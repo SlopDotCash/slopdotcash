@@ -287,6 +287,37 @@ function snapshot(
   );
 }
 
+test("banned reviews do not consume another reviewer's slot or credit", () => {
+  const result = snapshot(
+    POLICY,
+    new Map([["U_bob", "2026-10-19T01:00:00.000Z"]]),
+  );
+  const credits = result.ledger.filter((event) =>
+    event.id.startsWith("PR_2:value-review:"),
+  );
+  expect(credits.map((event) => [event.actor.id, event.scoreThirds])).toEqual([
+    ["U_carol", 5],
+    ["U_erin", 2],
+    ["U_grace", 2],
+  ]);
+  expect(
+    credits.reduce((sum, event) => sum + (event.scoreThirds ?? 0), 0),
+  ).toBe(9);
+  expect(
+    snapshot(POLICY, new Map([["U_bob", "2026-10-19T01:00:00.000Z"]])),
+  ).toEqual(result);
+  const exclusions = new Map(
+    (result.reviewExclusions ?? []).map((item) => [item.reviewId, item.reason]),
+  );
+  expect(exclusions.get("PRR_2_1")).toBe("review-credit-account-banned");
+  expect(exclusions.get("PRR_2_4")).toBe("review-credit-account-banned");
+  expect(exclusions.get("PRR_2_7")).toBeUndefined();
+  // A later ban must preserve all credit earned before it, including legacy credit.
+  expect(
+    snapshot(POLICY, new Map([["U_bob", "2026-10-21T00:00:00.000Z"]])).ledger,
+  ).toEqual(snapshot().ledger);
+});
+
 test("the normal command takes no opt-in flag and uses the recorded policy", () => {
   expect(parseGenerationArguments([])).toEqual({});
   expect(() => parseGenerationArguments(["--value-assessments"])).toThrow(
@@ -938,17 +969,21 @@ test("published account bans remove new merge and review credit but retain earli
     true,
   );
   expect(
-    after.some(
+    after.filter(
       (event) => bans.has(event.actor.id) && event.occurredAt >= bannedAt,
     ),
-  ).toBe(false);
-  const earlierBobReview = after.find(
-    (event) =>
-      event.category === "substantive-review" &&
-      event.source.number === 2 &&
-      event.actor.id === "U_bob",
-  );
-  expect(earlierBobReview?.source.id).toBe("PRR_2_1");
+  ).toEqual([]);
+  // Removing Bob's post-ban deep review must retain his earlier standard
+  // review and reallocate the pool using only eligible bands.
+  expect(
+    after
+      .filter((event) => event.id.startsWith("PR_2:value-review:"))
+      .map((event) => [event.source.id, event.scoreThirds]),
+  ).toEqual([
+    ["PRR_2_2", 5],
+    ["PRR_2_1", 2],
+    ["PRR_2_5", 2],
+  ]);
   expect(after.filter((event) => event.source.number === 1)).toEqual(
     before.filter((event) => event.source.number === 1),
   );
@@ -964,31 +999,4 @@ test("published account bans remove new merge and review credit but retain earli
         new Response(null, { status: 503 })) as unknown as typeof fetch,
     ),
   ).rejects.toBeInstanceOf(ValueFeedUnavailableError);
-});
-
-test("a banned reviewer takes no slot or share from qualifying reviewers", () => {
-  const result = snapshot(
-    POLICY,
-    new Map([["U_bob", "2026-10-19T00:00:00.000Z"]]),
-  );
-  const reviews = result.ledger.filter(
-    (event) =>
-      event.category === "substantive-review" && event.source.number === 2,
-  );
-  expect(reviews.map((event) => [event.actor.id, event.scoreThirds])).toEqual([
-    ["U_carol", 5],
-    ["U_erin", 2],
-    ["U_grace", 2],
-  ]);
-  expect(
-    reviews.reduce((sum, event) => sum + (event.scoreThirds ?? 0), 0),
-  ).toBe(9);
-  expect(
-    (result.reviewExclusions ?? [])
-      .filter((row) => row.reason === "banned-account")
-      .map((row) => row.reviewId),
-  ).toEqual(["PRR_2_1", "PRR_2_4"]);
-  expect(
-    snapshot(POLICY, new Map([["U_bob", "2026-10-19T00:00:00.000Z"]])),
-  ).toEqual(result);
 });

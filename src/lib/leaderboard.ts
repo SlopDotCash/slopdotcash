@@ -241,7 +241,7 @@ export const REVIEW_EXCLUSION_REASONS = [
   "review-credit-reviewer-limit",
   "review-credit-zero-share",
   "review-credit-outside-window",
-  "banned-account",
+  "review-credit-account-banned",
 ] as const;
 
 function exactEvidenceBonusRun(
@@ -1715,6 +1715,17 @@ function publishedPenalties(
   );
 }
 
+function participationBannedAt(
+  participationBans: ReadonlyMap<string, string>,
+  actorId: string,
+  occurredAt: string,
+): boolean {
+  const bannedAt = participationBans.get(actorId);
+  return (
+    bannedAt !== undefined && parseIsoTime(occurredAt) >= parseIsoTime(bannedAt)
+  );
+}
+
 function addScore(
   entries: Map<string, MutableLeaderboardEntry>,
   ledger: ScoreEvent[],
@@ -1726,10 +1737,8 @@ function addScore(
   }
   // PRD section 8: a banned account receives no new contribution or review
   // credit from its ban onward. Earlier credit stays.
-  const bannedAt = participationBans.get(event.actor.id);
   if (
-    bannedAt !== undefined &&
-    parseIsoTime(event.occurredAt) >= parseIsoTime(bannedAt)
+    participationBannedAt(participationBans, event.actor.id, event.occurredAt)
   )
     return false;
   const entry = actorEntry(entries, event.actor);
@@ -3925,12 +3934,24 @@ function createSnapshotWithReviewCutoff(
     const scoringFrom = parseIsoTime(input.windowFrom);
     const inWindow: ValueReviewCandidate[] = [];
     for (const candidate of eligible) {
-      const reviewedAt = parseIsoTime(candidate.submittedAt);
-      const bannedAt = participationBans.get(candidate.actor.id);
-      if (bannedAt !== undefined && reviewedAt >= parseIsoTime(bannedAt)) {
-        excludeReview(pullRequest, candidate.review, "banned-account");
+      // Apply the same prospective ban as the ledger before selecting the
+      // five reviewers and dividing their pool. A discarded award must not
+      // take a qualifying reviewer's slot or share.
+      if (
+        participationBannedAt(
+          participationBans,
+          candidate.actor.id,
+          candidate.submittedAt,
+        )
+      ) {
+        excludeReview(
+          pullRequest,
+          candidate.review,
+          "review-credit-account-banned",
+        );
         continue;
       }
+      const reviewedAt = parseIsoTime(candidate.submittedAt);
       if (reviewedAt < scoringFrom || reviewedAt >= windowTo) {
         excludeReview(
           pullRequest,
