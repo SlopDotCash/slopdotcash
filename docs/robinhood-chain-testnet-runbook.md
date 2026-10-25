@@ -161,7 +161,7 @@ Then run the acceptance scenario with finalized receipts:
    signature (domain `SlopProjectEscrow`, version `5`).
 4. Anyone calls `pay`; the replacement deployment has no mandatory award delay.
 5. The owner withdraws part of the free balance. Check the fee is
-   `floor(gross / 50)` (2%) and only `gross - fee` reaches the owner.
+   `ceil(gross / 50)` (2%) and only `gross - fee` reaches the owner.
 6. Anyone calls `claimFees`.
 7. Read `totals()` and the adapter's `readVaultTotals` at the finalized block,
    and check the conservation identity.

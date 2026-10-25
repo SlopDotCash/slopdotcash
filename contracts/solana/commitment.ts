@@ -1,4 +1,8 @@
 import {
+  acceptsPayoutFee,
+  ordinaryFee,
+} from "../../src/lib/payments/contracts";
+import {
   readVaultTotals,
   type SolanaEscrowConfig,
   solanaAwardId,
@@ -134,7 +138,7 @@ export async function prepareSolanaCommitment(
     [instruction],
   );
   const gross = BigInt(intent.gross),
-    fee = gross / 50n;
+    fee = ordinaryFee(gross);
   return {
     ...intent,
     ...transaction,
@@ -163,12 +167,12 @@ export async function checkSolanaCommitment(
     obligationId: solanaAwardId(config.projectPda, intent.sourceDigest),
   });
   const gross = BigInt(intent.gross),
-    fee = gross / 50n;
+    fee = BigInt(event.feeMicro);
   if (
     event.githubUserId !== intent.githubUserId ||
     event.sourceDigest !== intent.sourceDigest ||
     event.grossMicro !== intent.gross ||
-    event.feeMicro !== fee.toString() ||
+    !acceptsPayoutFee(gross, fee) ||
     event.netMicro !== (gross - fee).toString()
   )
     throw new SolanaWalletActionError(

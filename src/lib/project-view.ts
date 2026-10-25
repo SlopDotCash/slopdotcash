@@ -1,4 +1,5 @@
 import { compareActors } from "./github-actor";
+import { ordinaryFee } from "./payments/contracts";
 /**
  * Derives one project's cycle leaderboard, diagnostic compute evidence, and
  * reward simulation from the canonical GitHub snapshot. A finalized private
@@ -710,7 +711,7 @@ export function createProjectView(
       if (escrow) {
         // New escrow projections are recipient net, never gross plus a fee.
         const net = (gross: string) =>
-          (BigInt(gross) - BigInt(gross) / 50n).toString();
+          (BigInt(gross) - ordinaryFee(BigInt(gross))).toString();
         entry.simulatedMinor = net(entry.simulatedMinor);
         entry.simulatedDisplayMinor = entry.simulatedMinor;
         entry.projectedMinor = net(entry.projectedMinor);
@@ -732,13 +733,14 @@ export function createProjectView(
       capMinor,
       projectedPrincipalMinor: [...projected.values()]
         .reduce(
-          (total, amount) => total + (escrow ? amount - amount / 50n : amount),
+          (total, amount) =>
+            total + (escrow ? amount - ordinaryFee(amount) : amount),
           0n,
         )
         .toString(),
       platformFeeMinor: (escrow
         ? [...projected.values()].reduce(
-            (total, amount) => total + amount / 50n,
+            (total, amount) => total + ordinaryFee(amount),
             0n,
           )
         : (monthlyCapMinor *

@@ -36,6 +36,7 @@ const rpcUrl = `http://127.0.0.1:${anvilPort}`;
 let anvil: ChildProcess;
 let deployment: EscrowDeployment;
 let project: (typeof PROJECTS)[number];
+let otherToken: string;
 async function rpc(method: string, params: unknown[]) {
   const response = await fetch(rpcUrl, {
     method: "POST",
@@ -106,6 +107,7 @@ test.beforeAll(async () => {
   const token = deploy(
     "integration/TestDollar.sol:TestDollar",
   ).deployedTo.toLowerCase() as `0x${string}`;
+  otherToken = deploy("integration/TestDollar.sol:TestDollar").deployedTo;
   const factory = deployUpgradeableFactory(
     (contract, args) => deploy(contract, args).deployedTo,
     [registrar, fee, attester, "3600"],
@@ -739,6 +741,236 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     "already committed",
   );
   expect(sends).toHaveLength(5);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("owner turns automatic monthly payment on by default, then opts out", async ({
+  page,
+}, info) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (event) => {
+    if (event.type() === "error") errors.push(event.text());
+  });
+  let account = donor;
+  let rejected = false;
+  let ambiguous = false;
+  const sends: string[] = [];
+  await page.exposeFunction(
+    "monthlyWalletRequest",
+    async (method: string, params: unknown[]) => {
+      if (method === "eth_accounts" || method === "eth_requestAccounts")
+        return [account];
+      if (method === "eth_sendTransaction") {
+        if (rejected) return { fixtureError: "rejected" };
+        const hash = await rpc(method, params);
+        sends.push(hash);
+        if (ambiguous) return { fixtureError: "unknown" };
+        return hash;
+      }
+      return rpc(method, params);
+    },
+  );
+  await page.addInitScript(() => {
+    Object.assign(window, {
+      ethereum: {
+        isMetaMask: true,
+        request: async ({
+          method,
+          params = [],
+        }: {
+          method: string;
+          params?: unknown[];
+        }) => {
+          const value = await (
+            window as unknown as {
+              monthlyWalletRequest: (
+                method: string,
+                params: unknown[],
+              ) => Promise<unknown>;
+            }
+          ).monthlyWalletRequest(method, params);
+          if ((value as { fixtureError?: string })?.fixtureError === "rejected")
+            throw Object.assign(new Error("User rejected"), { code: 4001 });
+          if ((value as { fixtureError?: string })?.fixtureError === "unknown")
+            throw new Error("Transport interrupted after send");
+          return value;
+        },
+      },
+    });
+  });
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+  );
+  await page.route("**/api/v1/projects/eliza", (route) =>
+    route.fulfill({ json: { project, revision: 1 } }),
+  );
+  await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
+    route.fulfill({
+      json: {
+        projectId: "eliza",
+        snapshots: [],
+        staleAfterMs: 60000,
+        servedAt: new Date().toISOString(),
+      },
+    }),
+  );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  const monthlyState = parseAbi([
+    "function monthlyCap() view returns (uint128)",
+    "function monthlyEnabled() view returns (bool)",
+  ]);
+  const read = async (functionName: "monthlyCap" | "monthlyEnabled") =>
+    BigInt(
+      await rpc("eth_call", [
+        {
+          to: deployment.vault,
+          data: encodeFunctionData({ abi: monthlyState, functionName }),
+        },
+        "latest",
+      ]),
+    );
+  const onChain = async () => ({
+    cap: await read("monthlyCap"),
+    enabled: (await read("monthlyEnabled")) === 1n,
+  });
+  // A vault starts with the monthly commitment off and a zero cap.
+  expect(await onChain()).toEqual({ cap: 0n, enabled: false });
+  const matchingProject = project;
+  if (!project.rewardAsset) throw new Error("Missing token reward fixture");
+  project = {
+    ...project,
+    rewardAsset: { ...project.rewardAsset, address: otherToken.toLowerCase() },
+  };
+  const cap = formatAssetAmount(project.reward.monthlyCapMinor, 6);
+  await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
+  const monthly = page.getByRole("region", {
+    name: "Automatic monthly payment · base-sepolia",
+  });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  const automatic = monthly.getByRole("checkbox", {
+    name: "Pay contributors automatically each month",
+  });
+  await expect(automatic).toBeChecked();
+  await monthly
+    .getByRole("button", { name: "Review monthly payment setting" })
+    .click();
+  await expect(monthly.getByRole("alert")).toContainText(
+    "vault owner's wallet",
+  );
+  account = owner;
+  await monthly.getByRole("button", { name: "Choose another wallet" }).click();
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await monthly
+    .getByRole("button", { name: "Review monthly payment setting" })
+    .click();
+  await expect(monthly.getByRole("alert")).toContainText(
+    "vault token differs from the project's reward asset",
+  );
+  expect(sends).toHaveLength(0);
+  expect(await onChain()).toEqual({ cap: 0n, enabled: false });
+  project = matchingProject;
+  await page.reload({ waitUntil: "networkidle" });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await monthly
+    .getByRole("button", { name: "Review monthly payment setting" })
+    .click();
+  const review = monthly.getByRole("region", {
+    name: "Review monthly payment setting",
+  });
+  await expect(review).toContainText("Off");
+  await expect(review).toContainText(cap);
+  await page.screenshot({
+    path: info.outputPath("monthly-payment-review.png"),
+    fullPage: true,
+  });
+  const turnOn = monthly.getByRole("button", {
+    name: "Turn on automatic monthly payment in wallet",
+  });
+  rejected = true;
+  await turnOn.click();
+  await expect(monthly.getByRole("alert")).toContainText("You declined");
+  expect(sends).toHaveLength(0);
+  rejected = false;
+  ambiguous = true;
+  await turnOn.click();
+  await expect(monthly.getByRole("alert")).toContainText(
+    "wallet result is unclear",
+  );
+  expect(sends).toHaveLength(1);
+  ambiguous = false;
+  await page.reload({ waitUntil: "networkidle" });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await expect(turnOn).toHaveCount(0);
+  await monthly.getByLabel("Transaction hash from your wallet").fill(sends[0]);
+  await monthly
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(monthly.getByRole("status")).toContainText(
+    "Waiting for finalized",
+  );
+  await rpc("anvil_mine", ["0x40"]);
+  await monthly
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(monthly.getByRole("status")).toContainText(
+    "Automatic monthly payment is on",
+  );
+  expect(await onChain()).toEqual({
+    cap: BigInt(project.reward.monthlyCapMinor),
+    enabled: true,
+  });
+  // The same setting needs no second signature.
+  await monthly
+    .getByRole("button", { name: "Review monthly payment setting" })
+    .click();
+  await expect(review).toContainText("Nothing to sign");
+  // Opting out keeps the cap and turns the commitment off.
+  await automatic.uncheck();
+  await monthly
+    .getByRole("button", { name: "Review monthly payment setting" })
+    .click();
+  await monthly
+    .getByRole("button", {
+      name: "Turn off automatic monthly payment in wallet",
+    })
+    .click();
+  await expect.poll(() => sends.length).toBe(2);
+  await rpc("anvil_mine", ["0x40"]);
+  await monthly
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(monthly.getByRole("status")).toContainText(
+    "Automatic monthly payment is off",
+  );
+  expect(await onChain()).toEqual({
+    cap: BigInt(project.reward.monthlyCapMinor),
+    enabled: false,
+  });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

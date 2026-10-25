@@ -1178,6 +1178,62 @@ describe("monthly attestation input", () => {
     );
     expect(await prepare()).toEqual(initial);
   });
+  test("accepts a month frozen before fees rounded up, and no other fee", async () => {
+    clock = beforeCutoff;
+    await owner().changeAllocation(project.id, "2026-11", actor, {
+      githubUserId: B,
+      grossBase: "349",
+      expectedSequence: 0,
+    });
+    vault("2000");
+    await coordinate(afterCutoff);
+    const current = await prepare();
+    expect(current.entries.map((e) => [e.githubUserId, e.grossMicro])).toEqual([
+      [A, "600"],
+      [B, "349"],
+    ]);
+    const row = sqlite
+      .prepare("SELECT snapshot FROM monthly_payment_runs")
+      .get() as { snapshot: string };
+    const frozen = JSON.parse(row.snapshot) as {
+      awards: { githubUserId: string; feeBase: string; netBase: string }[];
+    };
+    const award = frozen.awards.find((a) => a.githubUserId === B);
+    // A month frozen now holds ceil(349 / 50) = 7.
+    expect([award?.feeBase, award?.netBase]).toEqual(["7", "342"]);
+    // Rewrite the month as it was frozen before the change, with
+    // floor(349 / 50) = 6 in the snapshot and in its funded obligation.
+    for (const trigger of sqlite
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('monthly_payment_runs','monthly_payment_obligations')",
+      )
+      .all() as { name: string }[])
+      sqlite.exec(`DROP TRIGGER ${trigger.name}`);
+    const freezeWithFee = async (fee: string) => {
+      if (!award) throw new Error("Fixture award missing");
+      award.feeBase = fee;
+      award.netBase = (349n - BigInt(fee)).toString();
+      const text = JSON.stringify(frozen);
+      sqlite
+        .prepare(
+          "UPDATE monthly_payment_runs SET snapshot=?, snapshot_sha256=?",
+        )
+        .run(text, await sha256Hex(text));
+      sqlite
+        .prepare(
+          "UPDATE monthly_payment_obligations SET fee_base=? WHERE github_user_id=?",
+        )
+        .run(fee, B);
+    };
+    await freezeWithFee("6");
+    const legacy = await prepare();
+    // The allocation root binds actor, gross and source only, so the root is the same.
+    expect(legacy.allocationRoot).toBe(current.allocationRoot);
+    expect(legacy.entries).toEqual(current.entries);
+    // A fee that neither rounding produces is not canonical.
+    await freezeWithFee("5");
+    await rejects(prepare(), "invalid_allocation");
+  });
   test("rejects a forged frozen payload even when its metadata still names the real project", async () => {
     vault("1000");
     await coordinate(afterCutoff);

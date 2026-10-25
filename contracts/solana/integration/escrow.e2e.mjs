@@ -458,16 +458,16 @@ test("actual SPL escrow lifecycle, late wallet claim, reserve and authority atta
     pay("late", 102, wrongDestination),
     /ConstraintTokenMint|WrongDestination/,
   );
-  // The 50 reserved for actor 102 cannot be withdrawn. The 2% fee rounds down
-  // once per withdrawal: 1 pays 0, and 849,999,999 pays
-  // floor(849,999,999 / 50) = 16,999,999.
+  // The 50 reserved for actor 102 cannot be withdrawn. The 2% fee rounds up
+  // once per withdrawal, so splitting never avoids it: 1 pays 1 (and returns
+  // nothing), and 849,999,999 pays ceil(849,999,999 / 50) = 17,000,000.
   await assert.rejects(withdraw(850_000_001), /InsufficientFreeBalance/);
   await withdraw(1);
-  assert.equal(await balance(source), 1n);
-  assert.equal(await accrued(), 2_000_000n);
+  assert.equal(await balance(source), 0n);
+  assert.equal(await accrued(), 2_000_001n);
   await withdraw(849_999_999);
-  assert.equal(await balance(source), 833_000_001n);
-  assert.equal(await accrued(), 18_999_999n);
+  assert.equal(await balance(source), 832_999_999n);
+  assert.equal(await accrued(), 19_000_001n);
   await assert.rejects(withdraw(1), /InsufficientFreeBalance/);
   // A stolen authority key rebinds actor 102 to a thief, who must expose a
   // wallet by co-signing. Only the owner can veto it, and only while it is
@@ -517,14 +517,14 @@ test("actual SPL escrow lifecycle, late wallet claim, reserve and authority atta
     [payer],
   );
   assert.equal(await balance(destination), 147_000_001n);
-  assert.equal(await accrued(), 19_999_999n);
+  assert.equal(await accrued(), 20_000_001n);
   assert.equal(await balance(feeAccount), 0n);
-  assert.equal(await balance(vault), 19_999_999n);
+  assert.equal(await balance(vault), 20_000_001n);
   const state = await program.account.project.fetch(project);
   assert.equal(state.reserved.toString(), "0");
   assert.equal(state.paid.toString(), "147000000");
   assert.equal(state.payoutFees.toString(), "3000000");
-  assert.equal(state.withdrawalFees.toString(), "16999999");
+  assert.equal(state.withdrawalFees.toString(), "17000001");
   assert.equal(
     (await balance(source)) +
       (await balance(destination)) +
@@ -643,7 +643,7 @@ test("actual SPL escrow lifecycle, late wallet claim, reserve and authority atta
     assert.equal(totals[field], value.toString(), field);
   assert.equal(totals.freeBalance, "0");
   assert.equal(totals.reservedPrincipal, null);
-  assert.equal(totals.accruedFees, "19999999");
+  assert.equal(totals.accruedFees, "20000001");
   assert.equal(totals.accruedFees, counters.accruedFees.toString());
   assert.equal(
     BigInt(totals.totalDeposited),
@@ -657,7 +657,7 @@ test("actual SPL escrow lifecycle, late wallet claim, reserve and authority atta
   );
   // Anyone moves the accrued fees once; nothing is left to claim.
   await claimFees();
-  assert.equal(await balance(feeAccount), 19_999_999n);
+  assert.equal(await balance(feeAccount), 20_000_001n);
   assert.equal(await balance(vault), 0n);
   assert.equal(await accrued(), 0n);
   await assert.rejects(claimFees(), /InvalidAmount/);
@@ -857,12 +857,14 @@ test("commit delay, rotation freezes the earlier wallet, veto cap, bounded delay
     bind(203, walletD, 0, network, { expiresAt: bn(1) }),
     /BindingExpired/,
   );
-  // A 49-unit award has a zero fee and pays in one transfer.
+  // A 49-unit award pays ceil(49 / 50) = 1 fee, so splitting an award into
+  // pieces under 50 never avoids it. The fee stays in the vault, so the
+  // payment is one transfer of the net 48.
   await commit("zero-fee", 204, 49);
   await bind(204, walletD);
   await activate();
   const zeroFee = await pay("zero-fee", 204, ataD);
-  assert.equal(await balance(ataD), 49n);
+  assert.equal(await balance(ataD), 48n);
   await provider.connection.confirmTransaction(zeroFee, "finalized");
   const [zeroFeePay] = escrowInvocations(
     await parsedTransaction(zeroFee),
@@ -893,8 +895,9 @@ test("commit delay, rotation freezes the earlier wallet, veto cap, bounded delay
     kind: "paid",
     obligationId: awardOf("zero-fee").toString("hex"),
   });
-  assert.equal(zeroFeeEvidence.feeMicro, "0");
-  assert.equal(zeroFeeEvidence.netMicro, "49");
+  assert.equal(zeroFeeEvidence.grossMicro, "49");
+  assert.equal(zeroFeeEvidence.feeMicro, "1");
+  assert.equal(zeroFeeEvidence.netMicro, "48");
   // L-1 and L-3: initialize rejects an out-of-range delay and a fee recipient equal to
   // the owner or the project.
   const initialize = (
@@ -1120,9 +1123,9 @@ test("permissionless deposit, 18-, 9- and 0-decimal mints, 2% withdrawal fee, To
     // 10 whole tokens at 18 or 9 decimals; 1,000 base units at 0 decimals.
     const total = decimals === 0 ? 1_000n : 10n * 10n ** BigInt(decimals);
     const gross = total / 10n,
-      awardFee = gross / 50n,
+      awardFee = (gross + 49n) / 50n,
       unused = total - gross,
-      withdrawalFee = unused / 50n;
+      withdrawalFee = (unused + 49n) / 50n;
     mint = await createMint(
       provider.connection,
       payer,
@@ -2327,7 +2330,8 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
     programId: program.programId.toBase58(),
   });
   assert.equal(totals.freeBalance, "0");
-  assert.equal(totals.accruedFees, String(free / 50n));
+  // ceil(59,999,998 / 50) = 1,200,000.
+  assert.equal(totals.accruedFees, String((free + 49n) / 50n));
   assert.equal(
     BigInt(totals.totalDeposited),
     [
@@ -2571,7 +2575,8 @@ test("monthly gate blocks direct commits; a source consumed before the freeze, o
     programId: program.programId.toBase58(),
   });
   assert.equal(totals.freeBalance, "0");
-  assert.equal(totals.accruedFees, String(free / 50n));
+  // ceil(59,999,998 / 50) = 1,200,000.
+  assert.equal(totals.accruedFees, String((free + 49n) / 50n));
   assert.equal(
     BigInt(totals.totalDeposited),
     [
