@@ -181,7 +181,10 @@ export default {
       name: config.name,
       modules: true,
       script: await readFile(bundle, "utf8"),
-      compatibilityDate: config.compatibility_date,
+      // The pinned native binary predates the existing production date.
+      // Wrangler above validates the unchanged generated 2026-10-06 config;
+      // this explicit local-only date permits the HTTP refusal proof.
+      compatibilityDate: "2026-09-14",
       compatibilityFlags: config.compatibility_flags,
       bindings: config.vars,
       durableObjects: {
@@ -237,7 +240,7 @@ export default {
   assert.deepEqual(await observation.json(), []);
   assert.equal(outbound, 0);
   console.log(
-    "PASS: generated private empty attester, Wrangler dry run, release absence/existing/uncertain boundaries, seven native signing-route refusals, accidental-cron refusal, zero key/RPC reads or outbound calls; no deployment",
+    "PASS: generated private empty attester, Wrangler dry run, release absence/existing/uncertain boundaries, seven native signing-route refusals, accidental-cron refusal, zero key/RPC reads or outbound calls; local runtime date2026-09-14 only; no deployment",
   );
 } finally {
   await runtime?.dispose();
