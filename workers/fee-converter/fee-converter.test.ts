@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { keccak256, toBytes } from "viem";
+import {
+  FEE_CLAIM_RESOLVE_PATH,
+  FEE_CONVERSIONS_PATH,
+  type FeeConversionsDependencies,
+  handleFeeConversionsApi,
+} from "../../backend/fee-conversions/handler";
 import {
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
@@ -14,8 +21,10 @@ import { parseConfig } from "./config";
 import {
   type ChainClient,
   type ConversionRow,
+  claimRecord,
   type FeeVault,
   message,
+  OPERATOR_REVIEW,
   type PreparedSend,
   type Quote,
   type QuoteResult,
@@ -882,6 +891,354 @@ describe("EVM reconciliation", () => {
   });
 });
 
+describe("EVM vault fee claim recovery", () => {
+  const VAULT = "0x3333333333333333333333333333333333333333";
+  const CLAIM_TX = `0x${"c1".repeat(32)}`;
+  const FEE = 7_000_000n;
+  const word = (value: string | bigint) =>
+    `0x${(typeof value === "bigint" ? value.toString(16) : value.slice(2))
+      .toLowerCase()
+      .padStart(64, "0")}`;
+  const claimVault: FeeVault = {
+    vault: VAULT,
+    projectId: "evm-project",
+    payoutPolicy: "ordinary",
+    deployment: {
+      network: "base-mainnet",
+      vault: VAULT,
+      asset: TOKEN,
+      owner: "0x4444444444444444444444444444444444444444",
+      identityAuthority: "0x5555555555555555555555555555555555555555",
+      feeRecipient: WALLET,
+      factory: "0x6666666666666666666666666666666666666666",
+      registrar: "0x7777777777777777777777777777777777777777",
+      codeSha256: "a".repeat(64),
+      factoryCodeSha256: "b".repeat(64),
+      bindingDelaySeconds: "0",
+      deploymentTransaction: "reviewed",
+      evmUpgrade: {
+        authority: "0x8888888888888888888888888888888888888888",
+        vaultImplementation: "0x9999999999999999999999999999999999999999",
+        vaultImplementationCodeSha256: "c".repeat(64),
+        factoryImplementation: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        factoryImplementationCodeSha256: "d".repeat(64),
+        // A long append-only upgrade history must not reach the claim row.
+        history: Array.from({ length: 40 }, (_, index) => ({
+          authority: "0x8888888888888888888888888888888888888888",
+          vaultImplementation: "0x9999999999999999999999999999999999999999",
+          vaultImplementationCodeSha256: "e".repeat(64),
+          factoryImplementation: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          factoryImplementationCodeSha256: "f".repeat(64),
+          supersededAtBlock: String(1000 + index),
+        })),
+      },
+    },
+  };
+
+  /** The claim row the Worker journals before broadcast, at nonce 1. */
+  async function journaledClaim(h: ReturnType<typeof harness>) {
+    await h.deps.store.insert({
+      id: "claim-000001",
+      kind: "claim",
+      runId: "run-000001",
+      network: "base",
+      mode: "live",
+      feeWallet: WALLET,
+      token: TOKEN,
+      targetToken: TOKEN,
+      amountIn: FEE.toString(),
+      route: null,
+      quoteAmountOut: null,
+      minAmountOut: null,
+      quoteValueMicro: null,
+      quote: JSON.stringify(claimRecord(claimVault)),
+      priceImpactBps: null,
+      approvalTxId: null,
+      txId: CLAIM_TX,
+      rawTx: "0x02c1",
+      evmNonce: 1,
+      expiresAt: null,
+      amountOut: null,
+      tokenBalanceBefore: null,
+      targetBalanceBefore: null,
+      targetBalanceAfter: null,
+      state: "submitted",
+      reason: null,
+      createdAt: "2026-10-18T11:00:00.000Z",
+      updatedAt: "2026-10-18T11:00:00.000Z",
+      submittedAt: "2026-10-18T11:00:00.000Z",
+      finalizedAt: null,
+    });
+  }
+
+  /**
+   * A pruned node: the claim was mined in block 0x100 and the finalized head
+   * is 0x400, but state at any numbered block is gone ("missing trie node").
+   * `receipt: false` models a node with no hash lookups for the claim.
+   */
+  function prunedRpc(options: { receipt: boolean }) {
+    const stateReads: string[] = [];
+    const log = (
+      address: string,
+      topics: string[],
+      data: string,
+      index: number,
+    ) => ({
+      address,
+      topics,
+      data,
+      blockNumber: "0x100",
+      blockHash: `0x${"b1".repeat(32)}`,
+      transactionHash: CLAIM_TX,
+      transactionIndex: "0x0",
+      logIndex: `0x${index.toString(16)}`,
+      removed: false,
+    });
+    const transfer = keccak256(toBytes("Transfer(address,address,uint256)"));
+    const fetchRpc = (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const requests: { id: number; method: string; params: unknown[] }[] =
+        Array.isArray(body) ? body : [body];
+      const replies = requests.map((request) => {
+        const reply = (result: unknown) => ({
+          jsonrpc: "2.0",
+          id: request.id,
+          result,
+        });
+        const block =
+          request.method === "eth_getStorageAt"
+            ? request.params[2]
+            : request.params[1];
+        if (
+          ["eth_getCode", "eth_getStorageAt", "eth_call"].includes(
+            request.method,
+          )
+        ) {
+          if (typeof block === "string" && /^0x[0-9a-f]+$/u.test(block)) {
+            stateReads.push(request.method);
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              error: { code: -32000, message: "missing trie node" },
+            };
+          }
+          // Latest balance of the claimed token: already empty.
+          return reply(word(0n));
+        }
+        switch (request.method) {
+          case "eth_chainId":
+            return reply("0x2105");
+          case "eth_getTransactionReceipt":
+            return reply(
+              options.receipt
+                ? {
+                    blockHash: `0x${"b1".repeat(32)}`,
+                    blockNumber: "0x100",
+                    contractAddress: null,
+                    cumulativeGasUsed: "0x5208",
+                    effectiveGasPrice: "0x1",
+                    from: WALLET,
+                    gasUsed: "0x5208",
+                    logs: [
+                      log(
+                        VAULT,
+                        [
+                          keccak256(toBytes("FeesClaimed(address,uint128)")),
+                          word(WALLET),
+                        ],
+                        word(FEE),
+                        0,
+                      ),
+                      log(
+                        TOKEN,
+                        [transfer, word(VAULT), word(WALLET)],
+                        word(FEE),
+                        1,
+                      ),
+                    ],
+                    logsBloom: `0x${"0".repeat(512)}`,
+                    status: "0x1",
+                    to: VAULT,
+                    transactionHash: CLAIM_TX,
+                    transactionIndex: "0x0",
+                    type: "0x2",
+                  }
+                : null,
+            );
+          case "eth_getTransactionByHash":
+            return reply(null);
+          case "eth_getTransactionCount":
+            return reply("0x2");
+          case "eth_getBlockByNumber":
+            return reply({
+              number: "0x400",
+              hash: `0x${"b4".repeat(32)}`,
+              parentHash: `0x${"b3".repeat(32)}`,
+              timestamp: "0x6700",
+              transactions: [],
+            });
+          default:
+            throw new Error(`unexpected RPC ${request.method}`);
+        }
+      });
+      return Response.json(Array.isArray(body) ? replies : replies[0]);
+    }) as unknown as typeof fetch;
+    return { fetchRpc, stateReads };
+  }
+
+  async function recover(h: ReturnType<typeof harness>, receipt: boolean) {
+    const { createEvmClient } = await import("./evm");
+    const rpc = prunedRpc({ receipt });
+    h.deps.client = (network) =>
+      createEvmClient({
+        config: network,
+        limits: h.deps.limits,
+        kyberClientId: "test",
+        fetch: rpc.fetchRpc,
+        sleep: async () => {},
+      });
+    await runNetwork(h.network, h.deps);
+    return rpc;
+  }
+
+  test("a journaled claim keeps only the bounded vault record", async () => {
+    const h = harness();
+    await journaledClaim(h);
+    const [row] = h.rows();
+    const stored = JSON.parse(String(row.quote));
+    expect(stored.deployment.evmUpgrade.history).toBeUndefined();
+    expect(stored.deployment.deploymentTransaction).toBeUndefined();
+    expect(stored.deployment.evmUpgrade.authority).toBe(
+      "0x8888888888888888888888888888888888888888",
+    );
+    expect(JSON.stringify(claimVault).length).toBeGreaterThan(8192);
+    expect(String(row.quote).length).toBeLessThan(2048);
+  });
+
+  test("recovery settles a finalized claim on a node without old state", async () => {
+    const h = harness();
+    await journaledClaim(h);
+    const rpc = await recover(h, true);
+    // The receipt is 768 blocks old. Its proof is the signed transaction and
+    // its vault event and transfer, not deployment state at that block.
+    expect(rpc.stateReads).toEqual([]);
+    const [row] = h.rows();
+    expect([row.state, row.amount_out, row.reason]).toEqual([
+      "finalized",
+      FEE.toString(),
+      null,
+    ]);
+    expect(h.events).toContainEqual(
+      expect.objectContaining({ event: "fee_claim_finalized", txId: CLAIM_TX }),
+    );
+  });
+
+  test("an unprovable claim waits for an operator, who can close it", async () => {
+    const h = harness();
+    await journaledClaim(h);
+    await recover(h, false);
+    const [open] = h.rows();
+    expect(open.state).toBe("submitted");
+    expect(String(open.reason)).toStartWith(OPERATOR_REVIEW);
+
+    const admin = {
+      db: h.db as unknown as FeeConversionsDependencies["db"],
+      adminGithubIds: new Set(["1"]),
+      sessionActor: async () => ({ githubId: "1" }),
+    };
+    const listed = await (
+      await handleFeeConversionsApi(
+        new Request(`https://slop.cash${FEE_CONVERSIONS_PATH}`),
+        admin,
+      )
+    )?.json();
+    expect(listed.recent).toEqual([]);
+    expect(listed.openClaims).toEqual([
+      expect.objectContaining({
+        id: "claim-000001",
+        txId: CLAIM_TX,
+        evmNonce: 1,
+        operatorReview: true,
+      }),
+    ]);
+    const resolve = (headers: Record<string, string>, body: unknown) =>
+      handleFeeConversionsApi(
+        new Request(`https://slop.cash${FEE_CLAIM_RESOLVE_PATH}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        }),
+        admin,
+      );
+    const json = {
+      origin: "https://slop.cash",
+      "content-type": "application/json",
+    };
+    const reason = "Explorer shows nonce 1 was this claim's replacement";
+    expect(
+      (
+        await resolve(
+          { "content-type": "application/json" },
+          { id: "claim-000001", reason },
+        )
+      )?.status,
+    ).toBe(403);
+    expect(
+      (await resolve(json, { id: "claim-000001", reason: "short" }))?.status,
+    ).toBe(400);
+    expect(
+      (
+        await handleFeeConversionsApi(
+          new Request(`https://slop.cash${FEE_CLAIM_RESOLVE_PATH}`, {
+            method: "POST",
+            headers: json,
+            body: JSON.stringify({ id: "claim-000001", reason }),
+          }),
+          { ...admin, sessionActor: async () => ({ githubId: "2" }) },
+        )
+      )?.status,
+    ).toBe(403);
+    const closed = await resolve(json, { id: "claim-000001", reason });
+    expect(closed?.status).toBe(200);
+    const [row] = h.rows();
+    expect([row.state, row.reason, row.tx_id, row.raw_tx]).toEqual([
+      "failed",
+      `operator 1: ${reason}`,
+      CLAIM_TX,
+      "0x02c1",
+    ]);
+    // A closed claim and a claim without the review mark stay unchanged.
+    expect((await resolve(json, { id: "claim-000001", reason }))?.status).toBe(
+      409,
+    );
+  });
+
+  test("an operator cannot close a claim the Worker can still settle", async () => {
+    const h = harness();
+    await journaledClaim(h);
+    const response = await handleFeeConversionsApi(
+      new Request(`https://slop.cash${FEE_CLAIM_RESOLVE_PATH}`, {
+        method: "POST",
+        headers: {
+          origin: "https://slop.cash",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "claim-000001",
+          reason: "Operator wants to convert this token now",
+        }),
+      }),
+      {
+        db: h.db as unknown as FeeConversionsDependencies["db"],
+        adminGithubIds: new Set(["1"]),
+        sessionActor: async () => ({ githubId: "1" }),
+      },
+    );
+    expect(response?.status).toBe(409);
+    expect(h.rows()[0].state).toBe("submitted");
+  });
+});
+
 describe("D1 contract", () => {
   test("the schema refuses a second open send, a submitted row without bytes, and edits to final rows", async () => {
     const h = harness();
@@ -1183,6 +1540,13 @@ describe("Solana vault fee claims", () => {
       receipt: null as bigint | null,
       sent: [] as string[],
       verified: [] as SolanaEscrowConfig[],
+      /** Finalized project bytes: [offset, public key] pairs to write. */
+      projectKeys: [] as [number, string][],
+      /** Signature status of the claim: confirmed, finalized or unknown. */
+      claimStatus: "confirmed" as "confirmed" | "finalized" | null,
+      blockHeight: 100,
+      /** Makes deployment verification fail, as after a program upgrade. */
+      verifyError: null as Error | null,
     };
     const rpcFetch = (async (_url: string, init?: RequestInit) => {
       const { method, params } = JSON.parse(String(init?.body)) as {
@@ -1234,7 +1598,11 @@ describe("Solana vault fee claims", () => {
         }
         case "getSignatureStatuses":
           return reply({
-            value: [{ err: null, confirmationStatus: "confirmed" }],
+            value: [
+              state.claimStatus === null
+                ? null
+                : { err: null, confirmationStatus: state.claimStatus },
+            ],
           });
         case "getTransaction": {
           const event = new Uint8Array(80);
@@ -1282,7 +1650,7 @@ describe("Solana vault fee claims", () => {
           });
         }
         case "getBlockHeight":
-          return reply(100);
+          return reply(state.blockHeight);
         default:
           throw new Error(`unexpected RPC ${method}`);
       }
@@ -1303,8 +1671,12 @@ describe("Solana vault fee claims", () => {
         fetch: rpcFetch,
         sleep: async () => {},
         verifyDeployment: async (escrow) => {
+          if (state.verifyError) throw state.verifyError;
           state.verified.push(escrow);
-          return projectBytes(state.finalizedAccrued);
+          const project = projectBytes(state.finalizedAccrued);
+          for (const [offset, account] of state.projectKeys)
+            project.set(decodeBase58Bytes(account), offset);
+          return project;
         },
       });
     return { state, client, network };
@@ -1312,7 +1684,7 @@ describe("Solana vault fee claims", () => {
 
   function solanaRun(mode: "dry_run" | "live") {
     const chain = solanaChain();
-    const { db } = sqliteD1();
+    const { db, sqlite } = sqliteD1();
     const events: Record<string, unknown>[] = [];
     let id = 0;
     const deps: RunDependencies = {
@@ -1327,7 +1699,11 @@ describe("Solana vault fee claims", () => {
       client: () => chain.client(mode === "live"),
       log: (event) => events.push(event),
     };
-    return { ...chain, deps, events, config: chain.network.networks[0] };
+    const rows = () =>
+      sqlite
+        .query("SELECT * FROM fee_conversions ORDER BY rowid")
+        .all() as Record<string, string | number | null>[];
+    return { ...chain, deps, events, rows, config: chain.network.networks[0] };
   }
 
   test("accrued fees are read only after the reviewed deployment verifies", async () => {
@@ -1370,6 +1746,77 @@ describe("Solana vault fee claims", () => {
     );
     expect(state.verified).toEqual([]);
     expect(state.sent).toEqual([]);
+  });
+
+  test("the fee wallet never claims while it holds or is proposed for a project role", async () => {
+    for (const role of [
+      "owner",
+      "identityAuthority",
+      "rotationAuthority",
+      "upgradeAuthority",
+    ]) {
+      const { state, client } = solanaChain();
+      await expect(
+        client(true).vaultFees?.claim(
+          vault({ [role]: wallet }),
+          async () => {},
+        ),
+      ).rejects.toThrow(/holds or is proposed for a vault role/);
+      expect(state.sent).toEqual([]);
+    }
+    // The identity authority in force (byte 104) and a pending rotation to
+    // the fee wallet (byte 257) come from finalized project state.
+    for (const offset of [104, 257]) {
+      const { state, client } = solanaChain();
+      state.projectKeys = [[offset, wallet]];
+      await expect(client(false).vaultFees?.accrued(vault())).rejects.toThrow(
+        /holds or is proposed for a vault role/,
+      );
+      await expect(
+        client(true).vaultFees?.claim(vault(), async () => {}),
+      ).rejects.toThrow(/holds or is proposed for a vault role/);
+      expect(state.sent).toEqual([]);
+    }
+    // A rotation to a separate identity authority remains claimable.
+    const { state, client } = solanaChain();
+    state.projectKeys = [
+      [104, key(30)],
+      [257, key(31)],
+    ];
+    expect(await client(false).vaultFees?.accrued(vault())).toEqual({
+      asset: SOLANA_USDC,
+      amount: 10_000_000n,
+    });
+  });
+
+  test("a journaled claim settles from its finalized receipt after a later program change", async () => {
+    const run = solanaRun("live");
+    expect((await runNetwork(run.config, run.deps)).claimed).toBe(1);
+    expect(run.rows()).toEqual([
+      expect.objectContaining({ kind: "claim", state: "submitted" }),
+    ]);
+    // A later reviewed upgrade changes the program digest. The claim was
+    // verified before it was signed, so its receipt alone settles it.
+    run.state.verifyError = new Error(
+      "Deployed program bytes differ from reviewed digest",
+    );
+    run.state.claimStatus = "finalized";
+    await runNetwork(run.config, run.deps);
+    const [claim] = run.rows();
+    expect([claim.state, claim.amount_out]).toEqual(["finalized", "10000000"]);
+    expect(run.state.sent).toHaveLength(1);
+  });
+
+  test("an expired claim with no status waits for an operator", async () => {
+    const run = solanaRun("live");
+    await runNetwork(run.config, run.deps);
+    run.state.claimStatus = null;
+    run.state.blockHeight = 501;
+    await runNetwork(run.config, run.deps);
+    const [claim] = run.rows();
+    expect(claim.state).toBe("submitted");
+    expect(String(claim.reason)).toStartWith(OPERATOR_REVIEW);
+    expect(run.state.sent).toHaveLength(1);
   });
 
   test("a claim signs only claim_fees into the fee wallet's own token account", async () => {

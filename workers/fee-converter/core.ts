@@ -94,7 +94,11 @@ export interface PreparedApproval {
 }
 
 export type SendStatus =
-  | { kind: "pending" }
+  /**
+   * Still open. `reason` marks a claim that no later chain read can settle
+   * (OPERATOR_REVIEW); an admin must resolve it.
+   */
+  | { kind: "pending"; reason?: string }
   | { kind: "finalized"; amountOut: bigint }
   | { kind: "failed"; reason: string }
   /** Not seen on chain and still valid: send the same bytes again. */
@@ -131,6 +135,70 @@ export interface FeeVault {
   projectId: string;
   payoutPolicy: "ordinary" | "security-bounty";
   deployment: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Prefix of the reason on an open claim that the Worker cannot settle from
+ * chain data. Only such a claim may be closed through the admin API.
+ */
+export const OPERATOR_REVIEW = "operator review: ";
+
+const REVIEW_FIELDS = [
+  "authority",
+  "vaultImplementation",
+  "vaultImplementationCodeSha256",
+  "factoryImplementation",
+  "factoryImplementationCodeSha256",
+];
+const DEPLOYMENT_FIELDS = [
+  "network",
+  "vault",
+  "asset",
+  "owner",
+  "identityAuthority",
+  "feeRecipient",
+  "codeSha256",
+  "bindingDelaySeconds",
+  // EVM
+  "factory",
+  "factoryCodeSha256",
+  "registrar",
+  // Solana
+  "programId",
+  "projectPda",
+  "networkDomain",
+  "rotationAuthority",
+  "upgradeAuthority",
+  "rotationDelaySeconds",
+];
+
+/**
+ * The reviewed vault record that a claim row keeps: only the fields the claim
+ * verification reads. The current EVM upgrade review is kept; its superseded
+ * history is not, because a claim verifies the deployment only at the current
+ * block. The record therefore fits the bounded `quote` column.
+ */
+export function claimRecord(vault: FeeVault): FeeVault {
+  const pick = (
+    source: Readonly<Record<string, unknown>>,
+    fields: string[],
+  ): Record<string, unknown> =>
+    Object.fromEntries(
+      fields.filter((field) => field in source).map((f) => [f, source[f]]),
+    );
+  const deployment = pick(vault.deployment, DEPLOYMENT_FIELDS);
+  const upgrade = vault.deployment.evmUpgrade;
+  if (upgrade !== undefined)
+    deployment.evmUpgrade =
+      upgrade !== null && typeof upgrade === "object"
+        ? pick(upgrade as Record<string, unknown>, REVIEW_FIELDS)
+        : upgrade;
+  return {
+    vault: vault.vault,
+    projectId: vault.projectId,
+    payoutPolicy: vault.payoutPolicy,
+    deployment,
+  };
 }
 
 /** Fees accrued in one vault whose fee recipient is this fee wallet. */
@@ -283,6 +351,12 @@ async function reconcile(
   const at = deps.now().toISOString();
   switch (status.kind) {
     case "pending":
+      // Record once why the claim needs an operator, so the admin API shows it.
+      if (status.reason !== undefined && status.reason !== row.reason)
+        await deps.store.update(row.id, {
+          reason: status.reason,
+          updatedAt: at,
+        });
       return false;
     case "finalized": {
       const after = await client
@@ -570,7 +644,7 @@ async function claimVaultFees(
           quoteAmountOut: null,
           minAmountOut: null,
           quoteValueMicro: null,
-          quote: JSON.stringify(vault),
+          quote: JSON.stringify(claimRecord(vault)),
           priceImpactBps: null,
           approvalTxId: null,
           txId: send.txId,

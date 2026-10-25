@@ -31,15 +31,16 @@ import {
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import type { Limits, NetworkConfig } from "./config";
-import type {
-  ChainClient,
-  ConversionRow,
-  FeeVault,
-  PreparedApproval,
-  PreparedSend,
-  Quote,
-  QuoteResult,
-  SendStatus,
+import {
+  type ChainClient,
+  type ConversionRow,
+  type FeeVault,
+  OPERATOR_REVIEW,
+  type PreparedApproval,
+  type PreparedSend,
+  type Quote,
+  type QuoteResult,
+  type SendStatus,
 } from "./core";
 
 const KYBER_API = "https://aggregator-api.kyberswap.com";
@@ -319,7 +320,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     return { raw, hash: keccak256(raw) };
   }
 
-  async function verifiedVault(entry: FeeVault, atBlock?: bigint) {
+  async function verifiedVault(entry: FeeVault) {
     const record = entry.deployment;
     const text = (name: string): string => {
       const value = record[name];
@@ -352,7 +353,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     };
     // Pin every read to one current block. A recent unreviewed upgrade must not
     // remain claimable merely because the prior implementation is finalized.
-    const block = atBlock ?? (await client.getBlockNumber({ cacheTime: 0 }));
+    const block = await client.getBlockNumber({ cacheTime: 0 });
     await verifyEvmDeployment(escrow, `0x${block.toString(16)}`);
     if (escrow.feeRecipient.toLowerCase() !== wallet) return null;
     // The attester can rotate without changing the deployment record. Check
@@ -392,20 +393,37 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     return { escrow, amount };
   }
 
-  async function claimReceipt(
+  /**
+   * Binds a claim receipt to its journal row. The deployment and roles were
+   * verified at the current block before the claim was signed and recorded;
+   * the row exists only after that check. The receipt is not checked against
+   * deployment state at its own block: an RPC without archive state cannot
+   * answer that read for a receipt from an earlier run, and the claim would
+   * then block conversion of its token forever. Instead the exact signed
+   * transaction, its sender and target, the vault's own FeesClaimed event and
+   * the matching token debit and credit prove what entered the fee wallet.
+   */
+  function claimReceipt(
     entry: FeeVault,
+    txId: string,
     receipt: TransactionReceipt,
-  ): Promise<bigint> {
-    const verified = await verifiedVault(entry, receipt.blockNumber);
+  ): bigint {
+    const record = entry.deployment;
+    const escrow = {
+      vault: String(record.vault ?? "").toLowerCase(),
+      asset: String(record.asset ?? "").toLowerCase(),
+    };
     if (
-      !verified ||
+      receipt.transactionHash.toLowerCase() !== txId.toLowerCase() ||
+      escrow.vault !== entry.vault.toLowerCase() ||
+      !/^0x[0-9a-f]{40}$/u.test(escrow.asset) ||
+      String(record.feeRecipient ?? "").toLowerCase() !== wallet ||
       receipt.from.toLowerCase() !== wallet ||
-      receipt.to?.toLowerCase() !== entry.vault.toLowerCase()
+      receipt.to?.toLowerCase() !== escrow.vault
     )
       throw new Error(
         "Claim receipt does not match the reviewed vault or fee wallet",
       );
-    const { escrow } = verified;
     const claims = parseEventLogs({
       abi: VAULT_FEE_ABI,
       eventName: "FeesClaimed",
@@ -663,8 +681,9 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         if (row.kind === "claim")
           return {
             kind: "finalized",
-            amountOut: await claimReceipt(
+            amountOut: claimReceipt(
               JSON.parse(row.quote as string) as FeeVault,
+              hash,
               receipt,
             ),
           };
@@ -697,9 +716,13 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       });
       if (row.evmNonce !== null && finalizedNonce > row.evmNonce)
         // A claim may itself have consumed the nonce while its hash lookups
-        // are unavailable. Only its receipt proves what entered the wallet.
+        // are unavailable. Only its receipt proves what entered the wallet,
+        // so an operator must confirm the outcome from another source.
         return row.kind === "claim"
-          ? { kind: "pending" }
+          ? {
+              kind: "pending",
+              reason: `${OPERATOR_REVIEW}nonce ${row.evmNonce} was used, but no receipt for this claim is available`,
+            }
           : { kind: "failed", reason: "nonce used by another transaction" };
       // Past the router deadline the swap reverts even if it is mined later.
       if (
@@ -775,7 +798,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         if (!receipt) throw new Error(`claim ${sent.hash} not mined in time`);
         if (receipt.status !== "success")
           throw new Error(`claim ${sent.hash} reverted`);
-        await claimReceipt(entry, receipt);
+        claimReceipt(entry, sent.hash, receipt);
         return { txId: sent.hash };
       },
     },
