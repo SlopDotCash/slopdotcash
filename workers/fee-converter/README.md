@@ -85,11 +85,19 @@ For each enabled network:
    and logs `fee_claim_included`. A claim is a transfer to the fee wallet
    itself, so it does not count against the conversion caps. The step runs
    before the balance reads, so the claimed fee converts in the same run.
-   Receipt runs skip this step, so the claim costs at most one vault read and
-   two quotes per vault every 15 minutes.
-   - **EVM.** Reads `accruedFees()`, `feeRecipient()` and `token()`; prices
-     the claim through a native-currency quote; signs `claimFees()` only when
-     no earlier fee-wallet transaction is pending and waits for its receipt.
+   Receipt runs skip this step. Recovery scans verify each deployment before
+   they read its fee counter or price its claim.
+   - **EVM.** Uses the shared escrow verifier to check the manifest's network,
+     runtime and implementation hashes, factory, roles, asset, delays and
+     payout purpose at one current block. Missing or changed reviewed values
+     stop the claim. It repeats this check before signing `claimFees()`, and
+     signs only when no earlier fee-wallet transaction is pending. At the
+     receipt block it verifies the deployment again. Transfers of the reviewed
+     token must show the same net debit from the vault and credit to this fee
+     wallet, at least equal to the fee read before the claim. This permits fees
+     that accrued while the claim was pending. Receipt status alone is not
+     proof. An included claim with incomplete receipt data is not reported as
+     verified; the next run reads the current counter before any new claim.
    - **Solana.** Builds the escrow config from the manifest's reviewed
      deployment record (the cluster genesis comes from the escrow network
      registry) and refuses a record whose fee recipient is not this fee wallet
@@ -399,8 +407,13 @@ covering an ordinary send, a send lost before delivery, a send whose
 response was lost, a below-minimum skip, a refusal when the price moved
 between quote and signing, a token no aggregator can route, and a vault fee
 claim (the reviewed EscrowFactory and ProjectEscrow deployed on the fork, a
-real 2% fee accrued, no claim by a receipt or dry run, then a live claim,
-sale and finalized reconcile); and a local
+real 2% fee accrued, refusal of incomplete or changed deployment pins, a
+reviewed implementation upgrade, no claim by a receipt or dry run, refusal of
+an incomplete transfer receipt, then a live claim, sale and finalized
+reconcile). The fee claim leaves both free principal and a reserved award
+unchanged. `SLOP_TEST_FEE_PORT` selects another local port. To run only this
+claim flow, use `bun run test:fee-converter:fork --fee-claim-only`.
+The Solana check uses a local
 `solana-test-validator` (port 28899) that clones the mainnet Jupiter and
 Whirlpool programs and one JUP/USDC route. The Solana harness lifts the
 Solana block with a local-only option that the hosted Worker never sets.

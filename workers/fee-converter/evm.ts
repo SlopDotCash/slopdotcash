@@ -24,10 +24,16 @@ import {
   TransactionReceiptNotFoundError,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import {
+  type EvmEscrowConfig,
+  type EvmUpgrade,
+  verifyEvmDeployment,
+} from "../../contracts/evm/adapter";
 import type { Limits, NetworkConfig } from "./config";
 import type {
   ChainClient,
   ConversionRow,
+  FeeVault,
   PreparedApproval,
   PreparedSend,
   Quote,
@@ -297,6 +303,51 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     return { raw, hash: keccak256(raw) };
   }
 
+  async function verifiedVault(entry: FeeVault) {
+    const record = entry.deployment;
+    const text = (name: string): string => {
+      const value = record[name];
+      if (typeof value !== "string" || value.length === 0)
+        throw new Error(`reviewed EVM deployment lacks ${name}`);
+      return value;
+    };
+    if (
+      !definition.escrowNetworks.includes(text("network")) ||
+      text("vault").toLowerCase() !== entry.vault.toLowerCase()
+    )
+      throw new Error("Vault differs from its reviewed network or deployment");
+    const escrow: EvmEscrowConfig = {
+      request: (method, params) => client.request({ method, params } as never),
+      chainId: BigInt(chain.id),
+      payoutPolicy: entry.payoutPolicy,
+      vault: text("vault"),
+      asset: text("asset"),
+      owner: text("owner"),
+      identityAuthority: text("identityAuthority"),
+      feeRecipient: text("feeRecipient"),
+      factory: text("factory"),
+      registrar: text("registrar"),
+      codeSha256: text("codeSha256"),
+      factoryCodeSha256: text("factoryCodeSha256"),
+      bindingDelaySeconds: text("bindingDelaySeconds"),
+      ...(record.evmUpgrade === undefined
+        ? {}
+        : { evmUpgrade: record.evmUpgrade as EvmUpgrade }),
+    };
+    // Pin every read to one current block. A recent unreviewed upgrade must not
+    // remain claimable merely because the prior implementation is finalized.
+    const block = await client.getBlockNumber({ cacheTime: 0 });
+    await verifyEvmDeployment(escrow, `0x${block.toString(16)}`);
+    if (escrow.feeRecipient.toLowerCase() !== wallet) return null;
+    const amount = await client.readContract({
+      address: escrow.vault as Address,
+      abi: VAULT_FEE_ABI,
+      functionName: "accruedFees",
+      blockNumber: block,
+    });
+    return { escrow, amount };
+  }
+
   const self: ChainClient & { address(): string | null } = {
     address: () => account?.address.toLowerCase() ?? null,
 
@@ -553,31 +604,14 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     },
 
     vaultFees: {
-      async accrued({ vault }) {
-        const read = <F extends "accruedFees" | "feeRecipient" | "token">(
-          functionName: F,
-        ) =>
-          client.readContract({
-            address: vault as Address,
-            abi: VAULT_FEE_ABI,
-            functionName,
-          });
-        const [amount, recipient, token] = await Promise.all([
-          read("accruedFees"),
-          read("feeRecipient"),
-          read("token"),
-        ]);
-        // A claim pays only the vault's own fee recipient; another wallet's
-        // fees are not this run's to claim.
-        if (
-          (amount as bigint) === 0n ||
-          (recipient as string).toLowerCase() !== wallet
-        )
-          return null;
-        return {
-          asset: (token as string).toLowerCase(),
-          amount: amount as bigint,
-        };
+      async accrued(entry) {
+        const verified = await verifiedVault(entry);
+        return verified === null || verified.amount === 0n
+          ? null
+          : {
+              asset: verified.escrow.asset.toLowerCase(),
+              amount: verified.amount,
+            };
       },
 
       async claimCostMicro({ vault }) {
@@ -597,7 +631,12 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         return "noRoute" in priced ? null : priced.amountOut;
       },
 
-      async claim({ vault }) {
+      async claim(entry) {
+        const verified = await verifiedVault(entry);
+        if (!verified) throw new Error("Vault pays another fee recipient");
+        if (verified.amount === 0n) throw new Error("No accrued fees to claim");
+        const { escrow, amount } = verified;
+        const vault = escrow.vault;
         // One send at a time: a claim waits until no earlier fee-wallet
         // transaction is pending, so a resend can never race the first.
         const [latest, pending] = await Promise.all([
@@ -612,6 +651,30 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         if (!receipt) throw new Error(`claim ${sent.hash} not mined in time`);
         if (receipt.status !== "success")
           throw new Error(`claim ${sent.hash} reverted`);
+        await verifyEvmDeployment(
+          escrow,
+          `0x${receipt.blockNumber.toString(16)}`,
+        );
+        const transfers = parseEventLogs({
+          abi: erc20Abi,
+          eventName: "Transfer",
+          logs: receipt.logs.filter(
+            (log) => log.address.toLowerCase() === escrow.asset.toLowerCase(),
+          ),
+        });
+        let received = 0n,
+          paid = 0n;
+        for (const { args } of transfers) {
+          if (args.to.toLowerCase() === wallet) received += args.value;
+          if (args.from.toLowerCase() === wallet) received -= args.value;
+          if (args.from.toLowerCase() === vault.toLowerCase())
+            paid += args.value;
+          if (args.to.toLowerCase() === vault.toLowerCase()) paid -= args.value;
+        }
+        if (received < amount || received !== paid)
+          throw new Error(
+            `claim ${sent.hash} receipt does not match the vault fee`,
+          );
         return { txId: sent.hash };
       },
     },
