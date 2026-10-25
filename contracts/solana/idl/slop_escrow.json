@@ -695,43 +695,6 @@
       "args": []
     },
     {
-      "name": "expire_month",
-      "discriminator": [177, 180, 193, 72, 217, 37, 87, 65],
-      "accounts": [
-        {
-          "name": "project",
-          "writable": true,
-          "relations": ["month"]
-        },
-        {
-          "name": "month",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [109, 111, 110, 116, 104]
-              },
-              {
-                "kind": "account",
-                "path": "project"
-              },
-              {
-                "kind": "arg",
-                "path": "period"
-              }
-            ]
-          }
-        }
-      ],
-      "args": [
-        {
-          "name": "period",
-          "type": "u32"
-        }
-      ]
-    },
-    {
       "name": "initialize",
       "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
       "accounts": [
@@ -1084,6 +1047,9 @@
         },
         {
           "name": "monthly_source",
+          "docs": [
+            "recorded obligation decides); it stays so the instruction's accounts are unchanged."
+          ],
           "pda": {
             "seeds": [
               {
@@ -1107,8 +1073,7 @@
         {
           "name": "obligation",
           "docs": [
-            "The obligation the origin records; required unless the actor is zero or another",
-            "month consumed the source."
+            "The obligation the origin records; required unless the actor is zero."
           ],
           "optional": true
         },
@@ -1405,10 +1370,6 @@
     {
       "name": "FeesClaimed",
       "discriminator": [22, 104, 110, 222, 38, 157, 14, 62]
-    },
-    {
-      "name": "MonthExpired",
-      "discriminator": [112, 58, 152, 189, 71, 127, 38, 232]
     },
     {
       "name": "MonthlyAwardReleased",
@@ -1909,26 +1870,6 @@
       }
     },
     {
-      "name": "MonthExpired",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "project",
-            "type": "pubkey"
-          },
-          {
-            "name": "period",
-            "type": "u32"
-          },
-          {
-            "name": "unsettled",
-            "type": "u64"
-          }
-        ]
-      }
-    },
-    {
       "name": "MonthlyAllocation",
       "docs": [
         "One period's recorded allocation root and the gross committed from it so far."
@@ -1980,9 +1921,7 @@
           },
           {
             "name": "expired",
-            "docs": [
-              "Set by expire_month: the unsettled gross no longer counts as outstanding."
-            ],
+            "docs": ["Legacy layout field. New funded months never expire."],
             "type": "bool"
           }
         ]

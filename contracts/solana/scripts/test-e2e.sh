@@ -43,7 +43,7 @@ node --test --test-force-exit --test-isolation=none integration/production-delay
 stop_validator
 # Reuse the same production build for the funded lifecycle suite. The validator also
 # preloads a Project of the earlier 316-byte layout for the migrate_project check, and
-# states no live validator reaches: a month past its expiry grace, an earlier month
+# states no live validator reaches: a funded month past its admission window, an earlier month
 # that already committed sources, and a vault holding less than its counters owe.
 read -ra legacy_accounts <<<"$(node integration/legacy-project.mjs)"
 read -ra monthly_accounts <<<"$(node integration/monthly-preload.mjs)"

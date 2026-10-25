@@ -20,6 +20,7 @@ import {
   SystemProgram,
   sendAndConfirmTransaction,
   Transaction,
+  TransactionInstruction,
 } from "@solana/web3.js";
 import {
   escrowInvocations,
@@ -50,7 +51,11 @@ import {
   CROSS_SOURCES,
   crossProject,
   EARLIER_PERIOD,
+  EXPIRED_ACTOR,
+  EXPIRED_GROSS,
   EXPIRED_PERIOD,
+  EXPIRED_SOURCE,
+  expiredOwner,
   expiredProject,
   shortProject,
   sourceDigest,
@@ -2391,18 +2396,34 @@ const awardAt = (entry) =>
   );
 const monthAt = (n) =>
   pda(seed("month"), key(project), Buffer.from(new Uint32Array([n]).buffer));
+// Retain the removed instruction bytes only to prove that expiry cannot bypass
+// funded-source protection on either a current or a past-window month.
 const expireAt = (projectKey, n) =>
-  program.methods
-    .expireMonth(n)
-    .accountsStrict({
-      project: projectKey,
-      month: pda(
-        seed("month"),
-        key(projectKey),
-        Buffer.from(new Uint32Array([n]).buffer),
-      ),
-    })
-    .rpc();
+  sendAndConfirmTransaction(
+    provider.connection,
+    new Transaction().add(
+      new TransactionInstruction({
+        programId: program.programId,
+        keys: [
+          { pubkey: projectKey, isSigner: false, isWritable: true },
+          {
+            pubkey: pda(
+              seed("month"),
+              key(projectKey),
+              Buffer.from(new Uint32Array([n]).buffer),
+            ),
+            isSigner: false,
+            isWritable: true,
+          },
+        ],
+        data: Buffer.concat([
+          Buffer.from(hash("global:expire_month")).subarray(0, 8),
+          Buffer.from(new Uint32Array([n]).buffer),
+        ]),
+      }),
+    ),
+    [payer],
+  );
 // Waits until the validator clock is past `time` and returns the new clock.
 async function after(time) {
   while ((await chainTime()) <= time) await sleep(500);
@@ -2526,8 +2547,8 @@ test("monthly gate blocks direct commits; a source consumed before the freeze, o
   // The owner cannot consume an admitted leaf's source, or any other, by hand.
   await assert.rejects(ownerCommit("leaf-c"), /MonthlyOutstanding/);
   await assert.rejects(ownerCommit("unrelated"), /MonthlyOutstanding/);
-  // Expiry opens only 30 days after the window closes.
-  await assert.rejects(expire(), /MonthlyWindowClosed/);
+  // The removed expiry selector cannot bypass a funded reservation.
+  await assert.rejects(expire(), /InstructionFallbackNotFound/);
   // A leaf that can still commit has no origin, so it cannot be released.
   await assert.rejects(leaf(0, "release", null), /AwardCommittable/);
   await leaf(0, "commit");
@@ -2630,30 +2651,158 @@ test("monthly gate blocks direct commits; a source consumed before the freeze, o
   assert.equal(state.reserved.toString(), String(90_000_000 - 1));
   assert.equal(state.monthlyOutstanding.toString(), "30000000");
   await assert.rejects(ownerCommit("blocked"), /MonthlyOutstanding/);
-  await assert.rejects(expire(), /MonthlyWindowClosed/);
+  await assert.rejects(expire(), /InstructionFallbackNotFound/);
 });
 
-// No admitted month on the validator is 30 days past its window, so test-e2e.sh preloads
-// one (see monthly-preload.mjs): anyone expires it once, and only its unsettled gross leaves
-// monthly_outstanding.
-test("expire_month ends an unsettled month once after its grace", async () => {
-  const fetchMonth = () =>
-    program.account.monthlyAllocation.fetch(
-      pda(
-        seed("month"),
-        key(expiredProject),
-        Buffer.from(new Uint32Array([EXPIRED_PERIOD]).buffer),
-      ),
-    );
-  assert.equal((await fetchMonth()).expired, false);
-  await expireAt(expiredProject, EXPIRED_PERIOD);
-  const state = await program.account.project.fetch(expiredProject);
-  assert.equal(state.monthlyOutstanding.toString(), "1000000");
-  assert.equal(state.reserved.toString(), "4000000");
-  assert.equal((await fetchMonth()).expired, true);
+// Historical clock state is preloaded; all refusal, reservation and payment
+// instructions below execute against the actual compiled program.
+test("past-window funded leaves preserve their recipient and remain payable", async () => {
+  const projectKey = expiredProject;
+  const sourceBytes = Buffer.from(EXPIRED_SOURCE, "hex");
+  const fundedId = Buffer.from(
+    solanaAwardId(projectKey.toBase58(), EXPIRED_SOURCE),
+    "hex",
+  );
+  const vaultKey = pda(seed("vault"), key(projectKey));
+  const monthKey = pda(
+    seed("month"),
+    key(projectKey),
+    Buffer.from(new Uint32Array([EXPIRED_PERIOD]).buffer),
+  );
+  const originKey = pda(seed("origin"), key(projectKey), sourceBytes);
+  const obligationKey = pda(seed("award"), key(projectKey), fundedId);
+  await sendAndConfirmTransaction(
+    provider.connection,
+    new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: expiredOwner.publicKey,
+        lamports: 1_000_000_000,
+      }),
+    ),
+    [payer],
+  );
+  const ownerCommit = (source, id) =>
+    program.methods
+      .commit([...id], [...source], bn(999), bn(EXPIRED_GROSS))
+      .accountsStrict({
+        owner: expiredOwner.publicKey,
+        project: projectKey,
+        vault: vaultKey,
+        origin: pda(seed("origin"), key(projectKey), source),
+        obligation: pda(seed("award"), key(projectKey), id),
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([expiredOwner])
+      .rpc();
   await assert.rejects(
-    expireAt(expiredProject, EXPIRED_PERIOD),
-    /MonthExpired/,
+    expireAt(projectKey, EXPIRED_PERIOD),
+    /InstructionFallbackNotFound/,
+  );
+  await assert.rejects(
+    ownerCommit(sourceBytes, fundedId),
+    /MonthlyOutstanding/,
+  );
+  let state = await program.account.project.fetch(projectKey);
+  assert.equal(state.reserved.toString(), String(EXPIRED_GROSS));
+  assert.equal(state.monthlyOutstanding.toString(), String(EXPIRED_GROSS));
+  // The fixture's owner has already opted out; this still preserves the funded leaf.
+  assert.equal(state.monthlyEnabled, false);
+  const committed = await program.methods
+    .commitMonthlyAward(
+      EXPIRED_PERIOD,
+      [...fundedId],
+      [...sourceBytes],
+      bn(EXPIRED_ACTOR),
+      bn(EXPIRED_GROSS),
+      0,
+      1,
+      [],
+    )
+    .accountsStrict({
+      payer: payer.publicKey,
+      project: projectKey,
+      vault: vaultKey,
+      month: monthKey,
+      origin: originKey,
+      obligation: obligationKey,
+      settled: pda(seed("settled"), key(monthKey), sourceBytes),
+      monthlySource: pda(seed("monthly-source"), key(projectKey), sourceBytes),
+      systemProgram: SystemProgram.programId,
+    })
+    .rpc();
+  await provider.connection.confirmTransaction(committed, "finalized");
+  state = await program.account.project.fetch(projectKey, "finalized");
+  assert.equal(state.monthlyOutstanding.toString(), "0");
+  assert.equal(state.reserved.toString(), String(EXPIRED_GROSS));
+  const original = await program.account.obligation.fetch(
+    obligationKey,
+    "finalized",
+  );
+  assert.equal(original.actorId.toString(), String(EXPIRED_ACTOR));
+  const other = Buffer.from(
+    hash("unrelated owner source after leaf completion"),
+  );
+  await ownerCommit(
+    other,
+    Buffer.from(
+      solanaAwardId(projectKey.toBase58(), other.toString("hex")),
+      "hex",
+    ),
+  );
+  const wallet = Keypair.generate();
+  const recipientAccount = await createAccount(
+    provider.connection,
+    payer,
+    state.mint,
+    wallet.publicKey,
+  );
+  const bound = pda(seed("wallet"), key(projectKey), actorSeed(EXPIRED_ACTOR));
+  await program.methods
+    .bindWallet(
+      bn(EXPIRED_ACTOR),
+      state.network,
+      bn(0),
+      hash("past-window funded binding"),
+      expiry(),
+    )
+    .accountsStrict({
+      payer: payer.publicKey,
+      identityAuthority: configIdentity.publicKey,
+      destination: wallet.publicKey,
+      project: projectKey,
+      binding: bound,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([configIdentity, wallet])
+    .rpc();
+  const paid = await program.methods
+    .pay(bn(1))
+    .accountsStrict({
+      project: projectKey,
+      obligation: obligationKey,
+      binding: bound,
+      mint: state.mint,
+      vault: vaultKey,
+      destination: recipientAccount,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      veto: pda(
+        seed("veto"),
+        key(projectKey),
+        actorSeed(EXPIRED_ACTOR),
+        actorSeed(1),
+      ),
+    })
+    .rpc();
+  await provider.connection.confirmTransaction(paid, "finalized");
+  assert.equal(
+    (await getAccount(provider.connection, recipientAccount, "finalized"))
+      .amount,
+    980_000n,
+  );
+  assert.equal(
+    (await program.account.obligation.fetch(obligationKey, "finalized")).paid,
+    true,
   );
 });
 
