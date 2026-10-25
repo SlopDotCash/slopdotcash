@@ -147,8 +147,9 @@ paths before recording the controller as operational.
 
 ### Cache and rescans
 
-The inventory digest covers executable content only. Documentation that is
-not an agent instruction file does not change it. A later commit whose
+The inventory digest covers executable content and the digests of retained
+binary, archive and quarantined artifacts. Documentation that is not an agent
+instruction file does not change it. A later commit whose
 executable inventory, skill template and scan policy are byte-identical to a
 clean scan reuses that result with `reuseCleanScan`; the intake checks that
 the cited original is a clean, non-reused scan of the same repository,

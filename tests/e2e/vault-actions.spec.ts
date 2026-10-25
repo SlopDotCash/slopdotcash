@@ -1027,11 +1027,24 @@ test("owner creates, registers and funds a vault through the real API", async ({
     (p) => p.id !== project.id && p.reward.kind === "monthly-pool",
   );
   if (!other) throw new Error("A second registry fixture is required");
+  if (!deployment.evmUpgrade) throw new Error("Missing upgrade review");
+  // The template has an upgrade history. A new vault must not inherit it.
   const template = {
     ...other,
     reward: project.reward,
     rewardAsset: project.rewardAsset,
-    escrow: project.escrow,
+    escrow: {
+      ...project.escrow,
+      deployments: [
+        {
+          ...deployment,
+          evmUpgrade: {
+            ...deployment.evmUpgrade,
+            history: [{ ...deployment.evmUpgrade, supersededAtBlock: "1" }],
+          },
+        },
+      ],
+    },
   };
   const fixturePath = join(temporary, "projects.json");
   writeFileSync(fixturePath, JSON.stringify({ project: target, template }));
@@ -1322,6 +1335,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
     const created = state.project.manifest.escrow.deployments[0];
     expect(created.owner).toBe(donor);
     expect(created.deploymentTransaction).toBe(sends[0]);
+    expect(created.evmUpgrade).toEqual(deployment.evmUpgrade);
     const monthly = await readEvmMonthlyCommitment({
       ...created,
       rpcUrl,

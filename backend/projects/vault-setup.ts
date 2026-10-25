@@ -40,6 +40,17 @@ export interface OwnerVaultSetup {
   ): Promise<EscrowDeployment | null>;
 }
 
+/**
+ * A new vault's first record carries only the current implementation review.
+ * Upgrade history is append-only and belongs to the template's own upgrades,
+ * so it is never copied to a new deployment or used to verify its creation.
+ */
+function currentReview(template: EscrowDeployment): EscrowDeployment {
+  if (!template.evmUpgrade) return template;
+  const { history: _history, ...current } = template.evmUpgrade;
+  return { ...template, evmUpgrade: current };
+}
+
 export function ownerVaultSetupService(deps: {
   db: D1TransactionalDatabase;
   projects(): Promise<ProjectRecord[]>;
@@ -165,7 +176,7 @@ export function ownerVaultSetupService(deps: {
       )
         continue;
       const config: EvmEscrowConfig = {
-        ...template,
+        ...currentReview(template),
         factory: template.factory,
         factoryCodeSha256: template.factoryCodeSha256,
         registrar: template.registrar,
@@ -239,14 +250,8 @@ export function ownerVaultSetupService(deps: {
         );
       }
       if (!vault) return null;
-      // A new deployment's first revision never carries upgrade history: the
-      // history of the template's vault records upgrades of that vault only.
-      const { evmUpgrade, ...reviewed } = template;
-      const current = evmUpgrade && { ...evmUpgrade };
-      delete current?.history;
       return {
-        ...reviewed,
-        ...(current ? { evmUpgrade: current } : {}),
+        ...currentReview(template),
         vault,
         owner: creation.owner,
         asset: creation.asset,
