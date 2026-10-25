@@ -1439,10 +1439,24 @@ async function publishOwnerRevision(
       },
     };
   let { manifest: submitted } = canonicalManifest(prepared);
-  // Check authority before any funding read: a refusal must not tell an
-  // account without access whether the bounty vault has funds.
-  const checked = await currentAuthority(deps, submitted, actor);
+  // Check authority and every refusal before any funding read: a refusal
+  // must not tell an account without access whether the bounty vault has
+  // funds. Authority comes from the stored repository, never from the
+  // repository the caller sends.
+  const checked = await currentAuthority(deps, current.manifest, actor);
   requireAuthority(checked);
+  if (submitted.id !== projectId)
+    fail(422, "invalid_manifest", "Project id cannot change");
+  const restricted = classifyRevisionChanges(
+    current.manifest,
+    submitted,
+  ).restricted;
+  if (restricted.length > 0)
+    fail(
+      422,
+      "owner_field_restricted",
+      `These fields do not change through owner self-service: ${restricted.join(", ")}`,
+    );
   if (programChanged)
     submitted = await ownerSecurityProgram(
       current.manifest,
@@ -1451,15 +1465,7 @@ async function publishOwnerRevision(
       actor,
       deps,
     );
-  if (submitted.id !== projectId)
-    fail(422, "invalid_manifest", "Project id cannot change");
   const changes = classifyRevisionChanges(current.manifest, submitted);
-  if (changes.restricted.length > 0)
-    fail(
-      422,
-      "owner_field_restricted",
-      `These fields do not change through owner self-service: ${changes.restricted.join(", ")}`,
-    );
   if (
     changes.presentation.length +
       changes.executable.length +
