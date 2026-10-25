@@ -190,6 +190,7 @@ function setup(
   let permission: "admin" | "read" = "admin";
   let repositoryId = 700000001;
   let accessUnavailable = false;
+  const unavailableRepositories = new Set<string>();
   const repositoryAccess = (
     repository: { path: string; githubId: string },
     actor: Account,
@@ -198,9 +199,12 @@ function setup(
       {
         fetch: async (request) => {
           const url = new URL(request.url);
-          expect(url.searchParams.get("repositoryId")).toBe("700000001");
+          expect(url.searchParams.get("repositoryId")).toBe(
+            repository.path === REPO ? "700000001" : "700000002",
+          );
           expect(url.searchParams.get("githubId")).toBe(actor.githubId);
-          if (accessUnavailable) return new Response(null, { status: 503 });
+          if (accessUnavailable || unavailableRepositories.has(repository.path))
+            return new Response(null, { status: 503 });
           return Response.json({
             installation: "installed",
             installationId: 123,
@@ -208,9 +212,9 @@ function setup(
               actor.githubId === MAINTAINER.githubId ? permission : "read",
             roleName: null,
             repository: {
-              id: repositoryId,
-              node_id: "R_700000001",
-              full_name: REPO,
+              id: repository.path === REPO ? repositoryId : 700000002,
+              node_id: repository.path === REPO ? "R_700000001" : "R_700000002",
+              full_name: repository.path,
               private: false,
               owner: {
                 id: Number(owner.actorId),
@@ -266,6 +270,7 @@ function setup(
         intake,
         analyzer,
         repositoryAccess,
+        moderatorGithubIds: new Set([ADMIN.githubId]),
       },
     )) as Response;
     if (as) absorb(as, response.headers.getSetCookie());
@@ -341,8 +346,8 @@ function setup(
     return response;
   };
   /** Creates a draft and authorizes it; returns the submission. */
-  const ready = async (as: Account = REPORTER) => {
-    const created = await create(as);
+  const ready = async (as: Account = REPORTER, projectId = PROJECT) => {
+    const created = await create(as, { projectId });
     expect(created.status).toBe(201);
     const callback = await authorize(as, created.body.authorizeUrl as string);
     expect(callback.status).toBe(303);
@@ -383,6 +388,36 @@ function setup(
         .all() as { recipient_github_id: string }[]
     ).map((r) => r.recipient_github_id);
   return {
+    addProject: (id: string, repository: string) => {
+      const other = JSON.parse(manifest);
+      other.id = id;
+      other.repositories = [{ id: repository }];
+      other.authority = {
+        repositoryId: "700000002",
+        repositoryNodeId: "R_700000002",
+      };
+      const bytes = JSON.stringify(other);
+      const hash = createHash("sha256").update(bytes).digest("hex");
+      sqlite
+        .query(
+          "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at, actor_github_id, actor_github_login) VALUES (?, 1, ?, ?, 'fixture', ?, ?, ?)",
+        )
+        .run(
+          id,
+          bytes,
+          hash,
+          START,
+          MAINTAINER.githubId,
+          MAINTAINER.githubLogin,
+        );
+      sqlite
+        .query(
+          "INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, ?, ?)",
+        )
+        .run(id, bytes, hash, START, START);
+      github.install(repository);
+    },
+    unavailableRepositories,
     sqlite,
     db: securityDb,
     clock,
@@ -630,6 +665,61 @@ describe("private intake: creation and identity", () => {
 });
 
 describe("registered project without paid bounty terms", () => {
+  test("an unrelated authority outage preserves the reporter's own case list with a generic retry notice", async () => {
+    const t = setup({ noProgram: true });
+    const own = await t.ready();
+    await t.send(own.id, 1);
+    t.addProject("bounty-other", "example/other");
+    const unrelated = await t.ready(OTHER, "bounty-other");
+    expect((await t.send(unrelated.id, 1, REPORT, OTHER)).status).toBe(200);
+    t.unavailableRepositories.add("example/other");
+    const list = await t.call(REPORTER, "GET", "security-cases");
+    expect(list.status).toBe(200);
+    expect(list.body.authorityUnavailable).toBe(true);
+    expect(list.body.programs).toEqual([]);
+    expect(
+      (list.body.cases as { projectId: string }[]).map((row) => row.projectId),
+    ).toEqual([PROJECT]);
+    expect(JSON.stringify(list.body)).not.toContain("bounty-other");
+  });
+
+  test("a moderator cannot discover an un-escalated reporting-only project from the private list", async () => {
+    const t = setup({ noProgram: true });
+    const submission = await t.ready();
+    await t.send(submission.id, 1);
+    const list = await t.call(ADMIN, "GET", "security-cases");
+    expect(list.status).toBe(200);
+    expect(list.body.cases).toEqual([]);
+    expect(list.body.programs).toEqual([]);
+    expect(JSON.stringify(list.body)).not.toContain(PROJECT);
+  });
+
+  test("a sent report survives a contact lookup outage and reconciles without sending again", async () => {
+    const t = setup({ noProgram: true });
+    const submission = await t.ready();
+    t.github.beforeCreate(() => t.setAccessUnavailable(true));
+    const sent = await t.send(submission.id, 1);
+    expect(sent.status).toBe(202);
+    expect(t.row(submission.id).state).toBe("submitted");
+    expect(t.row(submission.id).advisory_ghsa).toBe(
+      t.github.advisories[0].advisory.ghsa_id,
+    );
+    expect(t.github.counts.posts).toBe(1);
+    t.setAccessUnavailable(false);
+    const recovered = await t.reconcile(
+      submission.id,
+      Number(t.row(submission.id).revision),
+    );
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.submission?.state).toBe("receipt-verified");
+    expect(t.github.counts.posts).toBe(1);
+    expect(t.cases()).toHaveLength(1);
+    expect(t.cases()[0]).toMatchObject({
+      terms: null,
+      award_state: "not-applicable",
+    });
+  });
+
   test("private intake accepts a report without inventing an award", async () => {
     const t = setup({ noProgram: true });
     const readiness = await t.call(

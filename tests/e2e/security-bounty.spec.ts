@@ -2551,10 +2551,26 @@ test("automatic private intake files as the reporter and verifies receipt @regis
         fullPage: true,
       });
       const submission = await authorized(noProgram.id);
-      const sent = await intakeApi(
+      const unavailable = await request.fetch(
+        `${GITHUB_FIXTURE}/__fixture/slopbot/${noProgram.repository}/unavailable`,
+        { method: "PUT" },
+      );
+      expect(unavailable.status()).toBe(204);
+      let sent = await intakeApi(
         "POST",
         `security-submissions/${submission.id}/send`,
         { expectedRevision: submission.revision, report },
+      );
+      expect(sent.status, JSON.stringify(sent.body)).toBe(202);
+      expect(sent.body.submission).toMatchObject({ state: "submitted" });
+      await installSlopbot(noProgram.repository);
+      sent = await intakeApi(
+        "POST",
+        `security-submissions/${submission.id}/reconcile`,
+        {
+          expectedRevision: (sent.body.submission as { revision: number })
+            .revision,
+        },
       );
       expect(sent.status, JSON.stringify(sent.body)).toBe(200);
       expect(sent.body.submission).toMatchObject({ state: "receipt-verified" });
@@ -2605,6 +2621,30 @@ test("automatic private intake files as the reporter and verifies receipt @regis
         path: test.info().outputPath("report-only-receipt.png"),
         fullPage: true,
       });
+      await request.fetch(
+        `${GITHUB_FIXTURE}/__fixture/slopbot/${noProgram.repository}/unavailable`,
+        { method: "PUT" },
+      );
+      await page.reload({ waitUntil: "networkidle" });
+      await expect(
+        page.getByText("Some maintainer access could not be checked.", {
+          exact: false,
+        }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button").filter({ hasText: noProgram.id }),
+      ).toHaveCount(1);
+      await page.screenshot({
+        path: test.info().outputPath("report-only-partial-access.png"),
+        fullPage: true,
+      });
+      await expectAccessible(page);
+      await installSlopbot(noProgram.repository);
+      await page.getByRole("button", { name: "Retry access check" }).focus();
+      await page.keyboard.press("Enter");
+      await expect(
+        page.getByRole("button", { name: "Retry access check" }),
+      ).toHaveCount(0);
       const revoked = await request.fetch(
         `${GITHUB_FIXTURE}/__fixture/slopbot/${noProgram.repository}/permission/e2e-security/read`,
         { method: "PUT" },

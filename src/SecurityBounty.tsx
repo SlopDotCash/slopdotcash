@@ -858,6 +858,7 @@ type CaseList = {
   viewer: { githubId: string; githubLogin: string };
   programs: { projectId: string; roles: string[] }[];
   cases: SecurityCase[];
+  authorityUnavailable?: boolean;
 };
 
 type Loaded<T> =
@@ -2850,8 +2851,21 @@ export function SecurityCasesPage() {
         {note ? <p role="status">{note}</p> : null}
         <section aria-labelledby="security-cases" className="admin-section">
           <h2 id="security-cases">Your cases</h2>
+          {list.value.authorityUnavailable ? (
+            <p className="form-error" role="status">
+              Some maintainer access could not be checked. Your available cases
+              are shown.{" "}
+              <button className="text-button" onClick={reload} type="button">
+                Retry access check
+              </button>
+            </p>
+          ) : null}
           {list.value.cases.length === 0 ? (
-            <p className="admin-status">You have no private security cases.</p>
+            <p className="admin-status">
+              {list.value.authorityUnavailable
+                ? "No cases are available in this result. Retry the access check."
+                : "You have no private security cases."}
+            </p>
           ) : (
             <ul className="security-case-list">
               {list.value.cases.map((record) => (

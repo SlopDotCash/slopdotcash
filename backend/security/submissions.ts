@@ -60,6 +60,7 @@ import {
   type IntakeConfig,
   readGrant,
 } from "./intake-grant";
+import { reportingAuthorityUnavailable } from "./project-access";
 import { checkedAnalysis } from "./report-analysis";
 
 export type SubmissionState =
@@ -685,13 +686,15 @@ async function verifyReceipt(
     (row.origin === "slop" && !facts.markerFound)
   )
     return failWith("invalid");
-  return writeVerifiedCase(
-    deps,
-    intake,
-    row,
-    await reportingContext(deps, row.project_id, true),
-    facts,
-  );
+  let context: ReportingContext;
+  try {
+    context = await reportingContext(deps, row.project_id, true);
+  } catch (error) {
+    if (!reportingAuthorityUnavailable(error)) throw error;
+    // GitHub already received it. Keep the journal and grant for reconciliation.
+    return stay("contacts-unavailable");
+  }
+  return writeVerifiedCase(deps, intake, row, context, facts);
 }
 
 async function writeVerifiedCase(

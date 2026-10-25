@@ -49,7 +49,10 @@ import {
   OUTSTANDING_RESERVATIONS,
   readSecurityProgramFunds,
 } from "./program-funds";
-import { repositoryReportingAuthority } from "./project-access";
+import {
+  reportingAuthorityUnavailable,
+  repositoryReportingAuthority,
+} from "./project-access";
 import { handleSubmissionRoute } from "./submissions";
 export type SecurityD1Database = D1TransactionalDatabase<D1Statement>;
 
@@ -405,7 +408,6 @@ function programRoles(
   moderators: ReadonlySet<string>,
 ): Set<Role> {
   const roles = new Set<Role>();
-  if (moderators.has(githubId)) roles.add("dispute");
   if (terms === undefined) return roles;
   if (terms.approvers.technical.some((entry) => entry.githubId === githubId))
     roles.add("security-maintainer");
@@ -447,6 +449,7 @@ async function caseRoles(
     actor.githubId,
     deps.moderatorGithubIds ?? new Set(),
   );
+  if (deps.moderatorGithubIds?.has(actor.githubId)) roles.add("dispute");
   const triager =
     row.reporter_github_id !== actor.githubId &&
     (await activeTriager(deps, row.id, actor.githubId));
@@ -998,21 +1001,30 @@ async function listCases(
   const actor = await requireActor(request, deps);
   const all = await programs(deps);
   const currentRoles = new Map<string, Set<Role>>();
+  let authorityUnavailable = false;
   for (const [id, manifest] of all) {
     const roles = programRoles(
       manifest.securityBounty,
       actor.githubId,
       deps.moderatorGithubIds ?? new Set(),
     );
-    if (
-      !manifest.securityBounty &&
-      (await repositoryReportingAuthority(
-        deps.repositoryAccess,
-        manifest,
-        actor,
-      ))
-    )
-      roles.add("security-maintainer");
+    // A moderator's role belongs to an escalated case, not its whole project.
+    roles.delete("dispute");
+    if (!manifest.securityBounty) {
+      try {
+        if (
+          await repositoryReportingAuthority(
+            deps.repositoryAccess,
+            manifest,
+            actor,
+          )
+        )
+          roles.add("security-maintainer");
+      } catch (error) {
+        if (!reportingAuthorityUnavailable(error)) throw error;
+        authorityUnavailable = true;
+      }
+    }
     if (roles.size) currentRoles.set(id, roles);
   }
   const projectIds = [...currentRoles.keys()];
@@ -1021,22 +1033,34 @@ async function listCases(
     .prepare(
       `SELECT ${CASE_COLUMNS} FROM security_cases WHERE reporter_github_id = ? OR id IN (SELECT case_id FROM security_case_members WHERE github_id = ? AND revoked_at IS NULL)${
         projectIds.length > 0 ? ` OR project_id IN (${placeholders})` : ""
-      } ORDER BY created_at DESC LIMIT 500`,
+      }${deps.moderatorGithubIds?.has(actor.githubId) ? " OR appeal_state <> 'none' OR related_party_review <> 'not-applicable'" : ""} ORDER BY created_at DESC LIMIT 500`,
     )
     .bind(actor.githubId, actor.githubId, ...projectIds)
     .all<CaseRow>();
   const cases: Record<string, unknown>[] = [];
   const reads: D1Statement[] = [];
   for (const row of result.results ?? []) {
-    const roles = await caseRoles(deps, row, actor);
+    let roles: Set<Role>;
+    try {
+      roles = await caseRoles(deps, row, actor);
+    } catch (error) {
+      if (!reportingAuthorityUnavailable(error)) throw error;
+      authorityUnavailable = true;
+      continue;
+    }
     if (roles.size === 0) continue;
+    if (roles.has("dispute")) {
+      const projectRoles = currentRoles.get(row.project_id) ?? new Set<Role>();
+      projectRoles.add("dispute");
+      currentRoles.set(row.project_id, projectRoles);
+    }
     cases.push(await caseView(deps, row, roles, false));
     reads.push(accessLog(deps, row.id, actor, roles, "read"));
   }
   // The list discloses private case fields too. Persist its read audit before
   // returning any cases, just as the individual case route does.
   if (reads.length > 0) await deps.db.batch(reads);
-  const programsForActor = projectIds.map((id) => ({
+  const programsForActor = [...currentRoles.keys()].map((id) => ({
     projectId: id,
     roles: [...(currentRoles.get(id) ?? [])].sort(),
   }));
@@ -1044,6 +1068,7 @@ async function listCases(
     viewer: { githubId: actor.githubId, githubLogin: actor.githubLogin },
     programs: programsForActor,
     cases,
+    authorityUnavailable,
   });
 }
 
@@ -2812,7 +2837,11 @@ async function automaticAction(
   body: Record<string, unknown>,
 ): Promise<Response> {
   exactKeys(body, ["action", "expectedRevision", "idempotencyKey"]);
-  const terms = await programOrNotFound(deps, row.project_id);
+  const terms = await reportingContext(
+    deps,
+    row.project_id,
+    action === "check-receipt",
+  );
   if (action === "check-receipt") {
     requireAction(row, roles, action);
     const result = await reconcileProgram(

@@ -47,3 +47,12 @@ export async function repositoryReportingAuthority(
     actor.githubId === steward.actorId || checked.access.permission === "admin"
   );
 }
+
+/** Permission-provider outages are retryable, never a denial or empty scope. */
+export function reportingAuthorityUnavailable(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "github_unavailable"
+  );
+}
