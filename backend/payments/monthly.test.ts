@@ -7,6 +7,7 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { monthlyBasesSql } from "../../scripts/prepare-monthly-rewards";
+import { requestOwnerCommitment } from "../../src/lib/owner-commitment-actions";
 import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
@@ -342,7 +343,7 @@ describe("monthly coordinator", () => {
     expect((await coordinate(afterCutoff)).created).toEqual([]);
   });
 
-  test("an 18-decimal token month keeps exact amounts through an owner edit, freeze and attestation", async () => {
+  test("an 18-decimal token month keeps exact amounts through owner review, freeze and attestation", async () => {
     sqlite.close();
     const unit = 10n ** 18n;
     await setupFixture(
@@ -397,6 +398,55 @@ describe("monthly coordinator", () => {
         snapshotSha256: digest,
       },
     );
+    // Use the real commitment route and database result as the browser's input.
+    // GitHub authority remains controlled by this existing fixture.
+    clock = afterCutoff;
+    const token = "o".repeat(43);
+    sqlite
+      .prepare(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('node-owner',?,'owner',?,0)",
+      )
+      .run(OWNER, afterCutoff.toISOString());
+    sqlite
+      .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
+      .run(await sha256Hex(token), "node-owner", "2027-01-01T00:00:00.000Z");
+    const originalFetch = globalThis.fetch;
+    let commitmentRequests = 0;
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(
+        new URL(String(input), "https://slop.cash"),
+        init,
+      );
+      expect(new URL(request.url).pathname).toBe(
+        `/api/v1/payments/projects/${project.id}/monthly/2026-11/commitment`,
+      );
+      request.headers.set("cookie", `__Host-slop_points=${token}`);
+      request.headers.set("origin", "https://slop.cash");
+      commitmentRequests += 1;
+      const response = await handlePaymentsApi(request, {
+        db,
+        monthly: owner(),
+        now: () => afterCutoff,
+      });
+      expect(response.status).toBe(200);
+      return response;
+    }) as typeof fetch;
+    try {
+      const reviewed = await requestOwnerCommitment(project.id, "2026-11", {
+        network: "base-sepolia",
+        githubUserId: A,
+        manifestSha256: project.manifestSha256,
+        snapshotSha256: digest,
+      });
+      expect(reviewed.award).toMatchObject({
+        gross: (600n * unit).toString(),
+        fee: (12n * unit).toString(),
+        net: (588n * unit).toString(),
+      });
+      expect(commitmentRequests).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
     expect(plan.totalGrossBase).toBe((900n * unit).toString());
     expect(plan.entries.map((row) => row.grossMicro)).toEqual([
       (600n * unit).toString(),
