@@ -244,6 +244,14 @@ export function chainFamily(chain) {
 export const EVM_CHAINS = Object.freeze(
   ESCROW_CHAINS.filter((chain) => chainFamily(chain) === "evm"),
 );
+/** Solana token amounts are u64; EVM vault accounting supports MAX_BASE_UNITS. */
+export const SOLANA_MAX_BASE_UNITS = (1n << 64n) - 1n;
+/** The largest base-unit amount one payment may carry on a chain. */
+export function maxBaseUnitsForChain(chain) {
+  return chainFamily(chain) === "solana"
+    ? SOLANA_MAX_BASE_UNITS
+    : MAX_BASE_UNITS;
+}
 /** New production deployments may pay committed awards immediately. */
 export const MIN_PRODUCTION_BINDING_DELAY = 0;
 /** New production deployments may rotate an authorized identity key immediately. */

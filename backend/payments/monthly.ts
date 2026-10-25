@@ -17,6 +17,7 @@ import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
+  maxBaseUnitsForChain,
 } from "../../src/lib/escrow-policy.mjs";
 import {
   type MonthlyAwardState,
@@ -960,6 +961,12 @@ export function monthlyOwnerService(deps: {
           // The proposal's own manifest revision fixes the month's exclusions.
           payoutExcludedGithubUserIds(base.manifest, period),
         );
+        // Attestation applies the same range to the vault network's chain.
+        const chain = base.manifest.escrow?.chain;
+        if (!chain || BigInt(change.grossBase) > maxBaseUnitsForChain(chain))
+          throw new MonthlyAllocationError(
+            "The amount exceeds the token range of the vault network.",
+          );
       } catch (error) {
         if (error instanceof MonthlyAllocationError)
           throw new MonthlyPaymentError(

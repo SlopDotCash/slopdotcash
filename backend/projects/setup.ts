@@ -15,7 +15,10 @@ import type {
   SetupAuthority,
   SetupNextAction,
 } from "../../src/lib/project-contracts";
-import { SLOPBOT_INSTALL_URL } from "../../src/lib/project-contracts";
+import {
+  parseRepositoryIdentity,
+  SLOPBOT_INSTALL_URL,
+} from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type {
   VettingClearance,
@@ -75,7 +78,8 @@ export function parseRepositoryAccess(value: unknown): RepositoryAccess {
     return { installation: "suspended", installationId };
   if (
     body.installation === "installed" &&
-    keys === "installation,installationId,permission,roleName" &&
+    (keys === "installation,installationId,permission,roleName" ||
+      keys === "installation,installationId,permission,repository,roleName") &&
     typeof body.permission === "string" &&
     GITHUB_PERMISSIONS.has(body.permission) &&
     (body.roleName === null ||
@@ -87,6 +91,9 @@ export function parseRepositoryAccess(value: unknown): RepositoryAccess {
       installationId,
       permission: body.permission as "admin" | "write" | "read" | "none",
       roleName: body.roleName as string | null,
+      ...(body.repository === undefined
+        ? {}
+        : { repository: parseRepositoryIdentity(body.repository) }),
     };
   throw new TypeError("Repository access is malformed");
 }

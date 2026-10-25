@@ -109,3 +109,5 @@ export declare function assertSecurityEscrowPolicy(
 
 export const MAX_BASE_UNITS: bigint;
 export function isBaseUnits(value: unknown): value is string;
+export const SOLANA_MAX_BASE_UNITS: bigint;
+export function maxBaseUnitsForChain(chain: string): bigint;
