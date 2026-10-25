@@ -144,6 +144,10 @@ async function main() {
       throw new Error("Qualification SQL failed");
     return results.flatMap((r) => r.results);
   }
+  async function requireAbsent(path: string) {
+    if ((await api(path, "GET", undefined, true)) !== null)
+      throw new Error("Owned fixture still exists after deletion");
+  }
   async function command(action: string) {
     if (!bindingsVerified)
       throw new Error("Qualification bindings are not verified");
@@ -291,6 +295,7 @@ async function main() {
           "DELETE",
         );
         await api(`workers/scripts/${run}`, "DELETE");
+        await requireAbsent(`workers/scripts/${run}/settings`);
         owned.worker = false;
       } catch {
         errors++;
@@ -305,6 +310,7 @@ async function main() {
         )
           throw new Error("Queue ownership changed");
         await api(`queues/${queue.queue_id}`, "DELETE");
+        await requireAbsent(`queues/${queue.queue_id}`);
       } catch {
         errors++;
       }
@@ -318,6 +324,7 @@ async function main() {
         )
           throw new Error("Database ownership changed");
         await api(`d1/database/${database.uuid}`, "DELETE");
+        await requireAbsent(`d1/database/${database.uuid}`);
       } catch {
         errors++;
       }
@@ -332,6 +339,7 @@ async function main() {
           throw new Error("Bucket ownership changed");
         // Cloudflare refuses a nonempty bucket. Never force removal.
         await api(`r2/buckets/${bucket.name}`, "DELETE");
+        await requireAbsent(`r2/buckets/${bucket.name}`);
       } catch {
         errors++;
       }
@@ -476,7 +484,7 @@ async function main() {
     }
     await command("verify");
     report.verify = await waitFor("verify");
-    await command("verify"); // Restart/replay uses permanent phase results.
+    await command("verify"); // Command replay uses permanent phase results.
     report.replayedVerify = await waitFor("verify");
     await command("corrupt");
     report.corrupt = await waitFor("corrupt");
