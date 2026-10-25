@@ -226,8 +226,7 @@ describe("assertEscrowPolicy after the family refactor", () => {
     ).toThrow(/one chain and one escrow per network/);
   });
   test("rejects an owner who is also the fee recipient", () => {
-    // The payout fee flows to the fee recipient, so the owner must not
-    // collect it: "Escrow authorities must have separate roles".
+    // The dedicated platform fee key must not also hold a vault-owner role.
     expect(() =>
       assertEscrowPolicy(
         policy("base", { ...evmDeployment, feeRecipient: evmDeployment.owner }),
