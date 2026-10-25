@@ -8,7 +8,7 @@ export interface GasBudget {
   /** Native base units, selected by the operator. No default economic policy. */
   perTransaction: string;
   perDay: string;
-  /** EVM L2 data-fee reserve, zero only on a rail without that fee. */
+  /** Base L1-data and operator-fee allowance, zero on other supported rails. */
   additionalFeeReserve: string;
 }
 export async function rpc(
@@ -60,15 +60,20 @@ function reserve(
         settled_day: string | null;
         maximum: string;
         actual: string | null;
+        expiry_evidence: string | null;
       },
       []
-    >("SELECT day,settled_day,maximum,actual FROM gas")
+    >("SELECT day,settled_day,maximum,actual,expiry_evidence FROM gas")
     .all();
   let committed = 0n;
   for (const row of rows) {
     // Unknown sends keep their whole reserve across UTC day boundaries.
-    if (row.actual === null) committed += BigInt(row.maximum);
-    else if (row.settled_day === day) committed += BigInt(row.actual);
+    if (row.actual === null) {
+      // Finalized expiry cannot prove a zero fee. Charge the full reservation on
+      // its observation day, then release only future-day liability.
+      if (row.expiry_evidence === null || row.settled_day === day)
+        committed += BigInt(row.maximum);
+    } else if (row.settled_day === day) committed += BigInt(row.actual);
     if (row.actual !== null && BigInt(row.actual) > BigInt(row.maximum))
       throw new Error(
         "A native charge exceeded its reserve; review the operator budget before continuing",
@@ -99,21 +104,23 @@ export function budgetEvmSigner(
     async signTransaction(input) {
       if (options.baseRpc) {
         const size = (serializeTransaction(input).length - 2) / 2;
-        const quote = await rpc(options.baseRpc, "eth_call", [
-          {
-            to: "0x420000000000000000000000000000000000000f",
-            data: `0xf1c7a58b${BigInt(size).toString(16).padStart(64, "0")}`,
-          },
-          "latest",
-        ]);
-        if (
-          typeof quote !== "string" ||
-          !/^0x[0-9a-fA-F]{64}$/.test(quote) ||
-          BigInt(quote) > BigInt(budget.additionalFeeReserve)
-        )
-          throw new Error(
-            "Base L1 data fee exceeds the operator reserve or its quote is unavailable",
-          );
+        const block = await rpc(options.baseRpc, "eth_blockNumber", []);
+        if (typeof block !== "string" || !/^0x[0-9a-fA-F]+$/.test(block))
+          throw new Error("Base quote block unavailable");
+        const l1 = await baseOracleFee(
+          options.baseRpc,
+          "0xf1c7a58b",
+          BigInt(size),
+          block,
+        );
+        const operator = await baseOracleFee(
+          options.baseRpc,
+          "0x275aedd2",
+          input.gas,
+          block,
+        );
+        if (l1 + operator > BigInt(budget.additionalFeeReserve))
+          throw new Error("Base additional fees exceed the operator reserve");
       }
       const maximum =
         input.gas * input.maxFeePerGas + BigInt(budget.additionalFeeReserve);
@@ -204,9 +211,10 @@ export async function reconcileGas(
   requireL1Fee: boolean,
 ) {
   const rows = store.db
-    .query<{ id: string; transaction_id: string }, []>(
-      "SELECT id,transaction_id FROM gas WHERE actual IS NULL",
-    )
+    .query<
+      { id: string; transaction_id: string; expiry_evidence: string | null },
+      []
+    >("SELECT id,transaction_id,expiry_evidence FROM gas WHERE actual IS NULL")
     .all();
   for (const row of rows) {
     if (row.transaction_id === "unsigned")
@@ -245,7 +253,15 @@ export async function reconcileGas(
       settledAt = Number(BigInt(block.timestamp));
       actual =
         BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice) +
-        BigInt(receipt.l1Fee ?? "0x0");
+        BigInt(receipt.l1Fee ?? "0x0") +
+        (requireL1Fee
+          ? await baseOracleFee(
+              rpcUrl,
+              "0x275aedd2",
+              BigInt(receipt.gasUsed),
+              receipt.blockNumber,
+            )
+          : 0n);
     } else {
       const tx = (await rpc(rpcUrl, "getTransaction", [
         row.transaction_id,
@@ -262,7 +278,11 @@ export async function reconcileGas(
         };
         meta: { preBalances: number[]; postBalances: number[] };
       } | null;
-      if (!tx) continue;
+      if (!tx) {
+        if (row.expiry_evidence === null)
+          await accountExpiredSolanaReserve(store, rpcUrl, row);
+        continue;
+      }
       if (
         tx.transaction.signatures[0] !== row.transaction_id ||
         tx.transaction.message.accountKeys[0] !== signer
@@ -288,4 +308,106 @@ export async function reconcileGas(
         row.id,
       );
   }
+}
+
+/** Unknown receipt costs stay unknown. Finalized expiry bounds when they could occur. */
+async function accountExpiredSolanaReserve(
+  store: KeeperStore,
+  rpcUrl: string,
+  row: { id: string; transaction_id: string },
+) {
+  const attempts = store.db
+    .query<{ value: string }, [string]>(
+      "SELECT value FROM journal WHERE json_extract(value,'$.transactionId')=?",
+    )
+    .all(row.transaction_id);
+  if (attempts.length === 0) return;
+  let lastValidBlockHeight: number | undefined;
+  for (const entry of attempts) {
+    const attempt = JSON.parse(entry.value) as {
+      raw?: string;
+      lastValidBlockHeight?: number;
+    };
+    if (
+      typeof attempt.raw !== "string" ||
+      !Number.isSafeInteger(attempt.lastValidBlockHeight) ||
+      (attempt.lastValidBlockHeight as number) < 0
+    )
+      return;
+    const raw = Buffer.from(attempt.raw, "base64");
+    if (
+      raw[0] !== 1 ||
+      raw.length < 100 ||
+      solanaBase58(raw.subarray(1, 65)) !== row.transaction_id ||
+      `solana:${raw.subarray(65).toString("base64")}` !== row.id ||
+      (lastValidBlockHeight !== undefined &&
+        lastValidBlockHeight !== attempt.lastValidBlockHeight)
+    )
+      throw new Error(
+        "Gas expiry evidence does not match the signed transaction",
+      );
+    lastValidBlockHeight = attempt.lastValidBlockHeight;
+  }
+  if (lastValidBlockHeight === undefined) return;
+  const height = await rpc(rpcUrl, "getBlockHeight", [
+    { commitment: "finalized" },
+  ]);
+  if (typeof height !== "number" || !Number.isSafeInteger(height))
+    throw new Error("Finalized expiry height unavailable");
+  if (height <= lastValidBlockHeight) return;
+  const status = (await rpc(rpcUrl, "getSignatureStatuses", [
+    [row.transaction_id],
+    { searchTransactionHistory: true },
+  ])) as { value?: unknown[] };
+  if (!Array.isArray(status.value) || status.value.length !== 1)
+    throw new Error("Gas expiry signature status unavailable");
+  if (status.value[0] !== null) return;
+  const slot = await rpc(rpcUrl, "getSlot", [{ commitment: "finalized" }]);
+  if (typeof slot !== "number" || !Number.isSafeInteger(slot))
+    throw new Error("Finalized expiry slot unavailable");
+  const timestamp = await rpc(rpcUrl, "getBlockTime", [slot]);
+  if (
+    typeof timestamp !== "number" ||
+    !Number.isSafeInteger(timestamp) ||
+    timestamp < 0
+  )
+    throw new Error("Finalized expiry time unavailable");
+  const evidence = JSON.stringify({
+    kind: "expired-upper-bound",
+    transactionId: row.transaction_id,
+    lastValidBlockHeight,
+    finalizedBlockHeight: height,
+    finalizedSlot: slot,
+    blockTime: timestamp,
+    receipt: "unavailable",
+    signatureStatus: null,
+  });
+  store.db
+    .query(
+      "UPDATE gas SET settled_day=?,expiry_evidence=? WHERE id=? AND actual IS NULL AND expiry_evidence IS NULL",
+    )
+    .run(
+      new Date(timestamp * 1000).toISOString().slice(0, 10),
+      evidence,
+      row.id,
+    );
+}
+
+/** Canonical Base oracle implements the active fork's data/operator fee formula. */
+async function baseOracleFee(
+  url: string,
+  selector: "0xf1c7a58b" | "0x275aedd2",
+  amount: bigint,
+  block: string,
+): Promise<bigint> {
+  const value = await rpc(url, "eth_call", [
+    {
+      to: "0x420000000000000000000000000000000000000f",
+      data: `${selector}${amount.toString(16).padStart(64, "0")}`,
+    },
+    block,
+  ]);
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value))
+    throw new Error("Base fee oracle unavailable");
+  return BigInt(value);
 }

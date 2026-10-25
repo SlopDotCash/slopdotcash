@@ -24,6 +24,10 @@ import {
   Transaction,
 } from "@solana/web3.js";
 import { onRequest } from "../../../functions/api/v1/[[path]].ts";
+import {
+  budgetSolanaSigner,
+  reconcileGas,
+} from "../../../scripts/payment-keeper/budget.ts";
 import { runKeeper } from "../../../scripts/payment-keeper/keeper.ts";
 import { openKeeperStore } from "../../../scripts/payment-keeper/store.ts";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
@@ -37,6 +41,7 @@ import {
   solanaAllocationTotal,
   solanaMonthlyMessage,
 } from "../adapter.ts";
+import { bytes } from "../transactions.ts";
 import {
   configAddress,
   configFees,
@@ -214,7 +219,7 @@ try {
       })
       .rpc(),
   );
-  const now = new Date((await time()) * 1000);
+  let now = new Date((await time()) * 1000);
   const cutoffMonth = now.getUTCDate() >= 4 ? 1 : 2;
   const period = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - cutoffMonth, 1),
@@ -377,8 +382,8 @@ try {
     rpcUrl: proxy.url.origin,
     perRun: 10,
     gas: {
-      perTransaction: "10000000",
-      perDay: "100000000",
+      perTransaction: "20000000",
+      perDay: "200000000",
       additionalFeeReserve: "0",
     },
   };
@@ -435,14 +440,140 @@ try {
   const beforeRestart = signatures;
   store.close();
   store = openKeeperStore(journalFile);
-  lose = false;
   await tick();
   assert.equal(
     signatures,
     beforeRestart,
-    "Restart reuses the exact signed root",
+    "Restart reuses the exact signed root while the response remains unknown",
   );
-  await finalized(JSON.parse(rootAttempt.value).transactionId);
+  const expired = JSON.parse(rootAttempt.value);
+  await until(
+    async () =>
+      (await provider.connection.getBlockHeight("finalized")) >
+      expired.lastValidBlockHeight,
+    160,
+  );
+  store.close();
+  store = openKeeperStore(journalFile);
+  const gasRow = store.db
+    .query("SELECT * FROM gas WHERE transaction_id=?")
+    .get(expired.transactionId);
+  assert(gasRow && gasRow.actual === null && gasRow.expiry_evidence === null);
+  const limited = {
+    perTransaction: gasRow.maximum,
+    perDay: gasRow.maximum,
+    additionalFeeReserve: "0",
+  };
+  const freshHash = (await provider.connection.getLatestBlockhash("finalized"))
+    .blockhash;
+  const freshMessage = Buffer.from(expired.raw, "base64").subarray(65);
+  freshMessage.set(bytes(freshHash), 4 + freshMessage[3] * 32);
+  let signingRequested = false;
+  const stoppedSigner = {
+    address: gas.publicKey.toBase58(),
+    async signMessage() {
+      signingRequested = true;
+      throw new Error("Signing provider reached after budget admission");
+    },
+  };
+  const expiryDay = new Date((await time()) * 1000);
+  const nextDay = new Date(expiryDay.getTime() + 86400000);
+  if (process.env.SLOP_KEEPER_BEFORE_BUDGET) {
+    const before = await import(process.env.SLOP_KEEPER_BEFORE_BUDGET);
+    await before.reconcileGas(
+      store,
+      "solana",
+      proxy.url.origin,
+      gas.publicKey.toBase58(),
+      false,
+    );
+    await assert.rejects(
+      store.journal.transaction(() =>
+        before
+          .budgetSolanaSigner(
+            store,
+            limited,
+            stoppedSigner,
+            proxy.url.origin,
+            () => nextDay,
+          )
+          .signMessage(freshMessage),
+      ),
+      /Operator gas budget reached/,
+    );
+    assert.equal(signingRequested, false);
+  }
+  await reconcileGas(
+    store,
+    "solana",
+    proxy.url.origin,
+    gas.publicKey.toBase58(),
+    false,
+  );
+  const bounded = store.db
+    .query("SELECT * FROM gas WHERE transaction_id=?")
+    .get(expired.transactionId);
+  assert.equal(
+    bounded.actual,
+    null,
+    "Missing receipt remains an unknown actual charge",
+  );
+  const expiryEvidence = JSON.parse(bounded.expiry_evidence);
+  assert(
+    expiryEvidence.finalizedBlockHeight > expiryEvidence.lastValidBlockHeight,
+  );
+  assert.equal(bounded.settled_day, expiryDay.toISOString().slice(0, 10));
+  await assert.rejects(
+    store.journal.transaction(() =>
+      budgetSolanaSigner(
+        store,
+        limited,
+        stoppedSigner,
+        proxy.url.origin,
+        () => expiryDay,
+      ).signMessage(freshMessage),
+    ),
+    /Operator gas budget reached/,
+  );
+  assert.equal(
+    signingRequested,
+    false,
+    "Full maximum remains charged on expiry observation day",
+  );
+  await assert.rejects(
+    store.journal.transaction(() =>
+      budgetSolanaSigner(
+        store,
+        limited,
+        stoppedSigner,
+        proxy.url.origin,
+        () => nextDay,
+      ).signMessage(freshMessage),
+    ),
+    /Signing provider reached/,
+  );
+  assert.equal(
+    signingRequested,
+    true,
+    "Proven expiry releases future-day liability without inventing zero cost",
+  );
+  now = nextDay; // Host budget calendar only; actual validator Clock/genesis remain unchanged.
+  lose = false;
+  await tick(true, { ...operator, gas: limited });
+  const freshRoot = JSON.parse(
+    store.db
+      .query("SELECT value FROM journal WHERE key LIKE 'solana:monthly:%:root'")
+      .get().value,
+  );
+  assert.notEqual(freshRoot.transactionId, expired.transactionId);
+  assert.equal(signatures, beforeRestart + 1);
+  await finalized(freshRoot.transactionId);
+  assert.equal(
+    store.db
+      .query("SELECT expiry_evidence FROM gas WHERE transaction_id=?")
+      .get(expired.transactionId).expiry_evidence,
+    bounded.expiry_evidence,
+  );
   await until(async () => {
     await tick();
     return store.db.query("SELECT count(*) n FROM awards").get().n === 2;
@@ -547,13 +678,15 @@ try {
       genesis,
       programSha256: expectedDeployment.codeSha256,
       overlay:
-        "local genesis pin + firstPeriod=current local open month; no public-network or November-start qualification",
+        "local genesis pin + firstPeriod=current local open month + controlled next-day host budget calendar; no Clock change, public-network or November-start qualification",
       period,
       cases: [
         "public HTTP and migrated SQLite",
         "read-only dry run",
         "on-chain opt-out",
         "same-byte root restart",
+        "actual blockhash expiry and durable restart",
+        "old-budget next-day refusal; conservative expiry-day accounting; next-day progress",
         "bounded monthly leaves",
         "late co-signed wallet binding",
         "frozen recipient isolation",

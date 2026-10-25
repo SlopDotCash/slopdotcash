@@ -14,8 +14,16 @@ export function openKeeperStore(file: string) {
   db.exec("PRAGMA synchronous=FULL");
   db.exec(`CREATE TABLE IF NOT EXISTS journal(key TEXT PRIMARY KEY,value TEXT NOT NULL) STRICT;
     CREATE TABLE IF NOT EXISTS awards(scope TEXT NOT NULL,id TEXT NOT NULL,actor TEXT NOT NULL,reserve TEXT NOT NULL,payment TEXT,checked INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id)) STRICT;
-    CREATE TABLE IF NOT EXISTS gas(id TEXT PRIMARY KEY,day TEXT NOT NULL,maximum TEXT NOT NULL,transaction_id TEXT NOT NULL,actual TEXT,settled_day TEXT) STRICT;
+    CREATE TABLE IF NOT EXISTS gas(id TEXT PRIMARY KEY,day TEXT NOT NULL,maximum TEXT NOT NULL,transaction_id TEXT NOT NULL,actual TEXT,settled_day TEXT,expiry_evidence TEXT) STRICT;
     CREATE TABLE IF NOT EXISTS payment_chain_cursors(project_id TEXT NOT NULL,network TEXT NOT NULL,position TEXT NOT NULL,synced_at TEXT NOT NULL,PRIMARY KEY(project_id,network)) STRICT;`);
+  if (
+    !db
+      .query<{ name: string }, []>("PRAGMA table_info(gas)")
+      .all()
+      .some((column) => column.name === "expiry_evidence")
+  ) {
+    db.exec("ALTER TABLE gas ADD COLUMN expiry_evidence TEXT");
+  }
   if (
     !db
       .query(

@@ -8,6 +8,7 @@ import {
   solanaPaymentAdapter,
   verifySolanaDeployment,
 } from "../../contracts/solana/adapter";
+import { deploymentOrigins } from "../../src/lib/deployment";
 import {
   ESCROW_NETWORKS,
   type PaymentDeploymentRecord,
@@ -57,7 +58,7 @@ export interface KeeperConfiguration {
   signer: string;
   rpcUrl: string;
   gas: GasBudget;
-  /** Maximum award checks per run; failures rotate to the end of the next run. */
+  /** Maximum award checks per vault per run; failures rotate on the next run. */
   perRun: number;
 }
 type Deployment = PaymentDeploymentRecord & {
@@ -75,7 +76,14 @@ export interface KeeperDependencies {
 }
 async function json(url: string) {
   const response = await fetch(url, {
-    headers: { accept: "application/json" },
+    headers: {
+      accept: "application/json",
+      // The production API uses the same public CORS contract as the website.
+      origin:
+        new URL(url).origin === deploymentOrigins().api
+          ? deploymentOrigins().site
+          : new URL(url).origin,
+    },
     signal: AbortSignal.timeout(20_000),
     redirect: "error",
   });

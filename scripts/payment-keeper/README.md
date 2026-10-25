@@ -25,17 +25,21 @@ Create a private JSON configuration with these fields:
 | `perRun` | Maximum funded-award checks per vault in one run. |
 | `gas.perTransaction` | Operator-approved native reservation per transaction. |
 | `gas.perDay` | Operator-approved native base units per UTC day, including unknown sends. |
-| `gas.additionalFeeReserve` | EVM L2 data-fee reserve per transaction; zero on a rail without this charge. |
+| `gas.additionalFeeReserve` | Base L1-data and operator-fee allowance per transaction; zero on other supported rails. |
 
 There is no default spending budget. EVM execution keeps the existing reviewed
 network gas ceiling and 10-gwei fee-price ceiling. Base also reserves the
-operator's data-fee allowance. Before signing it compares that allowance with
-`getL1FeeUpperBound` for the unsigned transaction at the current Base oracle.
-An unavailable or larger quote refuses signing. It reconciles `l1Fee` from the
-final receipt. The transaction's gas fields cap L2 execution, but do not cap a
+operator's additional-fee allowance. Before signing it compares that allowance
+with `getL1FeeUpperBound(unsignedSize)` plus `getOperatorFee(gasLimit)` at one
+current block of the canonical Base oracle. An unavailable or larger quote
+refuses signing. Final native costs include `gasUsed * effectiveGasPrice`,
+the receipt's `l1Fee`, and `getOperatorFee(gasUsed)` at that canonical receipt
+block. The oracle selects the active fork formula; a zero operator fee today
+is not assumed to stay zero. The transaction's gas fields cap L2 execution, but do not cap a
 future Base L1 charge. These are admission and accounting limits, not a promise
 of a protocol-enforced total maximum. See the [Base fee documentation](https://docs.base.org/specifications/transactions/network-fees)
-and [OP Stack fee oracle specification](https://specs.optimism.io/protocol/fjord/predeploys.html). Solana reserves the quoted
+and [OP Stack fee oracle specification](https://specs.optimism.io/protocol/fjord/predeploys.html),
+including the [Jovian operator-fee rule](https://specs.optimism.io/protocol/jovian/exec-engine.html#operator-fee). Solana reserves the quoted
 signature fee and rent for missing writable accounts, using the largest account
 created by the reviewed builders. It sends no priority-fee instruction. Rent
 is part of this native spending budget. A final receipt that exceeds its reserve
@@ -46,6 +50,9 @@ Start without a key or `--execute`:
 ```sh
 bun run payments:keep --config /private/operator.json --journal /private/keeper.sqlite
 ```
+
+Public reads send the website Origin from the existing deployment configuration.
+This does not authenticate an account or grant access to a private route.
 
 The dry run reads the registry, verifies deployed code and chain identity,
 indexes finalized evidence in the local journal, and reports funded awards and
@@ -67,6 +74,12 @@ network and public signer. A second process with the same journal fails its
 SQLite process lock. The operating system releases that lock after a crash.
 Signed bytes, nonce allocation and gas reservations commit together before a
 broadcast. An uncertain response keeps its gas reserve, even after midnight. Final expenses count on the canonical receipt block's UTC day, including a send signed the day before.
+For a Solana send with no receipt, the keeper retains the signed bytes and
+unknown actual charge. After finalized block-height expiry and an absent
+signature status, it records the observation and charges the full reservation
+on that observation day. Future days can then proceed. A later exact receipt
+reconciles its actual cost without deleting the earlier conservative record.
+This is budget accounting, not proof that the transaction never landed.
 Retry reads the same journal. Never delete it to retry a payment.
 
 The keeper uses the existing finalized scanner and exact amount, token, fee and
