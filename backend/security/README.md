@@ -13,14 +13,17 @@ program in project settings. Each change uses the existing project revision
 route and checks current GitHub authority through Slopbot. Opening requires
 available funds from a current finalized snapshot of the separate, reviewed
 bounty vault. The server sets funding evidence; an owner cannot supply it.
+The project steward or a repository admin manages contacts and the sponsor.
+Ordinary write access cannot grant or remove private-case roles. Authority
+checks use the stored project's repository before reading private funds.
 New vault registration is a separate verification boundary. This editor does
 not deploy a vault or accept client-supplied contract trust metadata.
 A program cannot be removed. Existing cases retain their receipt terms and
 funded obligations remain available after a pause or closure.
 
-The Manage page also creates and funds a separate EVM bounty vault through
+The Manage page also creates and funds a separate EVM or Solana bounty vault through
 the owner's confirmed wallet. Registration verifies finalized creation
-against the reviewed factory, project, owner, USDC asset and bounty purpose.
+against the reviewed factory or program, project, owner, USDC asset and bounty purpose.
 It never treats registration or a sent deposit as available funds. The private
 payment worker reads the finalized balance before the owner can open the
 program. Its balance view requires current GitHub ownership and uses no
