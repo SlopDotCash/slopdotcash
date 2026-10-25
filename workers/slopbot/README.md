@@ -1208,3 +1208,32 @@ identity. A resolved appeal remains in history with no decision requested.
 Optional activity email uses the existing consent-bound queue; dispatch
 suppresses a resolved appeal or a recipient who is no longer a moderator.
 Private security appeals keep their separate notice and acknowledgment path.
+# Historical merge sources
+
+The existing admin-only historical import route also accepts two multipart
+file parts: `envelope` with type `application/json`, and `bundle` containing
+complete Git objects. The total body limit remains 25 MiB. Use the JSON file
+part to preserve exact line endings. Existing JSON-only clients are unchanged.
+
+The bundle is allowed only for a joint assessment from one public repository.
+The publisher re-reads the live registry, App selection, full GitHub source and
+policy before calling the sandbox's fixed named merge verifier. It re-reads
+source again before publication. A server-created `git-2.56.0-v1` recipe binds
+the exact collector inputs in the existing joint journal. No client patch,
+tree, digest assertion or local assessment can bypass these checks.
+
+Points ingestion reconstructs that recipe from independently verified public
+GitHub objects with the same pinned collector. Missing Git, changed source,
+incomplete objects or a failed reconstruction stop the projection. They do not
+replace a joint decision with minimum or zero credit. Old journal records and
+JSON clients retain their existing path; frozen financial records are not
+rewritten. The September/October publication hold remains in force.
+
+Trusted ingestion jobs explicitly build checksum-pinned Git through
+`scripts/install-value-merge-git.ts`. The consumer does not download tools.
+The staging Pages binding uses the existing staging repository-access Worker,
+staging D1 and a separate named publisher. It adds no model route, bot queue,
+scanner controller or production database access. Production uses the existing
+publisher. Both environments still require normal reviewed release and actual
+provider qualification before live historical intake is claimed.
+

@@ -28,6 +28,7 @@ jobs:
           SLOP_SANDBOX_TEST_URL: http://127.0.0.1:8896
         run: |
           set -euo pipefail
+          bun --no-env-file scripts/prepare-vetting-sandbox.mjs
           # The locally built image ID and checkout identify this CI runner.
           # They do not prove a deployed Cloudflare image.
           image="$(docker build --quiet workers/vetting-sandbox)"
