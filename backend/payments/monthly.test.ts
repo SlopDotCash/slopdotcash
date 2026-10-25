@@ -11,6 +11,7 @@ import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
+import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
@@ -1281,6 +1282,50 @@ describe("monthly attestation input", () => {
     vault("1000");
     await coordinate(afterCutoff);
     expect((await prepare()).totalGrossBase).toBe("1000");
+  });
+  test("signs a frozen month after a later revision that keeps its payment terms", async () => {
+    const revise = async (
+      change: (manifest: ProjectRecord["manifest"]) => object,
+    ) => {
+      const current = await projects().getProject(project.id);
+      if (!current) throw new Error("Fixture project missing");
+      const manifest = assertProjectDefinition(change(current.manifest));
+      const text = JSON.stringify(manifest);
+      expect(
+        await new CloudflareProjectPersistence(db).appendProjectRevision(
+          {
+            projectId: project.id,
+            expectedRevision: current.revision,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(text),
+            reason: "Owner update",
+            actor,
+            at: afterCutoff.toISOString(),
+          },
+          0,
+        ),
+      ).toBe("updated");
+    };
+    vault("500");
+    await coordinate(afterCutoff);
+    await rejects(prepare(), "award_unfunded");
+    // While the frozen month waits for a deposit, the owner edits the headline.
+    await revise((manifest) => ({
+      ...manifest,
+      headline: `${manifest.headline} Now with vaults.`,
+    }));
+    vault("1000");
+    expect((await coordinate(afterCutoff)).created).toEqual([
+      `${project.id}/2026-11`,
+    ]);
+    expect((await prepare()).totalGrossBase).toBe("1000");
+    // Terms that sized the month still bind it.
+    await revise((manifest) => ({
+      ...manifest,
+      escrow: { ...manifest.escrow, effectiveCycle: "2026-12" },
+    }));
+    await rejects(prepare(), "financial_policy_changed");
   });
   test("rechecks restrictions and the owner's opt-out after the month was frozen", async () => {
     vault("1000");
