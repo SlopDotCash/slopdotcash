@@ -148,7 +148,7 @@ describe("execution snapshot", () => {
       frozenAt: "2026-12-02T00:00:00.000Z",
     });
 
-  test("zero awards are left out and each fee is floor(gross / 50)", () => {
+  test("zero awards are left out and each fee is ceil(gross / 50)", () => {
     const { snapshot, sha256, text } = freeze(
       currentAllocations(rows, [
         { sequence: 1, githubUserId: "20", grossBase: "0" },
@@ -159,8 +159,8 @@ describe("execution snapshot", () => {
         githubUserId: "10",
         login: "a",
         grossBase: "399",
-        feeBase: "7",
-        netBase: "392",
+        feeBase: "8",
+        netBase: "391",
         sourceDigest: "a".repeat(64),
       },
     ]);

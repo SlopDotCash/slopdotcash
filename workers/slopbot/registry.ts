@@ -5,6 +5,7 @@ import {
   type ProjectRestrictionState,
 } from "../../src/lib/project-capabilities.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
+import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { Job } from "./contracts";
 import type { D1Database } from "./persistence";
 
@@ -20,6 +21,47 @@ const UNREGISTERED: ProjectCapabilities = evaluateProjectCapabilities({
   registered: false,
 });
 
+/** Public journal reads preserve history after pause or retirement. These
+ * lookups never authorize new reviews, assessments or publication.
+ */
+export async function registeredHistoryRepository(
+  db: D1Database,
+  repositoryId: string,
+): Promise<string | null> {
+  const key = repositoryId.toLowerCase();
+  const row = await db
+    .prepare(`SELECT manifest FROM projects p WHERE EXISTS (
+      SELECT 1 FROM json_each(p.manifest, '$.repositories') r
+      WHERE lower(json_extract(r.value, '$.id')) = ?
+         OR EXISTS (SELECT 1 FROM json_each(r.value, '$.aliases') a
+                    WHERE lower(a.value) = ?))`)
+    .bind(key, key)
+    .first<{ manifest: string }>();
+  if (row === null) return null;
+  const project = assertProjectDefinition(JSON.parse(row.manifest));
+  return (
+    project.repositories.find((repository) =>
+      [repository.id, ...(repository.aliases ?? [])].some(
+        (id) => id.toLowerCase() === key,
+      ),
+    )?.id ?? null
+  );
+}
+
+export async function registeredHistoryProject(
+  db: D1Database,
+  projectId: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT manifest FROM projects WHERE id = ?")
+    .bind(projectId)
+    .first<{ manifest: string }>();
+  return (
+    row !== null &&
+    assertProjectDefinition(JSON.parse(row.manifest)).id === projectId
+  );
+}
+
 /** Read the live registry, not the release's generated snapshot. Installation
  * access alone does not authorize reviews. Database failures must propagate.
  * Slopbot does not read funding, so payment execution is never derived here.
@@ -27,7 +69,11 @@ const UNREGISTERED: ProjectCapabilities = evaluateProjectCapabilities({
 export async function repositoryCapabilities(
   db: D1Database,
   job: RepositoryJob,
-): Promise<{ projectId: string | null; capabilities: ProjectCapabilities }> {
+): Promise<{
+  projectId: string | null;
+  project: ProjectDefinition | null;
+  capabilities: ProjectCapabilities;
+}> {
   const key = `${job.owner}/${job.repo}`.toLowerCase();
   const row = await db
     .prepare(`SELECT p.status, p.manifest FROM project_repositories r
@@ -35,7 +81,8 @@ export async function repositoryCapabilities(
       WHERE r.repository_key = ?`)
     .bind(key)
     .first<{ status: string; manifest: string }>();
-  if (row === null) return { projectId: null, capabilities: UNREGISTERED };
+  if (row === null)
+    return { projectId: null, project: null, capabilities: UNREGISTERED };
   const project = assertProjectDefinition(JSON.parse(row.manifest));
   const index = project.repositories.findIndex(
     (repository) =>
@@ -48,7 +95,7 @@ export async function repositoryCapabilities(
     index < 0 ||
     (index === 0 && String(job.repositoryId) !== project.authority.repositoryId)
   )
-    return { projectId: null, capabilities: UNREGISTERED };
+    return { projectId: null, project: null, capabilities: UNREGISTERED };
   const identity = repositoryIdentity(project);
   // An enforcement can be effective before its paused revision is appended.
   // Match the current restriction of every project sharing this identity.
@@ -65,6 +112,7 @@ export async function repositoryCapabilities(
     .first<{ state: ProjectRestrictionState }>();
   return {
     projectId: project.id,
+    project,
     capabilities: evaluateProjectCapabilities({
       registered: true,
       // The row status and the manifest status must agree before work opens.
@@ -133,4 +181,12 @@ export async function requireRegisteredRepository(
   job: RepositoryJob,
 ) {
   await requireScope(db, job, "contributor");
+}
+
+/** Current validated metadata for contributor work. The same live authority
+ * check supplies the manifest, so a release snapshot cannot gate new projects.
+ */
+export async function registeredProject(db: D1Database, job: RepositoryJob) {
+  const { project, capabilities } = await repositoryCapabilities(db, job);
+  return capabilities.mayOfferContributorWork ? project : null;
 }

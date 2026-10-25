@@ -794,7 +794,7 @@ export async function runEvm(
           keys.owner.address.toLowerCase() ||
         after - beforeAtParent !== amounts.withdrawGross - amounts.withdrawFee
       )
-        throw new Error("Withdrawal did not pay floor(gross / 50) as the fee");
+        throw new Error("Withdrawal did not pay ceil(gross / 50) as the fee");
       await persist();
     }
     if (!entry.checks.overWithdrawal)
