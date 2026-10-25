@@ -1,5 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { requestOwnerCommitment } from "./owner-commitment-actions";
+
+const originalFetch = globalThis.fetch;
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 const DIGEST = "b".repeat(64);
 const MANIFEST = "c".repeat(64);
