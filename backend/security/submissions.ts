@@ -313,7 +313,8 @@ async function transition(
  * Applies time-based moves before any decision: an interrupted send becomes
  * `uncertain` and is never resent, a `submitted` row GitHub never let Slop
  * verify fails as `unverifiable` (it holds a GitHub advisory, so it is never
- * resent), and an idle draft or failure is abandoned.
+ * resent), and an idle draft or failure is abandoned. A verified receipt
+ * awaiting a current triager remains recoverable with fresh reporter consent.
  */
 async function settle(
   deps: SecurityApiDependencies,
@@ -345,6 +346,19 @@ async function settle(
   )
     next = { state: "abandoned", kind: "abandoned", actorGithubId: null };
   if (next === null) return row;
+  if (
+    (row.state === "submitted" || row.state === "draft") &&
+    row.advisory_ghsa !== null &&
+    (await deps.db
+      .prepare(
+        "SELECT 1 AS verified FROM security_submission_events WHERE submission_id = ? AND revision <= ? AND kind = 'contacts-unavailable' LIMIT 1",
+      )
+      .bind(row.id, row.revision)
+      .first()) !== null
+  )
+    // This event is written only after GitHub receipt identity checks pass.
+    // Missing routing contacts do not make that delivered report unverifiable.
+    return row;
   return (
     (await transition(deps, row, next)) ??
     ((await loadSubmission(deps, row.id)) as SubmissionRow)

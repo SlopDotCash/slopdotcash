@@ -720,27 +720,78 @@ describe("registered project without paid bounty terms", () => {
     });
   });
 
-  test("a verified report with no passing approver stays for reconciliation instead of creating an ownerless case", async () => {
-    const t = setup({ noProgram: true });
-    const submission = await t.ready();
-    // The steward is an organization, so it is not synthesized as its own
-    // approver, and the only registry candidate loses admin permission.
-    t.setPermission("read");
-    const sent = await t.send(submission.id, 1);
-    expect(sent.status).toBe(202);
-    expect(t.row(submission.id).state).toBe("submitted");
-    expect(t.cases()).toHaveLength(0);
-    expect(t.outbox()).toEqual([]);
-    t.setPermission("admin");
-    const recovered = await t.reconcile(
-      submission.id,
-      Number(t.row(submission.id).revision),
-    );
-    expect(recovered.status).toBe(200);
-    expect(recovered.body.submission?.state).toBe("receipt-verified");
-    expect(t.cases()).toHaveLength(1);
-    expect(t.outbox()).toEqual([MAINTAINER.githubId, REPORTER.githubId]);
-  });
+  for (const origin of ["slop", "direct"] as const)
+    test(`a verified ${origin} report with no passing approver recovers after 24 hours with fresh reporter consent`, async () => {
+      const t = setup({ noProgram: true });
+      const direct =
+        origin === "direct"
+          ? t.github.seed(
+              REPO,
+              { id: Number(REPORTER.githubId), login: REPORTER.githubLogin },
+              REPORT,
+              START,
+            )
+          : null;
+      const created = await t.create(
+        REPORTER,
+        direct ? { origin, advisory: direct.ghsa_id } : {},
+      );
+      expect(created.status).toBe(201);
+      await t.authorize(REPORTER, created.body.authorizeUrl as string);
+      const submission = created.body.submission as NonNullable<
+        Body["submission"]
+      >;
+      const verify = () =>
+        origin === "slop"
+          ? t.reconcile(submission.id, Number(t.row(submission.id).revision))
+          : t.call(
+              REPORTER,
+              "POST",
+              `security-submissions/${submission.id}/verify`,
+              {
+                expectedRevision: Number(t.row(submission.id).revision),
+              },
+            );
+      // The steward is an organization, so it is not synthesized as its own
+      // approver, and the only registry candidate loses admin permission.
+      t.setPermission("read");
+      const sent =
+        origin === "slop" ? await t.send(submission.id, 1) : await verify();
+      expect(sent.status).toBe(202);
+      const heldState = origin === "slop" ? "submitted" : "draft";
+      expect(t.row(submission.id).state).toBe(heldState);
+      expect(t.cases()).toHaveLength(0);
+      expect(t.outbox()).toEqual([]);
+      const receipt = t.github.advisories[0].advisory;
+      t.advance(SUBMITTED_LIMIT_MS + 1000);
+      t.setPermission("admin");
+      const expiredGrant = await verify();
+      expect(expiredGrant.status).toBe(409);
+      expect(expiredGrant.body.error).toBe("grant_required");
+      expect(t.row(submission.id).state).toBe(heldState);
+      expect(t.cases()).toHaveLength(0);
+      const authorization = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/authorize`,
+        {},
+      );
+      expect(authorization.status).toBe(200);
+      expect(
+        (await t.authorize(REPORTER, authorization.body.authorizeUrl as string))
+          .status,
+      ).toBe(303);
+      const recovered = await verify();
+      expect(recovered.status).toBe(200);
+      expect(recovered.body.submission?.state).toBe("receipt-verified");
+      expect(t.cases()).toHaveLength(1);
+      expect(t.cases()[0]).toMatchObject({
+        advisory_ghsa: receipt.ghsa_id,
+        received_at: receipt.created_at,
+      });
+      expect(t.outbox()).toEqual([MAINTAINER.githubId, REPORTER.githubId]);
+      expect(t.github.counts.posts).toBe(origin === "slop" ? 1 : 0);
+    });
 
   test("private intake accepts a report without inventing an award", async () => {
     const t = setup({ noProgram: true });
