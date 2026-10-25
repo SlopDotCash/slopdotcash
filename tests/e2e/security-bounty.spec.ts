@@ -184,16 +184,10 @@ function bountyTerms(
   };
 }
 
-/** Creates a paused project through the owner self-service API. */
-async function listProject(
-  request: APIRequestContext,
-  applicantToken: string,
-  repository: string,
-  id: string,
-  overrides: Record<string, unknown>,
-) {
+/** The steward and authority claim for a fixture repository's owner. */
+function ownership(repository: string) {
   const facts = fixtureRepository(repository);
-  const manifest = applicationManifest(id, repository, {
+  return {
     steward: {
       displayName: "Bounty maintainers",
       kind: facts.owner.type === "User" ? "individual" : "organization",
@@ -214,14 +208,31 @@ async function listProject(
       repositoryNodeId: facts.node_id,
       proof: null,
     },
-    ...overrides,
-  });
-  // Creation reads the account's access through the Slopbot installation.
+  };
+}
+
+async function installSlopbot(repository: string) {
   const installed = await fetch(
     `${GITHUB_FIXTURE}/__fixture/slopbot/${repository}/installed`,
     { method: "PUT" },
   );
   expect(installed.status).toBe(204);
+}
+
+/** Creates a paused project through the owner self-service API. */
+async function listProject(
+  request: APIRequestContext,
+  applicantToken: string,
+  repository: string,
+  id: string,
+  overrides: Record<string, unknown>,
+) {
+  const manifest = applicationManifest(id, repository, {
+    ...ownership(repository),
+    ...overrides,
+  });
+  // Creation reads the account's access through the Slopbot installation.
+  await installSlopbot(repository);
   const program = manifest.securityBounty as SecurityBountyTerms | undefined;
   const applied = await api(request, "POST", "projects", applicantToken, {
     manifest: program?.settlement
@@ -458,6 +469,53 @@ async function setIntake(
   expect(response.status()).toBe(204);
 }
 
+/**
+ * An outsider who tries to open the program, with the stored manifest and
+ * with its own Slopbot-installed repository in every repository field, gets
+ * only the authority refusal. The answer never depends on the vault's funds.
+ */
+async function expectOutsiderRefused(
+  request: APIRequestContext,
+  id: string,
+  repository: string,
+) {
+  const own = `e2e-reporter-a/${id}-claim`;
+  await installSlopbot(own);
+  const claimed = applicationManifest(id, own, ownership(own));
+  for (const claim of [false, true]) {
+    const stored = await adminProject(request, id);
+    const program = {
+      ...(stored.manifest.securityBounty as object),
+      status: "open",
+    };
+    const outsider = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS["reporter-a"],
+      {
+        expectedRevision: stored.revision,
+        manifest: claim
+          ? {
+              ...stored.manifest,
+              repositories: claimed.repositories,
+              steward: claimed.steward,
+              authority: claimed.authority,
+              securityBounty: JSON.parse(
+                JSON.stringify(program).replaceAll(
+                  `"${repository}"`,
+                  `"${own}"`,
+                ),
+              ),
+            }
+          : { ...stored.manifest, securityBounty: program },
+      },
+    );
+    expect(outsider.status, JSON.stringify(outsider.body)).toBe(403);
+    expect(outsider.body.error).toBe("authority_required");
+  }
+}
+
 test("owners publish and control bounty programs with verified funding @registry", async ({
   browser,
   request,
@@ -521,25 +579,8 @@ test("owners publish and control bounty programs with verified funding @registry
     expect(unsupported.status).toBe(422);
     expect(unsupported.body.error).toBe("security_funding_unavailable");
     // An account without repository access gets the authority refusal,
-    // never the funding answer.
-    const outsider = await api(
-      request,
-      "PUT",
-      `projects/${id}`,
-      TOKENS["reporter-a"],
-      {
-        expectedRevision: stored.revision,
-        manifest: {
-          ...stored.manifest,
-          securityBounty: {
-            ...(stored.manifest.securityBounty as object),
-            status: "open",
-          },
-        },
-      },
-    );
-    expect(outsider.status).toBe(403);
-    expect(outsider.body.error).toBe("authority_required");
+    // never the funding answer, even when it sends its own repository.
+    await expectOutsiderRefused(request, id, repository);
     // Approvers get private-case roles, so owners cannot change them.
     const contacts = await api(
       request,
@@ -576,6 +617,8 @@ test("owners publish and control bounty programs with verified funding @registry
       ).status,
     ).toBe(200);
     await vaultSnapshot(id, bountyDeployment(repository), "200000000");
+    // The refusal is the same when the vault has available funds.
+    await expectOutsiderRefused(request, id, repository);
     await page.reload({ waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Edit bounty settings" }).click();
     await page.getByLabel("Status", { exact: true }).selectOption("open");
