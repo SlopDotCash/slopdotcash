@@ -711,6 +711,73 @@ jobs:
             exit 1
           fi
 
+          # Base mainnet identity attester (workers/payment-executor, PRD
+          # PAY-05; owner activation of 24 October 2026). configure.mjs pins
+          # the Base mainnet vaults of the reviewed registry snapshot at this
+          # commit. With no pinned vault the attester has nothing to sign and
+          # is not released. With a pinned vault the owner-installed secrets
+          # must exist before this release changes anything. Only secret
+          # names are read, never values. Slop has no relayer or payment
+          # dispatcher on a mainnet (PRD section 6).
+          attester_dir="$RUNNER_TEMP/slop-payment-attester"
+          attester_config="$attester_dir/slop-payments-base-mainnet-attester.json"
+          mkdir -p "$attester_dir"
+          attester_vaults="$(ATTESTER_PINS="$attester_dir/pinned.json" bun --eval '
+          import { writeFileSync } from "node:fs";
+          import { HISTORICAL_PROJECTS } from "./src/lib/projects.mjs";
+          import { paymentDeployments } from "./scripts/prepare-payment-deployments.ts";
+          const pinned = paymentDeployments(HISTORICAL_PROJECTS, "mainnet", "base-mainnet");
+          writeFileSync(process.env.ATTESTER_PINS, JSON.stringify(pinned));
+          process.stdout.write(String(pinned.length));
+          ')"
+          if ! [[ "$attester_vaults" =~ ^[0-9]+$ ]]; then
+            echo "::error::The Base mainnet attester pin count is invalid."
+            exit 1
+          fi
+          if [ "$attester_vaults" != "0" ]; then
+            node workers/payment-executor/configure.mjs --stack production \
+              --network base-mainnet \
+              --deployments "$attester_dir/pinned.json" \
+              --output "$attester_dir"
+            node - "$attester_config" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const vars = config.vars ?? {};
+          const pinned = JSON.parse(vars.PAYMENT_DEPLOYMENTS ?? "[]");
+          if (
+            config.name !== "slop-payments-base-mainnet-attester" ||
+            config.workers_dev !== false ||
+            config.preview_urls !== false ||
+            !Array.isArray(config.routes) || config.routes.length !== 0 ||
+            config.services !== undefined ||
+            vars.SIGNER_STACK !== "production" ||
+            vars.SIGNER_ROLE !== "attester" ||
+            vars.CHAIN_FAMILY !== "evm" ||
+            !Array.isArray(pinned) || pinned.length === 0 ||
+            !pinned.every((d) => d.network === "base-mainnet" && d.chainId === "8453")
+          ) {
+            throw new TypeError("the Base mainnet attester configuration boundary drifted");
+          }
+          NODE
+            ./node_modules/.bin/wrangler secret list \
+              --config "$attester_config" > "$attester_dir/secrets.json"
+            node - "$attester_dir/secrets.json" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          if (!Array.isArray(value)) throw new TypeError("attester secret inventory must be an array");
+          const actual = value.map((entry) => entry?.name).sort();
+          // The owner-installed attester key and the private Base RPC map.
+          // Any other name (a test key, a relayer key) also stops the release.
+          if (JSON.stringify(actual) !== JSON.stringify(["PAYMENT_RPC_URLS", "SIGNER_PRIVATE_KEY"])) {
+            throw new TypeError("Base mainnet attester secret inventory is incomplete or contains unexpected entries");
+          }
+          NODE
+          else
+            # An attester released earlier stays unchanged; stop it first
+            # (contracts/DEPLOY-MAINNET.md section 3.6).
+            echo "::notice::The registry snapshot pins no Base mainnet vault; the attester is not released."
+          fi
+
           # Restore only absent cleanup triggers; reject nonempty provisioning drift.
           bun scripts/verify-identity-schedules.mjs --restore-missing
 
@@ -1318,6 +1385,34 @@ jobs:
           NODE
           else
             echo "::notice::Fee-converter Worker release is not enabled (SLOP_FEE_CONVERTER_RELEASE repository variable)."
+          fi
+
+          # Base mainnet attester release, after the shared slop-private
+          # migrations and before Pages serves its bindings. A full deploy
+          # applies the SQLite Durable Object journal migration and the cron.
+          if [ "$attester_vaults" != "0" ]; then
+            ./node_modules/.bin/wrangler deploy \
+              --config "$attester_config" \
+              --tag="$GITHUB_SHA" \
+              --message="slop.cash release $GITHUB_SHA"
+            attester_versions="$attester_dir/versions.json"
+            attester_deployment="$attester_dir/deployment.json"
+            ./node_modules/.bin/wrangler versions list --name slop-payments-base-mainnet-attester --json > "$attester_versions"
+            ./node_modules/.bin/wrangler deployments status --name slop-payments-base-mainnet-attester --json > "$attester_deployment"
+            node - "$attester_versions" "$attester_deployment" "$GITHUB_SHA" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const versions = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const deployment = JSON.parse(readFileSync(process.argv[3], "utf8"));
+          const sha = process.argv[4];
+          const active = Array.isArray(deployment?.versions) && deployment.versions.length === 1 ? deployment.versions[0] : null;
+          if (active?.percentage !== 100 || typeof active?.version_id !== "string") {
+            throw new TypeError("Base mainnet attester deployment is not pinned 100% to one version");
+          }
+          const version = Array.isArray(versions) ? versions.find((candidate) => candidate?.id === active.version_id) : undefined;
+          if (version?.annotations?.["workers/tag"] !== sha) {
+            throw new TypeError("Base mainnet attester deployment is not bound to the tested commit");
+          }
+          NODE
           fi
 
           live_main="$(
