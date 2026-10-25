@@ -31,7 +31,7 @@ import {
 } from "../../backend/vetting/scan-result";
 import { SCAN_REVIEW_AREAS, type ScannerEvidence } from "./scanners";
 
-export const INVENTORY_SCHEMA = "slop-scan-inventory-v1";
+export const INVENTORY_SCHEMA = "slop-scan-inventory-v2";
 /** The evidence bundle the model reads; never silently shortened. */
 export const MAX_INVENTORY_BYTES = 1024 * 1024;
 export const MAX_INVENTORY_ITEMS = 1024;
@@ -480,6 +480,9 @@ export function inspectRepository(input: {
     JSON.stringify({
       schemaVersion: INVENTORY_SCHEMA,
       items,
+      // Binary and archive bytes are not text items. Bind their digests so
+      // adding or changing quarantined content invalidates clean scan reuse.
+      artifacts,
       visibilityGaps: gaps,
     }),
   );
