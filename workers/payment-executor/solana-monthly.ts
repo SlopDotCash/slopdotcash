@@ -28,7 +28,10 @@ import {
   pda,
   SYSTEM,
 } from "../../contracts/solana/transactions";
-import { ordinaryFee } from "../../src/lib/payments/contracts";
+import {
+  acceptsPayoutFee,
+  ordinaryFee,
+} from "../../src/lib/payments/contracts";
 import type { MonthlyAuthorization } from "./monthly";
 import {
   broadcastSolanaTransaction,
@@ -223,7 +226,7 @@ async function readFinalized(config: SolanaEscrowConfig, addresses: string[]) {
 /**
  * Attester rule for solanaMonthlyMessage v3: at one finalized slot no included
  * source has a `monthly-source` account, and any `origin` it has records an
- * award paying that actor at least that gross (counted once, as on EVM);
+ * identical award (same actor and gross, a genuine 2% fee; counted once, as on EVM);
  * frozen_at is that slot's block time. Origins are never closed, so every
  * batch's source was also absent at the lowest batch slot, whose block time is
  * returned. A later hand commit of a smaller award or one to another actor has
@@ -244,8 +247,8 @@ export async function freezeSolanaMonthly(
     if (initialized(config, marker))
       throw new Error("A monthly source was already consumed by a month");
     if (!initialized(config, originInfo)) continue;
-    // An existing award that already pays this actor at least this gross is
-    // counted once, as on EVM; the program releases this leaf.
+    // An existing identical award is counted once, as on EVM; the program
+    // releases this leaf.
     const recorded = await readSolanaAccount(
       config,
       solanaPubkey(
@@ -260,7 +263,14 @@ export async function freezeSolanaMonthly(
       OBLIGATION_SIZE,
       OBLIGATION_DISCRIMINATOR,
     );
-    if (!recorded || !paysActor(recorded, entry))
+    // Sign only when the existing award is this exact award, as EVM's
+    // commitMonthly counts it; a larger or different award is a conflict.
+    if (
+      !recorded ||
+      solanaUint(recorded, 112) !== BigInt(entry.githubUserId) ||
+      solanaUint(recorded, 8) !== BigInt(entry.grossMicro) ||
+      !acceptsPayoutFee(solanaUint(recorded, 8), solanaUint(recorded, 128))
+    )
       throw new Error("A monthly source was already consumed");
   }
   const time = await solanaRpc(config, "getBlockTime", [slot]);

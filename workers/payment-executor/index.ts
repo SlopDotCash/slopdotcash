@@ -19,6 +19,7 @@ import {
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
 import { runMonthlyCoordinator, syncRegistryVaults } from "../payments/index";
 import {
+  assertEvmMonthlySources,
   type BindingRunReport,
   bindingCandidates,
   createEvmAttester,
@@ -307,7 +308,10 @@ export class PaymentSignerJournal {
                 vault: plan.deployment.vault,
               };
               if (plan.family === "evm")
-                await preflightEvmDeployment(this.env, target);
+                await assertEvmMonthlySources(
+                  await preflightEvmDeployment(this.env, target),
+                  plan.entries,
+                );
               else await preflightSolanaDeployment(this.env, target);
             },
             freeze: async (plan) =>

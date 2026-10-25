@@ -1194,6 +1194,21 @@ export function monthlyOwnerService(deps: {
           "award_unfunded",
           "This award waits for enough free vault funds.",
         );
+      // A Solana month is admitted with its whole total free and its awards are
+      // committed by the monthly run. A hand reservation of a funded award would
+      // spend that free balance and block the month for every recipient, so it
+      // waits until the owner turns automatic payment off. EVM counts the same
+      // award once instead.
+      if (
+        ESCROW_NETWORKS[run.network as keyof typeof ESCROW_NETWORKS]?.family ===
+          "solana" &&
+        (await automaticMonthlyPayment(deps.db, project.id))
+      )
+        throw new MonthlyPaymentError(
+          409,
+          "monthly_automatic",
+          "Automatic monthly payment reserves this award. Turn it off to reserve awards by hand.",
+        );
       if (
         obligation.chain_state !== null &&
         !holdsAward(
