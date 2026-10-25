@@ -149,6 +149,8 @@ for (const withObligations of [false, true])
       await expect(connections.getByRole("status")).toHaveText(
         "X visibility updated.",
       );
+      // Saving refreshes the existing X row. Focus the newly rendered control.
+      await visibility.focus();
       await page.keyboard.press("Space");
       await expect(visibility).toBeChecked();
       await page.screenshot({
