@@ -1500,6 +1500,10 @@ jobs:
             echo "::notice::Fee-converter Worker release is not enabled (SLOP_FEE_CONVERTER_RELEASE repository variable)."
           fi
 
+          # Prepare only absent, empty and execution-disabled network services.
+          # No keys, schedules, public endpoints or vault pins are installed.
+          node workers/payment-executor/prepare-inactive.mjs "$RUNNER_TEMP/slop-inactive-attesters"
+
           # Base mainnet attester release, after the shared slop-private
           # migrations and before Pages serves its bindings. A full deploy
           # preserves the SQLite Durable Object journal. Empty bootstrap has no cron.
