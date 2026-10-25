@@ -49,11 +49,17 @@ export async function runTraceOperatorUi({
     } catch {
       selected = join(build, "index.html");
     }
+    const body = await readFile(selected);
     response.writeHead(200, {
+      "content-length": String(body.byteLength),
       "content-type": types[extname(selected)] ?? "application/octet-stream",
-      "cache-control": "no-store",
+      // Match public/_headers for generated data. Chromium reports completed
+      // streamed Points reads as ERR_ABORTED under an artificial no-store policy.
+      "cache-control": path.startsWith("/data/")
+        ? "public, max-age=300, stale-while-revalidate=900"
+        : "no-store",
     });
-    response.end(await readFile(selected));
+    response.end(body);
   });
   const results = [];
   for (const [name, viewport] of process.env.SLOP_TRACE_UI_NATIVE_ONLY === "1"
