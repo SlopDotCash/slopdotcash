@@ -289,4 +289,57 @@ contract MonthlyReserveV2Test {
         vm.prank(SUBMITTER);
         vault.pay(id, 1);
     }
+
+    function test_theNextMonthAdmitsWhileTheLastReserveIsStuck() public {
+        uint32[2] memory stuck = [uint32(202612), 202702];
+        for (uint256 k; k < 2; ++k) {
+            ProjectEscrow target = newVault(keccak256(abi.encode("stuck", k)));
+            uint32 period = stuck[k];
+            uint32 next = period % 100 == 12 ? period + 89 : period + 1;
+            (uint64 opensAt, uint64 closesAt) = target.monthlyWindow(period);
+            vm.warp(opensAt);
+            reserve(
+                target,
+                period,
+                ProjectEscrow.MonthlyReservation(
+                    keccak256("random"), keccak256("random root"), CAP, CAP, 1, target.ordinarySourceSequence()
+                )
+            );
+            (uint64 nextOpens, uint64 nextCloses) = target.monthlyWindow(next);
+            require(nextOpens == closesAt && nextCloses <= closesAt + 30 days, "expiry comes too late for next");
+            // The next month can use free funds while the earlier reserve stays funded.
+            vm.warp(nextCloses - 1);
+            ProjectEscrow.MonthlyAward[] memory e = entries(3, k);
+            reserve(target, next, plan(target, e, sum(e)));
+            require(target.pendingMonthlyGross() == CAP + sum(e), "both reserves held");
+            require(target.freeBalance() == 10_000e6 - CAP - sum(e), "each reserved once");
+            leaf(target, next, e, 0);
+            leaf(target, next, e, 1);
+            leaf(target, next, e, 2);
+            require(target.pendingMonthlyGross() == CAP, "the stuck remainder stays reserved");
+            // Manual awards still wait, so no unproven leaf's source can be consumed by hand.
+            bytes32 id = target.awardId(keccak256("manual"));
+            vm.prank(OWNER);
+            vm.expectRevert(ProjectEscrow.MonthlyLeavesPending.selector);
+            target.commitAward(id, 7, 1e6, keccak256("manual"));
+        }
+    }
+
+    function test_aLegacyMonthlyCommitmentIsNotBlockedByAStuckReserve() public {
+        reserve(
+            vault,
+            PERIOD,
+            ProjectEscrow.MonthlyReservation(
+                keccak256("random"), keccak256("random root"), CAP, CAP, 1, vault.ordinarySourceSequence()
+            )
+        );
+        vm.warp(NOVEMBER_CLOSES);
+        ProjectEscrow.MonthlyAward[] memory e = entries(2, 7);
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(AUTHORITY_KEY, vault.monthlyDigest(NEXT_PERIOD, vault.allocationRoot(e)));
+        vm.prank(SUBMITTER);
+        vault.commitMonthly(NEXT_PERIOD, e, abi.encodePacked(r, s, v));
+        require(vault.freeBalance() == 10_000e6 - CAP - sum(e), "legacy month funded from free balance");
+        require(vault.pendingMonthlyGross() == CAP, "stuck reserve unchanged");
+    }
 }

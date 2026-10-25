@@ -177,7 +177,6 @@ contract OpusHandler {
 
     /// @dev Anyone reserves a signed V2 remainder of one to six leaves for the next open period.
     function reserveMonthly(uint256 actorSeed, uint256 gross, uint256 width, address caller) external {
-        if (escrow.pendingMonthlyGross() != 0) return;
         uint256 n = 1 + (width % 6);
         uint128 free = escrow.freeBalance();
         if (free < n) return;

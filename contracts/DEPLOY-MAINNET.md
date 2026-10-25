@@ -866,8 +866,9 @@ V2 reserves the entire unfunded part of one signed month in a bounded call.
 Anyone can then create each award from its Merkle proof. A leaf moves funds
 from the monthly reserve to the award reserve; it does not debit free funds
 again. Funded leaves remain executable after opt-out or the admission window.
-While leaves remain, new manual or legacy ordinary commitments wait. Funded
-payments and withdrawals of free funds remain available.
+While leaves remain, new manual awards wait. Later signed monthly admissions
+can use free funds within their own caps. Funded payments and withdrawals of
+free funds remain available.
 
 The first 27 vault storage fields are unchanged, including `Award`, `Binding`
 and existing mappings. New fields follow them:

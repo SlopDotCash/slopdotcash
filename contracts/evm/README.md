@@ -248,8 +248,8 @@ funded seals with an empty tree and zero remaining reserve. The trusted attester
 rejects duplicate sources before signing; the contract cannot inspect every
 leaf during constant-size admission.
 
-While pending gross remains, new manual awards, legacy monthly commitments,
-and another V2 admission wait. Existing funded payments, bindings, deposits,
+While pending gross remains, new manual awards wait. Later signed monthly
+admissions can use free funds within their own caps. Existing funded payments, bindings, deposits,
 and free withdrawals remain available. Permissionless leaf execution completes
 the reserve after owner opt-out or window expiry. It has no refund, expiry, or
 human release step. The executor bounds examined leaves, including already
@@ -276,9 +276,12 @@ period and root, replay, the wrong attester, the rotation, purpose isolation and
 permissionless creation. `test/MonthlyReserveV2.t.sol` tests V2 trees of
 odd and even widths, index aliasing, forged sibling totals, leaf replay, a
 stale source sequence, count-zero sealing, the cap on the whole gross and
-preservation of funded leaves after the admission window. The invariant handler in `test/OpusInvariant.t.sol` commits
+preservation of funded leaves after the admission window, and later monthly admission while earlier leaves remain. The invariant handler in `test/OpusInvariant.t.sol` commits
 signed legacy allocations, V2 reserves and leaves from
 random callers, and checks both identities below with pending gross.
+
+The monthly dispatcher sends a new reservation before older months’ leaves.
+A leaf can change the source sequence and invalidate a reservation signature.
 
 The first version uses individual commit and pay calls. Dispatchers isolate
 failed recipients by submitting separate transactions. No account can sweep

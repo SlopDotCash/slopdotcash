@@ -360,7 +360,20 @@ export async function runMonthlyCommitments(
   )
     .bind(activePeriod, env.PAYMENT_NETWORKS)
     .first<{ items: string }>();
-  for (const encoded of JSON.parse(rows?.items ?? "[]") as string[]) {
+  // Newest period first: only the newest month can be admitting, so its reservation is sent before
+  // any older month's leaf in this pass. A leaf mined first would advance ordinarySourceSequence
+  // and revert the signed reservation with MonthlySourceChanged.
+  const period = (encoded: string) => {
+    try {
+      return String(JSON.parse(encoded).plan.request.period);
+    } catch {
+      return "";
+    }
+  };
+  const items = (JSON.parse(rows?.items ?? "[]") as string[]).sort((a, b) =>
+    period(b).localeCompare(period(a)),
+  );
+  for (const encoded of items) {
     try {
       const authorization = JSON.parse(encoded) as MonthlyAuthorization;
       const { plan } = authorization;

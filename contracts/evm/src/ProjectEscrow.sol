@@ -483,7 +483,6 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// awards only; matching existing awards retain their payment state and are never reserved twice.
     function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation) external {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
-        if (pendingMonthlyGross != 0) revert MonthlyLeavesPending();
         if (!monthlyEnabled) revert MonthlyDisabled();
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
         if (block.timestamp < opensAt || block.timestamp >= closesAt) revert MonthlyWindowClosed();
@@ -527,7 +526,6 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         external
     {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
-        if (pendingMonthlyGross != 0) revert MonthlyLeavesPending();
         if (!monthlyEnabled) revert MonthlyDisabled();
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
         if (block.timestamp < opensAt || block.timestamp >= closesAt) revert MonthlyWindowClosed();
