@@ -113,7 +113,8 @@ bun scripts/qualify-vetting-sandbox.ts
 ```
 
 Hosted execution is refused outside the exact protected development workflow.
-# Canonical merge reconstruction
+
+## Canonical merge reconstruction
 
 The named `MergeVerifier` binding serves only the authenticated historical
 publisher. It is not exposed through the artifact HTTP endpoint. The publisher
@@ -144,4 +145,12 @@ this preparation automatically. The image contains the bundled canonical
 collector; it does not check out or run repository source files. Local native
 Git or Workerd checks alone do not prove the deployed image, per-isolate memory
 capacity or physical VM teardown.
+
+The existing Linux sandbox job also runs `scripts/value-merge-sdk.workflow.mjs`
+through the real bounded multipart handler, a test-only metadata publisher and
+the actual named `MergeVerifier`. Pinned public Network 97/117 objects exercise
+the complete merge, a second fresh sandbox, wrong parents, omitted paths,
+corrupt bytes, the unchanged request cap and the expanded-object bound. No
+subscription verdict enters CI. Real session, journal and Points consumption
+need separate end-to-end evidence; this SDK control does not provide them.
 

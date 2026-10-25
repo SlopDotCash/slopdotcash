@@ -1208,7 +1208,7 @@ identity. A resolved appeal remains in history with no decision requested.
 Optional activity email uses the existing consent-bound queue; dispatch
 suppresses a resolved appeal or a recipient who is no longer a moderator.
 Private security appeals keep their separate notice and acknowledgment path.
-# Historical merge sources
+## Historical merge sources
 
 The existing admin-only historical import route also accepts two multipart
 file parts: `envelope` with type `application/json`, and `bundle` containing
