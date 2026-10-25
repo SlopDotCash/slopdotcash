@@ -21,7 +21,7 @@ uint64 constant MAX_BINDING_DELAY = 30 days;
 uint64 constant MONTHLY_CUTOFF_DELAY = 72 hours;
 
 /// @dev From this long after a period's window closes, anyone may expire its V2 reserve once, as Solana
-/// expire_month does. Expiry ends the reserve's block on other commitments; its gross stays reserved.
+/// expire_month does. Expiry ends the reserve's block on the owner's manual awards; its gross stays reserved.
 uint64 constant MONTHLY_GATE_GRACE = 30 days;
 
 /// @notice What a vault holds funds for. One owner can hold one vault per project, token and purpose, so
@@ -152,7 +152,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     uint256 public ordinarySourceSequence;
     mapping(uint32 => MonthlyReserve) public monthlyReserves;
     /// @notice The part of pendingMonthlyGross whose months expired. It stays reserved for its leaves
-    /// but no longer blocks other commitments.
+    /// but no longer blocks the owner's manual awards.
     uint128 public expiredMonthlyGross;
 
     error Unauthorized();
@@ -461,6 +461,9 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// @param sourceDigest Unique per award origin (project/cycle/actor/allocation), not a whole-cycle digest.
     function commitAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest) external onlyOwner {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
+        // An unproven monthly leaf would be stranded if the owner consumed its source first. Monthly
+        // admission is not gated, as on Solana: only one period's window is open at a time, and each
+        // admission is bounded by free funds and its own cap.
         if (pendingMonthlyGross != expiredMonthlyGross) revert MonthlyLeavesPending();
         commit(id, actorId, gross, sourceDigest, payoutFee(gross));
     }
@@ -493,7 +496,6 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// awards only; matching existing awards retain their payment state and are never reserved twice.
     function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation) external {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
-        if (pendingMonthlyGross != expiredMonthlyGross) revert MonthlyLeavesPending();
         if (!monthlyEnabled) revert MonthlyDisabled();
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
         if (block.timestamp < opensAt || block.timestamp >= closesAt) revert MonthlyWindowClosed();
@@ -537,7 +539,6 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         external
     {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
-        if (pendingMonthlyGross != expiredMonthlyGross) revert MonthlyLeavesPending();
         if (!monthlyEnabled) revert MonthlyDisabled();
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
         if (block.timestamp < opensAt || block.timestamp >= closesAt) revert MonthlyWindowClosed();
@@ -611,7 +612,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     }
 
     /// @notice From MONTHLY_GATE_GRACE after the period's window closes, anyone ends a V2 reserve's block on
-    /// manual awards and later monthly admissions, once. Its unsettled gross stays reserved and its leaves
+    /// the owner's manual awards, once. Its unsettled gross stays reserved and its leaves
     /// can still commit: time alone never releases a funded reserve to the project.
     function expireMonthlyReserve(uint32 period) external {
         MonthlyReserve storage month = monthlyReserves[period];

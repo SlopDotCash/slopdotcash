@@ -42,7 +42,11 @@ contract OpusHandler {
     mapping(uint256 => uint32) internal reservePeriod;
     mapping(uint256 => ProjectEscrow.MonthlyAward[]) internal reserveEntries;
     mapping(uint256 => mapping(uint256 => bool)) internal leafCommitted;
+    mapping(uint256 => uint256) internal reserveRemaining;
+    mapping(uint256 => bool) internal reserveExpired;
     uint256 public ghostUnsettled;
+    /// @dev The sum of remaining gross over expired reserves.
+    uint256 public ghostExpired;
 
     constructor(ProjectEscrow e, MintableToken t, address o, uint256 authorityKey_, uint256 maxDeposit_) {
         escrow = e;
@@ -175,9 +179,9 @@ contract OpusHandler {
         period = period % 100 == 12 ? period + 89 : period + 1;
     }
 
-    /// @dev Anyone reserves a signed V2 remainder of one to six leaves for the next open period.
+    /// @dev Anyone reserves a signed V2 remainder of one to six leaves for the next open period, even
+    /// while earlier reserves still have unproven leaves.
     function reserveMonthly(uint256 actorSeed, uint256 gross, uint256 width, address caller) external {
-        if (escrow.pendingMonthlyGross() != escrow.expiredMonthlyGross()) return;
         uint256 n = 1 + (width % 6);
         uint128 free = escrow.freeBalance();
         if (free < n) return;
@@ -202,6 +206,7 @@ contract OpusHandler {
         (uint8 v, bytes32 rr, bytes32 s) = vm.sign(authorityKey, escrow.monthlyReserveDigest(period, r));
         vm.prank(caller);
         escrow.reserveMonthly(period, r, abi.encodePacked(rr, s, v));
+        reserveRemaining[reserveCount] = root.total;
         reservePeriod[reserveCount++] = period;
         ghostUnsettled += root.total;
         period = period % 100 == 12 ? period + 89 : period + 1;
@@ -218,6 +223,8 @@ contract OpusHandler {
         vm.prank(caller);
         escrow.commitMonthlyLeaf(reservePeriod[r], entries[i], uint32(i), proof);
         leafCommitted[r][i] = true;
+        reserveRemaining[r] -= entries[i].gross;
+        if (reserveExpired[r]) ghostExpired -= entries[i].gross;
         ids.push(escrow.awardId(entries[i].sourceDigest));
         actorOf.push(entries[i].actorId);
         ghostUnsettled -= entries[i].gross;
@@ -226,10 +233,13 @@ contract OpusHandler {
     /// @dev Anyone expires a reserve once its grace has passed; time moves forward to allow it.
     function expireMonthlyReserve(uint256 reserveSeed) external {
         if (reserveCount == 0) return;
-        uint32 p = reservePeriod[reserveSeed % reserveCount];
+        uint256 r = reserveSeed % reserveCount;
+        uint32 p = reservePeriod[r];
         (, uint64 closesAt) = escrow.monthlyWindow(p);
         if (block.timestamp < closesAt + 30 days) vm.warp(closesAt + 30 days);
         escrow.expireMonthlyReserve(p);
+        reserveExpired[r] = true;
+        ghostExpired += reserveRemaining[r];
     }
 
     function _openPeriod() internal {
@@ -294,6 +304,7 @@ contract OpusInvariantTest is OpusBase {
     /// @dev Pending gross is exactly what no leaf has proven; expiry never removes it, only its block.
     function invariant_monthlyReserveAccounting() public view {
         require(escrow.pendingMonthlyGross() == handler.ghostUnsettled(), "pending equals unproven leaves");
+        require(escrow.expiredMonthlyGross() == handler.ghostExpired(), "expired equals expired months' remainder");
         require(escrow.expiredMonthlyGross() <= escrow.pendingMonthlyGross(), "expired within pending");
     }
 
