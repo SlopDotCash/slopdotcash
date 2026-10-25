@@ -457,7 +457,12 @@ async function finalizedLog(
   ) {
     throw new Error("Receipt block is not canonical");
   }
-  await verifyEvmDeployment(config, receipt.blockNumber, undefined, blockNumber);
+  await verifyEvmDeployment(
+    config,
+    receipt.blockNumber,
+    undefined,
+    blockNumber,
+  );
   if (!Array.isArray(receipt.logs)) throw new Error("Missing receipt logs");
   const matches = receipt.logs
     .map(object)

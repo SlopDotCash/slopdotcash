@@ -296,13 +296,12 @@ export function ownerVaultSetupService(deps: {
             transactionId,
           );
           if (!verified) return null;
-          return {
-            ...result.template,
+          return newDeployment(result.template, {
             ...verified,
             owner: result.creation.owner,
             asset: result.creation.mint,
             deploymentTransaction: transactionId,
-          };
+          });
         } catch (error) {
           fail(
             422,
@@ -331,15 +330,33 @@ export function ownerVaultSetupService(deps: {
         );
       }
       if (!vault) return null;
-      return {
-        ...template,
+      return newDeployment(template, {
         vault,
         owner: creation.owner,
         asset: creation.asset,
         deploymentTransaction: transactionId,
-      };
+      });
     },
   };
+}
+
+/**
+ * A template is another project's reviewed deployment. The new vault starts at
+ * the template's current reviewed implementation, so it takes no upgrade
+ * history: history records only later upgrades of that one deployment.
+ */
+function newDeployment(
+  template: EscrowDeployment,
+  fields: Pick<
+    EscrowDeployment,
+    "vault" | "owner" | "asset" | "deploymentTransaction"
+  > &
+    Partial<EscrowDeployment>,
+): EscrowDeployment {
+  const { evmUpgrade, ...rest } = template;
+  if (!evmUpgrade) return { ...rest, ...fields };
+  const { history: _history, ...current } = evmUpgrade;
+  return { ...rest, evmUpgrade: current, ...fields };
 }
 
 export function attachOrdinaryVault(
