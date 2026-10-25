@@ -2224,6 +2224,7 @@ export async function applyMaintainerHold(
     return supersede("item not readable");
   if (issue.state !== "open") return supersede("item is no longer open");
   const { pull, revision } = await itemRevision(github, job, issue);
+  if (pull?.draft) return supersede("item is a draft");
   if (pull?.merged || revision !== hold.revision)
     return supersede("item changed after the review");
   if (await maintainerActedSince(env, github, repo, job, hold.held_at)) {
