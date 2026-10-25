@@ -12,6 +12,7 @@ import { encodeBase64Url, ownedBuffer } from "../../src/lib/byte-encoding";
 import { canonicalJson } from "../../src/lib/canonical-json";
 import { sha256Hex } from "../../workers/identity/crypto";
 import { fail } from "../api-error";
+import type { ReportingReader } from "./reporting-readiness";
 
 export type FailureCode =
   | "pvr-disabled"
@@ -759,6 +760,73 @@ export function githubAppAdvisoryToken(
         : null;
     } catch {
       return null;
+    }
+  };
+}
+
+/** Safe repository facts only; no advisory body is requested by this reader. */
+export function githubAppReportingReader(
+  options: AppCredentials,
+): ReportingReader {
+  const installation = githubInstallationCheck(options);
+  const tokenFor = githubAppAdvisoryToken(options);
+  return async (target) => {
+    try {
+      const installed = await installation.installed(target.repository);
+      if (installed !== "yes")
+        return {
+          kind: installed === "no" ? "app-not-installed" : "unavailable",
+        };
+      const token = await tokenFor(target.repository);
+      if (token === null) return { kind: "unavailable" };
+      const get = (suffix: string) =>
+        options.fetch(
+          `${options.apiOrigin}/repos/${repositoryPath(target.repository)}${suffix}`,
+          {
+            headers: headers(token),
+            redirect: "manual",
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+      const repository = await get("");
+      if (!repository.ok) {
+        await repository.body?.cancel();
+        return { kind: "unavailable" };
+      }
+      const facts = (await readBoundedJson(repository, 64 * 1024)) as {
+        id?: unknown;
+        node_id?: unknown;
+        full_name?: unknown;
+      };
+      const id = githubId(facts.id);
+      if (
+        id === null ||
+        typeof facts.node_id !== "string" ||
+        !/^[A-Za-z0-9_=-]{4,256}$/u.test(facts.node_id) ||
+        typeof facts.full_name !== "string" ||
+        facts.full_name.toLowerCase() !== target.repository.toLowerCase() ||
+        (target.repositoryId !== null && id !== target.repositoryId) ||
+        (target.repositoryNodeId !== null &&
+          facts.node_id !== target.repositoryNodeId)
+      )
+        return { kind: "identity-mismatch" };
+      const response = await get("/private-vulnerability-reporting");
+      if (!response.ok) {
+        await response.body?.cancel();
+        return { kind: "unavailable" };
+      }
+      const value = (await readBoundedJson(response, 64 * 1024)) as {
+        enabled?: unknown;
+      };
+      if (typeof value.enabled !== "boolean") return { kind: "unavailable" };
+      return {
+        kind: "verified",
+        enabled: value.enabled,
+        repositoryId: id,
+        repositoryNodeId: facts.node_id,
+      };
+    } catch {
+      return { kind: "unavailable" };
     }
   };
 }

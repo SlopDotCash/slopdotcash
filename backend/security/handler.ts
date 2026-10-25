@@ -53,6 +53,12 @@ import {
   reportingAuthorityUnavailable,
   repositoryReportingAuthority,
 } from "./project-access";
+import {
+  cachedReportingReadiness,
+  type ReportingReader,
+  refreshReportingObservation,
+  reportingTarget,
+} from "./reporting-readiness";
 import { handleSubmissionRoute } from "./submissions";
 export type SecurityD1Database = D1TransactionalDatabase<D1Statement>;
 
@@ -61,12 +67,8 @@ export type SecurityApiDependencies = {
   now: () => Date;
   randomId: () => string;
   sessionActor: (request: Request) => Promise<Actor | null>;
-  /** Public GitHub reads for the intake readiness check. */
-  github: {
-    fetch: (url: string, init: RequestInit) => Promise<Response>;
-    token?: string;
-    apiOrigin: string;
-  };
+  /** Fresh App-authenticated repository facts for sensitive submissions. */
+  reportingRead: ReportingReader;
   /**
    * Reads the program repository's private vulnerability reports so receipt
    * is verified from GitHub, never typed in. Absent means receipt checks are
@@ -3049,37 +3051,25 @@ export type AutomaticIntake =
   | "unavailable"
   | "off";
 
-/** GitHub private vulnerability reporting status for one repository. */
+/** Sensitive requests recheck GitHub even when public observations are stale. */
 export async function pvrState(
-  deps: Pick<SecurityApiDependencies, "github">,
-  repository: string,
+  deps: Pick<SecurityApiDependencies, "db" | "reportingRead" | "now">,
+  projectId: string,
 ): Promise<PvrState> {
-  try {
-    const response = await deps.github.fetch(
-      `${deps.github.apiOrigin}/repos/${repository}/private-vulnerability-reporting`,
-      {
-        headers: {
-          accept: "application/vnd.github+json",
-          "user-agent": "slop.cash-security-intake",
-          "x-github-api-version": "2022-11-28",
-          ...(deps.github.token
-            ? { authorization: `Bearer ${deps.github.token}` }
-            : {}),
-        },
-        signal: AbortSignal.timeout(10_000),
-      },
-    );
-    if (response.status === 401 || response.status === 403) return "forbidden";
-    if (!response.ok) return "unavailable";
-    const body = (await response.json()) as { enabled?: unknown };
-    return body.enabled === true
-      ? "ready"
-      : body.enabled === false
-        ? "disabled"
-        : "unavailable";
-  } catch {
+  const project = await currentReportingProject(deps, projectId);
+  if (project === null || project.manifest.listingTier === "retired")
     return "unavailable";
-  }
+  const result = await refreshReportingObservation(
+    deps.db,
+    reportingTarget(project.manifest, project.revision),
+    deps.reportingRead,
+    deps.now(),
+  );
+  return result.kind === "verified"
+    ? result.enabled
+      ? "ready"
+      : "disabled"
+    : "unavailable";
 }
 
 /**
@@ -3121,7 +3111,12 @@ async function intakeReadiness(
   const context = await reportingContext(deps, projectId);
   const checkedAt = deps.now().toISOString();
   const repository = context.intake.repository;
-  const state = await pvrState(deps, repository);
+  const observed = await cachedReportingReadiness(
+    deps.db,
+    reportingTarget(program.manifest, program.revision),
+    deps.now(),
+  );
+  const state = observed.state;
   const closed =
     terms?.capacity.closesAt != null &&
     Date.parse(terms.capacity.closesAt) <= Date.parse(checkedAt);
@@ -3131,9 +3126,21 @@ async function intakeReadiness(
       projectId,
       repository,
       state,
-      automatic: await automaticIntake(deps, repository, state),
-      checkedAt,
-      maxAgeSeconds: INTAKE_READINESS_TTL_SECONDS,
+      automatic:
+        deps.intake?.mode !== "on"
+          ? "off"
+          : observed.failure === "app-not-installed"
+            ? "app-not-installed"
+            : !observed.stale && state === "ready"
+              ? "ready"
+              : "unavailable",
+      automaticConfigured: deps.intake?.mode === "on",
+      checkedAt: observed.checkedAt,
+      stale: observed.stale,
+      maxAgeSeconds: Math.min(
+        INTAKE_READINESS_TTL_SECONDS,
+        Math.max(0, observed.maxAgeSeconds - INTAKE_READINESS_TTL_SECONDS),
+      ),
       programStatus: terms?.status ?? null,
       // Pause or closure stops new paid research, never the private route.
       paidParticipation:

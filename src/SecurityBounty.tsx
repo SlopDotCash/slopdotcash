@@ -128,7 +128,9 @@ type Readiness = {
   state: "ready" | "disabled" | "forbidden" | "unavailable";
   /** Whether Slop can file the report as the reporter (intake App). */
   automatic?: "ready" | "app-not-installed" | "unavailable" | "off";
-  checkedAt: string;
+  checkedAt: string | null;
+  stale?: boolean;
+  automaticConfigured?: boolean;
   maxAgeSeconds: number;
   paidParticipation: "open" | "closed";
   handoffUrl: string | null;
@@ -151,7 +153,7 @@ const BLOCKED_INTAKE: Record<Exclude<Readiness["state"], "ready">, string> = {
   forbidden:
     "GitHub refused the readiness check. Slop cannot confirm that private reporting is available.",
   unavailable:
-    "GitHub did not answer the readiness check. Slop cannot confirm that private reporting is available.",
+    "A current private reporting check is not available. Slop cannot confirm that private reporting is available.",
 };
 
 function automaticReady(value: Readiness): boolean {
@@ -187,11 +189,20 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
       `security-programs/${encodeURIComponent(project.id)}/intake`,
     ).then(
       (value) => {
-        setState({ status: "checked", value, stale: false, rechecking: false });
+        setState({
+          status: "checked",
+          value,
+          stale: value.stale === true,
+          rechecking: false,
+        });
         return value;
       },
       (error: unknown) => {
-        setState({ status: "error", message: errorMessage(error) });
+        setState((current) =>
+          current.status === "checked"
+            ? { ...current, stale: true, rechecking: false }
+            : { status: "error", message: errorMessage(error) },
+        );
         return null;
       },
     );
@@ -199,17 +210,27 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
   useEffect(() => {
     void check();
   }, [check]);
-  // Sending needs a fresh answer: a stale one is checked again first.
+  // The authenticated endpoints obtain the fresh GitHub answer.
   const ensureReady = useCallback(async (): Promise<boolean> => {
     const current = stateRef.current;
+    // The authenticated create/send endpoints recheck GitHub. A stale public
+    // observation must not prevent that current authority check.
+    if (
+      current.status === "checked" &&
+      current.value.automaticConfigured === true
+    )
+      return true;
     if (current.status === "checked" && !current.stale && !current.rechecking)
       return automaticReady(current.value);
     const value = await check();
-    return value !== null && automaticReady(value);
+    return (
+      value !== null &&
+      (value.automaticConfigured === true || automaticReady(value))
+    );
   }, [check]);
   // The answer expires on this device's clock from when it arrived, so a
   // skewed clock cannot hide or extend it. The edge serves it at most
-  // `maxAgeSeconds` old, so the handoff never relies on an older check.
+  // the edge TTL old; the server subtracts that TTL from observation freshness.
   useEffect(() => {
     if (state.status !== "checked" || state.stale) return;
     const timer = window.setTimeout(
@@ -241,7 +262,7 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
       </p>
       {state.status === "checking" ? (
         <p aria-live="polite" className="admin-status">
-          Checking GitHub private reporting…
+          Loading private reporting status…
         </p>
       ) : state.status === "error" ? (
         <div className="form-error" role="alert">
@@ -253,7 +274,10 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
           {state.stale ? (
             <div className="form-error" role="alert">
               <CircleAlert aria-hidden="true" /> The readiness check from{" "}
-              {formatUtc(state.value.checkedAt)} is out of date.
+              {state.value.checkedAt
+                ? formatUtc(state.value.checkedAt)
+                : "an unknown time"}{" "}
+              is out of date.
               {state.value.automatic === "ready" && signedIn
                 ? " Your draft is kept; sending checks again first."
                 : ""}
@@ -262,20 +286,15 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
           ) : (
             <p className="admin-status">
               GitHub private reporting is on (checked{" "}
-              {formatUtc(state.value.checkedAt)}).{" "}
+              {state.value.checkedAt
+                ? formatUtc(state.value.checkedAt)
+                : "an unknown time"}
+              ).{" "}
               {state.value.paidParticipation === "open"
                 ? "This program accepts paid reports."
                 : "This program does not accept new paid reports now. Private reporting stays open."}
             </p>
           )}
-          {state.value.automatic === "ready" ? (
-            <AutomaticReportForm
-              draft={draft}
-              ensureReady={ensureReady}
-              onDraft={setDraft}
-              project={project}
-            />
-          ) : null}
           {state.stale ? null : (
             <a
               className={
@@ -302,11 +321,33 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
               state.value.state as Exclude<Readiness["state"], "ready">
             ]
           }{" "}
+          {state.stale && state.value.checkedAt
+            ? ` The last verified observation (${formatUtc(state.value.checkedAt)}) is out of date.`
+            : ""}
           Do not use a public channel. Keep your notes private and check again
           later.
           {checkAgain(state.rechecking)}
         </div>
       )}
+      {state.status === "checked" &&
+      (state.value.automaticConfigured === true ||
+        state.value.automatic === "ready") ? (
+        <>
+          {(state.stale || state.value.state !== "ready") && (
+            <p className="admin-status">
+              {state.stale ? "The public observation is out of date. " : ""}You
+              can keep preparing your report. Slop checks GitHub before
+              authorization and sending.
+            </p>
+          )}
+          <AutomaticReportForm
+            draft={draft}
+            ensureReady={ensureReady}
+            onDraft={setDraft}
+            project={project}
+          />
+        </>
+      ) : null}
       <p>
         Already reported on GitHub?{" "}
         <Link href="/security">Verify it on your private Slop page</Link>. Your

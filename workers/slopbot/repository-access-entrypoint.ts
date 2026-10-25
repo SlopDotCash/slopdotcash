@@ -4,6 +4,7 @@ import {
   REPOSITORY_ACCESS_URL,
 } from "./repository-access";
 
+export { ReportingReadinessRefresher } from "./reporting-readiness-service";
 export { HistoricalValuePublisher } from "./value-import-service";
 
 type Env = { SLOPBOT_APP_ID: string; SLOPBOT_APP_PRIVATE_KEY: string };

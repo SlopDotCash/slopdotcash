@@ -195,6 +195,15 @@ rate-limited, or malformed answer. A skipped renewal is logged as
 one of `unreachable`, `rate-limited`, `unauthorized`, `rejected`, or
 `malformed`. See `backend/trace/PRIVATE_INTAKE_RECOVERY.md`.
 
+The hourly trigger also calls the named `REPORTING_READINESS` service binding.
+It refreshes registered repositories' private-reporting status through the
+existing Slopbot App and stores safe observations in `repository_reporting_status`.
+Production uses `slop-slopbot`; staging uses `slop-repository-access-staging`.
+The receiver has no public refresh route. A failed refresh preserves the last
+good observation with a stale state and does not stop identity cleanup. This is
+separate from the fixed-site optional trace intake observation above. It does
+not enable automatic report submission or add a schedule or credential.
+
 The protected release verifies the live cleanup schedule against this Worker's
 canonical configuration before code/database deployment and after version activation.
 If the live schedule list is entirely empty, the release restores only the canonical

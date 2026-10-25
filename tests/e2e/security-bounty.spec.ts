@@ -457,6 +457,16 @@ async function expectAccessible(page: Page) {
   ).toEqual([]);
 }
 
+async function refreshReporting(request: APIRequestContext) {
+  const endpoint = process.env.SLOP_E2E_REPORTING_REFRESH;
+  expect(endpoint).toBeTruthy();
+  const response = await request.post(endpoint as string);
+  expect(response.status()).toBe(200);
+  const result = await response.json();
+  expect(result.checked).toBeGreaterThan(0);
+  return result;
+}
+
 async function setIntake(
   request: APIRequestContext,
   repository: string,
@@ -467,6 +477,7 @@ async function setIntake(
     { method: "PUT" },
   );
   expect(response.status()).toBe(204);
+  await refreshReporting(request);
 }
 
 /**
@@ -859,14 +870,15 @@ test("private security bounty programs keep cases restricted from intake to awar
   });
 
   await test.step("intake readiness gates the GitHub handoff", async () => {
-    // Without the slopdotcash App the page offers only the GitHub handoff,
-    // also in the lane where automatic intake is on.
+    // A removed App makes the prior observation stale. Restoring the App and
+    // running the existing background refresh restores the verified handoff.
     const app = (state: "installed" | "missing") =>
       request.fetch(
         `${GITHUB_FIXTURE}/__fixture/intake-app/${a.repository}/${state}`,
         { method: "PUT" },
       );
     expect((await app("missing")).status()).toBe(204);
+    await refreshReporting(request);
     const context = await browser.newContext({
       viewport: test.info().project.use.viewport,
       recordVideo: { dir: test.info().outputPath("workflow-video") },
@@ -877,8 +889,25 @@ test("private security bounty programs keep cases restricted from intake to awar
     // The page checks readiness on open; no click is needed.
     await page.goto(`/projects/${a.id}/security`, { waitUntil: "networkidle" });
     const handoff = page.getByRole("link", {
-      name: "Report privately on GitHub",
+      name: /^(Or report directly|Report privately) on GitHub$/u,
     });
+    await expect(page.getByRole("alert")).toContainText("is out of date");
+    await expect(handoff).toHaveCount(0);
+    expect((await app("installed")).status()).toBe(204);
+    await refreshReporting(request);
+    // Respect the existing edge TTL; a refresh does not rewrite a cached reply.
+    await expect
+      .poll(
+        async () =>
+          (
+            await (
+              await request.get(`/api/v1/security-programs/${a.id}/intake`)
+            ).json()
+          ).stale,
+        { timeout: 35_000 },
+      )
+      .toBe(false);
+    await page.getByRole("button", { name: "Check again" }).click();
     await expect(handoff).toHaveAttribute(
       "href",
       `https://github.com/${a.repository}/security/advisories/new`,
@@ -908,7 +937,11 @@ test("private security bounty programs keep cases restricted from intake to awar
         `security-programs/${b.id}/intake?state=${state}`,
         null,
       );
-      expect(checked.body).toMatchObject({ state, handoffUrl: null });
+      expect(checked.body).toMatchObject({
+        state: "disabled",
+        stale: true,
+        handoffUrl: null,
+      });
     }
     // The App reads the program's private reports from here on.
     expect((await app("installed")).status()).toBe(204);
@@ -2506,6 +2539,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
         { method: "PUT" },
       );
       expect(installed.status()).toBe(204);
+      await refreshReporting(request);
       const readiness = await api(
         request,
         "GET",
@@ -2528,6 +2562,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     const errors = observe(page);
     try {
       await signIn(page, TOKENS["reporter-a"]);
+      await setIntake(request, noProgram.repository, "unavailable");
       await page.goto(`/projects/${noProgram.id}/security`, {
         waitUntil: "networkidle",
       });
@@ -2550,6 +2585,10 @@ test("automatic private intake files as the reporter and verifies receipt @regis
         path: test.info().outputPath("report-only-intake.png"),
         fullPage: true,
       });
+      await expect(page.getByRole("alert")).toContainText("is out of date");
+      await setIntake(request, noProgram.repository, "enabled");
+      // The page retains the stale observation; current authenticated intake
+      // can still proceed once GitHub is available again.
       const submission = await authorized(noProgram.id);
       const unavailable = await request.fetch(
         `${GITHUB_FIXTURE}/__fixture/slopbot/${noProgram.repository}/unavailable`,
@@ -2983,6 +3022,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       `${GITHUB_FIXTURE}/__fixture/intake-app/${program.repository}/missing`,
       { method: "PUT" },
     );
+    await refreshReporting(request);
     const readiness = await api(
       request,
       "GET",
