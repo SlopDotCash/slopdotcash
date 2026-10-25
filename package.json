@@ -29,6 +29,7 @@
     "test:slopbot": "bun test ./workers/slopbot",
     "test:notify": "bun test ./workers/notify/notify.test.ts ./workers/notify/security.test.ts",
     "test:fee-converter": "bun test ./workers/fee-converter/fee-converter.test.ts ./backend/fee-conversions/handler.test.ts",
+    "payments:keep": "bun scripts/payment-keeper/run.ts",
     "fee-converter:dry-run": "bun workers/fee-converter/dry-run.ts",
     "test:fee-converter:fork": "bun workers/fee-converter/fork.integration.ts",
     "test:fee-converter:solana": "bun workers/fee-converter/solana-local.integration.ts",

@@ -207,7 +207,6 @@ export class PaymentSignerJournal {
           return Response.json(
             await submitSolanaMonthly(
               {
-                PAYMENTS_DB: database,
                 PAYMENT_DEPLOYMENTS: this.env.PAYMENT_DEPLOYMENTS,
                 PAYMENT_RPC_URLS: this.env.PAYMENT_RPC_URLS,
                 JOURNAL: this.state.storage,
@@ -232,7 +231,6 @@ export class PaymentSignerJournal {
         return Response.json(
           await submitEvmMonthly(
             {
-              PAYMENTS_DB: database,
               PAYMENT_DEPLOYMENTS: this.env.PAYMENT_DEPLOYMENTS,
               PAYMENT_RPC_URLS: this.env.PAYMENT_RPC_URLS,
               JOURNAL: this.state.storage,

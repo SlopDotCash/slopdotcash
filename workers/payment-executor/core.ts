@@ -69,6 +69,11 @@ export interface ExecutorEnvironment {
   /** Only the local integration harness may enable chain 31337. Never set in hosted deployments. */
   ALLOW_LOCAL_TEST_CHAIN?: boolean;
 }
+export type PublicEvmExecutorEnvironment = Omit<
+  ExecutorEnvironment,
+  "PAYMENTS_DB" | "ATTESTER"
+>;
+
 type Input = DispatchPayment & { idempotencyKey: string };
 /**
  * A binding request. The hosted `/v1/pay` names the dispatcher's payout
@@ -455,7 +460,7 @@ async function assertPayable(
 }
 /** A finalized reverted attempt changed nothing, so a fresh attempt may replace it. */
 async function retireRevertedAttempt(
-  env: ExecutorEnvironment,
+  env: PublicEvmExecutorEnvironment,
   config: Deployment,
   key: string,
   attempt: Attempt,
@@ -481,7 +486,7 @@ async function retireRevertedAttempt(
 }
 
 async function signAndSubmit(
-  env: ExecutorEnvironment,
+  env: PublicEvmExecutorEnvironment,
   config: Deployment,
   key: string,
   fingerprint: string,
@@ -602,7 +607,7 @@ async function signAndSubmit(
  * A submitted transaction is not proof of finalized reservation or payment.
  */
 export async function submitEvmMonthly(
-  env: ExecutorEnvironment,
+  env: PublicEvmExecutorEnvironment,
   authorization: MonthlyAuthorization,
   admit = true,
   maxLeaves = 16,
@@ -707,7 +712,7 @@ export async function submitEvmMonthly(
 /** The reserve and each leaf share the existing exact-byte transaction journal. A replacement root
  * cannot skip an uncertain admission: first reconcile/rebroadcast that stored transaction. */
 async function submitEvmMonthlyReserve(
-  env: ExecutorEnvironment,
+  env: PublicEvmExecutorEnvironment,
   authorization: MonthlyAuthorization,
   deployment: Deployment,
   reservation: EvmMonthlyReservation,
@@ -876,6 +881,98 @@ async function submitEvmMonthlyReserve(
     alreadyCommitted: true,
     complete: false,
     committedSources,
+  };
+}
+
+/** Read a funded award and its wallet-authorized binding without private Slop data. */
+export async function preparePermissionlessEvmPayment(
+  env: Pick<
+    PublicEvmExecutorEnvironment,
+    "PAYMENT_DEPLOYMENTS" | "PAYMENT_RPC_URLS" | "ALLOW_LOCAL_TEST_CHAIN"
+  >,
+  input: { network: string; vault: string; obligationId: string },
+) {
+  if (!BYTES32.test(input.obligationId)) throw new Error("Invalid award ID");
+  const deployment = await preflightEvmDeployment(env, input);
+  const state = await call(
+    deployment,
+    `0xe76af61d${input.obligationId.slice(2)}`,
+    6,
+  );
+  const actor = BigInt(`0x${state[0]}`).toString();
+  const gross = BigInt(`0x${state[1]}`),
+    fee = BigInt(`0x${state[2]}`);
+  if (
+    actor === "0" ||
+    gross === 0n ||
+    !acceptsPayoutFee(gross, fee, deployment.payoutPolicy) ||
+    !same(
+      evmAwardId(BigInt(deployment.chainId), deployment.vault, `0x${state[3]}`),
+      input.obligationId,
+    )
+  )
+    throw new Error("Finalized funded award is invalid");
+  if (BigInt(`0x${state[5]}`) !== 0n)
+    return { deployment, state: "paid" as const };
+  const current = await binding(deployment, actor);
+  if (current.version === "0")
+    return { deployment, state: "awaiting-wallet" as const };
+  await assertPayable(deployment, current, BigInt(`0x${state[4]}`));
+  return {
+    deployment,
+    state: "ready" as const,
+    data: buildPayCalldata(input.obligationId, current.version),
+    destination: current.destination,
+    version: current.version,
+  };
+}
+
+/** This gas key has no vault authority. The contract selects the co-signed destination. */
+export async function submitPermissionlessEvmPayment(
+  env: PublicEvmExecutorEnvironment,
+  input: { network: string; vault: string; obligationId: string },
+) {
+  const plan = await preparePermissionlessEvmPayment(env, input);
+  const { deployment } = plan;
+  const roles = await Promise.all(
+    ["0x13fa3c08", "0x8da5cb5b"].map((data) => call(deployment, data, 1)),
+  );
+  if (
+    [
+      deployment.feeRecipient,
+      deployment.registrar,
+      ...roles.map((value) => `0x${value[0].slice(24)}`),
+    ].some((role) => same(role, env.SIGNER.address))
+  )
+    throw new Error("Keeper key must have no vault role");
+  const fingerprint = digest(
+    JSON.stringify([
+      deployment.chainId,
+      input.vault.toLowerCase(),
+      input.obligationId.toLowerCase(),
+    ]),
+  );
+  const key = `keeper:pay:${fingerprint}`;
+  const previous = await env.JOURNAL.get<Attempt>(key);
+  if (
+    previous &&
+    !(await retireRevertedAttempt(env, deployment, key, previous))
+  ) {
+    return {
+      state: "submitted" as const,
+      ...(await signAndSubmit(env, deployment, key, fingerprint, "", {
+        ...input,
+        idempotencyKey: fingerprint.slice(2),
+      })),
+    };
+  }
+  if (plan.state !== "ready") return { state: plan.state };
+  return {
+    state: "submitted" as const,
+    ...(await signAndSubmit(env, deployment, key, fingerprint, plan.data, {
+      ...input,
+      idempotencyKey: fingerprint.slice(2),
+    })),
   };
 }
 
