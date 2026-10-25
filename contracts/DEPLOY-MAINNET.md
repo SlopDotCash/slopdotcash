@@ -850,8 +850,8 @@ or a permissionless executor submits for an approved and funded obligation.
 
 ## 4. EVM monthly reserve V2 upgrade
 
-This kit targets contract source `e55a804a370cb54884c6b0dfe4748ff665eea78c`.
-It replaces the earlier `2a4e80b3` kit. The existing mainnet review is still
+This kit targets contract source `dd1af34d22c08a8aecd9bb6c644831f2e2da85ac`.
+It replaces the earlier `239d0235`, `e55a804a` and `2a4e80b3` kits. The existing mainnet review is still
 `bce5b0df`, as listed above. Recheck that review before use. Agents prepare
 and rehearse this kit on local forks only. The human upgrade authority signs
 and sends mainnet transactions. Follow the approved launch order in section 0.
@@ -903,7 +903,7 @@ Runtime SHA-256 includes the implementation address in the UUPS self-reference.
 
 | Role | Address | Runtime SHA-256 | Bytes |
 | --- | --- | --- | --- |
-| Vault | `0xB486d51528fe66D3798994Dd820f84B903df88B6` | `88937eddbe9141817e2578e2e238ad708aa69348574e999369554fcbfdb7fbe8` | 21,642 |
+| Vault | `0x6A79B8970E980159c362d11F37dC8BFFbF2da027` | `112ea2575a1d699cb128105bf5ba7ec78a0e22f8b83051bc2114d60567a5b1e3` | 21,548 |
 | Factory | `0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f` | `976208154ce5e58f59d826e58273d917adc226109bf95ab4894b9cf144e4a1dd` | 6,879 |
 
 The factory matches the earlier kit; the vault does not. Reproduce addresses
@@ -947,7 +947,7 @@ Use these values only after the exact build and current-state checks pass:
 ```sh
 FACTORY=0xe51AbF8c6Dbb3Ca6E9AD09F2dc6EF141d7364aAb
 AUTHORITY=0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D
-NEW_VAULT=0xB486d51528fe66D3798994Dd820f84B903df88B6
+NEW_VAULT=0x6A79B8970E980159c362d11F37dC8BFFbF2da027
 NEW_FACTORY=0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f
 ```
 
@@ -1010,8 +1010,8 @@ leaf creation does not debit free funds twice.
 The script advances time on its local fork only to exercise the monthly
 window. Its blocks and receipts are local evidence. It does not qualify
 mainnet finality, actual fees, provider availability or the first live payout.
-Use the result for this exact contract source; earlier `2a4e80b3` results do
-not qualify V2. Retain any failed provider attempt with the successful retry.
+Use the result for this exact contract source; earlier `239d0235`, `e55a804a` and `2a4e80b3` results do
+not qualify this revision. Retain any failed provider attempt with the successful retry.
 
 ### 4.7 Choose `supersededAtBlock`
 
@@ -1027,7 +1027,7 @@ registry operation. Use the addresses and digests in section 4.3 as current
 `evmUpgrade`; retain each previous review in `history` with its verified
 `supersededAtBlock`. Never rewrite old history. A new deployment has no
 invented prior history. Proxy digests stay unchanged. Set `sourceCommit` to
-`e55a804a370cb54884c6b0dfe4748ff665eea78c` and record the upgrade transaction
+`dd1af34d22c08a8aecd9bb6c644831f2e2da85ac` and record the upgrade transaction
 where the registry contract requires it.
 
 Regenerate pinned `PAYMENT_DEPLOYMENTS` from D1 and deploy the reviewed
