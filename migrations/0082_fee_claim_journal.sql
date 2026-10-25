@@ -1,5 +1,6 @@
 -- Claims share the existing signed-send journal and pending-token guard.
--- Existing records keep their conversion kind. Claims have no router expiry.
+-- Existing records keep their conversion kind. EVM claims have no expiry;
+-- Solana claims retain their blockhash expiry.
 -- Rebuild only to make the expiry/minimum constraint depend on the kind.
 
 CREATE TABLE fee_conversions_next (

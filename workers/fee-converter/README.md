@@ -27,9 +27,9 @@ withdrawals, contributor payments or access to reserved awards. The Worker
 implements EVM and Solana claims. It verifies the reviewed deployment and
 that its fee recipient is this fee wallet (on Solana, that the destination
 token account is owned by it), reconciles uncertain sends before retrying, and
-verifies receipt before conversion. Solana claims are covered by unit tests
-only; qualification against a validator running the reviewed program remains
-required before Solana activation.
+verifies receipt before conversion. Local fork and validator evidence must
+identify the exact source and reviewed program. Local proof does not activate
+production signing.
 
 The Worker is off by default.
 
@@ -83,7 +83,7 @@ For each enabled network:
    network fee; a smaller fee keeps accruing in the vault. `dry_run` logs
    `fee_claim_quoted` and signs nothing. `live` signs one claim, waits for it
    and logs `fee_claim_included`. A claim is a transfer to the fee wallet
-   itself, so it does not count against the conversion caps. EVM claims remain
+   itself, so it does not count against the conversion caps. Claims remain
    pending until a later run verifies the finalized receipt. That token cannot
    convert while its claim is unresolved, including during receipt runs.
    Receipt runs skip this step. Recovery scans verify each deployment before
@@ -119,15 +119,19 @@ For each enabled network:
      `FEE_CONVERTER_SOLANA_FEE_MICRO`. Before signing, a claim reconciles
      earlier sends: it refuses while the confirmed `accrued_fees` is already
      zero (an earlier claim awaits finality) or any project transaction is
-     confirmed but not finalized. A send lost before confirmation expires with
-     its blockhash long before the next recovery scan, and the program moves
-     only the counter's current value, so a repeat never pays twice. The
-     transaction holds exactly two instructions, signed only by the fee
-     wallet: idempotent creation of the fee wallet's associated token account
-     for the vault mint, and `claim_fees` paying into that account. It is
-     simulated first and must credit at least the accrued fee. After the claim
-     confirms, the receipt must show the fee wallet credited at least the
-     accrued fee and exactly what the vault lost.
+     confirmed but not finalized. The fee wallet cannot be the program upgrade
+     authority. The transaction holds exactly two instructions, signed only by
+     the fee wallet: idempotent creation of its associated token account for
+     the vault mint, and `claim_fees` paying into that account. It is simulated
+     first. Before broadcast, the shared journal records the signature, exact
+     bytes, blockhash expiry and reviewed deployment. A finalized receipt must
+     bind that signature and slot to the reviewed program's `FeesClaimed`
+     event. The event amount must equal the vault's debit and fee wallet's
+     credit. The current program must still prove the code used at that slot;
+     a later deployment leaves execution unverified. Missing or partial
+     receipts remain pending, even after blockhash expiry. Recovery sends
+     unchanged recorded bytes only while valid, after checking the deployment
+     again. That token cannot convert until the receipt is verified.
 5. List candidate tokens from D1 project manifests: a `rewardAsset` of kind
    `token` on that network, and the `escrow.deployments[].asset` of each
    deployment on the network's escrow key (`base-mainnet`, `ethereum`,
@@ -234,17 +238,19 @@ A token with an unresolved send gets no new attempt; a unique D1 index allows
 at most one `submitted` or `unknown` row per network and token. Reconciliation
 decides each unresolved row:
 
-- **EVM.** A receipt in a finalized block settles the row. With no receipt and
-  no pending transaction, the row fails only when another transaction used its
-  nonce in a finalized block, or the router deadline (20 minutes) has passed,
-  after which the swap reverts even if mined. Otherwise the Worker
-  rebroadcasts the recorded bytes unchanged. Only the node's "not found"
-  answer counts as no receipt or no transaction. A failed lookup (HTTP 429,
-  timeout or another RPC error) logs `fee_conversion_reconcile_error` and
-  leaves the row open for the next run.
-- **Solana.** A finalized signature status settles the row. With no status,
-  the row fails only when the finalized block height is past the recorded
-  `lastValidBlockHeight`. Otherwise the Worker rebroadcasts the recorded bytes.
+- **EVM.** A finalized receipt with verified token movement settles the row.
+  A swap can fail when its nonce was consumed or its router deadline passed.
+  A claim with missing hash lookups stays pending even when its nonce was
+  consumed: the missing claim could be the transaction that consumed it.
+  Only the node's "not found" answer counts as no receipt or transaction.
+  A failed lookup logs `fee_conversion_reconcile_error` and leaves the row
+  open. A valid unsent claim uses the recorded bytes after a fresh deployment
+  check.
+- **Solana.** A finalized signature with a verified receipt settles the row.
+  A swap with no status fails after its recorded `lastValidBlockHeight`.
+  A claim with no status remains pending after expiry, because expiry does not
+  prove it was never included. Before expiry, recovery checks the deployment
+  and rebroadcasts the recorded bytes.
 
 The Worker never signs a second transaction for a send that could still land.
 

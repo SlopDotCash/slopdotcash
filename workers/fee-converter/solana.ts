@@ -552,12 +552,9 @@ export function createSolanaClient(
       const { escrow } = verified;
       const amount = solanaUint(verified.project, ACCRUED_FEES_OFFSET);
       if (amount === 0n) throw new Error("no accrued fees to claim");
-      // Reconcile before sending. A claim confirmed but not yet finalized
-      // has already zeroed the confirmed counter, and any unfinalized project
-      // transaction (an earlier claim among them) waits for finality. A send
-      // lost before confirmation cannot land after its blockhash expires,
-      // well inside the 15-minute recovery interval, and the program moves
-      // only the counter's current value, so a repeat never pays twice.
+      // The run reconciles recorded claims before reaching this path. Also
+      // wait for unfinalized project activity: the confirmed counter may
+      // already reflect a claim that the finalized project does not yet show.
       if ((await confirmedAccrued(escrow)) === 0n)
         throw new Error("an earlier claim is confirmed but not yet finalized");
       const recent = await rpc<

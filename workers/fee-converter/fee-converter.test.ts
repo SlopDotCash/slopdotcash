@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
@@ -8,6 +9,7 @@ import {
   solanaVaultAddress,
 } from "../../contracts/solana/adapter";
 import { ata } from "../../contracts/solana/transactions";
+import { decodeBase58Bytes } from "../../src/lib/base58";
 import { parseConfig } from "./config";
 import {
   type ChainClient,
@@ -1235,6 +1237,17 @@ describe("Solana vault fee claims", () => {
             value: [{ err: null, confirmationStatus: "confirmed" }],
           });
         case "getTransaction": {
+          const event = new Uint8Array(80);
+          event.set(
+            sha256(new TextEncoder().encode("event:FeesClaimed")).slice(0, 8),
+          );
+          event.set(decodeBase58Bytes(PROJECT), 8);
+          event.set(decodeBase58Bytes(ata(SOLANA_USDC, wallet)), 40);
+          new DataView(event.buffer).setBigUint64(
+            72,
+            state.confirmedAccrued,
+            true,
+          );
           const credit = state.receipt ?? state.confirmedAccrued;
           const balance = (owner: string, amount: bigint) => ({
             owner,
@@ -1242,8 +1255,21 @@ describe("Solana vault fee claims", () => {
             uiTokenAmount: { amount: amount.toString() },
           });
           return reply({
+            slot: 100,
+            transaction: {
+              signatures: [
+                solanaBase58(
+                  unb64(state.sent[state.sent.length - 1]).slice(1, 65),
+                ),
+              ],
+            },
             meta: {
               err: null,
+              logMessages: [
+                `Program ${PROGRAM} invoke [1]`,
+                `Program data: ${b64(event)}`,
+                `Program ${PROGRAM} success`,
+              ],
               preTokenBalances: [
                 balance(wallet, 0n),
                 balance(PROJECT, VAULT_BALANCE),
@@ -1348,7 +1374,15 @@ describe("Solana vault fee claims", () => {
 
   test("a claim signs only claim_fees into the fee wallet's own token account", async () => {
     const { state, client } = solanaChain();
-    const { txId } = (await client(true).vaultFees?.claim(vault())) ?? {};
+    const { txId } =
+      (await client(true).vaultFees?.claim(vault(), async (record) => {
+        expect(state.sent).toHaveLength(0);
+        expect(record.txId).toBe(
+          solanaBase58(unb64(record.rawTx).slice(1, 65)),
+        );
+        expect(record.amount).toBe(10_000_000n);
+        expect(record.evmNonce).toBeNull();
+      })) ?? {};
     expect(state.sent).toHaveLength(1);
     const raw = unb64(state.sent[0]);
     const parsed = parseTransaction(raw);
@@ -1392,9 +1426,9 @@ describe("Solana vault fee claims", () => {
   test("a receipt that does not match the vault fee fails the claim", async () => {
     const { state, client } = solanaChain();
     state.receipt = 9_000_000n;
-    await expect(client(true).vaultFees?.claim(vault())).rejects.toThrow(
-      /receipt does not match the vault fee/,
-    );
+    await expect(
+      client(true).vaultFees?.claim(vault(), async () => {}),
+    ).rejects.toThrow(/receipt does not match the vault fee/);
   });
 
   test("a dry run reports the claim and signs nothing", async () => {
