@@ -488,14 +488,16 @@ export function notifySlopbotAppeal<S>(
   at: string,
 ): S {
   return db
-    .prepare(`${INSERT}
+    .prepare(
+      `${INSERT}
     SELECT 'slopbot-' || a.appeal_key, ?2, 'slopbot_appeal_review',
            a.item_node_id, NULL, ?4, a.escalated_at, ?3
       FROM slopbot_appeals a
      WHERE a.appeal_key = ?1 AND a.escalated_at IS NOT NULL
        AND a.resolved_at IS NULL AND a.appellant_github_id <> ?2
        AND ${GITHUB_ID("?2")}
-    ${ONCE}`)
+    ${ONCE}`,
+    )
     .bind(
       appealKey,
       recipient,
@@ -569,14 +571,16 @@ export function notifySlopbotScamReview<S>(
     throw new Error("Invalid scam review author");
   const path = scamReviewPath(input);
   return db
-    .prepare(`${INSERT}
+    .prepare(
+      `${INSERT}
     SELECT 'slopbot-scam-review:' || p.item_node_id, ?2,
            'slopbot_scam_review', p.project_id, ?3, ?4, p.recorded_at, ?5
       FROM slopbot_penalties p
-     WHERE p.item_node_id = ?1 AND p.category = 'scam'
+     WHERE p.item_node_id = ?1 AND p.category = 'scam' AND p.reversed_at IS NULL
        AND p.moderator_review = 1 AND p.author_github_id <> ?2
        AND ${GITHUB_ID("?2")}
-    ${ONCE}`)
+    ${ONCE}`,
+    )
     .bind(
       input.itemNodeId,
       input.recipient,
