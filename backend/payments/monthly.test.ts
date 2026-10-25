@@ -260,7 +260,7 @@ async function rejects(promise: Promise<unknown>, code: string) {
 }
 
 describe("monthly coordinator", () => {
-  test("Solana still refuses an owner allocation above its token range before storing it", async () => {
+  test("Solana refuses a monthly cap above its token range before storing an allocation", async () => {
     sqlite.close();
     await setupFixture(solanaDeployment, 10n ** 18n);
     clock = beforeCutoff;
@@ -270,10 +270,7 @@ describe("monthly coordinator", () => {
         grossBase: (300n * 10n ** 18n).toString(),
         expectedSequence: 0,
       }),
-    ).rejects.toMatchObject({
-      code: "invalid_allocation",
-      message: "The amount exceeds the Solana token range.",
-    });
+    ).rejects.toThrow("monthly pool policy is inconsistent");
     expect(count("monthly_allocation_changes")).toBe(0);
   });
 
