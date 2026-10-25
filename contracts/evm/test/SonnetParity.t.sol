@@ -54,7 +54,7 @@ contract SonnetParity {
     function _wd(uint128 g) internal {
         vm.prank(owner);
         e.withdrawUnused(g);
-        ghostWithdrawalFees += g / 50;
+        ghostWithdrawalFees += (g + 49) / 50;
     }
 
     function _inv() internal view {
@@ -77,7 +77,9 @@ contract SonnetParity {
         uint64[9] memory g = [uint64(1), 49, 50, 51, 99, 100, 149, 150, 1e6];
         for (uint256 i; i < g.length; i++) {
             uint128 f = e.payoutFee(g[i]);
-            require(f <= g[i] && g[i] - f >= 1, "bad");
+            require(f == (g[i] + 49) / 50, "ceil(gross/50)");
+            // A one-unit award is all fee; every larger award pays the contributor something.
+            require(g[i] == 1 ? f == 1 : g[i] - f >= 1, "bad");
         }
     }
 
@@ -96,7 +98,7 @@ contract SonnetParity {
             total += g;
             _inv();
         }
-        require(feeSum == ghostWithdrawalFees && feeSum <= total / 50, "fee per withdrawal");
+        require(feeSum == ghostWithdrawalFees && feeSum >= (total + 49) / 50, "fee per withdrawal");
     }
 
     function test_unitWithdrawals() public {
@@ -138,11 +140,12 @@ contract SonnetParity {
         _inv();
         _wd(55);
         _inv();
-        require(t.balanceOf(dest1) == 147 && t.balanceOf(dest2) == 98, "net");
-        require(e.accruedFees() == 2 + 1 + 1, "fees"); // 2 + 1 payout, +1 withdraw (55 -> 1)
+        require(t.balanceOf(dest1) == 146 && t.balanceOf(dest2) == 97, "net");
+        // 3 + 2 payout, +5 withdraw (9, 1 and 5 pay 1 each; 55 pays 2)
+        require(e.accruedFees() == 3 + 2 + 5, "fees");
         e.claimFees();
         _inv();
-        require(t.balanceOf(feeR) == 4, "claimed");
+        require(t.balanceOf(feeR) == 10, "claimed");
     }
 
     // direct transfer doesn't break accounting identities (2) other than vault >= sum
@@ -257,7 +260,7 @@ contract SonnetParity {
     }
 
     function test_selfPayoutExitFeeAndFragments() public {
-        // 49-unit awards pay zero fee; 100 gross pays 2
+        // 49-unit awards each pay a fee of 1; splitting never avoids the fee
         _dep(1000);
         for (uint256 i; i < 3; i++) {
             bytes32 s = bytes32(uint256(100 + i));
@@ -265,6 +268,6 @@ contract SonnetParity {
             vm.prank(owner);
             e.commitAward(id, 9, 49, s);
         }
-        require(e.reservedFees() == 0 && e.reservedPrincipal() == 147, "fragments");
+        require(e.reservedFees() == 3 && e.reservedPrincipal() == 144, "fragments");
     }
 }

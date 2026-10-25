@@ -62,9 +62,11 @@ export const SOLANA_GENESIS = {
 } as const;
 /**
  * ProjectEscrow.payoutFee and withdrawalFee, and the program's commit and
- * withdraw: both 2%, rounded down (#907).
+ * withdraw: both 2%, rounded up, ceil(gross / 50) (#907).
  */
 export const PAYOUT_FEE_DIVISOR = 50n;
+const twoPercentFee = (gross: bigint) =>
+  (gross + PAYOUT_FEE_DIVISOR - 1n) / PAYOUT_FEE_DIVISOR;
 export type ActorRole = "registered" | "walletless";
 export interface TestActor {
   role: ActorRole;
@@ -161,12 +163,12 @@ export function scenarioAmounts(decimals: number, divisor: bigint) {
     totalDeposit: 1000n * unit,
     awardA,
     awardB,
-    feeA: awardA / PAYOUT_FEE_DIVISOR,
-    feeB: awardB / PAYOUT_FEE_DIVISOR,
-    netA: awardA - awardA / PAYOUT_FEE_DIVISOR,
-    netB: awardB - awardB / PAYOUT_FEE_DIVISOR,
+    feeA: twoPercentFee(awardA),
+    feeB: twoPercentFee(awardB),
+    netA: awardA - twoPercentFee(awardA),
+    netB: awardB - twoPercentFee(awardB),
     withdrawGross,
-    withdrawFee: withdrawGross / PAYOUT_FEE_DIVISOR,
+    withdrawFee: twoPercentFee(withdrawGross),
   };
   if (result.netA !== 98n * unit || result.netB !== 49n * unit)
     throw new Error("Unit is too small for exact section 21 figures");
