@@ -2,6 +2,8 @@
 
 Date: 12 October 2026, proposed by Drew Pierson. Status: scope approved by the repository owner on 14 October 2026 (PRD FND-02 and the section 22 decision row). Nothing in it activates a project, lifts the mainnet executor rejection, or changes the fee policy.
 
+**Amendment, 25 October 2026.** The [canonical PRD](slop-product-requirements.md#6-funds-and-payments) supersedes this record's conversion rule. Do not convert or bridge Robinhood fees. Retain each received asset in the fee wallet and show "not converted"; USDG stays USDG, and project tokens stay unchanged. A USDC route is no longer required there. The implementation and acceptance remain in #905; this amendment activates no service or transaction.
+
 **Amendment, 18 October 2026 (product owner decisions, PRD section 22).** These decisions change parts of this record. Where the text below disagrees, this amendment wins:
 
 - The project vault is the only funding mode (FND-01). The legacy monthly-pool rail (PAY-09), Squads and Sablier are removed, so the "legacy rail stays Base and Solana" statements below are historical.

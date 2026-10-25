@@ -48,7 +48,9 @@ alias only.
   - One fee-wallet hot key per network (PRD TOK-07, MVP-07c, owner decision
     of 18 October 2026). It controls only the network fee wallet. It signs
     only the conversion of fees received in that wallet to USDC, through allowlisted routes, within the slippage limit,
-    with output to the same wallet. Owner decision of 24 October 2026: it may
+    with output to the same wallet. Robinhood Chain retains each received
+    asset without conversion or bridging (PRD section 11, 25 October 2026).
+    Owner decision of 24 October 2026: it may
     also submit permissionless fee claims on reviewed vaults, moving only
     accrued fees to that same fee wallet. It holds no vault role and cannot
     withdraw free funds or touch contributor principal, reserved awards or payments. Per-run and
@@ -556,8 +558,14 @@ For a project-token reward (PRD TOK-06, owner decision of 14 October 2026),
 the 2% is deducted in that token and paid in that token to the network fee
 wallet at payout. No contract converts it. A scheduled backend job converts
 fees already in the fee wallet to USDC (PRD section 6) inside that wallet
-(TOK-07, MVP-07c); a network without a verified USDC route keeps the fee token
-pending. It never blocks or touches a contributor payment.
+(TOK-07, MVP-07c). Robinhood Chain retains the received asset and shows
+"not converted"; USDG stays USDG and project tokens stay unchanged. Other
+networks without a verified USDC route keep the fee token pending.
+It never blocks or touches a contributor payment. The approved keeper and
+fee-converter EVM replacement changes only fee fields, with the same nonce
+and transaction content, bounded steps of about 25%, at most three times
+the original fees, and the existing per-network limits (PRD section 11).
+Source approval does not activate this replacement behavior.
 Unused-fund withdrawals deduct the same 2%, `ceil(gross / 50)`, enforced in the
 contracts, and reach only the owner's refund destination; funded
 obligations cannot be withdrawn.
