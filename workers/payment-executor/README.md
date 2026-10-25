@@ -266,6 +266,22 @@ relayer endpoints on a production stack. The generated
 `apply-production-stack.sh` lists the dry run, the attester deploy and its
 secret prompts for the operator to review and run.
 
+An empty production deployment list is valid only when the checked registry
+has no deployment for that network and scope. It generates the same private
+attester with no cron. Every signing request is refused before reading an
+RPC or signing key. Test stacks still require reviewed deployments.
+
+The protected `main` release can create the absent Base attester in this
+inactive state, so the owner can install its existing key and RPC secrets
+before creating the first vault. No secret is required for that initial
+inactive release. A zero-pin release leaves any existing Worker and its
+journal unchanged; it never disables an already-served vault. Once the
+checked registry contains real vault pins, the normal release requires the
+exact `PAYMENT_RPC_URLS` and `SIGNER_PRIVATE_KEY` secret names and restores
+the existing schedule. This does not enable another network, create a
+payment dispatcher or authorize a transaction. Production deployment still
+uses the reviewed main-only release workflow.
+
 The generated `pages-bindings.json` is an integration fragment for an isolated test
 Pages environment, not permission to change an existing staging deployment. Bind its
 `SLOP_DB` to the exact same test D1 as the dispatcher; only one network/database may

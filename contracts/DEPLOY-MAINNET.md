@@ -567,6 +567,9 @@ from an existing D1 deployment. D1 remains the only project inventory.
 Only then derive the attester pins from the registered vault. A missing
 attester does not block wallet confirmation or vault creation. Existing
 unpaid awards and prior deployment reviews remain unchanged.
+The normal main release can first install an inactive Base attester with
+an empty allowlist and no cron. This lets the owner install its secrets
+before creating a vault; it does not establish vault or payment readiness.
 
 ### 3.2 Configure the stack
 
@@ -652,8 +655,11 @@ release (`.github/workflows/deploy.yml`, job `deploy`, `main` only, environment
 `configure.mjs --stack production` from the registry snapshot of the released
 commit. Then:
 
-- If the snapshot pins no Base mainnet vault, the release skips the attester
-  and reports a notice. The attester has nothing to sign.
+- If the snapshot pins no Base mainnet vault and the Worker is proved absent,
+  the release installs the private attester with an empty allowlist and no
+  cron. No secret is required. Every signing request is refused. An existing
+  Worker stays unchanged, so an empty snapshot cannot remove earlier pins or
+  interrupt its journal. An ambiguous provider lookup stops the release.
 - If the snapshot pins a vault, the release reads the secret names of
   `slop-payments-base-mainnet-attester` (never the values). The names must be
   exactly `PAYMENT_RPC_URLS` and `SIGNER_PRIVATE_KEY`. A missing or extra
@@ -661,20 +667,20 @@ commit. Then:
   Pages. The release then deploys the attester with the commit SHA as its
   version tag and checks that the active version has that tag.
 
-Install the secrets before the first snapshot that pins a Base vault reaches
-`main`. The push of that snapshot to `main` starts a release, and that release
-stops while the Worker or a secret is missing, as does every later release of
-the site. Do these steps from a clean checkout of `development` after the owner route records the
-verified Base vault and its registry snapshot is on `development`. Do not
-install keys to compensate for unavailable vault creation; the attester is
-not needed for owner wallet confirmation or creation:
+After the reviewed main release installs the inactive Worker, install its
+secrets before the first snapshot that pins a Base vault reaches `main`.
+A nonempty release stops if either required secret is missing. A vault is
+not a prerequisite for this key setup. The empty service remains unable to
+sign, even after keys are installed. Do these steps from a clean reviewed
+checkout; the attester is not needed for owner wallet confirmation or creation:
 
 1. Generate the configuration. The secrets belong to the Worker name, so this
    configuration also serves the later `main` release:
 
    ```sh
    bun install --frozen-lockfile --ignore-scripts
-   bun run payments:deployments mainnet base-mainnet > /tmp/base-mainnet-pinned.json
+   bun run projects:sync
+   bun --eval 'import { HISTORICAL_PROJECTS } from "./src/lib/projects.mjs"; import { paymentDeployments } from "./scripts/prepare-payment-deployments.ts"; console.log(JSON.stringify(paymentDeployments(HISTORICAL_PROJECTS, "mainnet", "base-mainnet")));' > /tmp/base-mainnet-pinned.json
    node workers/payment-executor/configure.mjs --stack production \
      --network base-mainnet \
      --deployments /tmp/base-mainnet-pinned.json \
@@ -686,8 +692,8 @@ not needed for owner wallet confirmation or creation:
 
 2. Install the two secrets on the attester Worker only. Wrangler reads each
    value at its prompt; do not put a value in the command, a file in the
-   repository, or the shell history. If the Worker does not exist yet,
-   Wrangler asks to create it: answer yes.
+   repository, or the shell history. The normal reviewed main release must
+   have installed the Worker first. Do not create or deploy it locally.
 
    ```sh
    ./node_modules/.bin/wrangler secret put SIGNER_PRIVATE_KEY --config "$CONFIG"
@@ -725,12 +731,15 @@ not needed for owner wallet confirmation or creation:
    unset PAYMENT_RPC_URLS
    ```
 
-   For `base-mainnet`, `factory` and `attester` must be `configured` and
-   `rpc` must be `finalized`. `executor` reports `missing`.
+   Before a vault is registered, the report remains not ready. After
+   registration, regenerate the pins and configuration. For `base-mainnet`,
+   `factory` and `attester` must be `configured` and `rpc` must be
+   `finalized`. `executor` reports `missing`.
 
-6. Approve the production release: merge the reviewed promotion pull request
-   from `development` to `main`. The `deploy` job checks the secrets and
-   deploys the attester. Check the job log for the attester deploy, then
+6. After vault registration, approve the normal production release: merge
+   the reviewed promotion pull request from `development` to `main`. The
+   `deploy` job checks the pins and secrets and installs the scheduled
+   attester. Check the job log for the attester deploy, then
    check the Worker with
    `./node_modules/.bin/wrangler deployments status --config "$CONFIG"`.
 
