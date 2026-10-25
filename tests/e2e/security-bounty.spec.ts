@@ -993,6 +993,51 @@ test("private security bounty programs keep cases restricted from intake to awar
       const reply = await read(role, id);
       expect(reply.status, `${role} reading ${id}`).toBe(404);
     }
+    // A write collaborator cannot name an outside approver, nor remove the
+    // recorded ones: approvers read every private case of the program.
+    const permission = (level: string) =>
+      fetch(
+        `${GITHUB_FIXTURE}/__fixture/slopbot/${a.repository}/permission/e2e-reporter-b/${level}`,
+        { method: "PUT" },
+      );
+    expect((await permission("write")).status).toBe(204);
+    try {
+      const current = await adminProject(request, a.id);
+      const program = current.manifest.securityBounty as SecurityBountyTerms;
+      for (const approvers of [
+        {
+          ...program.approvers,
+          technical: [...program.approvers.technical, account("reporter-b")],
+        },
+        {
+          technical: [account("reporter-b")],
+          financial: [account("reporter-b")],
+          dispute: [account("reporter-b")],
+        },
+      ]) {
+        const reply = await api(
+          request,
+          "PUT",
+          `projects/${a.id}`,
+          TOKENS["reporter-b"],
+          {
+            expectedRevision: current.revision,
+            manifest: {
+              ...current.manifest,
+              securityBounty: { ...program, approvers },
+            },
+          },
+        );
+        expect(reply.status, JSON.stringify(reply.body)).toBe(422);
+        expect(reply.body.error).toBe("security_contacts_restricted");
+      }
+      expect((await adminProject(request, a.id)).revision).toBe(
+        current.revision,
+      );
+      expect((await read("reporter-b", caseA)).status).toBe(404);
+    } finally {
+      expect((await permission("none")).status).toBe(204);
+    }
     const adminList = await api(request, "GET", "security-cases", ADMIN_TOKEN);
     expect(
       (adminList.body.cases as { projectId: string }[]).filter(
