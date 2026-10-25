@@ -231,11 +231,20 @@ new member keeps the one-third minimum.
 
 The owner selected the capped pool on 24 October 2026. The 25 October decision
 extends the new size and review bands to unpaid work from 1 September through
-31 October 2026. `VALUE_SCORING_POLICY_EFFECTIVE_AT` is therefore
-`2026-09-01T00:00:00.000Z`. Preserve original Points and frozen terms for approved
+31 October 2026. `VALUE_SCORING_APPROVED_HISTORY_FROM` records that approved
+scope at `2026-09-01T00:00:00.000Z`. Preserve original Points and frozen terms for approved
 or funded awards, including scheduled and paid awards. Keep source IDs, source
 dates and all separate eligibility and penalty dates. Historical assessment uses
 the ChatGPT subscription only; paid API assessment still starts on 1 November.
+
+Historical publication is on hold until the complete subscription assessment
+journal and exact Points changes are reconciled. Normal generation keeps
+`VALUE_SCORING_POLICY_EFFECTIVE_AT` at `2026-11-01T00:00:00.000Z`, so an absent
+or partial historical feed cannot reduce existing Points during another
+release. The standard importer and explicit September candidate verification
+remain available. Remove the hold through a reviewed source change after
+coverage, duplicate credit and funded-history checks pass. This hold does not
+change the approved historical scope or the November API start.
 
 When the hosted value feed does not answer (a transport failure, a timeout,
 HTTP 408, 429 or 5xx), generation writes nothing and exits

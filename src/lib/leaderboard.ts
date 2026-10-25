@@ -51,7 +51,7 @@ import {
   allocatePullRequestReviewCredit,
   assertValueScoringPolicy,
   type QualifyingReview,
-  VALUE_SCORING_POLICY_EFFECTIVE_AT,
+  VALUE_SCORING_APPROVED_HISTORY_FROM,
   type ValueScoringPolicy,
 } from "./scoring-policy";
 import { REVIEW_VALUE_THIRDS, VALUE_TIERS } from "./value-assessment";
@@ -2844,7 +2844,7 @@ function createSnapshotWithReviewCutoff(
   if (
     valuePolicy &&
     parseIsoTime(valuePolicy.effectiveAt) <
-      parseIsoTime(VALUE_SCORING_POLICY_EFFECTIVE_AT)
+      parseIsoTime(VALUE_SCORING_APPROVED_HISTORY_FROM)
   )
     throw new Error(
       "The value policy cannot reinterpret earlier policy periods",

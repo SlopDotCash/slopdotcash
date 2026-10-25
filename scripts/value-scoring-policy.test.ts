@@ -324,14 +324,14 @@ test("banned reviews do not consume another reviewer's slot or credit", () => {
   ).toEqual(snapshot().ledger);
 });
 
-test("the normal command takes no opt-in flag and uses the recorded policy", () => {
+test("normal publication holds historical changes without a runtime flag", () => {
   expect(parseGenerationArguments([])).toEqual({});
   expect(() => parseGenerationArguments(["--value-assessments"])).toThrow(
     "Usage: generate-leaderboard.ts [--cutoff YYYY-MM-DDTHH:mm:ss.sssZ]",
   );
   expect(valueScoringPolicy()).toEqual({
     ...POLICY,
-    effectiveAt: "2026-09-01T00:00:00.000Z",
+    effectiveAt: "2026-11-01T00:00:00.000Z",
   });
   expect(() =>
     assertValueScoringPolicy({ ...POLICY, effectiveAt: "2026-10-15" }),
