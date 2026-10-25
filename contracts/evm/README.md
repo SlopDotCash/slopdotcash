@@ -248,19 +248,24 @@ funded seals with an empty tree and zero remaining reserve. The trusted attester
 rejects duplicate sources before signing; the contract cannot inspect every
 leaf during constant-size admission.
 
-While pending gross remains, new manual awards, legacy monthly commitments,
-and another V2 admission wait. Existing funded payments, bindings, deposits,
-and free withdrawals remain available. Permissionless leaf execution completes
+While pending gross remains, new manual awards wait, so the owner cannot
+consume an unproven leaf's source by hand. This matches Solana, where
+`monthly_outstanding` gates only the owner's direct `commit`. Monthly
+admission does not wait: a later month's V2 reservation or legacy commitment
+can be admitted while an earlier reserve has unproven leaves. Only one
+period's window is open at a time, and free funds and that period's cap
+bound each admission. Existing funded payments, bindings, deposits, and free
+withdrawals remain available. Permissionless leaf execution completes
 the reserve after owner opt-out or window expiry. The executor bounds examined
 leaves, including already committed leaves, and retains a finalized cursor for
 restart.
 
 A reserve that no leaf can prove (an attester fault or a stolen attester key)
-would block those calls for ever. As Solana `expire_month` does, anyone may
+would block manual awards for ever. As Solana `expire_month` does, anyone may
 call `expireMonthlyReserve(period)` once, from 30 days after the period's
 window closes. It adds the unproven remainder to `expiredMonthlyGross` and
-emits `MonthlyReserveExpired(period, unsettled)`. Commitments wait only while
-`pendingMonthlyGross` exceeds `expiredMonthlyGross`. The remainder stays
+emits `MonthlyReserveExpired(period, unsettled)`. Manual awards wait only
+while `pendingMonthlyGross` exceeds `expiredMonthlyGross`. The remainder stays
 reserved, and its leaves can still commit later. There is no refund: time
 alone never releases a funded reserve to the project (PRD, funded-award
 expiry). A remainder that can never be proven stays reserved for good, as on
@@ -290,10 +295,17 @@ commitment per period, the opt-out, the window, the signature binding over vault
 period and root, replay, the wrong attester, the rotation, purpose isolation and
 permissionless creation. `test/MonthlyReserveV2.t.sol` tests V2 trees of
 odd and even widths, index aliasing, forged sibling totals, leaf replay, a
-stale source sequence, count-zero sealing, the cap on the whole gross and
-reserve expiry. The invariant handler in `test/OpusInvariant.t.sol` commits
-signed legacy allocations, V2 reserves and leaves, and expires reserves, from
-random callers, and checks both identities below with pending gross.
+stale source sequence, count-zero sealing, the cap on the whole gross,
+reserve expiry, and admission of the next V2 or legacy month while a reserve
+is stuck (including the 202612 and 202702 calendar cases). The invariant
+handler in `test/OpusInvariant.t.sol` commits signed legacy allocations,
+overlapping V2 reserves and leaves, and expires reserves, from random
+callers. It checks both identities below with pending gross, and that
+`expiredMonthlyGross` equals the remaining gross of expired months.
+
+A late leaf of an older month advances `ordinarySourceSequence`. The monthly
+dispatcher therefore sends the newest month's reservation before older
+months' leaves in each pass.
 
 The first version uses individual commit and pay calls. Dispatchers isolate
 failed recipients by submitting separate transactions. No account can sweep
