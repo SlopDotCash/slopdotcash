@@ -52,6 +52,7 @@ bun build adapter.ts --target=node --outfile=.local/adapter.mjs
 bun build funding.ts --target=node --outfile=.local/funding.mjs
 bun build commitment.ts --target=node --outfile=.local/commitment.mjs
 bun build owner-instructions.ts transactions.ts --target=node --outdir=.local --entry-naming='[name].mjs'
+bun build owner-creation.ts --target=node --outfile=.local/owner-creation.mjs
 bun build ../../workers/payment-executor/solana.ts --target=node --outfile=.local/executor.mjs
 bun build ../../workers/payment-executor/solana-monthly.ts --target=node --outfile=.local/monthly-executor.mjs
 bun build ../../workers/payments/scanner.ts ../../backend/payments/ledger.ts ../../backend/payments/handler.ts ../../backend/payments/vault-snapshots.ts --target=node --outdir=.local --entry-naming='[name].mjs'
