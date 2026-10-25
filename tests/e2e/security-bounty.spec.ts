@@ -2598,6 +2598,31 @@ test("automatic private intake files as the reporter and verifies receipt @regis
         fullPage: true,
       });
       await expect(page.getByRole("alert")).toContainText("is out of date");
+      // The effective layout of the native desktop review at 200% zoom.
+      // Backward keyboard navigation must not hide focus under the header.
+      const originalViewport = page.viewportSize();
+      await page.setViewportSize({ width: 864, height: 498 });
+      await page.getByRole("textbox", { name: "Summary", exact: true }).click();
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Shift+Tab");
+      const retry = page.getByRole("button", {
+        name: "Check again",
+        exact: true,
+      });
+      await expect(retry).toBeFocused();
+      const focus = await retry.evaluate((element) => ({
+        top: element.getBoundingClientRect().top,
+        headerBottom: document
+          .querySelector(".site-header")
+          ?.getBoundingClientRect().bottom,
+      }));
+      expect(focus.headerBottom).toBeDefined();
+      expect(focus.top).toBeGreaterThanOrEqual((focus.headerBottom ?? 0) + 6);
+      await page.screenshot({
+        path: test.info().outputPath("reporting-keyboard-focus.png"),
+      });
+      if (originalViewport) await page.setViewportSize(originalViewport);
       await setIntake(request, noProgram.repository, "enabled");
       // The page retains the stale observation; current authenticated intake
       // can still proceed once GitHub is available again.
