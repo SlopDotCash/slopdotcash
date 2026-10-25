@@ -328,6 +328,35 @@ export async function runEvmExtended(
     item: Award,
     bounty = false,
   ) => {
+    if (!entry.steps[key]) {
+      // An interrupted run can commit after its evidence was last saved; the
+      // vault's AwardCommitted event names that transaction.
+      const [created] = (await chain.rpc("eth_getLogs", [
+        {
+          address: vault,
+          fromBlock: at(
+            entry.steps[`${key.split(":")[0]}:create`]?.block ?? "0",
+          ),
+          toBlock: "latest",
+          topics: [
+            keccak256(
+              Buffer.from(
+                "AwardCommitted(bytes32,uint64,uint128,uint128,bytes32)",
+              ),
+            ),
+            item.id,
+          ],
+        },
+      ])) as { transactionHash: string; blockNumber: string }[];
+      if (created) {
+        entry.steps[key] = {
+          transactionId: created.transactionHash,
+          from: keys.owner.address.toLowerCase(),
+          note: "Recovered from the vault's AwardCommitted event",
+        };
+        await persist();
+      }
+    }
     const receipt = await send(
       entry,
       key,
