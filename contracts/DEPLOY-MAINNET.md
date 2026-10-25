@@ -66,12 +66,13 @@ These steps deploy replacement UUPS EVM factories and vault implementations,
 and deploy or upgrade the Solana program with owner-controlled upgrades.
 The approved launch order is Base, Solana, Ethereum, then Robinhood.
 
-Deployment runs through a human operator. Under the current repository rules,
-humans create, store and rotate signing keys and deploy mainnet contracts.
-Agents may prepare unsigned plans, review public configuration and verify
-public chain evidence; they must not handle signing material or execute a
-mainnet deployment. Application services receive only their separately
-authorized attester or fee-conversion key, never deployment or upgrade keys.
+A human or an owner-authorized agent may execute the reviewed plan within
+the owner's authorized financial scope (PRD section 11, 25 October 2026). An
+authorized agent may use necessary existing credentials privately. Never print
+secrets or signing material. Required acceptance, explicit mainnet activation
+and the reviewed release flow remain. Application services receive only their
+separately authorized attester or fee-conversion key, never deployment or
+upgrade keys.
 Keep signing material and transaction journals private; publish only
 transaction identities and verified results.
 
@@ -101,7 +102,7 @@ needs a reviewed manifest revision with the deployment evidence below
 4. Set `ESCROW_UPGRADE_AUTHORITY` to the approved deployment authority. It can
    upgrade factory and vault logic immediately. The deployer pays gas and holds
    upgrade power only if selected. Use a hardware
-   wallet (`--ledger` or `--trezor`) or a human-managed Foundry keystore
+   wallet (`--ledger` or `--trezor`) or an owner-controlled Foundry keystore
    (`--account`). Hardware is optional; the owner selected software custody.
    Never pass a private key on the command line.
 5. Use Foundry 1.7.1 (commit `4072e48705af9d93e3c0f6e29e93b5e9a40caed8`).
@@ -516,8 +517,8 @@ lifecycle on each activated project separately.
 ## 3. Payout activation, one network at a time
 
 Do this section for one network. Finish it, reconcile the first payout, and
-record the evidence before you start the next network. Agents must not run
-these steps; they may prepare commands and read reports.
+record the evidence before you start the next network. A human or an
+owner-authorized agent may run these steps within the approved financial scope.
 
 The code enables only Base mainnet (section 3.6). Every other value in
 `workers/payment-executor/mainnet-execution.mjs` is `false`, and the
@@ -550,7 +551,7 @@ An unsigned kit, a planned address or a local fork must not become a live pin.
 Reuse the network definitions in `ESCROW_NETWORKS`; do not add a project,
 owner, asset or vault as a bootstrap placeholder.
 
-After the human signs the approved upgrade, verify the finalized factory
+After the approved upgrade is signed, verify the finalized factory
 proxy, its implementation and selected new-vault implementation, runtime
 hashes, upgrade authority, registrar, identity authority, fee recipient and
 delays. Record those reviewed fields, the source commit and expected vault
@@ -756,8 +757,9 @@ only binding path. Slop does not submit the payout: `pay` is permissionless
 
 #### Base test payout, owner sequence
 
-This is the full sequence for one 10 USDC test award. Agents must not run
-these steps. `$RPC` is your Base RPC URL, `--account owner` is your Foundry
+This is the full sequence for one 10 USDC test award. The owner must authorize
+the award and its transactions before a human or agent runs it. `$RPC` is your
+Base RPC URL, `--account owner` is your Foundry
 keystore for the owner wallet, and `$ACTOR` is the contributor's numeric
 GitHub ID. Run the commands from a clean checkout of `development`.
 
@@ -909,9 +911,10 @@ or a permissionless executor submits for an approved and funded obligation.
 
 This kit targets contract source `dd1af34d22c08a8aecd9bb6c644831f2e2da85ac`.
 It replaces the earlier `239d0235`, `e55a804a` and `2a4e80b3` kits. The existing mainnet review is still
-`bce5b0df`, as listed above. Recheck that review before use. Agents prepare
-and rehearse this kit on local forks only. The human upgrade authority signs
-and sends mainnet transactions. Follow the approved launch order in section 0.
+`bce5b0df`, as listed above. Recheck that review before use. Rehearse this kit
+on a local fork before mainnet execution. The owner may authorize an agent to
+use the upgrade authority key for the reviewed plan. Follow the approved launch
+order and acceptance checks in section 0.
 
 ### 4.1 What changes
 
@@ -1017,7 +1020,7 @@ NEW_FACTORY=0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f
      --rpc-url "$RPC" --account slop-mainnet-deployer --sender "$AUTHORITY"
    ```
 
-   The human operator adds `--broadcast` only for the approved network and
+   The authorized operator adds `--broadcast` only for the approved network and
    after reviewing the simulation. The script sends salt plus creation bytes
    to the CREATE2 deployer and skips implementations already present.
    After finality, compare both runtimes with section 4.3. Verify their source
@@ -1125,5 +1128,5 @@ awards. Opt-out stops new admission; it does not cancel an admitted reserve.
 
 Use a separately reviewed forward repair if a defect prevents completion.
 Preserve pending reserve data, stored award fees, source-use maps and signed
-attempt journals. Rehearse recovery against the affected state before human
+attempt journals. Rehearse recovery against the affected state before
 signing. Append its implementation review and history as another revision.
