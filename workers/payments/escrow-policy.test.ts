@@ -225,6 +225,25 @@ describe("assertEscrowPolicy after the family refactor", () => {
       assertEscrowPolicy(policy("robinhood", evmDeployment)),
     ).toThrow(/one chain and one escrow per network/);
   });
+  test("rejects an owner who is also the fee recipient", () => {
+    // The payout fee flows to the fee recipient, so the owner must not
+    // collect it: "Escrow authorities must have separate roles".
+    expect(() =>
+      assertEscrowPolicy(
+        policy("base", { ...evmDeployment, feeRecipient: evmDeployment.owner }),
+      ),
+    ).toThrow(/separate roles/);
+  });
+  test("rejects an identity authority who is also the fee recipient", () => {
+    expect(() =>
+      assertEscrowPolicy(
+        policy("base", {
+          ...evmDeployment,
+          feeRecipient: evmDeployment.identityAuthority,
+        }),
+      ),
+    ).toThrow(/separate roles/);
+  });
 });
 describe("escrow v2 network registry", () => {
   test("Ethereum mainnet and Sepolia carry Circle USDC with its source", () => {
