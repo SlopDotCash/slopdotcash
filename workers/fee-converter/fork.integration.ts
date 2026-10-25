@@ -30,6 +30,35 @@ const FORK_URL =
   "https://mainnet.base.org";
 const PORT = Number(process.env.SLOP_TEST_FEE_PORT ?? 28545);
 const claimOnly = process.argv.includes("--fee-claim-only");
+const supportedFaults = ["before", "after", "receipt", "hashes", "race"];
+const faults =
+  process.env.SLOP_TEST_CLAIM_FAULTS?.split(",") ?? supportedFaults;
+if (faults.some((fault) => !supportedFaults.includes(fault)))
+  throw new Error("Unknown fee-claim fault case");
+if (faults.length > 1) {
+  // Repeated snapshot restores can lose historical bytecode in Anvil. Each
+  // fault needs a fresh chain so receipt-block code checks remain available.
+  // The first process also runs the six existing conversion cases.
+  for (const [index, fault] of faults.entries()) {
+    console.log(`Fresh fork for claim fault: ${fault}`);
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        import.meta.path,
+        ...process.argv.slice(2),
+        ...(index > 0 && !claimOnly ? ["--fee-claim-only"] : []),
+      ],
+      {
+        env: { ...process.env, SLOP_TEST_CLAIM_FAULTS: fault },
+        stdout: "inherit",
+        stderr: "inherit",
+      },
+    );
+    const code = await child.exited;
+    if (code !== 0) process.exit(code);
+  }
+  process.exit(0);
+}
 const RPC = `http://127.0.0.1:${PORT}`;
 const AERO = "0x940181a94a35a4569e4529a3cdfb74e38fd98631";
 const HOLDER = "0x6cdcb1c4a4d1c3c6d054b27ac5b77e89eafb971d";
@@ -40,19 +69,28 @@ const UNROUTED = "0x00000000000000000000000000000000000f0e10";
 const nativeFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const response = await nativeFetch(input, init);
-  if (String(input) === RPC && typeof init?.body === "string") {
+  const url = input instanceof Request ? input.url : String(input);
+  if (new URL(url).origin === RPC && typeof init?.body === "string") {
     const result = await response.clone().json();
-    if (result.error)
+    if (result.error) {
+      const request = JSON.parse(init.body);
       console.log(
         JSON.stringify({
-          rpcMethod: JSON.parse(init.body).method,
+          rpcMethod: request.method,
+          block:
+            request.method === "eth_call" || request.method === "eth_getCode"
+              ? request.params[1]
+              : request.method === "eth_getStorageAt"
+                ? request.params[2]
+                : undefined,
           rpcError: result.error.code,
-          message: String(result.error.message).replace(
+          message: JSON.stringify(result.error).replace(
             /0x[0-9a-f]{80,}/giu,
             "<hex>",
           ),
         }),
       );
+    }
   }
   return response;
 }) as typeof fetch;
@@ -737,11 +775,6 @@ try {
     throw new Error("7 a receipt or dry run moved vault fees");
 
   // Each retry uses a fresh Worker invocation and the durable SQLite journal.
-  const supportedFaults = ["before", "after", "receipt", "hashes", "race"];
-  const faults =
-    process.env.SLOP_TEST_CLAIM_FAULTS?.split(",") ?? supportedFaults;
-  if (faults.some((fault) => !supportedFaults.includes(fault)))
-    throw new Error("Unknown fee-claim fault case");
   console.log(`Claim fault cases: ${faults.join(", ")}`);
   for (const fault of faults) {
     const snapshot = await rpc("evm_snapshot", []);
@@ -1006,5 +1039,6 @@ try {
   );
 } finally {
   anvil.kill();
+  await anvil.exited;
   globalThis.fetch = nativeFetch;
 }
