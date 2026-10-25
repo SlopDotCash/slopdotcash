@@ -58,7 +58,9 @@ Config `9hjoFnUrgF65K4DnWSDbS1WJjoGu4LChuz8XFq73UtaS`: identity authority
 `9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY`, rotation authority
 `2tAA47aavW2mqtCAxbn21ZqLb8xZTeq8XvkRR9emduiy`. The release issues (#898,
 #899, #900, #901) hold the transaction identities. The verifiable Docker
-build and second-operator hash are still open for Solana.
+build and exact-artifact qualification are still open for Solana. The owner
+waived a second operator and a different build machine on 25 October 2026;
+that check was not completed (PRD section 11).
 
 These steps deploy replacement UUPS EVM factories and vault implementations,
 and deploy or upgrade the Solana program with owner-controlled upgrades.
@@ -305,43 +307,39 @@ Placeholders:
 
 ### 2. Verifiable build with the pinned toolchain
 
-Use Anchor CLI 0.32.1 and the Docker image
-`solanafoundation/anchor:v0.32.1` with the digest
-`sha256:facc4ebd0738ba7ebc1eb4ef000deab6b37e7747960d3f400c73c40c5421b5de`
-(linux/amd64). The image contains solana-cli 2.3.0. The build uses platform
-tools v1.52 and the locked `Cargo.lock`, the same arguments as
-`scripts/build-local.sh`.
+Use Anchor CLI 0.32.1, the Docker image digest below, platform tools v1.52
+and the locked `Cargo.lock`. The image is linux/amd64 and contains Solana
+CLI 2.3.0.
 
 ```bash
 git clone https://github.com/SlopDotCash/slopdotcash.git && cd slopdotcash
 git checkout "$COMMIT"
 cd contracts/solana
-docker pull solanafoundation/anchor@sha256:facc4ebd0738ba7ebc1eb4ef000deab6b37e7747960d3f400c73c40c5421b5de
-anchor build --verifiable --no-idl -- --tools-version v1.52 -- --locked
+IMAGE=solanafoundation/anchor@sha256:facc4ebd0738ba7ebc1eb4ef000deab6b37e7747960d3f400c73c40c5421b5de
+docker pull "$IMAGE"
+anchor build --verifiable --docker-image "$IMAGE" --no-idl -- --tools-version v1.52 -- --locked
 ```
 
-Do not use `solana-verify build`. solana-verify 0.5.2 selects the Solana 2.3.0
-image (`solanafoundation/solana-verifiable-build@sha256:695f890e…`), which has
-Cargo 1.84.0. `Cargo.lock` contains `block-buffer 0.12.1`, which needs the
-`edition2024` feature, so Cargo stops before the build starts.
+Do not use the default `solana-verify build` image with this lockfile. Its
+Cargo 1.84.0 cannot build the edition-2024 dependency `block-buffer 0.12.1`.
 
-After Anchor writes the program file, it tries to extract the IDL on the host
-and stops with `unexpected argument '--tools-version'` and exit code 1. That
-step occurs after the program file is complete and does not change it. Check
-that `target/verifiable/slop_escrow.so` exists and has a new modification time.
-Any other error is a failed build.
-
-Record `target/verifiable/slop_escrow.so` as `$SO`.
+Anchor 0.32.1 extracts the IDL on the host after the Docker build. With these
+arguments, that later step exits with `unexpected argument '--tools-version'`.
+Accept that specific error only after the Docker build completed and wrote a
+new `target/verifiable/slop_escrow.so`. Any other error is a failed build.
+Record that program file as `$SO`.
 
 ```bash
 sha256sum "$SO"                          # REVIEWED_SO_SHA256
 solana-verify get-executable-hash "$SO"  # REVIEWED_EXECUTABLE_HASH
 ```
 
-A second operator repeats this step on a different machine with the same
-commit and image digest. Both hashes must match. Record the two values, the
-host and the image digest in the release issue. Do not continue if a value is
-different.
+Record the source commit, tool versions, image digest and both hashes in the
+release issue. A second operator or different machine is not required (owner
+decision, 25 October 2026; PRD section 11). This waiver is not a completed
+independent check. Qualify this exact artifact on the test network before the
+authorized mainnet upgrade. Steps 3 to 9 still verify the deployed bytes,
+executable hash and authority.
 
 ### 3. Record the current deployed program
 
