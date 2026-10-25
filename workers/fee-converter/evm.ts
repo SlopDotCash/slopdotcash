@@ -490,8 +490,16 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         inUsd !== null && outUsd !== null && inUsd > 0n
           ? Number(inUsd > outUsd ? ((inUsd - outUsd) * 10_000n) / inUsd : 0n)
           : null;
-      const gasCostMicro =
-        (usdMicro(summary.gasUsd) ?? 0n) + (usdMicro(summary.l1FeeUsd) ?? 0n);
+      const gasUsd = usdMicro(summary.gasUsd);
+      // Ethereum has no separate L1 posting fee. Base needs both estimates;
+      // an unavailable price must not weaken the conversion's 10x gas gate.
+      const l1FeeUsd =
+        summary.l1FeeUsd === undefined && config.network === "ethereum"
+          ? 0n
+          : usdMicro(summary.l1FeeUsd);
+      if (gasUsd === null || l1FeeUsd === null)
+        throw new Error("KyberSwap gas cost is unavailable");
+      const gasCostMicro = gasUsd + l1FeeUsd;
       return {
         route: "kyberswap",
         amountIn: amount,

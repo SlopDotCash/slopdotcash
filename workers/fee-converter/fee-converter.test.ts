@@ -345,7 +345,10 @@ describe("USDC routes", () => {
 describe("Kyber gas pricing in the conversion workflow", () => {
   // The fields follow the live 2026-10-25 /routes response. The token and
   // amounts are synthetic; only gas pricing varies in the refusal controls.
-  function quotedRun(network: "base" | "ethereum", costs: Record<string, unknown>) {
+  function quotedRun(
+    network: "base" | "ethereum",
+    costs: Record<string, unknown>,
+  ) {
     const h = harness({
       env: {
         FEE_CONVERTER_NETWORKS: network,
@@ -441,7 +444,9 @@ describe("Kyber gas pricing in the conversion workflow", () => {
         });
         expect(h.chain.prepared).toBe(state === "submitted" ? 1 : 0);
         expect(h.chain.sent).toHaveLength(state === "submitted" ? 1 : 0);
-        expect(h.events.some((event) => event.event === "fee_conversion_error")).toBe(false);
+        expect(
+          h.events.some((event) => event.event === "fee_conversion_error"),
+        ).toBe(false);
       } finally {
         h.sqlite.close();
       }
