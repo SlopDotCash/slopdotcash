@@ -47,6 +47,7 @@ export async function readValueDecision(
         )?.id ?? evidence.repository,
         evidence.pull.number,
         after,
+        evidence.repositoryNodeId,
       ),
     evidence,
     policy,

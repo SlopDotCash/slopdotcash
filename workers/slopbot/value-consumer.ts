@@ -208,6 +208,7 @@ export async function consumeValueRequest(
               source.evidence.pull.number,
               after,
               through,
+              source.evidence.repositoryNodeId,
             ),
           {
             repositoryNodeId: source.evidence.repositoryNodeId,

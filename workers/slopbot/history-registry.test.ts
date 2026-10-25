@@ -11,9 +11,14 @@ import { findProject } from "../../src/lib/projects.mjs";
 import { findRegisteredRepositoryById } from "../../src/lib/repositories.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import worker from "./index";
-import { readValueDecisionFromHistory } from "./value-consumption";
+import {
+  readValueDecision,
+  readValueDecisionFromHistory,
+} from "./value-consumption";
 import type { ValueEvidence } from "./value-evidence";
+import { appendValueRecord } from "./value-journal";
 import { readWorkUnitHistory } from "./value-work-unit-consumption";
+import { workUnitHistory } from "./value-work-unit-journal";
 
 const repository = "Example/new-history";
 const projectId = "new-history";
@@ -173,6 +178,7 @@ function fixture(
     fetch: (request) => worker.fetch(request, env),
   });
   return {
+    db,
     sqlite,
     revision,
     record,
@@ -261,6 +267,79 @@ test("history consumers retain registered aliases and reject a different immutab
     limitations: ["History readback only"],
   } as unknown as ValueEvidence;
   try {
+    const direct = await readValueDecision(
+      f.db,
+      evidence,
+      { sha: "a".repeat(40), text: "History readback" },
+      repositories,
+    );
+    expect(direct.latestDigest).toBe(digest(f.record));
+    expect(direct.history).toHaveLength(1);
+    const successor = {
+      ...JSON.parse(f.record),
+      repository: repositories[0].id,
+      producerRevision: "a".repeat(40),
+      rubricVersion: "history-readback",
+      supersedes: direct.latestDigest,
+      revisionReason: "Retain predecessor after rename",
+    };
+    const prepare = async (record: typeof successor) => {
+      const recordJson = JSON.stringify(record);
+      return {
+        record,
+        recordJson,
+        recordDigest: digest(recordJson),
+        assessmentKey: digest(
+          JSON.stringify([
+            "slop-value-assessment:v1",
+            record.repositoryNodeId,
+            record.pullRequestNodeId,
+            record.sourceDigest,
+            record.rubricVersion,
+            record.producerRevision,
+          ]),
+        ),
+      };
+    };
+    const prepared = await prepare(successor);
+    const appended = await appendValueRecord(f.db, prepared);
+    expect((await appendValueRecord(f.db, prepared)).record_digest).toBe(
+      appended.record_digest,
+    );
+    const continued = await readValueDecision(
+      f.db,
+      evidence,
+      { sha: "a".repeat(40), text: "History readback" },
+      repositories,
+    );
+    expect(continued.history).toHaveLength(2);
+    expect(continued.history[0].record_json).toBe(f.record);
+    expect(continued.latestDigest).toBe(appended.record_digest);
+    await expect(
+      appendValueRecord(
+        f.db,
+        await prepare({
+          ...successor,
+          producerRevision: "f".repeat(40),
+          supersedes: null,
+          revisionReason: null,
+        }),
+      ),
+    ).rejects.toThrow("value journal records cannot be replaced");
+    const directGraph = await readWorkUnitHistory(
+      (after, through) =>
+        workUnitHistory(
+          f.db,
+          evidence.repository,
+          8,
+          after,
+          through,
+          evidence.repositoryNodeId,
+        ),
+      { repositoryNodeId: "R_history", pullRequestNodeId: "PR_joint" },
+      repositories,
+    );
+    expect(directGraph.current?.row.record_digest).toBe(digest(f.joint));
     const result = await readValueDecisionFromHistory(
       single,
       evidence,
