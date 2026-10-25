@@ -3817,12 +3817,6 @@ function createSnapshotWithReviewCutoff(
       const claims = joint.evidence.claims.filter((claim) =>
         unit.claimIds.includes(claim.id),
       );
-      if (
-        claims.some((claim) =>
-          claim.carrierPullRequestIds.some((id) => scoreRatifications.has(id)),
-        )
-      )
-        return null;
       value = unit.assessment.reviews.find(
         (item) => item.sourceId === review.id,
       );
