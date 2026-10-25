@@ -453,11 +453,19 @@ export default {
     await resumeBudgetBlocks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
     await dispatchMaintainerHolds(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
     await dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
-    if (env.SLOP_NOTIFY) {
-      await dispatchSpendAlert(env.SLOPBOT_DB, env.SLOP_NOTIFY);
-      await dispatchFailureAlert(env.SLOPBOT_DB, env.SLOP_NOTIFY);
-    }
-    await consumePendingValueRequest(env);
+    // An email outage must not stop assessment. Notice claims and ambiguous
+    // receipts remain durable, while the scheduled invocation reports failure.
+    const outcomes = await Promise.allSettled([
+      consumePendingValueRequest(env),
+      ...(env.SLOP_NOTIFY
+        ? [
+            dispatchSpendAlert(env.SLOPBOT_DB, env.SLOP_NOTIFY),
+            dispatchFailureAlert(env.SLOPBOT_DB, env.SLOP_NOTIFY),
+          ]
+        : []),
+    ]);
+    if (outcomes.some((result) => result.status === "rejected"))
+      throw new Error("Slopbot scheduled work or notification needs attention");
   },
 
   async queue(

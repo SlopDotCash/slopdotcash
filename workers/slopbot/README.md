@@ -1049,8 +1049,9 @@ are accepted in alerts-only mode but do not create a fictional cost ceiling.
 
 A positive monthly amount selects capped mode. It still requires a positive
 `SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD` within that allowance and an explicit
-canonical UTC `SLOPBOT_VALUE_START_AT`. The release supplies the validated settings
-to the same Worker version as `SLOPBOT_PRODUCER_REVISION` and the existing model
+canonical UTC `SLOPBOT_VALUE_START_AT` on or after 1 November. Neither mode can
+use API assessment for September or October. The release supplies the validated
+settings to the same Worker version as `SLOPBOT_PRODUCER_REVISION` and the existing model
 credential. No source default enables inference, payout approval or closures.
 Email each crossed $500 spending milestone in alerts-only mode. All attempts,
 known costs and unknown costs remain recorded. Migration `0085` queues each new
@@ -1058,8 +1059,9 @@ failed Surplus request for the existing private notify service. A cron claims
 one pending notice before sending it. The notice includes only its cost-record
 ID, model, fixed failure category and time. A failed primary request still gets
 a notice if the fallback succeeds. Historical failures are not queued again.
-An ambiguous email result stays recorded and is not blindly resent. This source change does not set
-production variables, deploy a Worker or prove a live assessment.
+An ambiguous email result stays recorded and is not blindly resent. An email
+outage does not stop the scheduled assessment; the cron still reports the
+notification failure. This source change does not set production variables, deploy a Worker or prove a live assessment.
 
 The consumer replay uses actual SQLite migrations, collector, policy loader,
 model SDK over local HTTP, usage ledger, journal reader and publisher. Captured

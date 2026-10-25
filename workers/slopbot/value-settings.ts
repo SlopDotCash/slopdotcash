@@ -31,7 +31,7 @@ export function valueSettings(env: ValueSettingsEnv) {
     (monthly !== null && maximum !== null && maximum > monthly) ||
     !Number.isFinite(start) ||
     new Date(start).toISOString() !== startText ||
-    (alertsOnly && start < Date.parse(VALUE_API_START_AT))
+    start < Date.parse(VALUE_API_START_AT)
   )
     return null;
   return { monthly, maximum, start };
