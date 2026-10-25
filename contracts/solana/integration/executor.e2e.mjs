@@ -95,7 +95,7 @@ async function parsedTransaction(signature) {
   });
   return (await response.json()).result;
 }
-test("durable executor verifies SQLite consent, binds, creates ATAs, pays and retries exact signature", {
+test("durable executor verifies SQLite consent, pays a one-unit award, and retries exact signature", {
   timeout: 480000,
 }, async () => {
   await ensureConfig(program);
@@ -181,8 +181,9 @@ test("durable executor verifies SQLite consent, binds, creates ATAs, pays and re
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .rpc();
+  // Round-up fees consume this award. The program settles it without a token CPI.
   const approval = await program.methods
-    .commit([...awardId], [...origin], bn(103), bn(100_000_000))
+    .commit([...awardId], [...origin], bn(103), bn(1))
     .accountsStrict({
       owner: payer.publicKey,
       project,
@@ -261,8 +262,8 @@ test("durable executor verifies SQLite consent, binds, creates ATAs, pays and re
       input.vault,
       mint.toBase58(),
       6,
-      "100000000",
-      "2000000",
+      "1",
+      "1",
       origin.toString("hex"),
       now,
     );
@@ -675,12 +676,12 @@ test("durable executor verifies SQLite consent, binds, creates ATAs, pays and re
         getAssociatedTokenAddressSync(mint, recipient.publicKey),
       )
     ).amount,
-    98_000_000n,
+    0n,
   );
   // The fee accrues in the vault; the executor no longer touches a fee account.
   assert.equal(
     (await program.account.project.fetch(project)).accruedFees.toString(),
-    "2000000",
+    "1",
   );
   assert.equal(
     await provider.connection.getAccountInfo(
@@ -688,9 +689,21 @@ test("durable executor verifies SQLite consent, binds, creates ATAs, pays and re
     ),
     null,
   );
-  const [{ index: eventIndex }] = escrowInvocations(
+  const [paidInvocation] = escrowInvocations(
     await parsedTransaction(sent.transactionId),
     config.programId,
+  );
+  assert.equal(paidInvocation.children.length, 0);
+  const eventIndex = paidInvocation.index;
+  console.log(
+    JSON.stringify({
+      step: "one-unit-payment-finalized",
+      signature: sent.transactionId,
+      gross: "1",
+      fee: "1",
+      net: "0",
+      tokenTransfers: 0,
+    }),
   );
   const adapter = solanaPaymentAdapter({
     ...config,
@@ -707,7 +720,7 @@ test("durable executor verifies SQLite consent, binds, creates ATAs, pays and re
         obligationId: input.obligationId,
       })
     ).netMicro,
-    "98000000",
+    "0",
   );
   assert.equal(
     sql.prepare("SELECT count(*) n FROM test_executor_journal").get().n,
@@ -931,5 +944,22 @@ test("durable executor verifies SQLite consent, binds, creates ATAs, pays and re
   await scanSolanaPayments(db, config, provider.connection.rpcEndpoint, index);
   await scanSolanaPayments(db, config, provider.connection.rpcEndpoint, index);
   assert.equal(sql.prepare("SELECT count(*) n FROM payment_events").get().n, 2);
+  const indexedAward = sql
+    .prepare(
+      "SELECT gross_base,fee_base,paid_transaction FROM payment_obligations",
+    )
+    .get();
+  assert.equal(indexedAward.gross_base, "1");
+  assert.equal(indexedAward.fee_base, "1");
+  assert.equal(indexedAward.paid_transaction, sent.transactionId);
+  console.log(
+    JSON.stringify({
+      step: "one-unit-payment-indexed",
+      state: "paid",
+      gross: indexedAward.gross_base,
+      fee: indexedAward.fee_base,
+      events: 2,
+    }),
+  );
   sql.close();
 });
