@@ -123,13 +123,13 @@ export async function runSolanaExtended(
       "ESCROW_ACCEPTANCE_UNIT_DIVISOR scaled the scenario figures down; amounts are not at full scale.";
     if (!run.deviations.includes(note)) run.deviations.push(note);
   }
-  // Destination wallets are derived in memory from the second actor seed.
+  // Each recorded run has separate destination wallets; a resume derives the same keys.
   const actorSeed = solanaSeed("ESCROW_ACCEPTANCE_ACTOR_B_KEY");
   const walletSeed = (label: string) =>
     sha256(
       Buffer.concat([
         Buffer.from(actorSeed),
-        Buffer.from(`slop-acceptance-wallet:${label}`),
+        Buffer.from(`slop-acceptance-wallet:${run.runId}:${label}`),
       ]),
     );
   const wallet = (label: string) => Keypair.fromSeed(walletSeed(label));
