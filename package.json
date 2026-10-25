@@ -27,6 +27,7 @@
     "verify": "bun run verify:contracts && bun run cycles:check && bun run audit:dependencies && bun run verify:code && bun run test:points && bun run build",
     "typecheck": "tsc -b",
     "test:slopbot": "bun test ./workers/slopbot",
+    "test:trace": "node backend/trace/workflow.mjs",
     "test:notify": "bun test ./workers/notify/notify.test.ts ./workers/notify/security.test.ts",
     "test:fee-converter": "bun test ./workers/fee-converter/fee-converter.test.ts ./backend/fee-conversions/handler.test.ts",
     "payments:keep": "bun scripts/payment-keeper/run.ts",

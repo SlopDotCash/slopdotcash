@@ -60,11 +60,21 @@ export const loginHref = (next: string) =>
 
 function AdminAccountLink({ onNavigate }: { onNavigate: () => void }) {
   const session = useProjectSession();
-  return session.status === "signed-in" && session.session.admin ? (
-    <Link href="/admin" onNavigate={onNavigate}>
-      Admin
-    </Link>
-  ) : null;
+  if (session.status !== "signed-in") return null;
+  return (
+    <>
+      {session.session.admin ? (
+        <Link href="/admin" onNavigate={onNavigate}>
+          Admin
+        </Link>
+      ) : null}
+      {session.session.traceOperator === true ? (
+        <Link href="/operator/traces" onNavigate={onNavigate}>
+          Private traces
+        </Link>
+      ) : null}
+    </>
+  );
 }
 
 interface Membership {
