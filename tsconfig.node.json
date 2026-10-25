@@ -21,6 +21,7 @@
     "src/lib/payments/**/*.ts",
     "contracts/evm/adapter.ts",
     "contracts/evm/integration/upgrade.ts",
+    "contracts/evm/integration/mainnet-upgrade-rehearsal.ts",
     "contracts/solana/adapter.ts",
     "contracts/solana/transactions.ts",
     "contracts/solana/owner-instructions.ts",
