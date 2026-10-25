@@ -1,8 +1,9 @@
 # Escrow acceptance runbook (PRD section 21)
 
 This runbook runs the PRD section 21 funded-award scenario on one test
-network and writes a machine-readable evidence file. A human operator runs it
-with funded test keys. Test assets are not real funds, and a test run is not
+network and writes a machine-readable evidence file. A human or owner-authorized
+agent runs the reviewed plan with funded test keys under PRD section 11. Keep
+credentials private. Test assets are not real funds, and a test run is not
 mainnet evidence.
 
 Networks: `base-sepolia`, `ethereum-sepolia`, `robinhood-testnet`,
@@ -294,10 +295,32 @@ bun scripts/escrow-acceptance/evm-upgrade.ts verify  base-sepolia evidence/escro
   creation inventory and its factory mapping again, and records `supersededAtBlock`
   (section 4.7).
 
+`verify` records a fixed preservation block from the canonical finalized
+completion receipts, including template selection and stragglers. It compares
+all original storage there. A separate current finalized observation checks
+runtime, roles and complete inventory. Payments of already funded awards after
+the preservation block are reconciled from exact canonical receipts, stored
+fees, actual token balance deltas and allowed storage changes. Other event
+classes and all unexplained writes remain unqualified. Keep the upgrade
+interval free of unrelated activity; this verifier does not infer per-transaction
+preservation from ambiguous same-block state.
+
 Exit code 75 means a transaction waits for finality; run the same command
-again. Evidence is `upgrade.json` in the directory. Run no acceptance run
-against the factory between `plan` and `verify`: the storage comparison
-expects no other activity.
+again. Evidence is `upgrade.json` in the directory. To qualify an explicitly
+reviewed plan from an older runner without changing its source or journal, use
+the read-only companion from the reviewed repaired source:
+
+```sh
+bun --no-env-file scripts/escrow-acceptance/upgrade-verify.ts base-sepolia \
+  <original-upgrade.json> <reviewed-original-source-sha> \
+  <reviewed-original-file-sha256> <new-private-report.json>
+```
+
+It requires the existing RPC and factory configuration, never a signing key.
+The new report binds original source and input bytes separately from verifier
+source. The original status, history, snapshots and signed transactions remain
+unchanged. Preserve the original failed verification and the compatibility
+review. Hold the original network lock while qualifying a live journal.
 
 The test network upgrade authority is the address that `plan` reads from
 `upgradeAuthority()`. The deploy scripts set it from

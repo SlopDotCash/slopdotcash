@@ -50,6 +50,9 @@ jobs:
   prepare:
     name: Prepare checked browser bundle
     needs: source
+    outputs:
+      registry_sha256: ${{ steps.registry.outputs.registry_sha256 }}
+      revisions_sha256: ${{ steps.registry.outputs.revisions_sha256 }}
     env:
       RELEASE_SHA: ${{ needs.source.outputs.sha }}
       VITE_SLOP_ENVIRONMENT: ${{ (github.ref == 'refs/heads/development' || github.base_ref == 'development') && 'staging' || 'production' }}
@@ -229,6 +232,33 @@ jobs:
           SLOP_POINTS_ONLINE: ${{ github.event_name != 'pull_request' && '1' || '0' }}
           SLOP_POINTS_BOOTSTRAP: "1"
         run: bun run build
+
+      - name: Bind the checked registry snapshot
+        id: registry
+        run: |
+          set -euo pipefail
+          bun run projects:check
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { appendFileSync, readFileSync } from "node:fs";
+          for (const [name, file] of [
+            ["registry_sha256", "src/lib/project-registry.generated.mjs"],
+            ["revisions_sha256", "src/lib/project-revisions.generated.json"],
+          ]) {
+            const digest = createHash("sha256").update(readFileSync(file)).digest("hex");
+            appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${digest}\n`);
+          }
+          NODE
+
+      - name: Upload checked registry snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slop-registry-${{ needs.source.outputs.sha }}
+          path: |
+            src/lib/project-registry.generated.mjs
+            src/lib/project-revisions.generated.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Run installer lifecycle end-to-end checks
         run: bun run test:installer:e2e
@@ -506,7 +536,7 @@ jobs:
       needs.quality.result == 'success' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
-    needs: [source, quality]
+    needs: [source, prepare, quality]
     env:
       RELEASE_SHA: ${{ needs.source.outputs.sha }}
     permissions:
@@ -577,6 +607,32 @@ jobs:
 
       - name: Verify downloaded Pages bundle
         run: node scripts/dist-manifest.mjs verify-local dist
+
+      - name: Download checked registry snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: slop-registry-${{ needs.source.outputs.sha }}
+          path: src/lib
+
+      - name: Verify downloaded registry snapshot
+        env:
+          REGISTRY_SHA256: ${{ needs.prepare.outputs.registry_sha256 }}
+          REVISIONS_SHA256: ${{ needs.prepare.outputs.revisions_sha256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFileSync } from "node:fs";
+          for (const [expected, file] of [
+            [process.env.REGISTRY_SHA256, "src/lib/project-registry.generated.mjs"],
+            [process.env.REVISIONS_SHA256, "src/lib/project-revisions.generated.json"],
+          ]) {
+            const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
+            if (!/^[a-f0-9]{64}$/.test(expected ?? "") || actual !== expected)
+              throw new Error(`The checked registry snapshot changed: ${file}`);
+          }
+          NODE
+          bun run projects:check
 
       - name: Require live release-input equivalence
         env:
@@ -749,10 +805,11 @@ jobs:
 
           # Base mainnet identity attester (workers/payment-executor, PRD
           # PAY-05; owner activation of 24 October 2026). configure.mjs pins
-          # the Base mainnet vaults of the reviewed registry snapshot at this
-          # commit. With no pinned vault the attester has nothing to sign and
-          # is not released. With a pinned vault the owner-installed secrets
-          # must exist before this release changes anything. Only secret
+          # the Base mainnet vaults of the checked registry artifact from
+          # this release build. An absent Worker can be installed without pins
+          # or secrets, privately and without a cron. An existing Worker stays
+          # unchanged if the checked snapshot is empty. With pins, the required
+          # secrets must exist before this release changes anything. Only secret
           # names are read, never values. Slop has no relayer or payment
           # dispatcher on a mainnet (PRD section 6).
           attester_dir="$RUNNER_TEMP/slop-payment-attester"
@@ -770,12 +827,11 @@ jobs:
             echo "::error::The Base mainnet attester pin count is invalid."
             exit 1
           fi
-          if [ "$attester_vaults" != "0" ]; then
-            node workers/payment-executor/configure.mjs --stack production \
-              --network base-mainnet \
-              --deployments "$attester_dir/pinned.json" \
-              --output "$attester_dir"
-            node - "$attester_config" <<'NODE'
+          node workers/payment-executor/configure.mjs --stack production \
+            --network base-mainnet \
+            --deployments "$attester_dir/pinned.json" \
+            --output "$attester_dir"
+          node - "$attester_config" <<'NODE'
           const { readFileSync } = require("node:fs");
           const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
           const vars = config.vars ?? {};
@@ -789,12 +845,15 @@ jobs:
             vars.SIGNER_STACK !== "production" ||
             vars.SIGNER_ROLE !== "attester" ||
             vars.CHAIN_FAMILY !== "evm" ||
-            !Array.isArray(pinned) || pinned.length === 0 ||
-            !pinned.every((d) => d.network === "base-mainnet" && d.chainId === "8453")
+            !Array.isArray(pinned) ||
+            !pinned.every((d) => d.network === "base-mainnet" && d.chainId === "8453") ||
+            JSON.stringify(config.triggers?.crons) !== JSON.stringify(pinned.length ? ["*/5 * * * *"] : [])
           ) {
             throw new TypeError("the Base mainnet attester configuration boundary drifted");
           }
           NODE
+          attester_release=true
+          if [ "$attester_vaults" != "0" ]; then
             ./node_modules/.bin/wrangler secret list \
               --config "$attester_config" > "$attester_dir/secrets.json"
             node - "$attester_dir/secrets.json" <<'NODE'
@@ -809,9 +868,27 @@ jobs:
           }
           NODE
           else
-            # An attester released earlier stays unchanged; stop it first
-            # (contracts/DEPLOY-MAINNET.md section 3.6).
-            echo "::notice::The registry snapshot pins no Base mainnet vault; the attester is not released."
+            # Never replace an existing signer's pins or Durable Object journal
+            # with an empty snapshot. Only a proved absent Worker is bootstrapped.
+            if ./node_modules/.bin/wrangler deployments list \
+              --name slop-payments-base-mainnet-attester \
+              --config "$attester_config" --json \
+              > "$attester_dir/existing.json" 2> "$attester_dir/existing.stderr"; then
+              attester_release=false
+              echo "::notice::The registry pins no Base vault; the existing attester is unchanged."
+            else
+              node - "$attester_dir/existing.json" "$attester_dir/existing.stderr" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+          const output = process.argv.slice(2).map((path) => readFileSync(path, "utf8")).join("\n");
+          const resource = `/accounts/${account}/workers/scripts/slop-payments-base-mainnet-attester/deployments`;
+          if (!/^[a-f0-9]{32}$/.test(account ?? "") ||
+              !output.includes(`A request to the Cloudflare API (${resource}) failed.`) ||
+              !/\[code: 10007\]/.test(output)) {
+            throw new Error("Cannot prove Base attester absent; no bootstrap is permitted");
+          }
+          NODE
+            fi
           fi
 
           # Restore only absent cleanup triggers; reject nonempty provisioning drift.
@@ -1412,8 +1489,8 @@ jobs:
 
           # Base mainnet attester release, after the shared slop-private
           # migrations and before Pages serves its bindings. A full deploy
-          # applies the SQLite Durable Object journal migration and the cron.
-          if [ "$attester_vaults" != "0" ]; then
+          # preserves the SQLite Durable Object journal. Empty bootstrap has no cron.
+          if [ "$attester_release" = "true" ]; then
             ./node_modules/.bin/wrangler deploy \
               --config "$attester_config" \
               --tag="$GITHUB_SHA" \

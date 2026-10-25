@@ -66,12 +66,13 @@ These steps deploy replacement UUPS EVM factories and vault implementations,
 and deploy or upgrade the Solana program with owner-controlled upgrades.
 The approved launch order is Base, Solana, Ethereum, then Robinhood.
 
-Deployment runs through a human operator. Under the current repository rules,
-humans create, store and rotate signing keys and deploy mainnet contracts.
-Agents may prepare unsigned plans, review public configuration and verify
-public chain evidence; they must not handle signing material or execute a
-mainnet deployment. Application services receive only their separately
-authorized attester or fee-conversion key, never deployment or upgrade keys.
+A human or an owner-authorized agent may execute the reviewed plan within
+the owner's authorized financial scope (PRD section 11, 25 October 2026). An
+authorized agent may use necessary existing credentials privately. Never print
+secrets or signing material. Required acceptance, explicit mainnet activation
+and the reviewed release flow remain. Application services receive only their
+separately authorized attester or fee-conversion key, never deployment or
+upgrade keys.
 Keep signing material and transaction journals private; publish only
 transaction identities and verified results.
 
@@ -101,7 +102,7 @@ needs a reviewed manifest revision with the deployment evidence below
 4. Set `ESCROW_UPGRADE_AUTHORITY` to the approved deployment authority. It can
    upgrade factory and vault logic immediately. The deployer pays gas and holds
    upgrade power only if selected. Use a hardware
-   wallet (`--ledger` or `--trezor`) or a human-managed Foundry keystore
+   wallet (`--ledger` or `--trezor`) or an owner-controlled Foundry keystore
    (`--account`). Hardware is optional; the owner selected software custody.
    Never pass a private key on the command line.
 5. Use Foundry 1.7.1 (commit `4072e48705af9d93e3c0f6e29e93b5e9a40caed8`).
@@ -516,8 +517,8 @@ lifecycle on each activated project separately.
 ## 3. Payout activation, one network at a time
 
 Do this section for one network. Finish it, reconcile the first payout, and
-record the evidence before you start the next network. Agents must not run
-these steps; they may prepare commands and read reports.
+record the evidence before you start the next network. A human or an
+owner-authorized agent may run these steps within the approved financial scope.
 
 The code enables only Base mainnet (section 3.6). Every other value in
 `workers/payment-executor/mainnet-execution.mjs` is `false`, and the
@@ -550,7 +551,7 @@ An unsigned kit, a planned address or a local fork must not become a live pin.
 Reuse the network definitions in `ESCROW_NETWORKS`; do not add a project,
 owner, asset or vault as a bootstrap placeholder.
 
-After the human signs the approved upgrade, verify the finalized factory
+After the approved upgrade is signed, verify the finalized factory
 proxy, its implementation and selected new-vault implementation, runtime
 hashes, upgrade authority, registrar, identity authority, fee recipient and
 delays. Record those reviewed fields, the source commit and expected vault
@@ -567,10 +568,15 @@ from an existing D1 deployment. D1 remains the only project inventory.
 Only then derive the attester pins from the registered vault. A missing
 attester does not block wallet confirmation or vault creation. Existing
 unpaid awards and prior deployment reviews remain unchanged.
+The normal main release can first install an inactive Base attester with
+an empty allowlist and no cron. This lets the owner install its secrets
+before creating a vault; it does not establish vault or payment readiness.
 
 ### 3.2 Configure the stack
 
-1. Pin the signer deployments from the registry snapshot:
+1. For a network with registered vaults, pin the signer deployments from the
+   registry snapshot. For the first Base vault, use the empty-capable setup
+   in section 3.6 instead:
    `bun run projects:sync`, then
    `bun run payments:deployments mainnet <network> > pinned.json`.
 2. Generate the stack:
@@ -644,16 +650,20 @@ separately. Attach the report to the release issue.
 
 ### 3.6 Base mainnet activation: owner steps
 
-The owner approved Base mainnet execution on 24 October 2026 and installs the
-secrets. `base-mainnet` is `true` in `mainnet-execution.mjs`, and the Pages
+The owner approved Base mainnet execution on 24 October 2026. The owner or
+an authorized agent installs the secrets under PRD section 11.
+`base-mainnet` is `true` in `mainnet-execution.mjs`, and the Pages
 `PAYMENT_NETWORKS` in `wrangler.toml` is `["base-mainnet"]`. The production
 release (`.github/workflows/deploy.yml`, job `deploy`, `main` only, environment
 `eliza-army-production`) generates the attester configuration with
-`configure.mjs --stack production` from the registry snapshot of the released
-commit. Then:
+`configure.mjs --stack production` from the checked registry artifact of the
+verified build. The release verifies both registry-file digests first. Then:
 
-- If the snapshot pins no Base mainnet vault, the release skips the attester
-  and reports a notice. The attester has nothing to sign.
+- If the snapshot pins no Base mainnet vault and the Worker is proved absent,
+  the release installs the private attester with an empty allowlist and no
+  cron. No secret is required. Every signing request is refused. An existing
+  Worker stays unchanged, so an empty snapshot cannot remove earlier pins or
+  interrupt its journal. An ambiguous provider lookup stops the release.
 - If the snapshot pins a vault, the release reads the secret names of
   `slop-payments-base-mainnet-attester` (never the values). The names must be
   exactly `PAYMENT_RPC_URLS` and `SIGNER_PRIVATE_KEY`. A missing or extra
@@ -661,20 +671,20 @@ commit. Then:
   Pages. The release then deploys the attester with the commit SHA as its
   version tag and checks that the active version has that tag.
 
-Install the secrets before the first snapshot that pins a Base vault reaches
-`main`. The push of that snapshot to `main` starts a release, and that release
-stops while the Worker or a secret is missing, as does every later release of
-the site. Do these steps from a clean checkout of `development` after the owner route records the
-verified Base vault and its registry snapshot is on `development`. Do not
-install keys to compensate for unavailable vault creation; the attester is
-not needed for owner wallet confirmation or creation:
+After the reviewed main release installs the inactive Worker, install its
+secrets before the first snapshot that pins a Base vault reaches `main`.
+A nonempty release stops if either required secret is missing. A vault is
+not a prerequisite for this key setup. The empty service remains unable to
+sign, even after keys are installed. Do these steps from a clean reviewed
+checkout; the attester is not needed for owner wallet confirmation or creation:
 
 1. Generate the configuration. The secrets belong to the Worker name, so this
    configuration also serves the later `main` release:
 
    ```sh
    bun install --frozen-lockfile --ignore-scripts
-   bun run payments:deployments mainnet base-mainnet > /tmp/base-mainnet-pinned.json
+   bun run projects:sync
+   bun --eval 'import { HISTORICAL_PROJECTS } from "./src/lib/projects.mjs"; import { paymentDeployments } from "./scripts/prepare-payment-deployments.ts"; console.log(JSON.stringify(paymentDeployments(HISTORICAL_PROJECTS, "mainnet", "base-mainnet")));' > /tmp/base-mainnet-pinned.json
    node workers/payment-executor/configure.mjs --stack production \
      --network base-mainnet \
      --deployments /tmp/base-mainnet-pinned.json \
@@ -686,8 +696,8 @@ not needed for owner wallet confirmation or creation:
 
 2. Install the two secrets on the attester Worker only. Wrangler reads each
    value at its prompt; do not put a value in the command, a file in the
-   repository, or the shell history. If the Worker does not exist yet,
-   Wrangler asks to create it: answer yes.
+   repository, or the shell history. The normal reviewed main release must
+   have installed the Worker first. Do not create or deploy it locally.
 
    ```sh
    ./node_modules/.bin/wrangler secret put SIGNER_PRIVATE_KEY --config "$CONFIG"
@@ -725,12 +735,15 @@ not needed for owner wallet confirmation or creation:
    unset PAYMENT_RPC_URLS
    ```
 
-   For `base-mainnet`, `factory` and `attester` must be `configured` and
-   `rpc` must be `finalized`. `executor` reports `missing`.
+   Before a vault is registered, the report remains not ready. After
+   registration, regenerate the pins and configuration. For `base-mainnet`,
+   `factory` and `attester` must be `configured` and `rpc` must be
+   `finalized`. `executor` reports `missing`.
 
-6. Approve the production release: merge the reviewed promotion pull request
-   from `development` to `main`. The `deploy` job checks the secrets and
-   deploys the attester. Check the job log for the attester deploy, then
+6. After vault registration, approve the normal production release: merge
+   the reviewed promotion pull request from `development` to `main`. The
+   `deploy` job checks the pins and secrets and installs the scheduled
+   attester. Check the job log for the attester deploy, then
    check the Worker with
    `./node_modules/.bin/wrangler deployments status --config "$CONFIG"`.
 
@@ -756,8 +769,9 @@ only binding path. Slop does not submit the payout: `pay` is permissionless
 
 #### Base test payout, owner sequence
 
-This is the full sequence for one 10 USDC test award. Agents must not run
-these steps. `$RPC` is your Base RPC URL, `--account owner` is your Foundry
+This is the full sequence for one 10 USDC test award. The owner must authorize
+the award and its transactions before a human or agent runs it. `$RPC` is your
+Base RPC URL, `--account owner` is your Foundry
 keystore for the owner wallet, and `$ACTOR` is the contributor's numeric
 GitHub ID. Run the commands from a clean checkout of `development`.
 
@@ -909,9 +923,10 @@ or a permissionless executor submits for an approved and funded obligation.
 
 This kit targets contract source `dd1af34d22c08a8aecd9bb6c644831f2e2da85ac`.
 It replaces the earlier `239d0235`, `e55a804a` and `2a4e80b3` kits. The existing mainnet review is still
-`bce5b0df`, as listed above. Recheck that review before use. Agents prepare
-and rehearse this kit on local forks only. The human upgrade authority signs
-and sends mainnet transactions. Follow the approved launch order in section 0.
+`bce5b0df`, as listed above. Recheck that review before use. Rehearse this kit
+on a local fork before mainnet execution. The owner may authorize an agent to
+use the upgrade authority key for the reviewed plan. Follow the approved launch
+order and acceptance checks in section 0.
 
 ### 4.1 What changes
 
@@ -1017,7 +1032,7 @@ NEW_FACTORY=0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f
      --rpc-url "$RPC" --account slop-mainnet-deployer --sender "$AUTHORITY"
    ```
 
-   The human operator adds `--broadcast` only for the approved network and
+   The authorized operator adds `--broadcast` only for the approved network and
    after reviewing the simulation. The script sends salt plus creation bytes
    to the CREATE2 deployer and skips implementations already present.
    After finality, compare both runtimes with section 4.3. Verify their source
@@ -1108,12 +1123,19 @@ configuration agree, signing and verification fail closed.
 
 ### 4.9 After the upgrade: read-only verification
 
-At one finalized block, verify each proxy implementation slot, implementation
-runtime, template pointer, unchanged roles, pending rotations and old awards.
+Prove unchanged storage at the canonical finalized completion block of the
+upgrade, including template selection and stragglers. Separately pin the current
+finalized block and verify proxy implementations, runtime, template, roles,
+pending rotations and the complete vault inventory. Later payments do not
+rewrite the preservation snapshot: verify their canonical receipts, stored fees,
+exact token movement and allowed accounting changes. Refuse every unexplained
+storage change or unsupported later activity.
+
 Run `verifyEvmDeployment` with the new review and history. Verify historic
 receipts at their own blocks. Confirm V2 availability and that cached totals
-include pending monthly funds. Record the result on the network release issue.
-Then complete section 3's separate first-payout and reconciliation gates.
+include pending monthly funds. Record both block numbers and hashes on the
+network release issue. Then complete section 3's separate first-payout and
+reconciliation gates.
 
 ### 4.10 Recovery
 
@@ -1125,5 +1147,5 @@ awards. Opt-out stops new admission; it does not cancel an admitted reserve.
 
 Use a separately reviewed forward repair if a defect prevents completion.
 Preserve pending reserve data, stored award fees, source-use maps and signed
-attempt journals. Rehearse recovery against the affected state before human
+attempt journals. Rehearse recovery against the affected state before
 signing. Append its implementation review and history as another revision.

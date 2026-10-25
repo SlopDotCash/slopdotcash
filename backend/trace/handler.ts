@@ -59,6 +59,10 @@ export type TraceApiDependencies = {
   persistence: TracePersistence;
   authSecret: string;
   operatorGithubIds: ReadonlySet<string>;
+  /** Existing site session; used only for the two same-origin trace read routes. */
+  operatorSession?: (
+    request: Request,
+  ) => Promise<{ githubId: string; githubLogin: string } | null>;
   now: () => Date;
   randomId: () => string;
   verifyIdentityAssertion: (
@@ -1358,6 +1362,20 @@ function matchAuthenticatedRoute(
   return null;
 }
 
+function isOperatorTraceRoute(
+  request: Request,
+  parts: readonly string[],
+): boolean {
+  return (
+    parts[0] === "operator" &&
+    parts[1] === "traces" &&
+    ((request.method === "POST" &&
+      parts.length === 4 &&
+      parts[3] === "grant") ||
+      (request.method === "GET" && parts.length === 3))
+  );
+}
+
 function browserRouteHeaders(
   parts: readonly string[],
   method: string,
@@ -1453,7 +1471,16 @@ async function handleTraceApiInternal(
   if (requestUrl.protocol !== "https:" && !isLocal) {
     return json(400, { error: "https_required" });
   }
-  if (requestUrl.origin !== deploymentOrigins(deps.tier).api && !isLocal) {
+  const operatorSessionRoute =
+    isOperatorTraceRoute(request, parts) &&
+    request.headers.get("authorization") === null &&
+    (deploymentOrigins(deps.tier).browserOrigins.has(requestUrl.origin) ||
+      isLocal);
+  if (
+    requestUrl.origin !== deploymentOrigins(deps.tier).api &&
+    !isLocal &&
+    !operatorSessionRoute
+  ) {
     return json(404, { error: "not_found" });
   }
   const publicWalletRead = isPublicWalletRead(request, parts);
@@ -1520,12 +1547,32 @@ async function handleTraceApiInternal(
     const route = matchAuthenticatedRoute(request, parts, deps);
     // No contributor or project-owner read endpoint exists by design.
     if (route === null) return json(404, { error: "not_found" });
-    const actor = await verifyApiToken({
-      authorization: request.headers.get("authorization"),
-      secret: deps.authSecret,
-      operatorGithubIds: deps.operatorGithubIds,
-      nowSeconds: Math.floor(deps.now().getTime() / 1000),
-    });
+    let actor: AuthenticatedActor | null;
+    if (operatorSessionRoute) {
+      const origin = request.headers.get("origin");
+      // Browsers omit Origin on same-origin GET. Fetch Metadata supplies the
+      // browser-controlled origin relation for that exact read route only.
+      const sameOrigin =
+        origin === requestUrl.origin ||
+        (origin === null &&
+          request.method === "GET" &&
+          request.headers.get("sec-fetch-site") === "same-origin");
+      if (!sameOrigin)
+        fail(403, "origin_not_allowed", "Same-origin access is required");
+      const member = await deps.operatorSession?.(request);
+      if (!member) fail(401, "unauthorized", "Authentication failed");
+      if (!deps.operatorGithubIds.has(member.githubId))
+        fail(403, "forbidden", "Operator access is required");
+      // This request-local role never changes the session or issues a bearer.
+      actor = { ...member, roles: ["operator"], tokenId: deps.randomId() };
+    } else {
+      actor = await verifyApiToken({
+        authorization: request.headers.get("authorization"),
+        secret: deps.authSecret,
+        operatorGithubIds: deps.operatorGithubIds,
+        nowSeconds: Math.floor(deps.now().getTime() / 1000),
+      });
+    }
     if (actor === null) fail(401, "unauthorized", "Authentication failed");
     return await route(actor);
   } catch (caught) {

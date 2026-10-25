@@ -374,8 +374,8 @@ try {
   // with the owner-installed secrets. The Durable Object namespace returns
   // the one journal instance.
   const pinned = [paymentDeploymentRecord(manifest.id, deployment)];
-  const stack = paymentStack({
-    stack: "production",
+  const stackInput = {
+    stack: "production" as const,
     network: "base-mainnet",
     deployments: pinned,
     registry: [manifest],
@@ -385,7 +385,20 @@ try {
     },
     monthlySchedule:
       '{"firstPeriod":"2026-11","cutoffSecondsAfterPeriodEnd":259200}',
-  });
+  };
+  const stack = paymentStack(stackInput);
+  assert.throws(
+    () => paymentStack({ ...stackInput, deployments: [] }),
+    /Empty attester configuration omits reviewed deployments/,
+  );
+  assert.throws(
+    () =>
+      paymentStack({
+        ...stackInput,
+        deployments: [{ ...pinned[0], vault: payer }],
+      }),
+    /Deployment differs from canonical project manifest/,
+  );
   const vars = stack.configs.attester.vars as Record<string, string>;
   assert.equal(stack.configs.attester.services, undefined);
   assert.deepEqual(stack.configs.attester.triggers, {

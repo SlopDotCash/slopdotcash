@@ -169,7 +169,7 @@ Account API types. `PaymentChain` in `src/lib/payments/contracts.ts` becomes `"b
 
 ### 7. Testnet runbook (prepare only)
 
-To be delivered in PR C as `docs/robinhood-chain-testnet-runbook.md` with an evidence template; it is not part of PR B. An agent prepares; a human broadcasts. Steps:
+To be delivered in PR C as `docs/robinhood-chain-testnet-runbook.md` with an evidence template; it is not part of PR B. A human or owner-authorized agent executes the reviewed plan under PRD section 11. Steps:
 
 1. Create a dedicated Foundry keystore account for the testnet deployer; never a raw key in a command, file or environment dump.
 2. Fund it from `https://faucet.testnet.chain.robinhood.com`; confirm with `node scripts/check-payout-test-funding.mjs robinhood-testnet <address>` (the script gains the network with chain id `0xb626` and the public testnet RPC).
