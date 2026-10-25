@@ -300,10 +300,11 @@ relayer endpoints on a production stack. The generated
 secret prompts for review. Do not run its local deployment commands for
 production; use the protected `main` release workflow.
 
-An empty production deployment list is valid only when the checked registry
-has no deployment for that network and scope. It generates the same private
-attester with no cron. Every signing request is refused before reading an
-RPC or signing key. Test stacks still require reviewed deployments.
+An empty production input list is valid only when the checked registry has
+no deployment for that network and scope. The shared attester has no cron
+only when both generated pin lists, ordinary and private, are empty. In that
+state, every signing request is refused before reading an RPC or signing key.
+Test stacks still require reviewed deployments.
 
 The protected `main` release can create the absent Base attester in this
 inactive state, so the owner can install its existing key and RPC secrets
