@@ -1,0 +1,51 @@
+# Project-referral accrual job (workers/referral-accrual; PRD section 11,
+# "Referral program", proposed by the operator). Off by default. It has no
+# release step in deploy.yml yet: nothing deploys it until the owner approves
+# the program and adds a gated release in the shape of the fee converter's.
+# See README.md before changing any value here.
+name = "slop-referral-accrual"
+main = "index.ts"
+compatibility_date = "2026-07-30"
+workers_dev = false
+preview_urls = false
+
+# No routes: the Worker runs only on its cron trigger. Once a day it files any
+# UTC month that has ended and is not filed yet.
+[triggers]
+crons = ["23 1 * * *"]
+
+[[d1_databases]]
+binding = "REFERRAL_DB"
+database_name = "slop-private"
+database_id = "1b453124-2709-45af-8389-151a8105c461"
+migrations_dir = "../../migrations"
+
+[vars]
+# off | dry_run. dry_run files accrual rows and the public accrual file and
+# posts nothing. There is no live mode in this Worker.
+REFERRAL_ACCRUAL_MODE = "off"
+# First UTC month the job may file. Paid events before it are never accrued.
+REFERRAL_FIRST_PERIOD = "2026-11"
+# Program token base units per one stablecoin micro-unit. With an 18-decimal
+# token, 3 tokens per 1 USDC = 3 x 10^18 / 10^6 = 3 x 10^12. Operator proposal;
+# the rate, pool and caps are the owner's decision before anything posts.
+REFERRAL_RATE_BASE_PER_MICRO = "3000000000000"
+REFERRAL_TOKEN_DECIMALS = "18"
+# Lifetime pool: 2,000,000 tokens. Lifetime cap per referred project: 250,000.
+REFERRAL_POOL_BASE = "2000000000000000000000000"
+REFERRAL_PROJECT_CAP_BASE = "250000000000000000000000"
+# Months from a project's first finalized payout during which its payouts accrue.
+REFERRAL_WINDOW_MONTHS = "12"
+# Accounts that never accrue as referrers: lalalune and drew-dot-com (team
+# tokens, related parties). Admin and moderator ids below are excluded too.
+REFERRAL_EXCLUDED_GITHUB_IDS = "18633264,202660855"
+ADMIN_GITHUB_IDS = "18633264,202660855"
+PROJECT_MODERATOR_GITHUB_IDS = "18633264,202660855"
+
+# No secrets: this Worker holds no key.
+
+[observability]
+enabled = true
+
+  [observability.logs]
+  invocation_logs = false
