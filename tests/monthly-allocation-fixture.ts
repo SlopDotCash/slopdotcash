@@ -14,7 +14,7 @@ export async function createMonthlyAllocationFixture({
   capBase = (1000n * unit).toString(),
   rows,
 }: {
-  deployment: Record<string, string | null>;
+  deployment: Record<string, unknown>;
   unit?: bigint;
   applyAmountRange?: boolean;
   period?: string;
@@ -34,7 +34,9 @@ export async function createMonthlyAllocationFixture({
     readFileSync("tests/fixtures/projects/eliza.json", "utf8"),
   );
   manifest.reward.feeBasisPoints = 200;
-  const chain = selected.network?.startsWith("solana") ? "solana" : "base";
+  const chain = String(selected.network).startsWith("solana")
+    ? "solana"
+    : "base";
   manifest.reward.chain = chain;
   if (unit > 1n) {
     manifest.reward.currency = "TOKEN";
