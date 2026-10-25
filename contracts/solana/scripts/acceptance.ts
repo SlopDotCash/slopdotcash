@@ -262,6 +262,34 @@ export function escrow(programId: PublicKey) {
         ],
         u64(input.gross),
       ),
+    /** The owner proposes a replacement identity authority for one project. */
+    proposeAuthorityRotation: (input: {
+      owner: PublicKey;
+      project: PublicKey;
+      next: PublicKey;
+    }) =>
+      ix(
+        "propose_authority_rotation",
+        [
+          meta(input.owner, false, true),
+          meta(input.project, true),
+          meta(new PublicKey(solanaConfigAddress(programId.toBase58()))),
+        ],
+        input.next.toBuffer(),
+      ),
+    /** The Config rotation authority confirms the pending proposal. */
+    confirmAuthorityRotation: (input: {
+      rotationAuthority: PublicKey;
+      project: PublicKey;
+    }) =>
+      ix("confirm_authority_rotation", [
+        meta(input.rotationAuthority, false, true),
+        meta(new PublicKey(solanaConfigAddress(programId.toBase58()))),
+        meta(input.project, true),
+      ]),
+    /** Anyone executes a confirmed proposal after its rotation delay. */
+    executeAuthorityRotation: (project: PublicKey) =>
+      ix("execute_authority_rotation", [meta(project, true)]),
     claimFees: (input: {
       project: PublicKey;
       mint: PublicKey;

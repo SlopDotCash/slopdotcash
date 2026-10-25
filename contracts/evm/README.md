@@ -248,7 +248,7 @@ funded seals with an empty tree and zero remaining reserve. The trusted attester
 rejects duplicate sources before signing; the contract cannot inspect every
 leaf during constant-size admission.
 
-While pending gross remains, new manual awards wait. Later signed monthly
+While pending gross remains, new manual awards wait. If a reserve can never settle (an attester fault), they wait until a reviewed upgrade, because no release path exists on EVM. Later signed monthly
 admissions can use free funds within their own caps. Existing funded payments, bindings, deposits,
 and free withdrawals remain available. Permissionless leaf execution completes
 the reserve after owner opt-out or window expiry. It has no refund, expiry, or

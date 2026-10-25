@@ -358,11 +358,23 @@ solana-verify get-program-hash "$PROGRAM" -u "$RPC"
 The previous hash must equal the hash recorded at the last reviewed release.
 If it differs, stop: the program changed outside the runbook.
 
-If the size of `$SO` is larger than the `Data Length`, extend the program first:
+Before you write the buffer in step 4, compare the size of `$SO` with the
+`Data Length`. If `$SO` is larger, extend the program account by at least the
+difference. Do this before you write the buffer: an upgrade into a program
+account that is too small fails after the buffer is paid for.
 
 ```bash
-solana program extend "$PROGRAM" <ADDITIONAL_BYTES> -u "$RPC" --keypair "$PAYER"
+DATA_LENGTH=<Data Length from solana program show>
+ADDITIONAL_BYTES=$(( $(wc -c < "$SO") - DATA_LENGTH ))
+echo "$ADDITIONAL_BYTES"   # extend only if this is greater than 0
+solana program extend "$PROGRAM" "$ADDITIONAL_BYTES" -u "$RPC" --keypair "$PAYER"
+solana program show "$PROGRAM" -u "$RPC"   # Data Length must now be >= the size of $SO
 ```
+
+Example: the first-operator verifiable build for the next upgrade (#901,
+source `edf3b341`) is 672,560 bytes. The mainnet program has a 681,392-byte
+`Data Length`. `ADDITIONAL_BYTES` is negative, so do not extend the program
+account for this upgrade.
 
 ### 4. Write and check the buffer
 
