@@ -115,6 +115,11 @@ keeper then replaces it automatically, in bounded steps (owner decision,
 - A restart continues from the journal. The keeper does not sign a new nonce for
   the same work while an attempt for the old nonce is unresolved. The fee limit
   comes from the original signed bytes, so repeated runs cannot go above it.
+- The budget signer accepts a second signature at a reserved nonce only when
+  it names that nonce's journaled original. Any other second signature fails.
+- If the registry gas ceiling falls below the journaled gas limit, or the fee
+  read fails, the keeper signs nothing new. It rebroadcasts the latest verified
+  attempt and reports `waiting` with the reason.
 - A dry run signs nothing.
 
 Hosted executors do not use this replacement.

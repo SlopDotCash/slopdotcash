@@ -119,47 +119,67 @@ export function budgetEvmSigner(
   options: { now?: () => Date; baseRpc?: string } = {},
 ): Signer {
   validateBudget(budget);
+  const sign = async (
+    input: Parameters<Signer["signTransaction"]>[0],
+    replaces?: string,
+  ) => {
+    if (options.baseRpc) {
+      const size = (serializeTransaction(input).length - 2) / 2;
+      const block = await rpc(options.baseRpc, "eth_blockNumber", []);
+      if (typeof block !== "string" || !/^0x[0-9a-fA-F]+$/.test(block))
+        throw new Error("Base quote block unavailable");
+      const l1 = await baseOracleFee(
+        options.baseRpc,
+        "0xf1c7a58b",
+        BigInt(size),
+        block,
+      );
+      const operator = await baseOracleFee(
+        options.baseRpc,
+        "0x275aedd2",
+        input.gas,
+        block,
+      );
+      if (l1 + operator > BigInt(budget.additionalFeeReserve))
+        throw new Error("Base additional fees exceed the operator reserve");
+    }
+    const maximum =
+      input.gas * input.maxFeePerGas + BigInt(budget.additionalFeeReserve);
+    // Check before asking the signing provider. The durable insert is repeated with its exact hash.
+    // Only a stated fee replacement of this nonce's journaled original gets
+    // its own row in the nonce's group. Any other second signature is refused.
+    const group = `${input.chainId}:${signer.address.toLowerCase()}:${input.nonce}`;
+    const prior = store.db
+      .query<{ n: number }, [string, number, string]>(
+        `SELECT count(*) n FROM gas WHERE ${SAME_NONCE}`,
+      )
+      .get(...sameNonce(group));
+    if (prior?.n) {
+      const original = store.db
+        .query<{ transaction_id: string }, [string]>(
+          "SELECT transaction_id FROM gas WHERE id=?",
+        )
+        .get(group);
+      if (
+        !replaces ||
+        original?.transaction_id.toLowerCase() !== replaces.toLowerCase()
+      )
+        throw new Error(
+          "Gas reservation conflict: this nonce is already reserved",
+        );
+    }
+    const id = prior?.n ? `${group}:r${prior.n}` : group;
+    reserve(store, budget, id, maximum, "unsigned", options.now?.());
+    const raw = await signer.signTransaction(input);
+    store.db
+      .query("UPDATE gas SET transaction_id=? WHERE id=?")
+      .run(keccak256(raw), id);
+    return raw;
+  };
   return {
     address: signer.address,
-    async signTransaction(input) {
-      if (options.baseRpc) {
-        const size = (serializeTransaction(input).length - 2) / 2;
-        const block = await rpc(options.baseRpc, "eth_blockNumber", []);
-        if (typeof block !== "string" || !/^0x[0-9a-fA-F]+$/.test(block))
-          throw new Error("Base quote block unavailable");
-        const l1 = await baseOracleFee(
-          options.baseRpc,
-          "0xf1c7a58b",
-          BigInt(size),
-          block,
-        );
-        const operator = await baseOracleFee(
-          options.baseRpc,
-          "0x275aedd2",
-          input.gas,
-          block,
-        );
-        if (l1 + operator > BigInt(budget.additionalFeeReserve))
-          throw new Error("Base additional fees exceed the operator reserve");
-      }
-      const maximum =
-        input.gas * input.maxFeePerGas + BigInt(budget.additionalFeeReserve);
-      // Check before asking the signing provider. The durable insert is repeated with its exact hash.
-      // A same-nonce fee replacement gets its own row in the nonce's group.
-      const group = `${input.chainId}:${signer.address.toLowerCase()}:${input.nonce}`;
-      const prior = store.db
-        .query<{ n: number }, [string, number, string]>(
-          `SELECT count(*) n FROM gas WHERE ${SAME_NONCE}`,
-        )
-        .get(...sameNonce(group));
-      const id = prior?.n ? `${group}:r${prior.n}` : group;
-      reserve(store, budget, id, maximum, "unsigned", options.now?.());
-      const raw = await signer.signTransaction(input);
-      store.db
-        .query("UPDATE gas SET transaction_id=? WHERE id=?")
-        .run(keccak256(raw), id);
-      return raw;
-    },
+    signTransaction: (input) => sign(input),
+    signReplacement: (input, replaces) => sign(input, replaces),
   };
 }
 

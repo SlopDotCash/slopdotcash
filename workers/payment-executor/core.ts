@@ -47,19 +47,25 @@ import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
 import type { MonthlyAuthorization } from "./monthly";
 
 type Hex = `0x${string}`;
+type SignerInput = {
+  type: "eip1559";
+  chainId: number;
+  nonce: number;
+  gas: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+  to: Hex;
+  data: Hex;
+  value: bigint;
+};
 export interface Signer {
   address: string;
-  signTransaction(input: {
-    type: "eip1559";
-    chainId: number;
-    nonce: number;
-    gas: bigint;
-    maxFeePerGas: bigint;
-    maxPriorityFeePerGas: bigint;
-    to: Hex;
-    data: Hex;
-    value: bigint;
-  }): Promise<Hex>;
+  signTransaction(input: SignerInput): Promise<Hex>;
+  /**
+   * Payment keeper only: sign a same-nonce fee replacement of the named
+   * journaled original. Without it, no replacement is signed.
+   */
+  signReplacement?(input: SignerInput, replaces: Hex): Promise<Hex>;
 }
 export interface JournalStore {
   get<T>(key: string): Promise<T | undefined>;
@@ -747,7 +753,6 @@ async function verifiedReplacements(
       signed.chainId !== Number(config.chainId) ||
       signed.nonce !== original.nonce ||
       signed.gas !== original.gas ||
-      signed.gas > BigInt(config.gasCeiling) ||
       !same(signed.to ?? "", original.to ?? "") ||
       (signed.value ?? 0n) !== (original.value ?? 0n) ||
       (signed.data ?? "0x") !== (original.data ?? "0x") ||
@@ -799,27 +804,40 @@ async function replaceUnderpricedAttempt(
     fees: originalFees,
     latest,
   } = await verifiedReplacements(env, config, attempt, record);
-  const block = (await rpc(config, "eth_getBlockByNumber", [
-    "latest",
-    false,
-  ])) as { baseFeePerGas: string };
+  // Report a wait after the latest verified bytes were offered again.
+  const waiting = async (reason: string): Promise<never> => {
+    await broadcast(config, latest).catch(() => undefined);
+    throw new Error(reason);
+  };
+  let baseFee: bigint;
+  try {
+    const block = (await rpc(config, "eth_getBlockByNumber", [
+      "latest",
+      false,
+    ])) as { baseFeePerGas: string };
+    baseFee = BigInt(block.baseFeePerGas);
+  } catch {
+    return waiting(
+      "Network fee unavailable; the latest journaled attempt was rebroadcast without a fee replacement",
+    );
+  }
   const now = clock.now();
   if (
-    BigInt(block.baseFeePerGas) + latest.maxPriorityFeePerGas <=
-      latest.maxFeePerGas ||
+    baseFee + latest.maxPriorityFeePerGas <= latest.maxFeePerGas ||
     now.getTime() - Date.parse(latest.signedAt) < FEE_BUMP_POLICY.waitMs
   ) {
     await broadcast(config, latest);
     return { transactionId: latest.transactionId };
   }
   const fees = nextReplacementFees(originalFees, latest);
-  if (!fees) {
-    // The error below reports the wait; a rejected rebroadcast changes nothing.
-    await broadcast(config, latest).catch(() => undefined);
-    throw new Error(
+  if (!fees)
+    return waiting(
       "Fee replacement cap reached; journaled attempts wait for a lower network fee",
     );
-  }
+  if ((original.gas as bigint) > BigInt(config.gasCeiling))
+    return waiting(
+      "Registry gas ceiling is now below the journaled gas limit; no fee replacement is signed",
+    );
   const mined = BigInt(
     (await rpc(config, "eth_getTransactionCount", [
       env.SIGNER.address,
@@ -830,6 +848,9 @@ async function replaceUnderpricedAttempt(
     throw new Error(
       "Signer nonce is already used; waiting for the journaled receipt",
     );
+  const sign = env.SIGNER.signReplacement?.bind(env.SIGNER);
+  if (!sign)
+    return waiting("This signer cannot sign a budgeted fee replacement");
   const current = record;
   let replacement: FeeReplacement;
   try {
@@ -840,16 +861,19 @@ async function replaceUnderpricedAttempt(
         JSON.stringify(await store.get(key)) !== JSON.stringify(attempt)
       )
         throw new Error("Journaled attempt changed before fee replacement");
-      const rawTransaction = await env.SIGNER.signTransaction({
-        type: "eip1559",
-        chainId: Number(config.chainId),
-        nonce: original.nonce as number,
-        gas: original.gas as bigint,
-        ...fees,
-        to: original.to as Hex,
-        data: (original.data ?? "0x") as Hex,
-        value: original.value ?? 0n,
-      });
+      const rawTransaction = await sign(
+        {
+          type: "eip1559",
+          chainId: Number(config.chainId),
+          nonce: original.nonce as number,
+          gas: original.gas as bigint,
+          ...fees,
+          to: original.to as Hex,
+          data: (original.data ?? "0x") as Hex,
+          value: original.value ?? 0n,
+        },
+        attempt.transactionId,
+      );
       const next = {
         rawTransaction,
         transactionId: transactionHash(rawTransaction),
@@ -864,8 +888,7 @@ async function replaceUnderpricedAttempt(
     });
   } catch (error) {
     // Without a reservation there is no replacement; keep the latest signed send alive.
-    await broadcast(config, latest).catch(() => undefined);
-    throw new Error(
+    return waiting(
       `Fee replacement waits: ${error instanceof Error ? error.message : String(error)}`,
     );
   }

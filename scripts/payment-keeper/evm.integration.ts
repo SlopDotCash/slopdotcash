@@ -55,6 +55,8 @@ const attester = privateKeyToAccount(generatePrivateKey());
 const alice = privateKeyToAccount(generatePrivateKey());
 const bob = privateKeyToAccount(generatePrivateKey());
 let lose = false;
+// Latest-block reads to pass before one transient failure; -1 disables it.
+let latestBlockFailsAfter = -1;
 let signatures = 0;
 let broadcasts = 0;
 const proxy = Bun.serve({
@@ -67,6 +69,18 @@ const proxy = Bun.serve({
     }
     const text = await request.text();
     if (JSON.parse(text).method === "eth_sendRawTransaction") broadcasts++;
+    const call = JSON.parse(text) as { method: string; params?: unknown[] };
+    if (
+      latestBlockFailsAfter >= 0 &&
+      call.method === "eth_getBlockByNumber" &&
+      call.params?.[0] === "latest" &&
+      latestBlockFailsAfter-- === 0
+    )
+      return Response.json({
+        jsonrpc: "2.0",
+        id: 1,
+        error: { code: -32000, message: "temporary outage" },
+      });
     if (lose && JSON.parse(text).method === "eth_sendRawTransaction")
       return new Response("lost before acceptance", { status: 502 });
     return fetch(url, {
@@ -1022,9 +1036,22 @@ try {
     nonceAfterOriginal,
     "replacements never advance the nonce",
   );
-  // The fee falls; the latest capped replacement is rebroadcast and lands.
+  // The fee falls, but the fee read fails: the latest verified bytes are still rebroadcast.
   await nextBaseFee(1n);
-  await tick();
+  // The award's binding-time check reads the latest block first; the fee read is next.
+  latestBlockFailsAfter = 1;
+  const unreadable = outcome(await tick(), cappedAward);
+  assert.equal(latestBlockFailsAfter, -1, "exactly the fee read failed");
+  assert.equal(unreadable.state, "waiting");
+  assert(
+    unreadable.error?.includes("Network fee unavailable"),
+    JSON.stringify(unreadable),
+  );
+  assert.equal(signatures, before + 6);
+  assert(
+    await chain("eth_getTransactionByHash", [ladder[4].transactionId]),
+    "the latest capped replacement reached the node",
+  );
   await finalize();
   const capPaidBefore = await paid();
   await tick();
@@ -1070,6 +1097,7 @@ try {
         "fee cap of three times stops signing and reports waiting",
         "restart mid-bump continues from the journal without a new nonce",
         "replacement refused when its reserve does not fit the budget",
+        "fee read outage still rebroadcasts the latest verified attempt",
       ],
       payments: 6,
       signatures,
