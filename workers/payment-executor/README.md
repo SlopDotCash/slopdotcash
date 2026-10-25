@@ -93,6 +93,28 @@ never signs for a mainnet and a production key never signs while
 `MAINNET_EXECUTION` is off.
 Any other `SIGNER_STACK` value stops the signer.
 
+## Private bounty bindings
+
+One production attester serves a network's ordinary and bounty vaults. The
+configuration generator derives both pin lists from the checked registry.
+`PAYMENT_DEPLOYMENTS` selects ordinary vaults; `SECURITY_PAYMENT_DEPLOYMENTS`
+selects private vaults. Both scopes share the same Durable Object, identity
+key and nonce journal, because the factory supplies one identity authority.
+Do not run separate signing services with that same key on the same network.
+
+Its five-minute schedule indexes finalized events into each scope's separate
+ledger. On EVM it submits only bindings with current account and wallet
+consent, using the existing reconciliation rules. Private internal requests
+use `/v1/security/`. Solana wallet co-signing remains interactive through the
+private account route; its `SECURITY_SOLANA_IDENTITY_ATTESTER` binding points
+to the same network attester, with that private path.
+
+The private scope never signs a monthly allocation or submits an award
+payment. The owner still decides each bounty and the project or a permissionless
+executor submits its payment. Private amounts and case records stay out of
+ordinary balances and notices. Generated configuration is not a deployed
+service; use the reviewed main release before owner-authorized key installation.
+
 ## Monthly allocation execution
 
 The ordinary attester publishes only the eligible entries of the immutable funded
