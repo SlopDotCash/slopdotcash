@@ -130,7 +130,7 @@ export async function createdVaults(
     );
     const event = decodeEventLog({
       abi: parseAbi([
-        "event VaultCreated(bytes32 indexed projectId,address indexed owner,address indexed vault,address token,uint8 decimals,uint8 purpose)",
+        "event VaultCreated(bytes32 indexed projectId,address indexed token,address indexed vault,address owner,uint8 purpose,uint8 decimals)",
       ]),
       topics: log.topics,
       data: log.data,
