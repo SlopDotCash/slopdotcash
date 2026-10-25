@@ -521,6 +521,139 @@ test("a maintainer correction overrides only the implementation score", () => {
   expect(result.valueAssessmentCoverage?.[0]?.status).toBe("human-ratified");
 });
 
+test("a maintainer ratification of a carrier keeps joint review credit", () => {
+  const joint = outcome(12, "2026-10-20T10:00:00.000Z");
+  const maintainer = actor("maintainer");
+  const jointReviews = [
+    review(12, 1, bob as GitHubActor, "APPROVED", "2026-10-19T00:00:00.000Z"),
+    review(12, 2, carol as GitHubActor, "APPROVED", "2026-10-19T01:00:00.000Z"),
+  ];
+  const projectId = TARGET_REPOSITORIES.find(
+    (target) => target.id === REPO,
+  )?.projectId;
+  const record = {
+    schemaVersion: "1",
+    ruleVersion: "slop-score-v2",
+    projectId,
+    pullRequestNodeId: joint.id,
+    headSha: HEAD,
+    workUnitId: "wu_slopdotcash_pr_12",
+    tier: "micro",
+    scoreThirds: 1,
+    proposalReviewNodeIds: [],
+    coRatifierNodeIds: [],
+    reason: "Narrow mechanical correction.",
+    supersedes: null,
+  };
+  const createdAt = "2026-10-22T10:00:00.000Z";
+  const jointDecision = {
+    status: "assessed",
+    latestDigest: "c".repeat(64),
+    history: [{ recorded_at: "2026-10-22T00:00:00.000Z" }],
+    record: {
+      sources: [{ pullRequestNodeId: joint.id, headSha: HEAD }],
+      units: jointReviews.map((item, index) => ({
+        workUnitId: `wu_unit-${index}`,
+        claimIds: [`claim-${index}`],
+        assessment: {
+          tier: index === 0 ? "medium" : "micro",
+          rationale: "An independently accepted part of the pull request.",
+          reviews: [
+            {
+              sourceId: item.id,
+              tier: "standard",
+              finding: "Verified the fix.",
+              outcome: "The accepted head retains it.",
+            },
+          ],
+        },
+      })),
+    },
+    evidence: {
+      claims: jointReviews.map((_, index) => ({
+        id: `claim-${index}`,
+        carrierPullRequestIds: [joint.id],
+        creditPullRequestId: joint.id,
+        implementationActorNodeIds: [(alice as GitHubActor).id],
+      })),
+      sources: [
+        {
+          evidence: {
+            repository: REPO,
+            pull: {
+              node_id: joint.id,
+              head: { sha: HEAD },
+              updated_at: joint.updatedAt,
+              merged_at: joint.mergedAt,
+              user: { node_id: (alice as GitHubActor).id },
+              html_url: joint.url,
+              number: joint.number,
+              title: joint.title,
+            },
+            comments: [],
+            reviews: jointReviews.map((item) => ({
+              node_id: item.id,
+              body: item.body,
+              user: { node_id: item.author?.id },
+              submitted_at: item.submittedAt,
+            })),
+          },
+        },
+      ],
+    },
+  };
+  const jointSnapshot = (ratify: boolean) =>
+    createLeaderboardSnapshot(
+      input({
+        mergedPullRequestOutcomes: [joint],
+        reviewedMergedPullRequests: [
+          {
+            ...reviewed(joint, jointReviews),
+            comments: ratify
+              ? [
+                  {
+                    id: "IC_ratify",
+                    artifactId: joint.id,
+                    kind: "comment" as const,
+                    body: `\`\`\`slop-score\n${JSON.stringify(record)}\n\`\`\`\n`,
+                    url: `${REPO_URL}/pull/12#issuecomment-12`,
+                    createdAt,
+                    updatedAt: createdAt,
+                    author: maintainer,
+                    authorAssociation: "OWNER",
+                  },
+                ]
+              : [],
+          },
+        ],
+        valuePolicy: POLICY,
+        valueDecisions: new Map(),
+        valueActors: new Map([
+          [(alice as GitHubActor).id, alice as GitHubActor],
+        ]),
+        jointValueDecisions: new Map([
+          [joint.id, jointDecision],
+        ]) as unknown as LeaderboardInput["jointValueDecisions"],
+      }),
+    );
+
+  const baseline = new Map(
+    jointSnapshot(false).ledger.map((event) => [event.id, event]),
+  );
+  expect(baseline.get("PR_12:value-review:PRR_12_1")?.scoreThirds).toBe(3);
+  expect(baseline.get("PR_12:value-review:PRR_12_2")?.scoreThirds).toBe(3);
+
+  // PRD section 7: the ratification corrects only the implementation
+  // score, so both reviewers keep their joint value allocation and the
+  // ratifier earns the one-third ratification credit alongside them.
+  const ratified = new Map(
+    jointSnapshot(true).ledger.map((event) => [event.id, event]),
+  );
+  expect(ratified.get("PR_12:value-review:PRR_12_1")?.scoreThirds).toBe(3);
+  expect(ratified.get("PR_12:value-review:PRR_12_2")?.scoreThirds).toBe(3);
+  expect(ratified.get("PR_12:ratifier:IC_ratify")?.scoreThirds).toBe(1);
+});
+
 test("a merge assessed at zero keeps the minimum and a one-third review pool", () => {
   const zero = outcome(5, "2026-10-21T10:00:00.000Z");
   const result = createLeaderboardSnapshot(
