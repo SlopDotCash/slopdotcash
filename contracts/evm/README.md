@@ -56,7 +56,7 @@ The contract reads only `block.timestamp` and `block.chainid`, never `block.numb
 
 `createWithMonthlyCommitment(projectId, token, cap, enabled)` creates an ordinary
 vault and its monthly policy atomically. `buildCreateVaultCalldata` requires the
-owner's cap and an explicit `enabled` choice. It supplies no default. The
+owner's cap and defaults `enabled` to true; an explicit false opts out. The
 compatibility `create(projectId, token, purpose)` entry point remains for old
 callers and private bounty vaults. Both are permissionless and make `msg.sender`
 the owner. A vault proves only which account created it. The project registry
@@ -193,7 +193,8 @@ claim the same ID first, so ledger IDs stay unique across projects.
 `commitAward` stays owner-only. To let the monthly coordinator commit a month
 without the owner's wallet, an ordinary vault has one more path:
 
-- Normal creation sets the owner's cap and explicit on/off choice. The owner can later call `setMonthlyCommitment(cap, enabled)`.
+- Normal creation sets the owner's cap and enables monthly commitments unless
+  the owner opts out. The owner can later call `setMonthlyCommitment(cap, enabled)`.
   "On" needs a positive cap. While it is off, no monthly allocation can commit.
   Awards already committed stay reserved. Compatibility callers of the old
   three-argument `create` retain their earlier off/zero initial state.

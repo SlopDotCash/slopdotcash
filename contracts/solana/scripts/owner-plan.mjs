@@ -151,7 +151,7 @@ export async function ownerPlan(input, runtime) {
       (input.monthlyCap !== undefined || input.automaticMonthly !== undefined)
     )
       throw new Error("Private bounty awards have no automatic monthly policy");
-    const enabled = bounty ? false : input.automaticMonthly;
+    const enabled = input.automaticMonthly ?? true;
     if (typeof enabled !== "boolean")
       throw new Error("Invalid automatic monthly choice");
     const cap = bounty

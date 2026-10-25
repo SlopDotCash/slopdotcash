@@ -238,7 +238,7 @@ test("unsigned owner plans initialize, fund, reserve, veto and withdraw on actua
   );
   deployment.feeRecipient = pinned;
   await assert.rejects(
-    execute("initialize", { projectDigest, automaticMonthly: true }),
+    execute("initialize", { projectDigest }),
     /positive u64/,
   );
   assert.equal(
@@ -246,15 +246,7 @@ test("unsigned owner plans initialize, fund, reserve, veto and withdraw on actua
     null,
     "a missing cap creates no project",
   );
-  await assert.rejects(
-    execute("initialize", { projectDigest, monthlyCap: "60000000" }),
-    /Invalid automatic monthly choice/,
-  );
-  await execute("initialize", {
-    projectDigest,
-    monthlyCap: "60000000",
-    automaticMonthly: true,
-  });
+  await execute("initialize", { projectDigest, monthlyCap: "60000000" });
   const created = await new anchor.Program(
     JSON.parse(readFileSync("idl/slop_escrow.json")),
     provider,
