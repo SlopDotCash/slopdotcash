@@ -458,7 +458,7 @@ function handleSlopbotApp(state, request, response, path) {
     return true;
   };
   const installControl =
-    /^\/__fixture\/slopbot\/([^/]+\/[^/]+)\/(installed|suspended|missing)$/u.exec(
+    /^\/__fixture\/slopbot\/([^/]+\/[^/]+)\/(installed|suspended|missing|unavailable)$/u.exec(
       path,
     );
   if (request.method === "PUT" && installControl) {
@@ -487,6 +487,8 @@ function handleSlopbotApp(state, request, response, path) {
     if (bearer.split(".").length !== 3)
       return send(401, { message: "A JSON web token is required" });
     const found = state.installations.get(installation[1].toLowerCase());
+    if (found === "unavailable")
+      return send(503, { message: "Fixture unavailable" });
     return found === undefined
       ? send(404, { message: "Not Found" })
       : send(200, {
@@ -534,6 +536,7 @@ export function startGitHubApiFixture(port) {
   const intake = new Map();
   const privateIntake = privateIntakeFixture();
   const githubUsers = new Map();
+  const limitedRepositories = new Set();
   const slopbot = {
     installations: new Map(),
     permissions: new Map(),
@@ -542,6 +545,18 @@ export function startGitHubApiFixture(port) {
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
+    const publicControl =
+      /^\/__fixture\/public-repository\/([^/]+\/[^/]+)\/(rate-limited|ready)$/u.exec(
+        path,
+      );
+    if (request.method === "PUT" && publicControl) {
+      const key = publicControl[1].toLowerCase();
+      if (publicControl[2] === "rate-limited") limitedRepositories.add(key);
+      else limitedRepositories.delete(key);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
     if (handleSlopbotApp(slopbot, request, response, path)) return;
     if (handleGithubUsers(githubUsers, request, response, url)) return;
     try {
@@ -624,6 +639,14 @@ export function startGitHubApiFixture(port) {
       return;
     }
     if (request.method === "GET" && repository) {
+      if (limitedRepositories.has(repository[1].toLowerCase())) {
+        response.writeHead(403, {
+          "content-type": "application/json",
+          "x-ratelimit-remaining": "0",
+        });
+        response.end('{"message":"API rate limit exceeded"}');
+        return;
+      }
       const name = repository[1].split("/")[1];
       if (name === "lookup-rate-limited" || name === "lookup-unavailable") {
         response.writeHead(name === "lookup-rate-limited" ? 429 : 503, {

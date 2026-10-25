@@ -1333,6 +1333,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       verifyEvmDeployment(
         { ...created, rpcUrl, chainId: 84532n },
         "finalized",
+        undefined,
         `0x${"f".repeat(64)}`,
       ),
     ).rejects.toThrow("different registry project");

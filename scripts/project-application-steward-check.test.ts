@@ -47,12 +47,9 @@ async function submit(github: Record<string, unknown>) {
       "INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, 'act_1', '2099-01-01T00:00:00.000Z')",
     )
     .run(await sha256Hex(SESSION));
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input instanceof Request ? input.url : input);
-    return url === "https://api.github.com/repos/example/open-registry"
-      ? Response.json(REPOSITORY)
-      : Response.json({ message: "Not Found" }, { status: 404 });
-  }) as typeof fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("The primary identity must come from the App response");
+  }) as unknown as typeof fetch;
   const base = applicationManifest("open-registry", "example/open-registry");
   const steward = base.steward as Record<string, unknown>;
   const manifest = {
@@ -90,6 +87,7 @@ async function submit(github: Record<string, unknown>) {
             installationId: 5151,
             permission: "admin",
             roleName: "admin",
+            repository: REPOSITORY,
           }),
       },
     } as never,
