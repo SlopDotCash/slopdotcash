@@ -239,6 +239,8 @@ export class PaymentSignerJournal {
               SIGNER: privateKeyToAccount(key),
             },
             authorization,
+            new URL(request.url).searchParams.get("admit") !== "false",
+            16,
           ),
         );
       }
