@@ -250,6 +250,13 @@ node workers/payment-executor/configure.mjs --stack production \
   --output workers/payment-executor/.generated
 ```
 
+The production release uses the registry snapshot from its verified build.
+The prepare job validates and uploads both generated registry files and records
+their SHA-256 digests. The deploy job checks those digests before it loads the
+snapshot. Pin derivation and this command then read the same registry and revision
+history. A new D1 vault registration does not need a source commit or a second
+registry fetch during deployment. This handoff does not enable another network.
+
 The command does not create resources, read keys or deploy. It refuses a test
 network and any `--database-id` or `--database-name`. The production stack
 has no relayer and no dispatcher: under PRD PAY-04 the project or a
