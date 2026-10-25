@@ -58,6 +58,12 @@ service = "slop-identity"
 binding = "SLOP_NOTIFY"
 service = "slop-notify"
 
+# Only observe an explicitly named finalized winner. No default signer access.
+[[services]]
+binding = "BINDING_RECOVERY"
+service = "slop-payments-base-mainnet-attester"
+entrypoint = "BindingRecovery"
+
 # Cloudflare's non-inheritable bindings must be declared separately for every
 # environment. Keeping preview explicit and binding-free prevents preview
 # deployments from reaching the permanent production trace store.
