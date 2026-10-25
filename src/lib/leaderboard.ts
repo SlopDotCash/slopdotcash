@@ -241,6 +241,7 @@ export const REVIEW_EXCLUSION_REASONS = [
   "review-credit-reviewer-limit",
   "review-credit-zero-share",
   "review-credit-outside-window",
+  "banned-account",
 ] as const;
 
 function exactEvidenceBonusRun(
@@ -3925,6 +3926,11 @@ function createSnapshotWithReviewCutoff(
     const inWindow: ValueReviewCandidate[] = [];
     for (const candidate of eligible) {
       const reviewedAt = parseIsoTime(candidate.submittedAt);
+      const bannedAt = participationBans.get(candidate.actor.id);
+      if (bannedAt !== undefined && reviewedAt >= parseIsoTime(bannedAt)) {
+        excludeReview(pullRequest, candidate.review, "banned-account");
+        continue;
+      }
       if (reviewedAt < scoringFrom || reviewedAt >= windowTo) {
         excludeReview(
           pullRequest,

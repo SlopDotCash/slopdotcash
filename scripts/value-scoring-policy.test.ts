@@ -937,7 +937,21 @@ test("published account bans remove new merge and review credit but retain earli
   expect(blocked.some((event) => event.category === "substantive-review")).toBe(
     true,
   );
-  expect(after).toEqual(before.filter((event) => !blocked.includes(event)));
+  expect(
+    after.some(
+      (event) => bans.has(event.actor.id) && event.occurredAt >= bannedAt,
+    ),
+  ).toBe(false);
+  const earlierBobReview = after.find(
+    (event) =>
+      event.category === "substantive-review" &&
+      event.source.number === 2 &&
+      event.actor.id === "U_bob",
+  );
+  expect(earlierBobReview?.source.id).toBe("PRR_2_1");
+  expect(after.filter((event) => event.source.number === 1)).toEqual(
+    before.filter((event) => event.source.number === 1),
+  );
   expect(
     after.some(
       (event) => event.actor.id === "U_alice" && event.occurredAt < bannedAt,
@@ -950,4 +964,31 @@ test("published account bans remove new merge and review credit but retain earli
         new Response(null, { status: 503 })) as unknown as typeof fetch,
     ),
   ).rejects.toBeInstanceOf(ValueFeedUnavailableError);
+});
+
+test("a banned reviewer takes no slot or share from qualifying reviewers", () => {
+  const result = snapshot(
+    POLICY,
+    new Map([["U_bob", "2026-10-19T00:00:00.000Z"]]),
+  );
+  const reviews = result.ledger.filter(
+    (event) =>
+      event.category === "substantive-review" && event.source.number === 2,
+  );
+  expect(reviews.map((event) => [event.actor.id, event.scoreThirds])).toEqual([
+    ["U_carol", 5],
+    ["U_erin", 2],
+    ["U_grace", 2],
+  ]);
+  expect(
+    reviews.reduce((sum, event) => sum + (event.scoreThirds ?? 0), 0),
+  ).toBe(9);
+  expect(
+    (result.reviewExclusions ?? [])
+      .filter((row) => row.reason === "banned-account")
+      .map((row) => row.reviewId),
+  ).toEqual(["PRR_2_1", "PRR_2_4"]);
+  expect(
+    snapshot(POLICY, new Map([["U_bob", "2026-10-19T00:00:00.000Z"]])),
+  ).toEqual(result);
 });
