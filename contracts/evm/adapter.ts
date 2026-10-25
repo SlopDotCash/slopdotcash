@@ -171,10 +171,10 @@ async function rpc(config: EvmRpc, method: string, params: unknown[]) {
 export class EvmRpcError extends Error {
   constructor(
     public code: number,
-    message: string,
+    public rpcMessage: string,
     public data: unknown,
   ) {
-    super(message);
+    super("RPC request failed");
   }
 }
 export {
