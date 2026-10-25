@@ -1640,18 +1640,26 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
 
   // A real concurrent owner revision must still show the load action.
   const current = await listedProject(page, project.id);
-  const concurrent = await page.request.put(`/api/v1/projects/${project.id}`, {
-    headers: { origin: new URL(page.url()).origin },
-    data: {
-      manifest: {
-        ...current,
-        headline: "The owner published this from another tab",
-      },
-      expectedRevision: 3,
-      reason: "Update from another owner tab",
+  const concurrent = await page.evaluate(
+    async ({ id, manifest }) => {
+      // The browser sends the same secure loopback fixture cookie as the form.
+      const response = await fetch(`/api/v1/projects/${id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          manifest: {
+            ...manifest,
+            headline: "The owner published this from another tab",
+          },
+          expectedRevision: 3,
+          reason: "Update from another owner tab",
+        }),
+      });
+      return response.status;
     },
-  });
-  expect(concurrent.status()).toBe(200);
+    { id: project.id, manifest: current },
+  );
+  expect(concurrent).toBe(200);
   await headline.fill("A draft based on the previous revision");
   await publish.click();
   await expect(alert).toContainText("The project changed since you loaded it");
@@ -1661,6 +1669,17 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
     fullPage: true,
   });
   await reload.click();
+  await expect(
+    page.getByText(
+      "This draft was saved against revision 3. The current revision is 4.",
+      { exact: false },
+    ),
+  ).toBeVisible();
+  await expect(headline).toHaveValue("A draft based on the previous revision");
+  await expect(publish).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Discard draft", exact: true })
+    .click();
   await expect(headline).toHaveValue(
     "The owner published this from another tab",
   );
