@@ -248,13 +248,17 @@ period is open at a time.
    obligation the origin records. The leaf must prove against the recorded
    month, and one of these must hold: its actor is zero; the recorded
    obligation pays this actor at least this gross (an identical hand award,
-   which EVM also counts once, a larger one, or another month's award), so the
-   contributor is already paid; or the recorded obligation was committed
+   which EVM also counts once, or a larger award that arrived after the
+   freeze), so the contributor is already paid; or the recorded obligation was committed
    strictly before the month's `frozen_at`. The attester takes `frozen_at` from
    the block time of the finalized slot at which it checked that no included
    source has a `monthly-source` marker and that any existing `origin` records
-   an award paying that actor at least that gross, and never repeats a source of
-   any admitted month. Otherwise the call fails with `AwardCommittable`. A
+   the identical award (same actor and gross, a genuine 2% fee), and never
+   repeats a source of any admitted month. The EVM attester applies the same
+   rule before signing, because EVM `commitMonthly` reverts the whole month for
+   any other existing award. While automatic monthly payment is on, the owner
+   cannot reserve a funded Solana monthly award by hand: that would spend the
+   free balance the month's admission needs. Otherwise the call fails with `AwardCommittable`. A
    source the owner consumes by hand after the freeze with a smaller award, or
    one to another actor, therefore stays reserved and never becomes a refund.
    The release instruction still takes the `monthly-source` address but no

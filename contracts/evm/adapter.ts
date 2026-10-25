@@ -15,12 +15,25 @@ export type EvmRpc =
       request: (method: string, params: unknown[]) => Promise<unknown>;
     };
 
-export interface EvmUpgrade {
+/** One reviewed upgrade authority and implementation pair for the vault and factory proxies. */
+export interface EvmImplementationReview {
   authority: string;
   vaultImplementation: string;
   vaultImplementationCodeSha256: string;
   factoryImplementation: string;
   factoryImplementationCodeSha256: string;
+}
+/** A superseded review. It applies only to events before `supersededAtBlock`. */
+export interface EvmSupersededReview extends EvmImplementationReview {
+  /** Decimal block number at and after which this review no longer applies: the block of the
+   * last proxy upgrade (vault or factory) that left it, since proxies upgrade separately. */
+  supersededAtBlock: string;
+}
+export interface EvmUpgrade extends EvmImplementationReview {
+  /** Superseded reviews, oldest first and append-only. Only a finalized event before an entry's
+   * bound verifies against it, at its own block, so a later upgrade cannot strand earlier events
+   * and a rollback cannot revive a superseded review. */
+  history?: EvmSupersededReview[];
 }
 export type EvmEscrowConfig = EvmRpc & {
   evmUpgrade?: EvmUpgrade;
@@ -210,6 +223,9 @@ export function evmVaultKey(input: {
 export async function verifyEvmDeployment(
   config: EvmEscrowConfig,
   blockTag: unknown = "finalized",
+  /** Only for an event at its own block number: also accept a superseded review whose bound is
+   * after that block. */
+  eventBlock?: bigint,
 ) {
   if (
     ![
@@ -243,18 +259,38 @@ export async function verifyEvmDeployment(
   const implementationSlot =
     "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
   const upgrade = config.evmUpgrade;
-  for (const [target, expected, digest] of [
-    [
-      config.vault,
-      upgrade?.vaultImplementation,
-      upgrade?.vaultImplementationCodeSha256,
-    ],
-    [
-      config.factory,
-      upgrade?.factoryImplementation,
-      upgrade?.factoryImplementationCodeSha256,
-    ],
-  ]) {
+  const reviews: EvmImplementationReview[] = upgrade
+    ? [
+        upgrade,
+        ...(eventBlock === undefined
+          ? []
+          : (upgrade.history ?? []).filter(
+              (review) =>
+                /^[1-9][0-9]*$/.test(review.supersededAtBlock) &&
+                eventBlock < BigInt(review.supersededAtBlock),
+            )),
+      ]
+    : [];
+  if (
+    reviews.some(
+      (review) =>
+        ![
+          review.authority,
+          review.vaultImplementation,
+          review.factoryImplementation,
+        ].every((value) => ADDRESS.test(value)) ||
+        ![
+          review.vaultImplementationCodeSha256,
+          review.factoryImplementationCodeSha256,
+        ].every((digest) => /^[0-9a-f]{64}$/.test(digest)) ||
+        [config.feeRecipient, config.identityAuthority].some(
+          (value) => value.toLowerCase() === review.authority.toLowerCase(),
+        ),
+    )
+  )
+    throw new Error("Escrow upgrade review is invalid");
+  const slots: string[] = [];
+  for (const target of [config.vault, config.factory]) {
     const slot = await rpc(config, "eth_getStorageAt", [
       target,
       implementationSlot,
@@ -262,34 +298,51 @@ export async function verifyEvmDeployment(
     ]);
     if (typeof slot !== "string" || !HASH.test(slot))
       throw new Error("Invalid implementation slot");
-    if (!upgrade) {
-      if (BigInt(slot) !== 0n)
-        throw new Error("Proxy deployment has no reviewed implementation");
-    } else if (
-      !expected ||
-      !ADDRESS.test(expected) ||
-      !digest ||
-      !/^[0-9a-f]{64}$/.test(digest) ||
-      slot.toLowerCase() !== addressWord(expected).toLowerCase() ||
-      (await runtimeSha256(config, expected, blockTag)) !== digest
-    ) {
+    if (!upgrade && BigInt(slot) !== 0n)
+      throw new Error("Proxy deployment has no reviewed implementation");
+    slots.push(slot.toLowerCase());
+  }
+  if (upgrade) {
+    // Each proxy's implementation and the upgrade authority must each match a
+    // review valid at this block. They may come from different reviews,
+    // because proxies upgrade in separate transactions.
+    const [vaultSlot, factorySlot] = slots;
+    const vaultDigest = await runtimeSha256(
+      config,
+      `0x${vaultSlot.slice(-40)}`,
+      blockTag,
+    );
+    const factoryDigest = await runtimeSha256(
+      config,
+      `0x${factorySlot.slice(-40)}`,
+      blockTag,
+    );
+    if (
+      !reviews.some(
+        (review) =>
+          vaultSlot === addressWord(review.vaultImplementation) &&
+          vaultDigest === review.vaultImplementationCodeSha256,
+      ) ||
+      !reviews.some(
+        (review) =>
+          factorySlot === addressWord(review.factoryImplementation) &&
+          factoryDigest === review.factoryImplementationCodeSha256,
+      )
+    )
       throw new Error(
         "Escrow implementation does not match reviewed deployment",
       );
-    }
-  }
-  if (
-    upgrade &&
-    (!ADDRESS.test(upgrade.authority) ||
-      [config.feeRecipient, config.identityAuthority].some(
-        (value) => value.toLowerCase() === upgrade.authority.toLowerCase(),
-      ) ||
-      (await getter(config, config.factory, "upgradeAuthority()", blockTag)) !==
-        addressWord(upgrade.authority))
-  )
-    throw new Error(
-      "Escrow upgrade authority does not match reviewed deployment",
+    const authority = await getter(
+      config,
+      config.factory,
+      "upgradeAuthority()",
+      blockTag,
     );
+    if (!reviews.some((review) => authority === addressWord(review.authority)))
+      throw new Error(
+        "Escrow upgrade authority does not match reviewed deployment",
+      );
+  }
   for (const [target, signature, expected] of [
     [config.vault, "token()", config.asset],
     [config.vault, "owner()", config.owner],
@@ -401,7 +454,7 @@ async function finalizedLog(
   ) {
     throw new Error("Receipt block is not canonical");
   }
-  await verifyEvmDeployment(config, receipt.blockNumber);
+  await verifyEvmDeployment(config, receipt.blockNumber, blockNumber);
   if (!Array.isArray(receipt.logs)) throw new Error("Missing receipt logs");
   const matches = receipt.logs
     .map(object)

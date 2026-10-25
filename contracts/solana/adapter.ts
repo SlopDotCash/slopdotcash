@@ -543,6 +543,9 @@ export interface EscrowInvocation {
   kind: "reserved" | "paid";
   accounts: string[];
   data: Uint8Array;
+  /** For a commit: the award ID argument, hex. `commit_monthly_award` puts its u32
+   * period first, so its ID sits 4 bytes later than in `commit` and `commit_bounty`. */
+  awardId?: string;
   /** Direct child instructions of this invocation, in order. */
   children: Obj[];
 }
@@ -589,11 +592,15 @@ export function escrowInvocations(
         break;
       if (candidate.height === entry.height + 1) children.push(candidate.ix);
     }
+    const awardAt = tag === COMMIT_MONTHLY_AWARD ? 12 : 8;
     found.push({
       index,
       kind: tag === PAY ? "paid" : "reserved",
       accounts: list(entry.ix.accounts).map(string),
       data,
+      ...(tag === PAY
+        ? {}
+        : { awardId: hex(data.slice(awardAt, awardAt + 32)) }),
       children,
     });
   });
@@ -605,6 +612,12 @@ export function solanaPaymentAdapter(
   config: SolanaEscrowConfig,
 ): PaymentChainAdapter {
   return {
+    // Lets the ledger skip re-verifying evidence it already stored.
+    deployment: {
+      projectId: config.projectId,
+      network: config.network,
+      vault: config.vault,
+    },
     async verifyFinalized(input) {
       if (!Number.isSafeInteger(input.eventIndex) || input.eventIndex < 0)
         throw new Error("Invalid instruction index");
@@ -736,8 +749,10 @@ export function solanaPaymentAdapter(
           accounts[4] !== config.vault
         )
           throw new Error("Payment differs from award");
-        // The fee accrues in the vault; only the net moves to the destination.
-        const expected = [{ to: accounts[5], amount: net }];
+        // The fee accrues in the vault; only the net moves to the destination. A
+        // 1-unit award has a 1-unit fee and a net of 0, and the program then makes
+        // no transfer at all.
+        const expected = net > 0n ? [{ to: accounts[5], amount: net }] : [];
         if (children.length !== expected.length)
           throw new Error("Unexpected payout instructions");
         // Any classic SPL mint is accepted, so the transfer decimals must equal the mint's.
