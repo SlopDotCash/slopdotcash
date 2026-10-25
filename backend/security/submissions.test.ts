@@ -720,6 +720,28 @@ describe("registered project without paid bounty terms", () => {
     });
   });
 
+  test("a verified report with no passing approver stays for reconciliation instead of creating an ownerless case", async () => {
+    const t = setup({ noProgram: true });
+    const submission = await t.ready();
+    // The steward is an organization, so it is not synthesized as its own
+    // approver, and the only registry candidate loses admin permission.
+    t.setPermission("read");
+    const sent = await t.send(submission.id, 1);
+    expect(sent.status).toBe(202);
+    expect(t.row(submission.id).state).toBe("submitted");
+    expect(t.cases()).toHaveLength(0);
+    expect(t.outbox()).toEqual([]);
+    t.setPermission("admin");
+    const recovered = await t.reconcile(
+      submission.id,
+      Number(t.row(submission.id).revision),
+    );
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.submission?.state).toBe("receipt-verified");
+    expect(t.cases()).toHaveLength(1);
+    expect(t.outbox()).toEqual([MAINTAINER.githubId, REPORTER.githubId]);
+  });
+
   test("private intake accepts a report without inventing an award", async () => {
     const t = setup({ noProgram: true });
     const readiness = await t.call(
