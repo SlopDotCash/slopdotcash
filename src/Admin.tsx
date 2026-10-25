@@ -696,7 +696,7 @@ function ProjectEditor({
 
 /** Public reads are edge cached for 30 seconds and purged on each write. */
 const SAVED_NOTE =
-  "Saved. The public site shows the change within a minute. Leaderboard, points, and profile data follow at the next scheduled release, which runs every 6 hours.";
+  "Saved. The public site shows the change within a minute. Leaderboard, points, and profile data follow at the next release.";
 
 /** Delisting keeps history: the project becomes paused and retired. */
 function DelistButton({
