@@ -497,8 +497,9 @@ export default {
     // Public repository observations are independent of identity cleanup and
     // the separate fixed-site trace intake health observation.
     const reporting = async () => {
-      if (!env.REPORTING_READINESS)
-        throw new Error("reporting refresher unavailable");
+      // A release that leaves Slopbot unchanged omits this optional binding.
+      // It must not invent fresh observations or prevent identity cleanup.
+      if (!env.REPORTING_READINESS) return;
       const result = await env.REPORTING_READINESS.refreshReportingReadiness();
       if (result.failed !== 0) throw new Error("reporting refresh incomplete");
     };

@@ -198,11 +198,16 @@ one of `unreachable`, `rate-limited`, `unauthorized`, `rejected`, or
 The hourly trigger also calls the named `REPORTING_READINESS` service binding.
 It refreshes registered repositories' private-reporting status through the
 existing Slopbot App and stores safe observations in `repository_reporting_status`.
-Production uses `slop-slopbot`; staging uses `slop-repository-access-staging`.
-The receiver has no public refresh route. A failed refresh preserves the last
+The identity schedule calls `slop-slopbot` in production and
+`slop-repository-access-staging` in staging; Slopbot's own cron does not run this
+refresh. The receiver has no public refresh route. A failed refresh preserves the last
 good observation with a stale state and does not stop identity cleanup. This is
 separate from the fixed-site optional trace intake observation above. It does
 not enable automatic report submission or add a schedule or credential.
+When `SLOPBOT_RELEASE` is disabled, the production publication copy omits only
+this binding. Identity cleanup continues, and existing observations expire to
+stale or remain unknown. A configured binding's failed call still fails the
+scheduled invocation after cleanup has run.
 
 The protected release verifies the live cleanup schedule against this Worker's
 canonical configuration before code/database deployment and after version activation.

@@ -155,6 +155,16 @@ export default { async fetch(request, env) {
           outboundService: upstream,
         },
         {
+          name: "schedule-disabled",
+          ...shared,
+          script: scheduler,
+          d1Databases: { IDENTITY_DB: "reporting-db" },
+          bindings: {
+            SLOP_ENVIRONMENT: "staging",
+            IDENTITY_PUBLIC_ORIGIN: "https://identity-staging.slop.cash",
+          },
+        },
+        {
           name: "schedule-caller",
           ...shared,
           script: scheduler,
@@ -241,6 +251,36 @@ export default { async fetch(request, env) {
     assert.equal(requests, before, "Public readiness must not call GitHub");
     return response.json();
   };
+  const expiredKey = "e".repeat(64);
+  const expired = () =>
+    db
+      .prepare(
+        "INSERT INTO identity_rate_limits(key_hash,request_count,window_started_at,expires_at) VALUES(?,1,1,2)",
+      )
+      .bind(expiredKey)
+      .run();
+  const cleanupFinished = async () =>
+    assert.equal(
+      await db
+        .prepare("SELECT key_hash FROM identity_rate_limits WHERE key_hash=?")
+        .bind(expiredKey)
+        .first(),
+      null,
+    );
+  await expired();
+  const beforeDisabled = requests;
+  const disabledSchedule = await runtime.getWorker("schedule-disabled");
+  assert.equal(
+    (await disabledSchedule.fetch("https://fixture.internal/scheduled")).status,
+    200,
+  );
+  await cleanupFinished();
+  assert.equal(requests, beforeDisabled);
+  assert.equal(await row(), null);
+  assert.equal((await readiness()).state, "unavailable");
+  checks.push(
+    "deliberately omitted binding keeps cleanup and unknown readiness",
+  );
   assert.equal(
     (await caller.fetch("https://fixture.internal/scheduled")).status,
     200,
@@ -260,6 +300,15 @@ export default { async fetch(request, env) {
   checks.push("native App-authenticated refresh and provider-free public read");
 
   state.status = 403;
+  await expired();
+  await assert.rejects(
+    caller.fetch("https://fixture.internal/scheduled"),
+    /slop scheduled maintenance failed/u,
+  );
+  await cleanupFinished();
+  checks.push(
+    "configured refresh failure stays explicit and cleanup completes",
+  );
   assert.deepEqual(await refresh(), { checked: 1, failed: 1 });
   const failed = await readiness();
   assert.equal(failed.state, "ready");

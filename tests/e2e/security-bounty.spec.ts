@@ -879,6 +879,18 @@ test("private security bounty programs keep cases restricted from intake to awar
       );
     expect((await app("missing")).status()).toBe(204);
     await refreshReporting(request);
+    // The earlier terms page may still have a ready reply in the edge cache.
+    await expect
+      .poll(
+        async () =>
+          (
+            await (
+              await request.get(`/api/v1/security-programs/${a.id}/intake`)
+            ).json()
+          ).stale,
+        { timeout: 35_000 },
+      )
+      .toBe(true);
     const context = await browser.newContext({
       viewport: test.info().project.use.viewport,
       recordVideo: { dir: test.info().outputPath("workflow-video") },

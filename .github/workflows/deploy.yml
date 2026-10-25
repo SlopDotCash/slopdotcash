@@ -1080,6 +1080,15 @@ jobs:
           }
           NODE
 
+          # The selected profile is prepared from the checked-in Pages D1 contract.
+          # No pilot is selected unless the protected environment opts in.
+          if [ "$SLOP_NOTIFY_RELEASE" = "enabled" ]; then
+            bun scripts/release-notify.mjs deploy production "$RUNNER_TEMP/slop-notify-release"
+          else
+            test -z "$SLOP_NOTIFY_MAIL_PILOTS"
+            echo "::notice::Notification release is disabled."
+          fi
+
           # Slopbot (workers/slopbot, protocol/slopbot-v2.md). The owner creates
           # the Worker shell, its custom domain and its secrets once, then sets
           # the SLOPBOT_RELEASE repository variable to "enabled". Releases only
@@ -1176,17 +1185,32 @@ jobs:
             echo "::notice::Slopbot release is not enabled (SLOPBOT_RELEASE repository variable)."
           fi
 
-
-          # The named reporting refresher above must exist before identity binds it.
+          # Bind the identity schedule only to the named refresher released above.
+          # With Slopbot disabled, leave its existing version untouched and omit
+          # only this optional binding from the identity publication copy.
+          identity_config="workers/identity/wrangler.toml"
+          if [ "$SLOPBOT_RELEASE" != "enabled" ]; then
+            identity_config="$(mktemp "$GITHUB_WORKSPACE/workers/identity/.wrangler-release.XXXXXX.json")"
+            trap 'rm -f "$identity_config"' EXIT
+            bun --no-env-file - "$identity_config" <<'BUN'
+          const config = Bun.TOML.parse(await Bun.file("workers/identity/wrangler.toml").text());
+          config.services = config.services.filter((service) => service.binding !== "REPORTING_READINESS");
+          await Bun.write(process.argv[2], `${JSON.stringify(config, null, 2)}\n`);
+          BUN
+          fi
           # Upload and promote a version without rewriting the existing custom
           # domain or cron configuration. The production token intentionally
           # has no zone-level Workers Routes permission.
           identity_upload="$RUNNER_TEMP/slop-identity-upload.log"
           ./node_modules/.bin/wrangler versions upload \
-            --config workers/identity/wrangler.toml \
+            --config "$identity_config" \
             --minify \
             --tag="$GITHUB_SHA" \
             --message="slop.cash release $GITHUB_SHA" 2>&1 | tee "$identity_upload"
+          if [ "$SLOPBOT_RELEASE" != "enabled" ]; then
+            rm -f "$identity_config"
+            trap - EXIT
+          fi
           identity_version_id="$(node - "$identity_upload" <<'NODE'
           const { readFileSync } = require("node:fs");
           const contents = readFileSync(process.argv[2], "utf8");
@@ -1397,15 +1421,6 @@ jobs:
             throw new TypeError("identity exact rate-limit bucket has an unexpected state");
           }
           NODE
-
-          # The selected profile is prepared from the checked-in Pages D1 contract.
-          # No pilot is selected unless the protected environment opts in.
-          if [ "$SLOP_NOTIFY_RELEASE" = "enabled" ]; then
-            bun scripts/release-notify.mjs deploy production "$RUNNER_TEMP/slop-notify-release"
-          else
-            test -z "$SLOP_NOTIFY_MAIL_PILOTS"
-            echo "::notice::Notification release is disabled."
-          fi
 
           if [ "$SLOP_VETTING_BACKUP_RELEASE" = "enabled" ]; then
             node scripts/release-vetting-backup.mjs production
