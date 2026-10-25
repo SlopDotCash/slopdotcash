@@ -55,6 +55,8 @@ type Run = {
   deliver: (job: Job) => Promise<string>;
   tick: () => Promise<Job[]>;
   model: (category: Category, confidence: number) => void;
+  limitations: (triage: string[], confirmation: string[]) => void;
+  prompts: unknown[];
   consent: (value: boolean | null) => void;
   revokeOnConfirmation: () => void;
   repositoryConfig: (value: string | null, truncated?: boolean) => void;
@@ -140,6 +142,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let policyResponse: { status: number; body?: unknown } | null = null;
   let revokeOnConfirmation = false;
   let modelCalls = 0;
+  let limitations: [string[], string[]] = [[], []];
+  const prompts: unknown[] = [];
   const consent = (value: boolean | null) => {
     const row = sqlite
       .query("SELECT revision, manifest FROM projects WHERE id = ?")
@@ -185,6 +189,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       if (request.method !== "GET" && !path.endsWith("/access_tokens"))
         writes.push(`${request.method} ${path}`);
       if (path === "/v1/messages") {
+        prompts.push(await request.json());
         if (++modelCalls === 2 && revokeOnConfirmation) consent(false);
         return Response.json({
           id: "msg_local",
@@ -202,7 +207,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
                 ],
                 evidence: ["Buy cheap followers"],
                 summary: "This pull request advertises a service.",
-                limitations: [],
+                limitations: limitations[modelCalls === 1 ? 0 : 1],
                 objective_defect: null,
               }),
             },
@@ -270,25 +275,33 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           draft: false,
           merged: false,
           head: { sha: "b".repeat(40) },
-          base: { sha: "c".repeat(40) },
+          base: {
+            sha: "c".repeat(40),
+            ref: "main",
+            repo: { id: repositoryId },
+          },
           additions: 1,
           deletions: 0,
           changed_files: 1,
         });
       if (path.endsWith("/branches/main"))
         return Response.json({ commit: { sha: "c".repeat(40) } });
-      if (path.endsWith("/pulls/5/files"))
-        return Response.json(
-          url.searchParams.get("page") === "1" || !url.searchParams.has("page")
-            ? [
-                {
-                  filename: "README.md",
-                  status: "modified",
-                  patch: `+${BODY}`,
-                },
-              ]
-            : [],
-        );
+      if (path.includes("/compare/"))
+        return Response.json({
+          base_commit: { sha: "c".repeat(40) },
+          merge_base_commit: { sha: "c".repeat(40) },
+          files:
+            url.searchParams.get("page") === "1" ||
+            !url.searchParams.has("page")
+              ? [
+                  {
+                    filename: "README.md",
+                    status: "modified",
+                    patch: `+${BODY}`,
+                  },
+                ]
+              : [],
+        });
       const user = path.match(/^\/user\/(\d+)$/u);
       if (user && login(Number(user[1])))
         return Response.json({
@@ -493,6 +506,10 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         await (worker as unknown as Worker).scheduled({}, env);
         return [...sent];
       },
+      prompts,
+      limitations: (triage, confirmation) => {
+        limitations = [triage, confirmation];
+      },
       model: (category, confidence) => {
         verdict = { category, confidence };
       },
@@ -618,6 +635,47 @@ test("project closure consent is fresh and never overrides repository or product
     expect(await run.review()).toBe("closed (spam)");
     expect(run.sql(PENALTY)).toHaveLength(1);
   });
+});
+
+test("independent review preserves every returned limitation before closure", async () => {
+  // Real HTTP/SQLite action controls with synthetic decisions. This does not
+  // prove how a provider interprets the prompt; real qualification is separate.
+  for (const [triage, confirmation] of [
+    [[], []],
+    [["The required source is unavailable."], []],
+    [[], ["The required comparison is unavailable."]],
+    [["Tests were not run."], []],
+    [[], ["The author's intent is unknown."]],
+  ]) {
+    await closedItem(async (run) => {
+      run.limitations(triage, confirmation);
+      const outcome = await run.review();
+      expect(run.prompts).toHaveLength(2);
+      const [first, second] = run.prompts as {
+        system: unknown;
+        messages: unknown;
+      }[];
+      // Both independent routes receive the same policy and source. No first
+      // verdict or filtered limitations are injected into confirmation.
+      expect(second.system).toEqual(first.system);
+      expect(second.messages).toEqual(first.messages);
+      const rows = run.sql("SELECT verdict, action FROM slopbot_reviews") as {
+        verdict: string;
+        action: string;
+      }[];
+      expect(JSON.parse(rows[0].verdict).limitations).toEqual(triage);
+      const blocked = triage.length > 0 || confirmation.length > 0;
+      expect(rows[0].action).toBe(blocked ? "hold" : "close");
+      expect(run.sql(PENALTY)).toHaveLength(blocked ? 0 : 1);
+      expect(
+        run.writes.filter(
+          (path) => path === "PATCH /repos/SlopDotCash/asi/pulls/5",
+        ),
+      ).toHaveLength(blocked ? 0 : 1);
+      if (blocked) expect(outcome).toContain("held for maintainer");
+      else expect(outcome).toBe("closed (spam)");
+    });
+  }
 });
 
 test("a spam close debits 3 thirds once; an accepted uphold draft reopens the item and reverses the debit once", async () => {
