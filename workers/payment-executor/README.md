@@ -44,12 +44,14 @@ claim, the finalized unpaid award, the identity signer, the successor
 lineage for a rotation, and the stored binding signature for the current
 on-chain version. A binding that is already current needs nothing. Its
 journal key names the vault, actor, claim and finalized binding version,
-so a binding whose broadcast result is unknown is broadcast again with the
-same bytes and never signed a second time. Every signed binding stays on a
-pending list until it is finalized or a finalized revert proof retires it.
-Each run broadcasts the pending bindings again first, also when their
-contributor is no longer a candidate, so a lost transaction never blocks
-the identity key's later nonces. A rejected or held candidate makes the run
+so an unknown send retains the same signed bytes. Every signed binding stays
+on a pending list until its canonical receipt is finalized or a finalized
+revert proof retires it. Each run reads pending receipts first, even after a
+wallet changes. Before any broadcast, it verifies the exact signed intent
+against the current D1 claim, wallet authorization, unpaid award, on-chain
+version and unexpired stored consent. An obsolete or unprovable attempt stays
+held with its bytes, hash and nonce unchanged. This safety boundary alone does
+not resolve a held nonce that blocks the identity key's later transactions. A rejected or held candidate makes the run
 fail in the Worker logs; the other candidates continue. A binding that the
 project owner cancelled fails the same way until an identity review. The
 payout `pay`
@@ -92,6 +94,28 @@ the network, then the preflight, before it reads a secret, so a test key
 never signs for a mainnet and a production key never signs while
 `MAINNET_EXECUTION` is off.
 Any other `SIGNER_STACK` value stops the signer.
+
+## Private bounty bindings
+
+One production attester serves a network's ordinary and bounty vaults. The
+configuration generator derives both pin lists from the checked registry.
+`PAYMENT_DEPLOYMENTS` selects ordinary vaults; `SECURITY_PAYMENT_DEPLOYMENTS`
+selects private vaults. Both scopes share the same Durable Object, identity
+key and nonce journal, because the factory supplies one identity authority.
+Do not run separate signing services with that same key on the same network.
+
+Its five-minute schedule indexes finalized events into each scope's separate
+ledger. On EVM it submits only bindings with current account and wallet
+consent, using the existing reconciliation rules. Private internal requests
+use `/v1/security/`. Solana wallet co-signing remains interactive through the
+private account route; its `SECURITY_SOLANA_IDENTITY_ATTESTER` binding points
+to the same network attester, with that private path.
+
+The private scope never signs a monthly allocation or submits an award
+payment. The owner still decides each bounty and the project or a permissionless
+executor submits its payment. Private amounts and case records stay out of
+ordinary balances and notices. Generated configuration is not a deployed
+service; use the reviewed main release before owner-authorized key installation.
 
 ## Monthly allocation execution
 
@@ -276,10 +300,11 @@ relayer endpoints on a production stack. The generated
 secret prompts for review. Do not run its local deployment commands for
 production; use the protected `main` release workflow.
 
-An empty production deployment list is valid only when the checked registry
-has no deployment for that network and scope. It generates the same private
-attester with no cron. Every signing request is refused before reading an
-RPC or signing key. Test stacks still require reviewed deployments.
+An empty production input list is valid only when the checked registry has
+no deployment for that network and scope. The shared attester has no cron
+only when both generated pin lists, ordinary and private, are empty. In that
+state, every signing request is refused before reading an RPC or signing key.
+Test stacks still require reviewed deployments.
 
 The protected `main` release can create the absent Base attester in this
 inactive state, so the owner can install its existing key and RPC secrets
@@ -344,9 +369,10 @@ the fee recipient and the owner withdraws the rest. It also shows that an
 expired binding signature is never submitted, that a signature from
 another GitHub actor is refused by the API and by the attester, and that a
 binding whose broadcast is lost twice stays one journaled transaction with
-one nonce until the same bytes are broadcast. A second contributor's lost
-binding is broadcast again after she changes wallets and is no longer a
-candidate.
+one nonce until the same authorized bytes are broadcast. Signed consent that
+expires or names a superseded claim is held without rebroadcast. The test also
+covers a delayed original send, missing receipt and noncanonical receipt;
+finalized receipt reconciliation remains possible after the claim changes.
 
 Local execution is not public testnet evidence. Public-chain acceptance still
 needs isolated D1 and service bindings, dedicated funded gas/identity signers,

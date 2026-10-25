@@ -1582,18 +1582,24 @@ export async function runSolana(
       programId: programId.toBase58(),
     });
     const vaultBalance = await chain.tokenBalance(vault, "finalized");
-    const result = await reconcile(projection, entry.projectId, totals, {
-      totalDeposited: amounts.totalDeposit.toString(),
-      totalPaid: (amounts.netA + amounts.netB).toString(),
-      totalPayoutFees: (amounts.feeA + amounts.feeB).toString(),
-      totalGrossWithdrawn: amounts.withdrawGross.toString(),
-      totalWithdrawalFees: amounts.withdrawFee.toString(),
-      freeBalance: "0",
-      reservedPrincipal: null,
-      reservedFees: null,
-      accruedFees: "0",
-      reserved: "0",
-    });
+    const result = await reconcile(
+      projection,
+      entry.projectId,
+      totals,
+      {
+        totalDeposited: amounts.totalDeposit.toString(),
+        totalPaid: (amounts.netA + amounts.netB).toString(),
+        totalPayoutFees: (amounts.feeA + amounts.feeB).toString(),
+        totalGrossWithdrawn: amounts.withdrawGross.toString(),
+        totalWithdrawalFees: amounts.withdrawFee.toString(),
+        freeBalance: "0",
+        reservedPrincipal: null,
+        reservedFees: null,
+        accruedFees: "0",
+        reserved: "0",
+      },
+      vault.toBase58(),
+    );
     entry.checks.reconciliation = {
       ...result,
       vaultTokenBalance: vaultBalance.toString(),

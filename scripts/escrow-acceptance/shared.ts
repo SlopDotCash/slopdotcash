@@ -898,6 +898,8 @@ export async function reconcile(
   projectId: string,
   chain: VaultTotals,
   expected: Partial<Record<(typeof COUNTERS)[number], string | null>>,
+  /** The registered vault address the API serves. On Solana it is the vault token account, not chain.vault (the project PDA). */
+  servedVault = chain.vault,
 ) {
   const snapshots = await projectVaultSnapshots(projection.db, projectId);
   if (snapshots.length !== 1)
@@ -946,7 +948,12 @@ export async function reconcile(
     events.filter((e) => e.kind === "paid").length !== 2
   )
     mismatches.push(`ledger holds ${events.length} events, not 2 + 2`);
-  const publicApi = await reconcilePublicApi(projection, projectId, chain);
+  const publicApi = await reconcilePublicApi(
+    projection,
+    projectId,
+    chain,
+    servedVault,
+  );
   mismatches.push(...publicApi.mismatches);
   return {
     snapshot,
@@ -987,6 +994,7 @@ export async function reconcilePublicApi(
   projection: Projection,
   projectId: string,
   chain: VaultTotals,
+  servedVault = chain.vault,
 ) {
   const mismatches: string[] = [];
   const vault = await publicGet(projection, `/projects/${projectId}/vault`);
@@ -1004,7 +1012,7 @@ export async function reconcilePublicApi(
   if (
     String(served.assetAddress).toLowerCase() !== chain.asset.toLowerCase() ||
     served.assetDecimals !== chain.decimals ||
-    String(served.vault).toLowerCase() !== chain.vault.toLowerCase()
+    String(served.vault).toLowerCase() !== servedVault.toLowerCase()
   )
     mismatches.push("public /vault asset or vault identity differs from chain");
   // The "Reserved for committed awards" figure of the vault totals panel.

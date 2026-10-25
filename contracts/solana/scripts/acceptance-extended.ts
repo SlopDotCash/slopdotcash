@@ -1584,8 +1584,9 @@ export async function runSolanaExtended(
         );
         expectEqual(
           "wallet received once",
-          await chain.tokenBalance(
-            ata(scenarioMint, lost.wallets[0].publicKey),
+          // The movement of this payment only: the wallet comes from the reused actor key.
+          (await chain.tokenDeltas(lossRecord.transactionId)).get(
+            ata(scenarioMint, lost.wallets[0].publicKey).toBase58(),
           ),
           item.net,
         );
@@ -1692,9 +1693,16 @@ export async function runSolanaExtended(
       if (!failed.checks.phase2 && !failed.checks.stuck) {
         const item = blocked.items[1];
         expectEqual("retried attempts", projection.attempts(item.id).length, 1);
+        const paidTransaction = projection.obligation(
+          item.id,
+        )?.paid_transaction;
+        if (!paidTransaction)
+          throw new Error("Second recipient payment has no transaction");
         expectEqual(
           "second recipient received",
-          await chain.tokenBalance(tokenAccount(1)),
+          (await chain.tokenDeltas(paidTransaction)).get(
+            tokenAccount(1).toBase58(),
+          ),
           item.net,
         );
         failed.checks.phase2 = {

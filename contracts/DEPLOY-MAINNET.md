@@ -760,8 +760,11 @@ a stored destination binding signature that is valid for at least 10 more
 minutes. For each one it checks the award, the GitHub actor, the claim
 digest and the wallet signature again, then submits `bindDestination` with
 the identity key. It journals the signed transaction before the first
-broadcast. When a broadcast result is unknown, the next run broadcasts the
-same bytes again and never signs a second binding for that version. It
+broadcast. When a broadcast result is unknown, the next run reads its receipt
+and broadcasts the same bytes only while the exact claim and wallet consent
+remain authorized. Obsolete or unprovable attempts stay held without a new
+signature. A held nonce can still block later transactions; this safeguard
+alone does not complete failure-isolation acceptance. It
 checks at most 10 contributors per run. A failed binding makes the cron run
 fail in the Worker logs. The attester refuses `/v1/pay`; the cron run is its
 only binding path. Slop does not submit the payout: `pay` is permissionless
