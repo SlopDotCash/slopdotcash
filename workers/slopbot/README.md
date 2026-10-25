@@ -1018,7 +1018,10 @@ is durable-state evidence, not a model, queue or publication acceptance result.
 
 The scheduler selects one due request and claims it before source reads. It
 checks live registry and installation authority, then reads the complete closed
-PR evidence and pinned policy. A matching current journal avoids another model
+PR evidence and pinned policy. Collection, history validation and publication
+use the validated current D1 manifest, so new registrations do not wait for a
+Worker rebuild. Publication reads the manifest again and preserves the final
+restriction and installation checks. A matching current journal avoids another model
 call. New results pass the reserved inference route, a final ownership check
 and the existing fresh-source publisher before the request is completed.
 Open work completes as context, not an implementation award. Missing evidence keeps the request pending. Related PRs are collected with
@@ -1029,7 +1032,14 @@ group pending; it does not assign zero or split that group. Failures retain a
 retry state without provider exception bodies. Validated results are retained before publication, so a restart can reuse them
 without another model call.
 
-Required operator settings have no defaults:
+Required operator settings have no defaults. Set the following GitHub Actions
+variables in the protected production environment. The release validates them
+as one group and supplies them to the same Worker version as its producer SHA.
+All three empty leaves value inference disabled; partial or malformed settings
+stop the release before deployment. The attempt reserve must cover the complete
+model route, and the start timestamp must follow the subscription-only backfill.
+No setting here changes payout approval or enables closures.
+
 `SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD`,
 `SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD`, `SLOPBOT_VALUE_START_AT`, the existing
 model credential, and the deployed `SLOPBOT_PRODUCER_REVISION`. The start date

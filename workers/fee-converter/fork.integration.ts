@@ -425,7 +425,7 @@ try {
       args: [gross],
     }),
   );
-  const fee = gross / 50n;
+  const fee = (gross + 49n) / 50n;
   if ((await view(vault, "accruedFees")) !== fee)
     throw new Error("7 the withdrawal did not accrue the 2% fee");
   const manifest = JSON.stringify({

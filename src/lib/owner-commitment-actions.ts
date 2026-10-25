@@ -19,6 +19,7 @@ import {
   type VaultConnection,
   walletVaultConfig,
 } from "./evm-vault-actions";
+import { acceptsPayoutFee } from "./payments/contracts";
 
 export type OwnerCommitmentPlan = MonthlyCommitmentPlan;
 export async function requestOwnerCommitment(
@@ -59,8 +60,9 @@ export async function requestOwnerCommitment(
   const gross = BigInt(value.award.gross);
   if (
     gross > (1n << 64n) - 1n ||
-    value.award.fee !== (gross / 50n).toString() ||
-    value.award.net !== (gross - gross / 50n).toString()
+    !/^(0|[1-9][0-9]*)$/.test(value.award.fee) ||
+    !acceptsPayoutFee(gross, BigInt(value.award.fee)) ||
+    value.award.net !== (gross - BigInt(value.award.fee)).toString()
   )
     throw new Error("The prepared award amounts are invalid.");
   return value;
@@ -189,8 +191,10 @@ export async function checkEvmCommitment(
   if (
     event.githubUserId !== plan.award.githubUserId ||
     event.grossMicro !== plan.award.gross ||
-    event.feeMicro !== plan.award.fee ||
-    event.netMicro !== plan.award.net ||
+    // A vault not yet upgraded to rounded-up fees records floor(gross / 50).
+    !acceptsPayoutFee(BigInt(event.grossMicro), BigInt(event.feeMicro)) ||
+    event.netMicro !==
+      (BigInt(event.grossMicro) - BigInt(event.feeMicro)).toString() ||
     event.sourceDigest !== `0x${plan.award.sourceDigest}`
   )
     throw new Error(

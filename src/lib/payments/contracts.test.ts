@@ -1,10 +1,12 @@
 // Explorer links per network; unknown networks stay null.
 import { describe, expect, test } from "bun:test";
 import {
+  acceptsPayoutFee,
   formatAssetAmount,
   formatBaseUnits,
   isBaseUnits,
   MAX_BASE_UNITS,
+  ordinaryFee,
   payoutFee,
   transactionUrl,
 } from "./contracts";
@@ -74,11 +76,38 @@ describe("base-unit amounts", () => {
       }),
     ).toBe("2 USDC");
   });
-  test("payout fee is 2% in base units up to uint128", () => {
+  test("payout fee is 2% in base units, rounded up, up to uint128", () => {
     expect(payoutFee(100n)).toBe(2n);
-    expect(payoutFee(MAX_BASE_UNITS)).toBe(MAX_BASE_UNITS / 50n);
+    expect(payoutFee(1n)).toBe(1n);
+    expect(payoutFee(49n)).toBe(1n);
+    expect(payoutFee(51n)).toBe(2n);
+    expect(payoutFee(MAX_BASE_UNITS)).toBe(MAX_BASE_UNITS / 50n + 1n);
+    expect(ordinaryFee(0n)).toBe(0n);
+    expect(ordinaryFee(399n)).toBe(8n);
     expect(() => payoutFee(MAX_BASE_UNITS + 1n)).toThrow();
     expect(isBaseUnits("340282366920938463463374607431768211456")).toBe(false);
     expect(isBaseUnits("01")).toBe(false);
+  });
+  test("reconciliation accepts the rounded-up fee or a live vault's rounded-down fee only", () => {
+    // Rounded up, as upgraded vaults record it.
+    expect(acceptsPayoutFee(49n, 1n)).toBe(true);
+    expect(acceptsPayoutFee(851n, 18n)).toBe(true);
+    // Rounded down, as vaults not yet upgraded record it, only when it is one unit lower.
+    expect(acceptsPayoutFee(49n, 0n)).toBe(true);
+    expect(acceptsPayoutFee(851n, 17n)).toBe(true);
+    // An exact multiple of 50 has one fee.
+    expect(acceptsPayoutFee(850n, 17n)).toBe(true);
+    expect(acceptsPayoutFee(850n, 16n)).toBe(false);
+    expect(acceptsPayoutFee(850n, 18n)).toBe(false);
+    // Nothing else.
+    expect(acceptsPayoutFee(851n, 16n)).toBe(false);
+    expect(acceptsPayoutFee(851n, 19n)).toBe(false);
+    expect(acceptsPayoutFee(49n, 2n)).toBe(false);
+    // A bounty split is exact: 25%, with no alternative rounding.
+    expect(acceptsPayoutFee(100n, 25n, "security-bounty")).toBe(true);
+    expect(acceptsPayoutFee(100n, 24n, "security-bounty")).toBe(false);
+    expect(acceptsPayoutFee(100n, 2n, "security-bounty")).toBe(false);
+    expect(() => acceptsPayoutFee(101n, 25n, "security-bounty")).toThrow();
+    expect(() => acceptsPayoutFee(0n, 0n)).toThrow();
   });
 });
