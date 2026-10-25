@@ -192,6 +192,14 @@ KEY=$(cast call "$FACTORY" 'vaultKey(address,bytes32,address,uint8)(bytes32)' \
 VAULT=$(cast call "$FACTORY" 'vaults(bytes32)(address)' "$KEY" --rpc-url "$RPC")
 ```
 
+> **Required upgrade step, not performed.** Owner vault setup on the website
+> calls `createWithMonthlyCommitment`. The current mainnet factories listed
+> above do not have this method. Before setup can work on a network, an
+> operator must deploy and verify new factory and vault implementations, and
+> the upgrade authority (the owner wallet) must sign the factory upgrade below.
+> Until then, the setup route refuses creation on that network. No one has
+> deployed, signed or submitted this upgrade.
+
 For a new ordinary vault under PRD decision D1, use the reviewed factory and
 vault implementation that support atomic monthly setup. The older deployments
 listed above do not gain this method from a source merge. After a reviewed

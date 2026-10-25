@@ -1299,6 +1299,85 @@ test.each(["vault verification", "owner update"])(
   },
 );
 
+// One vault per project, and its owner controls refunds and the monthly switch.
+test("only the steward or a repository admin can register the project vault", async () => {
+  const t = registry();
+  await t.create("vault-target", "example/vault-target");
+  const target = await t.persistence.getProject("vault-target");
+  if (!target) throw new Error("Project required");
+  expect(
+    (
+      await t.call("PUT", "admin/projects/vault-target/manifest", ADMIN, {
+        expectedRevision: target.revision,
+        reason: "Set the approved monthly vault policy",
+        manifest: {
+          ...target.manifest,
+          reward: { ...target.manifest.reward, feeBasisPoints: 200 },
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: "2026-11",
+            chain: "ethereum",
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [],
+          },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  const registered: string[] = [];
+  t.deps.vaultSetup = {
+    networks: async () => ["ethereum"],
+    review: async () => {
+      throw new Error("Not used");
+    },
+    register: async (_project, actor) => {
+      registered.push(actor.githubId);
+      return TEST_VAULT;
+    },
+  };
+  const register = (actor: string) =>
+    t.call("POST", "project-vaults/vault-target", actor, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId: TEST_VAULT.deploymentTransaction,
+    });
+  // A collaborator with write access, who is not the steward, cannot become the vault owner.
+  t.state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "write",
+    roleName: "maintain",
+  };
+  for (const response of [
+    await t.call("GET", "project-vaults/vault-target", OTHER),
+    await register(OTHER),
+  ]) {
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("vault_authority_required");
+  }
+  expect(registered).toEqual([]);
+  expect((await t.persistence.getProject(target.id))?.revision).toBe(2);
+  // A repository admin can register the verified vault.
+  t.state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "admin",
+    roleName: "admin",
+  };
+  const accepted = await register(OTHER);
+  expect(accepted.status).toBe(200);
+  expect(accepted.body.status).toBe("registered");
+  expect(registered).toEqual([OTHER]);
+  expect(
+    (await t.persistence.getProject(target.id))?.manifest.escrow?.deployments,
+  ).toEqual([TEST_VAULT]);
+});
+
 // A moderator decision on another project also applies during this activation.
 test("a ban issued during the authority check prevents automatic activation", async () => {
   const t = registry();
