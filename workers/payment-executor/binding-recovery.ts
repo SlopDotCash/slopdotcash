@@ -67,11 +67,20 @@ const quantity = (value: unknown): bigint => {
     throw new Error("Binding reconciliation quantity unavailable");
   return BigInt(value);
 };
+// RPCs may return signature scalars without their leading zero nibble. Padding
+// changes no scalar; the reconstructed signed hash and recovered sender still bind it.
+const signatureScalar = (value: unknown): Hex => {
+  if (typeof value !== "string" || !/^0x[0-9a-f]{1,64}$/i.test(value))
+    throw new Error("Winner signature unavailable");
+  return `0x${value.slice(2).padStart(64, "0")}`;
+};
 
 /** Observe one already-finalized winner. This environment has no signer or key. */
 export async function reconcileBindingWinner(
   env: Environment,
   input: BindingRecoveryInput,
+  /** Internal scheduled reconciliation may observe absence without claiming a winner. */
+  allowMissingReceipt = false,
 ) {
   if (!isBindingRecoveryInput(input))
     throw new Error("Invalid binding reconciliation");
@@ -199,9 +208,12 @@ export async function reconcileBindingWinner(
           : "original_reverted",
     };
   } else {
-    if (same(input.winnerTransactionId, attempt.transactionId))
+    if (same(input.winnerTransactionId, attempt.transactionId)) {
+      if (allowMissingReceipt) return { state: "pending" as const };
       throw new Error("Original binding receipt unavailable");
+    }
     const receipt = await canonicalReceipt(input.winnerTransactionId);
+    if (!receipt && allowMissingReceipt) return { state: "pending" as const };
     if (receipt?.status !== "0x1")
       throw new Error("Finalized self-transaction unavailable");
     const tx = (await rpc("eth_getTransactionByHash", [
@@ -238,9 +250,7 @@ export async function reconcileBindingWinner(
       quantity(tx.gas) !== 21_000n ||
       quantity(receipt.gasUsed) !== 21_000n ||
       !Array.isArray(tx.accessList) ||
-      tx.accessList.length !== 0 ||
-      !/^0x[0-9a-f]{64}$/i.test(tx.r) ||
-      !/^0x[0-9a-f]{64}$/i.test(tx.s)
+      tx.accessList.length !== 0
     )
       throw new Error("Winner is not the supported inert self-transaction");
     const parity = quantity(tx.yParity ?? tx.v);
@@ -259,7 +269,11 @@ export async function reconcileBindingWinner(
         data: "0x",
         accessList: [],
       },
-      { r: tx.r, s: tx.s, yParity: Number(parity) },
+      {
+        r: signatureScalar(tx.r),
+        s: signatureScalar(tx.s),
+        yParity: Number(parity),
+      },
     );
     if (
       !same(keccak256(serialized), input.winnerTransactionId) ||

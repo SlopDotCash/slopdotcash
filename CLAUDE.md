@@ -28,7 +28,7 @@ alias only.
   - The escrow identity attester key (PAY-05, approved by the repository owner
     on 14 October 2026). It only attests the authenticated GitHub actor for a
     destination binding that the destination wallet also signs, and it submits
-    only that binding transaction. It cannot choose an amount or reach free
+    those binding transactions. It cannot choose an amount or reach free
     funds. A binding activates immediately and the award delay is zero (#1086,
     #1100), so a stolen attester key with a wallet it controls can redirect and
     pay any matured unpaid award before the owner can cancel. Protection rests
@@ -38,7 +38,13 @@ alias only.
     allocation root (the owner waived the independent audit, PRD section 11
     "External reviews"). The contract limits that commitment to the owner's
     monthly cap, one commitment per period, and the owner's opt-out; the
-    attester still cannot withdraw, redirect, or pay funds.
+    attester still cannot withdraw, redirect, or pay funds. Owner decision of
+    25 October 2026: it may automatically cancel its own obsolete pending EVM
+    wallet-binding transaction with a same-nonce, zero-native-value transfer
+    to itself, with empty data and the existing gas limits. Retain both signed
+    attempts and reconcile either canonical finalized winner. The old binding
+    may still win. Missing evidence is not cancellation proof. This exception
+    does not authorize cancellation of payments or monthly commitments.
   - One fee-wallet hot key per network (PRD TOK-07, MVP-07c, owner decision
     of 18 October 2026). It controls only the network fee wallet. It signs
     only the conversion of fees received in that wallet to USDC, through allowlisted routes, within the slippage limit,
