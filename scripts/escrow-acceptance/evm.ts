@@ -226,9 +226,14 @@ export class EvmChain {
     return { block: finalized.toString(), transactions };
   }
   /** Simulates a call that must revert and returns the node's reason. */
-  async mustRevert(from: string, to: string, data: string): Promise<string> {
+  async mustRevert(
+    from: string,
+    to: string,
+    data: string,
+    block = "latest",
+  ): Promise<string> {
     try {
-      await this.rpc("eth_call", [{ from, to, data }, "latest"]);
+      await this.rpc("eth_call", [{ from, to, data }, block]);
     } catch (error) {
       if (!(error instanceof RpcError) || !error.reverted) throw error;
       // Name the custom error when the node returns the revert data.
