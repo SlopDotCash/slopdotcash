@@ -418,6 +418,10 @@ jobs:
           test "$HAS_CLIENT" = true
           test "$HAS_KEYS" = true
           test "$HAS_APP" = true
+      - name: Derive staging scanner public key
+        env:
+          SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
+        run: bun scripts/prepare-vetting-public-key.ts derive staging "$RUNNER_TEMP/scanner-public-key.json"
       - name: Publish and verify isolated staging
         env:
           SLOP_VETTING_BACKUP_RELEASE: ${{ vars.SLOP_VETTING_BACKUP_STAGING_RELEASE }}
@@ -470,11 +474,12 @@ jobs:
           if [ "$SLOP_NOTIFY_RELEASE" = "enabled" ]; then
             cp "$RUNNER_TEMP/slop-notify-staging-release/pages.toml" "$publish_dir/wrangler.toml"
           fi
+          bun scripts/prepare-vetting-public-key.ts assemble staging "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.toml"
           cp -R dist "$publish_dir/dist"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$publish_dir/node_modules"
           (
             cd "$publish_dir"
-            ./node_modules/.bin/wrangler pages deploy \
+            WRANGLER_LOG=error WRANGLER_WRITE_LOGS=false ./node_modules/.bin/wrangler pages deploy \
               --project-name=slop-staging \
               --branch=development \
               --commit-hash="$GITHUB_SHA" \
@@ -482,6 +487,7 @@ jobs:
           )
           node scripts/verify-staging-deployment.mjs "$GITHUB_SHA" "$started_at"
           node scripts/verify-staging-backend.mjs
+          bun scripts/prepare-vetting-public-key.ts verify staging "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.jsonc"
 
       - name: Retain notification release evidence
         if: always()
@@ -702,6 +708,10 @@ jobs:
           writeFileSync(process.argv[2], bindings.map(([name, value]) => `--var=${name}:${value}`).join("\n") + "\n");
           NODE
 
+      - name: Derive production scanner public key
+        env:
+          SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
+        run: bun scripts/prepare-vetting-public-key.ts derive production "$RUNNER_TEMP/scanner-public-key.json"
       - name: Deploy private identity and Cloudflare Pages
         id: pages-deploy
         env:
@@ -1444,13 +1454,21 @@ jobs:
             exit 1
           fi
 
+          # Use the same immutable-source publication directory as staging.
+          # Only public configuration is added; the signing key is not in this step.
+          publish_dir="$(mktemp -d "$RUNNER_TEMP/slop-production-pages.XXXXXX")"
+          git archive "$GITHUB_SHA" | tar -x -C "$publish_dir"
+          bun scripts/prepare-vetting-public-key.ts assemble production "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.toml"
+          cp -R dist "$publish_dir/dist"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$publish_dir/node_modules"
           printf '%s\n' "started_at=$(node -e 'process.stdout.write(Date.now().toString())')" >> "$GITHUB_OUTPUT"
           for attempt in 1 2 3; do
-            if ./node_modules/.bin/wrangler pages deploy \
+            if WRANGLER_LOG=error WRANGLER_WRITE_LOGS=false ./node_modules/.bin/wrangler pages deploy --cwd "$publish_dir" \
               --project-name=eliza-computer \
               --branch=main \
               --commit-hash="$RELEASE_SHA" \
               --commit-dirty=false; then
+              bun scripts/prepare-vetting-public-key.ts verify production "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.jsonc"
               exit 0
             fi
             if [ "$attempt" = "3" ]; then
