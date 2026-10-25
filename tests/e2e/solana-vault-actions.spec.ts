@@ -999,12 +999,11 @@ test("owner creates, recovers, registers and funds a Solana vault through the AP
     await setup
       .getByRole("button", { name: "Connect Local Solana wallet" })
       .click();
-    const monthly = setup.getByRole("combobox", {
-      name: "Automatic monthly payment",
-      exact: true,
+    const monthly = setup.getByRole("checkbox", {
+      name: "Automatically pay the monthly allocation",
     });
-    await expect(monthly).toHaveValue("on");
-    if (!automatic) await monthly.selectOption("off");
+    await expect(monthly).toBeChecked();
+    if (!automatic) await monthly.uncheck();
     // Read the browser's own review in the test process. Chromium may drop a
     // finished response body before CDP reads it, so do not depend on that buffer.
     const reviewUrl = `${origin}/api/v1/project-vaults/${project.id}`;

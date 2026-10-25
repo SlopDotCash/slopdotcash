@@ -44,6 +44,17 @@ export interface OwnerVaultSetup {
   ): Promise<EscrowDeployment | null>;
 }
 
+/**
+ * A new vault's first record carries only the current implementation review.
+ * Upgrade history is append-only and belongs to the template's own upgrades,
+ * so it is never copied to a new deployment or used to verify its creation.
+ */
+function currentReview(template: EscrowDeployment): EscrowDeployment {
+  if (!template.evmUpgrade) return template;
+  const { history: _history, ...current } = template.evmUpgrade;
+  return { ...template, evmUpgrade: current };
+}
+
 export function ownerVaultSetupService(deps: {
   db: D1TransactionalDatabase;
   projects(): Promise<ProjectRecord[]>;
@@ -227,7 +238,7 @@ export function ownerVaultSetupService(deps: {
       )
         continue;
       const config: EvmEscrowConfig = {
-        ...template,
+        ...currentReview(template),
         factory: template.factory,
         factoryCodeSha256: template.factoryCodeSha256,
         registrar: template.registrar,
@@ -296,12 +307,13 @@ export function ownerVaultSetupService(deps: {
             transactionId,
           );
           if (!verified) return null;
-          return newDeployment(result.template, {
+          return {
+            ...currentReview(result.template),
             ...verified,
             owner: result.creation.owner,
             asset: result.creation.mint,
             deploymentTransaction: transactionId,
-          });
+          };
         } catch (error) {
           fail(
             422,
@@ -330,33 +342,15 @@ export function ownerVaultSetupService(deps: {
         );
       }
       if (!vault) return null;
-      return newDeployment(template, {
+      return {
+        ...currentReview(template),
         vault,
         owner: creation.owner,
         asset: creation.asset,
         deploymentTransaction: transactionId,
-      });
+      };
     },
   };
-}
-
-/**
- * A template is another project's reviewed deployment. The new vault starts at
- * the template's current reviewed implementation, so it takes no upgrade
- * history: history records only later upgrades of that one deployment.
- */
-function newDeployment(
-  template: EscrowDeployment,
-  fields: Pick<
-    EscrowDeployment,
-    "vault" | "owner" | "asset" | "deploymentTransaction"
-  > &
-    Partial<EscrowDeployment>,
-): EscrowDeployment {
-  const { evmUpgrade, ...rest } = template;
-  if (!evmUpgrade) return { ...rest, ...fields };
-  const { history: _history, ...current } = evmUpgrade;
-  return { ...rest, evmUpgrade: current, ...fields };
 }
 
 export function attachOrdinaryVault(

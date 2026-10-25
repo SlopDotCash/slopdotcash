@@ -190,6 +190,30 @@ test("a harmless revision passes every check, and its digest keys the cache", as
   );
   expect(scanProblems(parsed)).toEqual([]);
 
+  // A new binary is quarantined and cannot reuse earlier clean clearance.
+  const withBinary = inspectRepository({
+    files: [
+      ...harmless,
+      {
+        path: "new-tool.wasm",
+        bytes: new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]),
+      },
+    ],
+  });
+  expect(withBinary.artifacts[0]?.state).toBe("quarantined");
+  expect(() =>
+    reuseCleanScan({
+      queued: {
+        ...queued,
+        assessmentId: `vet_${"4".repeat(32)}`,
+        commitSha: "f".repeat(40),
+      },
+      original: parsed,
+      originalAssessmentId: queued.assessmentId,
+      inventorySha256: withBinary.inventorySha256,
+    }),
+  ).toThrow("does not cover");
+
   // A later commit with the same executable inventory reuses the result.
   const reused = reuseCleanScan({
     queued: {

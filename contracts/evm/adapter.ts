@@ -223,10 +223,10 @@ export function evmVaultKey(input: {
 export async function verifyEvmDeployment(
   config: EvmEscrowConfig,
   blockTag: unknown = "finalized",
-  expectedProjectId?: string,
   /** Only for an event at its own block number: also accept a superseded review whose bound is
    * after that block. */
   eventBlock?: bigint,
+  expectedProjectId?: string,
 ) {
   if (
     ![
@@ -457,12 +457,7 @@ async function finalizedLog(
   ) {
     throw new Error("Receipt block is not canonical");
   }
-  await verifyEvmDeployment(
-    config,
-    receipt.blockNumber,
-    undefined,
-    blockNumber,
-  );
+  await verifyEvmDeployment(config, receipt.blockNumber, blockNumber);
   if (!Array.isArray(receipt.logs)) throw new Error("Missing receipt logs");
   const matches = receipt.logs
     .map(object)
@@ -978,7 +973,7 @@ export function buildCreateVaultCalldata(input: {
   payoutPolicy?: PayoutPolicy;
   /** Required for ordinary vaults; base units chosen by the owner. */
   monthlyCap?: string | bigint;
-  /** Required for ordinary vaults; the website passes true unless the owner opts out. */
+  /** Defaults on; false records an explicit owner opt-out. */
   automaticMonthly?: boolean;
 }) {
   if (BigInt(hash(input.projectId)) === 0n || !ADDRESS.test(input.asset))
@@ -990,9 +985,7 @@ export function buildCreateVaultCalldata(input: {
   }
   if (input.monthlyCap === undefined)
     throw new Error("The owner's monthly cap is required");
-  if (typeof input.automaticMonthly !== "boolean")
-    throw new Error("Choose the monthly payment setting explicitly");
-  return `0x${selector("createWithMonthlyCommitment(bytes32,address,uint128,bool)")}${hash(input.projectId).slice(2)}${addressWord(input.asset).slice(2)}${monthlyCommitmentWords(input.monthlyCap, input.automaticMonthly)}`;
+  return `0x${selector("createWithMonthlyCommitment(bytes32,address,uint128,bool)")}${hash(input.projectId).slice(2)}${addressWord(input.asset).slice(2)}${monthlyCommitmentWords(input.monthlyCap, input.automaticMonthly ?? true)}`;
 }
 /** Creation uses a reviewed existing vault only as the factory/code trust source. */
 export interface EvmVaultCreation {
@@ -1117,8 +1110,13 @@ export async function verifyEvmVaultCreation(
     asset: input.asset,
     payoutPolicy: input.payoutPolicy,
   };
-  await verifyEvmDeployment(created, receipt.blockNumber, input.projectId);
-  await verifyEvmDeployment(created, "finalized", input.projectId);
+  await verifyEvmDeployment(
+    created,
+    receipt.blockNumber,
+    undefined,
+    input.projectId,
+  );
+  await verifyEvmDeployment(created, "finalized", undefined, input.projectId);
   if (input.payoutPolicy !== "security-bounty") {
     // Read the policy at the creation block: a later owner change must not block registration.
     const cap = BigInt(

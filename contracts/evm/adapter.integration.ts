@@ -189,7 +189,7 @@ try {
             ? {}
             : {
                 monthlyCap: "50000000",
-                automaticMonthly: from !== donor,
+                ...(from === donor ? { automaticMonthly: false } : {}),
               }),
         }),
       },
@@ -201,16 +201,6 @@ try {
     () => buildCreateVaultCalldata({ projectId, asset: token }),
     /monthly cap is required/,
     "ordinary creation requires the owner's cap",
-  );
-  assert.throws(
-    () =>
-      buildCreateVaultCalldata({
-        projectId,
-        asset: token,
-        monthlyCap: "50000000",
-      }),
-    /Choose the monthly payment setting explicitly/,
-    "ordinary creation requires the owner to choose on or off",
   );
   const vault = await createVault(token);
   // Any account creates its own vault for the same project; it never replaces the owner's.

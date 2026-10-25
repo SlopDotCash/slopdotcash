@@ -433,20 +433,17 @@ export function OwnerVaultSetup({
               </p>
             ) : null}
             <label>
-              Automatic monthly payment
-              <select
-                value={automatic ? "on" : "off"}
+              <input
+                type="checkbox"
+                checked={automatic}
                 disabled={busy}
-                onChange={(e) => setAutomatic(e.target.value === "on")}
-              >
-                <option value="on">On</option>
-                <option value="off">Off</option>
-              </select>
+                onChange={(e) => setAutomatic(e.target.checked)}
+              />{" "}
+              Automatically pay the monthly allocation
             </label>
             <p>
-              Automatic monthly payment is On by default. Choose Off to opt out.
               The cap is {project.reward.monthlyCapDisplay} per month. You can
-              change this setting later.
+              turn automatic payment off later.
             </p>
             <button
               className="button"
