@@ -204,7 +204,10 @@ Work accepted from that instant:
 
 Review credit is one explicit allocation per pull request. Qualifying reviews
 exclude implementation actors, bots, reviews after merge or closure, and
-duplicate findings. A qualifying review whose submission time is outside the
+duplicate findings. A review submitted at or after its author's account ban
+publishes `review-credit-account-banned` and takes no reviewer slot or share.
+Reviews before that ban remain eligible under their original policy.
+A qualifying review whose submission time is outside the
 scoring window publishes `review-credit-outside-window`. It takes no reviewer
 slot and no share. Its band does not replace an in-window review by the same
 person. The award keeps the submission time, so a later merge does not move
