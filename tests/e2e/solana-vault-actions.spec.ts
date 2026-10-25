@@ -19,6 +19,7 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import {
+  readVaultTotals,
   type SolanaEscrowConfig,
   solanaBase58,
   verifySolanaDeployment,
@@ -1426,7 +1427,7 @@ async function ownerSetupWorkflow(
         await spl.getAccount(connection, donorAccount, "finalized")
       ).amount;
       await funding.getByLabel("Withdraw free funds").check();
-      await funding.getByLabel("Token amount").fill("0.5");
+      await funding.getByLabel("Token amount").fill("0.500001");
       await funding
         .getByRole("button", { name: "Review withdrawal", exact: true })
         .click();
@@ -1460,6 +1461,16 @@ async function ownerSetupWorkflow(
           )
         ).amount,
       ).toBe(9_510_000n);
+      const withdrawn = await readVaultTotals(createdConfig);
+      expect(withdrawn.totalGrossWithdrawn).toBe("500001");
+      expect(withdrawn.totalWithdrawalFees).toBe("10001");
+      expect(withdrawn.accruedFees).toBe("10001");
+      expect(withdrawn.freeBalance).toBe("9499999");
+      expect(withdrawn.reserved).toBe("0");
+      await info.attach("private-withdrawal-totals.json", {
+        body: JSON.stringify(withdrawn, null, 2),
+        contentType: "application/json",
+      });
       const publicProject = await (
         await page.request.get(`${origin}/api/v1/projects/${project.id}`)
       ).text();

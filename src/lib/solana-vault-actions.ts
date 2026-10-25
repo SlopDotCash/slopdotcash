@@ -8,7 +8,11 @@ import { decodeBase58Bytes } from "./base58";
 import { readBoundedJson } from "./browser-json";
 import type { EscrowDeployment } from "./escrow-policy.mjs";
 import type { VaultConnection, VaultOperation } from "./evm-vault-actions";
-import { isAssetDecimals, ordinaryFee, type PayoutPolicy } from "./payments/contracts";
+import {
+  isAssetDecimals,
+  ordinaryFee,
+  type PayoutPolicy,
+} from "./payments/contracts";
 import { parseVaultAmount } from "./payments/vault-amount";
 import { projectApiRequest } from "./project-api";
 
