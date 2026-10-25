@@ -37,6 +37,7 @@ const supportedFaults = [
   "hashes",
   "race",
   "finalized-role",
+  "receipt-role",
 ];
 const faults =
   process.env.SLOP_TEST_CLAIM_FAULTS?.split(",") ?? supportedFaults;
@@ -783,7 +784,9 @@ try {
 
   // Each retry uses a fresh Worker invocation and the durable SQLite journal.
   console.log(`Claim fault cases: ${faults.join(", ")}`);
-  for (const fault of faults.filter((fault) => fault !== "finalized-role")) {
+  for (const fault of faults.filter(
+    (fault) => fault !== "finalized-role" && fault !== "receipt-role",
+  )) {
     const conversionsBefore = (
       sqlite
         .query(
@@ -927,6 +930,67 @@ try {
       );
     console.log(
       `7 ${fault}: unverified claim blocked conversion; same send recovered once`,
+    );
+  }
+
+  if (faults[0] === "receipt-role") {
+    let changed = false;
+    const changeBeforeSend: typeof fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const body = typeof init?.body === "string" ? init.body : "";
+      if (!changed && body.includes('"eth_sendRawTransaction"')) {
+        changed = true;
+        await call(
+          registrar,
+          factory,
+          encodeFunctionData({
+            abi: vaultAbi,
+            functionName: "proposeIdentityAuthority",
+            args: [wallet as Hex],
+          }),
+        );
+        await call(
+          registrar,
+          factory,
+          encodeFunctionData({
+            abi: vaultAbi,
+            functionName: "executeIdentityAuthorityRotation",
+          }),
+        );
+      }
+      return fetch(input, init);
+    }) as typeof fetch;
+    await runOnce(env, undefined, { fetch: changeBeforeSend });
+    if (!changed)
+      throw new Error("Fixture did not exercise the pre-broadcast change");
+    await rpc("anvil_mine", ["0x80"]);
+    await runOnce(env, undefined, undefined, "receipts");
+    const rows = sqlite
+      .query<{ kind: string; state: string; amount_out: string | null }, []>(
+        "SELECT kind,state,amount_out FROM fee_conversions ORDER BY rowid",
+      )
+      .all();
+    const claims = rows.filter((row) => row.kind === "claim");
+    const conversions = rows.filter((row) => row.kind === "conversion");
+    console.log(
+      JSON.stringify({
+        check: "receipt-time role verification",
+        changed,
+        rows,
+      }),
+    );
+    if (
+      claims.length !== 1 ||
+      claims[0].state === "finalized" ||
+      conversions.length !== 0
+    )
+      throw new Error(
+        "Receipt-time role change was accepted and allowed conversion",
+      );
+    console.log(
+      "PASS: receipt-time role change remains unresolved without conversion",
     );
   }
 
