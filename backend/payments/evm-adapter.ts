@@ -16,6 +16,11 @@ export function evmPaymentAdapter(
   },
 ): PaymentChainAdapter {
   return {
+    deployment: {
+      projectId: config.projectId,
+      network: config.network,
+      vault: config.vault,
+    },
     async verifyFinalized(input) {
       const result = await (input.kind === "reserved"
         ? verifyReserve

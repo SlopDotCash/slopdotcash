@@ -29,6 +29,7 @@ import { payoutExcludedGithubUserIds } from "../../src/lib/payout-exclusions.mjs
 import type { ProjectRecord } from "../../src/lib/project-contracts";
 import { sha256Hex } from "../../src/lib/sha256";
 import type { D1TransactionalDatabase } from "../d1";
+import { chainAwards, holdsAward } from "./chain-awards";
 import { automaticMonthlyPayment, MonthlyPaymentError } from "./monthly";
 
 export interface MonthlyAttestationRequest {
@@ -240,9 +241,6 @@ export async function prepareMonthlyAttestation(
   );
   if (eligible.length === 0)
     reject("empty_allocation", "No eligible award needs a chain commitment.");
-  const totalGrossBase = eligible
-    .reduce((total, a) => total + BigInt(a.grossBase), 0n)
-    .toString();
   // Compare every obligation, not just the existence of the month marker.
   const obligations = await deps.db
     .prepare(
@@ -301,8 +299,23 @@ export async function prepareMonthlyAttestation(
         "An award source already appears in another month.",
       );
   }
+  // A source that already holds a different award (another actor, gross or
+  // fee) can never commit: EVM commitMonthly would revert the whole month and
+  // the Solana leaf could never settle. Leave it out so the rest of the month
+  // commits; the owner view reports it as a conflict. An identical award stays
+  // in and is counted once.
+  const chain = await chainAwards(deps.db, request.network, deployment.vault);
+  const committable = eligible.filter((a) => {
+    const held = chain.get(a.sourceDigest);
+    return !held || holdsAward(held, a);
+  });
+  if (committable.length === 0)
+    reject("empty_allocation", "No eligible award needs a chain commitment.");
+  const totalGrossBase = committable
+    .reduce((total, a) => total + BigInt(a.grossBase), 0n)
+    .toString();
   const network = ESCROW_NETWORKS[request.network];
-  const entries = eligible.map((a) => ({
+  const entries = committable.map((a) => ({
     githubUserId: a.githubUserId,
     grossMicro: a.grossBase,
     sourceDigest:

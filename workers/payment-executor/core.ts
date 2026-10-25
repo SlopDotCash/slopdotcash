@@ -15,6 +15,7 @@ import {
   buildCommitMonthlyCalldata,
   buildPayCalldata,
   evmAllocationRoot,
+  evmAwardId,
   evmMonthlyDigest,
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
@@ -314,6 +315,42 @@ export async function preflightEvmDeployment(
     chainId: BigInt(deployment.chainId),
   });
   return deployment;
+}
+
+/**
+ * Before the attester signs an EVM month: commitMonthly counts an existing award
+ * under an included source once only if it is the same award, and otherwise
+ * reverts the whole month. Refuse to sign a month that can only revert, as the
+ * Solana freeze refuses the same allocation.
+ */
+export async function assertEvmMonthlySources(
+  deployment: Deployment,
+  entries: readonly {
+    githubUserId: string;
+    grossMicro: string;
+    sourceDigest: string;
+  }[],
+) {
+  for (const entry of entries) {
+    const id = evmAwardId(
+      BigInt(deployment.chainId),
+      deployment.vault,
+      entry.sourceDigest,
+    );
+    const state = await call(deployment, `0xe76af61d${id.slice(2)}`, 6);
+    const actor = BigInt(`0x${state[0]}`);
+    if (actor === 0n) continue;
+    const gross = BigInt(`0x${state[1]}`),
+      fee = BigInt(`0x${state[2]}`);
+    if (
+      actor.toString() !== entry.githubUserId ||
+      gross.toString() !== entry.grossMicro ||
+      !acceptsPayoutFee(gross, fee)
+    )
+      throw new Error(
+        "A monthly source is already reserved by a different award",
+      );
+  }
 }
 
 async function authorize(

@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
 import {
   type BindingInput,
@@ -27,6 +28,7 @@ import {
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { sha256Hex } from "../../workers/identity/crypto";
 import {
+  assertEvmMonthlySources,
   createEvmAttester,
   createEvmExecutor,
   type JournalStore,
@@ -467,6 +469,63 @@ try {
       ?.n,
     0,
   );
+  // Before signing a month the attester reads each source's finalized award:
+  // commitMonthly counts only the identical award once and reverts the whole
+  // month for any other, so the attester refuses to sign that month.
+  {
+    const monthly = {
+      ...config,
+      chain: "base",
+      chainId: "31337",
+      gasCeiling: "500000",
+    };
+    const leaf = {
+      githubUserId: "123",
+      grossMicro: "100000000",
+      sourceDigest: source,
+    };
+    await assertEvmMonthlySources(monthly, [
+      leaf,
+      { ...leaf, sourceDigest: `0x${"3".padStart(64, "0")}` },
+    ]);
+    for (const other of [{ grossMicro: "99999999" }, { githubUserId: "124" }])
+      await assert.rejects(
+        assertEvmMonthlySources(monthly, [{ ...leaf, ...other }]),
+        /already reserved by a different award/,
+      );
+    // An award committed before fees rounded up (#1189) holds floor(gross / 50).
+    // Award slots: [actorId | gross << 64, fee, ...] at keccak(id, 11).
+    const base = BigInt(
+      `0x${Buffer.from(
+        keccak_256(
+          Buffer.from(`${award.slice(2)}${"b".padStart(64, "0")}`, "hex"),
+        ),
+      ).toString("hex")}`,
+    );
+    const slot = (offset: bigint) =>
+      `0x${(base + offset).toString(16).padStart(64, "0")}`;
+    const word = (value: bigint) => `0x${value.toString(16).padStart(64, "0")}`;
+    const setAward = async (gross: bigint, fee: bigint) => {
+      await rpc("anvil_setStorageAt", [
+        vault,
+        slot(0n),
+        word(123n | (gross << 64n)),
+      ]);
+      await rpc("anvil_setStorageAt", [vault, slot(1n), word(fee)]);
+      await rpc("anvil_mine", ["0x40"]);
+    };
+    await setAward(100_000_049n, 2_000_000n);
+    await assertEvmMonthlySources(monthly, [
+      { ...leaf, grossMicro: "100000049" },
+    ]);
+    await setAward(100_000_049n, 1_999_999n);
+    await assert.rejects(
+      assertEvmMonthlySources(monthly, [{ ...leaf, grossMicro: "100000049" }]),
+      /already reserved by a different award/,
+    );
+    await setAward(100_000_000n, 2_000_000n);
+    await assertEvmMonthlySources(monthly, [leaf]);
+  }
   await assert.rejects(
     send(vault, "withdrawUnused(uint128)", ["100000001"]),
     /Transaction failed/,

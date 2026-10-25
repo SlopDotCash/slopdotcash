@@ -10,13 +10,16 @@ import {
   freezeAccount,
   getAccount,
   getAssociatedTokenAddressSync,
+  getOrCreateAssociatedTokenAccount,
   mintTo,
   TOKEN_PROGRAM_ID,
   thawAccount,
 } from "@solana/spl-token";
 import {
+  Ed25519Program,
   Keypair,
   PublicKey,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
   SystemProgram,
   sendAndConfirmTransaction,
   Transaction,
@@ -24,7 +27,11 @@ import {
 import {
   escrowInvocations,
   readVaultTotals,
+  solanaAllocationProof,
+  solanaAllocationRoot,
+  solanaAllocationTotal,
   solanaAwardId,
+  solanaMonthlyMessage,
   solanaPaymentAdapter,
 } from "../.local/adapter.mjs";
 import { dispatchPayment } from "../.local/dispatch.mjs";
@@ -1165,6 +1172,400 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
       sameAttempt: true,
       net: "9800",
     }),
+  );
+  sql.close();
+});
+
+// A fresh funded project, a SQLite ledger with every migration, and the real
+// scanner and ledger wired to the adapter, as the payments cron runs them.
+async function scannedProject(label) {
+  await ensureConfig(program);
+  const mint = await createMint(
+    provider.connection,
+    payer,
+    payer.publicKey,
+    null,
+    6,
+  );
+  const source = await createAccount(
+    provider.connection,
+    payer,
+    mint,
+    payer.publicKey,
+  );
+  await mintTo(provider.connection, payer, mint, source, payer, 50_000_000n);
+  const domain = hash(`scanned:${label}`),
+    projectId = hash(`scanned-project:${label}${RUN}`);
+  const project = pda(
+      Buffer.from("project"),
+      payer.publicKey.toBuffer(),
+      projectId,
+      Buffer.from([0]),
+    ),
+    vault = pda(Buffer.from("vault"), project.toBuffer());
+  await program.methods
+    .initialize(
+      [...projectId],
+      [...domain],
+      configIdentity.publicKey,
+      configFees.publicKey,
+      bn(0),
+      bn(0),
+      { ordinary: {} },
+    )
+    .accountsStrict({
+      owner: payer.publicKey,
+      project,
+      mint,
+      vault,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      config: configAddress(program.programId),
+    })
+    .rpc();
+  await program.methods
+    .deposit(bn(50_000_000))
+    .accountsStrict({
+      depositor: payer.publicKey,
+      project,
+      mint,
+      source,
+      vault,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .rpc();
+  const config = {
+    projectId: `scanned-${label}`,
+    network: "solana-localnet",
+    chain: "solana",
+    vault: vault.toBase58(),
+    programId: program.programId.toBase58(),
+    projectPda: project.toBase58(),
+    asset: mint.toBase58(),
+    networkDomain: domain.toString("hex"),
+    owner: payer.publicKey.toBase58(),
+    identityAuthority: configIdentity.publicKey.toBase58(),
+    feeRecipient: configFees.publicKey.toBase58(),
+    ...expectedDeployment,
+    bindingDelaySeconds: "0",
+    rotationDelaySeconds: "0",
+  };
+  const adapter = solanaPaymentAdapter({
+    ...config,
+    mint: config.asset,
+    rpcUrl: provider.connection.rpcEndpoint,
+    genesisHash: await provider.connection.getGenesisHash(),
+  });
+  rmSync(`.local/scanned-${label}.sqlite`, { force: true });
+  const sql = new DatabaseSync(`.local/scanned-${label}.sqlite`);
+  for (const migration of readdirSync("../../migrations")
+    .filter((x) => x.endsWith(".sql"))
+    .sort())
+    sql.exec(readFileSync(`../../migrations/${migration}`, "utf8"));
+  const statement = (query, args = []) => ({
+    bind: (...values) => statement(query, values),
+    first: async () => sql.prepare(query).get(...args) ?? null,
+    run: async () => {
+      const result = sql.prepare(query).run(...args);
+      return { success: true, meta: { changes: Number(result.changes) } };
+    },
+  });
+  const db = {
+    prepare: statement,
+    async batch(statements) {
+      sql.exec("BEGIN");
+      try {
+        const values = [];
+        for (const stmt of statements) values.push(await stmt.run());
+        sql.exec("COMMIT");
+        return values;
+      } catch (error) {
+        sql.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  };
+  // Runs the cron until the scan interval completes; any throw fails the test.
+  async function scan() {
+    await storeVaultSnapshot(
+      db,
+      config,
+      await readVaultTotals({
+        rpcUrl: provider.connection.rpcEndpoint,
+        network: config.network,
+        projectPda: config.projectPda,
+        programId: config.programId,
+      }),
+      new Date().toISOString(),
+    );
+    const index = (event) =>
+      indexPaymentEvent(db, adapter, event, new Date().toISOString());
+    for (let run = 0; run < 20; run++) {
+      await scanSolanaPayments(
+        db,
+        config,
+        provider.connection.rpcEndpoint,
+        index,
+      );
+      if (!sql.prepare("SELECT 1 FROM payment_solana_scans").get()) break;
+    }
+    assert.equal(
+      sql.prepare("SELECT count(*) n FROM payment_solana_scans").get().n,
+      0,
+    );
+  }
+  return { mint, domain, project, vault, config, sql, scan };
+}
+
+// Regression for red-team pass 3: commit_monthly_award puts its u32 period
+// before the award ID. The scanner read the ID 4 bytes early, so the first
+// committed monthly leaf failed verification and the scanner stopped for good.
+test("the scanner indexes a committed monthly leaf and advances its cursor", {
+  timeout: 300000,
+}, async () => {
+  const { project, vault, domain, sql, scan } = await scannedProject("monthly");
+  await program.methods
+    .setMonthlyCommitment(bn(40_000_000), true)
+    .accountsStrict({ owner: payer.publicKey, project })
+    .rpc();
+  const chainTime = async () =>
+    provider.connection.getBlockTime(
+      await provider.connection.getSlot("confirmed"),
+    );
+  const shifted = new Date(((await chainTime()) - 259_200) * 1000);
+  const open = new Date(
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() - 1, 1),
+  );
+  const period = `${open.getUTCFullYear()}-${String(open.getUTCMonth() + 1).padStart(2, "0")}`;
+  const number = Number(period.replace("-", ""));
+  const month = pda(
+    Buffer.from("month"),
+    project.toBuffer(),
+    Buffer.from(new Uint32Array([number]).buffer),
+  );
+  const entries = [501, 502].map((actor) => ({
+    githubUserId: String(actor),
+    grossMicro: "10000000",
+    sourceDigest: hash(`scanned-monthly:${actor}`).toString("hex"),
+  }));
+  const root = solanaAllocationRoot(entries),
+    total = solanaAllocationTotal(entries),
+    frozenAt = String(await chainTime());
+  await program.methods
+    .commitMonthly(
+      number,
+      [...Buffer.from(root, "hex")],
+      bn(total),
+      bn(frozenAt),
+    )
+    .accountsStrict({
+      payer: payer.publicKey,
+      project,
+      vault,
+      month,
+      instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+      systemProgram: SystemProgram.programId,
+    })
+    .preInstructions([
+      Ed25519Program.createInstructionWithPrivateKey({
+        privateKey: configIdentity.secretKey,
+        message: solanaMonthlyMessage(
+          program.programId.toBase58(),
+          project.toBase58(),
+          period,
+          root,
+          total,
+          frozenAt,
+          domain.toString("hex"),
+        ),
+      }),
+    ])
+    .rpc();
+  const [entry] = entries;
+  const digest = Buffer.from(entry.sourceDigest, "hex");
+  const awardHex = solanaAwardId(project.toBase58(), entry.sourceDigest);
+  const award = Buffer.from(awardHex, "hex");
+  const committed = await program.methods
+    .commitMonthlyAward(
+      number,
+      [...award],
+      [...digest],
+      bn(entry.githubUserId),
+      bn(entry.grossMicro),
+      0,
+      entries.length,
+      solanaAllocationProof(entries, 0).map((node) => ({
+        hash: [...Buffer.from(node.hash, "hex")],
+        total: bn(node.total),
+      })),
+    )
+    .accountsStrict({
+      payer: payer.publicKey,
+      project,
+      vault,
+      month,
+      origin: pda(Buffer.from("origin"), project.toBuffer(), digest),
+      obligation: pda(Buffer.from("award"), project.toBuffer(), award),
+      settled: pda(Buffer.from("settled"), month.toBuffer(), digest),
+      monthlySource: pda(
+        Buffer.from("monthly-source"),
+        project.toBuffer(),
+        digest,
+      ),
+      systemProgram: SystemProgram.programId,
+    })
+    .rpc();
+  await finalized(committed);
+  const [invocation] = escrowInvocations(
+    await parsedTransaction(committed),
+    program.programId.toBase58(),
+  );
+  assert.equal(invocation.awardId, awardHex);
+  await scan();
+  const event = sql.prepare("SELECT * FROM payment_events").get();
+  assert.equal(event.kind, "reserved");
+  assert.equal(event.obligation_id, awardHex);
+  assert.deepEqual(
+    {
+      ...sql
+        .prepare("SELECT github_user_id,state FROM payment_obligations")
+        .get(),
+    },
+    { github_user_id: "501", state: "reserved" },
+  );
+  assert.equal(
+    sql.prepare("SELECT position FROM payment_chain_cursors").get().position,
+    committed,
+  );
+  sql.close();
+});
+
+// Regression for red-team pass 3: with the fee rounded up, a 1-unit award has
+// a net of 0 and pay makes no transfer. The adapter required one transfer, so
+// the paid event could never be indexed and the scanner stopped.
+test("a zero-net payment of a 1-unit award is indexed as paid", {
+  timeout: 300000,
+}, async () => {
+  const { mint, project, vault, domain, sql, scan } =
+    await scannedProject("one-unit");
+  const digest = hash("scanned-one-unit-source");
+  const awardHex = solanaAwardId(project.toBase58(), digest.toString("hex"));
+  const award = Buffer.from(awardHex, "hex");
+  const obligation = pda(Buffer.from("award"), project.toBuffer(), award);
+  const actor = 601n;
+  await finalized(
+    await program.methods
+      .commit([...award], [...digest], bn(actor), bn(1))
+      .accountsStrict({
+        owner: payer.publicKey,
+        project,
+        vault,
+        origin: pda(Buffer.from("origin"), project.toBuffer(), digest),
+        obligation,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc(),
+  );
+  const stored = await program.account.obligation.fetch(obligation);
+  assert.equal(stored.principal.toString(), "0");
+  assert.equal(stored.fee.toString(), "1");
+  const wallet = Keypair.generate();
+  await sendAndConfirmTransaction(
+    provider.connection,
+    new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: configIdentity.publicKey,
+        lamports: 100_000_000,
+      }),
+    ),
+    [payer],
+  );
+  const destination = await getOrCreateAssociatedTokenAccount(
+    provider.connection,
+    payer,
+    mint,
+    wallet.publicKey,
+  );
+  const actorSeed = Buffer.alloc(8);
+  actorSeed.writeBigUInt64LE(actor);
+  const binding = pda(Buffer.from("wallet"), project.toBuffer(), actorSeed);
+  const now = await provider.connection.getBlockTime(
+    await provider.connection.getSlot("confirmed"),
+  );
+  await program.methods
+    .bindWallet(
+      bn(actor),
+      [...domain],
+      bn(0),
+      [...hash("scanned-one-unit-claim")],
+      bn(now + 600),
+    )
+    .accountsStrict({
+      payer: payer.publicKey,
+      identityAuthority: configIdentity.publicKey,
+      destination: wallet.publicKey,
+      project,
+      binding,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([configIdentity, wallet])
+    .rpc();
+  // The ledger records a payout only to a wallet the contributor authorized.
+  const at = new Date().toISOString();
+  sql
+    .prepare(
+      "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES('one-unit-wallet','601','one-unit',?,'d1_registry',?,?,?,?,'solana')",
+    )
+    .run(wallet.publicKey.toBase58(), "a".repeat(64), at, "b".repeat(64), at);
+  sql
+    .prepare("INSERT INTO payment_wallet_challenges VALUES(?,?,?,?,?,?)")
+    .run("one-unit-challenge", "one-unit-wallet", "601", "consent", at, at);
+  sql
+    .prepare("INSERT INTO payment_wallet_authorizations VALUES(?,?,?,?,?)")
+    .run("one-unit-wallet", "601", at, "one-unit-challenge", "signature");
+  const versionSeed = Buffer.alloc(8);
+  versionSeed.writeBigUInt64LE(1n);
+  const paid = await program.methods
+    .pay(bn(1))
+    .accountsStrict({
+      project,
+      obligation,
+      binding,
+      mint,
+      vault,
+      destination: destination.address,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      veto: pda(
+        Buffer.from("veto"),
+        project.toBuffer(),
+        actorSeed,
+        versionSeed,
+      ),
+    })
+    .rpc();
+  await finalized(paid);
+  const [invocation] = escrowInvocations(
+    await parsedTransaction(paid),
+    program.programId.toBase58(),
+  );
+  assert.equal(invocation.kind, "paid");
+  assert.equal(invocation.children.length, 0);
+  await scan();
+  assert.deepEqual(
+    sql
+      .prepare("SELECT kind FROM payment_events ORDER BY kind")
+      .all()
+      .map((row) => row.kind),
+    ["paid", "reserved"],
+  );
+  assert.equal(
+    sql.prepare("SELECT state FROM payment_obligations").get().state,
+    "paid",
+  );
+  assert.equal(
+    sql.prepare("SELECT position FROM payment_chain_cursors").get().position,
+    paid,
   );
   sql.close();
 });
