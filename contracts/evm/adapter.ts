@@ -25,7 +25,8 @@ export interface EvmImplementationReview {
 }
 /** A superseded review. It applies only to events before `supersededAtBlock`. */
 export interface EvmSupersededReview extends EvmImplementationReview {
-  /** Decimal block number at and after which this review no longer applies. */
+  /** Decimal block number at and after which this review no longer applies: the block of the
+   * last proxy upgrade (vault or factory) that left it, since proxies upgrade separately. */
   supersededAtBlock: string;
 }
 export interface EvmUpgrade extends EvmImplementationReview {
@@ -302,8 +303,9 @@ export async function verifyEvmDeployment(
     slots.push(slot.toLowerCase());
   }
   if (upgrade) {
-    // The vault implementation, factory implementation and upgrade authority
-    // at this block must all come from one review, never a mix of reviews.
+    // Each proxy's implementation and the upgrade authority must each match a
+    // review valid at this block. They may come from different reviews,
+    // because proxies upgrade in separate transactions.
     const [vaultSlot, factorySlot] = slots;
     const vaultDigest = await runtimeSha256(
       config,
@@ -315,28 +317,28 @@ export async function verifyEvmDeployment(
       `0x${factorySlot.slice(-40)}`,
       blockTag,
     );
+    if (
+      !reviews.some(
+        (review) =>
+          vaultSlot === addressWord(review.vaultImplementation) &&
+          vaultDigest === review.vaultImplementationCodeSha256,
+      ) ||
+      !reviews.some(
+        (review) =>
+          factorySlot === addressWord(review.factoryImplementation) &&
+          factoryDigest === review.factoryImplementationCodeSha256,
+      )
+    )
+      throw new Error(
+        "Escrow implementation does not match reviewed deployment",
+      );
     const authority = await getter(
       config,
       config.factory,
       "upgradeAuthority()",
       blockTag,
     );
-    const implementations = reviews.filter(
-      (review) =>
-        vaultSlot === addressWord(review.vaultImplementation) &&
-        vaultDigest === review.vaultImplementationCodeSha256 &&
-        factorySlot === addressWord(review.factoryImplementation) &&
-        factoryDigest === review.factoryImplementationCodeSha256,
-    );
-    if (!implementations.length)
-      throw new Error(
-        "Escrow implementation does not match reviewed deployment",
-      );
-    if (
-      !implementations.some(
-        (review) => authority === addressWord(review.authority),
-      )
-    )
+    if (!reviews.some((review) => authority === addressWord(review.authority)))
       throw new Error(
         "Escrow upgrade authority does not match reviewed deployment",
       );
