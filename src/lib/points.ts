@@ -414,6 +414,17 @@ export function applyPointsSnapshot(
     parentDecisions.set(event.source.url.split("#")[0], decision);
   }
   const keys = new Set(awards.map((a) => a.key));
+  // Merges the snapshot scores by their own record, such as the minimum for a
+  // member whose joint decision is no longer assessed.
+  const ownRecordMerges = new Set(
+    awards
+      .filter(
+        (a) =>
+          a.category === "merged-pull-request" &&
+          a.key === pointKey(a.projectId, a.actor.id, a.category, a.sourceId),
+      )
+      .map((a) => `${a.projectId}\0${a.sourceId}`),
+  );
   const repositoryIds = new Set(snapshot.repositories.map((r) => r.id));
   // A review is judged with its merged pull request, so the census can rule
   // on a review submitted before the window. An exclusion is that ruling.
@@ -444,10 +455,16 @@ export function applyPointsSnapshot(
       );
       // A missing valuation is not evidence that an earlier award was wrong.
       // A legacy-policy source is scored by its unchanged historical rules.
+      // A joint unit award still gives way once the same merge is scored by
+      // its own record, so the merge is not credited twice.
       if (
-        !coverage ||
-        !["assessed", "human-ratified", "legacy-policy"].includes(
-          coverage.status,
+        (!coverage ||
+          !["assessed", "human-ratified", "legacy-policy"].includes(
+            coverage.status,
+          )) &&
+        !(
+          a.key !== pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&
+          ownRecordMerges.has(`${a.projectId}\0${a.sourceId}`)
         )
       )
         continue;
