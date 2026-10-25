@@ -807,6 +807,12 @@ describe("project registry API", () => {
       "open-registry",
       "example/open-registry",
     );
+    access = {
+      installation: "installed",
+      installationId: 7,
+      permission: "write",
+      roleName: "maintain",
+    };
     control = () => ({
       state: "mismatch",
       reason: "Repository or steward facts do not match GitHub",
@@ -820,6 +826,7 @@ describe("project registry API", () => {
     // Matching public facts without the installation create nothing:
     // install Slopbot first (owner decision D11).
     control = () => ({ state: "matched" });
+    access = { installation: "missing" };
     const uninstalled = await call("POST", "projects", "applicant", {
       manifest,
     });

@@ -355,6 +355,40 @@ describe("indexPaymentEvent asset", () => {
       ),
     ).rejects.toThrow(/Conflicting/);
   });
+  test("re-indexing stored evidence for the adapter's deployment makes no chain call", async () => {
+    const { indexPaymentEvent } = await import("./ledger");
+    const db = open();
+    await storeVaultSnapshot(db, deployment, totals(), observed);
+    let calls = 0;
+    const adapter = {
+      deployment: {
+        projectId: event.projectId,
+        network: event.network,
+        vault: event.vault,
+      },
+      verifyFinalized: async () => {
+        calls += 1;
+        // After a vault upgrade, today's registry may no longer verify
+        // this event at its block; stored evidence must not depend on it.
+        if (calls > 1) throw new Error("implementation does not match");
+        return event;
+      },
+    };
+    await indexPaymentEvent(db, adapter, input, observed);
+    await indexPaymentEvent(db, adapter, input, observed);
+    expect(calls).toBe(1);
+    // A different obligation at the same event position is not stored
+    // evidence, so it is verified and the conflict still fails.
+    await expect(
+      indexPaymentEvent(
+        db,
+        adapter,
+        { ...input, obligationId: `0x${"ef".repeat(32)}` },
+        observed,
+      ),
+    ).rejects.toThrow(/implementation/);
+    expect(calls).toBe(2);
+  });
 });
 
 test("concurrent finalized refreshes cannot decrease cumulative vault counters", async () => {

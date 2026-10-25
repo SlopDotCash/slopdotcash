@@ -1002,10 +1002,57 @@ try {
   const nextVaultLogic = deploy("src/ProjectEscrow.sol:ProjectEscrow");
   const nextFactoryLogic = deploy("src/ProjectEscrow.sol:EscrowFactory");
   await send(vault, "upgradeToAndCall(address,bytes)", [nextVaultLogic, "0x"]);
-  await send(factory, "upgradeToAndCall(address,bytes)", [
-    nextFactoryLogic,
-    "0x",
-  ]);
+  await rpc("anvil_mine", ["0x40"]);
+  const timeless = (totals: Awaited<ReturnType<typeof readVaultTotals>>) => ({
+    ...totals,
+    blockNumber: "",
+    blockTime: "",
+  });
+  assert.deepEqual(
+    timeless(await readVaultTotals(config)),
+    timeless(beforeUpgrade),
+    "The vault proxy upgrade preserves exact funded vault counters",
+  );
+  /** Funds the vault and commits a new award; finalizes it. */
+  const commitLater = async (digit: string) => {
+    await send(token, "mint(address,uint256)", [owner, "10000000"]);
+    await send(token, "approve(address,uint256)", [vault, "10000000"]);
+    await send(vault, "deposit(uint128)", ["10000000"]);
+    const laterSource = `0x${digit.padStart(64, "0")}`;
+    const laterId = evmAwardId(31337n, vault, laterSource);
+    const tx = (await rpc("eth_sendTransaction", [
+      {
+        from: owner,
+        to: vault,
+        gas: "0x7a1200",
+        data: buildCommitAwardCalldata({
+          obligationId: laterId,
+          githubUserId: "101",
+          grossMicro: "10000000",
+          sourceDigest: laterSource,
+        }),
+      },
+    ])) as string;
+    await rpc("anvil_mine", ["0x40"]);
+    return { tx, id: laterId };
+  };
+  // Vaults upgrade one by one, apart from the factory. This event has the
+  // new vault implementation and the old factory implementation.
+  const between = await commitLater("5");
+  const beforeFactoryUpgrade = await readVaultTotals(config);
+  const factoryUpgradeTx = await send(
+    factory,
+    "upgradeToAndCall(address,bytes)",
+    [nextFactoryLogic, "0x"],
+  );
+  // The outgoing review is fully superseded by the last proxy upgrade.
+  const upgradeBlock = BigInt(
+    (
+      (await rpc("eth_getTransactionReceipt", [factoryUpgradeTx])) as {
+        blockNumber: string;
+      }
+    ).blockNumber,
+  );
   await rpc("anvil_mine", ["0x40"]);
   await assert.rejects(
     verifyEvmDeployment(config),
@@ -1019,13 +1066,9 @@ try {
   await verifyEvmDeployment(upgradedConfig);
   const afterUpgrade = await readVaultTotals(upgradedConfig);
   assert.deepEqual(
-    {
-      ...afterUpgrade,
-      blockNumber: beforeUpgrade.blockNumber,
-      blockTime: beforeUpgrade.blockTime,
-    },
-    beforeUpgrade,
-    "Both proxy upgrades preserve exact funded vault counters",
+    timeless(afterUpgrade),
+    timeless(beforeFactoryUpgrade),
+    "The factory proxy upgrade preserves exact funded vault counters",
   );
   assert.equal(
     (await verifyPayment(config, paymentTx, 0, id)).netMicro,
@@ -1036,6 +1079,127 @@ try {
     verifyPayment(upgradedConfig, paymentTx, 0, id),
     /implementation/,
     "A new implementation approval cannot rewrite historical payment provenance",
+  );
+  // A reviewed upgrade appends the outgoing review to history with the block
+  // that superseded it. An event verifies at its own block against the
+  // current review or a history entry whose bound is after that block, so a
+  // scan page that spans the upgrade block still verifies.
+  const outgoing = {
+    ...config.evmUpgrade,
+    supersededAtBlock: upgradeBlock.toString(),
+  };
+  const historyConfig = {
+    ...upgradedConfig,
+    evmUpgrade: { ...upgradedConfig.evmUpgrade, history: [outgoing] },
+  };
+  const later = await commitLater("3");
+  assert.equal(
+    (await verifyPayment(historyConfig, paymentTx, 0, id)).netMicro,
+    "98000000",
+    "An event before the upgrade verifies against the reviewed history",
+  );
+  assert.equal(
+    (await verifyReserve(historyConfig, later.tx, 0, later.id)).grossMicro,
+    "10000000",
+    "An event after the upgrade verifies against the current review",
+  );
+  await assert.rejects(
+    verifyReserve(config, later.tx, 0, later.id),
+    /implementation/,
+    "The outgoing review alone cannot verify an event after the upgrade",
+  );
+  await assert.rejects(
+    verifyPayment(
+      {
+        ...historyConfig,
+        evmUpgrade: {
+          ...historyConfig.evmUpgrade,
+          history: [{ ...outgoing, vaultImplementation: nextFactoryLogic }],
+        },
+      },
+      paymentTx,
+      0,
+      id,
+    ),
+    /implementation/,
+    "An implementation in neither the current review nor history is rejected",
+  );
+  assert.equal(
+    (await verifyReserve(historyConfig, between.tx, 0, between.id)).grossMicro,
+    "10000000",
+    "An event between the vault and factory upgrades verifies",
+  );
+  await assert.rejects(
+    verifyReserve(upgradedConfig, between.tx, 0, between.id),
+    /implementation/,
+    "Without history, the old factory implementation in the gap is rejected",
+  );
+
+  await assert.rejects(
+    verifyEvmDeployment(
+      {
+        ...config,
+        evmUpgrade: {
+          ...config.evmUpgrade,
+          history: [
+            {
+              ...upgradedConfig.evmUpgrade,
+              supersededAtBlock: (upgradeBlock + 1000000n).toString(),
+            },
+          ],
+        },
+      },
+      "latest",
+    ),
+    /implementation/,
+    "Current-state checks never accept a review from history",
+  );
+  // The upgrade authority moves the vault to logic no review names.
+  await send(vault, "upgradeToAndCall(address,bytes)", [
+    deploy("src/ProjectEscrow.sol:ProjectEscrow"),
+    "0x",
+  ]);
+  const unreviewed = await commitLater("6");
+  await assert.rejects(
+    verifyReserve(historyConfig, unreviewed.tx, 0, unreviewed.id),
+    /implementation/,
+    "A vault implementation that was never reviewed is rejected",
+  );
+  // The upgrade authority rolls both proxies back to the superseded review.
+  // New events from it are past its bound and fail; older events still verify.
+  await send(vault, "upgradeToAndCall(address,bytes)", [
+    outgoing.vaultImplementation,
+    "0x",
+  ]);
+  await send(factory, "upgradeToAndCall(address,bytes)", [
+    outgoing.factoryImplementation,
+    "0x",
+  ]);
+  for (const [proxy, implementation] of [
+    [vault, outgoing.vaultImplementation],
+    [factory, outgoing.factoryImplementation],
+  ])
+    assert.equal(
+      `0x${String(
+        await rpc("eth_getStorageAt", [
+          proxy,
+          "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+          "latest",
+        ]),
+      ).slice(-40)}`,
+      implementation.toLowerCase(),
+      "The rollback restored the superseded implementation",
+    );
+  const rolledBack = await commitLater("4");
+  await assert.rejects(
+    verifyReserve(historyConfig, rolledBack.tx, 0, rolledBack.id),
+    /implementation/,
+    "A rollback cannot revive a superseded review for new events",
+  );
+  assert.equal(
+    (await verifyPayment(historyConfig, paymentTx, 0, id)).netMicro,
+    "98000000",
+    "An event before the bound still verifies after the rollback",
   );
   console.log(
     "EVM adapter integration passed: real factory deployment, permissionless owner-keyed vault creation, separate ordinary and bounty vaults, permissionless deposit, 18-decimal vault beyond uint64, readVaultTotals, 2% withdrawal fee, vault-bound award, wallet-accepted immediate and cancellable binding, payment, fee claim, signed capped once-per-period monthly commitment from any sender, owner opt-out, finalized gating, wrong chain/vault/award/index/delay/purpose rejection, immediate authority rotation.",
