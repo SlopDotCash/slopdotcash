@@ -93,6 +93,21 @@ never signs for a mainnet and a production key never signs while
 `MAINNET_EXECUTION` is off.
 Any other `SIGNER_STACK` value stops the signer.
 
+## Private bounty bindings
+
+A production stack generated with `--scope security-bounty` has its own
+attester, pinned bounty vaults and private payment ledger. Its five-minute
+schedule indexes finalized private vault events. On EVM it then submits only
+destination bindings with current account and wallet consent, using the same
+journal and reconciliation rules as ordinary awards. On Solana, the wallet
+co-signs interactively through `SECURITY_SOLANA_IDENTITY_ATTESTER`.
+
+The private attester never signs a monthly allocation or submits an award
+payment. The owner still decides each bounty and the project or a permissionless
+executor submits its payment. No private amount or case record enters ordinary
+balances or notifications. A generated configuration is not a deployed service;
+release it through the reviewed main workflow before human key entry.
+
 ## Monthly allocation execution
 
 The ordinary attester publishes only the eligible entries of the immutable funded

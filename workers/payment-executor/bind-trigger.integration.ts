@@ -895,11 +895,7 @@ try {
   assert.equal(daveTo, 0n, "Dave has no payable destination");
 
   // The binding run exists only on a production EVM attester.
-  for (const other of [
-    { SIGNER_STACK: "test" },
-    { SIGNER_ROLE: "relayer" },
-    { PAYMENT_SCOPE: "security-bounty" },
-  ])
+  for (const other of [{ SIGNER_STACK: "test" }, { SIGNER_ROLE: "relayer" }])
     assert.equal(
       await runDestinationBindings({ ...env, ...other } as never),
       null,

@@ -120,8 +120,7 @@ export class PaymentSignerJournal {
         if (
           stack !== "production" ||
           this.env.SIGNER_ROLE !== "attester" ||
-          this.env.CHAIN_FAMILY !== "evm" ||
-          this.env.PAYMENT_SCOPE === "security-bounty"
+          this.env.CHAIN_FAMILY !== "evm"
         )
           return new Response("Not found", { status: 404 });
         // The stack, network and preflight checks of every pinned vault pass
@@ -528,13 +527,15 @@ export class PaymentSignerJournal {
   }
 }
 
-/** Background indexing and monthly signatures only; never dispatches a payment. */
+/** Scoped background indexing; ordinary monthly signatures only, never payment dispatch. */
 export async function runMonthlyAttester(env: Environment) {
-  if (env.SIGNER_ROLE !== "attester" || env.PAYMENT_SCOPE === "security-bounty")
-    return;
+  if (env.SIGNER_ROLE !== "attester") return;
   if (!env.REGISTRY_DB) throw new Error("Monthly registry binding missing");
-  const schedule = parseMonthlySchedule(env.MONTHLY_PAYMENT_SCHEDULE);
-  if (!schedule) throw new Error("Monthly schedule missing");
+  const privateScope = env.PAYMENT_SCOPE === "security-bounty";
+  const schedule = privateScope
+    ? null
+    : parseMonthlySchedule(env.MONTHLY_PAYMENT_SCHEDULE);
+  if (!privateScope && !schedule) throw new Error("Monthly schedule missing");
   const stack = signerStack(env.SIGNER_STACK);
   const deployments = JSON.parse(env.PAYMENT_DEPLOYMENTS) as {
     network: string;
@@ -546,8 +547,11 @@ export async function runMonthlyAttester(env: Environment) {
   )
     throw new Error("Monthly signer stack mismatch");
   const worker = {
-    PAYMENTS_DB: env.PAYMENTS_DB,
+    PAYMENTS_DB: privateScope
+      ? securityPaymentDatabase(env.PAYMENTS_DB)
+      : env.PAYMENTS_DB,
     REGISTRY_DB: env.REGISTRY_DB,
+    PAYMENT_SCOPE: env.PAYMENT_SCOPE,
     PAYMENT_NETWORKS: JSON.stringify(networks),
     PAYMENT_RPC_URLS: env.PAYMENT_RPC_URLS,
     PAYMENT_SOLANA_GENESIS: JSON.stringify(
@@ -561,6 +565,14 @@ export async function runMonthlyAttester(env: Environment) {
     MONTHLY_PAYMENT_SCHEDULE: env.MONTHLY_PAYMENT_SCHEDULE,
   };
   const sync = await syncRegistryVaults(worker);
+  // Private awards are owner decisions. Index only their separate ledger;
+  // never create a monthly bounty allocation or dispatch a payment.
+  if (privateScope) {
+    if (sync.failures.length)
+      throw new Error("Private award indexing incomplete");
+    return sync;
+  }
+  if (!schedule) throw new Error("Monthly schedule missing");
   await runMonthlyCoordinator(worker);
   const report = await publishMonthlyAuthorizations({
     db: env.PAYMENTS_DB,
@@ -611,8 +623,7 @@ export async function runDestinationBindings(env: Environment) {
   if (
     signerStack(env.SIGNER_STACK) !== "production" ||
     env.SIGNER_ROLE !== "attester" ||
-    env.CHAIN_FAMILY !== "evm" ||
-    env.PAYMENT_SCOPE === "security-bounty"
+    env.CHAIN_FAMILY !== "evm"
   )
     return null;
   const response = await env.JOURNAL.get(

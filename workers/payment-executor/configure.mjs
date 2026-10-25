@@ -143,6 +143,8 @@ export function paymentStack({
   for (const role of roles) {
     const signer = role !== "dispatcher";
     const monthlyAttester = role === "attester" && scope === "ordinary";
+    const scheduledAttester =
+      monthlyAttester || (production && role === "attester");
     configs[role] = {
       ...common,
       name: names[role],
@@ -157,7 +159,7 @@ export function paymentStack({
       // Signers sign only for the deployments pinned here at review time. The
       // monthly attester also checks current registry policy before signing;
       // the dispatcher discovers its vaults from that registry.
-      ...(signer && !monthlyAttester
+      ...(signer && !scheduledAttester
         ? {}
         : {
             d1_databases: [
@@ -195,7 +197,7 @@ export function paymentStack({
           },
       ...(signer
         ? {
-            ...(monthlyAttester
+            ...(scheduledAttester
               ? { triggers: { crons: ["*/5 * * * *"] } }
               : {}),
             durable_objects: {
