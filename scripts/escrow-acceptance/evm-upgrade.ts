@@ -116,7 +116,8 @@ interface Qualification {
     | "executed"
     | "passed"
     | "failed";
-  errors: string[];
+  /** One entry per command run: a refused or failed attempt stays on record. */
+  history: { command: string; at: string; status: string; error?: string }[];
 }
 
 const [command, network, directory] = process.argv.slice(2);
@@ -326,7 +327,7 @@ async function plan(): Promise<Qualification> {
     stragglers: [],
     verification: null,
     status: "planned",
-    errors: [],
+    history: [],
   };
 }
 
@@ -566,7 +567,8 @@ async function verify(run: Qualification) {
     mismatches,
   };
   run.status = mismatches.length ? "failed" : "passed";
-  if (mismatches.length) run.errors.push(...mismatches);
+  if (mismatches.length)
+    throw new Error(`Upgrade verification failed: ${mismatches.join("; ")}`);
 }
 
 const stored = (await Bun.file(file).exists())
@@ -585,6 +587,7 @@ if (
     "This directory belongs to another network, factory or source commit. Use a new directory.",
   );
 let code = 0;
+let failure: string | undefined;
 try {
   if (command === "plan") {
     if (stored) throw new Error(`${file} already holds a plan`);
@@ -597,35 +600,40 @@ try {
   }
 } catch (error) {
   if (!state) throw error;
+  failure = error instanceof Error ? error.message : String(error);
   if (error instanceof Waiting) {
     state.status = "waiting";
     code = WAITING_EXIT_CODE;
-    console.log(`[${network}] waiting: ${error.message}`);
+    console.log(`[${network}] waiting: ${failure}`);
   } else {
     state.status = "failed";
-    state.errors.push(error instanceof Error ? error.message : String(error));
     code = 1;
   }
 }
-await persist();
 if (state) {
+  state.history.push({
+    command,
+    at: new Date().toISOString(),
+    status: state.status,
+    ...(failure ? { error: failure } : {}),
+  });
+  await persist();
   console.log(
     JSON.stringify(
       {
         network,
         command,
         status: state.status,
+        error: failure ?? null,
         upgradeAuthority: state.roles.upgradeAuthority,
         vaults: state.before.vaults.length,
         stragglers: state.stragglers,
         review: state.review,
-        errors: state.errors,
         evidence: file,
       },
       null,
       2,
     ),
   );
-  if (state.status === "failed") code = 1;
 }
 process.exit(code);
