@@ -11,6 +11,7 @@ import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
+import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
@@ -95,10 +96,16 @@ let clock = afterCutoff;
 
 async function setupFixture(
   selected: Record<string, string | null> = deployment,
+  unit = 1n,
+  applyAmountRange = true,
 ) {
   ({ db, sqlite } = sqliteD1(
     readdirSync("migrations")
       .filter((name) => name.endsWith(".sql"))
+      .filter(
+        (name) =>
+          applyAmountRange || name !== "0081_monthly_asset_amount_range.sql",
+      )
       .sort(),
   ));
   const manifest = JSON.parse(
@@ -107,6 +114,21 @@ async function setupFixture(
   manifest.reward.feeBasisPoints = 200;
   const chain = selected.network?.startsWith("solana") ? "solana" : "base";
   manifest.reward.chain = chain;
+  if (unit > 1n) {
+    manifest.reward.currency = "TOKEN";
+    manifest.reward.monthlyCapMinor = (1000n * unit).toString();
+    manifest.reward.monthlyCapDisplay = "1,000 TOKEN";
+    manifest.rewardAsset = {
+      network: chain,
+      kind: "token",
+      address: selected.asset,
+      symbol: "TOKEN",
+      decimals: 18,
+      chainId: chain === "solana" ? null : "8453",
+      cluster: chain === "solana" ? "mainnet-beta" : null,
+      verifiedAt: "2026-10-01T00:00:00.000Z",
+    };
+  }
   manifest.escrow = {
     schemaVersion: "1",
     effectiveCycle: "2026-11",
@@ -152,18 +174,18 @@ async function setupFixture(
             manifest: text,
             manifestSha256: digest,
             sourceSnapshotSha256: "5".repeat(64),
-            capBase: "1000",
+            capBase: (1000n * unit).toString(),
             rows: [
               {
                 githubUserId: A,
                 login: "first",
-                grossBase: "600",
+                grossBase: (600n * unit).toString(),
                 sourceDigest: escrowAwardOrigin(project.id, "2026-11", A),
               },
               {
                 githubUserId: B,
                 login: "second",
-                grossBase: "400",
+                grossBase: (400n * unit).toString(),
                 sourceDigest: escrowAwardOrigin(project.id, "2026-11", B),
               },
             ],
@@ -202,13 +224,17 @@ const owner = () =>
     now: () => clock,
   });
 const actor = { githubId: OWNER, githubLogin: "owner" };
-function vault(free: string, observedAt = afterCutoff.toISOString()) {
+function vault(
+  free: string,
+  observedAt = afterCutoff.toISOString(),
+  decimals = 6,
+) {
   const escrow = project.manifest.escrow;
   const selected = escrow?.deployments[0];
   if (!escrow || !selected) throw new Error("Missing fixture deployment");
   sqlite
     .prepare(
-      "INSERT INTO vault_snapshots(project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,free_balance,reserved_principal,reserved_fees,accrued_fees,reserved,block_number,block_time,observed_at) VALUES(?,?,?,?,?,6,'5000','0','0','0','0','0',?,'0','0','0','0','100',?,?) ON CONFLICT(project_id,network,vault) DO UPDATE SET free_balance=excluded.free_balance,observed_at=excluded.observed_at,block_number=CAST(CAST(block_number AS INTEGER)+1 AS TEXT)",
+      "INSERT INTO vault_snapshots(project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,free_balance,reserved_principal,reserved_fees,accrued_fees,reserved,block_number,block_time,observed_at) VALUES(?,?,?,?,?,?,?,'0','0','0','0','0',?,'0','0','0','0','100',?,?) ON CONFLICT(project_id,network,vault) DO UPDATE SET free_balance=excluded.free_balance,observed_at=excluded.observed_at,block_number=CAST(CAST(block_number AS INTEGER)+1 AS TEXT)",
     )
     .run(
       project.id,
@@ -216,6 +242,8 @@ function vault(free: string, observedAt = afterCutoff.toISOString()) {
       escrow.chain,
       selected.vault,
       selected.asset,
+      decimals,
+      BigInt(free) > 5000n ? free : "5000",
       free,
       observedAt,
       observedAt,
@@ -233,6 +261,166 @@ async function rejects(promise: Promise<unknown>, code: string) {
 }
 
 describe("monthly coordinator", () => {
+  test("Solana refuses a monthly cap above its token range before storing an allocation", async () => {
+    sqlite.close();
+    await setupFixture(solanaDeployment, 10n ** 18n);
+    clock = beforeCutoff;
+    await expect(
+      owner().changeAllocation(project.id, "2026-11", actor, {
+        githubUserId: B,
+        grossBase: (300n * 10n ** 18n).toString(),
+        expectedSequence: 0,
+      }),
+    ).rejects.toThrow("monthly pool policy is inconsistent");
+    expect(count("monthly_allocation_changes")).toBe(0);
+  });
+
+  test("the amount-range migration preserves funded months, exclusions and authorization history", async () => {
+    sqlite.close();
+    await setupFixture(deployment, 1n, false);
+    clock = beforeCutoff;
+    await owner().changeAllocation(project.id, "2026-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 0,
+    });
+    seedParticipationBan(
+      sqlite,
+      { githubId: B, githubLogin: "second" },
+      actor,
+      beforeCutoff.toISOString(),
+    );
+    vault("600");
+    await coordinate(afterCutoff);
+    expect(count("monthly_payment_obligations")).toBe(1);
+    expect(count("monthly_payment_exclusions")).toBe(1);
+    sqlite
+      .prepare(
+        "INSERT INTO monthly_payment_authorizations SELECT project_id,period,network,snapshot_sha256,?,? FROM monthly_payment_runs",
+      )
+      .run('{"fixture":"migration-preservation"}', afterCutoff.toISOString());
+    sqlite
+      .prepare(
+        "INSERT INTO monthly_payment_execution SELECT project_id,period,network,?,0 FROM monthly_payment_authorizations",
+      )
+      .run(afterCutoff.toISOString());
+    const tables = [
+      "monthly_reward_bases",
+      "monthly_reward_base_rows",
+      "monthly_allocation_changes",
+      "monthly_payment_runs",
+      "monthly_payment_obligations",
+      "monthly_payment_exclusions",
+      "monthly_payment_authorizations",
+      "monthly_payment_execution",
+    ];
+    const records = () =>
+      tables.map((table) =>
+        sqlite.prepare(`SELECT * FROM ${table} ORDER BY 1,2,3`).all(),
+      );
+    const before = records();
+    sqlite.exec("PRAGMA foreign_keys=ON; BEGIN");
+    try {
+      sqlite.exec(
+        readFileSync("migrations/0081_monthly_asset_amount_range.sql", "utf8"),
+      );
+      expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      sqlite.exec("COMMIT");
+    } catch (error) {
+      sqlite.exec("ROLLBACK");
+      throw error;
+    }
+    expect(records()).toEqual(before);
+    expect(sqlite.prepare("PRAGMA foreign_keys").get()).toEqual({
+      foreign_keys: 1,
+    });
+    expect(() =>
+      sqlite.exec("UPDATE monthly_payment_runs SET snapshot='{}'"),
+    ).toThrow("frozen");
+    expect(() =>
+      sqlite.exec("DELETE FROM monthly_payment_obligations"),
+    ).toThrow("permanent");
+    expect((await coordinate(afterCutoff)).created).toEqual([]);
+  });
+
+  test("an 18-decimal token month keeps exact amounts through an owner edit, freeze and attestation", async () => {
+    sqlite.close();
+    const unit = 10n ** 18n;
+    await setupFixture(
+      { ...deployment, asset: "0x7000000000000000000000000000000000000007" },
+      unit,
+    );
+    clock = beforeCutoff;
+    const changed = await owner().changeAllocation(
+      project.id,
+      "2026-11",
+      actor,
+      {
+        githubUserId: B,
+        grossBase: (300n * unit).toString(),
+        expectedSequence: 0,
+      },
+    );
+    expect(changed.proposal?.allocations.map((row) => row.grossBase)).toEqual([
+      (600n * unit).toString(),
+      (300n * unit).toString(),
+    ]);
+    await rejects(
+      owner().changeAllocation(project.id, "2026-11", actor, {
+        githubUserId: B,
+        grossBase: (401n * unit).toString(),
+        expectedSequence: 1,
+      }),
+      "invalid_allocation",
+    );
+    vault((900n * unit).toString(), afterCutoff.toISOString(), 18);
+    expect((await coordinate(afterCutoff)).created).toEqual([
+      `${project.id}/2026-11`,
+    ]);
+    expect((await coordinate(afterCutoff)).created).toEqual([]);
+    expect(count("monthly_payment_obligations")).toBe(2);
+    if (!schedule) throw new Error("Fixture schedule missing");
+    const { digest } = sqlite
+      .prepare("SELECT snapshot_sha256 digest FROM monthly_payment_runs")
+      .get() as { digest: string };
+    const plan = await prepareMonthlyAttestation(
+      {
+        db,
+        ...projects(),
+        networks: [deployment.network],
+        schedule,
+        now: afterCutoff,
+      },
+      {
+        projectId: project.id,
+        period: "2026-11",
+        network: "base-sepolia",
+        snapshotSha256: digest,
+      },
+    );
+    expect(plan.totalGrossBase).toBe((900n * unit).toString());
+    expect(plan.entries.map((row) => row.grossMicro)).toEqual([
+      (600n * unit).toString(),
+      (300n * unit).toString(),
+    ]);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT gross_base,fee_base FROM monthly_payment_obligations ORDER BY github_user_id",
+        )
+        .all(),
+    ).toEqual([
+      {
+        gross_base: (600n * unit).toString(),
+        fee_base: (12n * unit).toString(),
+      },
+      {
+        gross_base: (300n * unit).toString(),
+        fee_base: (6n * unit).toString(),
+      },
+    ]);
+  });
+
   for (const action of ["allocation", "setting", "finalize"] as const) {
     for (const racing of [false, true]) {
       test(`a ${racing ? "concurrent" : "current"} owner ban refuses monthly ${action}`, async () => {
@@ -728,6 +916,39 @@ describe("monthly coordinator", () => {
     );
   });
 
+  test("a Solana hand reservation waits until automatic monthly payment is off", async () => {
+    await setupFixture(solanaDeployment);
+    await coordinate(afterCutoff);
+    vault("1000");
+    expect((await coordinate(afterCutoff)).created).toEqual([
+      `${project.id}/2026-11`,
+    ]);
+    const service = monthlyOwnerService({
+      db,
+      ...projects(),
+      networks: () => [solanaDeployment.network],
+      verifyAuthority: async () => {},
+      schedule: () => schedule,
+      now: () => clock,
+    });
+    const request = {
+      network: solanaDeployment.network,
+      manifestSha256: project.manifestSha256,
+      snapshotSha256:
+        (await service.view(project.id, "2026-11", actor)).run
+          ?.snapshotSha256 ?? "",
+      githubUserId: A,
+    };
+    await rejects(
+      service.commitment(project.id, "2026-11", actor, request),
+      "monthly_automatic",
+    );
+    await service.setAutomatic(project.id, actor, false);
+    expect(
+      await service.commitment(project.id, "2026-11", actor, request),
+    ).toMatchObject({ award: { githubUserId: A, gross: "600", fee: "12" } });
+  });
+
   test("a Solana month needs its full total free, even for an award reserved earlier", async () => {
     // Solana admission reserves the whole total; the identical earlier award is
     // released afterwards, so it cannot count as already funded.
@@ -921,6 +1142,114 @@ describe("monthly attestation input", () => {
       },
     );
   }
+  const chainObligation = (
+    id: string,
+    user: string,
+    gross: string,
+    fee: string,
+    source: string,
+  ) =>
+    sqlite
+      .prepare(
+        "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at,paid_transaction) VALUES(?,?,?,?,?,?,?,6,?,?,?,'reserved',?,NULL)",
+      )
+      .run(
+        `0x${id.repeat(64)}`,
+        project.id,
+        user,
+        "base-sepolia",
+        "base",
+        deployment.vault,
+        deployment.asset,
+        gross,
+        fee,
+        escrowAwardOrigin(project.id, "2026-11", source),
+        afterCutoff.toISOString(),
+      );
+  // Source digests are public: an owner can reserve another award under a frozen
+  // award's source. Only the same actor and gross with a 2% fee (ceil, or the
+  // pre-#1189 floor) is this award. Any other is a conflict: it needs no funds,
+  // cannot be reserved, and is left out of the signed month so the rest commits.
+  for (const [label, chainActor, chainGross, chainFee] of [
+    ["another actor", "999", "600", "12"],
+    ["a smaller gross", A, "1", "1"],
+    ["a wrong fee", A, "600", "0"],
+  ] as const)
+    test(`an obligation for ${label} under a frozen award's source is a conflict left out of the month`, async () => {
+      clock = beforeCutoff;
+      // 399 has a floor fee of 7 and a ceil fee of 8.
+      await owner().changeAllocation(project.id, "2026-11", actor, {
+        githubUserId: B,
+        grossBase: "399",
+        expectedSequence: 0,
+      });
+      clock = afterCutoff;
+      chainObligation("8", chainActor, chainGross, chainFee, A);
+      chainObligation("9", B, "399", "7", B);
+      // Neither source needs new funds: the month is funded with no vault reading.
+      expect((await coordinate(afterCutoff)).created).toEqual([
+        `${project.id}/2026-11`,
+      ]);
+      const view = await owner().view(project.id, "2026-11", actor);
+      expect(
+        view.run?.awards.map((award) => [award.login, award.state]),
+      ).toEqual([
+        ["first", "conflict"],
+        ["second", "reserved"],
+      ]);
+      const expected = {
+        network: "base-sepolia",
+        manifestSha256: project.manifestSha256,
+        snapshotSha256: view.run?.snapshotSha256 ?? "",
+      };
+      await rejects(
+        owner().commitment(project.id, "2026-11", actor, {
+          ...expected,
+          githubUserId: A,
+        }),
+        "award_conflict",
+      );
+      await rejects(
+        owner().commitment(project.id, "2026-11", actor, {
+          ...expected,
+          githubUserId: B,
+        }),
+        "award_reserved",
+      );
+      // The identical legacy-fee award stays in the month and is counted once.
+      const plan = await prepare();
+      expect(plan.entries.map((e) => [e.githubUserId, e.grossMicro])).toEqual([
+        [B, "399"],
+      ]);
+      expect(plan.totalGrossBase).toBe("399");
+    });
+
+  test("a contributor sees a conflicting award, and a month of only conflicts signs nothing", async () => {
+    chainObligation("7", "999", "600", "12", A);
+    chainObligation("8", "999", "400", "8", B);
+    await coordinate(afterCutoff);
+    await rejects(prepare(), "empty_allocation");
+    const token = "c".repeat(43);
+    sqlite
+      .prepare(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('node-first',?,'first',?,0)",
+      )
+      .run(A, afterCutoff.toISOString());
+    sqlite
+      .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
+      .run(await sha256Hex(token), "node-first", "2027-01-01T00:00:00.000Z");
+    const account = (await (
+      await handlePaymentsApi(
+        new Request("https://slop.cash/api/v1/payments/me", {
+          headers: { cookie: `__Host-slop_points=${token}` },
+        }),
+        { db, now: () => clock },
+      )
+    ).json()) as PaymentsAccount;
+    expect(account.monthlyAwards).toMatchObject([
+      { projectId: project.id, grossBase: "600", state: "conflict" },
+    ]);
+  });
   test("uses only the frozen owner-adjusted awards, even after a later funding observation", async () => {
     clock = beforeCutoff;
     await owner().changeAllocation(project.id, "2026-11", actor, {
@@ -953,6 +1282,50 @@ describe("monthly attestation input", () => {
     vault("1000");
     await coordinate(afterCutoff);
     expect((await prepare()).totalGrossBase).toBe("1000");
+  });
+  test("signs a frozen month after a later revision that keeps its payment terms", async () => {
+    const revise = async (
+      change: (manifest: ProjectRecord["manifest"]) => object,
+    ) => {
+      const current = await projects().getProject(project.id);
+      if (!current) throw new Error("Fixture project missing");
+      const manifest = assertProjectDefinition(change(current.manifest));
+      const text = JSON.stringify(manifest);
+      expect(
+        await new CloudflareProjectPersistence(db).appendProjectRevision(
+          {
+            projectId: project.id,
+            expectedRevision: current.revision,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(text),
+            reason: "Owner update",
+            actor,
+            at: afterCutoff.toISOString(),
+          },
+          0,
+        ),
+      ).toBe("updated");
+    };
+    vault("500");
+    await coordinate(afterCutoff);
+    await rejects(prepare(), "award_unfunded");
+    // While the frozen month waits for a deposit, the owner edits the headline.
+    await revise((manifest) => ({
+      ...manifest,
+      headline: `${manifest.headline} Now with vaults.`,
+    }));
+    vault("1000");
+    expect((await coordinate(afterCutoff)).created).toEqual([
+      `${project.id}/2026-11`,
+    ]);
+    expect((await prepare()).totalGrossBase).toBe("1000");
+    // Terms that sized the month still bind it.
+    await revise((manifest) => ({
+      ...manifest,
+      escrow: { ...manifest.escrow, effectiveCycle: "2026-12" },
+    }));
+    await rejects(prepare(), "financial_policy_changed");
   });
   test("rechecks restrictions and the owner's opt-out after the month was frozen", async () => {
     vault("1000");
@@ -987,6 +1360,62 @@ describe("monthly attestation input", () => {
       afterCutoff.toISOString(),
     );
     expect(await prepare()).toEqual(initial);
+  });
+  test("accepts a month frozen before fees rounded up, and no other fee", async () => {
+    clock = beforeCutoff;
+    await owner().changeAllocation(project.id, "2026-11", actor, {
+      githubUserId: B,
+      grossBase: "349",
+      expectedSequence: 0,
+    });
+    vault("2000");
+    await coordinate(afterCutoff);
+    const current = await prepare();
+    expect(current.entries.map((e) => [e.githubUserId, e.grossMicro])).toEqual([
+      [A, "600"],
+      [B, "349"],
+    ]);
+    const row = sqlite
+      .prepare("SELECT snapshot FROM monthly_payment_runs")
+      .get() as { snapshot: string };
+    const frozen = JSON.parse(row.snapshot) as {
+      awards: { githubUserId: string; feeBase: string; netBase: string }[];
+    };
+    const award = frozen.awards.find((a) => a.githubUserId === B);
+    // A month frozen now holds ceil(349 / 50) = 7.
+    expect([award?.feeBase, award?.netBase]).toEqual(["7", "342"]);
+    // Rewrite the month as it was frozen before the change, with
+    // floor(349 / 50) = 6 in the snapshot and in its funded obligation.
+    for (const trigger of sqlite
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('monthly_payment_runs','monthly_payment_obligations')",
+      )
+      .all() as { name: string }[])
+      sqlite.exec(`DROP TRIGGER ${trigger.name}`);
+    const freezeWithFee = async (fee: string) => {
+      if (!award) throw new Error("Fixture award missing");
+      award.feeBase = fee;
+      award.netBase = (349n - BigInt(fee)).toString();
+      const text = JSON.stringify(frozen);
+      sqlite
+        .prepare(
+          "UPDATE monthly_payment_runs SET snapshot=?, snapshot_sha256=?",
+        )
+        .run(text, await sha256Hex(text));
+      sqlite
+        .prepare(
+          "UPDATE monthly_payment_obligations SET fee_base=? WHERE github_user_id=?",
+        )
+        .run(fee, B);
+    };
+    await freezeWithFee("6");
+    const legacy = await prepare();
+    // The allocation root binds actor, gross and source only, so the root is the same.
+    expect(legacy.allocationRoot).toBe(current.allocationRoot);
+    expect(legacy.entries).toEqual(current.entries);
+    // A fee that neither rounding produces is not canonical.
+    await freezeWithFee("5");
+    await rejects(prepare(), "invalid_allocation");
   });
   test("rejects a forged frozen payload even when its metadata still names the real project", async () => {
     vault("1000");

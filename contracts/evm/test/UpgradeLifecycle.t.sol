@@ -40,7 +40,9 @@ contract UpgradeLifecycleTest is OpusBase {
             }
         }
         vm.prank(upgradeOwner);
-        factory.upgradeToAndCall(address(nextFactory), "");
+        factory.upgradeToAndCall(
+            address(nextFactory), abi.encodeCall(EscrowFactory.setVaultImplementation, (address(nextVault)))
+        );
         vm.prank(upgradeOwner);
         escrow.upgradeToAndCall(address(nextVault), "");
         check(FactoryNext(address(factory)).revision() == 2, "factory upgraded");
@@ -49,6 +51,13 @@ contract UpgradeLifecycleTest is OpusBase {
         check(escrow.reservedPrincipal() == 147e6 && escrow.reservedFees() == 3e6, "reserved preserved");
         check(escrow.freeBalance() == 850e6, "free balance preserved");
         check(escrow.consumedSources(source), "source replay guard preserved");
+        check(!escrow.monthlyEnabled() && escrow.monthlyCap() == 0, "existing monthly choice preserved");
+        vm.prank(OWNER);
+        ProjectEscrow created = ProjectEscrow(
+            factory.createWithMonthlyCommitment(keccak256("new-monthly-project"), IERC20(address(usdc)), 50e6, true)
+        );
+        check(VaultNext(address(created)).revision() == 2, "new vault uses selected implementation");
+        check(created.owner() == OWNER && created.monthlyEnabled() && created.monthlyCap() == 50e6, "monthly setup");
         {
             (address destination, uint64 currentVersion) = escrow.payableBinding(101);
             check(destination == ALICE_WALLET && currentVersion == version, "signed binding preserved");

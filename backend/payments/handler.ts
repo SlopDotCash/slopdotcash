@@ -13,6 +13,11 @@ import {
   SolanaFundingError,
   type SolanaFundingIntent,
 } from "../../contracts/solana/funding";
+import {
+  checkSolanaMonthlyCommitment,
+  prepareSolanaMonthlyCommitment,
+  readSolanaMonthlyCommitment,
+} from "../../contracts/solana/monthly-commitment";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   ESCROW_CHAINS,
@@ -223,6 +228,73 @@ export async function handlePaymentsApi(
         if (error instanceof SolanaFundingError)
           return json(422, {
             error: "funding_action_rejected",
+            message: error.message,
+          });
+        throw error;
+      }
+    }
+    const monthlySettingRoute =
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/solana-monthly-commitment$/.exec(
+        path,
+      );
+    if (monthlySettingRoute && request.method === "POST") {
+      if (!deps.solanaFundingConfig)
+        return json(503, { error: "funding_unavailable" });
+      const body = (await readBoundedJson(
+        request,
+        4096,
+        "monthly commitment setting",
+      )) as Record<string, unknown>;
+      if (
+        !body ||
+        (body.step !== "read" &&
+          body.step !== "review" &&
+          body.step !== "check") ||
+        typeof body.network !== "string" ||
+        typeof body.vault !== "string" ||
+        (body.step !== "read" &&
+          (typeof body.wallet !== "string" ||
+            !isWalletAddress("solana", body.wallet) ||
+            typeof body.cap !== "string" ||
+            !/^(0|[1-9][0-9]{0,19})$/.test(body.cap) ||
+            typeof body.enabled !== "boolean")) ||
+        (body.step === "check" &&
+          (typeof body.blockhash !== "string" ||
+            !isWalletAddress("solana", body.blockhash) ||
+            typeof body.transactionId !== "string" ||
+            body.transactionId.length > 100))
+      )
+        return json(400, { error: "invalid_monthly_setting" });
+      const config = await deps.solanaFundingConfig(
+        monthlySettingRoute[1],
+        body.network,
+        body.vault,
+      );
+      try {
+        if (body.step === "read")
+          return json(200, {
+            setting: await readSolanaMonthlyCommitment(config),
+          });
+        const intent = {
+          wallet: body.wallet as string,
+          cap: body.cap as string,
+          enabled: body.enabled as boolean,
+        };
+        if (body.step === "review")
+          return json(200, {
+            plan: await prepareSolanaMonthlyCommitment(config, intent),
+          });
+        return json(200, {
+          status: await checkSolanaMonthlyCommitment(
+            config,
+            { ...intent, blockhash: body.blockhash as string },
+            body.transactionId as string,
+          ),
+        });
+      } catch (error) {
+        if (error instanceof SolanaFundingError)
+          return json(422, {
+            error: "monthly_setting_rejected",
             message: error.message,
           });
         throw error;
@@ -1017,7 +1089,7 @@ export async function handlePaymentsApi(
       // out here; the state matches the owner's view (monthly.ts).
       const monthlyRows = await deps.db
         .prepare(
-          "SELECT json_group_array(json_object('projectId',project_id,'period',period,'network',network,'assetAddress',asset,'assetDecimals',decimals,'grossBase',gross,'feeBase',fee,'netBase',net,'state',state)) items FROM (SELECT r.project_id,r.period,r.network,json_extract(r.snapshot,'$.asset') asset,COALESCE((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id=r.project_id AND v.network=r.network AND v.vault=r.vault AND lower(v.asset_address)=lower(json_extract(r.snapshot,'$.asset'))),CASE WHEN lower(json_extract(b.manifest,'$.rewardAsset.address'))=lower(json_extract(r.snapshot,'$.asset')) THEN json_extract(b.manifest,'$.rewardAsset.decimals') END) decimals,json_extract(a.value,'$.grossBase') gross,json_extract(a.value,'$.feeBase') fee,json_extract(a.value,'$.netBase') net,CASE WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END state FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period, json_each(r.snapshot,'$.awards') a WHERE json_extract(a.value,'$.githubUserId')=? AND NOT EXISTS(SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id=r.project_id AND e.period=r.period AND e.source_digest=json_extract(a.value,'$.sourceDigest')) AND NOT EXISTS(SELECT 1 FROM payment_obligations o WHERE o.network=r.network AND o.vault=r.vault AND o.source_digest=json_extract(a.value,'$.sourceDigest')) ORDER BY r.period DESC,r.project_id)",
+          "SELECT json_group_array(json_object('projectId',project_id,'period',period,'network',network,'assetAddress',asset,'assetDecimals',decimals,'grossBase',gross,'feeBase',fee,'netBase',net,'state',state)) items FROM (SELECT r.project_id,r.period,r.network,json_extract(r.snapshot,'$.asset') asset,COALESCE((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id=r.project_id AND v.network=r.network AND v.vault=r.vault AND lower(v.asset_address)=lower(json_extract(r.snapshot,'$.asset'))),CASE WHEN lower(json_extract(b.manifest,'$.rewardAsset.address'))=lower(json_extract(r.snapshot,'$.asset')) THEN json_extract(b.manifest,'$.rewardAsset.decimals') END) decimals,json_extract(a.value,'$.grossBase') gross,json_extract(a.value,'$.feeBase') fee,json_extract(a.value,'$.netBase') net,CASE WHEN EXISTS(SELECT 1 FROM payment_obligations c WHERE c.network=r.network AND c.vault=r.vault AND c.source_digest=json_extract(a.value,'$.sourceDigest')) THEN 'conflict' WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END state FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period, json_each(r.snapshot,'$.awards') a WHERE json_extract(a.value,'$.githubUserId')=? AND NOT EXISTS(SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id=r.project_id AND e.period=r.period AND e.source_digest=json_extract(a.value,'$.sourceDigest')) AND NOT EXISTS(SELECT 1 FROM payment_obligations o WHERE o.network=r.network AND o.vault=r.vault AND o.source_digest=json_extract(a.value,'$.sourceDigest') AND o.github_user_id=json_extract(a.value,'$.githubUserId') AND o.gross_base=json_extract(a.value,'$.grossBase')) ORDER BY r.period DESC,r.project_id)",
         )
         .bind(member.github_id)
         .first<{ items: string }>();

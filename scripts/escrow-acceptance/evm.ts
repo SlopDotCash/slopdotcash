@@ -58,6 +58,7 @@ import {
   runPaymentsCron,
   type ScenarioAmounts,
   type StepRecord,
+  type Suite,
   saveEvidence,
   scenarioAmounts,
   sha256Text,
@@ -69,12 +70,12 @@ import {
   waitPolicy,
 } from "./shared";
 
-const ERC20 = parseAbi([
+export const ERC20 = parseAbi([
   "function balanceOf(address) view returns (uint256)",
   "function decimals() view returns (uint8)",
   "function approve(address,uint256) returns (bool)",
 ]);
-const FACTORY = parseAbi([
+export const FACTORY = parseAbi([
   "function registrar() view returns (address)",
   "function identityAuthority() view returns (address)",
   "function feeRecipient() view returns (address)",
@@ -82,24 +83,49 @@ const FACTORY = parseAbi([
   "function vaults(bytes32) view returns (address)",
   "function create(bytes32,address,uint8) returns (address)",
 ]);
-const VAULT = parseAbi([
+export const VAULT = parseAbi([
   "function awards(bytes32) view returns (uint64 actorId,uint128 gross,uint128 fee,bytes32 sourceDigest,uint64 committedAt,bool paid)",
   "function bindings(uint64) view returns (address destination,uint64 version,bytes32 claimDigest,uint64 activatesAt,bool cancelled)",
+  "function payableBinding(uint64) view returns (address destination,uint64 version)",
+  "function purpose() view returns (uint8)",
+  "function bindingDelay() view returns (uint64)",
+  "function freeBalance() view returns (uint128)",
+  "function accruedFees() view returns (uint128)",
+  "function monthlyCap() view returns (uint128)",
+  "function monthlyEnabled() view returns (bool)",
+  "function monthlyRoots(uint32) view returns (bytes32)",
+  "function monthlyWindow(uint32) view returns (uint64 opensAt,uint64 closesAt)",
+  "function setMonthlyCommitment(uint128,bool)",
+  "function totals() view returns (uint128 deposited,uint128 paid,uint128 payoutFees,uint128 grossWithdrawn,uint128 withdrawalFees,uint128 free,uint128 principalReserved,uint128 feesReserved,uint128 feesAccrued,uint256 balance)",
   "event Deposited(address indexed depositor, uint128 amount)",
+  "event AwardCommitted(bytes32 indexed id, uint64 indexed actorId, uint128 gross, uint128 fee, bytes32 sourceDigest)",
+  "event DestinationBound(uint64 indexed actorId, address indexed destination, uint64 version, bytes32 claimDigest, uint64 activatesAt)",
+  "event BindingCancelled(uint64 indexed actorId, uint64 version)",
+  "event Paid(bytes32 indexed id, uint64 indexed actorId, address indexed destination, uint64 version, uint128 gross, uint128 net, uint128 fee)",
   "event UnusedWithdrawn(address indexed destination, uint128 gross, uint128 net, uint128 fee)",
   "event FeesClaimed(address indexed feeRecipient, uint128 amount)",
+  "event MonthlyCommitmentSet(uint128 cap, bool enabled)",
+  "event MonthlyCommitted(uint32 indexed period, bytes32 allocationRoot, uint128 gross, uint256 awards)",
   "error Unauthorized()",
   "error InvalidInput()",
   "error InsufficientFreeBalance()",
   "error DuplicateAward()",
   "error InvalidBinding()",
   "error TransferFailed()",
+  "error ReentrantCall()",
+  "error WrongPurpose()",
+  "error MonthlyDisabled()",
+  "error MonthlyWindowClosed()",
+  "error MonthlyAlreadyCommitted()",
+  "error MonthlyCapExceeded()",
+  "error InvalidAttestation()",
   "error AwardPending()",
+  "error CancelLimit()",
   "error InvalidWalletSignature()",
 ]);
-const ZERO = "0x0000000000000000000000000000000000000000";
+export const ZERO = "0x0000000000000000000000000000000000000000";
 
-interface Receipt {
+export interface Receipt {
   status: string;
   blockNumber: string;
   transactionHash: string;
@@ -107,7 +133,7 @@ interface Receipt {
 }
 
 /** JSON-RPC, signing and receipts on one EVM test chain. Raw bytes are saved before broadcast. */
-class EvmChain {
+export class EvmChain {
   constructor(
     readonly rpcUrl: string,
     readonly chainId: number,
@@ -261,7 +287,7 @@ class EvmChain {
   }
 }
 
-const codeSha256 = async (chain: EvmChain, address: string) =>
+export const codeSha256 = async (chain: EvmChain, address: string) =>
   createHash("sha256")
     .update(
       Buffer.from(
@@ -274,7 +300,7 @@ const codeSha256 = async (chain: EvmChain, address: string) =>
     .digest("hex");
 
 /** The typed data the account API returns, in the shape viem signs. */
-function signBinding(
+export function signBinding(
   account: PrivateKeyAccount,
   typedData: ReturnType<typeof evmBindingTypedData>,
 ) {
@@ -297,10 +323,16 @@ function signBinding(
   });
 }
 
-export async function runEvm(
+/**
+ * The keys, chain identity, factory roles and evidence file of one EVM run.
+ * Nothing signs before the RPC chain id is the named test network and the
+ * factory's registrar and identity authority are the configured test keys.
+ */
+export async function openEvmRun(
   network: AcceptanceNetwork,
   directory: string,
-): Promise<Evidence> {
+  suite: Suite,
+) {
   const policy = ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS];
   if (policy?.family !== "evm")
     throw new Error(`${network} is not an EVM network`);
@@ -311,14 +343,7 @@ export async function runEvm(
     );
   const rpcUrl = requireEnv("ESCROW_ACCEPTANCE_RPC_URL");
   const factory = requireEnv("ESCROW_ACCEPTANCE_FACTORY").toLowerCase();
-  const assets = requireEnv("ESCROW_ACCEPTANCE_ASSETS")
-    .split(",")
-    .map((value) => value.trim().toLowerCase());
-  if (
-    !/^0x[0-9a-f]{40}$/.test(factory) ||
-    !assets.length ||
-    assets.some((asset) => !/^0x[0-9a-f]{40}$/.test(asset))
-  )
+  if (!/^0x[0-9a-f]{40}$/.test(factory))
     throw new Error("Factory and asset addresses must be EVM addresses");
   const keys = {
     registrar: privateKeyToAccount(evmKey("ESCROW_ACCEPTANCE_REGISTRAR_KEY")),
@@ -336,7 +361,6 @@ export async function runEvm(
   );
   if (new Set(addresses).size !== addresses.length)
     throw new Error("Every test role needs its own key");
-  const divisor = unitDivisor();
 
   // Chain identity first: nothing signs before the chain id is a test chain.
   const chainId = assertEvmTestChain(
@@ -381,6 +405,7 @@ export async function runEvm(
     evidence = newEvidence({
       network,
       rpcUrl,
+      suite,
       chain: {
         chainId,
         factoryCodeSha256,
@@ -399,16 +424,52 @@ export async function runEvm(
     await persist();
   } else if (
     evidence.network !== network ||
+    (evidence.suite ?? "section-21") !== suite ||
     evidence.chain.chainId !== chainId ||
     JSON.stringify(evidence.roles) !== JSON.stringify(roles)
   )
     throw new Error(
-      "The evidence directory belongs to another network, factory or key set",
+      "The evidence directory belongs to another network, suite, factory or key set",
     );
   const run = evidence;
   run.status = "running";
   run.waiting = null;
+  return {
+    network,
+    policy,
+    rpcUrl,
+    factory,
+    keys,
+    identity,
+    identityKey,
+    relayerKey,
+    chainId,
+    chain,
+    feeRecipient: feeRecipient.toLowerCase(),
+    bindingDelay,
+    factoryCodeSha256,
+    run,
+    persist,
+  };
+}
+export type EvmRun = Awaited<ReturnType<typeof openEvmRun>>;
 
+/**
+ * The local backend of one run: the projection, the project registry the
+ * payments Worker reads, and the production executor roles, each with its own
+ * durable journal and key. `restart` replaces the signer instances, as a
+ * Worker restart does; the journals stay on disk.
+ */
+export function evmServices(
+  ctx: EvmRun,
+  directory: string,
+  projects: () => {
+    projectId: string;
+    effectiveCycle: string;
+    deployment: EscrowDeployment;
+  }[],
+  rpcUrl = ctx.rpcUrl,
+) {
   const projection = new Projection(directory);
   // The dispatcher finds each vault in the project registry, as in
   // production; only the signer roles keep a pinned deployment list.
@@ -416,24 +477,13 @@ export async function runEvm(
   const env: PaymentsWorkerEnvironment = {
     PAYMENTS_DB: projection.db,
     REGISTRY_DB: registry.db,
-    PAYMENT_NETWORKS: JSON.stringify([network]),
-    PAYMENT_RPC_URLS: JSON.stringify({ [network]: rpcUrl }),
+    PAYMENT_NETWORKS: JSON.stringify([ctx.network]),
+    PAYMENT_RPC_URLS: JSON.stringify({ [ctx.network]: rpcUrl }),
   };
   let pinnedDeployments = "[]";
-  const refreshDeployments = () => {
-    pinnedDeployments = JSON.stringify(
-      registry.record(
-        run.assets
-          .filter((a) => a.vault)
-          .map((a) => ({
-            projectId: a.projectId,
-            effectiveCycle: run.startedAt.slice(0, 7),
-            deployment: a.deployment as unknown as EscrowDeployment,
-          })),
-      ),
-    );
+  const refresh = () => {
+    pinnedDeployments = JSON.stringify(registry.record(projects()));
   };
-  // The production executor roles, each with its own durable journal and key.
   const signer = (
     role: "attester" | "relayer",
     key: Hex,
@@ -468,11 +518,139 @@ export async function runEvm(
     );
     return instance;
   };
-  const attester = signer("attester", identityKey);
-  const relayer = signer("relayer", relayerKey, attester);
-  env.EVM_PAYMENT_EXECUTOR = relayer;
-  const relayerJournal = projection.journal("relayer");
-  const attesterJournal = projection.journal("attester");
+  const services = {
+    projection,
+    registry,
+    env,
+    refresh,
+    attester: signer("attester", ctx.identityKey),
+    relayer: undefined as unknown as Fetcher,
+    relayerJournal: projection.journal("relayer"),
+    attesterJournal: projection.journal("attester"),
+    restart() {
+      services.attester = signer("attester", ctx.identityKey);
+      services.relayer = signer("relayer", ctx.relayerKey, services.attester);
+      env.EVM_PAYMENT_EXECUTOR = services.relayer;
+    },
+  };
+  services.restart();
+  return services;
+}
+
+/**
+ * Registers an actor's payout wallet through the account API and signs the
+ * vault binding challenge with the wallet, as a contributor does on the
+ * account page. The identity attester then binds it during dispatch.
+ */
+export async function registerEvmWallet(input: {
+  projection: Projection;
+  actor: TestActor;
+  chain: string;
+  network: AcceptanceNetwork;
+  vault: string;
+  wallet: PrivateKeyAccount;
+  deps: { paymentDeployments: PaymentDeployment[] | object[] };
+}) {
+  const { projection, actor, wallet, network, vault } = input;
+  const deps = input.deps as never;
+  const claim = await projection.registerWallet(
+    actor,
+    input.chain,
+    wallet.address.toLowerCase(),
+    (message) => wallet.signMessage({ message }),
+    deps,
+  );
+  const authorized = projection.sqlite
+    .query<{ n: number }, [string, string]>(
+      "SELECT count(*) n FROM payment_binding_authorizations WHERE claim_id=? AND vault=?",
+    )
+    .get(claim.claimId, vault);
+  if (!authorized?.n) {
+    const challenge = await projection.api(
+      actor,
+      "/wallets/bind-challenge",
+      { claimId: claim.claimId, network, vault, expectedVersion: "0" },
+      deps,
+    );
+    const typedData = challenge.typedData as ReturnType<
+      typeof evmBindingTypedData
+    >;
+    await projection.api(
+      actor,
+      "/wallets/bind-authorize",
+      {
+        claimId: claim.claimId,
+        network,
+        vault,
+        expectedVersion: "0",
+        expiresAt: typedData.message.expiresAt,
+        signature: await signBinding(wallet, typedData),
+      },
+      deps,
+    );
+  }
+  return claim;
+}
+
+/** The escrow deployment an admin revision records in project.json for one vault. */
+export async function evmDeploymentRecord(
+  ctx: EvmRun,
+  vault: string,
+  asset: string,
+  deploymentTransaction: string,
+): Promise<EscrowDeployment> {
+  return {
+    network: ctx.network as EscrowDeployment["network"],
+    vault,
+    programId: null,
+    upgradeAuthority: null,
+    projectPda: null,
+    networkDomain: null,
+    asset,
+    owner: ctx.keys.owner.address.toLowerCase(),
+    identityAuthority: ctx.identity.address.toLowerCase(),
+    feeRecipient: ctx.feeRecipient,
+    deploymentTransaction,
+    sourceCommit: ctx.run.sourceCommit,
+    codeSha256: await codeSha256(ctx.chain, vault),
+    bindingDelaySeconds: ctx.bindingDelay.toString(),
+    rotationDelaySeconds: null,
+    factory: ctx.factory,
+    factoryCodeSha256: ctx.factoryCodeSha256,
+    evmUpgrade: await captureUpgrade(
+      (method, params) => jsonRpc(ctx.rpcUrl, method, params),
+      ctx.factory,
+      vault,
+    ),
+    registrar: ctx.keys.registrar.address.toLowerCase(),
+  };
+}
+
+export async function runEvm(
+  network: AcceptanceNetwork,
+  directory: string,
+): Promise<Evidence> {
+  const ctx = await openEvmRun(network, directory, "section-21");
+  const { policy, rpcUrl, factory, keys, identity, chainId, chain, run } = ctx;
+  const { persist, feeRecipient, bindingDelay } = ctx;
+  const assets = requireEnv("ESCROW_ACCEPTANCE_ASSETS")
+    .split(",")
+    .map((value) => value.trim().toLowerCase());
+  if (!assets.length || assets.some((asset) => !/^0x[0-9a-f]{40}$/.test(asset)))
+    throw new Error("Factory and asset addresses must be EVM addresses");
+  const divisor = unitDivisor();
+  const services = evmServices(ctx, directory, () =>
+    run.assets
+      .filter((a) => a.vault)
+      .map((a) => ({
+        projectId: a.projectId,
+        effectiveCycle: run.startedAt.slice(0, 7),
+        deployment: a.deployment as unknown as EscrowDeployment,
+      })),
+  );
+  const { projection, env, relayerJournal, attesterJournal } = services;
+  const refreshDeployments = services.refresh;
+  const relayer = services.relayer;
   const policyWait = waitPolicy();
   const deadline = Date.now() + policyWait.maxWaitMs;
   const report = (reason: string) => {
@@ -596,31 +774,12 @@ export async function runEvm(
     if (!entry.vault) {
       entry.vault = vault;
       // The escrow deployment an admin revision records in project.json.
-      const deployment: EscrowDeployment = {
-        network: network as EscrowDeployment["network"],
+      const deployment = await evmDeploymentRecord(
+        ctx,
         vault,
-        programId: null,
-        upgradeAuthority: null,
-        projectPda: null,
-        networkDomain: null,
         asset,
-        owner: keys.owner.address.toLowerCase(),
-        identityAuthority: identity.address.toLowerCase(),
-        feeRecipient: feeRecipient.toLowerCase(),
-        deploymentTransaction: steps["create-vault"].transactionId,
-        sourceCommit: run.sourceCommit,
-        codeSha256: await codeSha256(chain, vault),
-        bindingDelaySeconds: bindingDelay.toString(),
-        rotationDelaySeconds: null,
-        factory,
-        factoryCodeSha256,
-        evmUpgrade: await captureUpgrade(
-          (method, params) => jsonRpc(rpcUrl, method, params),
-          factory,
-          vault,
-        ),
-        registrar: keys.registrar.address.toLowerCase(),
-      };
+        steps["create-vault"].transactionId,
+      );
       entry.deployment = { ...deployment };
       await persist();
     }
@@ -794,7 +953,7 @@ export async function runEvm(
           keys.owner.address.toLowerCase() ||
         after - beforeAtParent !== amounts.withdrawGross - amounts.withdrawFee
       )
-        throw new Error("Withdrawal did not pay floor(gross / 50) as the fee");
+        throw new Error("Withdrawal did not pay ceil(gross / 50) as the fee");
       await persist();
     }
     if (!entry.checks.overWithdrawal)
@@ -909,42 +1068,15 @@ export async function runEvm(
     }
     const ready = <T>(step: () => Promise<T>) =>
       untilReady(step, policyWait, deadline, report);
-    const claim = await projection.registerWallet(
+    const claim = await registerEvmWallet({
+      projection,
       actor,
-      policy.chain,
-      wallet.address.toLowerCase(),
-      (message) => wallet.signMessage({ message }),
-      deps as never,
-    );
-    const authorized = projection.sqlite
-      .query<{ n: number }, [string, string]>(
-        "SELECT count(*) n FROM payment_binding_authorizations WHERE claim_id=? AND vault=?",
-      )
-      .get(claim.claimId, vault);
-    if (!authorized?.n) {
-      const challenge = await projection.api(
-        actor,
-        "/wallets/bind-challenge",
-        { claimId: claim.claimId, network, vault, expectedVersion: "0" },
-        deps as never,
-      );
-      const typedData = challenge.typedData as ReturnType<
-        typeof evmBindingTypedData
-      >;
-      await projection.api(
-        actor,
-        "/wallets/bind-authorize",
-        {
-          claimId: claim.claimId,
-          network,
-          vault,
-          expectedVersion: "0",
-          expiresAt: typedData.message.expiresAt,
-          signature: await signBinding(wallet, typedData),
-        },
-        deps as never,
-      );
-    }
+      chain: policy.chain,
+      network,
+      vault,
+      wallet,
+      deps,
+    });
     const cronErrors: string[] = [];
     await ready(async () => {
       const errors = await runPaymentsCron(env);

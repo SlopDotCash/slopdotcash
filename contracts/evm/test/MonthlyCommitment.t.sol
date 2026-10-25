@@ -13,6 +13,7 @@ interface MonthlyVm {
     function expectEmit(bool, bool, bool, bool, address) external;
     function addr(uint256) external pure returns (address);
     function sign(uint256, bytes32) external pure returns (uint8, bytes32, bytes32);
+    function store(address, bytes32, bytes32) external;
 }
 
 /// @dev Owner decision D13: permissionless vault creation by owner and purpose, and the bounded monthly
@@ -215,7 +216,7 @@ contract MonthlyCommitmentTest {
             (uint64 actor, uint128 gross, uint128 fee, bytes32 source,, bool paid) =
                 vault.awards(vault.awardId(entries[i].sourceDigest));
             require(
-                actor == entries[i].actorId && gross == entries[i].gross && fee == gross / 50
+                actor == entries[i].actorId && gross == entries[i].gross && fee == (gross + 49) / 50
                     && source == entries[i].sourceDigest && !paid,
                 "award committed"
             );
@@ -250,6 +251,59 @@ contract MonthlyCommitmentTest {
         require(vault.monthlyRoots(PERIOD) == vault.allocationRoot(entries), "month completes");
         require(vault.freeBalance() == 9_400e6, "each source reserved once");
         require(vault.reservedPrincipal() + vault.reservedFees() == 600e6, "exact total reserved");
+    }
+
+    /// @dev Rewrite a reserved award as a vault before the rounded-up fee recorded it: fee floor(gross / 50),
+    /// with the vault's reserved totals moved to match. Slots follow `forge inspect ProjectEscrow storage-layout`.
+    function reserveWithFloorFee(bytes32 id) internal {
+        (, uint128 gross, uint128 fee,,,) = vault.awards(id);
+        uint128 floorFee = gross / 50;
+        require(fee == floorFee + 1, "the new fee is one unit above the floor fee");
+        bytes32 awardSlot = keccak256(abi.encode(id, uint256(11)));
+        vm.store(address(vault), bytes32(uint256(awardSlot) + 1), bytes32(uint256(floorFee)));
+        uint256 principal = uint256(vault.reservedPrincipal()) + 1;
+        uint256 fees = uint256(vault.reservedFees()) - 1;
+        vm.store(address(vault), bytes32(uint256(5)), bytes32(principal << 128 | uint256(vault.freeBalance())));
+        vm.store(address(vault), bytes32(uint256(6)), bytes32(uint256(vault.totalDeposited()) << 128 | fees));
+        (,, uint128 stored,,,) = vault.awards(id);
+        require(stored == floorFee && vault.reservedFees() == fees, "legacy award in place");
+    }
+
+    /// An award reserved before fees rounded up holds floor(gross / 50). A signed month that includes it
+    /// counts it once, as the same obligation, instead of reverting the whole month.
+    function test_monthlyCountsAPreUpgradeFloorFeeAwardOnce() public {
+        vm.warp(NOVEMBER_OPENS);
+        ProjectEscrow.MonthlyAward[] memory entries = allocation(100e6, 200e6 + 1, 300e6);
+        bytes32 source = entries[1].sourceDigest;
+        bytes32 id = vault.awardId(source);
+        vm.prank(OWNER);
+        vault.commitAward(id, 12, 200e6 + 1, source);
+        reserveWithFloorFee(id);
+        submit(PERIOD, entries, attest(AUTHORITY_KEY, vault, PERIOD, entries));
+        require(vault.monthlyRoots(PERIOD) == vault.allocationRoot(entries), "month completes");
+        require(vault.freeBalance() == 10_000e6 - (600e6 + 1), "each source reserved once");
+        (,, uint128 fee,,,) = vault.awards(id);
+        require(fee == 4_000_000, "the earlier award keeps its floor fee");
+        // 100e6 and 300e6 pay ceil fees of 2e6 and 6e6; the earlier award keeps 4_000_000.
+        require(vault.reservedFees() == 2e6 + 4_000_000 + 6e6, "fees reserved once");
+        require(vault.reservedPrincipal() + vault.reservedFees() == 600e6 + 1, "exact total reserved");
+    }
+
+    /// Any fee other than the new ceil fee or the legacy floor fee is a changed award and fails closed.
+    function test_monthlyRejectsAnAwardWithAnyOtherFee() public {
+        vm.warp(NOVEMBER_OPENS);
+        ProjectEscrow.MonthlyAward[] memory entries = allocation(100e6, 200e6 + 1, 300e6);
+        bytes32 source = entries[1].sourceDigest;
+        bytes32 id = vault.awardId(source);
+        vm.prank(OWNER);
+        vault.commitAward(id, 12, 200e6 + 1, source);
+        bytes32 awardSlot = keccak256(abi.encode(id, uint256(11)));
+        vm.store(address(vault), bytes32(uint256(awardSlot) + 1), bytes32(uint256(4_000_000 - 1)));
+        bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
+        vm.prank(SUBMITTER);
+        vm.expectRevert(ProjectEscrow.DuplicateAward.selector);
+        vault.commitMonthly(PERIOD, entries, signature);
+        require(vault.monthlyRoots(PERIOD) == bytes32(0), "the month stays uncommitted");
     }
 
     function test_monthlyRejectsAConflictingManualAward() public {

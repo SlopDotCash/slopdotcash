@@ -244,10 +244,26 @@ export function chainFamily(chain) {
 export const EVM_CHAINS = Object.freeze(
   ESCROW_CHAINS.filter((chain) => chainFamily(chain) === "evm"),
 );
+/** Solana token amounts are u64; EVM vault accounting supports MAX_BASE_UNITS. */
+export const SOLANA_MAX_BASE_UNITS = (1n << 64n) - 1n;
+/** The largest base-unit amount one payment may carry on a chain. */
+export function maxBaseUnitsForChain(chain) {
+  return chainFamily(chain) === "solana"
+    ? SOLANA_MAX_BASE_UNITS
+    : MAX_BASE_UNITS;
+}
 /** New production deployments may pay committed awards immediately. */
 export const MIN_PRODUCTION_BINDING_DELAY = 0;
 /** New production deployments may rotate an authorized identity key immediately. */
 export const MIN_PRODUCTION_ROTATION_DELAY = 0;
+const MAX_U64 = (1n << 64n) - 1n;
+const EVM_IMPLEMENTATION_REVIEW_KEYS = [
+  "authority",
+  "vaultImplementation",
+  "vaultImplementationCodeSha256",
+  "factoryImplementation",
+  "factoryImplementationCodeSha256",
+];
 function keys(value, expected) {
   if (
     !value ||
@@ -282,7 +298,7 @@ function validateEscrowPolicy(value, feeBasisPoints) {
     !isEscrowChain(value.chain) ||
     value.feeBasisPoints !== feeBasisPoints ||
     // Escrow v2 (PRD section 6): the unused-fund withdrawal fee equals the
-    // 2% payout fee, floor(gross / 50) per withdrawal (#907). The contracts
+    // 2% payout fee, ceil(gross / 50) per withdrawal (#907). The contracts
     // enforce both.
     value.withdrawalFeeBasisPoints !== ESCROW_WITHDRAWAL_FEE_BASIS_POINTS ||
     value.feeMode !== "deduct-from-gross" ||
@@ -316,29 +332,54 @@ function validateEscrowPolicy(value, feeBasisPoints) {
     if (deployment.evmUpgrade !== undefined) {
       const upgrade = deployment.evmUpgrade;
       keys(upgrade, [
-        "authority",
-        "vaultImplementation",
-        "vaultImplementationCodeSha256",
-        "factoryImplementation",
-        "factoryImplementationCodeSha256",
+        ...EVM_IMPLEMENTATION_REVIEW_KEYS,
+        ...(upgrade?.history === undefined ? [] : ["history"]),
       ]);
+      const history = upgrade.history ?? [];
       if (
         chainFamily(value.chain) !== "evm" ||
-        ![
-          upgrade.authority,
-          upgrade.vaultImplementation,
-          upgrade.factoryImplementation,
-        ].every((address) => isFundingAddress(value.chain, address)) ||
-        ![
-          upgrade.vaultImplementationCodeSha256,
-          upgrade.factoryImplementationCodeSha256,
-        ].every((hash) => /^[0-9a-f]{64}$/.test(hash)) ||
-        [deployment.identityAuthority, deployment.feeRecipient].some(
-          (address) =>
-            address.toLowerCase() === upgrade.authority.toLowerCase(),
-        )
+        (upgrade.history !== undefined &&
+          (!Array.isArray(history) || history.length === 0))
       )
         throw new TypeError("Invalid reviewed EVM upgrade");
+      for (const review of [upgrade, ...history]) {
+        if (review !== upgrade)
+          keys(review, [
+            ...EVM_IMPLEMENTATION_REVIEW_KEYS,
+            "supersededAtBlock",
+          ]);
+        if (
+          ![
+            review.authority,
+            review.vaultImplementation,
+            review.factoryImplementation,
+          ].every((address) => isFundingAddress(value.chain, address)) ||
+          ![
+            review.vaultImplementationCodeSha256,
+            review.factoryImplementationCodeSha256,
+          ].every((hash) => /^[0-9a-f]{64}$/.test(hash)) ||
+          [deployment.identityAuthority, deployment.feeRecipient].some(
+            (address) =>
+              address.toLowerCase() === review.authority.toLowerCase(),
+          )
+        )
+          throw new TypeError("Invalid reviewed EVM upgrade");
+      }
+      // Each entry applies only to events before the block at which it was
+      // superseded. Bounds strictly increase, so no entry repeats.
+      let bound = 0n;
+      for (const review of history) {
+        if (
+          typeof review.supersededAtBlock !== "string" ||
+          !/^[1-9][0-9]{0,19}$/.test(review.supersededAtBlock) ||
+          BigInt(review.supersededAtBlock) > MAX_U64 ||
+          BigInt(review.supersededAtBlock) <= bound
+        )
+          throw new TypeError(
+            "Reviewed EVM upgrade history needs increasing supersession blocks",
+          );
+        bound = BigInt(review.supersededAtBlock);
+      }
     }
     const network = ESCROW_NETWORKS[deployment.network];
     if (
@@ -457,11 +498,52 @@ function validateEscrowPolicy(value, feeBasisPoints) {
   }
   return value;
 }
+/** The reviewed authority and implementations of an EVM upgrade, without its history. */
+function implementationReview(review) {
+  return JSON.stringify(
+    EVM_IMPLEMENTATION_REVIEW_KEYS.map((key) => review[key].toLowerCase()),
+  );
+}
+/**
+ * EVM upgrade history is append-only. When the reviewed authority or an
+ * implementation changes, exactly the outgoing review is appended with the
+ * block at which it was superseded (validation keeps bounds increasing), so
+ * events from before the upgrade still verify at their own block. Existing
+ * history entries never change or disappear.
+ */
+function assertEvmUpgradeHistory(previous, next) {
+  const before = previous.history ?? [];
+  const after = next.history ?? [];
+  const changed = implementationReview(previous) !== implementationReview(next);
+  if (
+    after.length !== before.length + (changed ? 1 : 0) ||
+    before.some(
+      (entry, index) => JSON.stringify(entry) !== JSON.stringify(after[index]),
+    ) ||
+    (changed &&
+      implementationReview(after[before.length]) !==
+        implementationReview(previous))
+  )
+    throw new TypeError(
+      "Reviewed EVM upgrade history must append the outgoing implementation",
+    );
+}
 export function assertEscrowTransition(
   previous,
   next,
   allowUnfundedChange = false,
 ) {
+  // A deployment's first revision has no superseded reviews to record.
+  for (const deployment of next?.deployments ?? [])
+    if (
+      deployment.evmUpgrade?.history !== undefined &&
+      !previous?.deployments.some(
+        (candidate) => candidate.network === deployment.network,
+      )
+    )
+      throw new TypeError(
+        "A new escrow deployment cannot carry reviewed EVM upgrade history",
+      );
   if (!previous) return;
   if (
     !next ||
@@ -509,5 +591,7 @@ export function assertEscrowTransition(
       })
     )
       throw new TypeError("Historical escrow deployments are immutable");
+    if (deployment.evmUpgrade)
+      assertEvmUpgradeHistory(deployment.evmUpgrade, successor.evmUpgrade);
   }
 }

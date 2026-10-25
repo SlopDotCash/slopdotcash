@@ -62,9 +62,11 @@ export const SOLANA_GENESIS = {
 } as const;
 /**
  * ProjectEscrow.payoutFee and withdrawalFee, and the program's commit and
- * withdraw: both 2%, rounded down (#907).
+ * withdraw: both 2%, rounded up, ceil(gross / 50) (#907).
  */
 export const PAYOUT_FEE_DIVISOR = 50n;
+const twoPercentFee = (gross: bigint) =>
+  (gross + PAYOUT_FEE_DIVISOR - 1n) / PAYOUT_FEE_DIVISOR;
 export type ActorRole = "registered" | "walletless";
 export interface TestActor {
   role: ActorRole;
@@ -161,12 +163,12 @@ export function scenarioAmounts(decimals: number, divisor: bigint) {
     totalDeposit: 1000n * unit,
     awardA,
     awardB,
-    feeA: awardA / PAYOUT_FEE_DIVISOR,
-    feeB: awardB / PAYOUT_FEE_DIVISOR,
-    netA: awardA - awardA / PAYOUT_FEE_DIVISOR,
-    netB: awardB - awardB / PAYOUT_FEE_DIVISOR,
+    feeA: twoPercentFee(awardA),
+    feeB: twoPercentFee(awardB),
+    netA: awardA - twoPercentFee(awardA),
+    netB: awardB - twoPercentFee(awardB),
     withdrawGross,
-    withdrawFee: withdrawGross / PAYOUT_FEE_DIVISOR,
+    withdrawFee: twoPercentFee(withdrawGross),
   };
   if (result.netA !== 98n * unit || result.netB !== 49n * unit)
     throw new Error("Unit is too small for exact section 21 figures");
@@ -209,8 +211,28 @@ export interface AssetEvidence {
   checks: Record<string, unknown>;
   status: "pending" | "passed";
 }
+/**
+ * section-21 is the funded-award run above. extended adds the #902 scenarios
+ * that section 21 does not cover: private bounty 75/25, monthly commitment,
+ * the walletless destination lifecycle, an interrupted send, a failed
+ * recipient, and fee claims with a frozen fee destination.
+ */
+export const SUITES = ["section-21", "extended"] as const;
+export type Suite = (typeof SUITES)[number];
+/** One extended scenario on one network: its vaults, transactions and checks. */
+export interface ScenarioEvidence {
+  status: "pending" | "passed" | "failed";
+  /** Why the scenario waits or failed. */
+  reason?: string;
+  assets: string[];
+  vaults: Record<string, string>;
+  steps: Record<string, StepRecord>;
+  checks: Record<string, unknown>;
+}
 export interface Evidence {
   schema: typeof EVIDENCE_SCHEMA;
+  /** Absent in section-21 evidence written before the extended suite. */
+  suite?: Suite;
   network: AcceptanceNetwork;
   mode: "public-testnet" | "local";
   rpcHost: string;
@@ -227,6 +249,8 @@ export interface Evidence {
   actors: Record<ActorRole, string>;
   deviations: string[];
   assets: AssetEvidence[];
+  /** Extended suite only, keyed by scenario name. */
+  scenarios?: Record<string, ScenarioEvidence>;
   errors: string[];
 }
 export function sourceCommit(): string {
@@ -260,6 +284,7 @@ export async function saveEvidence(directory: string, evidence: Evidence) {
 }
 export function newEvidence(input: {
   network: AcceptanceNetwork;
+  suite?: Suite;
   rpcUrl: string;
   chain: Record<string, string>;
   roles: Record<string, string>;
@@ -269,6 +294,7 @@ export function newEvidence(input: {
   const now = new Date().toISOString();
   return {
     schema: EVIDENCE_SCHEMA,
+    suite: input.suite ?? "section-21",
     network: input.network,
     mode: isLoopbackRpc(input.rpcUrl) ? "local" : "public-testnet",
     rpcHost: rpcHost(input.rpcUrl),
@@ -918,4 +944,208 @@ export async function untilReady<T>(
       await Bun.sleep(policy.pollMs);
     }
   }
+}
+
+/** A JSON-RPC request as the fault proxy sees it. */
+export interface RpcCall {
+  method: string;
+  params: unknown[];
+}
+/**
+ * A loopback JSON-RPC proxy in front of the real test network RPC, for the
+ * interrupted-send scenario. Armed once, it forwards the matching broadcast
+ * to the node, discards the node's answer and returns HTTP 503, then fails
+ * the next status lookup of the same transaction. The sender therefore
+ * cannot know whether its transaction left, as after a lost connection or a
+ * Worker restart. Every other request passes through unchanged.
+ */
+export class FaultRpc {
+  readonly url: string;
+  private armed: {
+    send: string;
+    match: (call: RpcCall) => boolean;
+    lookups: string[];
+    onLoss: (call: RpcCall, upstream: string) => Promise<void>;
+  } | null = null;
+  private lookupsToFail: string[] = [];
+  private readonly server: ReturnType<typeof Bun.serve>;
+  constructor(upstream: string) {
+    this.server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const text = await request.text();
+        const call = JSON.parse(text) as RpcCall;
+        if (this.lookupsToFail.includes(call.method)) {
+          this.lookupsToFail = this.lookupsToFail.filter(
+            (method) => method !== call.method,
+          );
+          return new Response("simulated outage", { status: 503 });
+        }
+        const response = await fetch(upstream, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: text,
+          signal: AbortSignal.timeout(120_000),
+        });
+        // fetch already decoded the body, so pass it on without the upstream encoding headers.
+        const body = await response.text();
+        const armed = this.armed;
+        if (armed && call.method === armed.send && armed.match(call)) {
+          this.armed = null;
+          this.lookupsToFail = [...armed.lookups];
+          await armed.onLoss(call, body);
+          return new Response("simulated lost response", { status: 503 });
+        }
+        return new Response(body, {
+          status: response.status,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    this.url = `http://127.0.0.1:${this.server.port}`;
+  }
+  /** Loses the answer to the next `send` call that `match` accepts. */
+  arm(input: NonNullable<FaultRpc["armed"]>) {
+    this.armed = input;
+  }
+  get isArmed() {
+    return this.armed !== null;
+  }
+  stop() {
+    this.server.stop(true);
+  }
+}
+
+/**
+ * Runs each extended scenario that has not passed. A group shares one run
+ * (for example one payments Worker cron) and marks an entry complete with
+ * `checks.complete` when its own part has finished. A failure is recorded
+ * on its scenario and never stops the others; a wait is recorded
+ * and the run exits with WAITING_EXIT_CODE after the remaining scenarios.
+ */
+export async function runScenarios(
+  run: Evidence,
+  persist: () => Promise<void>,
+  scenarios: [string[], (...entries: ScenarioEvidence[]) => Promise<void>][],
+) {
+  run.scenarios ??= {};
+  const scenariosByName = run.scenarios;
+  let waiting: Waiting | null = null;
+  for (const [names, scenario] of scenarios) {
+    const entries = names.map((name) => {
+      scenariosByName[name] ??= {
+        status: "pending",
+        assets: [],
+        vaults: {},
+        steps: {},
+        checks: {},
+      };
+      return scenariosByName[name];
+    });
+    if (entries.every((entry) => entry.status === "passed")) continue;
+    let outcome: unknown = null;
+    try {
+      await scenario(...entries);
+    } catch (error) {
+      outcome = error;
+    }
+    for (const [index, entry] of entries.entries()) {
+      if (
+        outcome === null ||
+        (names.length > 1 && entry.checks.complete === true)
+      ) {
+        entry.status = "passed";
+        delete entry.reason;
+      } else if (outcome instanceof Waiting) {
+        waiting ??= outcome;
+        entry.status = "pending";
+        entry.reason = outcome.message;
+      } else {
+        entry.status = "failed";
+        entry.reason =
+          outcome instanceof Error ? outcome.message : String(outcome);
+        console.error(`[${run.network}] ${names[index]}: ${entry.reason}`);
+      }
+    }
+    await persist();
+  }
+  if (waiting) throw waiting;
+  const open = Object.entries(scenariosByName).filter(
+    ([, entry]) => entry.status !== "passed",
+  );
+  if (open.length)
+    throw new Error(
+      `Scenarios not passed: ${open.map(([name, entry]) => `${name} (${entry.status}: ${entry.reason})`).join("; ")}`,
+    );
+}
+
+/**
+ * The extended scenario figures in base units, scaled like scenarioAmounts.
+ * A private bounty of 100 pays 75 and 25 (PRD section 8); ordinary awards pay
+ * floor(gross / 50) as the fee.
+ */
+export function extendedAmounts(decimals: number, divisor: bigint) {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36)
+    throw new Error("Invalid asset decimals");
+  const whole = 10n ** BigInt(decimals);
+  if (divisor < 1n || whole % divisor !== 0n)
+    throw new Error(
+      `Unit divisor ${divisor} must divide 10^${decimals} exactly`,
+    );
+  const unit = whole / divisor;
+  if ((50n * unit) % PAYOUT_FEE_DIVISOR !== 0n)
+    throw new Error("Unit is too small for exact scenario figures");
+  const award = (units: bigint) => {
+    const gross = units * unit;
+    return {
+      gross,
+      fee: gross / PAYOUT_FEE_DIVISOR,
+      net: gross - gross / PAYOUT_FEE_DIVISOR,
+    };
+  };
+  return {
+    unit,
+    fullScale: divisor === 1n,
+    award,
+    bounty: {
+      deposit: 100n * unit,
+      gross: 100n * unit,
+      researcher: 75n * unit,
+      fee: 25n * unit,
+    },
+  };
+}
+
+/** Extended-suite test actors: ids above GitHub's issued range, one set per scenario. */
+export function scenarioActor(scenario: number, n: number): TestActor {
+  if (![scenario, n].every((v) => Number.isInteger(v) && v >= 0 && v <= 9))
+    throw new Error("Invalid scenario actor");
+  return {
+    role: "walletless",
+    githubUserId: `91000000${scenario}${n}`,
+    login: `slop-acceptance-x${scenario}-${n}`,
+  };
+}
+
+/**
+ * The monthly period whose commitment window is open at `now` (UTC seconds):
+ * the window of month M runs from 72 hours after M ends to 72 hours after the
+ * next month ends (MONTHLY_CUTOFF_DELAY in both contracts).
+ */
+export function openMonthlyPeriod(now: bigint) {
+  const date = new Date(Number(now) * 1000);
+  const shift = (months: number) => {
+    const d = new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1),
+    );
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  };
+  const monthStart = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  const back = date.getTime() < monthStart + 72 * 3_600_000 ? 2 : 1;
+  return {
+    open: shift(-back),
+    next: shift(1 - back),
+    closed: shift(-back - 1),
+  };
 }

@@ -1,21 +1,35 @@
 /** Browser-to-Anvil workflow. No production RPC, credentials or funds are used. */
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { encodeFunctionData, parseAbi } from "viem";
+import { mnemonicToAccount } from "viem/accounts";
 import {
+  buildCreateVaultCalldata,
   EVM_ESCROW_EVENT_TOPICS,
   evmVaultKey,
+  readEvmMonthlyCommitment,
+  verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import {
   captureUpgrade,
   deployUpgradeableFactory,
 } from "../../contracts/evm/integration/upgrade";
-import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
+import {
+  ESCROW_NETWORKS,
+  type EscrowDeployment,
+} from "../../src/lib/escrow-policy.mjs";
 import { formatAssetAmount } from "../../src/lib/project-schema.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import {
+  applicationManifest,
+  CONTRIBUTION,
+} from "../project-application-manifest";
 
 test.skip(
   process.env.SLOP_E2E_VAULT_ACTIONS !== "1",
@@ -36,6 +50,7 @@ const rpcUrl = `http://127.0.0.1:${anvilPort}`;
 let anvil: ChildProcess;
 let deployment: EscrowDeployment;
 let project: (typeof PROJECTS)[number];
+let otherToken: string;
 async function rpc(method: string, params: unknown[]) {
   const response = await fetch(rpcUrl, {
     method: "POST",
@@ -106,6 +121,7 @@ test.beforeAll(async () => {
   const token = deploy(
     "integration/TestDollar.sol:TestDollar",
   ).deployedTo.toLowerCase() as `0x${string}`;
+  otherToken = deploy("integration/TestDollar.sol:TestDollar").deployedTo;
   const factory = deployUpgradeableFactory(
     (contract, args) => deploy(contract, args).deployedTo,
     [registrar, fee, attester, "3600"],
@@ -752,4 +768,1122 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     ).violations,
   ).toEqual([]);
   expect(errors).toEqual([]);
+});
+
+test("owner turns automatic monthly payment on by default, then opts out", async ({
+  page,
+}, info) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (event) => {
+    if (event.type() === "error") errors.push(event.text());
+  });
+  let account = donor;
+  let rejected = false;
+  let ambiguous = false;
+  const sends: string[] = [];
+  await page.exposeFunction(
+    "monthlyWalletRequest",
+    async (method: string, params: unknown[]) => {
+      if (method === "eth_accounts" || method === "eth_requestAccounts")
+        return [account];
+      if (method === "eth_sendTransaction") {
+        if (rejected) return { fixtureError: "rejected" };
+        const hash = await rpc(method, params);
+        sends.push(hash);
+        if (ambiguous) return { fixtureError: "unknown" };
+        return hash;
+      }
+      return rpc(method, params);
+    },
+  );
+  await page.addInitScript(() => {
+    Object.assign(window, {
+      ethereum: {
+        isMetaMask: true,
+        request: async ({
+          method,
+          params = [],
+        }: {
+          method: string;
+          params?: unknown[];
+        }) => {
+          const value = await (
+            window as unknown as {
+              monthlyWalletRequest: (
+                method: string,
+                params: unknown[],
+              ) => Promise<unknown>;
+            }
+          ).monthlyWalletRequest(method, params);
+          if ((value as { fixtureError?: string })?.fixtureError === "rejected")
+            throw Object.assign(new Error("User rejected"), { code: 4001 });
+          if ((value as { fixtureError?: string })?.fixtureError === "unknown")
+            throw new Error("Transport interrupted after send");
+          return value;
+        },
+      },
+    });
+  });
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+  );
+  await page.route("**/api/v1/projects/eliza", (route) =>
+    route.fulfill({ json: { project, revision: 1 } }),
+  );
+  await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
+    route.fulfill({
+      json: {
+        projectId: "eliza",
+        snapshots: [],
+        staleAfterMs: 60000,
+        servedAt: new Date().toISOString(),
+      },
+    }),
+  );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  const monthlyState = parseAbi([
+    "function monthlyCap() view returns (uint128)",
+    "function monthlyEnabled() view returns (bool)",
+  ]);
+  const read = async (functionName: "monthlyCap" | "monthlyEnabled") =>
+    BigInt(
+      await rpc("eth_call", [
+        {
+          to: deployment.vault,
+          data: encodeFunctionData({ abi: monthlyState, functionName }),
+        },
+        "latest",
+      ]),
+    );
+  const onChain = async () => ({
+    cap: await read("monthlyCap"),
+    enabled: (await read("monthlyEnabled")) === 1n,
+  });
+  // A vault starts with the monthly commitment off and a zero cap.
+  expect(await onChain()).toEqual({ cap: 0n, enabled: false });
+  const matchingProject = project;
+  if (!project.rewardAsset) throw new Error("Missing token reward fixture");
+  project = {
+    ...project,
+    rewardAsset: { ...project.rewardAsset, address: otherToken.toLowerCase() },
+  };
+  const cap = formatAssetAmount(project.reward.monthlyCapMinor, 6);
+  await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
+  const monthly = page.getByRole("region", {
+    name: "Automatic monthly payment · base-sepolia",
+  });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  const automatic = monthly.getByRole("checkbox", {
+    name: "Pay contributors automatically each month",
+  });
+  await expect(automatic).toBeChecked();
+  await monthly
+    .getByRole("button", { name: "Review monthly payment setting" })
+    .click();
+  await expect(monthly.getByRole("alert")).toContainText(
+    "vault owner's wallet",
+  );
+  account = owner;
+  await monthly.getByRole("button", { name: "Choose another wallet" }).click();
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await monthly
+    .getByRole("button", { name: "Review monthly payment setting" })
+    .click();
+  await expect(monthly.getByRole("alert")).toContainText(
+    "vault token differs from the project's reward asset",
+  );
+  expect(sends).toHaveLength(0);
+  expect(await onChain()).toEqual({ cap: 0n, enabled: false });
+  project = matchingProject;
+  await page.reload({ waitUntil: "networkidle" });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await monthly
+    .getByRole("button", { name: "Review monthly payment setting" })
+    .click();
+  const review = monthly.getByRole("region", {
+    name: "Review monthly payment setting",
+  });
+  await expect(review).toContainText("Off");
+  await expect(review).toContainText(cap);
+  await page.screenshot({
+    path: info.outputPath("monthly-payment-review.png"),
+    fullPage: true,
+  });
+  const turnOn = monthly.getByRole("button", {
+    name: "Turn on automatic monthly payment in wallet",
+  });
+  rejected = true;
+  await turnOn.click();
+  await expect(monthly.getByRole("alert")).toContainText("You declined");
+  expect(sends).toHaveLength(0);
+  rejected = false;
+  ambiguous = true;
+  await turnOn.click();
+  await expect(monthly.getByRole("alert")).toContainText(
+    "wallet result is unclear",
+  );
+  expect(sends).toHaveLength(1);
+  ambiguous = false;
+  await page.reload({ waitUntil: "networkidle" });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await expect(turnOn).toHaveCount(0);
+  await monthly.getByLabel("Transaction hash from your wallet").fill(sends[0]);
+  await monthly
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(monthly.getByRole("status")).toContainText(
+    "Waiting for finalized",
+  );
+  await rpc("anvil_mine", ["0x40"]);
+  await monthly
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(monthly.getByRole("status")).toContainText(
+    "Automatic monthly payment is on",
+  );
+  expect(await onChain()).toEqual({
+    cap: BigInt(project.reward.monthlyCapMinor),
+    enabled: true,
+  });
+  // The same setting needs no second signature.
+  await monthly
+    .getByRole("button", { name: "Review monthly payment setting" })
+    .click();
+  await expect(review).toContainText("Nothing to sign");
+  // Opting out keeps the cap and turns the commitment off.
+  await automatic.uncheck();
+  await monthly
+    .getByRole("button", { name: "Review monthly payment setting" })
+    .click();
+  await monthly
+    .getByRole("button", {
+      name: "Turn off automatic monthly payment in wallet",
+    })
+    .click();
+  await expect.poll(() => sends.length).toBe(2);
+  await rpc("anvil_mine", ["0x40"]);
+  await monthly
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(monthly.getByRole("status")).toContainText(
+    "Automatic monthly payment is off",
+  );
+  expect(await onChain()).toEqual({
+    cap: BigInt(project.reward.monthlyCapMinor),
+    enabled: false,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("owner creates, registers and funds a vault through the real API", async ({
+  page,
+}, info) => {
+  test.setTimeout(180_000);
+  const automatic = !info.project.name.includes("mobile");
+  const apiPort = anvilPort + 2;
+  const origin = `http://127.0.0.1:${apiPort}`;
+  const temporary = mkdtempSync(join(tmpdir(), "slop-vault-setup-"));
+  if (!project.escrow) throw new Error("Missing project vault policy");
+  const target = {
+    ...project,
+    skill: {
+      ...project.skill,
+      publishAtRoot: false,
+      sourcePath: "skills/project-contributor-template",
+    },
+    reviewSkill: {
+      id: `review-${project.id}-contributions`,
+      sourcePath: "skills/project-reviewer-template",
+    },
+    contribution: CONTRIBUTION,
+    escrow: { ...project.escrow, deployments: [] },
+  };
+  const other = PROJECTS.find(
+    (p) => p.id !== project.id && p.reward.kind === "monthly-pool",
+  );
+  if (!other) throw new Error("A second registry fixture is required");
+  if (!deployment.evmUpgrade) throw new Error("Missing upgrade review");
+  // The template has an upgrade history. A new vault must not inherit it.
+  const template = {
+    ...other,
+    reward: project.reward,
+    rewardAsset: project.rewardAsset,
+    escrow: {
+      ...project.escrow,
+      deployments: [
+        {
+          ...deployment,
+          evmUpgrade: {
+            ...deployment.evmUpgrade,
+            history: [{ ...deployment.evmUpgrade, supersededAtBlock: "1" }],
+          },
+        },
+      ],
+    },
+  };
+  const fixturePath = join(temporary, "projects.json");
+  writeFileSync(fixturePath, JSON.stringify({ project: target, template }));
+  let output = "";
+  const server = spawn(
+    "bun",
+    [
+      "scripts/vault-setup-browser-server.ts",
+      fixturePath,
+      String(apiPort),
+      rpcUrl,
+    ],
+    { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: process.env },
+  );
+  server.stdout?.on("data", (s) => {
+    output += String(s);
+  });
+  server.stderr?.on("data", (s) => {
+    output += String(s);
+  });
+  try {
+    await expect
+      .poll(() => output, { timeout: 30_000 })
+      .toContain("Vault setup API ready");
+    const initial = await (
+      await page.request.get(`${origin}/__fixture`)
+    ).json();
+    const headers = {
+      origin,
+      cookie: `__Host-slop_points=${initial.token}`,
+      "content-type": "application/json",
+    };
+    const api = async (path: string, data: unknown) => {
+      const response = await page.request.post(`${origin}/api/v1/${path}`, {
+        headers,
+        data,
+      });
+      const body = await response.json();
+      expect(response.ok(), JSON.stringify(body)).toBe(true);
+      return body;
+    };
+    // Confirm the owner wallet through the shipped claim and challenge routes.
+    const claim = await api("payments/wallets/register", {
+      chain: "base",
+      address: donor,
+    });
+    const challenge = await api("payments/wallets/challenge", {
+      claimId: claim.claimId,
+    });
+    const account = mnemonicToAccount(
+      "test test test test test test test test test test test junk",
+      { addressIndex: 4 },
+    );
+    await api("payments/wallets/authorize", {
+      claimId: claim.claimId,
+      challengeId: challenge.challengeId,
+      signature: await account.signMessage({ message: challenge.message }),
+    });
+    const input = {
+      step: "review",
+      expectedRevision: 1,
+      claimId: claim.claimId,
+      network: "base-sepolia",
+      automatic,
+    };
+    await page.request.post(`${origin}/__fixture`, {
+      data: { permitted: false },
+    });
+    expect(
+      (
+        await page.request.post(
+          `${origin}/api/v1/project-vaults/${project.id}`,
+          { headers, data: input },
+        )
+      ).status(),
+    ).toBe(403);
+    await page.request.post(`${origin}/__fixture`, {
+      data: { permitted: true, templatesEnabled: false },
+    });
+    expect(
+      (
+        await page.request.post(
+          `${origin}/api/v1/project-vaults/${project.id}`,
+          { headers, data: input },
+        )
+      ).status(),
+    ).toBe(503);
+    await page.request.post(`${origin}/__fixture`, {
+      data: { templatesEnabled: true },
+    });
+    expect(
+      (
+        await page.request.post(
+          `${origin}/api/v1/project-vaults/${project.id}`,
+          { headers, data: { ...input, claimId: "not-my-wallet" } },
+        )
+      ).status(),
+    ).toBe(403);
+    // A real vault for another project cannot be attached to this registry entry.
+    const unrelatedTransaction = await rpc("eth_sendTransaction", [
+      {
+        from: donor,
+        to: deployment.factory,
+        gas: "0x600000",
+        data: buildCreateVaultCalldata({
+          projectId: `0x${"f".repeat(64)}`,
+          asset: deployment.asset,
+          monthlyCap: project.reward.monthlyCapMinor,
+          automaticMonthly: automatic,
+        }),
+      },
+    ]);
+    await rpc("anvil_mine", ["0x40"]);
+    const unrelated = await page.request.post(
+      `${origin}/api/v1/project-vaults/${project.id}`,
+      {
+        headers,
+        data: {
+          ...input,
+          step: "register",
+          transactionId: unrelatedTransaction,
+        },
+      },
+    );
+    expect(unrelated.status()).toBe(422);
+    expect((await unrelated.json()).message).toContain("does not match");
+    expect(
+      (await (await page.request.get(`${origin}/__fixture`)).json()).revisions
+        .n,
+    ).toBe(1);
+    const sends: string[] = [];
+    let unknownSend = true;
+    await page.exposeFunction(
+      "setupWalletRequest",
+      async (method: string, params: unknown[]) => {
+        if (method === "eth_accounts" || method === "eth_requestAccounts")
+          return [donor];
+        if (method === "eth_sendTransaction") {
+          const hash = await rpc(method, params);
+          sends.push(hash);
+          if (unknownSend) return { unknown: true };
+          return hash;
+        }
+        return rpc(method, params);
+      },
+    );
+    await page.addInitScript((token) => {
+      // biome-ignore lint/suspicious/noDocumentCookie: Set the same site-session cookie used by the local registry harness.
+      document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+      Object.assign(window, {
+        ethereum: {
+          isMetaMask: true,
+          request: async ({
+            method,
+            params = [],
+          }: {
+            method: string;
+            params?: unknown[];
+          }) => {
+            const result = await (
+              window as unknown as {
+                setupWalletRequest(m: string, p: unknown[]): Promise<unknown>;
+              }
+            ).setupWalletRequest(method, params);
+            if ((result as { unknown?: boolean })?.unknown)
+              throw new Error("Transport interrupted after send");
+            return result;
+          },
+        },
+      });
+    }, initial.token);
+    const errors: string[] = [];
+    const failedRequests: string[] = [];
+    let expectedRecoveryRejection = false;
+    page.on("pageerror", (e) => errors.push(e.message));
+    page.on("console", (e) => {
+      if (
+        e.type() === "error" &&
+        !(expectedRecoveryRejection && e.text().includes("status of 422"))
+      )
+        errors.push(e.text());
+    });
+    page.on("response", (r) => {
+      if (
+        r.url().startsWith(origin) &&
+        r.status() >= 400 &&
+        !(
+          expectedRecoveryRejection &&
+          r.status() === 422 &&
+          r.url().endsWith(`/project-vaults/${project.id}`)
+        )
+      )
+        failedRequests.push(`${r.status()} ${r.url()}`);
+    });
+    await page.goto(`${origin}/projects/${project.slug}/funding`, {
+      waitUntil: "networkidle",
+    });
+    const setup = page.getByRole("region", { name: "Set up project vault" });
+    await setup.getByRole("button", { name: "Connect MetaMask" }).click();
+    const monthlyDefault = setup.getByRole("checkbox", {
+      name: "Automatically pay the monthly allocation",
+    });
+    await expect(monthlyDefault).toBeChecked();
+    if (!automatic) await monthlyDefault.uncheck();
+    const reviewButton = setup.getByRole("button", {
+      name: "Review vault creation",
+      exact: true,
+    });
+    // The wallet connection keeps the button disabled until it finishes.
+    await expect(reviewButton).toBeEnabled();
+    await reviewButton.focus();
+    await expect(reviewButton).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(
+      setup.getByRole("button", { name: "Create vault in wallet" }),
+    ).toBeEnabled();
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await page.screenshot({
+      path: info.outputPath("owner-vault-create-review.png"),
+      fullPage: true,
+    });
+    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await expect(setup.getByRole("alert")).toContainText(
+      "Transport interrupted",
+    );
+    expect(sends).toHaveLength(1);
+    await page.reload({ waitUntil: "networkidle" });
+    // Another tab may change the cap while this tab still shows the original project.
+    const beforeEdit = await (
+      await page.request.get(`${origin}/__fixture`)
+    ).json();
+    const edited = structuredClone(beforeEdit.project.manifest);
+    edited.reward.monthlyCapMinor = "2000000000";
+    edited.reward.monthlyCapDisplay = "2,000 TEST";
+    const changed = await page.request.put(
+      `${origin}/api/v1/projects/${project.id}`,
+      {
+        headers,
+        data: { manifest: edited, expectedRevision: 1 },
+      },
+    );
+    expect(changed.ok(), JSON.stringify(await changed.json())).toBe(true);
+    const afterEdit = await (
+      await page.request.get(`${origin}/__fixture`)
+    ).json();
+    expect(afterEdit.project.revision).toBe(2);
+    await expect(setup.getByText("1,000 TEST", { exact: true })).toBeVisible();
+    expectedRecoveryRejection = true;
+    await setup
+      .getByLabel("Creation transaction hash")
+      .fill(unrelatedTransaction);
+    await setup
+      .getByRole("button", { name: "Check vault registration" })
+      .click();
+    await expect(setup.getByRole("alert")).toContainText("does not match");
+    expect(sends).toHaveLength(1);
+    await expect(
+      setup.getByRole("button", { name: "Create vault in wallet" }),
+    ).toHaveCount(0);
+    expectedRecoveryRejection = false;
+    await setup.getByLabel("Creation transaction hash").fill(sends[0]);
+    await setup
+      .getByRole("button", { name: "Check vault registration" })
+      .click();
+    await expect(setup.getByRole("status")).toContainText("not finalized");
+    await rpc("anvil_mine", ["0x40"]);
+    await setup
+      .getByRole("button", { name: "Check vault registration" })
+      .click();
+    await expect(setup).toHaveCount(0);
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "Creation used a monthly cap" }),
+    ).toHaveText(
+      "Creation used a monthly cap of 1,000 TEST. The project now uses 2,000 TEST. Use the automatic payment controls below to apply the new cap.",
+    );
+    await expect(
+      page
+        .locator(".funding-status-grid")
+        .getByText("2,000 TEST", { exact: true }),
+    ).toBeVisible();
+    const state = await (await page.request.get(`${origin}/__fixture`)).json();
+    expect(state.project.revision).toBe(3);
+    expect(state.scanReads).toBe(afterEdit.scanReads);
+    expect(state.revisions.n).toBe(3);
+    expect(state.project.manifest.reward.monthlyCapMinor).toBe("2000000000");
+    const created = state.project.manifest.escrow.deployments[0];
+    expect(created.owner).toBe(donor);
+    expect(created.deploymentTransaction).toBe(sends[0]);
+    expect(created.evmUpgrade).toEqual(deployment.evmUpgrade);
+    const monthly = await readEvmMonthlyCommitment({
+      ...created,
+      rpcUrl,
+      chainId: 84532n,
+    });
+    expect(monthly.enabled).toBe(automatic);
+    expect(monthly.cap).toBe("1000000000");
+    await expect(
+      verifyEvmDeployment(
+        { ...created, rpcUrl, chainId: 84532n },
+        "finalized",
+        undefined,
+        `0x${"f".repeat(64)}`,
+      ),
+    ).rejects.toThrow("different registry project");
+    await api(`project-vaults/${project.id}`, {
+      ...input,
+      step: "register",
+      transactionId: sends[0],
+    });
+    expect(
+      (await (await page.request.get(`${origin}/__fixture`)).json()).revisions
+        .n,
+    ).toBe(3);
+    unknownSend = false;
+    const monthlyControls = page.getByRole("region", {
+      name: "Automatic monthly payment · base-sepolia",
+      exact: true,
+    });
+    await monthlyControls
+      .getByRole("button", { name: "Connect MetaMask" })
+      .click();
+    await monthlyControls
+      .getByRole("button", {
+        name: "Review monthly payment setting",
+        exact: true,
+      })
+      .click();
+    await expect(monthlyControls.getByText(/^On, up to 2,000 /)).toBeVisible();
+    expect(sends).toHaveLength(1);
+    const funding = page.getByRole("region", { name: /Fund or withdraw/ });
+    await funding.getByRole("button", { name: "Connect MetaMask" }).click();
+    await funding.getByLabel("Token amount").fill("10");
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    await funding.getByRole("button", { name: /Approve/ }).click();
+    await expect.poll(() => sends.length).toBe(2);
+    await rpc("anvil_mine", ["0x40"]);
+    await funding.getByRole("button", { name: /Check/ }).click();
+    await expect(funding.getByRole("status")).toContainText(
+      "no funds have been deposited yet",
+    );
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    await funding
+      .getByRole("button", { name: "Confirm deposit in wallet" })
+      .click();
+    await expect.poll(() => sends.length).toBe(3);
+    await rpc("anvil_mine", ["0x40"]);
+    await funding.getByRole("button", { name: /Check/ }).click();
+    await expect(funding).toContainText("finalized");
+    expect(
+      BigInt(
+        await rpc("eth_call", [
+          {
+            to: deployment.asset,
+            data: encodeFunctionData({
+              abi,
+              functionName: "balanceOf",
+              args: [created.vault],
+            }),
+          },
+          "latest",
+        ]),
+      ),
+    ).toBe(10_000_000n);
+    expect(errors).toEqual([]);
+    expect(failedRequests).toEqual([]);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    expect(
+      (
+        await new AxeBuilder({ page })
+          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+          .analyze()
+      ).violations,
+    ).toEqual([]);
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await page.screenshot({
+      path: info.outputPath("owner-vault-funded.png"),
+      fullPage: true,
+    });
+    await page.goto(`${origin}/projects/${project.slug}/manage`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByRole("region", { name: "Setup status: Ready" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", {
+        name: "View vault funds and automatic payment",
+      }),
+    ).toHaveCount(2);
+    // Funding and payment states stay distinct from vault registration (PRD section 7).
+    for (const state of ["Deposit needed", "Payments off"])
+      await expect(page.getByText(state, { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        "Payouts are disabled. Funding alone does not enable them.",
+      ),
+    ).toBeVisible();
+    expect(errors).toEqual([]);
+    expect(failedRequests).toEqual([]);
+    expect(
+      (
+        await new AxeBuilder({ page })
+          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+          .analyze()
+      ).violations,
+    ).toEqual([]);
+    await page.screenshot({
+      path: info.outputPath("owner-project-payment-links.png"),
+      fullPage: true,
+    });
+  } finally {
+    server.kill("SIGTERM");
+    rmSync(temporary, { recursive: true, force: true });
+    await info.attach("vault-setup-api.log", {
+      body: output,
+      contentType: "text/plain",
+    });
+  }
+});
+
+test("owner funds a separate bounty vault with private balances and no monthly reward", async ({
+  page,
+}, info) => {
+  test.setTimeout(180_000);
+  const apiPort = anvilPort + 2;
+  const origin = `http://127.0.0.1:${apiPort}`;
+  const temporary = mkdtempSync(join(tmpdir(), "slop-bounty-vault-"));
+  const id = "bounty-vault-owner";
+  const repository = `example/${id}`;
+  const usdc = ESCROW_NETWORKS["base-sepolia"].asset;
+  if (!usdc) throw new Error("Missing reviewed test-network asset");
+  // A local six-decimal token at the reviewed address exercises the production
+  // asset rule. No production RPC or stablecoin balance is used.
+  await rpc("anvil_setCode", [
+    usdc,
+    await rpc("eth_getCode", [deployment.asset, "latest"]),
+  ]);
+  await rpc("eth_sendTransaction", [
+    {
+      from: owner,
+      to: usdc,
+      gas: "0x100000",
+      data: encodeFunctionData({
+        abi,
+        functionName: "mint",
+        args: [donor as `0x${string}`, 20_000_000n],
+      }),
+    },
+  ]);
+  const zeroReward = {
+    ...project.reward,
+    monthlyCapMinor: "0",
+    monthlyCapDisplay: "0 TEST",
+    committedMinor: "0",
+    paymentMode: "disabled",
+  };
+  delete zeroReward.reviewBudget;
+  delete zeroReward.cycleCaps;
+  const contact = { githubId: "900000071", githubLogin: "vault-owner" };
+  const target = applicationManifest(id, repository, {
+    status: "active",
+    reward: zeroReward,
+    rewardAsset: project.rewardAsset,
+    escrow: { ...project.escrow, deployments: [] },
+    securityBounty: {
+      version: "1",
+      status: "paused",
+      rewardMode: "bounty-only",
+      eligibility: "critical-loss-of-funds",
+      amount: {
+        currency: "USDC",
+        decimals: 6,
+        network: "base",
+        grossMinor: "10000000",
+      },
+      split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+      sponsor: { name: "Local project", githubId: contact.githubId },
+      funding: { state: "pledged" },
+      capacity: {
+        awards: 1,
+        closesAt: null,
+        exhaustionRule: "New awards wait for available funds.",
+      },
+      scope: {
+        sourceRevisions: [{ repository, commit: "a".repeat(40) }],
+        deployments: [],
+        includedAssets: ["Vault deposits"],
+        excludedDependencies: [],
+        testingPermission: "Test on local forks only.",
+        severityRubric: "Assess impact on covered funds.",
+        lossDefinition: "Unauthorized loss of covered funds.",
+      },
+      intake: { kind: "github-private-vulnerability-reporting", repository },
+      responseTargets: {
+        acknowledgeHours: 24,
+        triageBusinessDays: 3,
+        updateIntervalDays: 7,
+      },
+      approvers: {
+        technical: [contact],
+        financial: [contact],
+        dispute: [contact],
+      },
+      dispute: {
+        authority: "advisory",
+        process: "Ask Slop for a private review.",
+      },
+      disclosure: "Contact the maintainer before disclosure.",
+      safeHarbor: "Good-faith testing within these rules is authorized.",
+    },
+  });
+  const fixturePath = join(temporary, "projects.json");
+  writeFileSync(
+    fixturePath,
+    JSON.stringify({
+      project: target,
+      template: { ...project, securityBounty: undefined },
+    }),
+  );
+  let output = "";
+  const server = spawn(
+    "bun",
+    [
+      "scripts/vault-setup-browser-server.ts",
+      fixturePath,
+      String(apiPort),
+      rpcUrl,
+    ],
+    { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: process.env },
+  );
+  server.stdout?.on("data", (s) => {
+    output += String(s);
+  });
+  server.stderr?.on("data", (s) => {
+    output += String(s);
+  });
+  try {
+    await expect
+      .poll(() => output, { timeout: 30_000 })
+      .toContain("Vault setup API ready");
+    const initial = await (
+      await page.request.get(`${origin}/__fixture`)
+    ).json();
+    const headers = {
+      origin,
+      cookie: `__Host-slop_points=${initial.token}`,
+      "content-type": "application/json",
+    };
+    const api = async (path: string, data: unknown) => {
+      const response = await page.request.post(`${origin}/api/v1/${path}`, {
+        headers,
+        data,
+      });
+      const body = await response.json();
+      expect(response.ok(), JSON.stringify(body)).toBe(true);
+      return body;
+    };
+    const privatePath = `${origin}/api/v1/project-vaults/${id}?purpose=security-bounty`;
+    expect((await page.request.get(privatePath)).status()).toBe(401);
+    await page.request.post(`${origin}/__fixture`, {
+      data: { permitted: false },
+    });
+    expect((await page.request.get(privatePath, { headers })).status()).toBe(
+      403,
+    );
+    await page.request.post(`${origin}/__fixture`, {
+      data: { permitted: true },
+    });
+    const claim = await api("payments/wallets/register", {
+      chain: "base",
+      address: donor,
+    });
+    const challenge = await api("payments/wallets/challenge", {
+      claimId: claim.claimId,
+    });
+    const account = mnemonicToAccount(
+      "test test test test test test test test test test test junk",
+      { addressIndex: 4 },
+    );
+    await api("payments/wallets/authorize", {
+      claimId: claim.claimId,
+      challengeId: challenge.challengeId,
+      signature: await account.signMessage({ message: challenge.message }),
+    });
+    const sends: string[] = [];
+    await page.exposeFunction(
+      "bountyWalletRequest",
+      async (method: string, params: unknown[]) => {
+        if (method === "eth_accounts" || method === "eth_requestAccounts")
+          return [donor];
+        const value = await rpc(method, params);
+        if (method === "eth_sendTransaction") sends.push(value);
+        return value;
+      },
+    );
+    await page.addInitScript((token) => {
+      // biome-ignore lint/suspicious/noDocumentCookie: Synthetic local session only.
+      document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+      Object.assign(window, {
+        ethereum: {
+          isMetaMask: true,
+          request: ({
+            method,
+            params = [],
+          }: {
+            method: string;
+            params?: unknown[];
+          }) =>
+            (
+              window as unknown as {
+                bountyWalletRequest(m: string, p: unknown[]): Promise<unknown>;
+              }
+            ).bountyWalletRequest(method, params),
+        },
+      });
+    }, initial.token);
+    const errors: string[] = [];
+    const failed: string[] = [];
+    const privateUrl = `${origin}/api/v1/project-vaults/${id}?purpose=security-bounty`;
+    let expectedPrivateErrors = 0;
+    page.on("pageerror", (error) => errors.push(error.message));
+    page.on("console", (event) => {
+      if (event.type() !== "error") return;
+      if (event.location().url === privateUrl && /403|503/.test(event.text()))
+        expectedPrivateErrors++;
+      else errors.push(event.text());
+    });
+    page.on("response", (response) => {
+      if (response.url().startsWith(origin) && response.status() >= 400)
+        failed.push(`${response.status()} ${response.url()}`);
+    });
+    await page.goto(`${origin}/projects/${id}/manage`, {
+      waitUntil: "networkidle",
+    });
+    const setup = page.getByRole("region", {
+      name: "Set up bounty vault",
+      exact: true,
+    });
+    await setup.getByRole("button", { name: "Connect MetaMask" }).click();
+    await expect(
+      setup.getByLabel("Automatically pay the monthly allocation"),
+    ).toHaveCount(0);
+    const reviewButton = setup.getByRole("button", {
+      name: "Review vault creation",
+    });
+    await expect(reviewButton).toBeEnabled();
+    await reviewButton.focus();
+    await expect(reviewButton).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(setup).toContainText(
+      "Security bounty: 75% researcher, 25% Slop",
+    );
+    await page.screenshot({
+      path: info.outputPath("bounty-vault-review.png"),
+      fullPage: true,
+    });
+    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await expect.poll(() => sends.length).toBe(1);
+    await page.reload({ waitUntil: "networkidle" });
+    await rpc("anvil_mine", ["0x40"]);
+    await setup
+      .getByRole("button", { name: "Check vault registration" })
+      .click();
+    await expect(setup).toHaveCount(0);
+    const state = await (await page.request.get(`${origin}/__fixture`)).json();
+    const created =
+      state.project.manifest.securityBounty.settlement.deployments[0];
+    expect(state.project.manifest.escrow.deployments).toEqual([]);
+    expect(
+      state.project.manifest.securityBounty.settlement.feeBasisPoints,
+    ).toBe(2500);
+    expect(created.asset).toBe(usdc);
+    expect(created.owner).toBe(donor);
+    expect(created.vault).not.toBe(deployment.vault);
+    await verifyEvmDeployment(
+      { ...created, rpcUrl, chainId: 84532n, payoutPolicy: "security-bounty" },
+      "finalized",
+    );
+    await expect(
+      verifyEvmDeployment({ ...created, rpcUrl, chainId: 84532n }, "finalized"),
+    ).rejects.toThrow();
+    const funding = page.getByRole("region", { name: /Fund or withdraw/ });
+    await funding.getByRole("button", { name: "Connect MetaMask" }).click();
+    await funding.getByLabel("Token amount").fill("10");
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    await funding.getByRole("button", { name: /Approve/ }).click();
+    await expect.poll(() => sends.length).toBe(2);
+    await rpc("anvil_mine", ["0x40"]);
+    await funding.getByRole("button", { name: /Check/ }).click();
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    await funding
+      .getByRole("button", { name: "Confirm deposit in wallet" })
+      .click();
+    await expect.poll(() => sends.length).toBe(3);
+    await rpc("anvil_mine", ["0x40"]);
+    await funding.getByRole("button", { name: /Check/ }).click();
+    await expect(funding).toContainText("finalized");
+    const scan = await page.request.post(`${origin}/__fixture`, {
+      data: { scanSecurity: true },
+    });
+    expect(scan.ok(), await scan.text()).toBe(true);
+    await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+    await expect(
+      page.getByRole("region", { name: "Bounty funds", exact: true }),
+    ).toContainText("Available for new awards: 10 USDC");
+    await expect(funding.getByRole("status")).toContainText("finalized");
+    await page.request.post(`${origin}/__fixture`, {
+      data: { privateReadUnavailable: true },
+    });
+    const unavailable = page.waitForResponse(
+      (response) => response.url() === privateUrl && response.status() === 503,
+    );
+    await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+    await unavailable;
+    const bountyFunds = page.getByRole("region", {
+      name: "Bounty funds",
+      exact: true,
+    });
+    await expect(bountyFunds.getByRole("alert")).toContainText(
+      "Private balance read is unavailable.",
+    );
+    // A failed refresh must retain funded withdrawal and transaction recovery.
+    await expect(funding).toBeVisible();
+    await expect(funding.getByRole("status")).toContainText("finalized");
+    await expect(bountyFunds).toContainText("Last verified balance");
+    await expect(bountyFunds).toContainText(
+      "Available for new awards: 10 USDC",
+    );
+    await expect(funding.getByLabel("Deposit tokens")).toHaveCount(0);
+    await funding.getByLabel("Withdraw free funds").check();
+    await expect(
+      funding.getByRole("button", { name: "Review withdrawal", exact: true }),
+    ).toBeEnabled();
+    await page.screenshot({
+      path: info.outputPath("bounty-vault-stale-funds.png"),
+      fullPage: true,
+    });
+    await page.request.post(`${origin}/__fixture`, {
+      data: { privateReadUnavailable: false },
+    });
+    await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+    await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
+    await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
+    await expect(funding.getByRole("status")).toContainText("finalized");
+    await page.getByRole("button", { name: "Edit bounty settings" }).click();
+    await page.getByLabel("Status", { exact: true }).selectOption("open");
+    await page.getByRole("button", { name: "Publish bounty terms" }).click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Published revision" }),
+    ).toBeVisible();
+    const final = await (await page.request.get(`${origin}/__fixture`)).json();
+    expect(final.project.manifest.securityBounty.status).toBe("open");
+    expect(final.privateSnapshots.n).toBe(1);
+    expect(final.publicSnapshots.n).toBe(0);
+    const publicProject = await (
+      await page.request.get(`${origin}/api/v1/projects/${id}`)
+    ).text();
+    expect(publicProject).not.toMatch(/availableMinor|freeMinor|snapshotAt/);
+    expect(errors).toEqual([]);
+    expect(failed).toEqual([`503 ${privateUrl}`]);
+    expect(expectedPrivateErrors).toBe(1);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    expect(
+      (
+        await new AxeBuilder({ page })
+          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+          .analyze()
+      ).violations,
+    ).toEqual([]);
+    await page.screenshot({
+      path: info.outputPath("bounty-vault-funded-open.png"),
+      fullPage: true,
+    });
+    await page.goto(`${origin}/projects/${project.slug}/manage`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByRole("heading", { name: "Manage project", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Bounty funds", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Available for new awards:", { exact: false }),
+    ).toHaveCount(0);
+    await page.goto(`${origin}/projects/${id}/manage`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByRole("region", { name: "Bounty funds", exact: true }),
+    ).toContainText("Available for new awards: 10 USDC");
+    await expect(funding.getByRole("status")).toHaveCount(0);
+    // Unlike a transient read failure, lost authority must clear private data.
+    await page.request.post(`${origin}/__fixture`, {
+      data: { permitted: false },
+    });
+    const denied = page.waitForResponse(
+      (response) => response.url() === privateUrl && response.status() === 403,
+    );
+    await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+    await denied;
+    await expect(bountyFunds.getByRole("alert")).toBeVisible();
+    await expect(funding).toHaveCount(0);
+    await expect(bountyFunds).not.toContainText("10 USDC");
+    await page.request.post(`${origin}/__fixture`, {
+      data: { permitted: true },
+    });
+    await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+    await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
+    await expect(bountyFunds).toContainText(
+      "Available for new awards: 10 USDC",
+    );
+    expect(errors).toEqual([]);
+    expect(failed).toEqual([`503 ${privateUrl}`, `403 ${privateUrl}`]);
+    expect(expectedPrivateErrors).toBe(2);
+  } finally {
+    server.kill("SIGTERM");
+    rmSync(temporary, { recursive: true, force: true });
+    await info.attach("bounty-vault-api.log", {
+      body: output,
+      contentType: "text/plain",
+    });
+  }
 });

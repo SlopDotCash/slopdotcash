@@ -6,7 +6,10 @@ import type {
   PublicProjectApplication,
   SetupAuthority,
 } from "../../src/lib/project-contracts";
-import { validRepositoryPath } from "../../src/lib/project-contracts";
+import {
+  type RepositoryIdentity,
+  validRepositoryPath,
+} from "../../src/lib/project-contracts";
 import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
 import { classifyRevisionChanges } from "../../src/lib/project-revision-changes";
 import {
@@ -24,8 +27,14 @@ import {
   rewardAssetChoice,
   sameRewardAsset,
 } from "../../src/lib/reward-asset.mjs";
+import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
+import {
+  isVaultCreationId,
+  type VaultSetupInput,
+} from "../../src/lib/vault-setup";
 import { type ApiError, fail } from "../api-error";
 import { pathParts } from "../api-path";
+import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readJsonObject, sha256Hex } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
 import {
@@ -81,9 +90,15 @@ import {
   setupAuthority,
 } from "./setup";
 import { TokenMetadataError, type TokenMetadataReader } from "./token-metadata";
+import {
+  attachBountyVault,
+  attachOrdinaryVault,
+  type OwnerVaultSetup,
+} from "./vault-setup";
 
 export type ProjectApiDependencies = {
   persistence: ProjectPersistence;
+  vaultSetup?: OwnerVaultSetup;
   adminGithubIds: ReadonlySet<string>;
   /** GitHub actor IDs with the project moderation role (PRD ADM-05, ADM-06). */
   moderatorGithubIds: ReadonlySet<string>;
@@ -111,6 +126,7 @@ export type ProjectApiDependencies = {
   /** Public GitHub facts: the manifest matches its repositories and steward. */
   repositoryControl: (
     manifest: ProjectDefinition,
+    repository?: RepositoryIdentity,
   ) => Promise<RepositoryControl>;
   /**
    * The Slopbot installation and the account's exact repository permission.
@@ -119,6 +135,11 @@ export type ProjectApiDependencies = {
   repositoryAccess?: RepositoryAccessReader;
   /** Queues a malicious-code scan of a project's current revision. */
   requestScan?: ScanRequester;
+  /** Finalized funds in a reviewed, separate bounty vault. Never client evidence. */
+  securityProgramFunds?: (
+    projectId: string,
+    program: SecurityBountyTerms,
+  ) => ReturnType<typeof readSecurityProgramFunds>;
 };
 
 const APPLICATION_ID = /^app_[A-Za-z0-9_-]{8,72}$/u;
@@ -263,9 +284,12 @@ function assertNewProjectManifest(
     ],
     [
       manifest.securityBounty === undefined ||
-        (manifest.securityBounty.status === "pending-approval" &&
-          manifest.securityBounty.funding.state === "pledged"),
-      "A security bounty program starts pending approval with pledged funding",
+        (["paused", "pending-approval"].includes(
+          manifest.securityBounty.status,
+        ) &&
+          manifest.securityBounty.funding.state === "pledged" &&
+          (manifest.securityBounty.settlement?.deployments.length ?? 0) === 0),
+      "A security bounty program starts paused with pledged funding and no unverified vault",
     ],
   ];
   for (const [valid, message] of rules) {
@@ -280,6 +304,107 @@ function fundingCommitments(manifest: ProjectDefinition): unknown[] {
 
 function sameValue(left: unknown, right: unknown): boolean {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+/** Owner terms affect later receipts. Existing cases retain their receipt terms. */
+async function ownerSecurityProgram(
+  previous: ProjectDefinition,
+  next: ProjectDefinition,
+  status: SecurityBountyTerms["status"] | undefined,
+  actor: GithubActor,
+  deps: ProjectApiDependencies,
+): Promise<ProjectDefinition> {
+  const before = previous.securityBounty;
+  const after = next.securityBounty;
+  if (after === undefined) {
+    if (before !== undefined)
+      fail(
+        422,
+        "security_program_required",
+        "Close the bounty program instead of deleting it; existing reports and awards remain available",
+      );
+    return next;
+  }
+  // Approvers receive private-case roles from the manifest alone. Write
+  // access must not let an owner name other accounts or remove the recorded
+  // contacts; admins change them through the reviewed manifest path.
+  if (before !== undefined) {
+    if (
+      !sameValue(before.approvers, after.approvers) ||
+      !sameValue(before.sponsor, after.sponsor)
+    )
+      fail(
+        422,
+        "security_contacts_restricted",
+        "Bounty contacts and the sponsor change only through a Slop admin review",
+      );
+  } else if (
+    [
+      ...after.approvers.technical,
+      ...after.approvers.financial,
+      ...after.approvers.dispute,
+    ].some((person) => person.githubId !== actor.githubId) ||
+    (after.sponsor.githubId !== null &&
+      after.sponsor.githubId !== actor.githubId)
+  )
+    fail(
+      422,
+      "security_contacts_restricted",
+      "A new bounty program names only you as its contact; a Slop admin adds other contacts after review",
+    );
+  if (!sameValue(before?.settlement, after.settlement))
+    fail(
+      422,
+      "security_vault_restricted",
+      "Keep the verified bounty vault; a new vault needs verified registration",
+    );
+  if (
+    before?.settlement &&
+    !sameValue(
+      {
+        currency: before.amount.currency,
+        decimals: before.amount.decimals,
+        network: before.amount.network,
+      },
+      {
+        currency: after.amount.currency,
+        decimals: after.amount.decimals,
+        network: after.amount.network,
+      },
+    )
+  )
+    fail(
+      422,
+      "security_asset_restricted",
+      "A funded bounty program keeps its network and asset",
+    );
+  const funds = await deps.securityProgramFunds?.(next.id, after);
+  if (status === "open" && (!funds || BigInt(funds.availableMinor) <= 0n))
+    fail(
+      422,
+      "security_funding_unavailable",
+      "Opening requires available funds in a verified bounty vault with a current finalized balance",
+    );
+  return {
+    ...next,
+    securityBounty: {
+      ...after,
+      status: status ?? after.status,
+      funding:
+        funds && BigInt(funds.availableMinor) > 0n
+          ? {
+              state: "verified-available",
+              evidence: `Finalized bounty vault balance for ${next.id} at ${funds.snapshotAt}`,
+              verifiedAt: funds.snapshotAt,
+            }
+          : // Pausing does not revoke the recorded funding proof. Award reads
+            // still require a fresh snapshot, even after a closed program's
+            // balances recover. Existing reports can then receive an award.
+            before?.settlement
+            ? before.funding
+            : { state: "pledged" },
+    },
+  };
 }
 
 /** Every UTC month from the reward start through `last`, in order. */
@@ -326,20 +451,17 @@ function prospectiveFinancialChange(
       "financial_change_restricted",
       "A separate review budget is not offered; review credit comes from the shared scoring policy",
     );
-  if (
-    !sameValue(previous.funding, next.funding) ||
-    !sameValue(previous.securityBounty, next.securityBounty)
-  )
+  if (!sameValue(previous.funding, next.funding))
     fail(
       422,
       "financial_change_restricted",
-      "Funding routes and security bounty programs do not change through owner self-service",
+      "Funding routes do not change through owner self-service",
     );
   // This API does not read chain state, so it cannot verify that a vault
   // record names a vault from the reviewed factory or program with the
   // project's owner, asset and purpose. A sponsor deposits to every recorded
-  // vault, so an owner revision never adds or changes one; a reviewed admin
-  // revision records a verified vault.
+  // vault, so an ordinary manifest edit never adds or changes one. The
+  // separate owner vault-setup route verifies chain state before appending it.
   if (
     !sameValue(
       previous.escrow?.deployments ?? [],
@@ -349,7 +471,7 @@ function prospectiveFinancialChange(
     fail(
       422,
       "financial_change_restricted",
-      "Vault records do not change through owner self-service; a reviewed admin revision records a verified vault",
+      "Use vault setup to register a verified owner vault; a manifest edit cannot change vault records",
     );
   const funded =
     before.fundingState === "committed" ||
@@ -739,9 +861,21 @@ async function currentAuthority(
   manifest: ProjectDefinition,
   actor: GithubActor,
 ): Promise<{ authority: SetupAuthority; access: AccessCheck }> {
+  const access = await readRepositoryAccess(
+    deps.repositoryAccess,
+    manifest,
+    actor,
+  );
+  const authority = setupAuthority(access, actor, manifest.repositories[0].id);
+  if (authority.state !== "verified") return { authority, access };
   let control: RepositoryControl;
   try {
-    control = await deps.repositoryControl(manifest);
+    control = await deps.repositoryControl(
+      manifest,
+      access.state === "read" && access.access.installation === "installed"
+        ? access.access.repository
+        : undefined,
+    );
   } catch {
     const message = "GitHub could not be checked. Try again.";
     return {
@@ -751,15 +885,7 @@ async function currentAuthority(
   }
   if (control.state === "mismatch")
     fail(422, "invalid_manifest", control.reason);
-  const access = await readRepositoryAccess(
-    deps.repositoryAccess,
-    manifest,
-    actor,
-  );
-  return {
-    authority: setupAuthority(access, actor, manifest.repositories[0].id),
-    access,
-  };
+  return { authority, access };
 }
 
 /**
@@ -884,6 +1010,7 @@ async function runSetupCheck(
     project = await appendRevision(request, deps, {
       current: project,
       manifest: { ...project.manifest, status: "active" },
+      ownerParticipation: true,
       reason: `Activated automatically after setup checks for @${actor.githubLogin}: ${authority.message} Slopbot installation ${access.access.installationId}. ${clearance.assessment === null ? "Grandfathered before security scans" : `Clean scan ${clearance.assessment.id}`}.`,
       actor,
     });
@@ -985,6 +1112,230 @@ async function createProject(
   });
 }
 
+/** Only verified server-derived deployments can bypass the ordinary manifest editor. */
+async function ownerVault(
+  request: Request,
+  deps: ProjectApiDependencies,
+  projectId: string,
+): Promise<Response> {
+  const actor = actorOf(await requireSession(request, deps));
+  const current = await deps.persistence.getProject(projectId);
+  if (!current) fail(404, "not_found", "Project not found");
+  const enforcements = await deps.persistence.listEnforcements();
+  const purpose =
+    new URL(request.url).searchParams.get("purpose") ?? "ordinary";
+  if (
+    request.method === "GET" &&
+    !["ordinary", "security-bounty"].includes(purpose)
+  )
+    fail(400, "invalid_request", "Invalid vault purpose");
+  if (request.method === "GET" && purpose === "security-bounty") {
+    // A banned account cannot read restricted bounty totals. During a project
+    // restriction, current owners can still read funded obligations and check
+    // existing transactions; new creation and deposits stay disabled.
+    assertMaintainerNotBanned(current.manifest, actor, enforcements);
+    requireAuthority(await currentAuthority(deps, current.manifest, actor));
+    const canSetup =
+      publicRestrictionOf(current, enforcements).state === "clear";
+    const program = current.manifest.securityBounty;
+    return json(200, {
+      revision: current.revision,
+      canSetup,
+      networks:
+        canSetup && !program?.settlement?.deployments.length && deps.vaultSetup
+          ? await deps.vaultSetup.networks(current, "security-bounty")
+          : [],
+      funds:
+        program && deps.securityProgramFunds
+          ? await deps.securityProgramFunds(current.id, program)
+          : null,
+    });
+  }
+  assertMaintainerNotBanned(current.manifest, actor, enforcements);
+  if (publicRestrictionOf(current, enforcements).state !== "clear")
+    fail(
+      409,
+      "project_restricted",
+      "Request reinstatement before setting up a vault.",
+    );
+  const checked = await currentAuthority(deps, current.manifest, actor);
+  requireAuthority(checked);
+  // A project has one ordinary vault and no replacement, and its owner
+  // controls refunds and the monthly switch. Write access is not enough:
+  // only the steward or a repository admin may create or register it.
+  if (
+    actor.githubId !== String(current.manifest.steward.github.actorId) &&
+    !(
+      checked.access.state === "read" &&
+      checked.access.access.installation === "installed" &&
+      checked.access.access.permission === "admin"
+    )
+  )
+    fail(
+      403,
+      "vault_authority_required",
+      `Only the project steward or an admin of ${current.manifest.repositories[0].id} can set up the project vault.`,
+    );
+  if (!deps.vaultSetup)
+    fail(
+      503,
+      "vault_setup_unavailable",
+      "Vault setup is unavailable on this deployment.",
+    );
+  if (request.method === "GET")
+    return json(200, {
+      revision: current.revision,
+      networks: await deps.vaultSetup.networks(current),
+    });
+  const body = await readJsonObject(request);
+  exactKeys(
+    body,
+    ["step", "expectedRevision", "network", "claimId", "automatic"],
+    ["transactionId", "payoutPolicy"],
+  );
+  if (
+    !["review", "register"].includes(String(body.step)) ||
+    typeof body.network !== "string" ||
+    typeof body.claimId !== "string" ||
+    body.claimId.length > 150 ||
+    typeof body.automatic !== "boolean" ||
+    (body.payoutPolicy !== undefined &&
+      body.payoutPolicy !== "ordinary" &&
+      body.payoutPolicy !== "security-bounty") ||
+    (body.payoutPolicy === "security-bounty" && body.automatic !== false)
+  )
+    fail(400, "invalid_request", "Invalid vault setup request");
+  const input = body as unknown as VaultSetupInput;
+  const bounty = input.payoutPolicy === "security-bounty";
+  const deployments = bounty
+    ? current.manifest.securityBounty?.settlement?.deployments
+    : current.manifest.escrow?.deployments;
+  if (body.step === "register" && typeof body.transactionId === "string") {
+    const existing = deployments?.find(
+      (d) =>
+        d.network === input.network &&
+        d.deploymentTransaction === body.transactionId,
+    );
+    if (existing)
+      return json(200, {
+        status: "registered",
+        deployment: existing,
+        project: current.manifest,
+        revision: current.revision,
+      });
+  }
+  const expectedRevision = positiveInteger(
+    body.expectedRevision,
+    "expectedRevision",
+  );
+  if (expectedRevision !== current.revision && body.step === "review")
+    fail(
+      409,
+      "stale_revision",
+      "The project changed. Reload and review the current policy.",
+    );
+  if (deployments?.length)
+    fail(
+      409,
+      "vault_already_registered",
+      "This project already has a registered vault.",
+    );
+  if (body.step === "review")
+    return json(200, {
+      review: await deps.vaultSetup.review(current, actor, input),
+    });
+  if (
+    typeof body.transactionId !== "string" ||
+    !isVaultCreationId(input.network, body.transactionId)
+  )
+    fail(400, "invalid_request", "Enter the vault creation transaction hash.");
+  // A wallet send may outlive an owner edit. Verify its exact creation intent
+  // from immutable server history, while attaching only to compatible current policy.
+  let creation = current;
+  if (expectedRevision !== current.revision) {
+    const stored = await deps.persistence.getRevisionText(
+      projectId,
+      expectedRevision,
+    );
+    if (!stored)
+      fail(
+        409,
+        "stale_revision",
+        "The reviewed project revision is not available.",
+      );
+    const { manifest } = canonicalManifest(JSON.parse(stored.manifestText));
+    if (
+      manifest.id !== current.id ||
+      (bounty
+        ? !manifest.securityBounty ||
+          !current.manifest.securityBounty ||
+          manifest.securityBounty.amount.currency !==
+            current.manifest.securityBounty.amount.currency ||
+          manifest.securityBounty.amount.network !==
+            current.manifest.securityBounty.amount.network ||
+          manifest.securityBounty.amount.decimals !==
+            current.manifest.securityBounty.amount.decimals ||
+          !sameValue(
+            manifest.securityBounty.settlement,
+            current.manifest.securityBounty.settlement,
+          )
+        : manifest.reward.kind !== current.manifest.reward.kind ||
+          manifest.reward.chain !== current.manifest.reward.chain ||
+          !sameValue(manifest.escrow, current.manifest.escrow) ||
+          !(
+            sameValue(manifest.rewardAsset, current.manifest.rewardAsset) ||
+            sameRewardAsset(manifest.rewardAsset, current.manifest.rewardAsset)
+          ))
+    )
+      fail(
+        409,
+        "vault_policy_changed",
+        "The project asset or vault policy changed. Restore the reviewed policy before registering this creation transaction.",
+      );
+    creation = {
+      ...current,
+      revision: expectedRevision,
+      status: manifest.status,
+      manifest,
+      manifestSha256: stored.manifestSha256,
+    };
+  }
+  const deployment = await deps.vaultSetup.register(
+    creation,
+    actor,
+    input,
+    body.transactionId,
+  );
+  if (!deployment) return json(200, { status: "pending" });
+  const updated = await appendRevision(request, deps, {
+    current,
+    actor,
+    manifest: bounty
+      ? attachBountyVault(
+          current.manifest,
+          deployment,
+          deps.now().toISOString().slice(0, 7),
+        )
+      : attachOrdinaryVault(current.manifest, deployment),
+    ownerParticipation: true,
+    reason:
+      "Owner registered a finalized vault verified against the reviewed factory and project policy.",
+  });
+  return json(200, {
+    status: "registered",
+    deployment,
+    project: updated.manifest,
+    revision: updated.revision,
+    ...(!bounty &&
+    creation.manifest.reward.monthlyCapMinor !==
+      updated.manifest.reward.monthlyCapMinor
+      ? {
+          notice: `Creation used a monthly cap of ${creation.manifest.reward.monthlyCapDisplay}. The project now uses ${updated.manifest.reward.monthlyCapDisplay}. Use the automatic payment controls below to apply the new cap.`,
+        }
+      : {}),
+  });
+}
+
 /**
  * Publishes an owner's revision at once (PRD section 4). Presentation
  * changes publish as they are; a change to the skill inputs pauses an active
@@ -1071,16 +1422,53 @@ async function publishOwnerRevision(
     const { cycleCaps: _oldCaps, ...reward } = prepared.reward;
     prepared = { ...prepared, reward };
   }
-  const { manifest: submitted } = canonicalManifest(prepared);
+  const programChanged = !sameValue(
+    current.manifest.securityBounty,
+    prepared.securityBounty,
+  );
+  const requestedProgramStatus = prepared.securityBounty?.status;
+  if (programChanged && prepared.securityBounty)
+    prepared = {
+      ...prepared,
+      securityBounty: {
+        ...prepared.securityBounty,
+        // Validate all terms before using them in a funding lookup. The server
+        // alone sets verified funding and then permits an open program.
+        status:
+          requestedProgramStatus === "open"
+            ? "paused"
+            : prepared.securityBounty.status,
+        funding: { state: "pledged" },
+      },
+    };
+  let { manifest: submitted } = canonicalManifest(prepared);
+  // Check authority and every refusal before any funding read: a refusal
+  // must not tell an account without access whether the bounty vault has
+  // funds. Authority comes from the stored repository, never from the
+  // repository the caller sends.
+  const checked = await currentAuthority(deps, current.manifest, actor);
+  requireAuthority(checked);
   if (submitted.id !== projectId)
     fail(422, "invalid_manifest", "Project id cannot change");
-  const changes = classifyRevisionChanges(current.manifest, submitted);
-  if (changes.restricted.length > 0)
+  const restricted = classifyRevisionChanges(
+    current.manifest,
+    submitted,
+  ).restricted;
+  if (restricted.length > 0)
     fail(
       422,
       "owner_field_restricted",
-      `These fields do not change through owner self-service: ${changes.restricted.join(", ")}`,
+      `These fields do not change through owner self-service: ${restricted.join(", ")}`,
     );
+  if (programChanged)
+    submitted = await ownerSecurityProgram(
+      current.manifest,
+      submitted,
+      requestedProgramStatus,
+      actor,
+      deps,
+    );
+  const changes = classifyRevisionChanges(current.manifest, submitted);
   if (
     changes.presentation.length +
       changes.executable.length +
@@ -1094,8 +1482,6 @@ async function publishOwnerRevision(
       : submitted;
   if (changes.executable.length > 0 && manifest.status === "active")
     manifest = { ...manifest, status: "paused" };
-  const checked = await currentAuthority(deps, manifest, actor);
-  requireAuthority(checked);
   const summary = [
     changes.presentation.length > 0
       ? `presentation (${changes.presentation.join(", ")}) published`
@@ -1104,7 +1490,7 @@ async function publishOwnerRevision(
       ? `skill inputs (${changes.executable.join(", ")}) need a new scan`
       : null,
     changes.financial.length > 0
-      ? `financial policy (${changes.financial.join(", ")}) applies from the next UTC cycle`
+      ? `financial policy (${changes.financial.join(", ")}) published; monthly amounts apply from the next UTC cycle and bounty terms apply to later reports`
       : null,
   ]
     .filter((part) => part !== null)
@@ -1115,6 +1501,7 @@ async function publishOwnerRevision(
     reason: `Owner update by @${actor.githubLogin}: ${summary}.${note ? ` ${note}` : ""}`,
     actor,
     applicationId: stored?.applicationId,
+    ownerParticipation: true,
   });
   const scanRequest =
     changes.executable.length > 0
@@ -1368,6 +1755,8 @@ async function appendRevision(
     reason: string;
     actor: GithubActor;
     applicationId?: string;
+    /** Recheck owner eligibility within the guarded enforcement snapshot. */
+    ownerParticipation?: true;
   },
 ): Promise<ProjectRecord> {
   const { current, actor } = input;
@@ -1377,6 +1766,8 @@ async function appendRevision(
   // guarded append below a conflict, so no write uses stale restrictions.
   const enforcementGeneration = await deps.persistence.enforcementGeneration();
   const enforcements = await deps.persistence.listEnforcements();
+  if (input.ownerParticipation)
+    assertMaintainerNotBanned(current.manifest, actor, enforcements);
   const restriction = projectRestriction(projectId, enforcements);
   // A new revision cannot lift a Quarantine or a Ban (PRD ADM-06).
   if (restriction.state !== "clear" && !enforcedManifest(manifest)) {
@@ -2180,6 +2571,7 @@ function isProjectRoute(parts: string[]): boolean {
   return (
     // Deeper /projects/:id/... paths belong to the trace API.
     (parts[0] === "projects" && parts.length <= 2) ||
+    parts[0] === "project-vaults" ||
     parts[0] === "project-github" ||
     parts[0] === "project-revisions" ||
     parts[0] === "project-session" ||
@@ -2202,6 +2594,7 @@ export async function handleProjectApi(
       (parts[0] === "admin" && index === 2) ||
       (parts[0] === "projects" && index === 1) ||
       (parts[0] === "project-setup" && index === 1) ||
+      (parts[0] === "project-vaults" && index === 1) ||
       (parts[0] === "project-applications" && index === 1 && parts.length === 3)
         ? ":id"
         : parts[0] === "project-github" &&
@@ -2271,6 +2664,9 @@ export async function handleProjectApi(
         return await createProject(request, deps);
       case "PUT projects/:id":
         return await publishOwnerRevision(request, deps, parts[1]);
+      case "GET project-vaults/:id":
+      case "POST project-vaults/:id":
+        return await ownerVault(request, deps, parts[1]);
       case "GET project-setup":
         return await listSetup(request, deps);
       case "POST project-setup/:id/check":
@@ -2313,7 +2709,9 @@ export async function handleProjectApi(
           ? error.code
           : "internal_error",
       message:
-        (status >= 500 && !(caught instanceof GithubLookupError)) ||
+        (status >= 500 &&
+          !(caught instanceof GithubLookupError) &&
+          error.code !== "vault_setup_unavailable") ||
         typeof error.message !== "string"
           ? "Internal error"
           : error.message,

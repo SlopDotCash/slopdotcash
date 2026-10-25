@@ -23,14 +23,14 @@ for itself. The caller is the owner, and the factory keeps one vault for each
 (owner, project ID, token, purpose). The purpose is `Ordinary` (0) for ordinary
 awards or `Bounty` (1) for private bounties, so one project can hold separate
 ordinary and bounty vaults for the same token (owner decision D13, 24 October
-2026). It
-is a UUPS proxy that only the factory's upgrade authority can upgrade, and it
-has no owner change, token approval, arbitrary call, rescue, claim expiry, or
-award cancellation entry point. An approved award remains reserved until it is paid. The owner can cancel only a wallet binding that has
-not paid yet, and only inside a bounded window. The only mutable authority is
-the factory's identity authority, replaced by a public registrar-authorized rotation. This
-code has local EVM execution evidence only. It has not received an independent
-security review or a public testnet deployment.
+2026). Vault logic has no owner change, token approval, arbitrary call, rescue,
+claim expiry, or award cancellation entry point. An approved award remains
+reserved until it is paid. The owner can cancel only an unpaid wallet binding
+inside a bounded window. The registrar can rotate the identity authority. The
+separate upgrade authority can replace factory or vault logic as described
+above. See [the deployment record](../DEPLOY-MAINNET.md) for recorded releases;
+new source changes need their own acceptance evidence. The owner waived the
+independent contract audit, not the release checks.
 
 ## Networks
 
@@ -54,7 +54,11 @@ The contract reads only `block.timestamp` and `block.chainid`, never `block.numb
 
 ## Authority and identity
 
-`create(projectId, token, purpose)` is permissionless and makes `msg.sender`
+`createWithMonthlyCommitment(projectId, token, cap, enabled)` creates an ordinary
+vault and its monthly policy atomically. `buildCreateVaultCalldata` requires the
+owner's cap and defaults `enabled` to true; an explicit false opts out. The
+compatibility `create(projectId, token, purpose)` entry point remains for old
+callers and private bounty vaults. Both are permissionless and make `msg.sender`
 the owner. A vault proves only which account created it. The project registry
 decides which owner's vault a project uses, so a vault that another account
 creates for the same project ID never replaces or reaches the owner's vault.
@@ -189,10 +193,14 @@ claim the same ID first, so ledger IDs stay unique across projects.
 `commitAward` stays owner-only. To let the monthly coordinator commit a month
 without the owner's wallet, an ordinary vault has one more path:
 
-- The owner calls `setMonthlyCommitment(cap, enabled)`. It is off with a zero
-  cap when the vault is created. "On" needs a positive cap. The owner can turn
-  it off at any time (the opt-out); while it is off, no monthly allocation can
-  commit. Awards that are already committed stay committed.
+- Normal creation sets the owner's cap and enables monthly commitments unless
+  the owner opts out. The owner can later call `setMonthlyCommitment(cap, enabled)`.
+  "On" needs a positive cap. While it is off, no monthly allocation can commit.
+  Awards already committed stay reserved. Compatibility callers of the old
+  three-argument `create` retain their earlier off/zero initial state.
+- The new creation path requires both reviewed factory and vault implementations.
+  Existing deployments and vault state do not change when this source merges;
+  qualify and record any operator-authorized upgrade before using it.
 - A period is a calendar UTC month written as `YYYYMM` (owner decision D1). Its
   window opens `MONTHLY_CUTOFF_DELAY` (72 hours) after the month ends, at 00:00
   UTC on the 4th, and closes when the next month's window opens.
@@ -241,16 +249,19 @@ unclaimed awards. Missing destinations cause a revert and leave reserves intact.
 
 All values are integer token base units, stored as checked `uint128`. The vault
 stores `decimals()` once, for display only, and never scales an amount. Each
-award reserves its gross allocation. The payout fee is `floor(gross / 50)` (2%)
+award reserves its gross allocation. The payout fee is `ceil(gross / 50)` (2%)
 and the recipient receives `gross - fee`. A 100-USDC award costs the project
 100 USDC and sends 98 USDC to the contributor plus 2 USDC of fees. The 2% is
 paid in the vault token. Each unused-fund withdrawal pays the same 2%:
-`withdrawalFee(gross) = payoutFee(gross) = floor(gross / 50)`, rounded down once
+`withdrawalFee(gross) = payoutFee(gross) = ceil(gross / 50)`, rounded up once
 per withdrawal (PRD section 18). Withdrawing 850 USDC of free funds pays 17 USDC
-and sends 833 USDC to the owner. A withdrawal under 50 base units
-pays no fee, so a split saves under one base unit per transaction, far less than its
-gas. A one-unit award requires one unit of funding and has a zero fee; tiny
-award rounding is intentional.
+and sends 833 USDC to the owner. Every award or withdrawal of at least one base
+unit pays at least one unit of fee, so splitting never lowers the fee (owner
+decision of 24 October 2026; rounding down let a split into pieces under 50
+base units avoid the fee on low-decimal tokens). A one-unit award has a one-unit
+fee and pays the contributor nothing. Vault logic deployed before this change
+takes `floor(gross / 50)` until it is upgraded; the adapter accepts either
+rounding and nothing else.
 
 Payout and withdrawal fees accrue in the vault as `accruedFees`. Anyone can
 call `claimFees()` to move them to the configured fee recipient. A blocked fee
@@ -338,6 +349,7 @@ EscrowFactory (UUPS proxy; the implementation constructor disables initializers)
   initialize(address registrar, address feeRecipient, address identityAuthority, uint64 bindingDelay, address upgradeAuthority, address vaultImplementation)
   proposeUpgradeAuthority(address) acceptUpgradeAuthority() setVaultImplementation(address)
   create(bytes32 projectId, address token, uint8 purpose)   (owner = msg.sender)
+  createWithMonthlyCommitment(bytes32 projectId, address token, uint128 cap, bool enabled)
   vaults(bytes32 key) vaultKey(address owner, bytes32 projectId, address token, uint8 purpose)
   VaultCreated(bytes32 indexed projectId, address indexed token, address indexed vault, address owner, uint8 purpose, uint8 decimals)
 ```

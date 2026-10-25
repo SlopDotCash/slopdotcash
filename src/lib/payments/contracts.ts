@@ -38,7 +38,9 @@ export type MonthlyAwardState =
   | "underfunded"
   | "awaiting-reservation"
   | "reserved"
-  | "paid";
+  | "paid"
+  /** Another award (other actor, gross or fee) is reserved under this award's source. */
+  | "conflict";
 /**
  * An approved monthly award that is frozen but not yet reserved in the vault
  * (PRD sections 3 and 6). Once reserved it is an AccountPayment instead.
@@ -50,7 +52,10 @@ export interface AccountMonthlyAward extends PaymentAsset {
   grossBase: string;
   feeBase: string;
   netBase: string;
-  state: Extract<MonthlyAwardState, "underfunded" | "awaiting-reservation">;
+  state: Extract<
+    MonthlyAwardState,
+    "underfunded" | "awaiting-reservation" | "conflict"
+  >;
 }
 export interface PaymentsAccount {
   githubUserId: string;
@@ -92,7 +97,8 @@ export interface DirectTransfer {
 }
 export { isBaseUnits, MAX_BASE_UNITS } from "../escrow-policy.mjs";
 export type PayoutPolicy = "ordinary" | "security-bounty";
-/** The 2% payout fee is deducted from the gross award, in base units of the award asset. */
+/** The 2% payout fee is deducted from the gross award, in base units of the award asset.
+ * It rounds up, ceil(gross / 50), on both chains, as does the unused-funds withdrawal fee. */
 export function payoutFee(
   gross: bigint,
   policy: PayoutPolicy = "ordinary",
@@ -104,7 +110,26 @@ export function payoutFee(
     return gross / 4n;
   }
   if (policy !== "ordinary") throw new Error("Unknown payout policy");
-  return gross / 50n;
+  return (gross + 49n) / 50n;
+}
+/** The 2% ordinary fee for any amount, rounded up; zero for zero. For projections and plans. */
+export function ordinaryFee(gross: bigint): bigint {
+  return gross > 0n ? (gross + 49n) / 50n : 0n;
+}
+/** The fee a vault records for `gross`. Vaults deployed before fees rounded up still record
+ * floor(gross / 50) until their upgrade, so reconciliation accepts either 2% rounding and
+ * nothing else. Remove the floor branch once every deployed vault and program runs the
+ * rounded-up code and its manifest digest is updated. */
+export function acceptsPayoutFee(
+  gross: bigint,
+  fee: bigint,
+  policy: PayoutPolicy = "ordinary",
+): boolean {
+  const expected = payoutFee(gross, policy);
+  return (
+    fee === expected ||
+    (policy === "ordinary" && fee === gross / 50n && fee + 1n === expected)
+  );
 }
 export function isAssetDecimals(value: unknown): value is number {
   return (

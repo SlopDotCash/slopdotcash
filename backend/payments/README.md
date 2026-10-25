@@ -298,6 +298,8 @@ sections 6 and 7). Migration `0062` adds its private records.
    each funded month's eligible allocation. The Durable Object records the
    first intent before signing and refuses a different root for that month.
    Funding-time exclusions are omitted; later bans preserve funded awards.
+   A later project revision does not block the frozen month unless it changes
+   the chain, effective month, fees, vault or asset that sized its proposal.
    The signed allocation is immutable in `monthly_payment_authorizations`.
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM/authorization/:network`
    returns only this final authorization and its publication time, without

@@ -6,7 +6,7 @@ Date: 12 October 2026, proposed by Drew Pierson. Status: scope approved by the r
 
 - The project vault is the only funding mode (FND-01). The legacy monthly-pool rail (PAY-09), Squads and Sablier are removed, so the "legacy rail stays Base and Solana" statements below are historical.
 - A project is added and activated only through admin-approved revisions in the D1 registry (PRJ-02). No pull request activates a project, and deployment bindings live in the D1 revision.
-- The withdrawal fee is 2%, `floor(gross / 50)`, equal to the payout fee and enforced in the contract (PRD section 18; repository owner decision of 19 October 2026, #907). The 10% figure below and the 5% figure of 18 October 2026 are superseded.
+- The withdrawal fee is 2%, `ceil(gross / 50)` (rounded up since 24 October 2026), equal to the payout fee and enforced in the contract (PRD section 18; repository owner decision of 19 October 2026, #907). The 10% figure below and the 5% figure of 18 October 2026 are superseded.
 - Any standard ERC-20 with any decimals may be a Robinhood Chain reward asset (TOK-01, TOK-03); USDG stays the network stablecoin. Generalization of `ProjectEscrow.sol` and the adapter beyond six decimals is MVP-06/MVP-07b work.
 - Fee-wallet conversion to USDG on Robinhood Chain is superseded: the PRD (section 6) converts fees to USDC only. Robinhood Chain conversion stays pending until a Circle USDC address verified from Circle's primary source and a route to it exist ([fee-converter guide](../workers/fee-converter/README.md)).
 

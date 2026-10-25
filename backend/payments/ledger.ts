@@ -1,9 +1,9 @@
 import { chainFamily } from "../../src/lib/escrow-policy.mjs";
 import {
+  acceptsPayoutFee,
   isBaseUnits,
   type PaymentChain,
   type PayoutPolicy,
-  payoutFee,
 } from "../../src/lib/payments/contracts";
 import type { D1TransactionalDatabase as D1Database, D1Statement } from "../d1";
 import {
@@ -51,6 +51,9 @@ function evidenceFacts(value: Record<string, unknown>) {
 }
 /** Adapters must independently fetch canonical finalized chain evidence. */
 export interface PaymentChainAdapter {
+  /** The one reviewed deployment this adapter verifies. With it, evidence already stored for
+   * that deployment is not verified again, so re-scans never depend on today's registry. */
+  deployment?: { projectId: string; network: string; vault: string };
   verifyFinalized(input: {
     transactionId: string;
     eventIndex: number;
@@ -77,6 +80,35 @@ export async function indexPaymentEvent(
   now: string,
   policy?: PaymentLedgerPolicy,
 ): Promise<void> {
+  const scope = adapter.deployment;
+  if (scope) {
+    const stored = await db
+      .prepare(
+        "SELECT kind,obligation_id,evidence_json FROM payment_events WHERE network=? AND transaction_id=? AND event_index=?",
+      )
+      .bind(scope.network, input.transactionId, input.eventIndex)
+      .first<{ kind: string; obligation_id: string; evidence_json: string }>();
+    if (stored) {
+      const evidence = JSON.parse(stored.evidence_json) as Record<
+        string,
+        unknown
+      >;
+      // This exact event was verified and recorded atomically when it was
+      // first indexed. A changed field falls through and fails as a conflict.
+      if (
+        stored.kind === input.kind &&
+        stored.obligation_id === input.obligationId &&
+        evidence.kind === input.kind &&
+        evidence.transactionId === input.transactionId &&
+        evidence.eventIndex === input.eventIndex &&
+        evidence.obligationId === input.obligationId &&
+        evidence.projectId === scope.projectId &&
+        evidence.network === scope.network &&
+        evidence.vault === scope.vault
+      )
+        return;
+    }
+  }
   const event = await adapter.verifyFinalized(input);
   if (
     event.transactionId !== input.transactionId ||
@@ -86,8 +118,12 @@ export async function indexPaymentEvent(
     !/^[1-9]\d*$/.test(event.githubUserId) ||
     !isBaseUnits(event.grossMicro) ||
     event.grossMicro === "0" ||
-    payoutFee(BigInt(event.grossMicro), policy?.payoutPolicy).toString() !==
-      event.feeMicro ||
+    !/^(0|[1-9]\d*)$/.test(event.feeMicro) ||
+    !acceptsPayoutFee(
+      BigInt(event.grossMicro),
+      BigInt(event.feeMicro),
+      policy?.payoutPolicy,
+    ) ||
     (BigInt(event.grossMicro) - BigInt(event.feeMicro)).toString() !==
       event.netMicro ||
     !/^[a-f0-9]{64}$/.test(event.sourceDigest)

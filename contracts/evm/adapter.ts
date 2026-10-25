@@ -1,6 +1,11 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { type PayoutPolicy, payoutFee } from "../../src/lib/payments/contracts";
+import {
+  acceptsPayoutFee,
+  ordinaryFee,
+  type PayoutPolicy,
+  payoutFee,
+} from "../../src/lib/payments/contracts";
 import type { VaultTotals } from "../vault-totals";
 /** Finalized escrow events from a reviewed deployment. The configured RPC and vault are trust roots. */
 export type EvmRpc =
@@ -10,12 +15,25 @@ export type EvmRpc =
       request: (method: string, params: unknown[]) => Promise<unknown>;
     };
 
-export interface EvmUpgrade {
+/** One reviewed upgrade authority and implementation pair for the vault and factory proxies. */
+export interface EvmImplementationReview {
   authority: string;
   vaultImplementation: string;
   vaultImplementationCodeSha256: string;
   factoryImplementation: string;
   factoryImplementationCodeSha256: string;
+}
+/** A superseded review. It applies only to events before `supersededAtBlock`. */
+export interface EvmSupersededReview extends EvmImplementationReview {
+  /** Decimal block number at and after which this review no longer applies: the block of the
+   * last proxy upgrade (vault or factory) that left it, since proxies upgrade separately. */
+  supersededAtBlock: string;
+}
+export interface EvmUpgrade extends EvmImplementationReview {
+  /** Superseded reviews, oldest first and append-only. Only a finalized event before an entry's
+   * bound verifies against it, at its own block, so a later upgrade cannot strand earlier events
+   * and a rollback cannot revive a superseded review. */
+  history?: EvmSupersededReview[];
 }
 export type EvmEscrowConfig = EvmRpc & {
   evmUpgrade?: EvmUpgrade;
@@ -69,6 +87,7 @@ export const EVM_ESCROW_EVENT_SIGNATURES = Object.freeze({
   Paid: "Paid(bytes32,uint64,address,uint64,uint128,uint128,uint128)",
   UnusedWithdrawn: "UnusedWithdrawn(address,uint128,uint128,uint128)",
   FeesClaimed: "FeesClaimed(address,uint128)",
+  MonthlyCommitmentSet: "MonthlyCommitmentSet(uint128,bool)",
   VaultCreated: "VaultCreated(bytes32,address,address,address,uint8,uint8)",
   IdentityAuthorityRotationProposed:
     "IdentityAuthorityRotationProposed(address,address,uint64)",
@@ -204,6 +223,10 @@ export function evmVaultKey(input: {
 export async function verifyEvmDeployment(
   config: EvmEscrowConfig,
   blockTag: unknown = "finalized",
+  /** Only for an event at its own block number: also accept a superseded review whose bound is
+   * after that block. */
+  eventBlock?: bigint,
+  expectedProjectId?: string,
 ) {
   if (
     ![
@@ -237,18 +260,38 @@ export async function verifyEvmDeployment(
   const implementationSlot =
     "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
   const upgrade = config.evmUpgrade;
-  for (const [target, expected, digest] of [
-    [
-      config.vault,
-      upgrade?.vaultImplementation,
-      upgrade?.vaultImplementationCodeSha256,
-    ],
-    [
-      config.factory,
-      upgrade?.factoryImplementation,
-      upgrade?.factoryImplementationCodeSha256,
-    ],
-  ]) {
+  const reviews: EvmImplementationReview[] = upgrade
+    ? [
+        upgrade,
+        ...(eventBlock === undefined
+          ? []
+          : (upgrade.history ?? []).filter(
+              (review) =>
+                /^[1-9][0-9]*$/.test(review.supersededAtBlock) &&
+                eventBlock < BigInt(review.supersededAtBlock),
+            )),
+      ]
+    : [];
+  if (
+    reviews.some(
+      (review) =>
+        ![
+          review.authority,
+          review.vaultImplementation,
+          review.factoryImplementation,
+        ].every((value) => ADDRESS.test(value)) ||
+        ![
+          review.vaultImplementationCodeSha256,
+          review.factoryImplementationCodeSha256,
+        ].every((digest) => /^[0-9a-f]{64}$/.test(digest)) ||
+        [config.feeRecipient, config.identityAuthority].some(
+          (value) => value.toLowerCase() === review.authority.toLowerCase(),
+        ),
+    )
+  )
+    throw new Error("Escrow upgrade review is invalid");
+  const slots: string[] = [];
+  for (const target of [config.vault, config.factory]) {
     const slot = await rpc(config, "eth_getStorageAt", [
       target,
       implementationSlot,
@@ -256,34 +299,51 @@ export async function verifyEvmDeployment(
     ]);
     if (typeof slot !== "string" || !HASH.test(slot))
       throw new Error("Invalid implementation slot");
-    if (!upgrade) {
-      if (BigInt(slot) !== 0n)
-        throw new Error("Proxy deployment has no reviewed implementation");
-    } else if (
-      !expected ||
-      !ADDRESS.test(expected) ||
-      !digest ||
-      !/^[0-9a-f]{64}$/.test(digest) ||
-      slot.toLowerCase() !== addressWord(expected).toLowerCase() ||
-      (await runtimeSha256(config, expected, blockTag)) !== digest
-    ) {
+    if (!upgrade && BigInt(slot) !== 0n)
+      throw new Error("Proxy deployment has no reviewed implementation");
+    slots.push(slot.toLowerCase());
+  }
+  if (upgrade) {
+    // Each proxy's implementation and the upgrade authority must each match a
+    // review valid at this block. They may come from different reviews,
+    // because proxies upgrade in separate transactions.
+    const [vaultSlot, factorySlot] = slots;
+    const vaultDigest = await runtimeSha256(
+      config,
+      `0x${vaultSlot.slice(-40)}`,
+      blockTag,
+    );
+    const factoryDigest = await runtimeSha256(
+      config,
+      `0x${factorySlot.slice(-40)}`,
+      blockTag,
+    );
+    if (
+      !reviews.some(
+        (review) =>
+          vaultSlot === addressWord(review.vaultImplementation) &&
+          vaultDigest === review.vaultImplementationCodeSha256,
+      ) ||
+      !reviews.some(
+        (review) =>
+          factorySlot === addressWord(review.factoryImplementation) &&
+          factoryDigest === review.factoryImplementationCodeSha256,
+      )
+    )
       throw new Error(
         "Escrow implementation does not match reviewed deployment",
       );
-    }
-  }
-  if (
-    upgrade &&
-    (!ADDRESS.test(upgrade.authority) ||
-      [config.feeRecipient, config.identityAuthority].some(
-        (value) => value.toLowerCase() === upgrade.authority.toLowerCase(),
-      ) ||
-      (await getter(config, config.factory, "upgradeAuthority()", blockTag)) !==
-        addressWord(upgrade.authority))
-  )
-    throw new Error(
-      "Escrow upgrade authority does not match reviewed deployment",
+    const authority = await getter(
+      config,
+      config.factory,
+      "upgradeAuthority()",
+      blockTag,
     );
+    if (!reviews.some((review) => authority === addressWord(review.authority)))
+      throw new Error(
+        "Escrow upgrade authority does not match reviewed deployment",
+      );
+  }
   for (const [target, signature, expected] of [
     [config.vault, "token()", config.asset],
     [config.vault, "owner()", config.owner],
@@ -318,6 +378,8 @@ export async function verifyEvmDeployment(
   )
     throw new Error("Escrow purpose does not match the payout policy");
   const projectId = await getter(config, config.vault, "projectId()", blockTag);
+  if (expectedProjectId && projectId !== hash(expectedProjectId))
+    throw new Error("The vault belongs to a different registry project");
   const key = evmVaultKey({
     owner: config.owner,
     projectId,
@@ -395,7 +457,7 @@ async function finalizedLog(
   ) {
     throw new Error("Receipt block is not canonical");
   }
-  await verifyEvmDeployment(config, receipt.blockNumber);
+  await verifyEvmDeployment(config, receipt.blockNumber, blockNumber);
   if (!Array.isArray(receipt.logs)) throw new Error("Missing receipt logs");
   const matches = receipt.logs
     .map(object)
@@ -457,7 +519,7 @@ async function verify(
   if (
     actor === 0n ||
     gross === 0n ||
-    fee !== payoutFee(gross, config.payoutPolicy) ||
+    !acceptsPayoutFee(gross, fee, config.payoutPolicy) ||
     net !== gross - fee
   ) {
     throw new Error("Invalid award accounting");
@@ -775,9 +837,83 @@ export function buildCancelBindingCalldata(
 export function buildClaimFeesCalldata() {
   return "0xd294f093";
 }
-/** Owner-only: refunds free funds to the refund destination less the 2% fee, floor(gross / 50). */
+/** Owner-only: refunds free funds to the refund destination less the 2% fee, ceil(gross / 50). */
 export function buildWithdrawCalldata(grossMicro: string | bigint) {
   return `0x${selector("withdrawUnused(uint128)")}${amountWord(grossMicro)}`;
+}
+/** The owner's monthly commitment setting: a uint128 cap and the on/off flag. */
+export interface EvmMonthlyCommitment {
+  cap: string;
+  enabled: boolean;
+}
+function monthlyCommitmentWords(cap: string | bigint, enabled: boolean) {
+  const value =
+    typeof cap === "bigint"
+      ? cap
+      : /^(0|[1-9][0-9]*)$/.test(cap)
+        ? BigInt(cap)
+        : -1n;
+  if (value < 0n || value > U128)
+    throw new Error("The monthly cap must be 0 to uint128 max base units");
+  if (enabled && value === 0n)
+    throw new Error("Turning on monthly commitments needs a positive cap");
+  return `${value.toString(16).padStart(64, "0")}${(enabled ? 1n : 0n).toString(16).padStart(64, "0")}`;
+}
+/** Owner-only on an ordinary vault: sets the monthly cap (token base units) and turns the
+ * signed monthly commitment on or off. The contract rejects "on" with a zero cap. */
+export function buildSetMonthlyCommitmentCalldata(
+  cap: string | bigint,
+  enabled: boolean,
+) {
+  return `0x${selector("setMonthlyCommitment(uint128,bool)")}${monthlyCommitmentWords(cap, enabled)}`;
+}
+/** Reads monthlyCap() and monthlyEnabled() together at the latest finalized block. */
+export async function readEvmMonthlyCommitment(
+  config: EvmVaultTotalsConfig,
+): Promise<EvmMonthlyCommitment & { blockNumber: string; blockTime: string }> {
+  if (!ADDRESS.test(config.vault)) throw new Error("Invalid vault");
+  if (quantity(await rpc(config, "eth_chainId", [])) !== config.chainId)
+    throw new Error("Wrong chain");
+  const block = object(
+    await rpc(config, "eth_getBlockByNumber", ["finalized", false]),
+  );
+  const blockNumber = quantity(block.number);
+  const blockTag = `0x${blockNumber.toString(16)}`;
+  const cap = uint128(
+    (await getter(config, config.vault, "monthlyCap()", blockTag)).slice(2),
+  );
+  const flag = await getter(config, config.vault, "monthlyEnabled()", blockTag);
+  if (flag !== `0x${"0".repeat(64)}` && flag !== `0x${"0".repeat(63)}1`)
+    throw new Error("Malformed monthly commitment state");
+  return {
+    cap: cap.toString(),
+    enabled: flag.endsWith("1"),
+    blockNumber: blockNumber.toString(),
+    blockTime: new Date(Number(quantity(block.timestamp)) * 1000).toISOString(),
+  };
+}
+/** Reconcile an owner's monthly commitment setting against its finalized vault event. */
+export async function verifyMonthlyCommitmentSet(
+  config: EvmEscrowConfig,
+  transactionId: string,
+  eventIndex: number,
+  expected: EvmMonthlyCommitment,
+) {
+  const { log, blockId, transactionHash } = await finalizedLog(
+    config,
+    transactionId,
+    eventIndex,
+  );
+  if (
+    !Array.isArray(log.topics) ||
+    log.topics.length !== 1 ||
+    hash(log.topics[0]) !== EVM_ESCROW_EVENT_TOPICS.MonthlyCommitmentSet ||
+    typeof log.data !== "string" ||
+    log.data.toLowerCase() !==
+      `0x${monthlyCommitmentWords(expected.cap, expected.enabled)}`
+  )
+    throw new Error("The finalized vault event does not match this setting");
+  return { transactionId: transactionHash, blockId, ...expected };
 }
 /** Reconcile a user's deposit or free-fund withdrawal against its finalized vault event. */
 export async function verifyVaultFundingAction(
@@ -801,15 +937,25 @@ export async function verifyVaultFundingAction(
     throw new Error("Invalid funding action");
   const topic =
     EVM_ESCROW_EVENT_TOPICS[withdrawing ? "UnusedWithdrawn" : "Deposited"];
-  const fee = withdrawing ? gross / 50n : 0n;
-  const data = `0x${amountWord(gross)}${withdrawing ? `${amountWord(gross - fee)}${fee.toString(16).padStart(64, "0")}` : ""}`;
+  // A vault not yet upgraded to rounded-up fees still takes floor(gross / 50).
+  const fees = withdrawing
+    ? [ordinaryFee(gross), gross / 50n].filter((fee) =>
+        acceptsPayoutFee(gross, fee),
+      )
+    : [0n];
+  const encoded = (fee: bigint) =>
+    `0x${amountWord(gross)}${withdrawing ? `${amountWord(gross - fee)}${fee.toString(16).padStart(64, "0")}` : ""}`;
+  const fee = fees.find(
+    (candidate) =>
+      typeof log.data === "string" &&
+      log.data.toLowerCase() === encoded(candidate),
+  );
   if (
     !Array.isArray(log.topics) ||
     log.topics.length !== 2 ||
     hash(log.topics[0]) !== topic ||
     hash(log.topics[1]) !== addressWord(expected.address) ||
-    typeof log.data !== "string" ||
-    log.data.toLowerCase() !== data
+    fee === undefined
   )
     throw new Error("The finalized vault event does not match this action");
   return {
@@ -825,11 +971,171 @@ export function buildCreateVaultCalldata(input: {
   projectId: string;
   asset: string;
   payoutPolicy?: PayoutPolicy;
+  /** Required for ordinary vaults; base units chosen by the owner. */
+  monthlyCap?: string | bigint;
+  /** Defaults on; false records an explicit owner opt-out. */
+  automaticMonthly?: boolean;
 }) {
   if (BigInt(hash(input.projectId)) === 0n || !ADDRESS.test(input.asset))
     throw new Error("Invalid vault input");
-  return `0x${selector("create(bytes32,address,uint8)")}${hash(input.projectId).slice(2)}${addressWord(input.asset).slice(2)}${evmVaultPurpose(input.payoutPolicy).toString(16).padStart(64, "0")}`;
+  if (input.payoutPolicy === "security-bounty") {
+    if (input.monthlyCap !== undefined || input.automaticMonthly !== undefined)
+      throw new Error("Private bounty awards have no automatic monthly policy");
+    return `0x${selector("create(bytes32,address,uint8)")}${hash(input.projectId).slice(2)}${addressWord(input.asset).slice(2)}${evmVaultPurpose(input.payoutPolicy).toString(16).padStart(64, "0")}`;
+  }
+  if (input.monthlyCap === undefined)
+    throw new Error("The owner's monthly cap is required");
+  return `0x${selector("createWithMonthlyCommitment(bytes32,address,uint128,bool)")}${hash(input.projectId).slice(2)}${addressWord(input.asset).slice(2)}${monthlyCommitmentWords(input.monthlyCap, input.automaticMonthly ?? true)}`;
 }
+/** Creation uses a reviewed existing vault only as the factory/code trust source. */
+export interface EvmVaultCreation {
+  projectId: string;
+  asset: string;
+  owner: string;
+  monthlyCap: string;
+  monthlyEnabled: boolean;
+  payoutPolicy?: PayoutPolicy;
+}
+function creationData(input: EvmVaultCreation) {
+  return buildCreateVaultCalldata({
+    projectId: input.projectId,
+    asset: input.asset,
+    payoutPolicy: input.payoutPolicy,
+    ...(input.payoutPolicy === "security-bounty"
+      ? {}
+      : {
+          monthlyCap: input.monthlyCap,
+          automaticMonthly: input.monthlyEnabled,
+        }),
+  });
+}
+async function creationVault(
+  config: EvmEscrowConfig,
+  input: EvmVaultCreation,
+  block: string,
+) {
+  const key = evmVaultKey(input);
+  const value = await getter(
+    config,
+    config.factory,
+    "vaults(bytes32)",
+    block,
+    key.slice(2),
+  );
+  return `0x${value.slice(-40)}`;
+}
+/** Refuses unreviewed logic and factories that cannot atomically set monthly policy. */
+export async function prepareEvmVaultCreation(
+  config: EvmEscrowConfig,
+  input: EvmVaultCreation,
+) {
+  await verifyEvmDeployment(config);
+  if (
+    !config.evmUpgrade ||
+    (await getter(
+      config,
+      config.factory,
+      "vaultImplementation()",
+      "finalized",
+    )) !== addressWord(config.evmUpgrade.vaultImplementation)
+  )
+    throw new Error(
+      "Vault creation is unavailable until the factory's new-vault implementation is reviewed.",
+    );
+  const existingVault = await creationVault(config, input, "latest");
+  const transaction = {
+    from: input.owner,
+    to: config.factory,
+    data: creationData(input),
+    value: "0x0",
+  };
+  if (BigInt(existingVault) !== 0n) return { existingVault, transaction };
+  const result = await rpc(config, "eth_call", [transaction, "latest"]);
+  if (typeof result !== "string" || !HASH.test(result) || BigInt(result) === 0n)
+    throw new Error(
+      "This reviewed factory does not support the requested vault creation.",
+    );
+  return { existingVault: null, transaction };
+}
+export class EvmVaultCreationFailed extends Error {}
+
+/** Exact finalized creation, not a user-supplied deployment assertion. */
+export async function verifyEvmVaultCreation(
+  config: EvmEscrowConfig,
+  input: EvmVaultCreation,
+  transactionId: string,
+) {
+  const transactionHash = hash(transactionId);
+  const receiptValue = await rpc(config, "eth_getTransactionReceipt", [
+    transactionHash,
+  ]);
+  if (!receiptValue) return null;
+  const receipt = object(receiptValue);
+  const finalized = object(
+    await rpc(config, "eth_getBlockByNumber", ["finalized", false]),
+  );
+  if (quantity(receipt.blockNumber) > quantity(finalized.number)) return null;
+  const [transaction, canonicalBlock] = await Promise.all([
+    rpc(config, "eth_getTransactionByHash", [transactionHash]),
+    rpc(config, "eth_getBlockByNumber", [receipt.blockNumber, false]),
+  ]);
+  const tx = object(transaction);
+  const canonical = object(canonicalBlock);
+  if (
+    hash(receipt.transactionHash) !== transactionHash ||
+    hash(tx.hash) !== transactionHash ||
+    hash(canonical.hash) !== hash(receipt.blockHash) ||
+    quantity(canonical.number) !== quantity(receipt.blockNumber)
+  )
+    throw new Error("The creation receipt does not match its canonical block.");
+  if (
+    String(tx.from).toLowerCase() !== input.owner.toLowerCase() ||
+    String(tx.to).toLowerCase() !== config.factory.toLowerCase() ||
+    String(tx.input).toLowerCase() !== creationData(input).toLowerCase() ||
+    quantity(tx.value) !== 0n ||
+    tx.blockHash !== receipt.blockHash
+  )
+    throw new Error(
+      "The transaction does not match this owner's vault creation request.",
+    );
+  if (quantity(receipt.status) !== 1n)
+    throw new EvmVaultCreationFailed(
+      "The vault creation transaction failed. Review a new request.",
+    );
+  const vault = await creationVault(config, input, String(receipt.blockNumber));
+  const created = {
+    ...config,
+    vault,
+    owner: input.owner,
+    asset: input.asset,
+    payoutPolicy: input.payoutPolicy,
+  };
+  await verifyEvmDeployment(
+    created,
+    receipt.blockNumber,
+    undefined,
+    input.projectId,
+  );
+  await verifyEvmDeployment(created, "finalized", undefined, input.projectId);
+  if (input.payoutPolicy !== "security-bounty") {
+    // Read the policy at the creation block: a later owner change must not block registration.
+    const cap = BigInt(
+      await getter(created, vault, "monthlyCap()", receipt.blockNumber),
+    );
+    const enabled = BigInt(
+      await getter(created, vault, "monthlyEnabled()", receipt.blockNumber),
+    );
+    if (
+      cap !== BigInt(input.monthlyCap) ||
+      enabled !== (input.monthlyEnabled ? 1n : 0n)
+    )
+      throw new Error(
+        "The vault's monthly policy differs from the reviewed creation request.",
+      );
+  }
+  return vault;
+}
+
 /** One award of a monthly allocation, in allocation order. */
 export interface MonthlyAllocationEntry {
   githubUserId: string;

@@ -665,9 +665,17 @@ try {
   // A production stack refuses a test network, a test stack refuses a
   // mainnet, the enabled Base mainnet preflight refuses an RPC of another
   // chain, MAINNET_EXECUTION refuses a mainnet that is off, and an unknown
-  // stack stops: none of them reads a secret.
+  // stack stops: none of them reads a secret. A production EVM attester
+  // signs bindings only in its scheduled run (/v1/bind-destinations).
+  const bindRun = "/v1/bind-destinations";
   assert.deepEqual(
-    await secretsRead("production", "base-sepolia", [sepoliaRecord]),
+    await secretsRead(
+      "production",
+      "base-sepolia",
+      [sepoliaRecord],
+      "attester",
+      bindRun,
+    ),
     [],
   );
   assert.deepEqual(
@@ -675,14 +683,43 @@ try {
     [],
   );
   assert.deepEqual(
-    await secretsRead("production", "base-mainnet", [mainnetRecord]),
+    await secretsRead(
+      "production",
+      "base-mainnet",
+      [mainnetRecord],
+      "attester",
+      bindRun,
+    ),
     [],
   );
   assert.deepEqual(
-    await secretsRead("production", "ethereum", [
-      paymentDeploymentRecord("eliza", { ...deployment, network: "ethereum" }),
-    ]),
+    await secretsRead(
+      "production",
+      "ethereum",
+      [
+        paymentDeploymentRecord("eliza", {
+          ...deployment,
+          network: "ethereum",
+        }),
+      ],
+      "attester",
+      bindRun,
+    ),
     [],
+  );
+  assert.deepEqual(
+    await signerRun("production", "base-mainnet", [mainnetRecord]),
+    { status: 404, read: [] },
+  );
+  assert.deepEqual(
+    await signerRun(
+      "test",
+      "base-sepolia",
+      [sepoliaRecord],
+      "attester",
+      bindRun,
+    ),
+    { status: 404, read: [] },
   );
   assert.deepEqual(
     await secretsRead("staging", "base-sepolia", [sepoliaRecord]),

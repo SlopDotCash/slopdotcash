@@ -13,8 +13,11 @@ import {
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
+  isBaseUnits,
+  maxBaseUnitsForChain,
 } from "../../src/lib/escrow-policy.mjs";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
+import { assertEscrowFinancialPolicy } from "../../src/lib/payments/escrow-review";
 import {
   assertPeriod,
   buildExecutionSnapshot,
@@ -25,8 +28,10 @@ import {
 } from "../../src/lib/payments/monthly-allocation";
 import { payoutExcludedGithubUserIds } from "../../src/lib/payout-exclusions.mjs";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
+import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import type { D1TransactionalDatabase } from "../d1";
+import { chainAwards, holdsAward } from "./chain-awards";
 import { automaticMonthlyPayment, MonthlyPaymentError } from "./monthly";
 
 export interface MonthlyAttestationRequest {
@@ -105,7 +110,7 @@ export async function prepareMonthlyAttestation(
     );
   const run = await deps.db
     .prepare(
-      "SELECT r.snapshot,r.snapshot_sha256,r.network,r.vault,r.frozen_at,r.obligations_created_at,b.cap_base,b.manifest_sha256 base_manifest_sha256,b.source_snapshot_sha256 FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period WHERE r.project_id=? AND r.period=?",
+      "SELECT r.snapshot,r.snapshot_sha256,r.network,r.vault,r.frozen_at,r.obligations_created_at,b.cap_base,b.manifest base_manifest,b.manifest_sha256 base_manifest_sha256,b.source_snapshot_sha256 FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period WHERE r.project_id=? AND r.period=?",
     )
     .bind(project.id, period)
     .first<{
@@ -116,6 +121,7 @@ export async function prepareMonthlyAttestation(
       frozen_at: string;
       obligations_created_at: string | null;
       cap_base: string;
+      base_manifest: string;
       base_manifest_sha256: string;
       source_snapshot_sha256: string;
     }>();
@@ -143,7 +149,6 @@ export async function prepareMonthlyAttestation(
     snapshot.vault !== deployment.vault ||
     run.vault !== deployment.vault ||
     snapshot.asset !== deployment.asset ||
-    snapshot.manifestSha256 !== project.manifestSha256 ||
     snapshot.baseManifestSha256 !== run.base_manifest_sha256 ||
     snapshot.sourceSnapshotSha256 !== run.source_snapshot_sha256 ||
     snapshot.capBase !== run.cap_base ||
@@ -153,14 +158,29 @@ export async function prepareMonthlyAttestation(
       "snapshot_changed",
       "The frozen allocation does not match the current project and proposal.",
     );
+  // As at the freeze, a later revision keeps the month only with the financial
+  // terms that sized its proposal; the snapshot keeps its freeze-time revision.
+  try {
+    assertEscrowFinancialPolicy(
+      project.manifest,
+      assertProjectDefinition(JSON.parse(run.base_manifest)),
+    );
+  } catch {
+    reject(
+      "financial_policy_changed",
+      "The project's payment terms changed after this month was proposed.",
+    );
+  }
   if (!Array.isArray(snapshot.awards) || snapshot.awards.length === 0)
     reject("empty_allocation", "An empty month needs no chain commitment.");
   const excluded = payoutExcludedGithubUserIds(project.manifest, period);
   const ids = new Set<string>();
   for (const award of snapshot.awards) {
     if (
-      !/^[1-9][0-9]*$/.test(award.grossBase) ||
-      BigInt(award.grossBase) > (1n << 64n) - 1n ||
+      !isBaseUnits(award.grossBase) ||
+      award.grossBase === "0" ||
+      BigInt(award.grossBase) >
+        maxBaseUnitsForChain(ESCROW_NETWORKS[deployment.network].chain) ||
       ids.has(award.githubUserId) ||
       award.sourceDigest !==
         escrowAwardOrigin(project.id, period, award.githubUserId)
@@ -173,27 +193,31 @@ export async function prepareMonthlyAttestation(
     if (excluded.has(award.githubUserId))
       reject("recipient_restricted", "An allocation recipient is excluded.");
   }
-  const canonical = buildExecutionSnapshot({
-    base: {
-      projectId: project.id,
-      period,
-      manifestSha256: run.base_manifest_sha256,
-      sourceSnapshotSha256: run.source_snapshot_sha256,
-      capBase: run.cap_base,
-    },
-    allocations: snapshot.awards.map((a) => ({
-      ...a,
-      proposedGrossBase: a.grossBase,
-    })),
-    allocationSequence: snapshot.allocationSequence,
-    trigger: snapshot.trigger,
-    manifestSha256: project.manifestSha256,
-    network: request.network,
-    vault: deployment.vault,
-    asset: deployment.asset,
-    frozenAt: run.frozen_at,
-  });
-  if (canonical.text !== run.snapshot)
+  const rebuild = (legacyFloorFee: boolean) =>
+    buildExecutionSnapshot({
+      base: {
+        projectId: project.id,
+        period,
+        manifestSha256: run.base_manifest_sha256,
+        sourceSnapshotSha256: run.source_snapshot_sha256,
+        capBase: run.cap_base,
+      },
+      allocations: snapshot.awards.map((a) => ({
+        ...a,
+        proposedGrossBase: a.grossBase,
+      })),
+      allocationSequence: snapshot.allocationSequence,
+      trigger: snapshot.trigger,
+      manifestSha256: snapshot.manifestSha256,
+      network: request.network,
+      vault: deployment.vault,
+      asset: deployment.asset,
+      frozenAt: run.frozen_at,
+      legacyFloorFee,
+    }).text;
+  // A month frozen before fees rounded up keeps its floor(gross / 50) rows; the
+  // allocation root binds only actor, gross and source, so either is canonical.
+  if (run.snapshot !== rebuild(false) && run.snapshot !== rebuild(true))
     reject("invalid_allocation", "The frozen allocation is not canonical.");
   // Eligibility was decided atomically when obligations were funded. A later
   // account ban must not revoke that funded right. Every omitted snapshot
@@ -232,9 +256,6 @@ export async function prepareMonthlyAttestation(
   );
   if (eligible.length === 0)
     reject("empty_allocation", "No eligible award needs a chain commitment.");
-  const totalGrossBase = eligible
-    .reduce((total, a) => total + BigInt(a.grossBase), 0n)
-    .toString();
   // Compare every obligation, not just the existence of the month marker.
   const obligations = await deps.db
     .prepare(
@@ -293,8 +314,23 @@ export async function prepareMonthlyAttestation(
         "An award source already appears in another month.",
       );
   }
+  // A source that already holds a different award (another actor, gross or
+  // fee) can never commit: EVM commitMonthly would revert the whole month and
+  // the Solana leaf could never settle. Leave it out so the rest of the month
+  // commits; the owner view reports it as a conflict. An identical award stays
+  // in and is counted once.
+  const chain = await chainAwards(deps.db, request.network, deployment.vault);
+  const committable = eligible.filter((a) => {
+    const held = chain.get(a.sourceDigest);
+    return !held || holdsAward(held, a);
+  });
+  if (committable.length === 0)
+    reject("empty_allocation", "No eligible award needs a chain commitment.");
+  const totalGrossBase = committable
+    .reduce((total, a) => total + BigInt(a.grossBase), 0n)
+    .toString();
   const network = ESCROW_NETWORKS[request.network];
-  const entries = eligible.map((a) => ({
+  const entries = committable.map((a) => ({
     githubUserId: a.githubUserId,
     grossMicro: a.grossBase,
     sourceDigest:

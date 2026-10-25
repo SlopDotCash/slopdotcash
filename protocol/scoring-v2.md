@@ -204,7 +204,10 @@ Work accepted from that instant:
 
 Review credit is one explicit allocation per pull request. Qualifying reviews
 exclude implementation actors, bots, reviews after merge or closure, and
-duplicate findings. A qualifying review whose submission time is outside the
+duplicate findings. A review submitted at or after its author's account ban
+publishes `review-credit-account-banned` and takes no reviewer slot or share.
+Reviews before that ban remain eligible under their original policy.
+A qualifying review whose submission time is outside the
 scoring window publishes `review-credit-outside-window`. It takes no reviewer
 slot and no share. Its band does not replace an in-window review by the same
 person. The award keeps the submission time, so a later merge does not move
@@ -232,7 +235,7 @@ the capped pool above. When the hosted value feed does not answer (a transport
 failure, a timeout, HTTP 408, 429 or 5xx), generation writes nothing and exits
 with status 75. The release retries once, then keeps the last published
 snapshot, and the site labels a snapshot older than eight hours as possibly
-outdated (PRD section 9). The next scheduled release retries. There is no
+outdated (PRD section 9). The next release retries. There is no
 fallback to the legacy producer, and an outage does not stop the rest of the
 release. Any other feed failure, such as a redirect or an invalid or changed
 page, stops the release. Accepted-source identity, the earliest-merge commit rule and

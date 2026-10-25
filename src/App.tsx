@@ -20,6 +20,7 @@ import { CycleArchivePage, CyclePage } from "./CyclePages";
 import { EarningsPage } from "./Earnings";
 import {
   EscrowFunding,
+  reservedGross,
   useVaultTotals,
   vaultSnapshotStale,
 } from "./EscrowFunding";
@@ -406,8 +407,15 @@ function Header() {
             <Wordmark domain={domain} />
           </span>
         </Link>
-        <Link className="header-nav-link" href="/how-it-works">
-          How It Works
+        <Link
+          ariaLabel="How it works"
+          className="header-nav-link"
+          href="/how-it-works"
+        >
+          <span className="header-nav-full">How It Works</span>
+          <span aria-hidden="true" className="header-nav-short">
+            ?
+          </span>
         </Link>
         <PointsNav />
       </div>
@@ -1205,8 +1213,7 @@ export function ProjectFunding({ project }: { project: ProjectDefinition }) {
         <span key={`${snapshot.network}:${snapshot.vault}`}>
           {index > 0 ? " · " : null}
           {networkLabel(snapshot.network)}: {amount(snapshot.freeBalance)}{" "}
-          available · {amount(snapshot.reservedPrincipal ?? snapshot.reserved)}{" "}
-          reserved
+          available · {amount(reservedGross(snapshot))} reserved
           {vaultSnapshotStale(snapshot, totals.vault.staleAfterMs)
             ? ` (stale, read ${formatDateTime(snapshot.observedAt)})`
             : null}
@@ -1246,7 +1253,13 @@ function fundingStateLabel(project: ProjectDefinition): string {
     : "Not funded yet";
 }
 
-function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
+function ProjectFundingPage({
+  project: original,
+}: {
+  project: ProjectDefinition;
+}) {
+  const [registered, setRegistered] = useState<ProjectDefinition | null>(null);
+  const project = registered ?? original;
   return (
     <main className="shell route-main funding-page">
       <p className="breadcrumb">
@@ -1307,17 +1320,17 @@ function ProjectFundingPage({ project }: { project: ProjectDefinition }) {
               </p>
             </section>
           ) : (
-            <EscrowFunding project={project} />
+            <EscrowFunding project={project} onRegistered={setRegistered} />
           )
         ) : (
           <div>
             <EmptyState text="This project has no vault yet." />
             <p>
-              Deposits and payments are not possible until a vault is recorded
-              for this project. The site has no control that creates a vault:
-              the project owner creates it on chain from its own wallet, and a
-              project revision then records it. Project owner:{" "}
-              <a href={CONTACT_MAILTO}>contact Slop</a> for vault setup.
+              Choose a monthly amount in{" "}
+              <Link href={`/projects/${project.slug}/manage`}>
+                project settings
+              </Link>{" "}
+              to enable vault setup.
             </p>
           </div>
         )}
@@ -1827,10 +1840,9 @@ function HowItWorksPage() {
           <summary>When will my work show up?</summary>
           <p>
             Open pull requests do not earn points. Once a pull request merges,
-            it and its qualifying reviews appear at the next data refresh, which
-            runs every 6 hours. Each one is dated when it happened, so points
-            can appear spread through the day. There is no waiting period and no
-            minimum account age.
+            it and its qualifying reviews appear at the next site release. Each
+            one is dated when it happened, so points can appear spread through
+            the day. There is no waiting period and no minimum account age.
           </p>
         </details>
         <details>
@@ -2961,7 +2973,7 @@ function AppContent({ route }: { route: Route }) {
   else if (route.kind === "security-program") {
     const project = findProject(route.projectId ?? "");
     content = project ? (
-      <SecurityProgramPage project={project} />
+      <SecurityProgramPage key={project.id} project={project} />
     ) : (
       <NotFound title="Project not found" />
     );
@@ -3002,7 +3014,7 @@ function AppContent({ route }: { route: Route }) {
   } else if (route.kind === "funding-project") {
     const project = findProject(route.projectId ?? "");
     content = project ? (
-      <ProjectFundingPage project={project} />
+      <ProjectFundingPage key={project.id} project={project} />
     ) : (
       <NotFound title="Project not found" />
     );

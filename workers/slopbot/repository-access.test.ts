@@ -39,6 +39,19 @@ const installed = {
   [API]: Response.json({ id: 123456789 }),
 };
 
+const repositoryIdentity = {
+  id: 123456789,
+  node_id: "R_example",
+  full_name: "example/open-registry",
+  private: false,
+  owner: {
+    id: 987654321,
+    node_id: "U_example",
+    login: "example",
+    type: "User",
+  },
+};
+
 async function read(fetcher: typeof fetch, query: Record<string, string> = {}) {
   const url = new URL(REPOSITORY_ACCESS_URL);
   for (const [name, value] of Object.entries({
@@ -84,6 +97,32 @@ test("reports the installation and the account's base permission", async () => {
     `GET ${API}`,
     `GET ${API}/collaborators/owner/permission`,
   ]);
+});
+
+test("new Pages clients reuse authenticated repository identity without changing older replies", async () => {
+  const calls: string[] = [];
+  const answer = await read(
+    github(
+      {
+        ...installed,
+        [API]: Response.json({
+          ...repositoryIdentity,
+          token: "must-not-forward-provider-fields",
+        }),
+        [`${API}/collaborators/owner/permission`]: Response.json({
+          permission: "admin",
+          role_name: "admin",
+          user: { id: 900000003 },
+        }),
+      },
+      calls,
+    ),
+    { includeRepository: "1" },
+  );
+  expect(answer.status).toBe(200);
+  expect(answer.body.repository).toEqual(repositoryIdentity);
+  expect(parseRepositoryAccess(answer.body)).toEqual(answer.body);
+  expect(calls.filter((call) => call === `GET ${API}`)).toHaveLength(1);
 });
 
 test("a repository without the App, or a suspended one, is not installed", async () => {

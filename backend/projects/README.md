@@ -50,6 +50,8 @@ points and profiles still validate.
 | `GET /api/v1/project-revisions` | public, edge cached | Full revision history with SHA-256 digests |
 | `GET /api/v1/project-account-bans` | public, edge cached | GitHub ID and earliest start time of each active account ban, for the score generator; no reason, evidence, project or login |
 | `GET /api/v1/project-github/owned-repositories` | session | The signed-in maintainer's public repositories |
+| `GET /api/v1/project-vaults/:id` | session, steward or repository admin | Lists served setup networks and the current revision |
+| `POST /api/v1/project-vaults/:id` | session, steward or repository admin, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction |
 | `GET /api/v1/project-github/repositories/:owner/:name` | session | Public repository facts for `/projects/new` |
 | `GET /api/v1/project-revisions/:id/:revision` | public, immutable | One revision's exact stored `manifestText` and digest, for generated-skill installers |
 | `GET /api/v1/project-session` | public | GitHub identity and admin flag, or `null` when signed out |
@@ -105,7 +107,13 @@ checks. Funding is reported separately; a project works without it.
   `SLOPBOT` service binding (`https://slopbot.internal/v1/repository-access`,
   `workers/slopbot/repository-access.ts`). The Worker asks GitHub for the
   repository's installation with its App JWT and checks the repository id.
-  Without the binding the check reports `retry`.
+  The current Pages client requests the repository's public identity fields
+  with `includeRepository=1` and reuses that authenticated read. It does not
+  make a second anonymous request for the primary repository. Tokens never
+  leave the Worker. Deploy the Worker before Pages: requests without the flag
+  retain the old response, while a current Pages client refuses a response
+  without the required identity fields. Without the binding the check reports
+  `retry`.
 - **Scan.** Creation, a changed skill input, and a setup check of an
   unscanned or stale revision queue a scan through the existing vetting
   queue (`vettingScanRequester`, the same assessment row and live pin as
@@ -138,7 +146,7 @@ and listing tier, then classifies the change (`src/lib/project-revision-changes.
   budget can be added. An owner revision never adds or changes an
   `escrow.deployments` record: this API reads no chain state, so it cannot
   verify the vault, and the funding page offers a deposit for every recorded
-  vault. A reviewed admin revision records a verified vault.
+  vault. Owners use the separate vault setup route below.
 
 `reward.payoutExclusions` lists owners, funded employees and related parties
 who receive no payout (PRD section 7). Each entry names the immutable GitHub
@@ -248,12 +256,12 @@ rate limit, and caches each answer for five minutes. The browser never calls
   canonical templates and complete maintainer-authored `contribution`
   fields. Repository receipt authority, terms activation, listing tier and
   money arrive through later revisions.
-- The API reads public GitHub facts on every write
-  (`SLOP_GITHUB_READ_TOKEN` is optional). The repository id, node id, name,
-  and owner must match the manifest, or the request is refused. Every
-  other repository and every alias of an older project must also be a
-  public GitHub repository, and an alias must be a name of the repository
-  it is listed under, with at most 5 names in all.
+- On every owner write, the API checks the primary repository's public
+  identity from the authenticated Slopbot read. The repository id, node id,
+  name, visibility and owner must match the manifest, or the request is
+  refused. Every other repository and every alias of an older project still
+  requires a public lookup (`SLOP_GITHUB_READ_TOKEN` is optional). An alias
+  must name the repository it is listed under, with at most 5 names in all.
 - `/projects/new` and `/admin` preview the exact generated contributor and
   reviewer skills.
 - A revision activates, or changes its skill inputs while active, and its
@@ -391,3 +399,40 @@ restrictions, and exact scan clearance before activation. No owner session or
 admin action is needed for this check. A failed readiness check leaves the
 project paused and returns an explicit retry state; the owner can retry from
 the setup page. A scan result alone never grants repository authority.
+
+### Owner vault setup
+
+The funding page creates and registers an ordinary EVM or Solana vault, then uses the
+existing deposit controls. The owner confirms a current wallet through the
+payment wallet-claim route. Slop checks current GitHub authority and derives
+the project digest, asset and cap from the current registry revision. The
+wallet signs the exact creation; the server never signs or broadcasts.
+
+Setup lists served networks with a factory record in D1. Before creation,
+Slop verifies that factory's current code and compatibility. On Solana it
+verifies the program bytes, upgrade authority and pinned Config. Registration
+verifies the exact finalized transaction, project
+digest, owner, asset, purpose, code and monthly setting before appending one
+revision. Retry returns the registered vault. An unknown send stays pending
+until the owner recovers its transaction hash; it never sends again by itself.
+Monthly payment is On by default at creation, and the owner can choose Off
+before review to opt out (owner decision, 25 Oct 2026). The atomic creation
+builder records that setting and the cap in one transaction.
+
+If the monthly amount changes while creation is pending, registration checks
+that transaction against its original immutable revision. The current asset
+and vault policy must still match. Registration keeps the current project
+amount and shows both amounts. The owner can then apply the current amount
+through the existing automatic payment control.
+
+The same route creates a separate EVM bounty vault from saved USDC bounty
+terms. It uses the 25% bounty fee and has no monthly-payment setting. A zero
+monthly reward does not block bounty setup. The Manage page shows bounty
+funds only after a current GitHub owner check; public payment queries never
+read private snapshots. A restriction stops new setup and deposits in Slop,
+but the owner can still read funded state, check transactions and withdraw
+free funds. Chain transactions remain public.
+
+On Solana, this route onboards ordinary vaults only. Solana bounty-vault
+onboarding requires its own completed end-to-end acceptance. Mainnet setup
+also requires the separately approved factory upgrade and network activation.

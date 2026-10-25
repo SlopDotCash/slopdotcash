@@ -1,4 +1,9 @@
-import { assertEscrowPolicy, isBaseUnits } from "./escrow-policy.mjs";
+import {
+  assertEscrowPolicy,
+  isBaseUnits,
+  isEscrowChain,
+  maxBaseUnitsForChain,
+} from "./escrow-policy.mjs";
 import { exactKeys, readRecord as record } from "./record-validation.mjs";
 /**
  * Validates untrusted project folders before they enter discovery, ingestion,
@@ -1057,7 +1062,10 @@ function validateReward(
         : reward.fundingState !== "committed" ||
           BigInt(committedMinor) <= 0n) ||
       reward.monthlyCapDisplay !==
-        monthlyAmountDisplay(monthlyCapMinor, rewardAsset)
+        monthlyAmountDisplay(monthlyCapMinor, rewardAsset) ||
+      // A month above the chain's payment range could never be attested.
+      (isEscrowChain(reward.chain) &&
+        BigInt(monthlyCapMinor) > maxBaseUnitsForChain(reward.chain))
     ) {
       throw new TypeError(`${field} monthly pool policy is inconsistent`);
     }
@@ -1083,6 +1091,14 @@ function validateReward(
           );
         }
         monthlyAmountDisplay(cap.monthlyCapMinor, rewardAsset);
+        if (
+          isEscrowChain(reward.chain) &&
+          BigInt(cap.monthlyCapMinor) > maxBaseUnitsForChain(reward.chain)
+        ) {
+          throw new TypeError(
+            `${field}.cycleCaps entry exceeds the chain amount range`,
+          );
+        }
         previousCycle = cap.cycleId;
       }
     }

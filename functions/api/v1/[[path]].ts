@@ -45,6 +45,7 @@ import {
 } from "../../../backend/projects/setup";
 import { assetTemplateSource } from "../../../backend/projects/skill-publication";
 import { rpcTokenMetadataReader } from "../../../backend/projects/token-metadata";
+import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
 import {
@@ -58,6 +59,7 @@ import {
   type IntakeConfig,
 } from "../../../backend/security/intake-grant";
 import { securityPaymentDatabase } from "../../../backend/security/payment-database";
+import { readSecurityProgramFunds } from "../../../backend/security/program-funds";
 import { deterministicAnalyzer } from "../../../backend/security/report-analysis";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import {
@@ -90,6 +92,7 @@ import type { SolanaEscrowConfig } from "../../../contracts/solana/adapter";
 import { deploymentTier } from "../../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
+import type { RepositoryIdentity } from "../../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../../src/lib/projects.mjs";
 import {
   loadRegistryPaymentDeployments,
@@ -370,6 +373,8 @@ async function slopbotRepositoryAccess(
   url.searchParams.set("repositoryId", repository.githubId);
   url.searchParams.set("login", actor.githubLogin);
   url.searchParams.set("githubId", actor.githubId);
+  // Older Pages clients keep their original response until they request facts.
+  url.searchParams.set("includeRepository", "1");
   const response = await slopbot.fetch(
     new Request(url, { headers: { accept: "application/json" } }),
   );
@@ -426,6 +431,7 @@ const MAX_APPLICATION_GITHUB_NAMES = 5;
 export async function repositoryControl(
   manifest: ProjectDefinition,
   env: Env,
+  facts?: RepositoryIdentity,
 ): Promise<RepositoryControl> {
   const api = githubApiOrigin(env.SLOP_GITHUB_API_ORIGIN);
   const token = env.SLOP_GITHUB_READ_TOKEN;
@@ -441,12 +447,8 @@ export async function repositoryControl(
       state: "mismatch",
       reason: `An application may name at most ${MAX_APPLICATION_GITHUB_NAMES} repositories and aliases`,
     };
-  const facts = await githubRepository(api, token, repository.id);
   if (!facts)
-    return {
-      state: "mismatch",
-      reason: "GitHub has no public repository with that name",
-    };
+    throw new Error("Slopbot did not return the current repository identity");
   if (
     String(facts.id) !== manifest.authority.repositoryId ||
     facts.node_id !== manifest.authority.repositoryNodeId ||
@@ -566,6 +568,23 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     );
   const projectDependencies: ProjectApiDependencies = {
     persistence: projectPersistence,
+    vaultSetup: ownerVaultSetupService({
+      db: context.env.SLOP_DB,
+      projects: () => projectPersistence.listProjects(),
+      networks: () => parsePaymentNetworks(context.env.PAYMENT_NETWORKS),
+      rpcUrl: (network) => {
+        const value = JSON.parse(context.env.PAYMENT_RPC_URLS ?? "{}")[network];
+        if (typeof value !== "string" || new URL(value).protocol !== "https:")
+          throw new Error("Vault setup RPC unavailable");
+        return value;
+      },
+    }),
+    securityProgramFunds: (projectId, program) =>
+      readSecurityProgramFunds(
+        { db: context.env.SLOP_DB, now: () => new Date() },
+        projectId,
+        program,
+      ),
     vettingClearance: (
       projectId,
       manifest,
@@ -589,7 +608,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         context.env.SLOP_DB,
         new Date().toISOString(),
       ),
-    repositoryControl: (manifest) => repositoryControl(manifest, context.env),
+    repositoryControl: (manifest, facts) =>
+      repositoryControl(manifest, context.env, facts),
     repositoryAccess: (repository, actor) =>
       slopbotRepositoryAccess(context.env.SLOPBOT, repository, actor),
     requestScan: vettingScanRequester({

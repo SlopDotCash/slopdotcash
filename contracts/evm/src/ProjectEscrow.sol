@@ -37,9 +37,9 @@ enum Purpose {
 /// Anyone may deposit; deposits join one free balance that only the owner commits or refunds to itself. An
 /// ordinary vault also accepts one monthly allocation per calendar month from anyone, when the owner has
 /// turned it on, the identity authority signed it, and its total is within the owner's monthly cap.
-/// The payout fee and the unused-fund withdrawal fee are both 2% (floor(gross / 50)), so awarding
-/// free funds to oneself costs the same as withdrawing them (#907); each fee rounds down once per award or
-/// withdrawal. Tokens must have exact transfers: a fee-on-transfer deposit or payout reverts. Decimals are stored for display only; amounts are
+/// The payout fee and the unused-fund withdrawal fee are both 2% (ceil(gross / 50)), so awarding
+/// free funds to oneself costs the same as withdrawing them (#907); each fee rounds up once per award or
+/// withdrawal, so splitting an amount never lowers the fee. Tokens must have exact transfers: a fee-on-transfer deposit or payout reverts. Decimals are stored for display only; amounts are
 /// token base units. The factory upgrade authority may replace vault logic without a timelock.
 contract ProjectEscrow is Initializable, UUPSUpgradeable {
     struct Award {
@@ -181,6 +181,32 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         address feeRecipient_,
         uint64 bindingDelay_
     ) external initializer {
+        _initialize(projectId_, token_, owner_, purpose_, feeRecipient_, bindingDelay_);
+    }
+
+    /// @notice Atomic ordinary-vault setup with the owner's cap and explicit opt-out.
+    function initializeWithMonthlyCommitment(
+        bytes32 projectId_,
+        IERC20 token_,
+        address owner_,
+        Purpose purpose_,
+        address feeRecipient_,
+        uint64 bindingDelay_,
+        uint128 monthlyCap_,
+        bool monthlyEnabled_
+    ) external initializer {
+        _initialize(projectId_, token_, owner_, purpose_, feeRecipient_, bindingDelay_);
+        _setMonthlyCommitment(monthlyCap_, monthlyEnabled_);
+    }
+
+    function _initialize(
+        bytes32 projectId_,
+        IERC20 token_,
+        address owner_,
+        Purpose purpose_,
+        address feeRecipient_,
+        uint64 bindingDelay_
+    ) private {
         EscrowFactory factory_ = EscrowFactory(msg.sender);
         address identityAuthority_ = factory_.identityAuthority();
         // Free funds are refunded only to the owner, whoever deposited them.
@@ -306,12 +332,13 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         return keccak256(abi.encode(block.chainid, address(this), sourceDigest));
     }
 
-    /// @notice The 2% fee deducted from a gross award, rounded down once per award.
+    /// @notice The 2% fee deducted from a gross award, rounded up once per award, so splitting an award into
+    /// pieces under 50 base units never avoids it.
     function payoutFee(uint128 gross) public pure returns (uint128) {
-        return gross / 50;
+        return gross / 50 + (gross % 50 == 0 ? 0 : 1);
     }
 
-    /// @notice The fee on one unused-fund withdrawal: the same 2% as payoutFee, rounded down once per withdrawal
+    /// @notice The fee on one unused-fund withdrawal: the same 2% as payoutFee, rounded up once per withdrawal
     /// (PRD section 18, #907).
     function withdrawalFee(uint128 gross) public pure returns (uint128) {
         return payoutFee(gross);
@@ -377,6 +404,10 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// @notice The owner sets the monthly cap and turns monthly commitments on or off. While they are off,
     /// nobody can commit a monthly allocation; awards already committed stay committed.
     function setMonthlyCommitment(uint128 cap, bool enabled) external onlyOwner {
+        _setMonthlyCommitment(cap, enabled);
+    }
+
+    function _setMonthlyCommitment(uint128 cap, bool enabled) private {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         if (enabled && cap == 0) revert InvalidInput();
         monthlyCap = cap;
@@ -413,10 +444,12 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
             uint128 fee = payoutFee(entry.gross);
             if (alreadyCommitted[i]) {
                 // An owner can reserve or pay an award while this signed allocation is in transit.
-                // Count the exact same obligation once; a changed award must still fail closed.
+                // Count the exact same obligation once; a changed award must still fail closed. An
+                // award reserved before fees rounded up holds floor(gross / 50) and is still the same award.
                 if (
                     existing.actorId != entry.actorId || existing.gross != entry.gross
-                        || existing.sourceDigest != entry.sourceDigest || existing.fee != fee
+                        || existing.sourceDigest != entry.sourceDigest
+                        || (existing.fee != fee && existing.fee != entry.gross / 50)
                 ) revert DuplicateAward();
             } else {
                 commit(id, entry.actorId, entry.gross, entry.sourceDigest, fee);
@@ -520,8 +553,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         emit Paid(id, award.actorId, destination, version, award.gross, net, award.fee);
     }
 
-    /// @notice Refunds free funds to the owner less withdrawalFee(gross), 2% rounded down. A
-    /// withdrawal under 50 base units pays no fee; splitting saves under one base unit per transaction.
+    /// @notice Refunds free funds to the owner less withdrawalFee(gross), 2% rounded up, so splitting a
+    /// withdrawal never lowers the fee.
     function withdrawUnused(uint128 gross) external onlyOwner nonReentrant {
         if (gross == 0) revert InvalidInput();
         if (gross > freeBalance) revert InsufficientFreeBalance();
@@ -694,18 +727,41 @@ contract EscrowFactory is Initializable, UUPSUpgradeable {
         return keccak256(abi.encode(owner, projectId, token, purpose));
     }
 
-    /// @notice Permissionless: creates the caller's own vault for a project, token and purpose.
+    /// @notice Compatibility entry point: monthly commitments stay off until the owner configures them.
     function create(bytes32 projectId, IERC20 token, Purpose purpose) external returns (address vault) {
-        bytes32 key = vaultKey(msg.sender, projectId, token, purpose);
-        if (vaults[key] != address(0)) revert DuplicateVault();
-        vault = address(
-            new ERC1967Proxy{salt: key}(
-                vaultImplementation,
-                abi.encodeCall(
-                    ProjectEscrow.initialize, (projectId, token, msg.sender, purpose, feeRecipient, bindingDelay)
-                )
+        return _create(
+            projectId,
+            token,
+            purpose,
+            abi.encodeCall(
+                ProjectEscrow.initialize, (projectId, token, msg.sender, purpose, feeRecipient, bindingDelay)
             )
         );
+    }
+
+    /// @notice Creates the caller's ordinary vault and sets its monthly policy in the same transaction.
+    function createWithMonthlyCommitment(bytes32 projectId, IERC20 token, uint128 cap, bool enabled)
+        external
+        returns (address vault)
+    {
+        return _create(
+            projectId,
+            token,
+            Purpose.Ordinary,
+            abi.encodeCall(
+                ProjectEscrow.initializeWithMonthlyCommitment,
+                (projectId, token, msg.sender, Purpose.Ordinary, feeRecipient, bindingDelay, cap, enabled)
+            )
+        );
+    }
+
+    function _create(bytes32 projectId, IERC20 token, Purpose purpose, bytes memory initialization)
+        private
+        returns (address vault)
+    {
+        bytes32 key = vaultKey(msg.sender, projectId, token, purpose);
+        if (vaults[key] != address(0)) revert DuplicateVault();
+        vault = address(new ERC1967Proxy{salt: key}(vaultImplementation, initialization));
         ProjectEscrow created = ProjectEscrow(vault);
         vaults[key] = vault;
         emit VaultCreated(projectId, address(token), vault, msg.sender, purpose, created.decimals());

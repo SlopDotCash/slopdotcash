@@ -14,6 +14,7 @@ import {
   type Page,
   test,
 } from "@playwright/test";
+import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
 import {
   E2E_SECURITY_ACCOUNTS,
   fixtureRepository,
@@ -183,16 +184,10 @@ function bountyTerms(
   };
 }
 
-/** Creates a paused project through the owner self-service API. */
-async function listProject(
-  request: APIRequestContext,
-  applicantToken: string,
-  repository: string,
-  id: string,
-  overrides: Record<string, unknown>,
-) {
+/** The steward and authority claim for a fixture repository's owner. */
+function ownership(repository: string) {
   const facts = fixtureRepository(repository);
-  const manifest = applicationManifest(id, repository, {
+  return {
     steward: {
       displayName: "Bounty maintainers",
       kind: facts.owner.type === "User" ? "individual" : "organization",
@@ -213,18 +208,52 @@ async function listProject(
       repositoryNodeId: facts.node_id,
       proof: null,
     },
-    ...overrides,
-  });
-  // Creation reads the account's access through the Slopbot installation.
+  };
+}
+
+async function installSlopbot(repository: string) {
   const installed = await fetch(
     `${GITHUB_FIXTURE}/__fixture/slopbot/${repository}/installed`,
     { method: "PUT" },
   );
   expect(installed.status).toBe(204);
+}
+
+/** Creates a paused project through the owner self-service API. */
+async function listProject(
+  request: APIRequestContext,
+  applicantToken: string,
+  repository: string,
+  id: string,
+  overrides: Record<string, unknown>,
+) {
+  const manifest = applicationManifest(id, repository, {
+    ...ownership(repository),
+    ...overrides,
+  });
+  // Creation reads the account's access through the Slopbot installation.
+  await installSlopbot(repository);
+  const program = manifest.securityBounty as SecurityBountyTerms | undefined;
   const applied = await api(request, "POST", "projects", applicantToken, {
-    manifest,
+    manifest: program?.settlement
+      ? {
+          ...manifest,
+          securityBounty: {
+            ...program,
+            settlement: { ...program.settlement, deployments: [] },
+          },
+        }
+      : manifest,
   });
   expect(applied.status, JSON.stringify(applied.body)).toBe(201);
+  if (program?.settlement) {
+    // Fixture trust root only. An owner cannot self-attest a deployed vault.
+    const registered = await revise(request, id, (current) => ({
+      ...current,
+      securityBounty: program,
+    }));
+    expect(registered.status, JSON.stringify(registered.body)).toBe(200);
+  }
 }
 
 async function adminProject(request: APIRequestContext, id: string) {
@@ -440,6 +469,196 @@ async function setIntake(
   expect(response.status()).toBe(204);
 }
 
+/**
+ * An outsider who tries to open the program, with the stored manifest and
+ * with its own Slopbot-installed repository in every repository field, gets
+ * only the authority refusal. The answer never depends on the vault's funds.
+ */
+async function expectOutsiderRefused(
+  request: APIRequestContext,
+  id: string,
+  repository: string,
+) {
+  const own = `e2e-reporter-a/${id}-claim`;
+  await installSlopbot(own);
+  const claimed = applicationManifest(id, own, ownership(own));
+  for (const claim of [false, true]) {
+    const stored = await adminProject(request, id);
+    const program = {
+      ...(stored.manifest.securityBounty as object),
+      status: "open",
+    };
+    const outsider = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS["reporter-a"],
+      {
+        expectedRevision: stored.revision,
+        manifest: claim
+          ? {
+              ...stored.manifest,
+              repositories: claimed.repositories,
+              steward: claimed.steward,
+              authority: claimed.authority,
+              securityBounty: JSON.parse(
+                JSON.stringify(program).replaceAll(
+                  `"${repository}"`,
+                  `"${own}"`,
+                ),
+              ),
+            }
+          : { ...stored.manifest, securityBounty: program },
+      },
+    );
+    expect(outsider.status, JSON.stringify(outsider.body)).toBe(403);
+    expect(outsider.body.error).toBe("authority_required");
+  }
+}
+
+test("owners publish and control bounty programs with verified funding @registry", async ({
+  browser,
+  request,
+}) => {
+  test.setTimeout(180_000);
+  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const id = `owner-bounty-${suffix}`;
+  const repository = `e2e-security/${id}`;
+  await listProject(request, TOKENS.security, repository, id, {});
+  const context = await browser.newContext({
+    viewport: test.info().project.use.viewport,
+    recordVideo: { dir: test.info().outputPath("owner-bounty-video") },
+  });
+  const page = await context.newPage();
+  const errors = observe(page);
+  try {
+    await signIn(page, TOKENS.security);
+    await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Set bounty terms" }).click();
+    await page.getByLabel("Published gross award (USDC)").fill("100");
+    await page.getByLabel(`Source commit (${repository})`).fill("a".repeat(40));
+    const values = {
+      "Covered assets": "Vault deposits",
+      "Test rules": "Test on local forks only.",
+      "Severity guide": "Assess impact on covered funds.",
+      "Loss of funds": "Unauthorized loss of covered funds.",
+      "When funds run out": "New awards wait for available funds.",
+      Disputes: "Ask Slop for a private review.",
+      Disclosure: "Contact the maintainer before disclosure.",
+      "Researcher protection":
+        "Good-faith testing within these rules is authorized.",
+    };
+    for (const [label, value] of Object.entries(values))
+      await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByRole("button", { name: "Publish bounty terms" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Published revision" }),
+    ).toBeVisible();
+    let stored = await adminProject(request, id);
+    expect((stored.manifest.securityBounty as { status: string }).status).toBe(
+      "paused",
+    );
+    // Program settings cannot self-attest funds or register a contract.
+    const unsupported = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS.security,
+      {
+        expectedRevision: stored.revision,
+        manifest: {
+          ...stored.manifest,
+          securityBounty: {
+            ...(stored.manifest.securityBounty as object),
+            status: "open",
+          },
+        },
+      },
+    );
+    expect(unsupported.status).toBe(422);
+    expect(unsupported.body.error).toBe("security_funding_unavailable");
+    // An account without repository access gets the authority refusal,
+    // never the funding answer, even when it sends its own repository.
+    await expectOutsiderRefused(request, id, repository);
+    // Approvers get private-case roles, so owners cannot change them.
+    const contacts = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS.security,
+      {
+        expectedRevision: stored.revision,
+        manifest: {
+          ...stored.manifest,
+          securityBounty: {
+            ...(stored.manifest.securityBounty as object),
+            approvers: {
+              technical: [account("reporter-a")],
+              financial: [account("reporter-a")],
+              dispute: [account("reporter-a")],
+            },
+          },
+        },
+      },
+    );
+    expect(contacts.status).toBe(422);
+    expect(contacts.body.error).toBe("security_contacts_restricted");
+    const reviewed = bountyTerms(repository).settlement;
+    expect(
+      (
+        await revise(request, id, (manifest) => ({
+          ...manifest,
+          securityBounty: {
+            ...(manifest.securityBounty as object),
+            settlement: reviewed,
+          },
+        }))
+      ).status,
+    ).toBe(200);
+    await vaultSnapshot(id, bountyDeployment(repository), "200000000");
+    // The refusal is the same when the vault has available funds.
+    await expectOutsiderRefused(request, id, repository);
+    await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Edit bounty settings" }).click();
+    await page.getByLabel("Status", { exact: true }).selectOption("open");
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("owner-bounty-settings.png"),
+      fullPage: true,
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await page.getByRole("button", { name: "Publish bounty terms" }).click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Published revision" }),
+    ).toBeVisible();
+    stored = await adminProject(request, id);
+    expect(stored.manifest.securityBounty).toMatchObject({
+      status: "open",
+      funding: { state: "verified-available" },
+      split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+    });
+    await page.getByRole("button", { name: "Edit bounty settings" }).click();
+    await page.getByLabel("Status", { exact: true }).selectOption("closed");
+    await page.getByRole("button", { name: "Publish bounty terms" }).click();
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: `Published revision ${stored.revision + 1}.` }),
+    ).toBeVisible();
+    expect(
+      (await adminProject(request, id)).manifest.securityBounty,
+    ).toMatchObject({ status: "closed" });
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
 test("private security bounty programs keep cases restricted from intake to award @registry", async ({
   browser,
   request,
@@ -542,7 +761,7 @@ test("private security bounty programs keep cases restricted from intake to awar
       (revisions.body.revisions as { projectId: string }[]).filter(
         (entry) => entry.projectId === a.id,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 
   const opened = await adminProject(request, a.id);
@@ -552,6 +771,11 @@ test("private security bounty programs keep cases restricted from intake to awar
   ).toISOString();
   const afterOpen = new Date(Date.parse(opened.updatedAt) + 1).toISOString();
   await expect.poll(() => Date.now() > Date.parse(afterOpen) + 5).toBe(true);
+
+  // Opening a program now fetches and caches readiness automatically. Set the
+  // disabled fixture before any page visit so the later handoff assertion
+  // does not race a previously cached enabled response.
+  await setIntake(request, b.repository, "disabled");
 
   await test.step("public terms and amounts", async () => {
     const context = await browser.newContext({
@@ -770,6 +994,51 @@ test("private security bounty programs keep cases restricted from intake to awar
     ] as const) {
       const reply = await read(role, id);
       expect(reply.status, `${role} reading ${id}`).toBe(404);
+    }
+    // A write collaborator cannot name an outside approver, nor remove the
+    // recorded ones: approvers read every private case of the program.
+    const permission = (level: string) =>
+      fetch(
+        `${GITHUB_FIXTURE}/__fixture/slopbot/${a.repository}/permission/e2e-reporter-b/${level}`,
+        { method: "PUT" },
+      );
+    expect((await permission("write")).status).toBe(204);
+    try {
+      const current = await adminProject(request, a.id);
+      const program = current.manifest.securityBounty as SecurityBountyTerms;
+      for (const approvers of [
+        {
+          ...program.approvers,
+          technical: [...program.approvers.technical, account("reporter-b")],
+        },
+        {
+          technical: [account("reporter-b")],
+          financial: [account("reporter-b")],
+          dispute: [account("reporter-b")],
+        },
+      ]) {
+        const reply = await api(
+          request,
+          "PUT",
+          `projects/${a.id}`,
+          TOKENS["reporter-b"],
+          {
+            expectedRevision: current.revision,
+            manifest: {
+              ...current.manifest,
+              securityBounty: { ...program, approvers },
+            },
+          },
+        );
+        expect(reply.status, JSON.stringify(reply.body)).toBe(422);
+        expect(reply.body.error).toBe("security_contacts_restricted");
+      }
+      expect((await adminProject(request, a.id)).revision).toBe(
+        current.revision,
+      );
+      expect((await read("reporter-b", caseA)).status).toBe(404);
+    } finally {
+      expect((await permission("none")).status).toBe(204);
     }
     const adminList = await api(request, "GET", "security-cases", ADMIN_TOKEN);
     expect(
@@ -2073,6 +2342,10 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     id: `bounty-intake-${suffix}`,
     repository: `e2e-security/bounty-intake-${suffix}`,
   };
+  const otherProgram = {
+    id: `bounty-intake-other-${suffix}`,
+    repository: `e2e-security/bounty-intake-other-${suffix}`,
+  };
   const sentinel = `E2E-PRIVATE-SENTINEL-${suffix}`;
   const report = {
     summary: `Vault withdraw skips the owner check ${sentinel}`,
@@ -2151,50 +2424,54 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       ).json()) as { count: number }
     ).count;
 
-  await test.step("program setup with the intake app installed", async () => {
-    await listProject(
-      request,
-      TOKENS.security,
-      program.repository,
-      program.id,
-      {
-        reward: {
-          ...(applicationManifest(program.id, program.repository)
-            .reward as object),
-          monthlyCapMinor: "0",
-          monthlyCapDisplay: "$0",
+  for (const currentProgram of [program, otherProgram]) {
+    await test.step("program setup with the intake app installed", async () => {
+      await listProject(
+        request,
+        TOKENS.security,
+        currentProgram.repository,
+        currentProgram.id,
+        {
+          reward: {
+            ...(applicationManifest(
+              currentProgram.id,
+              currentProgram.repository,
+            ).reward as object),
+            monthlyCapMinor: "0",
+            monthlyCapDisplay: "$0",
+          },
+          securityBounty: bountyTerms(currentProgram.repository),
         },
-        securityBounty: bountyTerms(program.repository),
-      },
-    );
-    const opened = await revise(request, program.id, (m) => ({
-      ...m,
-      securityBounty: openTerms(m.securityBounty as Record<string, unknown>),
-    }));
-    expect(opened.status).toBe(200);
-    // The bounty vault holds one published award of finalized free funds.
-    await vaultSnapshot(
-      program.id,
-      bountyDeployment(program.repository),
-      "10000000000",
-    );
-    await setIntake(request, program.repository, "enabled");
-    const installed = await request.fetch(
-      `${GITHUB_FIXTURE}/__fixture/intake-app/${program.repository}/installed`,
-      { method: "PUT" },
-    );
-    expect(installed.status()).toBe(204);
-    const readiness = await api(
-      request,
-      "GET",
-      `security-programs/${program.id}/intake?installed=1`,
-      null,
-    );
-    expect(readiness.body).toMatchObject({
-      state: "ready",
-      automatic: "ready",
+      );
+      const opened = await revise(request, currentProgram.id, (m) => ({
+        ...m,
+        securityBounty: openTerms(m.securityBounty as Record<string, unknown>),
+      }));
+      expect(opened.status).toBe(200);
+      // The bounty vault holds one published award of finalized free funds.
+      await vaultSnapshot(
+        currentProgram.id,
+        bountyDeployment(currentProgram.repository),
+        "10000000000",
+      );
+      await setIntake(request, currentProgram.repository, "enabled");
+      const installed = await request.fetch(
+        `${GITHUB_FIXTURE}/__fixture/intake-app/${currentProgram.repository}/installed`,
+        { method: "PUT" },
+      );
+      expect(installed.status()).toBe(204);
+      const readiness = await api(
+        request,
+        "GET",
+        `security-programs/${currentProgram.id}/intake?installed=1`,
+        null,
+      );
+      expect(readiness.body).toMatchObject({
+        state: "ready",
+        automatic: "ready",
+      });
     });
-  });
+  }
 
   await test.step("the program page offers the private form with consent", async () => {
     const context = await browser.newContext({
@@ -2238,6 +2515,15 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       page.getByRole("link", { name: /Or report directly on GitHub/u }),
     ).toBeVisible();
     await expect(summary).toHaveValue("Draft survives readiness expiry");
+    await page.evaluate((path) => {
+      history.pushState({}, "", path);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }, `/projects/${otherProgram.id}/security`);
+    await expect(
+      page.getByRole("link", { name: /Or report directly on GitHub/u }),
+    ).toHaveAttribute("href", new RegExp(otherProgram.id));
+    await expect(summary).toHaveValue("");
+    await expect(description).toHaveValue("");
     expect(errors).toEqual([]);
     await context.close();
   });

@@ -225,7 +225,7 @@ export function ProjectSetupStatusPanel({
             <div className="setup-check setup-check--funding">
               <dt>
                 <Wallet size={20} aria-hidden="true" />
-                Funding <small>Optional</small>
+                Contribution funding <small>Optional</small>
               </dt>
               <dd>
                 {setup.funding.mode === "none" ? (
@@ -274,6 +274,9 @@ export function ProjectSetupStatusPanel({
                         }
                       />
                     </span>
+                    <Link href={`/projects/${setup.slug}/funding`}>
+                      View vault funds and automatic payment
+                    </Link>
                   </>
                 )}
               </dd>

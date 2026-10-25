@@ -52,8 +52,10 @@ import {
   type RewardAssetNetwork,
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
+import { OwnerBountyVault } from "./OwnerBountyVault";
 import { loginHref } from "./Points";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
+import { SecurityProgramEditor } from "./SecurityProgramEditor";
 
 const SETTLEMENT_CHAIN_NAMES: Record<string, string> = Object.fromEntries(
   Object.entries(REWARD_ASSET_NETWORKS).map(([id, network]) => [
@@ -1966,7 +1968,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   const [reload, setReload] = useState(0);
   const [submission, setSubmission] = useState<
     | { state: "idle" | "publishing" }
-    | { state: "error"; message: string }
+    | { state: "error"; message: string; staleRevision: boolean }
     | { state: "published"; result: RevisionResult }
   >({ state: "idle" });
   useEffect(() => {
@@ -2279,6 +2281,8 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     } catch (error) {
       setSubmission({
         state: "error",
+        staleRevision:
+          error instanceof ProjectApiError && error.code === "stale_revision",
         message:
           error instanceof Error
             ? error.message
@@ -2529,13 +2533,15 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           {submission.state === "error" ? (
             <p className="form-error" role="alert">
               {submission.message}{" "}
-              <button
-                className="text-button"
-                onClick={() => setReload((count) => count + 1)}
-                type="button"
-              >
-                Load the current revision
-              </button>
+              {submission.staleRevision && (
+                <button
+                  className="text-button"
+                  onClick={() => setReload((count) => count + 1)}
+                  type="button"
+                >
+                  Load the current revision
+                </button>
+              )}
             </p>
           ) : submission.state === "published" ? (
             <p role="status">
@@ -2549,6 +2555,30 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           </p>
         </div>
       </form>
+      {base && session.status === "signed-in" && (
+        <>
+          <SecurityProgramEditor
+            key={`${current.id}:${base.revision}`}
+            project={current}
+            revision={base.revision}
+            actor={session.session}
+            onPublished={(result) => {
+              setBase({
+                project: result.project.manifest,
+                revision: result.project.revision,
+              });
+              setSubmission({ state: "published", result });
+            }}
+          />
+          {current.securityBounty ? (
+            <OwnerBountyVault
+              key={current.id}
+              project={current}
+              onRegistered={setBase}
+            />
+          ) : null}
+        </>
+      )}
       {monthly ? (
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>
@@ -2557,7 +2587,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
               ? "Payouts are enabled. Review allocations in Manage payouts."
               : "Payouts are disabled. Funding alone does not enable them."}{" "}
             <Link href={`/projects/${project.slug}/funding`}>
-              Funding setup
+              View vault funds and automatic payment
             </Link>
           </p>
         </section>

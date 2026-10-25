@@ -9,6 +9,7 @@ import {
   verifyVaultFundingAction,
 } from "../../contracts/evm/adapter";
 import { ESCROW_NETWORKS, type EscrowDeployment } from "./escrow-policy.mjs";
+import { ordinaryFee, type PayoutPolicy } from "./payments/contracts";
 import { parseVaultAmount } from "./payments/vault-amount";
 import type { PayoutWallet } from "./use-payout-wallets";
 
@@ -28,6 +29,7 @@ const word = (value: unknown): bigint => {
 export function walletVaultConfig(
   deployment: EscrowDeployment,
   wallet: VaultConnection,
+  payoutPolicy: PayoutPolicy = "ordinary",
 ): EvmEscrowConfig {
   const network = ESCROW_NETWORKS[deployment.network];
   if (
@@ -41,6 +43,7 @@ export function walletVaultConfig(
     throw new Error("This wallet cannot use the selected vault.");
   return {
     ...deployment,
+    payoutPolicy,
     factory: deployment.factory,
     factoryCodeSha256: deployment.factoryCodeSha256,
     registrar: deployment.registrar,
@@ -77,8 +80,9 @@ export async function reviewVaultAction(
   wallet: VaultConnection,
   operation: VaultOperation,
   amount: string,
+  payoutPolicy: PayoutPolicy = "ordinary",
 ) {
-  const config = walletVaultConfig(deployment, wallet);
+  const config = walletVaultConfig(deployment, wallet, payoutPolicy);
   await assertVaultWalletAccount(wallet, config);
   await verifyEvmDeployment(config);
   const totals = await readVaultTotals({
@@ -125,7 +129,7 @@ export async function reviewVaultAction(
       ),
     );
   }
-  const fee = operation === "withdraw" ? gross / 50n : 0n;
+  const fee = operation === "withdraw" ? ordinaryFee(gross) : 0n;
   return {
     gross: gross.toString(),
     fee: fee.toString(),
@@ -147,8 +151,15 @@ export async function sendVaultAction(
   amount: string,
   step: "approve" | "reset" | "send",
   beforeSend: () => void,
+  payoutPolicy: PayoutPolicy = "ordinary",
 ) {
-  const review = await reviewVaultAction(deployment, wallet, operation, amount);
+  const review = await reviewVaultAction(
+    deployment,
+    wallet,
+    operation,
+    amount,
+    payoutPolicy,
+  );
   const request = wallet.evmRequest;
   if (!request) throw new Error("Choose an EVM wallet.");
   if (step === "send" && review.approvalNeeded)
@@ -175,7 +186,10 @@ export async function sendVaultAction(
     value: "0x0",
   };
   await request("eth_estimateGas", [transaction]);
-  await assertVaultWalletAccount(wallet, walletVaultConfig(deployment, wallet));
+  await assertVaultWalletAccount(
+    wallet,
+    walletVaultConfig(deployment, wallet, payoutPolicy),
+  );
   beforeSend();
   const hash = await request("eth_sendTransaction", [transaction]);
   if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash))
@@ -193,8 +207,9 @@ export async function checkVaultAction(
   gross: string,
   transactionId: string,
   step: "approve" | "reset" | "send",
+  payoutPolicy: PayoutPolicy = "ordinary",
 ) {
-  const config = walletVaultConfig(deployment, wallet);
+  const config = walletVaultConfig(deployment, wallet, payoutPolicy);
   const expectedInput =
     step === "send"
       ? (operation === "deposit"

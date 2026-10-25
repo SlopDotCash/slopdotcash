@@ -71,10 +71,10 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
             githubUserId: row.githubUserId,
             login: row.login,
             grossBase: row.grossBase,
-            feeBase: (BigInt(row.grossBase) / 50n).toString(),
+            feeBase: ((BigInt(row.grossBase) + 49n) / 50n).toString(),
             netBase: (
               BigInt(row.grossBase) -
-              BigInt(row.grossBase) / 50n
+              (BigInt(row.grossBase) + 49n) / 50n
             ).toString(),
             state: "underfunded",
           })),

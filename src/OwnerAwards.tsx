@@ -41,6 +41,7 @@ const STATE_TEXT: Record<
   "awaiting-reservation": "Approved and funded: ready for your reservation",
   reserved: "Reserved in the vault; payment not yet verified",
   paid: "Paid",
+  conflict: "Conflict: a different award is reserved under this award's source",
 };
 
 export default function OwnerAwards({

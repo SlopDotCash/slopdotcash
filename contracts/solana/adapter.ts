@@ -2,7 +2,10 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { PaymentChainAdapter } from "../../backend/payments/ledger";
 import { decodeBase58Bytes } from "../../src/lib/base58";
-import { type PayoutPolicy, payoutFee } from "../../src/lib/payments/contracts";
+import {
+  acceptsPayoutFee,
+  type PayoutPolicy,
+} from "../../src/lib/payments/contracts";
 import type { VaultTotals } from "../vault-totals";
 
 export interface SolanaEscrowConfig {
@@ -28,6 +31,8 @@ export interface SolanaEscrowConfig {
   rotationAuthority: string;
   codeSha256: string;
   upgradeAuthority: string | null;
+  /** Receipt slot whose executed program must still be verifiable. */
+  executedAtSlot?: number;
   /** Reviewed delay, in seconds, before a wallet binding can pay in this project. */
   bindingDelaySeconds: string;
   /** Reviewed notice period, in seconds, before a proposed identity authority takes effect. */
@@ -221,11 +226,17 @@ export async function solanaMintDecimals(
 /** Bind the reviewed deployment to finalized executable bytes and all project authorities. */
 export async function verifySolanaDeployment(
   config: SolanaEscrowConfig,
+  expectedProjectDigest?: string,
 ): Promise<Uint8Array> {
   if (!/^[0-9a-f]{64}$/.test(config.codeSha256))
     throw new Error("Missing reviewed program digest");
   if ((await rpc(config, "getGenesisHash", [])) !== config.genesisHash)
     throw new Error("Wrong Solana cluster");
+  if (
+    config.executedAtSlot !== undefined &&
+    (!Number.isSafeInteger(config.executedAtSlot) || config.executedAtSlot < 0)
+  )
+    throw new Error("Invalid receipt slot");
   // The owner explicitly retains upgrade control. Verify the configured authority
   // below together with the exact finalized program bytes.
   for (const delay of [config.bindingDelaySeconds, config.rotationDelaySeconds])
@@ -276,6 +287,14 @@ export async function verifySolanaDeployment(
     const authority = content[12] === 1 ? pubkey(content, 13) : null;
     if (authority !== config.upgradeAuthority)
       throw new Error("Upgrade authority mismatch");
+    if (
+      config.executedAtSlot !== undefined &&
+      new DataView(content.buffer, content.byteOffset).getBigUint64(4, true) >=
+        BigInt(config.executedAtSlot)
+    )
+      throw new Error(
+        "Program version was not effective before the receipt slot",
+      );
     code = content.slice(45);
   } else if (
     program.owner !== "BPFLoader2111111111111111111111111111111111" ||
@@ -296,6 +315,19 @@ export async function verifySolanaDeployment(
     PROJECT_SIZE,
     PROJECT_DISCRIMINATOR,
   );
+  if (
+    expectedProjectDigest !== undefined &&
+    (hex(project.slice(40, 72)) !== hex(digest(expectedProjectDigest)) ||
+      config.projectPda !==
+        programAddress(config.programId, [
+          encoder.encode("project"),
+          publicKeyBytes(config.owner),
+          digest(expectedProjectDigest),
+          Uint8Array.of(solanaProjectPurpose(config.payoutPolicy)),
+        ]) ||
+      config.vault !== solanaVaultAddress(config.programId, config.projectPda))
+  )
+    throw new Error("The vault belongs to a different registry project.");
   // L-3: the program pins the identity authority and fee recipient of every new project
   // in its singleton Config. A project whose fee recipient differs (for example one
   // created before the Config existed) is refused, and so is a deployment without a Config.
@@ -525,6 +557,9 @@ export interface EscrowInvocation {
   kind: "reserved" | "paid";
   accounts: string[];
   data: Uint8Array;
+  /** For a commit: the award ID argument, hex. `commit_monthly_award` puts its u32
+   * period first, so its ID sits 4 bytes later than in `commit` and `commit_bounty`. */
+  awardId?: string;
   /** Direct child instructions of this invocation, in order. */
   children: Obj[];
 }
@@ -571,11 +606,15 @@ export function escrowInvocations(
         break;
       if (candidate.height === entry.height + 1) children.push(candidate.ix);
     }
+    const awardAt = tag === COMMIT_MONTHLY_AWARD ? 12 : 8;
     found.push({
       index,
       kind: tag === PAY ? "paid" : "reserved",
       accounts: list(entry.ix.accounts).map(string),
       data,
+      ...(tag === PAY
+        ? {}
+        : { awardId: hex(data.slice(awardAt, awardAt + 32)) }),
       children,
     });
   });
@@ -587,6 +626,12 @@ export function solanaPaymentAdapter(
   config: SolanaEscrowConfig,
 ): PaymentChainAdapter {
   return {
+    // Lets the ledger skip re-verifying evidence it already stored.
+    deployment: {
+      projectId: config.projectId,
+      network: config.network,
+      vault: config.vault,
+    },
     async verifyFinalized(input) {
       if (!Number.isSafeInteger(input.eventIndex) || input.eventIndex < 0)
         throw new Error("Invalid instruction index");
@@ -661,7 +706,7 @@ export function solanaPaymentAdapter(
         gross === 0n ||
         actor === 0n ||
         gross !== net + fee ||
-        fee !== payoutFee(gross, config.payoutPolicy) ||
+        !acceptsPayoutFee(gross, fee, config.payoutPolicy) ||
         solanaAwardId(config.projectPda, source) !== hex(award)
       )
         throw new Error("Invalid award accounting");
@@ -718,8 +763,10 @@ export function solanaPaymentAdapter(
           accounts[4] !== config.vault
         )
           throw new Error("Payment differs from award");
-        // The fee accrues in the vault; only the net moves to the destination.
-        const expected = [{ to: accounts[5], amount: net }];
+        // The fee accrues in the vault; only the net moves to the destination. A
+        // 1-unit award has a 1-unit fee and a net of 0, and the program then makes
+        // no transfer at all.
+        const expected = net > 0n ? [{ to: accounts[5], amount: net }] : [];
         if (children.length !== expected.length)
           throw new Error("Unexpected payout instructions");
         // Any classic SPL mint is accepted, so the transfer decimals must equal the mint's.

@@ -19,12 +19,17 @@ import {
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
 import { runMonthlyCoordinator, syncRegistryVaults } from "../payments/index";
 import {
+  assertEvmMonthlySources,
+  type BindingRunReport,
+  bindingCandidates,
   createEvmAttester,
   createEvmExecutor,
   type JournalStore,
   lookupAttempt,
+  pendingStoredBindings,
   preflightEvmDeployment,
   retireUnsignedAttempt,
+  runStoredBindings,
   type Signer,
   submitEvmMonthly,
 } from "./core";
@@ -75,7 +80,6 @@ interface Environment {
 interface State {
   storage: JournalStore;
 }
-
 /** One instance per signer role serializes nonce allocation and preserves signed bytes before broadcast. */
 export class PaymentSignerJournal {
   constructor(
@@ -97,10 +101,75 @@ export class PaymentSignerJournal {
         "/v1/complete-bind",
         "/v1/attempt-status",
         "/v1/cancel-unsubmitted",
+        "/v1/bind-destinations",
       ].includes(pathname)
     )
       return new Response("Not found", { status: 404 });
     try {
+      if (pathname === "/v1/bind-destinations") {
+        // The production EVM attester's own binding run (PRD PAY-05). It
+        // takes no input: the candidates come from D1 and the pinned
+        // deployments only, and every candidate passes the hosted
+        // attester's checks again.
+        const stack = signerStack(this.env.SIGNER_STACK);
+        if (
+          stack !== "production" ||
+          this.env.SIGNER_ROLE !== "attester" ||
+          this.env.CHAIN_FAMILY !== "evm" ||
+          this.env.PAYMENT_SCOPE === "security-bounty"
+        )
+          return new Response("Not found", { status: 404 });
+        // The stack, network and preflight checks of every pinned vault pass
+        // on every run, before D1 is read and before the secret is read, as
+        // on every other signing route.
+        const pinned = JSON.parse(this.env.PAYMENT_DEPLOYMENTS) as {
+          network: string;
+          vault: string;
+        }[];
+        if (
+          !pinned.length ||
+          pinned.some((target) => !stackServesNetwork(stack, target.network))
+        )
+          throw new Error("Signer stack does not serve this network");
+        for (const target of pinned)
+          await preflightEvmDeployment(this.env, target);
+        const environment = {
+          PAYMENTS_DB: database,
+          PAYMENT_DEPLOYMENTS: this.env.PAYMENT_DEPLOYMENTS,
+          PAYMENT_RPC_URLS: this.env.PAYMENT_RPC_URLS,
+          JOURNAL: this.state.storage,
+        };
+        const candidates = await bindingCandidates(environment);
+        if (
+          !candidates.length &&
+          !(await pendingStoredBindings(this.state.storage)).length
+        ) {
+          const idle: BindingRunReport = {
+            candidates: 0,
+            current: 0,
+            waiting: 0,
+            failed: 0,
+            submitted: [],
+          };
+          return Response.json(idle);
+        }
+        const key = this.env[SIGNER_STACKS[stack].evmSecret];
+        if (!key) throw new Error("Signer unavailable");
+        const account = privateKeyToAccount(key);
+        const signer: Signer = {
+          address: account.address,
+          signTransaction: (transaction) =>
+            account.signTransaction(transaction),
+        };
+        // One contributor's held or rejected binding never stops the others;
+        // the failure count makes the scheduled run fail.
+        return Response.json(
+          await runStoredBindings(
+            { ...environment, SIGNER: signer },
+            candidates,
+          ),
+        );
+      }
       if (pathname === "/v1/commit-monthly") {
         // Hosted relayers are test-only. Production submission belongs to a
         // project-operated or permissionless executor, never this attester.
@@ -239,7 +308,10 @@ export class PaymentSignerJournal {
                 vault: plan.deployment.vault,
               };
               if (plan.family === "evm")
-                await preflightEvmDeployment(this.env, target);
+                await assertEvmMonthlySources(
+                  await preflightEvmDeployment(this.env, target),
+                  plan.entries,
+                );
               else await preflightSolanaDeployment(this.env, target);
             },
             freeze: async (plan) =>
@@ -292,6 +364,11 @@ export class PaymentSignerJournal {
       // PRD PAY-04: Slop holds no relayer key and runs no payment dispatch on
       // a mainnet. A production stack is the PAY-05 identity attester only.
       if (stack === "production" && this.env.SIGNER_ROLE !== "attester")
+        return new Response("Not found", { status: 404 });
+      // A production EVM attester binds only through its scheduled run
+      // (/v1/bind-destinations), so one journal key per binding version is
+      // the only path that can sign a binding.
+      if (stack === "production" && this.env.CHAIN_FAMILY === "evm")
         return new Response("Not found", { status: 404 });
       if (["/v1/attempt-status", "/v1/cancel-unsubmitted"].includes(pathname)) {
         if (this.env.SIGNER_ROLE !== "relayer")
@@ -483,10 +560,53 @@ export async function runMonthlyAttester(env: Environment) {
   return report;
 }
 
+/**
+ * The production EVM attester binds the stored, wallet-signed destinations
+ * of reserved awards (PRD PAY-05). A mainnet has no Slop relayer to request
+ * a binding (PAY-04). The payout itself stays permissionless: the project
+ * owner or anyone else calls the vault's `pay`. Every other stack has no
+ * scheduled binding; a test relayer requests its bindings itself.
+ */
+export async function runDestinationBindings(env: Environment) {
+  if (
+    signerStack(env.SIGNER_STACK) !== "production" ||
+    env.SIGNER_ROLE !== "attester" ||
+    env.CHAIN_FAMILY !== "evm" ||
+    env.PAYMENT_SCOPE === "security-bounty"
+  )
+    return null;
+  const response = await env.JOURNAL.get(
+    env.JOURNAL.idFromName(SIGNER_STACKS.production.journal),
+  ).fetch(
+    new Request("https://attester.internal/v1/bind-destinations", {
+      method: "POST",
+    }),
+  );
+  if (!response.ok) throw new Error("Destination binding run rejected");
+  const report = (await readBoundedJson(
+    response,
+    65536,
+    "destination bindings",
+  )) as BindingRunReport;
+  if (report.failed !== 0) throw new Error("Destination binding incomplete");
+  return report;
+}
+
 /** Service bindings only. workers_dev and preview URLs must remain disabled in both deployments. */
 export default {
   async scheduled(_event: unknown, env: Environment) {
-    await runMonthlyAttester(env);
+    // The binding run follows the indexing of new awards and runs even when
+    // a monthly step fails; either failure fails the scheduled run.
+    const failures: unknown[] = [];
+    for (const step of [runMonthlyAttester, runDestinationBindings]) {
+      try {
+        await step(env);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length)
+      throw new AggregateError(failures, "Attester scheduled run incomplete");
   },
   async fetch(request: Request, env: Environment) {
     return env.JOURNAL.get(

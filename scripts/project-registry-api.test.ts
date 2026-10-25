@@ -26,6 +26,8 @@ import { vettingScanRequester } from "../backend/projects/setup";
 import type { SkillTemplateIndex } from "../backend/projects/skill-publication";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
+import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
+import { readSecurityProgramFunds } from "../backend/security/program-funds";
 import {
   CloudflareVettingPersistence,
   type VettingPin,
@@ -46,6 +48,7 @@ import {
 } from "../src/lib/project-skill-publication.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";
+import type { SecurityBountyTerms } from "../src/lib/security-bounty.mjs";
 import {
   applicationManifest,
   CONTRIBUTION,
@@ -125,6 +128,12 @@ beforeEach(async () => {
     `00000000-0000-4000-8000-${String(++id).padStart(12, "0")}`;
   deps = {
     persistence,
+    securityProgramFunds: (projectId, program) =>
+      readSecurityProgramFunds(
+        { db: database.db, now: () => deps.now() },
+        projectId,
+        program,
+      ),
     adminGithubIds: new Set([ADMIN.githubId, MODERATOR.githubId]),
     moderatorGithubIds: new Set([ADMIN.githubId, MODERATOR.githubId]),
     now: () => new Date("2026-10-18T12:00:00.000Z"),
@@ -400,6 +409,260 @@ describe("project registry API", () => {
     expect((await persistence.getProject("open-registry"))?.revision).toBe(2);
   });
 
+  test("owners publish bounty terms and open only with current verified vault funds", async () => {
+    access = ADMIN_ACCESS;
+    const program: SecurityBountyTerms = {
+      version: "1",
+      status: "paused",
+      rewardMode: "separate",
+      eligibility: "critical-loss-of-funds",
+      amount: {
+        currency: "USDC",
+        decimals: 6,
+        network: "base",
+        grossMinor: "1000000",
+      },
+      split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+      sponsor: { name: "Example", githubId: APPLICANT.githubId },
+      funding: { state: "pledged" },
+      capacity: {
+        awards: 1,
+        closesAt: null,
+        exhaustionRule: "New awards wait for available funds.",
+      },
+      scope: {
+        sourceRevisions: [
+          { repository: "example/open-registry", commit: "a".repeat(40) },
+        ],
+        deployments: [],
+        includedAssets: ["Vault funds"],
+        excludedDependencies: [],
+        testingPermission: "Test only in local forks.",
+        severityRubric: "Assess the impact on covered funds.",
+        lossDefinition: "Unauthorized loss of covered funds.",
+      },
+      intake: {
+        kind: "github-private-vulnerability-reporting",
+        repository: "example/open-registry",
+      },
+      responseTargets: {
+        acknowledgeHours: 24,
+        triageBusinessDays: 3,
+        updateIntervalDays: 7,
+      },
+      approvers: {
+        technical: [APPLICANT],
+        financial: [APPLICANT],
+        dispute: [APPLICANT],
+      },
+      dispute: {
+        authority: "advisory",
+        process: "Request a private review from Slop.",
+      },
+      disclosure: "The maintainer controls public disclosure.",
+      safeHarbor: "Good-faith testing within these rules is authorized.",
+    };
+    const deployment = {
+      network: "base-sepolia" as const,
+      vault: `0x${"1".repeat(40)}`,
+      asset: "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+      owner: `0x${"2".repeat(40)}`,
+      identityAuthority: `0x${"3".repeat(40)}`,
+      feeRecipient: `0x${"4".repeat(40)}`,
+      factory: `0x${"5".repeat(40)}`,
+      registrar: `0x${"6".repeat(40)}`,
+      factoryCodeSha256: "c".repeat(64),
+      codeSha256: "d".repeat(64),
+      deploymentTransaction: `0x${"e".repeat(64)}`,
+      sourceCommit: "a".repeat(40),
+      bindingDelaySeconds: "3600",
+      rotationDelaySeconds: null,
+      programId: null,
+      projectPda: null,
+      networkDomain: null,
+      upgradeAuthority: null,
+    };
+    const settlement = {
+      schemaVersion: "1" as const,
+      effectiveCycle: "2026-10",
+      chain: "base" as const,
+      feeBasisPoints: 2500 as const,
+      withdrawalFeeBasisPoints: 200 as const,
+      feeMode: "deduct-from-gross" as const,
+      deployments: [deployment],
+    };
+    const untrusted = await create(
+      applicationManifest("open-registry", "example/open-registry", {
+        securityBounty: { ...program, settlement },
+      }),
+    );
+    expect(untrusted.status).toBe(422);
+    expect((await untrusted.json()).message).toContain("unverified vault");
+    await listProject();
+    async function change(next: SecurityBountyTerms | undefined) {
+      const current = await persistence.getProject("open-registry");
+      if (!current) throw new Error("Missing project");
+      const { securityBounty: _old, ...manifest } = current.manifest;
+      return call("PUT", "projects/open-registry", "applicant", {
+        expectedRevision: current.revision,
+        manifest: { ...manifest, ...(next ? { securityBounty: next } : {}) },
+      });
+    }
+    const published = await change(program);
+    expect(published.status).toBe(200);
+    expect(
+      (await published.json()).project.manifest.securityBounty.status,
+    ).toBe("paused");
+    expect(
+      (
+        await change({
+          ...program,
+          status: "open",
+          funding: {
+            state: "verified-available",
+            evidence: "Owner claims funds exist",
+            verifiedAt: deps.now().toISOString(),
+          },
+        })
+      ).status,
+    ).toBe(422);
+    expect((await change({ ...program, settlement })).status).toBe(422);
+    // Exercise owner registration after the chain-verifier boundary. The EVM
+    // browser workflow separately proves this boundary against a real chain.
+    const current = await persistence.getProject("open-registry");
+    if (!current) throw new Error("Missing bounty project");
+    let verificationReads = 0;
+    deps.vaultSetup = {
+      networks: async () => ["base-sepolia"],
+      review: async () => {
+        throw new Error("Not used in this API boundary case");
+      },
+      register: async (reviewed, actor, input, transactionId) => {
+        expect(reviewed.revision).toBe(current.revision);
+        expect(actor.githubId).toBe(APPLICANT.githubId);
+        expect(input.payoutPolicy).toBe("security-bounty");
+        expect(transactionId).toBe(deployment.deploymentTransaction);
+        verificationReads++;
+        return deployment;
+      },
+    };
+    const registration = {
+      step: "register",
+      expectedRevision: current.revision,
+      payoutPolicy: "security-bounty",
+      network: "base-sepolia",
+      claimId: "verified-owner",
+      automatic: false,
+      transactionId: deployment.deploymentTransaction,
+    };
+    expect(
+      (
+        await call("POST", "project-vaults/open-registry", "applicant", {
+          ...registration,
+          automatic: true,
+        })
+      ).status,
+    ).toBe(400);
+    const registered = await call(
+      "POST",
+      "project-vaults/open-registry",
+      "applicant",
+      registration,
+    );
+    expect(registered.status).toBe(200);
+    expect((await registered.json()).project.securityBounty.settlement).toEqual(
+      settlement,
+    );
+    expect(
+      (
+        await call(
+          "POST",
+          "project-vaults/open-registry",
+          "applicant",
+          registration,
+        )
+      ).status,
+    ).toBe(200);
+    expect(verificationReads).toBe(1);
+    const observedAt = deps.now().toISOString();
+    sqlite
+      .prepare(
+        `INSERT INTO security_vault_snapshots(project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,free_balance,reserved_principal,reserved_fees,accrued_fees,reserved,block_number,block_time,observed_at) VALUES('open-registry','base-sepolia','base',?,?,6,'2000000','0','0','0','0','0','2000000',NULL,NULL,NULL,'0','64',?,?)`,
+      )
+      .run(deployment.vault, deployment.asset, observedAt, observedAt);
+    const privatePath = "project-vaults/open-registry?purpose=security-bounty";
+    expect((await call("GET", privatePath)).status).toBe(401);
+    access = { ...ADMIN_ACCESS, permission: "read", roleName: "read" };
+    expect((await call("GET", privatePath, "applicant")).status).toBe(403);
+    access = ADMIN_ACCESS;
+    const privateFunds = await call("GET", privatePath, "applicant");
+    expect(privateFunds.headers.get("cache-control")).toBe("no-store");
+    expect((await privateFunds.json()).funds).toMatchObject({
+      availableMinor: "2000000",
+      freeMinor: "2000000",
+    });
+    expect(
+      await (await call("GET", "projects/open-registry")).text(),
+    ).not.toMatch(/freeMinor|availableMinor/);
+    const opened = await change({ ...program, settlement, status: "open" });
+    expect(opened.status).toBe(200);
+    const openedProgram = (await opened.json()).project.manifest
+      .securityBounty as SecurityBountyTerms;
+    expect(openedProgram.funding).toMatchObject({
+      state: "verified-available",
+      verifiedAt: observedAt,
+    });
+    const openedRevision = await persistence.getProject("open-registry");
+    if (!openedRevision) throw new Error("Missing open revision");
+    const earlierText = sqlite
+      .prepare(
+        "SELECT manifest FROM project_revisions WHERE project_id=? AND revision=?",
+      )
+      .get("open-registry", openedRevision.revision);
+    const changed = await change({
+      ...openedProgram,
+      disclosure: "Contact the maintainer before public disclosure.",
+    });
+    expect(changed.status).toBe(200);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT manifest FROM project_revisions WHERE project_id=? AND revision=?",
+        )
+        .get("open-registry", openedRevision.revision),
+    ).toEqual(earlierText);
+    deps.now = () => new Date("2026-10-18T13:00:00.000Z");
+    expect((await change({ ...openedProgram, status: "paused" })).status).toBe(
+      200,
+    );
+    const stale = await change({ ...openedProgram, status: "open" });
+    expect(stale.status).toBe(422);
+    expect((await stale.json()).error).toBe("security_funding_unavailable");
+    access = { ...ADMIN_ACCESS, permission: "read", roleName: "read" };
+    expect(
+      (await change({ ...program, settlement, status: "closed" })).status,
+    ).toBe(403);
+    access = ADMIN_ACCESS;
+    expect(
+      (await change({ ...program, settlement, status: "closed" })).status,
+    ).toBe(200);
+    expect((await change(undefined)).status).toBe(422);
+    // A banned account cannot read restricted bounty totals or register.
+    deps.now = () => new Date(observedAt);
+    seedParticipationBan(sqlite, APPLICANT, ADMIN, observedAt);
+    const restrictedRead = await call("GET", privatePath, "applicant");
+    expect(restrictedRead.status).toBe(403);
+    expect((await restrictedRead.json()).error).toBe("maintainer_banned");
+    const restrictedWrite = await call(
+      "POST",
+      "project-vaults/open-registry",
+      "applicant",
+      registration,
+    );
+    expect(restrictedWrite.status).toBe(403);
+    expect((await restrictedWrite.json()).error).toBe("maintainer_banned");
+  });
+
   test("reads token decimals from chain once, stores the amount in base units and keeps them on later revisions", async () => {
     const created = await create(
       applicationManifest("open-registry", "example/open-registry", {
@@ -614,6 +877,12 @@ describe("project registry API", () => {
       "open-registry",
       "example/open-registry",
     );
+    access = {
+      installation: "installed",
+      installationId: 7,
+      permission: "write",
+      roleName: "maintain",
+    };
     control = () => ({
       state: "mismatch",
       reason: "Repository or steward facts do not match GitHub",
@@ -627,6 +896,7 @@ describe("project registry API", () => {
     // Matching public facts without the installation create nothing:
     // install Slopbot first (owner decision D11).
     control = () => ({ state: "matched" });
+    access = { installation: "missing" };
     const uninstalled = await call("POST", "projects", "applicant", {
       manifest,
     });
