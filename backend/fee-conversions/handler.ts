@@ -164,21 +164,23 @@ export async function handleFeeConversionsApi(
                   min_amount_out, price_impact_bps, approval_tx_id, tx_id, amount_out,
                   token_balance_before, target_balance_before, target_balance_after, state,
                   reason, created_at, submitted_at, finalized_at
-             FROM fee_conversions ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+             FROM fee_conversions WHERE kind = 'conversion'
+             ORDER BY created_at DESC, rowid DESC LIMIT ?`,
         )
         .bind(RECENT_LIMIT)
         .all<RecentRow>(),
       deps.db
         .prepare(
           `SELECT network, token, target_token, amount_in, amount_out FROM fee_conversions
-            WHERE mode = ? AND state = 'finalized'`,
+            WHERE mode = ? AND state = 'finalized' AND kind = 'conversion'`,
         )
         .bind("live")
         .all<SettledRow>(),
       deps.db
         .prepare(
           `SELECT network, mode, state, COUNT(*) AS count FROM fee_conversions
-            WHERE created_at >= ? GROUP BY network, mode, state ORDER BY network, mode, state`,
+            WHERE created_at >= ? AND kind = 'conversion'
+            GROUP BY network, mode, state ORDER BY network, mode, state`,
         )
         .bind(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
         .all<{ network: string; mode: string; state: string; count: number }>(),
