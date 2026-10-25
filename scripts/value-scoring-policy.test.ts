@@ -287,6 +287,31 @@ function snapshot(
   );
 }
 
+test("banned reviews do not consume another reviewer's slot or credit", () => {
+  const result = snapshot(
+    POLICY,
+    new Map([["U_bob", "2026-10-19T01:00:00.000Z"]]),
+  );
+  const credits = result.ledger.filter((event) =>
+    event.id.startsWith("PR_2:value-review:"),
+  );
+  expect(credits.map((event) => [event.actor.id, event.scoreThirds])).toEqual([
+    ["U_carol", 5],
+    ["U_erin", 2],
+    ["U_grace", 2],
+  ]);
+  const exclusions = new Map(
+    (result.reviewExclusions ?? []).map((item) => [item.reviewId, item.reason]),
+  );
+  expect(exclusions.get("PRR_2_1")).toBe("review-credit-account-banned");
+  expect(exclusions.get("PRR_2_4")).toBe("review-credit-account-banned");
+  expect(exclusions.get("PRR_2_7")).toBeUndefined();
+  // A later ban must preserve all credit earned before it, including legacy credit.
+  expect(
+    snapshot(POLICY, new Map([["U_bob", "2026-10-21T00:00:00.000Z"]])).ledger,
+  ).toEqual(snapshot().ledger);
+});
+
 test("the normal command takes no opt-in flag and uses the recorded policy", () => {
   expect(parseGenerationArguments([])).toEqual({});
   expect(() => parseGenerationArguments(["--value-assessments"])).toThrow(
@@ -937,7 +962,25 @@ test("published account bans remove new merge and review credit but retain earli
   expect(blocked.some((event) => event.category === "substantive-review")).toBe(
     true,
   );
-  expect(after).toEqual(before.filter((event) => !blocked.includes(event)));
+  expect(
+    after.filter(
+      (event) => bans.has(event.actor.id) && event.occurredAt >= bannedAt,
+    ),
+  ).toEqual([]);
+  // Removing Bob's post-ban deep review must retain his earlier standard
+  // review and reallocate the pool using only eligible bands.
+  expect(
+    after
+      .filter((event) => event.id.startsWith("PR_2:value-review:"))
+      .map((event) => [event.source.id, event.scoreThirds]),
+  ).toEqual([
+    ["PRR_2_2", 5],
+    ["PRR_2_1", 2],
+    ["PRR_2_5", 2],
+  ]);
+  expect(after.filter((event) => event.source.number === 1)).toEqual(
+    before.filter((event) => event.source.number === 1),
+  );
   expect(
     after.some(
       (event) => event.actor.id === "U_alice" && event.occurredAt < bannedAt,
