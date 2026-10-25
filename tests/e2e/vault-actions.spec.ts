@@ -1232,7 +1232,8 @@ test("owner creates, registers and funds a vault through the real API", async ({
     const setup = page.getByRole("region", { name: "Set up project vault" });
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
     const monthlySetting = setup.getByRole("combobox", {
-      name: /^Automatic monthly payment/,
+      name: "Automatic monthly payment",
+      exact: true,
     });
     await expect(monthlySetting).toHaveValue("on");
     if (!automatic) await monthlySetting.selectOption("off");
