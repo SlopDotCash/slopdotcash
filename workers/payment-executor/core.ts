@@ -743,6 +743,63 @@ async function submitEvmMonthlyReserve(
     throw new Error("Monthly reserve differs from its frozen authorization");
   const state = await readEvmMonthlyReserve(config, plan.request.period);
   const target = { network: plan.request.network, vault: deployment.vault };
+  const legacy = authorization.legacyAuthorization;
+  if (legacy) {
+    if (
+      legacy.plan.evmReservation ||
+      legacy.plan.family !== "evm" ||
+      legacy.plan.request.projectId !== plan.request.projectId ||
+      legacy.plan.request.period !== plan.request.period ||
+      legacy.plan.request.network !== plan.request.network ||
+      legacy.plan.request.snapshotSha256 !== plan.request.snapshotSha256 ||
+      !same(legacy.plan.deployment.vault, deployment.vault) ||
+      !same(legacy.plan.deployment.asset, deployment.asset) ||
+      plan.entries.some(
+        (entry) =>
+          !legacy.plan.entries.some(
+            (old) =>
+              same(old.sourceDigest, entry.sourceDigest) &&
+              old.githubUserId === entry.githubUserId &&
+              old.grossMicro === entry.grossMicro,
+          ),
+      )
+    ) {
+      throw new Error(
+        "Legacy authorization differs from the frozen monthly allocation",
+      );
+    }
+  }
+  if (BigInt(state.root) !== 0n && BigInt(state.allocationDigest) === 0n) {
+    if (!legacy)
+      throw new Error("The original legacy monthly authorization is required");
+    // An independently signed V1 transaction may win after V2 publication. Its finalized root
+    // proves the full old commitment; do not submit V2 or overwrite either authorization.
+    const legacyRoot = evmAllocationRoot(legacy.plan.entries);
+    const legacyDigest = evmMonthlyDigest(
+      config.chainId,
+      deployment.vault,
+      plan.request.period,
+      legacyRoot,
+    );
+    if (
+      state.root !== legacyRoot ||
+      legacy.plan.allocationRoot !== legacyRoot ||
+      legacy.plan.messageHex !== legacyDigest.slice(2) ||
+      !/^[a-f0-9]{130}$/.test(legacy.signatureHex) ||
+      !same(
+        await recoverAddress({
+          hash: legacyDigest as Hex,
+          signature: `0x${legacy.signatureHex}`,
+        }),
+        legacy.plan.deployment.identityAuthority,
+      )
+    ) {
+      throw new Error(
+        "Legacy monthly root differs from its original authorization",
+      );
+    }
+    return { transactionId: null, alreadyCommitted: true, complete: true };
+  }
   const key = `monthly:v2:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
   const fingerprint = digest(
     JSON.stringify([deployment.chainId, target.vault.toLowerCase(), expected]),
@@ -768,6 +825,26 @@ async function submitEvmMonthlyReserve(
       )
     ) {
       throw new Error("Invalid monthly authority signature");
+    }
+    const legacyKey = `monthly:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
+    const legacyAttempt = await env.JOURNAL.get<Attempt>(legacyKey);
+    if (
+      legacyAttempt &&
+      !(await retireRevertedAttempt(env, deployment, legacyKey, legacyAttempt))
+    ) {
+      const result = await signAndSubmit(
+        env,
+        deployment,
+        legacyKey,
+        legacyAttempt.fingerprint,
+        "",
+        {
+          ...target,
+          idempotencyKey: digest(legacyKey).slice(2),
+          monthlyPeriod: plan.request.period,
+        },
+      );
+      return { ...result, alreadyCommitted: false, complete: false };
     }
     const previous = await env.JOURNAL.get<Attempt>(key);
     if (
@@ -829,9 +906,9 @@ async function submitEvmMonthlyReserve(
   )
     throw new Error("Invalid monthly execution cursor");
   for (
-    let index = cursor;
-    index < plan.entries.length && committedSources.length < maxLeaves;
-    ++index
+    let index = cursor, examined = 0;
+    index < plan.entries.length && examined < maxLeaves;
+    ++index, ++examined
   ) {
     const entry = plan.entries[index];
     const id = evmAwardId(config.chainId, deployment.vault, entry.sourceDigest);

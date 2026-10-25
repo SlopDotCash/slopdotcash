@@ -195,8 +195,8 @@ without the owner's wallet, an ordinary vault has one more path:
 
 - Normal creation sets the owner's cap and turns the setting on unless the
   owner opts out. The owner can later call `setMonthlyCommitment(cap, enabled)`.
-  "On" needs a positive cap. While it is off, no monthly allocation can commit.
-  Awards already committed stay reserved. Compatibility callers of the old
+  "On" needs a positive cap. While it is off, no new monthly allocation can enter.
+  An admitted month and awards already committed stay reserved. Compatibility callers of the old
   three-argument `create` retain their earlier off/zero initial state.
 - The new creation path requires both reviewed factory and vault implementations.
   Existing deployments and vault state do not change when this source merges;
@@ -227,6 +227,39 @@ without the owner's wallet, an ordinary vault has one more path:
   unchanged. Solana commits awards one at a time, so it uses a sha256 Merkle
   sum tree that also binds each subtree's gross total (see
   `contracts/solana/README.md`).
+
+For larger allocations, reviewed V2 vaults expose `monthlyReserveVersion() == 2`.
+The old entry points, v5 domain, and funded awards remain valid. V2 adds the
+`MonthlyReserveV2` signed type; it does not reinterpret an old signature.
+
+The attester uses the frozen economic allocation and reads all source awards
+at one finalized block. It excludes consumed sources from a separate execution
+tree, without changing the frozen allocation or total. A V2 signature binds the
+period, frozen allocation digest, remaining Merkle-sum root, whole gross,
+remaining gross, leaf count, and `ordinarySourceSequence`. Each new ordinary
+source increments that sequence. `reserveMonthly` rejects a changed sequence
+before moving funds, then reserves the entire remaining gross in one operation.
+The whole frozen gross must still fit the owner's current cap.
+
+`commitMonthlyLeaf` verifies the ordered sum proof and moves that leaf's gross
+from `pendingMonthlyGross` into award principal and fees. It does not charge
+free funds again. Leaf replay fails atomically. A month whose sources are all
+funded seals with an empty tree and zero remaining reserve. The trusted attester
+rejects duplicate sources before signing; the contract cannot inspect every
+leaf during constant-size admission.
+
+While pending gross remains, new manual awards, legacy monthly commitments,
+and another V2 admission wait. Existing funded payments, bindings, deposits,
+and free withdrawals remain available. Permissionless leaf execution completes
+the reserve after owner opt-out or window expiry. It has no refund, expiry, or
+human release step. The executor bounds examined leaves, including already
+committed leaves, and retains a finalized cursor for restart.
+
+`monthly-reserve.integration.ts` exercises the real migrated database, frozen
+snapshot, signer, public authorization, and local chain executor with 100 awards.
+It also accepts `SLOP_MONTHLY_LEGACY_ROOT` for an archived, compiled pre-upgrade
+contract tree; this proves stored awards, prior fees, and wallet signatures
+survive an actual reviewed implementation upgrade.
 
 The authority's role therefore grows from wallet binding to monthly
 attestation. It still cannot withdraw, redirect or pay funds, and it cannot
@@ -291,9 +324,10 @@ and the award stays reserved; a frozen fee recipient blocks only `claimFees`.
 The conservation identities are unchanged by the binding lifecycle:
 
 ```
-totalDeposited = freeBalance + reservedPrincipal + reservedFees
+totalDeposited = freeBalance + reservedPrincipal + reservedFees + pendingMonthlyGross
                + totalPaid + totalPayoutFees + totalGrossWithdrawn
-vault balance  = freeBalance + reservedPrincipal + reservedFees + accruedFees
+vault balance  = freeBalance + reservedPrincipal + reservedFees + pendingMonthlyGross
+               + accruedFees
                + unsolicited direct transfers
 accruedFees + claimed fees = totalPayoutFees + totalWithdrawalFees
 ```
@@ -301,7 +335,9 @@ accruedFees + claimed fees = totalPayoutFees + totalWithdrawalFees
 `totals()` returns every counter and the vault token balance in one call, so a
 reader gets one consistent block. Each counter also has its own public getter.
 The adapter's `readVaultTotals` reads `totals()`, `token()` and `decimals()` at
-one pinned finalized block and checks the first identity.
+one pinned finalized block and checks the first identity. The old `totals()`
+ABI stays unchanged. A V2 reader also reads `pendingMonthlyGross()` at that block
+when it is nonzero and returns the combined award and pending-month reserve.
 
 The vault has no service charge. Slopbot is free (PRD section 5), so no call
 moves free funds to the fee recipient except the payout and withdrawal fees
