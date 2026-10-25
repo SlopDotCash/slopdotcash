@@ -2707,13 +2707,14 @@ small {
   .hero-typewriter-caret {
     display: none;
   }
+  /* Component rules such as .button set their own transition, so only !important wins here. */
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms;
-    animation-iteration-count: 1;
-    scroll-behavior: auto;
-    transition-duration: 0.01ms;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }
 
