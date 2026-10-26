@@ -129,11 +129,12 @@ test("How it works explains the current scoring policy once", async ({
   await modelQuestion.focus();
   await page.keyboard.press("Enter");
   const modelAnswer = modelQuestion.locator("..");
+  await expect(modelAnswer).toHaveAttribute("open", "");
   await expect(modelAnswer).toContainText(
-    "From November 2026, monthly rewards use accepted-work Points only.",
+    "From November 2026, monthly and external-prize reward shares use accepted-work Points only.",
   );
   await expect(modelAnswer).toContainText(
-    "Optional traces add no payment weight; older recorded terms and funded awards stay unchanged.",
+    "Optional traces add no payment weight. Older calculations and funded awards stay unchanged; unpaid September–October work stays subject to the reviewed historical reconciliation.",
   );
   await expectAccessible(page);
   await page.screenshot({

@@ -286,7 +286,7 @@ async function publishRole({
     telemetry: {
       source: "ccusage@20.0.20",
       policy:
-        "Contribute through GitHub with exact provider, model, and client disclosure. Signed receipts, usage collection, private traces, and wallet registration are optional. Inspected traces require consent under https://slop.cash/protocol/private-trace-v1.md. From November 2026, monthly rewards use accepted-work Points only. Optional traces add no payment weight; older recorded terms and funded awards stay unchanged. Missing evidence never blocks submission.",
+        "Contribute through GitHub with exact provider, model, and client disclosure. Signed receipts, usage collection, private traces, and wallet registration are optional. Inspected traces require consent under https://slop.cash/protocol/private-trace-v1.md. From November 2026, monthly and external-prize reward shares use accepted-work Points only. Optional traces add no payment weight. Older calculations and funded awards stay unchanged; unpaid September–October work stays subject to the reviewed historical reconciliation. Missing evidence never blocks submission.",
     },
     ...(review
       ? {
