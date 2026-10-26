@@ -11,6 +11,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { type Hex, keccak256 } from "viem";
+import { refreshReferralClaims } from "../../backend/referrals/cache";
+import { handleReferralClaims } from "../../backend/referrals/claims";
 import {
   handleReferralsApi,
   REFERRAL_ACCRUALS_PATH,
@@ -554,9 +556,55 @@ try {
   sqlite.exec("ROLLBACK TO owner_void_control; RELEASE owner_void_control");
   assert.equal(await rpc("evm_revert", [snapshot]), true);
 
+  const claimEnv = {
+    ...env,
+    REFERRAL_DEPLOYMENT_BLOCK: distributorBlock.toString(),
+    REFERRAL_DISTRIBUTOR_CODE_HASH: watchConfig.codeHash,
+  };
+  // The target network cannot serve finalized eth_call state. Reject it here
+  // so the real cache must use finalized headers and canonical event receipts.
+  const claimFetch = Object.assign(
+    async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const body = await request.clone().json();
+      if (body.method === "eth_call") assert.equal(body.params[1], "latest");
+      return boundedRpc(request);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  let cacheClock = new Date(
+    Number(
+      BigInt((await rpc("eth_getBlockByNumber", ["latest", false])).timestamp),
+    ) * 1000,
+  );
+  const claimAccount = async () => {
+    const response = await handleReferralClaims(
+      new Request("https://slop.cash/api/v1/referrals/me"),
+      {
+        db,
+        sessionActor: async () => ({ githubId: "900000100" }),
+        now: () => cacheClock,
+      },
+    );
+    assert.equal(response?.status, 200);
+    return response?.json();
+  };
+  await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
+  assert.equal((await claimAccount()).claimableBase, "0");
+
   // Seven days later the referrer claims its cumulative with the file's proof.
   await rpc("evm_increaseTime", [7 * 24 * 3600]);
-  await rpc("anvil_mine", ["0x1"]);
+  await rpc("anvil_mine", ["0x41"]);
+  cacheClock = new Date(
+    Number(
+      BigInt((await rpc("eth_getBlockByNumber", ["latest", false])).timestamp),
+    ) * 1000,
+  );
+  await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
+  const beforeClaim = await claimAccount();
+  assert.equal(beforeClaim.status, "ready");
+  assert.equal(beforeClaim.claimableBase, CUMULATIVE.toString());
+  assert.equal(beforeClaim.claim.epoch, 0);
   const body = JSON.parse(file.body) as {
     referrers: {
       wallet: string;
@@ -583,6 +631,32 @@ try {
     [referrer.cumulativeBase, proof],
     referrerWallet,
   );
+  cacheClock = new Date(cacheClock.getTime() + 1000);
+  await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
+  assert.equal(
+    (await claimAccount()).claimedBase,
+    "0",
+    "a receipt before finality cannot mark a referral claimed",
+  );
+  await rpc("anvil_mine", ["0x41"]);
+  cacheClock = new Date(cacheClock.getTime() + 1000);
+  await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
+  assert.equal((await claimAccount()).claimedBase, CUMULATIVE.toString());
+  assert.equal((await claimAccount()).claimableBase, "0");
+  await assert.rejects(
+    refreshReferralClaims(
+      claimEnv,
+      new Date(cacheClock.getTime() + 1000),
+      Object.assign(
+        async () => {
+          throw new Error("controlled provider outage");
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    ),
+  );
+  assert.equal((await claimAccount()).status, "stale");
+  assert.equal((await claimAccount()).claimedBase, CUMULATIVE.toString());
   assert.equal(
     BigInt(
       call(token, "balanceOf(address)(uint256)", [referrerWallet]).split(
@@ -608,6 +682,8 @@ try {
       root: file.merkle_root,
       post: post.tx_id,
       claimed: CUMULATIVE.toString(),
+      cachedClaimApiCanonicalFinality: true,
+      cachedClaimApiProviderFailureRetainsTotals: true,
       nonfinalVoidHeld: true,
       canonicalFinalVoidRecorded: true,
       voidFixtureRolledBackBeforeClaim: true,
