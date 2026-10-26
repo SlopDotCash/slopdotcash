@@ -841,39 +841,19 @@ PROJECT_ID=$(cast format-bytes32-string "$PROJECT")
    After the block is finalized (about 15 minutes on Base), the next
    attester run records the award as reserved.
 
-7. The contributor signs the binding. The site has no button for this step
-   yet. Signed in on `https://slop.cash`:
-   1. On `/earnings`, connect and confirm the Base wallet (a
-      `personal_sign` message).
-   2. Switch the wallet to Base. In the browser console of the same page,
-      run:
-
-      ```js
-      const call = async (path, body) => {
-        const response = await fetch(`/api/v1/payments/wallets/${path}`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!response.ok) throw new Error(`${path}: ${response.status} ${await response.text()}`);
-        return response.json();
-      };
-      const me = await (await fetch("/api/v1/payments/me", { credentials: "same-origin" })).json();
-      const claimId = me.wallets.find((w) => w.chain === "base").claimId;
-      const consent = { claimId, network: "base-mainnet", vault: "<VAULT>", expectedVersion: "0" };
-      const { typedData } = await call("bind-challenge", consent);
-      const [address] = await ethereum.request({ method: "eth_requestAccounts" });
-      const signature = await ethereum.request({
-        method: "eth_signTypedData_v4",
-        params: [address, JSON.stringify(typedData)],
-      });
-      await call("bind-authorize", { ...consent, expiresAt: typedData.message.expiresAt, signature });
-      ```
-
-      `expectedVersion` is `"0"` for the first binding. For a later one, use
-      the version from `cast call "$VAULT" 'bindings(uint64)(address,uint64,bytes32,uint64,bool)' "$ACTOR" --rpc-url "$RPC"`.
-      The signature is valid for 90 days.
+7. The contributor authorizes the vault destination from **Payouts**:
+   1. Confirm the payout address in **Account → Wallets**. This is an
+      account-wallet proof, separate from vault consent.
+   2. On `/earnings`, find the reserved award and select **Authorize payout
+      wallet**. Review its exact network, vault and confirmed address.
+   3. Select the wallet and sign. For EVM, switch to the named network first;
+      the challenge reads the current finalized binding version from the
+      reviewed registry vault. The EIP-712 signature is valid for 90 days.
+      For Solana, a Wallet Standard wallet with transaction signing co-signs
+      the attester's exact prepared binding; the attester pays its gas.
+   4. Refresh payments. Saved consent or a submitted binding is not paid.
+      Payment remains unverified until finalized reconciliation. A changed
+      wallet, rejected signature or unavailable attester preserves the award.
 
    Within five minutes the attester submits `bindDestination`. Check it:
 

@@ -21,6 +21,7 @@ const account = {
       ...asset,
       id: `0x${"8".repeat(64)}`,
       projectId: "eliza",
+      vault: `0x${"1".repeat(40)}`,
       grossBase: "25000000",
       feeBase: "500000",
       netBase: "24500000",
