@@ -1,9 +1,7 @@
 /** Signed runner client. Returned bytes must remain in private evidence storage. */
-import {
-  isRecord,
-  readLimitedBody,
-  sha256Hex,
-} from "../../backend/trace/validation";
+
+import { isRecord, readLimitedBody } from "../../backend/trace/validation";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { QueueConnection } from "./queue";
 import { signedServiceHeaders } from "./service";
 

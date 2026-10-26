@@ -1,7 +1,7 @@
 /** Execute acquired native artifacts only through the private disposable runner. */
 import { randomUUID } from "node:crypto";
-import { sha256Hex } from "../../backend/trace/validation";
 import type { VettingScanResult } from "../../backend/vetting/scan-result";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   MAX_INVENTORY_BYTES,
   MAX_INVENTORY_ITEMS,

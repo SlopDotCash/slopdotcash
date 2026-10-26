@@ -2,6 +2,7 @@
  * current-source checks. This module creates no GitHub action or payment.
  */
 
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { assertProjectRegistry } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition, ProjectId } from "../../src/lib/projects.mjs";
 import { collectTargetRepositories } from "../../src/lib/repositories.mjs";
@@ -9,7 +10,6 @@ import {
   VALUE_RUBRIC_VERSION,
   type ValueAssessment,
 } from "../../src/lib/value-assessment";
-import { sha256Hex } from "./github";
 import {
   type ValueProducer,
   valueResultProducerIdentity,

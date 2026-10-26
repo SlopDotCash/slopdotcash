@@ -1,5 +1,6 @@
 import { type ApiError, fail } from "../../backend/http";
 import brand from "../../brand/tokens.json" with { type: "json" };
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   type DeploymentTier,
   deploymentOrigins,
@@ -20,7 +21,6 @@ import {
   deriveAssertionToken,
   encryptPkceVerifier,
   pkceChallenge,
-  sha256Hex,
 } from "./crypto";
 
 export type IdentityWorkerDependencies = {

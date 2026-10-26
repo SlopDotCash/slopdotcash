@@ -1,13 +1,13 @@
 /** Private scanner backup and retention. No HTTP access. */
 import type { ProjectD1Database } from "../../backend/projects/cloudflare-persistence";
 import type { R2Bucket } from "../../backend/trace/cloudflare-persistence";
-import { sha256Hex } from "../../backend/trace/validation";
 import {
   chunkKey,
   chunkLayout,
   EVIDENCE_CHUNK_BYTES,
   verifiedPart,
 } from "../../backend/vetting/evidence-chunks";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 
 type ListedObject = { key: string; size: number; uploaded: Date };
 export type ArchiveBucket = R2Bucket & {

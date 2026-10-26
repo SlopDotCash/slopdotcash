@@ -1,3 +1,4 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { assertProjectRegistry } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
@@ -5,7 +6,6 @@ import {
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
 import { VALUE_RUBRIC_VERSION } from "../../src/lib/value-assessment";
-import { sha256Hex } from "./github";
 import type { D1Database } from "./persistence";
 import {
   type ValueContextSelection,

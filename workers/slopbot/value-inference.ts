@@ -1,4 +1,4 @@
-import { sha256Hex } from "./github";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   type ModelEnv,
   type Prompt,

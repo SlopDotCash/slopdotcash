@@ -1,12 +1,13 @@
 /** Internal journal consumer. The database connection is the authority boundary;
  * a digest alone never authenticates records copied from an arbitrary host.
  */
+
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   REGISTERED_REPOSITORIES,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
 import { VALUE_RUBRIC_VERSION } from "../../src/lib/value-assessment";
-import { sha256Hex } from "./github";
 import type { D1Database } from "./persistence";
 import {
   type ValueContextSelection,

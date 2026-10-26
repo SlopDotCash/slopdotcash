@@ -1,6 +1,7 @@
 /** Shared private-service signing. This helper never sends or publishes a request. */
-import { sha256Hex } from "../../backend/trace/validation";
+
 import { vettingSignedMessage } from "../../backend/vetting/handler";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 
 export type VettingServiceSigner = {
   privateKey: CryptoKey;

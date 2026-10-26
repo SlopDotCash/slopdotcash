@@ -1,8 +1,10 @@
 // Operator receipts are evidence, not model output or contributor test claims.
 // The signing key and approved VM profile are configured outside repositories.
+
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readRecord, timestamp } from "../../src/lib/record-validation.mjs";
 import type { RuleRef } from "./contracts";
-import { type GitHubClient, sha256Hex } from "./github";
+import type { GitHubClient } from "./github";
 
 export const QUALITY_MARKER = "<!-- slopbot:quality-evidence:v1 -->";
 export const QUALITY_EFFECTIVE_AT = Date.parse("2026-11-01T00:00:00Z");

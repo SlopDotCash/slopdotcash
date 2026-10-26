@@ -1,8 +1,5 @@
-import {
-  sha256Hex,
-  validGitSha,
-  validIsoTimestamp,
-} from "../../backend/trace/validation";
+import { validGitSha, validIsoTimestamp } from "../../backend/trace/validation";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { Job } from "./contracts";
 import type { D1Database } from "./persistence";
 
