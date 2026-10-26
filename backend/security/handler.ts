@@ -313,7 +313,7 @@ async function currentReportingProject(
 /**
  * A moderator quarantine or ban applies a paused, retired revision. The
  * project stays registered, so its existing private cases keep their
- * automatic checks and appeal triage (PRD section 8). The retained before
+ * analysis and appeal triage (PRD section 8). The retained before
  * and after revisions must prove that enforcement caused retirement; an
  * owner's earlier retirement or an unapplied restriction cannot grant it.
  */
@@ -2932,11 +2932,13 @@ async function automaticAction(
   body: Record<string, unknown>,
 ): Promise<Response> {
   exactKeys(body, ["action", "expectedRevision", "idempotencyKey"]);
+  // A receipt check imports every new report in the repository, so it stays
+  // closed with new intake when the project is retired.
   const terms = await reportingContext(
     deps,
     row.project_id,
     action === "check-receipt",
-    true,
+    action !== "check-receipt",
   );
   if (action === "check-receipt") {
     requireAction(row, roles, action);
