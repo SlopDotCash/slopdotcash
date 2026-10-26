@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import {
+  ata,
   concat,
   createAta,
   le,
@@ -19,7 +20,7 @@ import {
 } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { runOnce } from "./index";
-import { associatedTokenAccount, parseTransaction } from "./solana";
+import { parseTransaction } from "./solana";
 import { sqliteD1 } from "./sqlite-d1";
 
 const JUP = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
@@ -91,7 +92,7 @@ const wallet = solanaBase58(publicKey);
 const keypair = JSON.stringify([...seed, ...publicKey]);
 const fundingSeed = crypto.getRandomValues(new Uint8Array(32));
 const fundingWallet = solanaBase58(ed25519.getPublicKey(fundingSeed));
-const fundingAccount = associatedTokenAccount(fundingWallet, JUP);
+const fundingAccount = ata(JUP, fundingWallet);
 console.log(`throwaway fee wallet ${wallet}`);
 
 // Learn the route's accounts from an unsigned Jupiter transaction for this wallet.
@@ -114,7 +115,7 @@ const built = (await (
 const parsed = parseTransaction(
   Uint8Array.from(atob(built.swapTransaction), (c) => c.charCodeAt(0)),
 );
-const jupAccount = associatedTokenAccount(wallet, JUP);
+const jupAccount = ata(JUP, wallet);
 const clones = [...new Set(parsed.staticKeys)].filter(
   (key) =>
     key !== wallet &&
@@ -336,7 +337,7 @@ try {
   console.log(JSON.stringify(rows, null, 2));
   const usdc = await rpc<{ value: { amount: string } }>(
     "getTokenAccountBalance",
-    [associatedTokenAccount(wallet, USDC)],
+    [ata(USDC, wallet)],
   );
   const jupLeft = await rpc<{ value: { amount: string } }>(
     "getTokenAccountBalance",
