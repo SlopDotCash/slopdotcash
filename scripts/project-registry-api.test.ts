@@ -11,7 +11,10 @@ import {
   CloudflareProjectPersistence,
   ENFORCEMENT_COLUMNS,
 } from "../backend/projects/cloudflare-persistence";
-import type { RepositoryControl } from "../backend/projects/contracts";
+import type {
+  ProjectEnforcement,
+  RepositoryControl,
+} from "../backend/projects/contracts";
 import type { EdgeCache } from "../backend/projects/edge-cache";
 import {
   EnforcementRefusal,
@@ -1205,6 +1208,44 @@ describe("project enforcement (ADM-06)", () => {
     });
   }
 
+  test("an ordinary ban preserves the owner's project appeal for independent review", async () => {
+    await listProject();
+    expect((await enforce("admin", "quarantine")).status).toBe(200);
+    const appeal = {
+      projectId: "open-registry",
+      reason: "The release script was removed",
+      evidenceReference: EVIDENCE,
+    };
+    expect(
+      (await call("POST", "project-appeals", "applicant", appeal)).status,
+    ).toBe(200);
+    const ban = await enforce("admin", "ban");
+    expect(ban.status).toBe(200);
+    expect((await ban.json()).record.appealAfter).toBe("requested");
+
+    const review = await enforce("moderator", "reinstate");
+    expect(review.status).toBe(409);
+    expect((await review.json()).error).toBe("vetting_required");
+    const duplicate = await call(
+      "POST",
+      "project-appeals",
+      "applicant",
+      appeal,
+    );
+    expect(duplicate.status).toBe(409);
+    expect((await duplicate.json()).error).toBe("appeal_open");
+    const selfReview = await enforce("admin", "reinstate");
+    expect(selfReview.status).toBe(403);
+    expect((await selfReview.json()).error).toBe("independent_review_required");
+
+    const denied = await enforce("moderator", "deny_reinstatement");
+    expect(denied.status).toBe(200);
+    expect((await denied.json()).record.appealAfter).toBe("denied");
+    const afterDenial = await enforce("moderator", "reinstate");
+    expect(afterDenial.status).toBe(409);
+    expect((await afterDenial.json()).error).toBe("no_open_appeal");
+  });
+
   test("quarantines and bans while refusing an appeal with only historical clean metadata", async () => {
     const { get } = await publicationRequests();
     await listProject();
@@ -1366,6 +1407,17 @@ describe("project enforcement (ADM-06)", () => {
       async () => livePin,
     );
     expect(bannedClearance.state).toBe("banned");
+    // The confirmed-malicious re-ban supersedes the first appeal, so the
+    // applicant appeals the current restriction before reinstatement is
+    // attempted again; a project appeal from before the re-ban no longer
+    // opens it.
+    const reappealed = await call(
+      "POST",
+      "project-appeals",
+      "applicant",
+      appeal,
+    );
+    expect(reappealed.status).toBe(200);
     const scannedPin = livePin;
     livePin = { ...livePin, commitSha: "b".repeat(40) };
     const staleScan = await enforce("moderator", "reinstate");
@@ -1429,7 +1481,13 @@ describe("project enforcement (ADM-06)", () => {
       (await history.json()).projects[0].enforcement.records.map(
         (record: { action: string }) => record.action,
       ),
-    ).toEqual(["quarantine", "ban", "request_reinstatement", "ban"]);
+    ).toEqual([
+      "quarantine",
+      "ban",
+      "request_reinstatement",
+      "ban",
+      "request_reinstatement",
+    ]);
     // Independently preserve the append-only persistence contract. This is
     // historical database setup, never HTTP admission or a complete scan.
     if (!restricted || !latestRecord)
@@ -1710,6 +1768,78 @@ describe("project enforcement (ADM-06)", () => {
     expect((await restored.json()).error).toBe("repository_restricted");
   });
 
+  test("an account-only appeal cannot reinstate the project, while a project appeal can", async () => {
+    await listProject();
+    expect((await enforce("admin", "ban")).status).toBe(200);
+    const project = await persistence.getProject("open-registry");
+    const [record] = await persistence.listEnforcements();
+    if (!project || !record) throw new Error("Project restriction missing");
+    const ban: ProjectEnforcement = {
+      ...record,
+      maintainerBans: [APPLICANT],
+    };
+    const accountAppeal: ProjectEnforcement = {
+      ...record,
+      id: "enf-account-only-appeal",
+      sequence: 2,
+      action: "request_reinstatement",
+      actor: APPLICANT,
+      actorRole: "banned-account",
+      decisionSource: "account-request",
+      appealAfter: "requested",
+      beforeRevision: project.revision,
+      beforeManifestSha256: project.manifestSha256,
+      afterRevision: null,
+      afterManifestSha256: null,
+      result: "no_revision_needed",
+    };
+    const restriction = projectRestriction(project.id, [ban, accountAppeal]);
+    let refusal: unknown;
+    try {
+      planEnforcement({
+        action: "reinstate",
+        actor: MODERATOR,
+        project,
+        restriction,
+        listedBefore: true,
+      });
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(EnforcementRefusal);
+    expect(refusal).toMatchObject({ code: "no_open_appeal" });
+    // The existing account-appeal denial path remains available.
+    expect(
+      planEnforcement({
+        action: "deny_reinstatement",
+        actor: MODERATOR,
+        project,
+        restriction,
+        listedBefore: true,
+      }),
+    ).toMatchObject({ stateAfter: "banned", appealAfter: "denied" });
+    const projectAppeal: ProjectEnforcement = {
+      ...accountAppeal,
+      id: "enf-project-appeal",
+      sequence: 3,
+      actorRole: "project-applicant",
+      decisionSource: "owner-request",
+    };
+    expect(
+      planEnforcement({
+        action: "reinstate",
+        actor: MODERATOR,
+        project,
+        restriction: projectRestriction(project.id, [
+          ban,
+          accountAppeal,
+          projectAppeal,
+        ]),
+        listedBefore: true,
+      }),
+    ).toMatchObject({ stateAfter: "clear", appealAfter: "granted" });
+  });
+
   test("reinstatement is refused while the restriction revision is pending", async () => {
     await listProject();
     const listed = await persistence.getProject("open-registry");
@@ -1730,6 +1860,31 @@ describe("project enforcement (ADM-06)", () => {
       appeal: "requested" as const,
       restrictedBy: [ADMIN],
       openedAtRevision: 1,
+      // The appeal itself must be the project's own: a banned account's
+      // appeal alone no longer opens project reinstatement.
+      records: [
+        {
+          id: "enf-project-appeal",
+          projectId: "open-registry",
+          sequence: 1,
+          action: "request_reinstatement" as const,
+          stateAfter: "quarantined" as const,
+          appealAfter: "requested" as const,
+          reason: "The release script was removed",
+          evidenceReference: "evidence",
+          repositoryGithubId: "",
+          repositoryKeys: [],
+          actor: APPLICANT,
+          actorRole: "project-applicant" as const,
+          decisionSource: "owner-request" as const,
+          beforeRevision: 1,
+          beforeManifestSha256: "",
+          afterRevision: null,
+          afterManifestSha256: null,
+          result: "no_revision_needed" as const,
+          createdAt: new Date().toISOString(),
+        },
+      ],
     };
     let refusal: unknown = null;
     try {

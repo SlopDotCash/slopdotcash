@@ -149,10 +149,16 @@ export function projectAppealState(
   if (restriction.state === "clear") return "none";
   const newestFirst = [...restriction.records].reverse();
   const boundary =
-    newestFirst.find((record) =>
-      ["ban", "quarantine", "reinstate", "deny_reinstatement"].includes(
-        record.action,
-      ),
+    newestFirst.find(
+      (record) =>
+        // An ordinary ban can retain the pending project appeal. A new
+        // malicious result or a decision that closes it starts a new boundary.
+        (record.action === "ban" &&
+          (record.actorRole === "vetting-service" ||
+            record.appealAfter !== "requested")) ||
+        ["quarantine", "reinstate", "deny_reinstatement"].includes(
+          record.action,
+        ),
     )?.sequence ?? 0;
   const request = newestFirst.find(
     (record) =>
@@ -479,7 +485,12 @@ export function planEnforcement(input: {
     }
     case "reinstate":
     case "deny_reinstatement": {
-      if (restriction.state === "clear" || restriction.appeal !== "requested")
+      // An account-only appeal cannot authorize project reinstatement.
+      const appeal =
+        action === "reinstate"
+          ? projectAppealState(restriction)
+          : restriction.appeal;
+      if (restriction.state === "clear" || appeal !== "requested")
         refuse(
           "no_open_appeal",
           "Record a reinstatement request before a decision",
