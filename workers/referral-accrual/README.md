@@ -58,9 +58,12 @@ not filed yet, oldest first, starting at `REFERRAL_FIRST_PERIOD`.
      `pool_cap`; an unlimited one is `accrued`. A capped row may accrue zero.
 3. Append the rows to `referral_accruals` (permanent, one row per obligation)
    and publish the month's file to `referral_accrual_files`: the exact bytes,
-   their SHA-256, the Merkle root, the tree total and the leaf count. Months
-   file in epoch order and a filed month never changes. A paid event observed
-   after its month was filed joins the month it was observed in.
+   their SHA-256, the Merkle root, the tree total and the leaf count. Save the
+   rows, file and new wallet pins in one D1 transaction under the run's lease.
+   If any insert fails or the lease is no longer valid, save none of them.
+   A restart reads the committed files before it resumes. Months file in
+   epoch order and a filed month never changes. A paid event observed after
+   its month was filed joins the month it was observed in.
 
 The file (`schema: slop-referral-accrual-file-v1`) lists the parameters, every
 judged accrual with its obligation id and paying transaction, the pool total,

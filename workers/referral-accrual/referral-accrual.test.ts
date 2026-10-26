@@ -1,6 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   handleReferralsApi,
   REFERRAL_ACCRUALS_PATH,
@@ -9,14 +12,17 @@ import { seedParticipationBan } from "../../backend/security/participation-ban.f
 import { parseConfig } from "./config";
 import {
   eligibleAsset,
+  LOCK_MS,
   nextPeriod,
   pendingPeriods,
   periodBounds,
+  runAccrual,
   windowEnd,
 } from "./core";
 import worker, { type Env, runOnce } from "./index";
 import { buildTree, leafHash, verifyProof } from "./merkle";
 import { sqliteD1 } from "./sqlite-d1";
+import { D1AccrualStore } from "./store";
 
 const USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const USDG_ROBINHOOD = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
@@ -194,6 +200,171 @@ function files(sqlite: Database) {
     leaf_count: number;
   }[];
 }
+
+describe("atomic monthly filing and restart", () => {
+  for (const table of [
+    "referral_accruals",
+    "referral_accrual_files",
+    "referral_claim_wallets",
+  ]) {
+    test(`a failed ${table} insert leaves no partial month across restart`, async () => {
+      const directory = mkdtempSync(join(tmpdir(), "slop-referral-filing-"));
+      const filename = join(directory, "d1.sqlite");
+      let { db, sqlite } = sqliteD1(filename);
+      try {
+        addProject(sqlite, "referred", REFERRER);
+        const first = addPaid(
+          sqlite,
+          "referred",
+          1_000_000n,
+          "2026-11-05T00:00:00.000Z",
+        );
+        const second = addPaid(
+          sqlite,
+          "referred",
+          2_000_000n,
+          "2026-11-06T00:00:00.000Z",
+        );
+        const claim = addWallet(sqlite, REFERRER, WALLET);
+        // The accrual control fails after the first row has executed; the
+        // other controls fail after all accruals, or after the file as well.
+        sqlite.exec(`CREATE TRIGGER fixture_interruption BEFORE INSERT ON ${table}
+          ${table === "referral_accruals" ? `WHEN NEW.obligation_id = '${second.id}'` : ""}
+          BEGIN SELECT RAISE(ABORT, 'fixture controlled interruption'); END`);
+        await expect(
+          runOnce(env(db), at("2026-12-01T00:00:00.000Z")),
+        ).rejects.toThrow("fixture controlled interruption");
+        expect(rows(sqlite)).toEqual([]);
+        expect(files(sqlite)).toEqual([]);
+        expect(
+          sqlite.query("SELECT * FROM referral_claim_wallets").all(),
+        ).toEqual([]);
+        sqlite.close();
+        ({ db, sqlite } = sqliteD1(filename, false));
+        expect(rows(sqlite)).toEqual([]);
+        expect(files(sqlite)).toEqual([]);
+        sqlite.exec("DROP TRIGGER fixture_interruption");
+        const result = await runOnce(env(db), at("2026-12-01T00:00:00.000Z"));
+        expect(result?.filed).toEqual([
+          { period: "2026-11", epoch: 0, rows: 2, leafCount: 1 },
+        ]);
+        const filed = files(sqlite)[0];
+        const body = JSON.parse(filed.body);
+        expect(
+          body.accruals.map(
+            (row: { obligationId: string }) => row.obligationId,
+          ),
+        ).toEqual([first.id, second.id]);
+        expect(body.totals.poolAccruedBase).toBe((9n * ONE_TOKEN).toString());
+        expect(filed.body_sha256).toBe(sha(filed.body));
+        expect(
+          sqlite
+            .query("SELECT wallet, pinned_period FROM referral_claim_wallets")
+            .get(),
+        ).toEqual({ wallet: WALLET, pinned_period: "2026-11" });
+
+        // A later authorized wallet cannot move an already filed cumulative
+        // entitlement. Recovery also keeps the original file byte-for-byte.
+        addWallet(sqlite, REFERRER, `0x${"1".repeat(40)}`, "robinhood", {
+          supersedes: claim,
+        });
+        await runOnce(env(db), at("2027-01-01T00:00:00.000Z"));
+        expect(files(sqlite)[0]).toEqual(filed);
+        expect(files(sqlite)[1].merkle_root).toBe(filed.merkle_root);
+        expect(JSON.parse(files(sqlite)[1].body).referrers[0].wallet).toBe(
+          WALLET,
+        );
+        expect(rows(sqlite)).toHaveLength(2);
+      } finally {
+        sqlite.close();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test("a lost batch response resumes the already committed file without duplicate accruals", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "slop-referral-response-"));
+    const filename = join(directory, "d1.sqlite");
+    let { db, sqlite } = sqliteD1(filename);
+    try {
+      addProject(sqlite, "referred", REFERRER);
+      addPaid(sqlite, "referred", 1_000_000n, "2026-11-05T00:00:00.000Z");
+      const claim = addWallet(sqlite, REFERRER, WALLET);
+      const batch = db.batch.bind(db);
+      db.batch = async (statements) => {
+        await batch(statements);
+        throw new Error("fixture response lost after commit");
+      };
+      await expect(
+        runOnce(env(db), at("2026-12-01T00:00:00.000Z")),
+      ).rejects.toThrow("fixture response lost after commit");
+      const filed = files(sqlite)[0];
+      expect(rows(sqlite)).toHaveLength(1);
+      expect(
+        sqlite.query("SELECT wallet FROM referral_claim_wallets").get(),
+      ).toEqual({ wallet: WALLET });
+      sqlite.close();
+      ({ db, sqlite } = sqliteD1(filename, false));
+      expect(
+        (await runOnce(env(db), at("2026-12-01T00:00:00.000Z")))?.filed,
+      ).toEqual([]);
+      addWallet(sqlite, REFERRER, `0x${"2".repeat(40)}`, "robinhood", {
+        supersedes: claim,
+      });
+      await runOnce(env(db), at("2027-01-01T00:00:00.000Z"));
+      expect(files(sqlite)[0]).toEqual(filed);
+      expect(files(sqlite)[1].merkle_root).toBe(filed.merkle_root);
+      expect(rows(sqlite)).toHaveLength(1);
+    } finally {
+      sqlite.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  for (const replacement of [false, true]) {
+    test(`a ${replacement ? "replaced" : "expired"} lease cannot file stale work`, async () => {
+      const { db, sqlite } = sqliteD1();
+      try {
+        addProject(sqlite, "referred", REFERRER);
+        addPaid(sqlite, "referred", 1_000_000n, "2026-11-05T00:00:00.000Z");
+        addWallet(sqlite, REFERRER, WALLET);
+        let now = new Date("2026-12-01T00:00:00.000Z");
+        const store = new D1AccrualStore(db);
+        await expect(
+          runAccrual({
+            config: parseConfig(VARS),
+            store,
+            now: () => now,
+            randomId: () => "fixture_original",
+            log: () => {},
+            sha256: async (text) => {
+              now = new Date(now.getTime() + LOCK_MS + 1);
+              if (replacement)
+                expect(
+                  await store.acquireLock("rrun_fixture_successor", now),
+                ).toBe(true);
+              return sha(text);
+            },
+          }),
+        ).rejects.toThrow(/NOT NULL/u);
+        expect(rows(sqlite)).toEqual([]);
+        expect(files(sqlite)).toEqual([]);
+        expect(
+          sqlite.query("SELECT * FROM referral_claim_wallets").all(),
+        ).toEqual([]);
+        if (replacement) {
+          expect((await runOnce(env(db), () => now))?.status).toBe("locked");
+          await store.releaseLock("rrun_fixture_successor", now);
+        }
+        expect((await runOnce(env(db), () => now))?.filed).toEqual([
+          { period: "2026-11", epoch: 0, rows: 1, leafCount: 1 },
+        ]);
+      } finally {
+        sqlite.close();
+      }
+    });
+  }
+});
 
 describe("configuration", () => {
   test("off is inert without any other value", async () => {

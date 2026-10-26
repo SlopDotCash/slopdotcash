@@ -22,7 +22,7 @@ interface D1Statement {
 }
 export interface ReferralD1Database {
   prepare(query: string): D1Statement;
-  batch?(statements: D1Statement[]): Promise<unknown[]>;
+  batch(statements: D1Statement[]): Promise<unknown[]>;
 }
 
 const ACCRUAL_COLUMNS: [keyof AccrualRow, string][] = [
@@ -220,47 +220,54 @@ export class D1AccrualStore implements AccrualStore, PostStore {
     return new Map(results.map((row) => [row.referrer_github_id, row.wallet]));
   }
 
-  async insertAccruals(rows: AccrualRow[]) {
+  async filePeriod(rows: AccrualRow[], file: AccrualFile, now: Date) {
     const columns = ACCRUAL_COLUMNS.map(([, column]) => column).join(", ");
     const placeholders = ACCRUAL_COLUMNS.map(() => "?").join(", ");
-    for (const row of rows)
-      await this.db
+    const statements = rows.map((row) =>
+      this.db
         .prepare(
           `INSERT INTO referral_accruals (${columns}) VALUES (${placeholders})`,
         )
-        .bind(...ACCRUAL_COLUMNS.map(([key]) => row[key] as D1Value))
-        .run();
-  }
-
-  async insertFile(file: AccrualFile) {
-    await this.db
-      .prepare(
-        `INSERT INTO referral_accrual_files
+        .bind(...ACCRUAL_COLUMNS.map(([key]) => row[key] as D1Value)),
+    );
+    // A missing, expired or replaced lease produces NULL for the required
+    // run_id. That constraint fails the whole batch, including earlier rows.
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO referral_accrual_files
            (period, epoch, run_id, mode, body, body_sha256, merkle_root,
             tree_total_base, leaf_count, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        file.period,
-        file.epoch,
-        file.runId,
-        file.mode,
-        file.body,
-        file.bodySha256,
-        file.merkleRoot,
-        file.treeTotalBase,
-        file.leafCount,
-        file.createdAt,
-      )
-      .run();
-    for (const pin of file.pins)
-      await this.db
-        .prepare(
-          `INSERT INTO referral_claim_wallets (referrer_github_id, wallet, pinned_period, created_at)
-           VALUES (?, ?, ?, ?)`,
+         VALUES (?, ?, (SELECT run_id FROM referral_accrual_locks
+           WHERE scope = 'accrual' AND run_id = ? AND expires_at >= ?),
+           ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .bind(pin.githubId, pin.wallet, file.period, file.createdAt)
-        .run();
+        .bind(
+          file.period,
+          file.epoch,
+          file.runId,
+          now.toISOString(),
+          file.mode,
+          file.body,
+          file.bodySha256,
+          file.merkleRoot,
+          file.treeTotalBase,
+          file.leafCount,
+          file.createdAt,
+        ),
+    );
+    for (const pin of file.pins)
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO referral_claim_wallets (referrer_github_id, wallet, pinned_period, created_at)
+           VALUES (?, ?, ?, ?)`,
+          )
+          .bind(pin.githubId, pin.wallet, file.period, file.createdAt),
+      );
+    // D1 rolls back every statement if any insert fails. Never split this
+    // batch: a public cumulative file must not exist without its wallet pins.
+    await this.db.batch(statements);
   }
 
   async openPosts(network: string) {
