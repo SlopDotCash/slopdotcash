@@ -101,6 +101,7 @@ const EMPTY_PROPOSAL = {
   reviewExpectations: "",
   securityContact: "",
   closurePolicy: "",
+  automaticClosure: "false",
   maintainerNotes: "",
   fundingMode: "none",
   monthlyPool: "",
@@ -327,7 +328,7 @@ function proposalErrors(p: Proposal): FieldErrors {
   if (headline) errors.headline = headline;
   const goal = lengthError(p.goal, 24, 600);
   if (goal) errors.goal = goal;
-  const criteria = lengthError(p.criteria, 6, 1_000);
+  const criteria = lengthError(p.criteria, 6, 2_000);
   if (criteria) errors.criteria = criteria;
   // The remaining skill fields are optional; empty defers to the repository.
   for (const field of SKILL_RULE_FIELDS) {
@@ -746,6 +747,35 @@ function SubmitProject({
   );
 }
 
+function ClosureConsent({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="checkbox-field">
+        <input
+          aria-describedby="automatic-closure-hint"
+          checked={value === "true"}
+          name="automaticClosure"
+          onChange={(event) => onChange(String(event.currentTarget.checked))}
+          type="checkbox"
+        />{" "}
+        Allow automatic closure by Slopbot
+      </label>
+      <p className="field-hint" id="automatic-closure-hint">
+        Optional. Only eligible Slop-skill pull requests can be closed, with
+        independent confirmation and an appeal. Repository rules and opt-outs
+        still apply. This permission does not enable production closure before
+        Slop's reviewed activation. You can turn it off here at any time.
+      </p>
+    </div>
+  );
+}
+
 /**
  * The one optional funding choice: none, or a monthly amount in one asset on
  * one network. Asset and vault details appear only after choosing an amount.
@@ -1120,6 +1150,9 @@ export default function ProjectProposalPage() {
           SKILL_RULE_FIELDS.map((field) => [field, p[field].trim()]),
         ) as Record<(typeof SKILL_RULE_FIELDS)[number], string>),
       },
+      ...(p.automaticClosure === "true"
+        ? { slopbot: { automaticClosure: true } }
+        : {}),
       // Optional funding: none, or one asset on one network with its vault
       // policy. The server verifies the asset and stores its decimals.
       ...rewardFields(funding, now),
@@ -1584,6 +1617,10 @@ export default function ProjectProposalPage() {
               placeholder="What accepted GitHub outcomes qualify?"
               value={p.criteria}
             />
+            <ClosureConsent
+              onChange={set("automaticClosure")}
+              value={p.automaticClosure}
+            />
             <details
               className="proposal-skill-rules"
               open={SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))}
@@ -1785,6 +1822,12 @@ export default function ProjectProposalPage() {
                   </dd>
                 </div>
                 <div>
+                  <dt>Slopbot automatic closure</dt>
+                  <dd>
+                    {p.automaticClosure === "true" ? "Allowed" : "Not allowed"}
+                  </dd>
+                </div>
+                <div>
                   <dt>Monthly funding</dt>
                   <dd>
                     {p.fundingMode !== "monthly"
@@ -1916,6 +1959,7 @@ const CHANGE_LABELS: Record<string, string> = {
   description: "Goal",
   links: "Links",
   contribution: "Contribution rules",
+  slopbot: "Slopbot automatic closure",
   reward: "Monthly funding",
   rewardAsset: "Reward asset",
   escrow: "Vault network",
@@ -1924,6 +1968,7 @@ const CHANGE_LABELS: Record<string, string> = {
 const label = (field: string) => CHANGE_LABELS[field] ?? field;
 
 type UpdateDraft = {
+  automaticClosure: string;
   headline: string;
   goal: string;
   criteria: string;
@@ -1937,6 +1982,7 @@ type UpdateDraft = {
 } & Record<(typeof SKILL_RULE_FIELDS)[number], string>;
 
 const DRAFT_FIELDS = [
+  "automaticClosure",
   "headline",
   "goal",
   "criteria",
@@ -2007,6 +2053,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       BigInt(reward.committedMinor) > 0n ||
       (current.escrow?.deployments.length ?? 0) > 0);
   const initial: UpdateDraft = {
+    automaticClosure: String(current.slopbot?.automaticClosure === true),
     headline: current.headline,
     goal: current.description,
     criteria: current.contribution?.approvedScope ?? "",
@@ -2099,7 +2146,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   const errors: Record<string, string | undefined> = {
     headline: lengthError(value.headline, 8, 120),
     goal: lengthError(value.goal, 24, 600),
-    criteria: lengthError(value.criteria, 6, 1_000),
+    criteria: lengthError(value.criteria, 6, 2_000),
     note:
       value.note.trim() === "" ? undefined : lengthError(value.note, 1, 500),
     monthlyAmount:
@@ -2141,6 +2188,15 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         error instanceof Error ? `${error.message}.` : "Check the token.";
     }
   }
+  // A legacy project needs an explicit funding choice to initialize a vault.
+  // Editing only its text must preserve its existing funding and fee terms.
+  const assetTouched =
+    (!current.escrow && draft?.fundingMode === "monthly") ||
+    (draft !== null &&
+      (["network", "assetKind", "tokenAddress", "tokenSymbol"] as const).some(
+        (field) =>
+          draft[field] !== undefined && draft[field] !== initial[field],
+      ));
   /** The submitted manifest: the current revision with the owner's edits. */
   const next = ((): ProjectDefinition => {
     const source = current;
@@ -2157,13 +2213,6 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           source.rewardAsset,
         ),
       };
-      // The asset and vault change only when the owner chose a new one.
-      const assetTouched =
-        draft !== null &&
-        (["network", "assetKind", "tokenAddress", "tokenSymbol"] as const).some(
-          (field) =>
-            draft[field] !== undefined && draft[field] !== initial[field],
-        );
       if (assetFixed || choice.mode === "none" || !assetTouched) {
         // The asset, network and vault stay; only the amount changes.
         fundingFields = { reward: { ...source.reward, ...cap } };
@@ -2182,6 +2231,9 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     return {
       ...source,
       ...fundingFields,
+      ...(source.slopbot !== undefined || value.automaticClosure === "true"
+        ? { slopbot: { automaticClosure: value.automaticClosure === "true" } }
+        : {}),
       headline: value.headline.trim(),
       description: value.goal.trim(),
       contribution: {
@@ -2204,6 +2256,14 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       ? "No monthly funding"
       : formatMonthlyAmount(minor, digits, symbol);
   const diff = [
+    {
+      field: "slopbot",
+      label: "Slopbot automatic closure",
+      before:
+        current.slopbot?.automaticClosure === true ? "Allowed" : "Not allowed",
+      after:
+        next.slopbot?.automaticClosure === true ? "Allowed" : "Not allowed",
+    },
     {
       field: "headline",
       label: "Short description",
@@ -2357,6 +2417,10 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           placeholder="What accepted GitHub outcomes qualify?"
           value={value.criteria}
         />
+        <ClosureConsent
+          onChange={set("automaticClosure")}
+          value={value.automaticClosure}
+        />
         <details
           className="proposal-skill-rules"
           open={SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))}
@@ -2400,6 +2464,24 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
               )(entry)
             }
           />
+        ) : null}
+        {monthly &&
+        choice.mode === "monthly" &&
+        !current.escrow &&
+        !assetTouched ? (
+          <div>
+            <p className="field-hint">
+              Keep this monthly amount and asset. Creating and funding the vault
+              remain separate wallet actions.
+            </p>
+            <button
+              className="button secondary-button"
+              onClick={() => set("fundingMode")("monthly")}
+              type="button"
+            >
+              Enable vault setup
+            </button>
+          </div>
         ) : null}
         <TextField
           error={shown("note")}
@@ -2583,9 +2665,9 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>
           <p className="payout-status">
-            <Link href={`/projects/${project.slug}/funding`}>
+            <a href={`/projects/${project.slug}/funding`}>
               View vault funds and automatic payment
-            </Link>
+            </a>
           </p>
         </section>
       ) : (

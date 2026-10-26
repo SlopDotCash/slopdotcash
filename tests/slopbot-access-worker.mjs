@@ -4,6 +4,9 @@
  * sends its GitHub App calls to the loopback GitHub fixture instead of
  * api.github.com. The App key is a throwaway made for each run.
  */
+
+import { githubAppReportingReader } from "../backend/security/github-advisories";
+import { refreshRegisteredReporting } from "../workers/slopbot/reporting-readiness";
 import {
   handleRepositoryAccess,
   REPOSITORY_ACCESS_URL,
@@ -14,6 +17,23 @@ const route = new URL(REPOSITORY_ACCESS_URL);
 export default {
   fetch(request, env) {
     const url = new URL(request.url);
+    // Loopback fixture control only; production exports named RPC without fetch.
+    if (
+      request.method === "POST" &&
+      url.hostname === "127.0.0.1" &&
+      url.pathname === "/__fixture/reporting-refresh"
+    ) {
+      return refreshRegisteredReporting(
+        env,
+        githubAppReportingReader({
+          appId: env.SLOPBOT_APP_ID,
+          privateKey: env.SLOPBOT_APP_PRIVATE_KEY,
+          apiOrigin: env.GITHUB_FIXTURE_ORIGIN,
+          fetch: (url, init) => fetch(url, init),
+          now: () => new Date(),
+        }),
+      ).then((result) => Response.json(result));
+    }
     if (
       request.method !== "GET" ||
       url.origin !== route.origin ||

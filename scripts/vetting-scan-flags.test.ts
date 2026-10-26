@@ -7,8 +7,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
-import { handleProjectApi } from "../backend/projects/handler";
-import { flaggerAuthority } from "../backend/projects/setup";
+import {
+  handleProjectApi,
+  type ProjectApiDependencies,
+} from "../backend/projects/handler";
+import {
+  flaggerAuthority,
+  vettingScanRequester,
+} from "../backend/projects/setup";
 import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { githubFlaggerStanding } from "../backend/vetting/flagger-standing";
 import {
@@ -186,7 +192,10 @@ const vettingDeps = () => ({
   randomId,
 });
 
-function projectApi(request: Request) {
+function projectApi(
+  request: Request,
+  overrides: Partial<ProjectApiDependencies> = {},
+) {
   return handleProjectApi(request, {
     persistence: projects,
     adminGithubIds: new Set([ADMIN.githubId]),
@@ -213,6 +222,7 @@ function projectApi(request: Request) {
         readLivePin,
         forReinstatement,
       ),
+    ...overrides,
   }) as Promise<Response>;
 }
 
@@ -1017,4 +1027,176 @@ test("the existing-project exemption is permanent but cannot clear reinstatement
   } finally {
     database.sqlite.close();
   }
+});
+
+test("an exempt owner edit stays active without a scan, while flags still require fresh reinstatement", async () => {
+  await listPausedProject();
+  const canonical = await projects.getProject("open-registry");
+  if (!canonical) throw new Error("Missing canonical project");
+  const migration = "0075_vetting_grandfathered_projects.sql";
+  const database = sqliteD1(
+    readdirSync(new URL("../migrations", import.meta.url))
+      .filter((name) => name.endsWith(".sql") && name !== migration)
+      .sort(),
+  );
+  await retained.dispose();
+  sqlite = database.sqlite;
+  projects = new CloudflareProjectPersistence(database.db);
+  flags = new ProjectFlagStore(database.db);
+  retained = await localVettingEvidence(database.db, () => clock);
+  vetting = new CloudflareVettingPersistence(
+    database.db,
+    async (assessment) =>
+      assessment.result !== null &&
+      retained.evidence.retained(assessment.result),
+  );
+  expect(
+    await projects.createProject({
+      manifest: canonical.manifest,
+      manifestText: JSON.stringify(canonical.manifest),
+      manifestSha256: canonical.manifestSha256,
+      reason: "Existing project before the scan gate",
+      actor: APPLICANT,
+      at: NOW.toISOString(),
+      referrer: null,
+    }),
+  ).toBe("created");
+  sqlite.exec(
+    readFileSync(
+      new URL(`../migrations/${migration}`, import.meta.url),
+      "utf8",
+    ),
+  );
+  const initial = await projectApi(
+    sessionRequest(
+      "POST",
+      "project-setup/open-registry/check",
+      "applicant",
+      {},
+    ),
+  );
+  expect(initial.status).toBe(200);
+  const active = await projects.getProject("open-registry");
+  if (!active) throw new Error("Missing active project");
+  expect(active.status).toBe("active");
+  let scanRequests = 0;
+  const unavailable = vettingScanRequester({
+    vetting,
+    serviceAvailable: async () => true,
+    livePin: async () => {
+      throw new Error("Integration head unavailable");
+    },
+    now: () => clock,
+    randomId,
+  });
+  const edit = async () => {
+    const current = await projects.getProject("open-registry");
+    if (!current) throw new Error("Missing current project");
+    return projectApi(
+      sessionRequest("PUT", "projects/open-registry", "applicant", {
+        expectedRevision: current.revision,
+        manifest: {
+          ...current.manifest,
+          contribution: {
+            ...current.manifest.contribution,
+            approvedScope: "Fix reproduced defects in the supported runtime.",
+          },
+        },
+      }),
+      {
+        requestScan: async (...args) => {
+          scanRequests++;
+          return unavailable(...args);
+        },
+      },
+    );
+  };
+  const published = await edit();
+  expect(published.status).toBe(200);
+  const result = await published.json();
+  expect(result.project.revision).toBe(active.revision + 1);
+  expect(result.project.status).toBe("active");
+  expect(result.setup).toMatchObject({
+    state: "ready",
+    status: "active",
+    nextAction: { kind: "none" },
+    checks: { scan: { state: "cleared", exempt: true } },
+  });
+  expect(scanRequests).toBe(0);
+  expect(await vetting.projectAssessments("open-registry")).toHaveLength(0);
+  expect((await publicProject()).status).toBe(200);
+
+  // The permanent exemption does not remove the two-contributor flag gate.
+  expect((await flag("alice")).status).toBe(201);
+  const flagged = await flag("bob");
+  expect(flagged.status).toBe(201);
+  expect(await flagged.json()).toMatchObject({
+    paused: true,
+    restriction: "quarantined",
+    freshScan: "queued",
+  });
+  expect((await edit()).status).toBe(409);
+  const paused = await projects.getProject("open-registry");
+  if (!paused) throw new Error("Missing flagged project");
+  expect((await publicProject()).status).toBe(410);
+  const check = await projectApi(
+    sessionRequest(
+      "POST",
+      "project-setup/open-registry/check",
+      "applicant",
+      {},
+    ),
+  );
+  expect((await check.json()).setup.state).toBe("restricted");
+  expect(
+    (
+      await vetting.manifestClearance(
+        paused.id,
+        paused.manifest,
+        paused.revision,
+        readLivePin,
+        true,
+      )
+    ).state,
+  ).not.toBe("cleared");
+  expect(scanRequests).toBe(0);
+});
+
+test("a non-exempt owner executable edit still pauses and queues its new content", async () => {
+  await activeProject();
+  const current = await projects.getProject("open-registry");
+  if (!current) throw new Error("Missing active project");
+  const response = await projectApi(
+    sessionRequest("PUT", "projects/open-registry", "applicant", {
+      expectedRevision: current.revision,
+      manifest: {
+        ...current.manifest,
+        contribution: {
+          ...current.manifest.contribution,
+          approvedScope: "Fix reproduced defects in the supported runtime.",
+        },
+      },
+    }),
+    {
+      requestScan: vettingScanRequester({
+        vetting,
+        serviceAvailable: async () => true,
+        livePin: readLivePin,
+        now: () => clock,
+        randomId,
+      }),
+    },
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    project: { revision: current.revision + 1, status: "paused" },
+    setup: { state: "waiting", checks: { scan: { state: "queued" } } },
+  });
+  expect(
+    (await vetting.projectAssessments("open-registry")).filter(
+      (assessment) =>
+        assessment.revision === current.revision + 1 &&
+        assessment.state === "pending",
+    ),
+  ).toHaveLength(1);
 });

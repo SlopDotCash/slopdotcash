@@ -100,6 +100,7 @@ const OPTIONAL_PROJECT_KEYS = [
   "rewardAsset",
   "contribution",
   "securityBounty",
+  "slopbot",
 ];
 export const MAX_MONTHLY_CAP_MINOR = 1_000_000_000_000_000n;
 
@@ -1216,6 +1217,12 @@ function validateProjectDefinition(
   text(project.description, "project.description", { max: 600, min: 24 });
   if (project.contribution !== undefined)
     validateContribution(project.contribution);
+  if (project.slopbot !== undefined) {
+    const slopbot = record(project.slopbot, "project.slopbot");
+    exactKeys(slopbot, ["automaticClosure"], "project.slopbot");
+    if (typeof slopbot.automaticClosure !== "boolean")
+      throw new TypeError("project.slopbot.automaticClosure must be a boolean");
+  }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&
     project.listingTier !== "featured" &&

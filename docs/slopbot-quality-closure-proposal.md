@@ -44,10 +44,12 @@ installation, exemption, assignment and repository policy before acting.
 A changed source requires a new review. An appeal or maintainer reopen prevents
 another close of the same revision.
 
-Keep explicit repository enablement, the global closure switch, the later of
-14 days or 50 reviewed items in shadow mode, independent confirmation, the
-25-per-day default cap, and the reopen-rate circuit breaker. Record maintainer
-agreement for the proposed quality closures during shadow review.
+Keep explicit project-setting consent, existing repository opt-outs and rules,
+the global closure switch, reviewed real cases and counterexamples,
+independent confirmation, the 25-per-day default cap, and the reopen-rate
+circuit breaker. The owner replaced the fixed 14-day and 50-item qualification
+threshold on 25 October 2026. Record maintainer agreement and actual evidence
+for the proposed quality closures in the production activation record.
 
 No new penalty, exclusion, reward change or payment follows from this amendment.
 The existing separate human and financial authority rules remain in force.
@@ -59,4 +61,4 @@ real examples of each accepted rejection rule and useful counterexamples.
 Verify unchanged-head closure, source changes during review, missing evidence,
 provider failure, unavailable verification, exemptions, appeals and reopen.
 A local result cannot replace live hosted workflow evidence. Enable production
-closure only through its separate reviewed activation after shadow qualification.
+closure only through its separate reviewed activation after real-case qualification.

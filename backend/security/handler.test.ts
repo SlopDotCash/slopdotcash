@@ -260,13 +260,15 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
           return `case${String(ids).padStart(8, "0")}`;
         },
         sessionActor: async () => actor,
-        github: {
-          fetch: async () =>
-            intake === "forbidden"
-              ? new Response("{}", { status: 403 })
-              : Response.json({ enabled: intake === "enabled" }),
-          apiOrigin: "https://api.github.invalid",
-        },
+        reportingRead: async (target) =>
+          intake === "forbidden"
+            ? { kind: "unavailable" }
+            : {
+                kind: "verified",
+                enabled: intake === "enabled",
+                repositoryId: target.repositoryId!,
+                repositoryNodeId: target.repositoryNodeId!,
+              },
         advisories,
         analyzer: analyzerConfigured ? analyzer : null,
         moderatorGithubIds: MODERATORS,

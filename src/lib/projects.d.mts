@@ -215,6 +215,8 @@ export interface ProjectDefinition {
   };
   /** Maintainer-authored fields that generate the project skills (SKL-03). */
   readonly contribution?: Readonly<Record<ContributionField, string>>;
+  /** Explicit owner consent, recorded by immutable revision; absent is false. */
+  readonly slopbot?: { readonly automaticClosure: boolean };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;
   readonly repositories: readonly {

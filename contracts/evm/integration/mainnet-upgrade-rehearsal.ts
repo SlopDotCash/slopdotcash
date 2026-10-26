@@ -14,7 +14,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { keccak256, toBytes } from "viem";
+import { type Hex, hashTypedData, keccak256, toBytes } from "viem";
 import { privateKeyToAddress } from "viem/accounts";
 import {
   type BindingInput,
@@ -24,6 +24,7 @@ import {
   buildDepositCalldata,
   buildPayCalldata,
   buildWithdrawCalldata,
+  EVM_ESCROW_DOMAIN_VERSION,
   EVM_ESCROW_EVENT_TOPICS,
   type EvmEscrowConfig,
   type EvmImplementationReview,
@@ -41,6 +42,7 @@ import {
 import {
   buildCommitMonthlyLeafCalldata,
   buildReserveMonthlyCalldata,
+  type EvmMonthlyReservation,
   evmMonthlyReserveDigest,
   evmMonthlySumTree,
   prepareEvmMonthlyReservation,
@@ -1209,6 +1211,165 @@ try {
       BigInt(sent.receipt.gasUsed).toString(),
     ),
     payment: v2Paid.hash,
+    state: "finalized on local fork",
+  };
+  // The bundled release (docs/escrow-unsettleable-month-release.md): an attester-fault reserve
+  // that no leaf can settle blocks manual awards until the owner releases it with a fresh
+  // identity-authority signature over the exact remaining gross.
+  const releaseDate = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 2, 1),
+  );
+  const releasePeriod = `${releaseDate.getUTCFullYear()}-${String(releaseDate.getUTCMonth() + 1).padStart(2, "0")}`;
+  const releasePeriodNumber = releasePeriod.replace("-", "");
+  await sendOk(
+    owner.address,
+    vault,
+    calldata("setMonthlyCommitment(uint128,bool)", "5000000000", "true"),
+    "monthly policy for the faulty month",
+  );
+  const faulty: EvmMonthlyReservation = {
+    version: 2,
+    allocationDigest: keccak256(toBytes(`rehearsal-fault-${chainId}`)),
+    allocationRoot: keccak256(toBytes(`rehearsal-lost-root-${chainId}`)),
+    wholeGross: "3000000",
+    remainingGross: "3000000",
+    count: 1,
+    sourceSequence: read(vault, "ordinarySourceSequence()(uint256)"),
+  };
+  const freeBeforeFault = read(vault, "freeBalance()(uint128)");
+  await sendOk(
+    relayer.address,
+    vault,
+    buildReserveMonthlyCalldata(
+      releasePeriod,
+      faulty,
+      sign(
+        evmMonthlyReserveDigest(chainId, vault, releasePeriod, faulty),
+        authority.key,
+      ),
+    ),
+    "attester-fault reserve",
+  );
+  const blocked = award("blocked-by-fault", "106", "1000049");
+  const blockedCalldata = buildCommitAwardCalldata({
+    obligationId: blocked.id,
+    githubUserId: blocked.githubUserId,
+    grossMicro: blocked.grossMicro,
+    sourceDigest: blocked.sourceDigest,
+  });
+  await reverts(
+    owner.address,
+    vault,
+    blockedCalldata,
+    "a manual award waits while the faulty reserve is pending",
+  );
+  // An independent EIP-712 digest must equal the vault's helper.
+  const releaseDigest = hashTypedData({
+    domain: {
+      name: "SlopProjectEscrow",
+      version: EVM_ESCROW_DOMAIN_VERSION,
+      chainId,
+      verifyingContract: vault as Hex,
+    },
+    types: {
+      MonthlyRelease: [
+        { name: "period", type: "uint32" },
+        { name: "allocationDigest", type: "bytes32" },
+        { name: "allocationRoot", type: "bytes32" },
+        { name: "remainingGross", type: "uint128" },
+        { name: "releasedGross", type: "uint128" },
+      ],
+    },
+    primaryType: "MonthlyRelease",
+    message: {
+      period: Number(releasePeriodNumber),
+      allocationDigest: faulty.allocationDigest as Hex,
+      allocationRoot: faulty.allocationRoot as Hex,
+      remainingGross: 3000000n,
+      releasedGross: 3000000n,
+    },
+  });
+  assert.equal(
+    read(
+      vault,
+      "monthlyReleaseDigest(uint32,uint128,uint128)(bytes32)",
+      releasePeriodNumber,
+      "3000000",
+      "3000000",
+    ),
+    releaseDigest,
+    "the release digest matches EIP-712",
+  );
+  const releaseCalldata = calldata(
+    "releaseMonthlyReserve(uint32,uint128,uint128,bytes)",
+    releasePeriodNumber,
+    "3000000",
+    "3000000",
+    sign(releaseDigest, authority.key),
+  );
+  await reverts(
+    relayer.address,
+    vault,
+    releaseCalldata,
+    "only the owner releases",
+  );
+  await reverts(
+    owner.address,
+    vault,
+    calldata(
+      "releaseMonthlyReserve(uint32,uint128,uint128,bytes)",
+      releasePeriodNumber,
+      "3000000",
+      "3000000",
+      sign(releaseDigest, toBytes(keccak256(toBytes("not-the-authority")))),
+    ),
+    "another key cannot sign the release",
+  );
+  const releasedTx = await sendOk(
+    owner.address,
+    vault,
+    releaseCalldata,
+    "owner release with a fresh attestation",
+  );
+  await reverts(
+    owner.address,
+    vault,
+    releaseCalldata,
+    "a release cannot replay",
+  );
+  assert.equal(read(vault, "pendingMonthlyGross()(uint128)"), "0");
+  assert.equal(
+    read(vault, "freeBalance()(uint128)"),
+    freeBeforeFault,
+    "the released gross returns to free balance without a fee",
+  );
+  assert.equal(
+    read(vault, "monthlyReleased(uint32)(uint128)", releasePeriodNumber),
+    "3000000",
+  );
+  assert.equal(
+    read(vault, "monthlyRoots(uint32)(bytes32)", releasePeriodNumber),
+    faulty.allocationRoot,
+    "the period stays committed",
+  );
+  await sendOk(
+    owner.address,
+    vault,
+    blockedCalldata,
+    "manual award after release",
+  );
+  await rpc("anvil_mine", ["0x41"]);
+  const releasedTotals = await readVaultTotals(totalsConfig);
+  assert.equal(
+    releasedTotals.freeBalance,
+    (BigInt(freeBeforeFault) - BigInt(blocked.grossMicro)).toString(),
+    "the totals identity holds after the release and the manual award",
+  );
+  report.monthlyRelease = {
+    period: releasePeriod,
+    releasedGross: "3000000",
+    releaseGas: BigInt(releasedTx.receipt.gasUsed).toString(),
+    manualAwardUnblocked: true,
     state: "finalized on local fork",
   };
   const prepared = await prepareEvmVaultCreation(upgraded, {
