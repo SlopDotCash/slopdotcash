@@ -421,8 +421,10 @@ reads a key.
 ### Native fee budget
 
 The token-value caps above do not bound gas. Live EVM signing also needs its
-own native transaction and UTC-day limits. The owner has not selected these
-values. Keep mode off and leave them unset until the reviewed activation.
+own native transaction and UTC-day limits. The owner selected them on 26
+October 2026: Base 0.0002 ETH per transaction and 0.001 ETH per UTC day, with a
+0.00001 ETH data/operator allowance; Ethereum 0.002 ETH and 0.005 ETH; Robinhood
+0.0002 ETH and 0.001 ETH. They are set in `FEE_CONVERTER_NATIVE_BUDGETS`.
 Base needs a positive allowance for data and operator fees; Ethereum uses
 zero additional allowance. Robinhood remains retain-only and loads no key.
 Solana live signing remains blocked by its separate qualification gate.
