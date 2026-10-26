@@ -289,7 +289,8 @@ contract ReferralDistributor {
     }
 
     function setPoster(address newPoster) external onlyOwner {
-        if (newPoster == address(0) || newPoster == owner) revert InvalidInput();
+        // The pending owner may not become the poster either, so one key never holds both roles.
+        if (newPoster == address(0) || newPoster == owner || newPoster == pendingOwner) revert InvalidInput();
         emit PosterChanged(poster, newPoster);
         poster = newPoster;
     }

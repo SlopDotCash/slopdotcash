@@ -337,6 +337,14 @@ contract ReferralDistributorTest is ReferralBase {
         vm.prank(CAROL);
         distributor.acceptOwnership();
         require(distributor.owner() == CAROL && distributor.pendingOwner() == address(0), "handed over");
+        // A pending owner cannot also be made the poster, so owner and poster stay separate keys.
+        vm.prank(CAROL);
+        distributor.transferOwnership(OWNER);
+        vm.prank(CAROL);
+        vm.expectRevert(ReferralDistributor.InvalidInput.selector);
+        distributor.setPoster(OWNER);
+        vm.prank(CAROL);
+        distributor.transferOwnership(address(0));
         vm.prank(OWNER);
         vm.expectRevert(ReferralDistributor.NotOwner.selector);
         distributor.pause();
