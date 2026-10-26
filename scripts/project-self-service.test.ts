@@ -1264,6 +1264,252 @@ test("an explicit moderator ban blocks new contribution intake without blaming t
   expect(await hasParticipationBan(t.db, "900000004")).toBe(false);
 });
 
+async function accountAppealFlow(concurrent: boolean) {
+  const MOD_2 = "900000005";
+  const STEWARD = "987654321";
+  const t = registry();
+  t.deps.moderatorGithubIds = new Set([ADMIN, MOD_2]);
+  t.deps.adminGithubIds = new Set([ADMIN, MOD_2]);
+  t.deps.github.fetch = async (url) =>
+    Response.json(
+      String(url).endsWith("/owner")
+        ? { id: Number(OWNER), login: "owner", type: "User" }
+        : { id: Number(OTHER), login: "other", type: "User" },
+    );
+  expect((await t.create("appeal-roles", "example/appeal-roles")).status).toBe(
+    201,
+  );
+  const project = await t.persistence.getProject("appeal-roles");
+  if (!project) throw new Error("Project missing");
+  await t.persistence.appendEnforcement(
+    {
+      id: "enf_appeal_roles_scan",
+      projectId: project.id,
+      sequence: 1,
+      action: "ban",
+      stateAfter: "banned",
+      appealAfter: "none",
+      reason: "Synthetic confirmed malicious scan",
+      evidenceReference: "private-case-fixture",
+      repositoryGithubId: STEWARD,
+      repositoryKeys: ["example/appeal-roles"],
+      actor: null,
+      actorRole: "vetting-service",
+      decisionSource: "standing-rule",
+      systemIssuer: {
+        kind: "vetting-service",
+        keySha256: "a".repeat(64),
+        assessmentId: "vet_fixture",
+        policyVersion: "fixture",
+        rule: "confirmed-malicious",
+      },
+      beforeRevision: project.revision,
+      beforeManifestSha256: project.manifestSha256,
+      afterRevision: null,
+      afterManifestSha256: null,
+      result: "revision_pending",
+      createdAt: NOW,
+    },
+    null,
+    [],
+  );
+  const banned = await t.call(
+    "POST",
+    "admin/projects/appeal-roles/enforcement",
+    ADMIN,
+    {
+      action: "ban",
+      reason:
+        "Moderator confirms malicious scan and bans applicant and contributor",
+      evidenceReference: "private-case-fixture",
+      expectedRevision: project.revision,
+      expectedSequence: 2,
+      responsibleAccounts: [
+        { githubId: OWNER, githubLogin: "owner" },
+        { githubId: OTHER, githubLogin: "other" },
+      ],
+    },
+  );
+  expect(banned.status).toBe(200);
+
+  const openProjectAppeal = async () => {
+    const stewardAppeal = await t.call("POST", "project-appeals", STEWARD, {
+      projectId: "appeal-roles",
+      reason:
+        "Steward appeals the project restriction after reverting the commit",
+      evidenceReference: "private-steward-appeal-fixture",
+    });
+    expect(stewardAppeal.status).toBe(200);
+    expect(stewardAppeal.body.record).toMatchObject({
+      actorRole: "project-steward",
+      decisionSource: "owner-request",
+      stateAfter: "banned",
+      appealAfter: "requested",
+    });
+  };
+
+  // The banned project applicant can still file their individual account appeal,
+  // which records as a banned-account appeal and notifies only the moderator who did not ban them.
+  const openAccountAppeal = () =>
+    t.call("POST", "project-appeals", OWNER, {
+      projectId: "appeal-roles",
+      reason: "Applicant appeals their individual account ban",
+      evidenceReference: "private-applicant-account-appeal-fixture",
+    });
+  if (concurrent) {
+    const readEnforcements = t.persistence.listEnforcements.bind(t.persistence);
+    let pending = true;
+    t.persistence.listEnforcements = async () => {
+      const snapshot = await readEnforcements();
+      if (pending) {
+        pending = false;
+        await openProjectAppeal();
+      }
+      return snapshot;
+    };
+    try {
+      const stale = await openAccountAppeal();
+      expect(stale.status).toBe(409);
+      expect(stale.body.error).toBe("stale_enforcement");
+      expect(
+        (await readEnforcements()).filter(
+          (record) => record.action === "request_reinstatement",
+        ),
+      ).toMatchObject([{ actorRole: "project-steward", sequence: 3 }]);
+      expect(
+        t.sqlite
+          .query(
+            "SELECT recipient_github_id FROM notifications WHERE kind = 'reinstatement_review'",
+          )
+          .all(),
+      ).toEqual([{ recipient_github_id: MOD_2 }]);
+    } finally {
+      t.persistence.listEnforcements = readEnforcements;
+    }
+  } else {
+    await openProjectAppeal();
+  }
+  const applicantAccountAppeal = await openAccountAppeal();
+  expect(applicantAccountAppeal.status).toBe(200);
+  const applicantAppealRecord = applicantAccountAppeal.body.record as {
+    id: string;
+    actorRole: string;
+    decisionSource: string;
+  };
+  expect(applicantAppealRecord).toMatchObject({
+    actorRole: "banned-account",
+    decisionSource: "account-request",
+    stateAfter: "banned",
+    appealAfter: "requested",
+  });
+  expect(
+    t.sqlite
+      .query(
+        "SELECT recipient_github_id FROM notifications WHERE event_key = ? ORDER BY recipient_github_id",
+      )
+      .all(`reinstatement-review:${applicantAppealRecord.id}`),
+  ).toEqual([{ recipient_github_id: MOD_2 }]);
+
+  // Clear the applicant's account ban and reinstate the project while OTHER remains banned.
+  const applicantRestored = await t.call(
+    "POST",
+    "admin/projects/appeal-roles/enforcement",
+    MOD_2,
+    {
+      action: "reinstate_accounts",
+      reason: "Independent moderator clears the applicant account",
+      evidenceReference: "private-applicant-account-review-fixture",
+      expectedRevision: (await t.persistence.getProject(project.id))?.revision,
+      expectedSequence: 5,
+      responsibleAccounts: [{ githubId: OWNER, githubLogin: "owner" }],
+    },
+  );
+  expect(applicantRestored.status).toBe(200);
+  const currentProject = await t.persistence.getProject(project.id);
+  if (!currentProject) throw new Error("Project missing");
+  expect(
+    await t.persistence.appendEnforcement(
+      {
+        id: "enf_appeal_roles_project_reinstate",
+        projectId: project.id,
+        sequence: 6,
+        action: "reinstate",
+        stateAfter: "clear",
+        appealAfter: "granted",
+        reason: "Clean scan after revert clears the project",
+        evidenceReference: "private-project-review-fixture",
+        repositoryGithubId: STEWARD,
+        repositoryKeys: ["example/appeal-roles"],
+        actor: { githubId: MOD_2, githubLogin: "other" },
+        actorRole: "project-moderator",
+        decisionSource: "admin-panel",
+        beforeRevision: currentProject.revision,
+        beforeManifestSha256: currentProject.manifestSha256,
+        afterRevision: null,
+        afterManifestSha256: null,
+        result: "no_revision_needed",
+        createdAt: NOW,
+      },
+      null,
+      [],
+    ),
+  ).toBe("recorded");
+
+  // Once the project is clear, an unbanned owner or steward has no project restriction to appeal
+  // even while another maintainer's account ban remains active.
+  for (const unbannedOwner of [OWNER, STEWARD]) {
+    const refusedOwnerAppeal = await t.call(
+      "POST",
+      "project-appeals",
+      unbannedOwner,
+      {
+        projectId: "appeal-roles",
+        reason: "Unbanned owner attempts to appeal an already clear project",
+        evidenceReference: "private-unrestricted-appeal-fixture",
+      },
+    );
+    expect(refusedOwnerAppeal.status).toBe(409);
+    expect(refusedOwnerAppeal.body.error).toBe("not_restricted");
+  }
+
+  // Even after MOD_2 places a new quarantine on the project, OTHER's account-ban appeal
+  // must notify MOD_2 (who did not ban OTHER) and exclude ADMIN (who banned OTHER).
+  const quarantined = await t.call(
+    "POST",
+    "admin/projects/appeal-roles/enforcement",
+    MOD_2,
+    {
+      action: "quarantine",
+      reason: "Second moderator quarantines the project for a separate issue",
+      evidenceReference: "private-quarantine-fixture",
+      expectedRevision: (await t.persistence.getProject(project.id))?.revision,
+      expectedSequence: 7,
+    },
+  );
+  expect(quarantined.status).toBe(200);
+
+  const otherAppeal = await t.call("POST", "project-appeals", OTHER, {
+    projectId: "appeal-roles",
+    reason: "Banned contributor appeals the earlier account ban by ADMIN",
+    evidenceReference: "private-other-account-appeal-fixture",
+  });
+  expect(otherAppeal.status).toBe(200);
+  const otherAppealRecord = otherAppeal.body.record as { id: string };
+  expect(
+    t.sqlite
+      .query(
+        "SELECT recipient_github_id FROM notifications WHERE event_key = ? ORDER BY recipient_github_id",
+      )
+      .all(`reinstatement-review:${otherAppealRecord.id}`),
+  ).toEqual([{ recipient_github_id: MOD_2 }]);
+}
+
+test("account-ban appeals after project appeal or reinstatement resolve role, refusal and independent reviewer notices", () =>
+  accountAppealFlow(false));
+
+test("a concurrent project appeal refuses the stale account request and a fresh retry uses the account role", () =>
+  accountAppealFlow(true));
+
 test("account-reinstatement upgrade preserves prior releases and separates future project decisions", async () => {
   const names = readdirSync(new URL("../migrations/", import.meta.url))
     .filter((name) => name.endsWith(".sql"))
