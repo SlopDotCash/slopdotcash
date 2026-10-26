@@ -290,6 +290,8 @@ Proposed, not approved by the owner (from #1154; do not implement or treat as de
 
 Owner decision, 25 October 2026: branch protections and rulesets are not release requirements. Do not add or restore them during release work unless the owner asks. Keep the reviewed `development` to `main` pull-request flow, full CI and trusted policy checks, main-only production environment, and checked-in release workflow.
 
+Owner decisions, 26 October 2026: enable private-report intake in staging and production after the reviewed release. Verify delivery with the approved private test from `shawgotbags` (#1284). Enable fee handling on Base, Ethereum and Robinhood only after the fee wallets are funded and the limits and readiness are verified (#1285). Base and Ethereum convert received fees; Robinhood retains them. These decisions do not authorize other networks, unbounded spending or referral posting.
+
 ### Referral program
 
 Owner decision, 25 October 2026: approve the project-referral program proposed by the operator in #1261, #1265 and #1267. Slop Cash S.P. runs it beside the product from its own program-token allocation. It is not a Points, scoring or payout feature.
