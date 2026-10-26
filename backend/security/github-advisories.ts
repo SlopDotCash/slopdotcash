@@ -754,8 +754,9 @@ export function githubAppAdvisoryToken(
       const body = (await readBoundedJson(response, 64 * 1024)) as {
         token?: unknown;
       };
-      return typeof body?.token === "string" &&
-        /^[A-Za-z0-9_-]{20,255}$/u.test(body.token)
+      // Installation tokens are opaque and can exceed 255 characters. The
+      // response is bounded above; exclude whitespace/control bytes from headers.
+      return typeof body?.token === "string" && /^[!-~]+$/u.test(body.token)
         ? body.token
         : null;
     } catch {

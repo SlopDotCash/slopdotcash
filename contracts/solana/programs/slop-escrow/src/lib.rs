@@ -17,6 +17,9 @@ const MONTHLY_CUTOFF_DELAY: i64 = 72 * 3600;
 /// The identity authority signs this prefix, the program ID, the project, the period (u32 LE,
 /// YYYYMM), the allocation root, total, freeze time (i64 LE) and stored network domain.
 pub const MONTHLY_MESSAGE_PREFIX: &[u8] = b"slop-monthly-allocation-v3";
+/// The identity authority signs this prefix, the program ID, the project, the period, the
+/// allocation root, total, unsettled and released gross (u64 LE) and stored network domain.
+pub const MONTHLY_RELEASE_PREFIX: &[u8] = b"slop-monthly-release-v1";
 /// The native Ed25519 signature verification program.
 const ED25519_PROGRAM: Pubkey =
     anchor_lang::solana_program::pubkey::pubkey!("Ed25519SigVerify111111111111111111111111111");
@@ -472,6 +475,63 @@ pub mod slop_escrow {
         });
         Ok(())
     }
+    // The owner returns `released` gross of a recorded month that can never settle (an
+    // attester fault) to free balance. The instruction just before this one must be an
+    // Ed25519 program check of the project's identity authority signature over
+    // monthly_release_message for the month's current unsettled gross, so a leaf that
+    // settles first makes it stale. Committed awards do not change. Time alone never
+    // releases a reserve, and the period stays recorded. A leaf still settles while its
+    // gross fits the unsettled remainder.
+    pub fn release_monthly_reserve(
+        ctx: Context<ReleaseMonthlyReserve>,
+        period: u32,
+        expected_unsettled: u64,
+        released: u64,
+    ) -> Result<()> {
+        let p = &mut ctx.accounts.project;
+        let m = &mut ctx.accounts.month;
+        let unsettled = m
+            .total
+            .checked_sub(m.committed)
+            .ok_or(EscrowError::Arithmetic)?;
+        require!(
+            unsettled == expected_unsettled,
+            EscrowError::MonthlyReserveChanged
+        );
+        require!(
+            released > 0 && released <= unsettled,
+            EscrowError::InvalidAmount
+        );
+        let message = monthly_release_message(
+            ctx.program_id,
+            &p.key(),
+            period,
+            &m.allocation_root,
+            m.total,
+            unsettled,
+            released,
+            &p.network,
+        );
+        verify_attestation(&ctx.accounts.instructions, &p.identity_authority, &message)?;
+        m.committed = add(m.committed, released)?;
+        m.released = add(m.released, released)?;
+        let less = |n: u64| {
+            n.checked_sub(released)
+                .ok_or(error!(EscrowError::Arithmetic))
+        };
+        p.reserved = less(p.reserved)?;
+        // As in settle_leaf: a legacy expired month already left the outstanding count.
+        if !m.expired {
+            p.monthly_outstanding = less(p.monthly_outstanding)?;
+        }
+        emit!(MonthlyReserveReleased {
+            project: p.key(),
+            period,
+            unsettled,
+            released
+        });
+        Ok(())
+    }
     // The attester and the destination keypair both sign this exact transaction, including
     // deployment, project and predecessor. The destination is a co-signer, so the authority
     // alone cannot bind a wallet it does not hold. `expires_at` limits submission, not claim
@@ -817,6 +877,32 @@ pub fn monthly_message(
     ]
     .concat()
 }
+/// The bytes the identity authority signs to state that `released` of a recorded month's
+/// `unsettled` gross can never settle.
+#[allow(clippy::too_many_arguments)]
+pub fn monthly_release_message(
+    program_id: &Pubkey,
+    project: &Pubkey,
+    period: u32,
+    allocation_root: &[u8; 32],
+    total: u64,
+    unsettled: u64,
+    released: u64,
+    network: &[u8; 32],
+) -> Vec<u8> {
+    [
+        MONTHLY_RELEASE_PREFIX,
+        program_id.as_ref(),
+        project.as_ref(),
+        &period.to_le_bytes(),
+        allocation_root,
+        &total.to_le_bytes(),
+        &unsettled.to_le_bytes(),
+        &released.to_le_bytes(),
+        network,
+    ]
+    .concat()
+}
 /// A leaf of the allocation tree: sha256(0x00, actor ID LE, gross LE, source digest).
 pub fn monthly_leaf(actor_id: u64, gross: u64, source_digest: &[u8; 32]) -> [u8; 32] {
     hashv(&[
@@ -1133,6 +1219,18 @@ pub struct ReleaseMonthlyAward<'info> {
     pub system_program: Program<'info, System>,
 }
 #[derive(Accounts)]
+#[instruction(period:u32)]
+pub struct ReleaseMonthlyReserve<'info> {
+    pub owner: Signer<'info>,
+    #[account(mut,has_one=owner)]
+    pub project: Box<Account<'info, Project>>,
+    #[account(mut,has_one=project,seeds=[b"month",project.key().as_ref(),&period.to_le_bytes()],bump)]
+    pub month: Box<Account<'info, MonthlyAllocation>>,
+    /// CHECK: the instructions sysvar, read for the Ed25519 signature check.
+    #[account(address=anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions: UncheckedAccount<'info>,
+}
+#[derive(Accounts)]
 #[instruction(actor_id:u64,network:[u8;32])]
 pub struct BindWallet<'info> {
     #[account(mut)]
@@ -1290,7 +1388,8 @@ pub struct MonthlyAllocation {
     /// Gross settled so far: committed awards plus released awards.
     pub committed: u64,
     pub total: u64,
-    /// The part of `committed` that release_monthly_award returned to free balance. This
+    /// The part of `committed` that release_monthly_award or release_monthly_reserve returned
+    /// to free balance. This
     /// field also makes the account larger than the 92-byte month of the 316-byte build (no
     /// settled markers or outstanding count), so such a month fails closed here.
     pub released: u64,
@@ -1422,6 +1521,13 @@ pub struct MonthlyAwardReleased {
     pub gross: u64,
 }
 #[event]
+pub struct MonthlyReserveReleased {
+    pub project: Pubkey,
+    pub period: u32,
+    pub unsettled: u64,
+    pub released: u64,
+}
+#[event]
 pub struct ProjectMigrated {
     pub project: Pubkey,
 }
@@ -1524,6 +1630,8 @@ pub enum EscrowError {
     MonthExpired,
     #[msg("The allocation freeze time must be inside the window and not in the future")]
     InvalidFreeze,
+    #[msg("The month's unsettled gross changed after the release was signed")]
+    MonthlyReserveChanged,
 }
 
 #[account]

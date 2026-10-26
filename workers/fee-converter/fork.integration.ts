@@ -6,30 +6,42 @@
 // here, and the test token arrives by impersonating a holder on the fork.
 // KyberSwap's public API is only read for a route.
 //   bun workers/fee-converter/fork.integration.ts [fork-rpc-url] [--fee-claim-only]
+// --local instead uses harmless local token/router fixtures and fixed quote replies.
+// Every RPC then goes to the owned Anvil; no public provider is called.
+import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  decodeFunctionData,
   decodeFunctionResult,
   encodeAbiParameters,
   encodeFunctionData,
+  erc20Abi,
   type Hex,
   keccak256,
   parseAbi,
   parseTransaction,
+  recoverTransactionAddress,
+  type TransactionSerializedEIP1559,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { handleFeeConversionsApi } from "../../backend/fee-conversions/handler";
 import { evmAwardId } from "../../contracts/evm/adapter";
-import { parseConfig } from "./config";
+import { NETWORK_DEFINITIONS, parseConfig } from "./config";
+import { KYBER_ROUTER_ABI } from "./evm";
 import { chainClient, runOnce } from "./index";
 import { sqliteD1 } from "./sqlite-d1";
-import { projectVaults } from "./store";
+import { D1ConversionStore, projectVaults } from "./store";
 
 const FORK_URL =
   process.argv.slice(2).find((argument) => !argument.startsWith("--")) ??
   "https://mainnet.base.org";
 const PORT = Number(process.env.SLOP_TEST_FEE_PORT ?? 28545);
+const local = process.argv.includes("--local");
 const claimOnly = process.argv.includes("--fee-claim-only");
 const supportedFaults = [
   "before",
@@ -39,6 +51,7 @@ const supportedFaults = [
   "race",
   "finalized-role",
   "receipt-role",
+  "lease",
   // Same-nonce fee replacement cases. Each needs its own fresh fork for the
   // same historical-bytecode reason as the other claim cases.
   "bump-replaced",
@@ -48,7 +61,15 @@ const supportedFaults = [
   "bump-nonce",
 ];
 const faults =
-  process.env.SLOP_TEST_CLAIM_FAULTS?.split(",") ?? supportedFaults;
+  process.env.SLOP_TEST_CLAIM_FAULTS?.split(",") ??
+  (local ? ["before", "lease"] : supportedFaults);
+if (
+  local &&
+  faults.some((fault) => !["before", "lease", "finalized-role"].includes(fault))
+)
+  throw new Error(
+    "This local fixture supports approval, claim recovery, lease and finalized-role cases only",
+  );
 if (faults.some((fault) => !supportedFaults.includes(fault)))
   throw new Error("Unknown fee-claim fault case");
 if (faults.length > 1) {
@@ -56,7 +77,9 @@ if (faults.length > 1) {
   // fault needs a fresh chain so receipt-block code checks remain available.
   // The first process also runs the six existing conversion cases.
   for (const [index, fault] of faults.entries()) {
-    console.log(`Fresh fork for claim fault: ${fault}`);
+    console.log(
+      `Fresh ${local ? "local fixture" : "fork"} for claim fault: ${fault}`,
+    );
     const child = Bun.spawn(
       [
         process.execPath,
@@ -82,10 +105,85 @@ const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 // A fork-only copy of the AERO contract: an ERC-20 no aggregator knows.
 const UNROUTED = "0x00000000000000000000000000000000000f0e10";
 
+// Read the existing static chain definition without enabling the Worker.
+const ROUTER = NETWORK_DEFINITIONS.base.router as Hex;
 const nativeFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const response = await nativeFetch(input, init);
   const url = input instanceof Request ? input.url : String(input);
+  if (local && new URL(url).hostname === "aggregator-api.kyberswap.com") {
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith("/routes")) {
+      const tokenIn = parsed.searchParams.get("tokenIn");
+      const amountIn = parsed.searchParams.get("amountIn") as string;
+      if (tokenIn === UNROUTED)
+        return Response.json(
+          { code: 4008, message: "No route found" },
+          { status: 400 },
+        );
+      const amountOut =
+        tokenIn === AERO ? BigInt(amountIn) / 2_000_000_000_000n : 1n;
+      const usd = (Number(amountOut) / 1_000_000).toString();
+      return Response.json({
+        code: 0,
+        data: {
+          routerAddress: ROUTER,
+          routeSummary: {
+            tokenIn,
+            tokenOut: USDC,
+            amountIn,
+            amountOut: amountOut.toString(),
+            amountInUsd: usd,
+            amountOutUsd: usd,
+            gasUsd: "0",
+            l1FeeUsd: "0",
+            route: [],
+          },
+        },
+      });
+    }
+    if (parsed.pathname.endsWith("/route/build")) {
+      const request = JSON.parse(String(init?.body));
+      const route = request.routeSummary;
+      const amountOut = BigInt(route.amountIn) / 2_000_000_000_000n;
+      return Response.json({
+        code: 0,
+        data: {
+          routerAddress: ROUTER,
+          transactionValue: "0",
+          amountIn: route.amountIn,
+          amountOut: amountOut.toString(),
+          data: encodeFunctionData({
+            abi: KYBER_ROUTER_ABI,
+            functionName: "swapSimpleMode",
+            args: [
+              request.sender,
+              {
+                srcToken: route.tokenIn,
+                dstToken: USDC,
+                srcReceivers: [],
+                srcAmounts: [],
+                feeReceivers: [],
+                feeAmounts: [],
+                dstReceiver: request.recipient,
+                amount: BigInt(route.amountIn),
+                minReturnAmount:
+                  (amountOut * BigInt(10_000 - request.slippageTolerance)) /
+                  10_000n,
+                flags: 0n,
+                permit: "0x",
+              },
+              "0x",
+              "0x",
+            ],
+          }),
+        },
+      });
+    }
+    throw new Error("Unexpected local quote path");
+  }
+  if (local && new URL(url).origin !== RPC)
+    throw new Error("Local proof refused external request");
+  const response = await nativeFetch(input, init);
   if (new URL(url).origin === RPC && typeof init?.body === "string") {
     const result = await response.clone().json();
     if (result.error) {
@@ -137,8 +235,17 @@ try {
 } catch (error) {
   if (String(error).includes("already serving")) throw error;
 }
+const journalDirectory = mkdtempSync(join(tmpdir(), "slop-fee-approval-"));
+const journalPath = join(journalDirectory, "journal.sqlite");
+let closeJournal = () => {};
 const anvil = Bun.spawn(
-  ["anvil", "--fork-url", FORK_URL, "--port", String(PORT), "--silent"],
+  [
+    "anvil",
+    ...(local ? ["--chain-id", "8453"] : ["--fork-url", FORK_URL]),
+    "--port",
+    String(PORT),
+    "--silent",
+  ],
   { stdout: "ignore", stderr: "inherit" },
 );
 try {
@@ -151,10 +258,50 @@ try {
       await Bun.sleep(500);
     }
   }
+  if (local) {
+    const root = fileURLToPath(new URL("../../contracts/evm", import.meta.url));
+    execFileSync(
+      "forge",
+      ["build", "--root", root, `${root}/test/FeeConverterFixture.sol`],
+      { stdio: "pipe" },
+    );
+    for (const [name, addresses] of [
+      ["FeeConverterToken", [AERO]],
+      ["FeeConverterUSDC", [USDC]],
+      ["FeeConverterRouter", [ROUTER]],
+      ["FeeConverterL1Oracle", ["0x420000000000000000000000000000000000000f"]],
+    ] as const) {
+      const code = execFileSync(
+        "forge",
+        ["inspect", "--root", root, name, "deployedBytecode"],
+        { encoding: "utf8", cwd: root },
+      ).trim();
+      assert.match(code, /^0x[0-9a-f]+$/u);
+      for (const address of addresses)
+        await rpc("anvil_setCode", [address, code]);
+    }
+    const [sender] = (await rpc("eth_accounts", [])) as string[];
+    for (const [token, receiver, amount] of [
+      [AERO, HOLDER, 10n ** 30n],
+      [USDC, ROUTER, 10n ** 18n],
+    ] as const) {
+      await rpc("eth_sendTransaction", [
+        {
+          from: sender,
+          to: token,
+          data: encodeFunctionData({
+            abi: parseAbi(["function mint(address,uint256)"]),
+            functionName: "mint",
+            args: [receiver, amount],
+          }),
+        },
+      ]);
+    }
+  }
   const key = generatePrivateKey();
   const wallet = privateKeyToAccount(key).address.toLowerCase();
   console.log(
-    `throwaway fee wallet ${wallet} on fork chain ${await rpc("eth_chainId", [])}`,
+    `throwaway fee wallet ${wallet} on ${local ? "local fixture" : "fork"} chain ${await rpc("eth_chainId", [])}`,
   );
   await rpc("anvil_setBalance", [wallet, "0xde0b6b3a7640000"]);
   await rpc("anvil_setBalance", [HOLDER, "0xde0b6b3a7640000"]);
@@ -171,11 +318,13 @@ try {
         data: `0xa9059cbb${word(wallet)}${amount.toString(16).padStart(64, "0")}`,
       },
     ]);
+    await rpc("anvil_mine", ["0x1"]);
     await rpc("anvil_stopImpersonatingAccount", [HOLDER]);
     console.log(`seeded ${await balanceOf(AERO, wallet)} AERO base units`);
   };
 
-  const { db, sqlite } = sqliteD1();
+  let { db, sqlite } = sqliteD1(journalPath);
+  closeJournal = () => sqlite.close();
   const env = {
     FEE_DB: db,
     FEE_CONVERTER_MODE: "live",
@@ -193,7 +342,7 @@ try {
     FEE_CONVERTER_DAILY_CAP_MICRO: "5000000000",
     FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [AERO, UNROUTED] }),
   };
-  // Loses the swap send of a run (the approval is the first raw send),
+  // Loses a swap send after the separate approval has finalized,
   // either before it reaches the node or after the node accepted it.
   const faulty = (when: "before" | "after"): typeof fetch => {
     let sends = 0;
@@ -202,8 +351,8 @@ try {
       const isSend = body.includes('"eth_sendRawTransaction"');
       // Every later send of the run fails too, so the transport retry
       // cannot mask the fault; "after" delivers the first copy only.
-      if (isSend && ++sends >= 2) {
-        if (when === "after" && sends === 2) await fetch(input, init);
+      if (isSend && ++sends >= 1) {
+        if (when === "after" && sends === 1) await fetch(input, init);
         throw new Error("simulated network fault");
       }
       const response = await fetch(input, init);
@@ -220,6 +369,23 @@ try {
       }
       return response;
     }) as typeof fetch;
+  };
+  // The approval is a durable intent. A later invocation can prepare the swap
+  // only after the approval is canonical and finalized.
+  const finishApproval = async (fetchOverride?: typeof fetch) => {
+    const open = sqlite
+      .prepare(
+        "SELECT state FROM fee_conversions WHERE kind='approval' AND token=? ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(AERO) as { state: string } | null;
+    if (open?.state === "submitted" || open?.state === "unknown") {
+      await rpc("anvil_mine", ["0x80"]);
+      await runOnce(
+        env,
+        undefined,
+        fetchOverride ? { fetch: fetchOverride } : undefined,
+      );
+    }
   };
   const state = (token = AERO) =>
     sqlite
@@ -258,15 +424,123 @@ try {
   if (!claimOnly) {
     // 1. Ordinary send, finalized on the next run.
     await seed();
-    console.log("run:", JSON.stringify(await runOnce(env)));
-    expect(state(), "submitted", "1 after send");
+    // Lose the approval before delivery, then reopen the actual migrated DB.
+    if (local) await rpc("evm_setAutomine", [false]);
+    await runOnce(env, undefined, { fetch: faulty("before") });
+    const approval = sqlite
+      .prepare("SELECT * FROM fee_conversions WHERE kind='approval'")
+      .get() as { tx_id: Hex; raw_tx: Hex; state: string; amount_in: string };
+    console.log(
+      JSON.stringify({
+        check: "approval durable before delivery",
+        present: !!approval,
+        rows: sqlite
+          .prepare(
+            "SELECT kind,state,raw_tx IS NOT NULL AS retainedBytes,approval_tx_id IS NOT NULL AS approvalHash FROM fee_conversions ORDER BY rowid",
+          )
+          .all(),
+      }),
+    );
+    assert(
+      approval,
+      "approval bytes must exist in the journal before delivery",
+    );
+    assert.equal(approval.state, "unknown");
+    assert.equal(keccak256(approval.raw_tx), approval.tx_id);
+    assert.equal(
+      (
+        await recoverTransactionAddress({
+          serializedTransaction:
+            approval.raw_tx as TransactionSerializedEIP1559,
+        })
+      ).toLowerCase(),
+      wallet,
+    );
+    const decoded = decodeFunctionData({
+      abi: erc20Abi,
+      data: parseTransaction(approval.raw_tx).data as Hex,
+    });
+    assert.equal(decoded.functionName, "approve");
+    assert.equal(decoded.args[0].toLowerCase(), ROUTER);
+    assert.equal(decoded.args[1], BigInt(approval.amount_in));
+    sqlite.close();
+    ({ db, sqlite } = sqliteD1(journalPath, false));
+    env.FEE_DB = db;
+    await runOnce(env);
+    assert.equal(
+      (
+        sqlite
+          .prepare("SELECT raw_tx FROM fee_conversions WHERE kind='approval'")
+          .get() as { raw_tx: string }
+      ).raw_tx,
+      approval.raw_tx,
+    );
+    if (local) {
+      const original = parseTransaction(approval.raw_tx);
+      assert(
+        original.maxFeePerGas !== undefined &&
+          original.maxPriorityFeePerGas !== undefined,
+      );
+      const clippedBase =
+        original.maxFeePerGas - original.maxPriorityFeePerGas / 2n;
+      await rpc("anvil_dropTransaction", [approval.tx_id]);
+      await rpc("anvil_setNextBlockBaseFeePerGas", [
+        `0x${clippedBase.toString(16)}`,
+      ]);
+      await rpc("anvil_mine", ["0x1"]);
+      const later = () => new Date(Date.now() + 4 * 60_000);
+      // First deliver the persisted bytes, then observe the pending send.
+      await runOnce(env, later);
+      await runOnce(env, later);
+      assert.equal(
+        (
+          sqlite
+            .prepare("SELECT COUNT(*) AS n FROM fee_send_replacements")
+            .get() as { n: number }
+        ).n,
+        0,
+      );
+      await rpc("anvil_setNextBlockBaseFeePerGas", [
+        `0x${clippedBase.toString(16)}`,
+      ]);
+      await rpc("anvil_mine", ["0x1"]);
+      const receipt = (await rpc("eth_getTransactionReceipt", [
+        approval.tx_id,
+      ])) as { status: string; effectiveGasPrice: string };
+      assert.equal(receipt.status, "0x1");
+      assert.equal(BigInt(receipt.effectiveGasPrice), original.maxFeePerGas);
+      console.log(
+        JSON.stringify({
+          check: "mineable clipped-tip approval",
+          replacements: 0,
+          originalMined: true,
+          effectiveGasPriceEqualsMaximum: true,
+        }),
+      );
+      await rpc("evm_setAutomine", [true]);
+    }
+    // Receipt existence alone is insufficient; no swap before finality.
+    await runOnce(env);
+    assert.equal(
+      (
+        sqlite
+          .prepare(
+            "SELECT COUNT(*) AS n FROM fee_conversions WHERE kind='conversion'",
+          )
+          .get() as { n: number }
+      ).n,
+      0,
+    );
+    await finishApproval();
+    expect(state(), "submitted", "1 after approval finality and swap send");
     await rpc("anvil_mine", ["0x80"]); // Anvil finalizes only after later blocks.
     await runOnce(env);
     expect(state(), "finalized", "1 after reconcile");
 
     // 2. Swap lost before delivery: recorded unknown, rebroadcast unchanged, finalized.
     await seed();
-    await runOnce(env, undefined, { fetch: faulty("before") });
+    await runOnce(env);
+    await finishApproval(faulty("before"));
     expect(state(), "unknown", "2 after lost send");
     const largeSend = sqlite
       .query(
@@ -295,7 +569,8 @@ try {
 
     // 3. Swap delivered but the response lost: reconciled from the receipt, no resend.
     await seed();
-    await runOnce(env, undefined, { fetch: faulty("after") });
+    await runOnce(env);
+    await finishApproval(faulty("after"));
     expect(state(), "unknown", "3 after lost response");
     await rpc("anvil_mine", ["0x80"]);
     await runOnce(env);
@@ -308,7 +583,8 @@ try {
 
     // 5. Price moved between quote and signing: refused before signing.
     await seed(49n * 10n ** 18n);
-    await runOnce(env, undefined, { fetch: inflatedFirstQuote() });
+    await runOnce(env);
+    await finishApproval(inflatedFirstQuote());
     expect(state(), "failed", "5 slippage refusal");
 
     // 6. A token no aggregator can route: no_route. The AERO balance converts.
@@ -323,6 +599,7 @@ try {
       `0x${(1000n * 10n ** 18n).toString(16).padStart(64, "0")}`,
     ]);
     await runOnce(env);
+    await finishApproval();
     expect(state(UNROUTED), "no_route", "6 unsupported route");
     expect(state(), "submitted", "6 AERO send");
     await rpc("anvil_mine", ["0x80"]);
@@ -335,7 +612,7 @@ try {
       .query(
         `SELECT state, amount_in, quote_amount_out, min_amount_out, amount_out,
               approval_tx_id, tx_id, evm_nonce, token_balance_before, target_balance_before,
-              target_balance_after, reason FROM fee_conversions ORDER BY rowid`,
+              target_balance_after, reason FROM fee_conversions WHERE kind = 'conversion' ORDER BY rowid`,
       )
       .all() as { state: string; amount_out: string | null }[];
     console.log(JSON.stringify(rows, null, 2));
@@ -363,10 +640,37 @@ try {
       throw new Error(
         "fork live cycles did not finalize with matching proceeds",
       );
+    const api = await handleFeeConversionsApi(
+      new Request("http://localhost/api/v1/admin/fee-conversions"),
+      {
+        db,
+        adminGithubIds: new Set(["1"]),
+        sessionActor: async () => ({ githubId: "1" }),
+      },
+    );
+    const report = (await api?.json()) as {
+      recent: { txId: string | null }[];
+      totals: { amountOut: string }[];
+    };
+    const approvalIds = new Set(
+      (
+        sqlite
+          .prepare("SELECT tx_id FROM fee_conversions WHERE kind='approval'")
+          .all() as { tx_id: string }[]
+      ).map((row) => row.tx_id),
+    );
+    assert.equal(api?.status, 200);
+    assert(report.recent.every((row) => !approvalIds.has(row.txId ?? "")));
+    assert.equal(
+      report.totals.reduce((sum, row) => sum + BigInt(row.amountOut), 0n),
+      recorded,
+    );
     // A repeat run finds nothing left to sell and records nothing new.
     await runOnce(env);
     const count = sqlite
-      .query("SELECT COUNT(*) AS n FROM fee_conversions")
+      .query(
+        "SELECT COUNT(*) AS n FROM fee_conversions WHERE kind = 'conversion'",
+      )
       .get() as { n: number };
     if (count.n !== 7) throw new Error("a repeat run added a record");
   }
@@ -401,7 +705,9 @@ try {
       status: string;
     };
     if (receipt.status !== "0x1")
-      throw new Error(`7 transaction to ${to} reverted`);
+      throw new Error(
+        `7 ${decodeFunctionData({ abi: vaultAbi, data }).functionName} transaction reverted`,
+      );
   };
   const view = async (
     to: string,
@@ -790,12 +1096,76 @@ try {
   )
     throw new Error("7 a receipt or dry run moved vault fees");
 
+  if (faults[0] === "lease") {
+    let clock = new Date();
+    let takeover = false;
+    const initialNonce = await rpc("eth_getTransactionCount", [
+      wallet,
+      "latest",
+    ]);
+    const claimData = encodeFunctionData({
+      abi: vaultAbi,
+      functionName: "claimFees",
+    });
+    const delayed = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body =
+        typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      if (
+        !takeover &&
+        body?.method === "eth_estimateGas" &&
+        body.params[0]?.data === claimData
+      ) {
+        clock = new Date(clock.getTime() + 15 * 60_000);
+        takeover = await new D1ConversionStore(db).acquireLock(
+          "base",
+          "successor-lease",
+          clock,
+        );
+        assert(takeover);
+      }
+      return fetch(input, init);
+    }) as typeof fetch;
+    const [result] = await runOnce(env, () => clock, { fetch: delayed });
+    const claims = sqlite
+      .prepare("SELECT COUNT(*) AS n FROM fee_conversions WHERE kind='claim'")
+      .get() as { n: number };
+    const unchangedNonce =
+      initialNonce ===
+      (await rpc("eth_getTransactionCount", [wallet, "latest"]));
+    const retained = (await view(vault, "accruedFees")) === fee;
+    console.log(
+      JSON.stringify({
+        check: "claim lease takeover",
+        takeover,
+        claimed: result.claimed,
+        journalClaims: claims.n,
+        unchangedNonce,
+        accruedFeesRetained: retained,
+      }),
+    );
+    assert(takeover);
+    assert.equal(result.claimed, 0);
+    assert.equal(claims.n, 0);
+    assert(unchangedNonce && retained);
+    assert.equal(
+      (
+        sqlite
+          .prepare(
+            "SELECT run_id FROM fee_converter_locks WHERE network='base'",
+          )
+          .get() as { run_id: string }
+      ).run_id,
+      "successor-lease",
+    );
+  }
+
   // Each retry uses a fresh Worker invocation and the durable SQLite journal.
   console.log(`Claim fault cases: ${faults.join(", ")}`);
   for (const fault of faults.filter(
     (fault) =>
       fault !== "finalized-role" &&
       fault !== "receipt-role" &&
+      fault !== "lease" &&
       !fault.startsWith("bump-"),
   )) {
     const conversionsBefore = (
@@ -909,6 +1279,7 @@ try {
       await rpc("anvil_mine", ["0x80"]);
       await runOnce(env, undefined, undefined, "receipts");
     }
+    await finishApproval();
     const recovered = sqlite
       .query(
         "SELECT tx_id, raw_tx, state FROM fee_conversions WHERE kind = 'claim'",
@@ -1466,6 +1837,7 @@ try {
       throw new Error("new claims ignored a later fee-wallet role");
     await rpc("anvil_mine", ["0x80"]);
     await runOnce(env, undefined, undefined, "receipts");
+    await finishApproval();
     expect(state(), "submitted", "7 claimed fee send");
     const claimedRow = sqlite
       .query(
@@ -1542,11 +1914,13 @@ try {
     );
   } else if (!faults[0].startsWith("bump-")) {
     console.log(
-      `PASS: Base fork ${faults[0]} claim recovery and principal preservation`,
+      `PASS: ${local ? "Local EVM fixture" : "Base fork"} ${faults[0]} claim recovery and principal preservation`,
     );
   }
 } finally {
   anvil.kill();
   await anvil.exited;
   globalThis.fetch = nativeFetch;
+  closeJournal();
+  rmSync(journalDirectory, { recursive: true, force: true });
 }

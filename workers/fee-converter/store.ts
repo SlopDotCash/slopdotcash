@@ -121,7 +121,8 @@ export class D1ConversionStore implements ConversionStore {
       .prepare(
         `SELECT ${SELECT} FROM fee_conversions
           WHERE network = ? AND mode = 'live'
-            AND state IN ('submitted', 'unknown', 'quoted')
+            AND (state IN ('submitted', 'unknown', 'quoted') OR
+              (approval_tx_id IS NOT NULL AND raw_tx IS NULL AND tx_id IS NULL))
           ORDER BY created_at`,
       )
       .bind(network)
@@ -129,10 +130,10 @@ export class D1ConversionStore implements ConversionStore {
     return results.map(fromRow);
   }
 
-  async insert(row: ConversionRow) {
-    await this.db
+  async insert(row: ConversionRow, lease?: { runId: string; now: Date }) {
+    const result = await this.db
       .prepare(
-        `INSERT INTO fee_conversions (${SELECT}) VALUES (${COLUMNS.map(() => "?").join(", ")})`,
+        `INSERT INTO fee_conversions (${SELECT}) SELECT ${COLUMNS.map(() => "?").join(", ")}${lease ? " WHERE EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ? AND run_id = ? AND expires_at >= ?)" : ""}`,
       )
       .bind(
         ...COLUMNS.map(
@@ -141,8 +142,11 @@ export class D1ConversionStore implements ConversionStore {
               ? (row.kind ?? "conversion")
               : (row[key] ?? null)) as D1Value,
         ),
+        ...(lease ? [row.network, lease.runId, lease.now.toISOString()] : []),
       )
       .run();
+    if ((result.meta?.changes ?? 0) !== 1)
+      throw new Error("Fee send lost its lease before journaling");
   }
 
   async update(id: string, fields: Partial<ConversionRow>) {
@@ -192,13 +196,28 @@ export class D1ConversionStore implements ConversionStore {
     );
   }
 
-  async insertReplacement(replacement: SendReplacement) {
-    await this.db
+  async insertReplacement(
+    replacement: SendReplacement,
+    runId: string,
+    now: Date,
+  ) {
+    const result = await this.db
       .prepare(
         `INSERT INTO fee_send_replacements (id, conversion_id, network, attempt,
            evm_nonce, tx_id, raw_tx, max_fee_per_gas, max_priority_fee_per_gas,
            created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM fee_converter_locks
+             WHERE network = ? AND run_id = ? AND expires_at >= ?
+          ) AND EXISTS (
+            SELECT 1 FROM fee_conversions
+             WHERE id = ? AND network = ? AND evm_nonce = ?
+               AND mode = 'live' AND state IN ('submitted', 'unknown')
+          ) AND ? = (
+            SELECT COALESCE(MAX(attempt), 0) + 1 FROM fee_send_replacements
+             WHERE conversion_id = ?
+          )`,
       )
       .bind(
         replacement.id,
@@ -211,8 +230,17 @@ export class D1ConversionStore implements ConversionStore {
         replacement.maxFeePerGas,
         replacement.maxPriorityFeePerGas,
         replacement.createdAt,
+        replacement.network,
+        runId,
+        now.toISOString(),
+        replacement.conversionId,
+        replacement.network,
+        replacement.evmNonce,
+        replacement.attempt,
+        replacement.conversionId,
       )
       .run();
+    return (result.meta?.changes ?? 0) === 1;
   }
 
   async liveValueSince(network: Network, since: string) {

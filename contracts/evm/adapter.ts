@@ -15,6 +15,40 @@ export type EvmRpc =
       request: (method: string, params: unknown[]) => Promise<unknown>;
     };
 
+/** The requested transaction must occupy its receipt's exact canonical block slot. */
+export function isCanonicalEvmReceipt(
+  transactionId: string,
+  receipt: {
+    transactionHash: string;
+    blockHash: string;
+    blockNumber: bigint;
+    transactionIndex: number;
+  },
+  block: {
+    hash: string;
+    number: bigint;
+    transactions: readonly unknown[];
+  } | null,
+): boolean {
+  const same = (left: unknown, right: unknown) =>
+    typeof left === "string" &&
+    typeof right === "string" &&
+    /^0x[0-9a-fA-F]{64}$/.test(left) &&
+    left.toLowerCase() === right.toLowerCase();
+  return (
+    same(receipt.transactionHash, transactionId) &&
+    typeof receipt.blockNumber === "bigint" &&
+    receipt.blockNumber >= 0n &&
+    block !== null &&
+    same(block.hash, receipt.blockHash) &&
+    block.number === receipt.blockNumber &&
+    Number.isSafeInteger(receipt.transactionIndex) &&
+    receipt.transactionIndex >= 0 &&
+    Array.isArray(block.transactions) &&
+    same(block.transactions[receipt.transactionIndex], transactionId)
+  );
+}
+
 /** One reviewed upgrade authority and implementation pair for the vault and factory proxies. */
 export interface EvmImplementationReview {
   authority: string;

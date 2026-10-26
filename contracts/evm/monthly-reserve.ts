@@ -6,6 +6,7 @@ import {
   keccak256,
   parseAbi,
 } from "viem";
+import { sha256Hex } from "../../src/lib/sha256";
 import {
   EVM_ESCROW_DOMAIN_VERSION,
   type EvmEscrowConfig,
@@ -20,6 +21,7 @@ type Hex = `0x${string}`;
 const MAX = (1n << 128n) - 1n;
 const ZERO = `0x${"0".repeat(64)}`;
 const ABI = parseAbi([
+  "function identityAuthority() view returns (address)",
   "function monthlyReserveVersion() view returns (uint8)",
   "function ordinarySourceSequence() view returns (uint256)",
   "function awards(bytes32) view returns (uint64,uint128,uint128,bytes32,uint64,bool)",
@@ -279,6 +281,112 @@ export async function readEvmMonthlyReserve(
     remaining: BigInt(remaining),
     count: Number(BigInt(count)),
     admittedAt: BigInt(admittedAt),
+  };
+}
+
+/** A retained admission's complete ordered tree, not a collection of failed proofs. */
+export interface EvmMonthlyReleaseCapture {
+  allocationDigest: string;
+  entries: readonly MonthlyAllocationEntry[];
+}
+
+/** Read-only evidence for one positively provable fault. This neither signs nor builds a release.
+ * Missing data and all other fault classes stay held. In particular, a lost local tree says nothing
+ * about a contributor's retained proof. The caller must use the reviewed deployment configuration. */
+export async function inspectEvmMonthlyWrongSum(
+  config: EvmEscrowConfig,
+  period: string,
+  capture: EvmMonthlyReleaseCapture | null,
+) {
+  periodNumber(period);
+  if (!capture)
+    return { status: "held", reason: "allocation-unavailable" } as const;
+  const allocationDigest = bytes32(capture.allocationDigest);
+  const entries = capture.entries.map(
+    ({ githubUserId, grossMicro, sourceDigest }) => ({
+      githubUserId,
+      grossMicro,
+      sourceDigest,
+    }),
+  );
+  // Reuse settlement's canonical ordering, odd-node promotion, range and source checks. Invalid
+  // captures throw: they cannot supply positive evidence for an authority signature.
+  const tree = evmMonthlySumTree(entries);
+  const finalized = (await evmRpc(config, "eth_getBlockByNumber", [
+    "finalized",
+    false,
+  ])) as { number?: string; hash?: string } | null;
+  if (
+    !finalized?.number ||
+    !/^0x[0-9a-f]+$/i.test(finalized.number) ||
+    !finalized.hash ||
+    !/^0x[0-9a-f]{64}$/i.test(finalized.hash)
+  )
+    throw new Error("Finalized block unavailable");
+  const block = finalized.number;
+  await verifyEvmDeployment(config, block);
+  const [version] = await words(
+    config,
+    encodeFunctionData({ abi: ABI, functionName: "monthlyReserveVersion" }),
+    1,
+    block,
+  );
+  if (BigInt(version) !== 2n)
+    throw new Error("Unreviewed monthly reserve version");
+  const month = await readEvmMonthlyReserve(config, period, block);
+  if (
+    month.allocationDigest !== allocationDigest ||
+    month.root !== tree.hash ||
+    month.count !== entries.length ||
+    month.count === 0
+  )
+    return { status: "held", reason: "allocation-mismatch" } as const;
+  if (month.total === tree.total)
+    return { status: "held", reason: "no-wrong-sum-fault" } as const;
+  if (month.remaining !== month.total || month.remaining === 0n)
+    return { status: "held", reason: "prior-reserve-transition" } as const;
+  uint(month.total);
+  const authority = await evmRpc(config, "eth_call", [
+    {
+      to: config.factory,
+      data: encodeFunctionData({ abi: ABI, functionName: "identityAuthority" }),
+    },
+    block,
+  ]);
+  if (
+    typeof authority !== "string" ||
+    !/^0x0{24}[0-9a-f]{40}$/i.test(authority)
+  )
+    throw new Error("Malformed current identity authority");
+  const canonical = (await evmRpc(config, "eth_getBlockByNumber", [
+    block,
+    false,
+  ])) as { number?: string; hash?: string } | null;
+  if (canonical?.number !== block || canonical.hash !== finalized.hash)
+    throw new Error("Finalized monthly evidence changed");
+  return {
+    status: "provably-unsettleable" as const,
+    fault: "authenticated-sum-mismatch" as const,
+    chainId: config.chainId.toString(),
+    vault: config.vault.toLowerCase(),
+    factory: config.factory.toLowerCase(),
+    owner: config.owner.toLowerCase(),
+    asset: config.asset.toLowerCase(),
+    identityAuthority: `0x${authority.slice(-40).toLowerCase()}`,
+    codeSha256: config.codeSha256,
+    factoryCodeSha256: config.factoryCodeSha256,
+    implementationReview: config.evmUpgrade ?? null,
+    period,
+    blockNumber: BigInt(block).toString(),
+    blockHash: finalized.hash.toLowerCase(),
+    allocationDigest,
+    allocationRoot: tree.hash,
+    entriesSha256: sha256Hex(JSON.stringify(entries)),
+    count: month.count,
+    computedTotal: tree.total.toString(),
+    storedTotal: month.total.toString(),
+    expectedRemaining: month.remaining.toString(),
+    releasedGross: month.remaining.toString(),
   };
 }
 /** Current-code verification and every source read use the same finalized block. A missing legacy

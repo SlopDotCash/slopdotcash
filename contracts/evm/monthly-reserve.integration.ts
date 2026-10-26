@@ -63,6 +63,7 @@ import {
   captureUpgrade,
   deployUpgradeableFactory,
 } from "./integration/upgrade";
+import { inspectEvmMonthlyWrongSum } from "./monthly-reserve";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const legacyRoot = process.env.SLOP_MONTHLY_LEGACY_ROOT;
@@ -260,6 +261,180 @@ try {
   };
   await finalized();
   await verifyEvmDeployment(config);
+  // A lost tree is not a fault proof. Exercise the read-only classifier against actual admitted
+  // states, then restore this isolated fixture before the existing whole-month workflow.
+  if (!legacyRoot) {
+    const releaseEntries = [
+      {
+        githubUserId: "11",
+        grossMicro: "1000",
+        sourceDigest: `0x${"a".repeat(64)}`,
+      },
+      {
+        githubUserId: "12",
+        grossMicro: "2000",
+        sourceDigest: `0x${"b".repeat(64)}`,
+      },
+    ];
+    const tree = evmMonthlySumTree(releaseEntries);
+    const capture = {
+      allocationDigest: `0x${"c".repeat(64)}`,
+      entries: releaseEntries,
+    };
+    const reads: string[] = [];
+    const readOnly: EvmEscrowConfig = {
+      ...config,
+      rpcUrl: undefined,
+      request: async (method, params) => {
+        assert(
+          [
+            "eth_chainId",
+            "eth_call",
+            "eth_getCode",
+            "eth_getStorageAt",
+            "eth_getBlockByNumber",
+          ].includes(method),
+        );
+        reads.push(method);
+        return rpc(method, params);
+      },
+    };
+    for (const fault of ["healthy", "sum", "count"] as const) {
+      const snapshot = await rpc("evm_snapshot", []);
+      try {
+        const reservation = {
+          version: 2 as const,
+          allocationDigest: capture.allocationDigest,
+          allocationRoot: tree.hash,
+          wholeGross: "10000",
+          remainingGross: (
+            tree.total + (fault === "healthy" ? 0n : 1n)
+          ).toString(),
+          count: releaseEntries.length + (fault === "count" ? 1 : 0),
+          sourceSequence: "0",
+        };
+        const signature = await authority.sign({
+          hash: evmMonthlyReserveDigest(chainId, vault, period, reservation),
+        });
+        await send(
+          vault,
+          buildReserveMonthlyCalldata(period, reservation, signature),
+        );
+        await finalized();
+        const before = await readEvmMonthlyReserve(config, period);
+        const result = await inspectEvmMonthlyWrongSum(
+          readOnly,
+          period,
+          capture,
+        );
+        if (fault === "sum") {
+          assert.equal(result.status, "provably-unsettleable");
+          assert.equal(result.computedTotal, "3000");
+          assert.equal(result.storedTotal, "3001");
+          assert.equal(result.releasedGross, "3001");
+          assert.equal(
+            result.identityAuthority,
+            authority.address.toLowerCase(),
+          );
+          for (const [index, entry] of releaseEntries.entries())
+            await assert.rejects(
+              rpc("eth_call", [
+                {
+                  to: vault,
+                  data: buildCommitMonthlyLeafCalldata(
+                    period,
+                    entry,
+                    index,
+                    tree.proofs[index],
+                  ),
+                },
+                "finalized",
+              ]),
+            );
+          assert.equal(
+            (await inspectEvmMonthlyWrongSum(readOnly, period, null)).status,
+            "held",
+          );
+          assert.equal(
+            (
+              await inspectEvmMonthlyWrongSum(readOnly, period, {
+                ...capture,
+                allocationDigest: `0x${"d".repeat(64)}`,
+              })
+            ).status,
+            "held",
+          );
+          assert.equal(
+            (
+              await inspectEvmMonthlyWrongSum(readOnly, period, {
+                ...capture,
+                entries: [releaseEntries[0]],
+              })
+            ).status,
+            "held",
+          );
+          await assert.rejects(
+            inspectEvmMonthlyWrongSum(
+              { ...readOnly, codeSha256: "0".repeat(64) },
+              period,
+              capture,
+            ),
+            /runtime code/,
+          );
+          await assert.rejects(
+            inspectEvmMonthlyWrongSum(
+              {
+                ...readOnly,
+                request: async (method, params) => {
+                  const value = await readOnly.request(method, params);
+                  if (
+                    method === "eth_getBlockByNumber" &&
+                    params[0] !== "finalized"
+                  )
+                    return {
+                      ...(value as object),
+                      hash: `0x${"0".repeat(64)}`,
+                    };
+                  return value;
+                },
+              },
+              period,
+              capture,
+            ),
+            /evidence changed/,
+          );
+        } else {
+          assert.equal(result.status, "held");
+          assert.equal(
+            result.reason,
+            fault === "healthy" ? "no-wrong-sum-fault" : "allocation-mismatch",
+          );
+          if (fault === "healthy")
+            for (const [index, entry] of releaseEntries.entries())
+              await rpc("eth_call", [
+                {
+                  to: vault,
+                  data: buildCommitMonthlyLeafCalldata(
+                    period,
+                    entry,
+                    index,
+                    tree.proofs[index],
+                  ),
+                },
+                "finalized",
+              ]);
+        }
+        assert.deepEqual(
+          await readEvmMonthlyReserve(config, period),
+          before,
+          "inspection cannot move or release funds",
+        );
+      } finally {
+        assert.equal(await rpc("evm_revert", [snapshot]), true);
+      }
+    }
+    assert(reads.length > 0);
+  }
   const entries: MonthlyAllocationEntry[] = Array.from(
     { length: 100 },
     (_, index) => ({
@@ -1208,6 +1383,9 @@ try {
         optedOutAndWindowExpired: "leaves-completed",
         replay: "refused",
         withdrawalOfReservedFunds: "refused",
+        monthlyReleaseInspection: legacyRoot
+          ? "not-run-on-legacy"
+          : "wrong-sum-only; healthy/missing/mismatch/noncanonical held",
       },
       null,
       2,

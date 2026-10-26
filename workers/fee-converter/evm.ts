@@ -8,6 +8,7 @@
 
 import {
   type Address,
+  BaseError,
   type Chain,
   createPublicClient,
   decodeFunctionData,
@@ -15,12 +16,14 @@ import {
   defineChain,
   encodeFunctionData,
   erc20Abi,
+  FeeCapTooLowError,
   type Hex,
   http,
   keccak256,
   type PublicClient,
   parseEventLogs,
   parseTransaction,
+  RpcRequestError,
   recoverTransactionAddress,
   TransactionNotFoundError,
   type TransactionReceipt,
@@ -31,6 +34,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import {
   type EvmEscrowConfig,
   type EvmUpgrade,
+  isCanonicalEvmReceipt,
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import type { Limits, NetworkConfig } from "./config";
@@ -38,7 +42,6 @@ import type {
   ChainClient,
   ConversionRow,
   FeeVault,
-  PreparedApproval,
   PreparedSend,
   Quote,
   QuoteResult,
@@ -326,6 +329,19 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       });
     } catch (error) {
       if (/already known/iu.test(String((error as Error).message))) return;
+      const rpcError =
+        error instanceof BaseError
+          ? error.walk((cause) => cause instanceof RpcRequestError)
+          : null;
+      // Only an explicit node rejection permits escalation after rebroadcast.
+      // Do not classify HTTP/transport failures or a generic "outdated" error.
+      if (
+        rpcError instanceof RpcRequestError &&
+        /max fee per gas less than block base fee|fee cap less than block base fee/iu.test(
+          rpcError.details ?? "",
+        )
+      )
+        throw new FeeCapTooLowError();
       throw error;
     }
   }
@@ -346,6 +362,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     to: Address,
     data: Hex,
     nonce: number,
+    assertLease?: () => Promise<void>,
   ): Promise<{ raw: Hex; hash: Hex }> {
     if (!account)
       throw new Error("Signing is disabled without a fee-wallet key");
@@ -356,6 +373,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       value: 0n,
     });
     const fees = await client.estimateFeesPerGas();
+    await assertLease?.();
     const raw = await account.signTransaction({
       chainId: chain.id,
       type: "eip1559",
@@ -579,20 +597,19 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     async prepare(
       token,
       quote: Quote,
-      recordApproval: (approval: PreparedApproval) => Promise<void>,
       nonceFloor = 0,
+      assertLease?: () => Promise<void>,
     ): Promise<PreparedSend> {
       if (!account)
         throw new Error("Signing is disabled without a fee-wallet key");
       // Approve exactly the order amount to the pinned router, never more.
-      let approvalTxId: string | null = null;
       const allowance = await client.readContract({
         address: token as Address,
         abi: erc20Abi,
         functionName: "allowance",
         args: [wallet, router],
       });
-      let nonce = await client.getTransactionCount({
+      const nonce = await client.getTransactionCount({
         address: wallet,
         blockTag: "pending",
       });
@@ -609,19 +626,17 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
             args: [router, quote.amountIn],
           }),
           nonce,
+          assertLease,
         );
-        await recordApproval({
+        return {
+          kind: "approval",
           txId: approval.hash,
+          rawTx: approval.raw,
           evmNonce: nonce,
-        });
-        await sendRaw(approval.raw);
-        approvalTxId = approval.hash;
-        const receipt = await waitForReceipt(approval.hash);
-        if (!receipt)
-          throw new Error(`approval ${approval.hash} not mined in time`);
-        if (receipt.status !== "success")
-          throw new Error(`approval ${approval.hash} reverted`);
-        nonce += 1;
+          expiresAt: null,
+          approvalTxId: approval.hash,
+          minAmountOut: 0n,
+        };
       }
 
       // Re-route at the moment of signing with half the slippage budget, so
@@ -693,13 +708,13 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           "swap simulation returned less than the signed minimum",
         );
 
-      const swap = await signAndSend(router, built.data, nonce);
+      const swap = await signAndSend(router, built.data, nonce, assertLease);
       return {
         txId: swap.hash,
         rawTx: swap.raw,
         evmNonce: nonce,
         expiresAt: deadline,
-        approvalTxId,
+        approvalTxId: null,
         minAmountOut: desc.minReturnAmount,
       };
     },
@@ -727,10 +742,56 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
             throw error;
           });
         if (!receipt) continue;
+        const canonical = await client.getBlock({
+          blockNumber: receipt.blockNumber,
+        });
+        if (
+          !isCanonicalEvmReceipt(hash, receipt, canonical) ||
+          !["success", "reverted"].includes(receipt.status)
+        )
+          throw new Error("Fee send receipt identity differs");
         const landed = { txId: hash };
         const finalized = await client.getBlock({ blockTag: "finalized" });
+        if (typeof finalized.number !== "bigint" || finalized.number < 0n)
+          throw new Error("Fee send finality unavailable");
         if (receipt.blockNumber > finalized.number)
           return { kind: "pending", mined: true };
+        if (row.kind === "approval") {
+          const transaction = await client.getTransaction({ hash });
+          const decoded = decodeFunctionData({
+            abi: erc20Abi,
+            data: transaction.input,
+          });
+          if (
+            transaction.hash.toLowerCase() !== hash.toLowerCase() ||
+            transaction.from.toLowerCase() !== wallet ||
+            transaction.to?.toLowerCase() !== row.token.toLowerCase() ||
+            transaction.nonce !== row.evmNonce ||
+            transaction.value !== 0n ||
+            transaction.blockHash !== receipt.blockHash ||
+            transaction.blockNumber !== receipt.blockNumber ||
+            decoded.functionName !== "approve" ||
+            decoded.args[0].toLowerCase() !== router ||
+            decoded.args[1] !== BigInt(row.amountIn)
+          )
+            throw new Error("Approval receipt differs from its bounded intent");
+          if (receipt.status !== "success")
+            return {
+              kind: "failed",
+              reason: "approval transaction reverted",
+              ...landed,
+            };
+          const allowance = await client.readContract({
+            address: row.token as Address,
+            abi: erc20Abi,
+            functionName: "allowance",
+            args: [wallet, router],
+            blockNumber: receipt.blockNumber,
+          });
+          if (allowance !== BigInt(row.amountIn))
+            throw new Error("Finalized approval allowance differs");
+          return { kind: "finalized", amountOut: 0n, ...landed };
+        }
         if (receipt.status !== "success")
           return {
             kind: "failed",
@@ -780,7 +841,8 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         // replacement does not (a restart before its broadcast). Send the
         // latest bytes; never sign another. A swap past its deadline would
         // revert, so it only waits.
-        if (row.kind !== "claim" && deadlinePassed) return { kind: "pending" };
+        if (row.kind !== "claim" && row.kind !== "approval" && deadlinePassed)
+          return { kind: "pending" };
         if (
           row.kind === "claim" &&
           !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
@@ -798,7 +860,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         // A claim may itself have consumed the nonce while its hash lookups
         // are unavailable. Only its receipt proves what entered the wallet.
         // It is not replaced: the nonce is already spent.
-        return row.kind === "claim"
+        return row.kind === "claim" || row.kind === "approval"
           ? { kind: "pending", mined: true }
           : { kind: "failed", reason: "nonce used by another transaction" };
       // Past the router deadline the swap reverts even if it is mined later.
@@ -812,6 +874,8 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
       )
         throw new Error("Recorded claim pays another fee wallet");
+      // A historical approval hash without retained bytes cannot be resent.
+      if (row.rawTx === null) return { kind: "pending", mined: true };
       return { kind: "rebroadcast", rawTx: latestRaw };
     },
 
@@ -825,6 +889,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     async replace(
       row: ConversionRow,
       replacements: readonly SendReplacement[],
+      assertLease: () => Promise<void>,
     ): Promise<ReplacementResult> {
       if (!account) return { wait: "signing needs the fee-wallet key" };
       const original = parseTransaction(row.rawTx as Hex);
@@ -834,7 +899,9 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       const recipient =
         row.kind === "claim"
           ? (JSON.parse(row.quote as string) as FeeVault).vault
-          : router;
+          : row.kind === "approval"
+            ? row.token
+            : router;
       if (
         original.type !== "eip1559" ||
         previous.type !== "eip1559" ||
@@ -857,6 +924,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         throw new Error("Recorded send cannot be replaced");
       if (
         row.kind !== "claim" &&
+        row.kind !== "approval" &&
         row.expiresAt !== null &&
         Math.floor(now().getTime() / 1000) +
           REPLACEMENT_DEADLINE_MARGIN_SECONDS >=
@@ -865,11 +933,25 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         return {
           wait: "router deadline too close; a same-nonce replacement would revert",
         };
-      const [block, priority] = await Promise.all([
-        client.getBlock({ blockTag: "latest" }),
-        client.estimateMaxPriorityFeePerGas(),
-      ]);
-      if ((block.baseFeePerGas ?? 0n) + priority <= previous.maxFeePerGas)
+      if (row.kind === "approval") {
+        const decoded = decodeFunctionData({
+          abi: erc20Abi,
+          data: original.data,
+        });
+        if (
+          (original.value ?? 0n) !== 0n ||
+          decoded.functionName !== "approve" ||
+          decoded.args[0].toLowerCase() !== router ||
+          decoded.args[1] !== BigInt(row.amountIn)
+        )
+          throw new Error("Recorded approval differs from its bounded intent");
+      }
+      const block = await client.getBlock({ blockTag: "latest" });
+      if (block.baseFeePerGas === null || block.baseFeePerGas === undefined)
+        return { wait: "the current network base fee is unavailable" };
+      // EIP-1559 caps the effective tip at maxFee - baseFee. A new suggested
+      // tip does not make an otherwise includable transaction underpriced.
+      if (block.baseFeePerGas <= previous.maxFeePerGas)
         return { wait: "the signed fee covers the current network fee" };
       const step = (last: bigint, first: bigint) => {
         const raised = ceilPercent(last, REPLACEMENT_STEP_PERCENT);
@@ -895,6 +977,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
       )
         throw new Error("Recorded claim pays another fee wallet");
+      await assertLease();
       const raw = await account.signTransaction({
         chainId: chain.id,
         type: "eip1559",
@@ -964,7 +1047,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         return "noRoute" in priced ? null : priced.amountOut;
       },
 
-      async claim(entry, recordClaim, nonceFloor = 0) {
+      async claim(entry, recordClaim, nonceFloor = 0, assertLease) {
         const verified = await verifiedVault(entry);
         if (!verified) throw new Error("Vault pays another fee recipient");
         if (verified.amount === 0n) throw new Error("No accrued fees to claim");
@@ -982,7 +1065,12 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           throw new Error("Fee claim requires a durable send record");
         const held = nonceHeld(latest, nonceFloor);
         if (held) throw held;
-        const sent = await signAndSend(vault as Address, CLAIM_FEES, latest);
+        const sent = await signAndSend(
+          vault as Address,
+          CLAIM_FEES,
+          latest,
+          assertLease,
+        );
         await recordClaim({
           txId: sent.hash,
           rawTx: sent.raw,
@@ -990,6 +1078,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           expiresAt: null,
           amount,
         });
+        await assertLease?.();
         await sendRaw(sent.raw);
         const receipt = await waitForReceipt(sent.hash);
         if (!receipt) throw new Error(`claim ${sent.hash} not mined in time`);
