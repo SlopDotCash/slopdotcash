@@ -130,7 +130,37 @@ export function projectRestriction(
   restriction.bannedMaintainers = activeAccountBans(records).map(
     ({ account }) => account,
   );
+  if (
+    restriction.appeal !== "requested" &&
+    (projectAppealState(restriction) === "requested" ||
+      restriction.bannedMaintainers.some(
+        (account) =>
+          accountAppealState(restriction, account.githubId) === "requested",
+      ))
+  )
+    restriction.appeal = "requested";
   return restriction;
+}
+
+/** An account-only appeal does not open or pre-empt the project's appeal. */
+export function projectAppealState(
+  restriction: ProjectRestriction,
+): AppealState {
+  if (restriction.state === "clear") return "none";
+  const newestFirst = [...restriction.records].reverse();
+  const boundary =
+    newestFirst.find((record) =>
+      ["ban", "quarantine", "reinstate", "deny_reinstatement"].includes(
+        record.action,
+      ),
+    )?.sequence ?? 0;
+  const request = newestFirst.find(
+    (record) =>
+      record.action === "request_reinstatement" &&
+      record.actorRole !== "banned-account" &&
+      record.sequence > boundary,
+  );
+  return request ? "requested" : "none";
 }
 
 /** A shared project appeal must not claim that another account filed evidence. */
@@ -138,12 +168,21 @@ export function accountAppealState(
   restriction: ProjectRestriction,
   githubId: string,
 ): AppealState {
+  if (
+    !restriction.bannedMaintainers.some(
+      (account) => account.githubId === githubId,
+    )
+  )
+    return "none";
   const newestFirst = [...restriction.records].reverse();
   const boundary =
-    newestFirst.find((record) =>
-      ["ban", "quarantine", "reinstate", "deny_reinstatement"].includes(
-        record.action,
-      ),
+    newestFirst.find(
+      (record) =>
+        ["ban", "quarantine", "deny_reinstatement"].includes(record.action) ||
+        (record.action === "reinstate_accounts" &&
+          (record.accountReinstatements ?? []).some(
+            (account) => account.githubId === githubId,
+          )),
     )?.sequence ?? 0;
   const request = newestFirst.find(
     (record) =>
@@ -342,6 +381,7 @@ export function planEnforcement(input: {
   project: ProjectRecord;
   restriction: ProjectRestriction;
   listedBefore: boolean;
+  responsibleAccounts?: GithubActor[];
 }): EnforcementPlan {
   const { action, actor, project, restriction } = input;
   const manifest = project.manifest;
@@ -377,18 +417,21 @@ export function planEnforcement(input: {
         }),
       };
     }
-    case "request_reinstatement":
+    case "request_reinstatement": {
       if (
         restriction.state === "clear" &&
         restriction.bannedMaintainers.length === 0
       )
         refuse("not_restricted", "The project has no restriction to appeal");
+      const isBannedActor = restriction.bannedMaintainers.some(
+        (account) => account.githubId === actor.githubId,
+      );
       if (
-        restriction.appeal === "requested" &&
-        (!restriction.bannedMaintainers.some(
-          (account) => account.githubId === actor.githubId,
-        ) ||
-          accountAppealState(restriction, actor.githubId) === "requested")
+        isBannedActor
+          ? accountAppealState(restriction, actor.githubId) === "requested"
+          : restriction.state === "clear"
+            ? restriction.appeal === "requested"
+            : projectAppealState(restriction) === "requested"
       )
         refuse("appeal_open", "A reinstatement request is already open");
       return {
@@ -398,7 +441,8 @@ export function planEnforcement(input: {
         pendingReason: null,
         bansMaintainer: false,
       };
-    case "reinstate_accounts":
+    }
+    case "reinstate_accounts": {
       if (
         restriction.appeal !== "requested" ||
         restriction.bannedMaintainers.length === 0
@@ -407,13 +451,37 @@ export function planEnforcement(input: {
           "no_open_appeal",
           "Record an appeal before reinstating an account",
         );
+      const selected = input.responsibleAccounts ?? [];
+      if (
+        projectAppealState(restriction) !== "requested" &&
+        selected.some(
+          (account) =>
+            restriction.bannedMaintainers.some(
+              (banned) => banned.githubId === account.githubId,
+            ) &&
+            accountAppealState(restriction, account.githubId) !== "requested",
+        )
+      )
+        refuse(
+          "no_open_appeal",
+          "Record an appeal before reinstating an account",
+        );
+      const releasedIds = new Set(selected.map((account) => account.githubId));
+      const appealStillOpen =
+        projectAppealState(restriction) === "requested" ||
+        restriction.bannedMaintainers.some(
+          (account) =>
+            !releasedIds.has(account.githubId) &&
+            accountAppealState(restriction, account.githubId) === "requested",
+        );
       return {
         stateAfter: restriction.state,
-        appealAfter: restriction.appeal,
+        appealAfter: appealStillOpen ? "requested" : "granted",
         manifest: null,
         pendingReason: null,
         bansMaintainer: false,
       };
+    }
     case "reinstate":
     case "deny_reinstatement": {
       if (restriction.state === "clear" || restriction.appeal !== "requested")

@@ -1084,6 +1084,23 @@ test("an explicit moderator ban blocks new contribution intake without blaming t
   expect((await t.call("GET", "project-appeals", "900000004")).body).toEqual({
     appeals: [{ projectId: "responsibility", state: "banned", appeal: "none" }],
   });
+  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER]);
+  t.deps.adminGithubIds = new Set([ADMIN, OWNER]);
+  const unappealedRestore = await t.call(
+    "POST",
+    "admin/projects/responsibility/enforcement",
+    OWNER,
+    {
+      action: "reinstate_accounts",
+      reason: "Attempt to reinstate an account before it appealed",
+      evidenceReference: "private-account-review-fixture",
+      expectedRevision: (await t.persistence.getProject(project.id))?.revision,
+      expectedSequence: 4,
+      responsibleAccounts: [{ githubId: "900000004", githubLogin: "second" }],
+    },
+  );
+  expect(unappealedRestore.status).toBe(409);
+  expect(unappealedRestore.body.error).toBe("no_open_appeal");
   const secondAppeal = await t.call("POST", "project-appeals", "900000004", {
     projectId: "responsibility",
     reason: "Review the evidence for my account separately",
@@ -1124,8 +1141,6 @@ test("an explicit moderator ban blocks new contribution intake without blaming t
       )
     ).status,
   ).toBe(403);
-  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER]);
-  t.deps.adminGithubIds = new Set([ADMIN, OWNER]);
   const restored = await t.call(
     "POST",
     "admin/projects/responsibility/enforcement",
@@ -1136,6 +1151,7 @@ test("an explicit moderator ban blocks new contribution intake without blaming t
   expect(restored.body.record).toMatchObject({
     action: "reinstate_accounts",
     stateAfter: "banned",
+    appealAfter: "requested",
     afterRevision: null,
   });
   expect((await newRun()).status).toBe(201);
@@ -1167,6 +1183,85 @@ test("an explicit moderator ban blocks new contribution intake without blaming t
       banEnforcementId: (await t.persistence.listEnforcements())[1].id,
     },
   ]);
+  // Account appeals do not pre-empt the unbanned steward's project appeal.
+  const ownerAppeal = await t.call("POST", "project-appeals", OWNER, {
+    projectId: "responsibility",
+    reason: "The malicious commit was reverted and rotated",
+    evidenceReference: "private-owner-appeal-fixture",
+  });
+  expect(ownerAppeal.status).toBe(200);
+  expect(ownerAppeal.body.record).toMatchObject({
+    actorRole: "project-applicant",
+    decisionSource: "owner-request",
+    action: "request_reinstatement",
+    stateAfter: "banned",
+    appealAfter: "requested",
+  });
+  expect(
+    (
+      await t.call("POST", "project-appeals", OWNER, {
+        projectId: "responsibility",
+        reason: "Duplicate project appeal",
+        evidenceReference: "private-owner-appeal-fixture",
+      })
+    ).status,
+  ).toBe(409);
+  const currentProject = await t.persistence.getProject(project.id);
+  if (!currentProject) throw new Error("Project missing");
+  expect(
+    await t.persistence.appendEnforcement(
+      {
+        id: "enf_responsibility_project_reinstate",
+        projectId: project.id,
+        sequence: 7,
+        action: "reinstate",
+        stateAfter: "clear",
+        appealAfter: "granted",
+        reason: "Clean scan after revert clears the project",
+        evidenceReference: "private-project-review-fixture",
+        repositoryGithubId: "987654321",
+        repositoryKeys: ["example/responsibility"],
+        actor: { githubId: OWNER, githubLogin: "owner" },
+        actorRole: "project-moderator",
+        decisionSource: "admin-panel",
+        beforeRevision: currentProject.revision,
+        beforeManifestSha256: currentProject.manifestSha256,
+        afterRevision: null,
+        afterManifestSha256: null,
+        result: "no_revision_needed",
+        createdAt: NOW,
+      },
+      null,
+      [],
+    ),
+  ).toBe("recorded");
+  // Project reinstatement does not erase the remaining banned account's appeal.
+  expect((await t.call("GET", "project-appeals", "900000004")).body).toEqual({
+    appeals: [
+      { projectId: "responsibility", state: "clear", appeal: "requested" },
+    ],
+  });
+  const secondRestored = await t.call(
+    "POST",
+    "admin/projects/responsibility/enforcement",
+    OWNER,
+    {
+      action: "reinstate_accounts",
+      reason: "Separate review clears the second account",
+      evidenceReference: "private-second-account-review-fixture",
+      expectedRevision: (await t.persistence.getProject(project.id))?.revision,
+      expectedSequence: 8,
+      responsibleAccounts: [{ githubId: "900000004", githubLogin: "second" }],
+    },
+  );
+  expect(secondRestored.status).toBe(200);
+  expect(secondRestored.body.record).toMatchObject({
+    action: "reinstate_accounts",
+    stateAfter: "clear",
+    appealAfter: "granted",
+    afterRevision: null,
+  });
+  expect(await hasParticipationBan(t.db, "900000004")).toBe(false);
 });
 
 test("account-reinstatement upgrade preserves prior releases and separates future project decisions", async () => {
