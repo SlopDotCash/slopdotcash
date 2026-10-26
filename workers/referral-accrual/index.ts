@@ -104,7 +104,7 @@ export default {
               error: message(error),
             }),
           );
-          throw error;
+          throw new Error(message(error));
         }),
     );
   },

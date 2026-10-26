@@ -1,8 +1,8 @@
 # Slop referral-accrual Worker
 
 `slop-referral-accrual` files the project-referral accruals of each closed UTC
-month (PRD section 11, "Referral program", a proposal by the operator that the
-owner has not approved). The program is run by Slop Cash S.P. beside the
+month under [PRD section 11, "Referral program"](../../docs/slop-product-requirements.md#referral-program).
+The owner approved the program on 25 October 2026; posting activation remains separate. The program is run by Slop Cash S.P. beside the
 product, from its own token allocation. It is not a points feature, not a
 protocol change and not a contributor referral program: no manifest field, no
 scorer change, no cycle file, no creator transfer, and contributors and
@@ -90,11 +90,10 @@ There is no page, link or copy for them yet.
 
 ## Parameters
 
-All of these are operator proposals in `wrangler.toml`. The owner decides the
-rate, pool, caps and window before anything posts. Every value is required
-once the mode is not `off`; the code has no fallback.
+The initial values in `wrangler.toml` are approved in PRD section 11. Every
+value is required once the mode is not `off`; the code has no fallback.
 
-| Var | Meaning | Proposed |
+| Var | Meaning | Initial value |
 | --- | --- | --- |
 | `REFERRAL_RATE_BASE_PER_MICRO` | Program token base units per one stablecoin micro-unit | `3000000000000` (3 tokens per USDC at 18 decimals) |
 | `REFERRAL_POOL_BASE` | Lifetime pool, base units | 2,000,000 tokens |
@@ -130,12 +129,15 @@ and prints the run result and each filed file. It touches no hosted database.
 Live mode runs the accrual step exactly as `dry_run` does (files say
 `"mode": "live"`), then `postNextRoot` in `core.ts`:
 
-1. Reconcile every recorded send in `referral_root_posts` (migration 0087)
-   through the chain: a receipt in a finalized block with the filed root at
-   that epoch is `finalized`; a reverted receipt or a nonce taken by another
-   transaction is `failed` (the next run signs again); a send the node never
-   saw is rebroadcast from the stored bytes, never re-signed. A finalized
-   post the owner later voids on chain becomes `voided`.
+1. Check that the journal matches the configured distributor and token before
+   any recovery. Reconcile each send by exact transaction hash, canonical
+   block and transaction position below the finalized head. A successful post
+   must carry the exact distributor `RootPosted` event, epoch, root and total.
+   Only a canonical finalized revert is failed. An absent receipt with an
+   advanced nonce remains held: the nonce alone does not identify the winner.
+   If the nonce is still free, rebroadcast the stored bytes unchanged.
+   A nonfinal owner void holds the run without changing the journal; only a
+   canonical finalized `RootVoided` event makes the post permanently voided.
 2. Refuse while a send is in flight, and refuse after an owner void until the
    operator acknowledges it: set `void_acknowledged_at` and
    `void_acknowledgement` on the voided row with `wrangler d1 execute` after
@@ -158,11 +160,18 @@ Live mode runs the accrual step exactly as `dry_run` does (files say
    and nonce in the journal, then broadcast. A broadcast error leaves the
    row `unknown` for the next run to resend unchanged.
 
-Finality is read from the `finalized` block header, which the public
-Robinhood RPCs serve; state reads use `latest`. The poster key can post a
+The finalized header and canonical receipt/event evidence establish finality.
+State reads use `latest` for preflight and conservative holds; latest state
+alone cannot establish a terminal journal result. The poster key can post a
 capped root that the owner can void for seven days; it holds no tokens
 (`docs/security/referral-distributor-ai-review-2026-10-25.md`). Incident
 order: pause the distributor, rotate the poster, void, unpause.
+
+The signer uses the estimated gas limit plus 30% and quoted EIP-1559 fees.
+There is no configured native-currency transaction or daily gas budget. The
+program-token pool and epoch caps do not limit native gas. Keeper and fee
+converter gas limits do not apply to this separate key. This repair does not
+select a gas budget or activate posting.
 
 Local proof: `bun run test:referral-accrual:anvil` starts Anvil on chain id
 46630, deploys the compiled contract and mock token with public fixture keys,
@@ -179,6 +188,6 @@ optional `RPC_URL_REFERRAL`.
 ## Deployment
 
 There is no release step for this Worker in `deploy.yml`. Nothing deploys it
-until the owner approves the program and adds a gated release in the shape of
+until posting activation is approved and a gated release is added in the shape of
 the fee converter's (`SLOP_FEE_CONVERTER_RELEASE`). Its tables come from the
 shared `slop-private` migrations (`0086_referral_accruals.sql`).

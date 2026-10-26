@@ -10,16 +10,20 @@ import {
   type Address,
   type Chain,
   createPublicClient,
+  decodeEventLog,
   defineChain,
   encodeFunctionData,
   type Hex,
   http,
   keccak256,
   type PublicClient,
+  parseAbiItem,
+  RpcRequestError,
   TransactionNotFoundError,
   TransactionReceiptNotFoundError,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { isCanonicalEvmReceipt } from "../../contracts/evm/adapter";
 import type { PosterConfig } from "./config";
 import type {
   ChainState,
@@ -122,6 +126,13 @@ const DISTRIBUTOR_ABI = [
     outputs: [],
   },
 ] as const;
+
+const ROOT_POSTED = parseAbiItem(
+  "event RootPosted(uint256 indexed epoch, bytes32 root, uint256 total, uint64 claimableAt)",
+);
+const ROOT_VOIDED = parseAbiItem(
+  "event RootVoided(uint256 indexed epoch, bytes32 root)",
+);
 
 const ERC20_ABI = [
   {
@@ -279,42 +290,142 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
     },
 
     async broadcast(rawTx) {
+      if ((await client.getChainId()) !== chain.id)
+        throw new Error("Referral chain identity differs");
       try {
-        await client.request({
+        const hash = await client.request({
           method: "eth_sendRawTransaction",
           params: [rawTx as Hex],
         });
+        if (hash.toLowerCase() !== keccak256(rawTx as Hex))
+          throw new Error("Referral broadcast hash differs");
       } catch (error) {
-        if (/already known/iu.test(String((error as Error).message))) return;
+        if (
+          error instanceof RpcRequestError &&
+          /already known/iu.test(error.details)
+        )
+          return;
         throw error;
       }
     },
 
     async status(row: PostRow): Promise<PostStatus> {
-      const hash = row.txId as Hex;
-      const receipt = await client
-        .getTransactionReceipt({ hash })
-        .catch((error: unknown) => {
-          if (error instanceof TransactionReceiptNotFoundError) return null;
-          throw error;
+      if (
+        row.network !== config.network ||
+        row.distributor !== config.distributor ||
+        row.token !== config.token ||
+        (await client.getChainId()) !== chain.id
+      )
+        throw new Error("Referral journal deployment differs");
+      const finalized = await client.getBlock({ blockTag: "finalized" });
+      if (typeof finalized.number !== "bigint" || finalized.number < 0n)
+        throw new Error("Referral finality unavailable");
+      const canonicalReceipt = async (hash: Hex) => {
+        const receipt = await client
+          .getTransactionReceipt({ hash })
+          .catch((error: unknown) => {
+            if (error instanceof TransactionReceiptNotFoundError) return null;
+            throw error;
+          });
+        if (!receipt) return null;
+        const block = await client.getBlock({
+          blockNumber: receipt.blockNumber,
         });
+        if (
+          !isCanonicalEvmReceipt(hash, receipt, block) ||
+          !["success", "reverted"].includes(receipt.status)
+        )
+          throw new Error("Referral receipt identity differs");
+        return receipt;
+      };
+      const hash = row.txId as Hex;
+      const receipt = await canonicalReceipt(hash);
       if (receipt) {
-        // Finality by block header only: the public Robinhood RPCs serve the
-        // `finalized` header but not state at that tag, and the root is read
-        // from the latest state below.
-        const finalized = await client.getBlock({ blockTag: "finalized" });
         if (receipt.blockNumber > finalized.number) return { kind: "pending" };
+        if (
+          receipt.from.toLowerCase() !== row.poster ||
+          receipt.to?.toLowerCase() !== row.distributor
+        )
+          throw new Error("Referral receipt parties differ");
         if (receipt.status !== "success")
           return { kind: "failed", reason: "postRoot transaction reverted" };
+        const posted = receipt.logs.filter((log) => {
+          if (
+            log.address.toLowerCase() !== row.distributor ||
+            log.removed ||
+            log.transactionHash?.toLowerCase() !== hash ||
+            log.blockHash !== receipt.blockHash ||
+            log.blockNumber !== receipt.blockNumber ||
+            log.transactionIndex !== receipt.transactionIndex
+          )
+            return false;
+          try {
+            const event = decodeEventLog({
+              abi: [ROOT_POSTED],
+              data: log.data,
+              topics: log.topics,
+            });
+            return (
+              event.args.epoch === BigInt(row.epoch) &&
+              event.args.root.toLowerCase() === row.merkleRoot &&
+              event.args.total === BigInt(row.totalBase)
+            );
+          } catch {
+            return false;
+          }
+        });
+        if (posted.length !== 1)
+          throw new Error("Referral posted event differs");
+        // Latest state can hold a run; it cannot establish a terminal owner void.
+        // Robinhood need not serve historical eth_call for canonical receipt/log proof.
         const epoch = await this.epochAt(row.epoch);
-        if (epoch.root !== row.merkleRoot.toLowerCase())
-          throw new Error(
-            `Finalized post at epoch ${row.epoch} carries another root`,
-          );
+        if (
+          epoch.root !== row.merkleRoot ||
+          epoch.total !== BigInt(row.totalBase)
+        )
+          throw new Error("Referral epoch differs");
+        let voided = false;
+        if (epoch.voided) {
+          const logs = await client.getLogs({
+            address: distributor,
+            event: ROOT_VOIDED,
+            args: { epoch: BigInt(row.epoch) },
+            fromBlock: receipt.blockNumber,
+            toBlock: finalized.number,
+            strict: true,
+          });
+          if (logs.length === 0) return { kind: "pending" };
+          if (logs.length !== 1)
+            throw new Error("Referral void evidence differs");
+          const log = logs[0];
+          const removed = await canonicalReceipt(log.transactionHash);
+          if (!removed || removed.blockNumber > finalized.number)
+            return { kind: "pending" };
+          if (
+            log.removed ||
+            log.args.root?.toLowerCase() !== row.merkleRoot ||
+            log.blockHash !== removed.blockHash ||
+            log.blockNumber !== removed.blockNumber ||
+            removed.status !== "success" ||
+            removed.to?.toLowerCase() !== row.distributor ||
+            !removed.logs.some(
+              (item) =>
+                item.logIndex === log.logIndex &&
+                item.address.toLowerCase() === row.distributor &&
+                item.data === log.data &&
+                item.topics.length === log.topics.length &&
+                item.topics.every(
+                  (topic, index) => topic === log.topics[index],
+                ),
+            )
+          )
+            throw new Error("Referral void receipt differs");
+          voided = true;
+        }
         return {
           kind: "finalized",
           blockNumber: receipt.blockNumber.toString(),
-          voided: epoch.voided,
+          voided,
         };
       }
       const pending = await client
@@ -328,8 +439,8 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
         address: row.poster as Address,
         blockTag: "finalized",
       });
-      if (finalizedNonce > row.evmNonce)
-        return { kind: "failed", reason: "nonce used by another transaction" };
+      // Nonce advancement does not identify the winner. Preserve the unknown attempt.
+      if (finalizedNonce > row.evmNonce) return { kind: "pending" };
       return { kind: "rebroadcast" };
     },
   };
