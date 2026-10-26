@@ -68,7 +68,7 @@ export async function prepareWorkUnitEvidence(
   );
   const ids = new Set<string>();
   const projects = new Set<string>();
-  const retained = retainedCopyBindings(sources);
+  const retained = await retainedCopyBindings(sources);
   const limitations = new Set<string>(retained.limitations);
   const sourceDigests: WorkUnitEvidence["sourceDigests"] = [];
   const commits = new Map<string, string>();

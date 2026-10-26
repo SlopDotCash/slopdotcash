@@ -1,3 +1,4 @@
+import { sameRepositoryCommitHints } from "./value-commit-hints";
 import type { EvidenceClient, ValueEvidence } from "./value-evidence";
 import {
   collectIndirectValueRetention,
@@ -70,18 +71,9 @@ export async function collectIndirectValueAcceptance(
   const hints = [
     ...new Set(
       texts.flatMap((text) =>
-        [
-          ...text.matchAll(
-            /(?:https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:commit|blob|tree)\/|([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)@)?\b([a-f0-9]{7,40})\b/gu,
-          ),
-        ]
-          .filter(
-            (m) =>
-              (m[1] ?? m[2] ?? source.repository).toLowerCase() ===
-              source.repository.toLowerCase(),
-          )
-          .map((m) => m[3])
-          .filter((s) => /[a-f]/u.test(s)),
+        sameRepositoryCommitHints(source.repository, text).filter((s) =>
+          /[a-f]/u.test(s),
+        ),
       ),
     ),
   ];
