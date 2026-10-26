@@ -45,9 +45,11 @@ evidence remain ineligible under the scoring contract.
 
 The additive line is intentionally tier-only. Its weights use each accepted
 review event's base `scoreThirds` and ignore `evidenceBonusBasisPoints`.
-Finalized private-trace evidence may still increase that review's weight in the
-shared contributor pool under Score v2; it never changes the separate review
-line. This avoids paying the same trace bonus from both funding lines.
+Before November 2026, finalized private-trace evidence may increase that
+review's weight in the shared contributor pool under Score v2; it never changes
+the separate review line. This avoids paying the same trace bonus from both
+funding lines. From November 2026, a trace adds no payment weight to either
+line (PRD section 7).
 
 Slop does not hold keys, sign, or broadcast either line. A review amount may be
 called paid only after finalized public evidence reconciles its immutable
