@@ -20,6 +20,7 @@ import {
   walletVaultConfig,
 } from "./evm-vault-actions";
 import { acceptsPayoutFee } from "./payments/contracts";
+import { apiRequest } from "./project-api";
 
 export type OwnerCommitmentPlan = MonthlyCommitmentPlan;
 export async function requestOwnerCommitment(
@@ -27,14 +28,9 @@ export async function requestOwnerCommitment(
   cycleId: string,
   expected: MonthlyCommitmentInput,
 ) {
-  const response = await fetch(
-    `/api/v1/payments/projects/${encodeURIComponent(projectId)}/monthly/${encodeURIComponent(cycleId)}/commitment`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(expected),
-      signal: AbortSignal.timeout(120000),
-    },
+  const response = await apiRequest(
+    `payments/projects/${encodeURIComponent(projectId)}/monthly/${encodeURIComponent(cycleId)}/commitment`,
+    { body: expected, timeoutMs: 120_000 },
   );
   const value = (await readBoundedJson(
     response,

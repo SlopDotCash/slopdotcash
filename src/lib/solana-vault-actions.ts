@@ -14,7 +14,7 @@ import {
   type PayoutPolicy,
 } from "./payments/contracts";
 import { parseVaultAmount } from "./payments/vault-amount";
-import { projectApiRequest } from "./project-api";
+import { apiRequest, projectApiRequest } from "./project-api";
 
 export type SolanaFundingPlan = Awaited<
   ReturnType<typeof prepareSolanaFunding>
@@ -57,17 +57,11 @@ async function request(
       `project-vaults/${encodeURIComponent(projectId)}/solana-funding`,
       { network: deployment.network, vault: deployment.vault, ...body },
     );
-  const response = await fetch(
-    `/api/v1/payments/projects/${encodeURIComponent(projectId)}/solana-funding`,
+  const response = await apiRequest(
+    `payments/projects/${encodeURIComponent(projectId)}/solana-funding`,
     {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        network: deployment.network,
-        vault: deployment.vault,
-        ...body,
-      }),
-      signal: AbortSignal.timeout(90000),
+      body: { network: deployment.network, vault: deployment.vault, ...body },
+      timeoutMs: 90_000,
     },
   );
   const value = (await readBoundedJson(

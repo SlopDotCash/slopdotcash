@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { fetchWithDeadline } from "./browser-json";
+import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 import type {
   PublicProjectApplication as ProjectApplication,
   WebSession as ProjectSession,
@@ -19,6 +19,9 @@ export type {
   PublicProjectApplication as ProjectApplication,
 } from "./project-contracts";
 
+/** Above the largest admin and security list the API returns. */
+const MAX_PROJECT_API_BYTES = 16 * 1024 * 1024;
+
 export class ProjectApiError extends Error {
   constructor(
     readonly status: number,
@@ -27,6 +30,31 @@ export class ProjectApiError extends Error {
   ) {
     super(message);
   }
+}
+
+/**
+ * One same-origin JSON request to the API with its own deadline. A body makes
+ * it a POST. Callers read the bounded response and map statuses to their copy.
+ */
+export function apiRequest(
+  path: string,
+  {
+    body,
+    signal,
+    timeoutMs,
+  }: { body?: unknown; signal?: AbortSignal; timeoutMs: number },
+): Promise<Response> {
+  const deadline = AbortSignal.timeout(timeoutMs);
+  return fetch(`/api/v1/${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    credentials: "same-origin",
+    redirect: "error",
+    cache: "no-store",
+    headers:
+      body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+  });
 }
 
 export async function projectApiRequest<T>(
@@ -58,7 +86,11 @@ export async function projectApiRequest<T>(
   }
   let parsed: unknown;
   try {
-    parsed = await response.json();
+    parsed = await readBoundedJson(
+      response,
+      MAX_PROJECT_API_BYTES,
+      "The project API",
+    );
   } catch (error) {
     if (
       error instanceof DOMException &&
