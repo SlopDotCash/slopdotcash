@@ -419,11 +419,21 @@ deduct the same 2%, `ceil(gross / 50)`, enforced in the contracts, and reach
 only the owner's refund destination; funded obligations cannot be withdrawn.
 Historical v1 records retain their original fee and authority rules.
 
-Supported assets are the network stablecoin or any standard ERC-20 on Base,
-Robinhood Chain (chain id 4663) and Ethereum, or any classic SPL token on
-Solana, with any decimals (PRD section 6). Fee-on-transfer, rebasing and
-Token-2022 tokens are unsupported. Circle USDC is the Ethereum stablecoin;
-verify its address from Circle's primary source before activation.
+Approved assets are the network stablecoin or standard ERC-20 on Base,
+Robinhood Chain (chain id 4663) and Ethereum, or classic SPL and the bounded
+metadata-only Token-2022 subset on Solana (PRD section 6, owner decision of
+26 October 2026, #905). Token-2022 mints may have only MetadataPointer and
+TokenMetadata, with disabled mint/freeze authorities; token accounts may have
+only ImmutableOwner, or no extensions. Reject every other extension, including
+unknown extensions. Fee-on-transfer, rebasing and transfer-hook behavior
+remain unsupported. Qualify the correct token program throughout escrow,
+owner setup and fee handling, and resolve and inspect every account in a
+versioned route under the existing native limits before releasing support.
+Existing classic SPL vaults, funded obligations, fees and roles remain intact.
+This is approved implementation scope, not deployed acceptance. Program
+upgrades and token funding each need their own exact reviewed execution plan
+and owner approval. Circle USDC is the Ethereum stablecoin; verify its address
+from Circle's primary source before activation.
 
 Public pages never read chain or GitHub state live per page view (PRD
 section 9). They serve cached D1 data and snapshots that background jobs
