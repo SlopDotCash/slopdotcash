@@ -83,7 +83,7 @@ test("Your payouts lists approved monthly awards with their payment state", asyn
   await expect(rows.nth(1)).toContainText(
     "Approved, funded: the project vault reserves it next",
   );
-  await expect(rows.nth(2)).toContainText("Ready, payment queued");
+  await expect(rows.nth(2)).toContainText("Payment queued");
   await expect(
     rows.nth(0).getByRole("link", { name: "eliza" }),
   ).toHaveAttribute("href", "/projects/eliza");
