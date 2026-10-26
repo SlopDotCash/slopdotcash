@@ -18,6 +18,7 @@ import {
   assertProjectDefinition,
   assertProjectRegistry,
   monthlyAmountDisplay,
+  PROJECT_ID,
   PROJECT_SKILL_TEMPLATES,
   parseAssetAmount,
 } from "../../src/lib/project-schema.mjs";
@@ -162,7 +163,6 @@ export type ProjectApiDependencies = {
 };
 
 const APPLICATION_ID = /^app_[A-Za-z0-9_-]{8,72}$/u;
-const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
 
 function json(
   status: number,

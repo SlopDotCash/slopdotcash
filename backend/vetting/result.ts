@@ -6,6 +6,7 @@
  * "malicious" needs concrete confirmation evidence, not a model label.
  */
 
+import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import {
   VETTING_DISPOSITIONS,
   type VettingDisposition,
@@ -261,10 +262,7 @@ export function parseVettingResult(value: unknown): VettingResult {
     !/^vet_[a-f0-9]{32}$/u.test(body.assessmentId)
   )
     reject("assessmentId is invalid");
-  if (
-    typeof body.projectId !== "string" ||
-    !/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u.test(body.projectId)
-  )
+  if (typeof body.projectId !== "string" || !PROJECT_ID.test(body.projectId))
     reject("projectId is invalid");
   if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1)
     reject("revision must be a positive integer");

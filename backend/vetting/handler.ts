@@ -12,6 +12,7 @@
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { ProjectSetupStatus } from "../../src/lib/project-contracts";
+import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
   type ApiError,
@@ -50,7 +51,6 @@ import {
 export const VETTING_SIGNATURE_CONTEXT = "slop-vetting:v1";
 /** Signed requests older or newer than this are refused. */
 const SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
-const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
 
 export type VettingApiDependencies = {
   vetting: CloudflareVettingPersistence;

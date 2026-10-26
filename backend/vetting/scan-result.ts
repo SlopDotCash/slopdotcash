@@ -9,6 +9,7 @@
  * rules in `result.ts`; an old incomplete scan is never reread as clean.
  */
 
+import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import {
   VETTING_DISPOSITIONS,
   type VettingDisposition,
@@ -220,10 +221,7 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
     !ASSESSMENT_ID.test(body.assessmentId)
   )
     reject("assessmentId is invalid");
-  if (
-    typeof body.projectId !== "string" ||
-    !/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u.test(body.projectId)
-  )
+  if (typeof body.projectId !== "string" || !PROJECT_ID.test(body.projectId))
     reject("projectId is invalid");
   if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1)
     reject("revision must be a positive integer");

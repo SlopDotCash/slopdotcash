@@ -6,6 +6,7 @@
  * head; each skill request also verifies its retained private evidence.
  */
 
+import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import {
   buildProjectPublication,
@@ -93,7 +94,6 @@ export type SkillPublicationDependencies = {
   ): Promise<VettingClearance>;
 };
 
-const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
 /** Paths the generated publication defines, plus readable aliases. */
 const ARTIFACT =
   /^(?:(?:review-)?(?:skill|mission|codex|claude|claude-code|manual)\.md|(?:review-)?skill-manifest\.json|downloads\/[a-z0-9-]{1,96}\.skill(?:\.sha256)?|terms\.json|SKILL\.md|review\/SKILL\.md)$/u;

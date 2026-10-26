@@ -18,10 +18,13 @@
  * - There is no public fallback. A refused or unavailable intake leaves the
  *   report in the reporter's browser.
  */
+
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
+import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import type { D1QueryStatement as D1Statement } from "../d1";
+import { GHSA } from "../github";
 import { exactKeys, fail, requireActor } from "../http";
 import { notifySecurityReportReceived } from "../notifications/events";
 import {
@@ -39,11 +42,9 @@ import {
   automaticIntake,
   caseInsertStatement,
   eventStatement,
-  GHSA,
   IDEMPOTENCY_KEY,
   inboxStatements,
   json,
-  PROJECT_ID,
   pvrState,
   type ReportingContext,
   reportingContext,

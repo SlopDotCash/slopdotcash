@@ -48,6 +48,7 @@ import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { MonthlyReleaseResult } from "../../workers/payment-executor/monthly-release";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
+import { githubHeaders } from "../github";
 import { notifyMonthlyUnderfunded } from "../notifications/events";
 import {
   hasParticipationBan,
@@ -90,12 +91,7 @@ export async function verifyProjectAuthority(
     );
   async function github(path: string, label: string) {
     const response = await fetch(`https://api.github.com/${path}`, {
-      headers: {
-        accept: "application/vnd.github+json",
-        "x-github-api-version": "2022-11-28",
-        "user-agent": "Slop-monthly-awards",
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-      },
+      headers: githubHeaders(token, "Slop-monthly-awards"),
       redirect: "error",
       signal: AbortSignal.timeout(30000),
     });

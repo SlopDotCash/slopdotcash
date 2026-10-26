@@ -17,6 +17,7 @@
  */
 
 import type { SetupAuthority } from "../../src/lib/project-contracts";
+import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import {
   apiErrorResponse,
   fail,
@@ -68,7 +69,6 @@ export function flagCutoff(at: Date): string {
 
 const MIN_EVIDENCE = 20;
 const MAX_EVIDENCE = 4000;
-const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
 
 export type ProjectFlag = {
   id: string;

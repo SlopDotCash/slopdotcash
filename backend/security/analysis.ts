@@ -12,6 +12,7 @@
  */
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { D1Database, D1QueryStatement } from "../d1";
+import { loopbackOrigin } from "../github";
 import type { AdvisoryReader } from "./advisories";
 
 export const ANALYSIS_PROMPT_REVISION = "slop-security-case-analysis-1";
@@ -225,8 +226,6 @@ const SURPLUS_MESSAGES = new URL(
   "https://api.surplusintelligence.ai/anthropic/v1/messages",
 );
 const MAX_OUTPUT_TOKENS = 16000;
-/** Local browser tests only: a loopback provider fixture on 127.0.0.1. */
-const LOOPBACK_ORIGIN = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/u;
 
 /**
  * The Surplus analyzer, or null without the account key. Null
@@ -241,11 +240,7 @@ export function surplusSecurityAnalyzer(options: {
   const apiKey = options.apiKey?.trim();
   if (!apiKey) return null;
   // Only a loopback origin replaces the provider's fixed origin.
-  const endpoint =
-    options.loopbackOrigin !== undefined &&
-    LOOPBACK_ORIGIN.test(options.loopbackOrigin)
-      ? `${options.loopbackOrigin}${SURPLUS_MESSAGES.pathname}`
-      : SURPLUS_MESSAGES.href;
+  const endpoint = `${loopbackOrigin(options.loopbackOrigin, SURPLUS_MESSAGES.origin)}${SURPLUS_MESSAGES.pathname}`;
   /** One Messages call; the text of a complete answer, never a partial one. */
   const complete = async (
     system: string,

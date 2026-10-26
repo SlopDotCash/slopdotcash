@@ -38,7 +38,7 @@ export const PROJECT_SKILL_TEMPLATES = Object.freeze({
  * (`scripts/skill-validation/quick_validate.py`).
  */
 export const MAX_PROJECT_ID_LENGTH = 43;
-const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u;
+export const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u;
 
 /** Maintainer-authored fields, in render order, that generate project skills. */
 export const CONTRIBUTION_FIELDS = Object.freeze([

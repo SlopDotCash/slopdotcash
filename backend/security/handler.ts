@@ -10,6 +10,7 @@ import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
  * publicly, or exported to builds, leaderboards, points or cycles.
  */
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
+import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
   type SecurityBountyTerms,
@@ -20,6 +21,7 @@ import type {
   D1QueryStatement as D1Statement,
   D1TransactionalDatabase,
 } from "../d1";
+import { GHSA, GITHUB_LOGIN } from "../github";
 import {
   apiErrorResponse,
   exactKeys,
@@ -193,12 +195,8 @@ export type FrozenTerms = {
   capacityAwards: number;
 };
 
-export const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
 const CASE_ID = /^sc_[A-Za-z0-9_-]{8,72}$/u;
-export const GHSA =
-  /^GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}$/u;
 const GITHUB_ID = /^[1-9]\d{0,19}$/u;
-const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{16,80}$/u;
 const ROOT_CAUSE = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;

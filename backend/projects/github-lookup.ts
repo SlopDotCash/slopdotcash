@@ -12,6 +12,13 @@ import {
 
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { sha256Hex } from "../../src/lib/sha256";
+import {
+  GITHUB_API,
+  GITHUB_LOGIN,
+  githubHeaders,
+  loopbackOrigin,
+  nextLink,
+} from "../github";
 
 export type GithubFetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -25,23 +32,16 @@ export class GithubLookupError extends Error {
   }
 }
 
-export const GITHUB_API = "https://api.github.com";
-const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const MAX_OWNED_REPOSITORY_PAGES = 20;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export function validGithubLogin(value: string): boolean {
-  return LOGIN.test(value);
+  return GITHUB_LOGIN.test(value);
 }
 
 export function requestInit(token: string | undefined): RequestInit {
   return {
-    headers: {
-      accept: "application/vnd.github+json",
-      "user-agent": "slop.cash-project-setup",
-      "x-github-api-version": "2022-11-28",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
+    headers: githubHeaders(token, "slop.cash-project-setup"),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   };
 }
@@ -121,31 +121,27 @@ function nextOwnedRepositoryPage(
   currentPage: number,
   apiOrigin: string,
 ): number | null {
-  const link = response.headers.get("link");
-  if (link === null) return null;
-  const next = link
-    .split(",")
-    .find((part) => /;\s*rel="next"(?:\s*;|\s*$)/u.test(part));
-  if (next === undefined) return null;
-  const target = /^\s*<([^<>]+)>/u.exec(next)?.[1];
-  if (target === undefined)
-    throw new GithubLookupError(
+  const invalid = () =>
+    new GithubLookupError(
       502,
       "github_unavailable",
       "GitHub returned an invalid repository page link.",
     );
-  const url = new URL(target);
+  let url: URL | null;
+  try {
+    const target = nextLink(response.headers.get("link"));
+    url = target === null ? null : new URL(target);
+  } catch {
+    throw invalid();
+  }
+  if (url === null) return null;
   const page = Number(url.searchParams.get("page"));
   if (
     url.origin !== apiOrigin ||
     !Number.isSafeInteger(page) ||
     page !== currentPage + 1
   )
-    throw new GithubLookupError(
-      502,
-      "github_unavailable",
-      "GitHub returned an invalid repository page link.",
-    );
+    throw invalid();
   return page;
 }
 
@@ -159,7 +155,7 @@ export async function listOwnedRepositories(
   login: string,
   apiOrigin = GITHUB_API,
 ): Promise<OwnedRepository[]> {
-  if (!LOGIN.test(login))
+  if (!GITHUB_LOGIN.test(login))
     throw new GithubLookupError(
       400,
       "invalid_request",
@@ -383,7 +379,5 @@ export async function readBranchHead(
 
 /** The GitHub API origin: a loopback fixture in local browser tests only. */
 export function githubApiOrigin(value: string | undefined): string {
-  return value && /^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/u.test(value)
-    ? value
-    : GITHUB_API;
+  return loopbackOrigin(value, GITHUB_API);
 }

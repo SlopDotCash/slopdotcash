@@ -1,4 +1,5 @@
 import { readBoundedJson } from "../../src/lib/browser-json";
+import { GHSA, GITHUB_LOGIN, githubHeaders, nextLink } from "../github";
 
 /**
  * Reads a program repository's GitHub private vulnerability reports (PRD
@@ -40,9 +41,6 @@ export type AdvisoryReader = {
   privateReport(repository: string, ghsa: string): Promise<PrivateReportLookup>;
 };
 
-const GHSA =
-  /^GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}$/u;
-const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const REPOSITORY = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/u;
 /** A transport bound, not a policy: GitHub pages hold at most 100 rows. */
 const MAX_PAGES = 20;
@@ -113,15 +111,6 @@ export function parsePrivateReport(value: unknown): GithubPrivateReport | null {
   };
 }
 
-function nextPage(link: string | null): string | null {
-  if (link === null) return null;
-  for (const part of link.split(",")) {
-    const match = /^\s*<([^>]+)>\s*;\s*rel="next"\s*$/u.exec(part);
-    if (match) return match[1];
-  }
-  return null;
-}
-
 /**
  * A reader that authenticates with a read-only advisory token for each
  * repository: the slopdotcash App installation token (owner decision D10).
@@ -135,12 +124,7 @@ export function githubAdvisoryReader(options: {
 }): AdvisoryReader {
   const get = (url: string, token: string) =>
     options.fetch(url, {
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${token}`,
-        "user-agent": "slop.cash-security-intake",
-        "x-github-api-version": "2022-11-28",
-      },
+      headers: githubHeaders(token, "slop.cash-security-intake"),
       // Workers support only "follow" and "manual"; a redirect is not ok.
       redirect: "manual",
       signal: AbortSignal.timeout(10_000),
@@ -170,7 +154,7 @@ export function githubAdvisoryReader(options: {
             const report = parsePrivateReport(entry);
             if (report) reports.push(report);
           }
-          const next = nextPage(response.headers.get("link"));
+          const next = nextLink(response.headers.get("link"));
           // Follow only GitHub's own pagination on the same API origin.
           url = next !== null && new URL(next).origin === origin ? next : null;
           if (next !== null && url === null) return { state: "unavailable" };
