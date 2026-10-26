@@ -17,6 +17,9 @@ MONTHLY_PAYMENT_SCHEDULE = '{"firstPeriod":"2026-11","cutoffSecondsAfterPeriodEn
 # owner activation of 24 October 2026; its attester is
 # slop-payments-base-mainnet-attester.
 PAYMENT_NETWORKS = '["base-mainnet"]'
+# Automatic private-report intake (PRD section 8; owner activation of 26
+# October 2026). Routes stay closed unless every intake App secret is set.
+SLOP_PRIVATE_INTAKE_MODE = "on"
 
 [[d1_databases]]
 binding = "SLOP_DB"
