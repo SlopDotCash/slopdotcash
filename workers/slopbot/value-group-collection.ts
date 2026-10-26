@@ -1,10 +1,7 @@
-import {
-  REGISTERED_REPOSITORIES,
-  type TargetRepository,
-} from "../../src/lib/repositories.mjs";
+import type { TargetRepository } from "../../src/lib/repositories.mjs";
 import type { D1Database } from "./persistence";
 import { collectValueContext } from "./value-context";
-import { collectValueEvidence } from "./value-evidence";
+import { collectValueEvidence, namesRepository } from "./value-evidence";
 import { latestValueRecord } from "./value-journal";
 import { loadValuePolicy, type ValueClient } from "./value-publication";
 import type { WorkUnitSource } from "./value-work-unit";
@@ -29,7 +26,7 @@ export async function collectValueGroup(
   seed: WorkUnitSource,
   authorize: (source: Identity) => Promise<boolean>,
   startAt: number,
-  repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
+  repositories: readonly TargetRepository[],
 ): Promise<WorkUnitSource[] | null> {
   const root = repositories.find((r) => r.id === seed.evidence.repository);
   if (!root) return null;
@@ -53,9 +50,7 @@ export async function collectValueGroup(
     const repository = repositories.find(
       (r) =>
         r.projectId === root.projectId &&
-        [r.id, ...r.aliases].some(
-          (id) => id.toLowerCase() === selected.repository.toLowerCase(),
-        ),
+        namesRepository(r, selected.repository),
     );
     if (!repository) return null;
     const identity = await github.get<{

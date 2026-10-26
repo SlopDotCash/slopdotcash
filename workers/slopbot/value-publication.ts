@@ -3,7 +3,6 @@
 
 import {
   collectTargetRepositories,
-  REGISTERED_REPOSITORIES,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
 import type { Job } from "./contracts";
@@ -16,6 +15,7 @@ import { collectValueContext, valueContextSelections } from "./value-context";
 import {
   collectValueEvidence,
   type EvidenceClient,
+  findRepository,
   type ValueEvidence,
 } from "./value-evidence";
 import { appendValueRecord, prepareValueRecord } from "./value-journal";
@@ -50,14 +50,10 @@ export async function verifyCurrentValueSource(
   github: ValueClient,
   evidence: ValueEvidence,
   result: Pick<ValueResult, "policySha" | "sourceDigest">,
-  repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
+  repositories: readonly TargetRepository[],
   mergeRecipe?: ValueMergeRecipe,
 ) {
-  const repository = repositories.find((entry) =>
-    [entry.id, ...entry.aliases].some(
-      (id) => id.toLowerCase() === evidence.repository.toLowerCase(),
-    ),
-  );
+  const repository = findRepository(repositories, evidence.repository);
   if (!repository)
     throw new Error("Value source is absent from the verified registry");
   const [owner, repo] = evidence.repository.split("/");

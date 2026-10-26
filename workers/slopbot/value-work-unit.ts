@@ -3,13 +3,11 @@
  * This is evidence preparation, not journal publication or payout approval.
  */
 import { isCreditEligibleCommitAuthor } from "../../src/lib/commit-credit";
-import {
-  REGISTERED_REPOSITORIES,
-  type TargetRepository,
-} from "../../src/lib/repositories.mjs";
+import type { TargetRepository } from "../../src/lib/repositories.mjs";
 import { sha256Hex } from "./github";
 import { matchesHistoricalIntegrationBranch } from "./value-branch-policy";
 import {
+  findRepository,
   type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
@@ -60,7 +58,7 @@ const ordered = (values: Iterable<string>) =>
  */
 export async function prepareWorkUnitEvidence(
   input: readonly WorkUnitSource[],
-  repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
+  repositories: readonly TargetRepository[],
 ): Promise<WorkUnitEvidence> {
   if (input.length === 0) throw new Error("Joint value sources are missing");
   const sources = [...input].sort((a, b) =>
@@ -90,11 +88,7 @@ export async function prepareWorkUnitEvidence(
   for (const source of sources) {
     const { evidence, policy } = source;
     const { pull } = evidence;
-    const repository = repositories.find((entry) =>
-      [entry.id, ...entry.aliases].some(
-        (id) => id.toLowerCase() === evidence.repository.toLowerCase(),
-      ),
-    );
+    const repository = findRepository(repositories, evidence.repository);
     if (
       !repository ||
       !valueEvidenceMatchesRepository(evidence, repository) ||

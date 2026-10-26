@@ -454,6 +454,23 @@ async function relatedPullRequests(
     limitations: [...new Set(limitations)],
   };
 }
+/** True when `id` names the repository or one of its aliases, ignoring case. */
+export function namesRepository(
+  repository: Pick<TargetRepository, "id" | "aliases">,
+  id: string,
+): boolean {
+  const key = id.toLowerCase();
+  return [repository.id, ...repository.aliases].some(
+    (name) => name.toLowerCase() === key,
+  );
+}
+/** The registered repository that `id` names, ignoring case. */
+export function findRepository(
+  repositories: readonly TargetRepository[],
+  id: string,
+): TargetRepository | undefined {
+  return repositories.find((repository) => namesRepository(repository, id));
+}
 /** Captured attribution policy must match the independently selected registry.
  * A matching source digest alone does not establish project authority.
  */
@@ -464,9 +481,7 @@ export function valueEvidenceMatchesRepository(
   const policy = evidence.repositoryPolicy;
   return (
     policy !== null &&
-    [repository.id, ...repository.aliases].some(
-      (id) => id.toLowerCase() === evidence.repository.toLowerCase(),
-    ) &&
+    namesRepository(repository, evidence.repository) &&
     policy.id === repository.id &&
     policy.projectId === repository.projectId &&
     policy.integrationBranch === repository.integrationBranch &&
@@ -586,9 +601,7 @@ export async function collectValueEvidence(
   if (!repositoryIdentity) throw new Error("Repository identity unavailable");
   if (
     repositoryPolicy !== null &&
-    (![repositoryPolicy.id, ...repositoryPolicy.aliases].some(
-      (id) => id.toLowerCase() === repository.toLowerCase(),
-    ) ||
+    (!namesRepository(repositoryPolicy, repository) ||
       (repositoryPolicy.expectedNodeId !== null &&
         repositoryPolicy.expectedNodeId !== repositoryIdentity.node_id))
   )

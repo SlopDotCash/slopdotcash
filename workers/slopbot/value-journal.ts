@@ -3,15 +3,8 @@
  */
 
 import { assertProjectRegistry } from "../../src/lib/project-schema.mjs";
-import {
-  findProject,
-  type ProjectDefinition,
-  type ProjectId,
-} from "../../src/lib/projects.mjs";
-import {
-  collectTargetRepositories,
-  REGISTERED_REPOSITORIES,
-} from "../../src/lib/repositories.mjs";
+import type { ProjectDefinition, ProjectId } from "../../src/lib/projects.mjs";
+import { collectTargetRepositories } from "../../src/lib/repositories.mjs";
 import {
   VALUE_RUBRIC_VERSION,
   type ValueAssessment,
@@ -30,6 +23,7 @@ import {
   valueContextSelections,
 } from "./value-context";
 import {
+  findRepository,
   type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
@@ -78,24 +72,14 @@ export async function prepareValueRecord(
   policy: { sha: string; text: string },
   producerRevision: string,
   supersedes: string | null,
-  revisionReason: string | null = null,
-  projects?: readonly ProjectDefinition[],
+  revisionReason: string | null,
+  projects: readonly ProjectDefinition[],
 ) {
-  const registry =
-    projects === undefined ? null : assertProjectRegistry(projects);
-  const repositories =
-    registry === null
-      ? REGISTERED_REPOSITORIES
-      : collectTargetRepositories(registry);
-  const repository = repositories.find((entry) =>
-    [entry.id, ...entry.aliases].some(
-      (id) => id.toLowerCase() === evidence.repository.toLowerCase(),
-    ),
-  );
+  const registry = assertProjectRegistry(projects);
+  const repositories = collectTargetRepositories(registry);
+  const repository = findRepository(repositories, evidence.repository);
   const project = repository
-    ? registry === null
-      ? findProject(repository.projectId)
-      : registry.find((entry) => entry.id === repository.projectId)
+    ? registry.find((entry) => entry.id === repository.projectId)
     : null;
   if (!repository || !project || project.status !== "active")
     throw new Error("Value source must belong to an active registered project");
