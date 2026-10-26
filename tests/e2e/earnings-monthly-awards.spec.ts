@@ -67,6 +67,9 @@ test("Your payouts lists approved monthly awards with their payment state", asyn
   await page.route("**/api/v1/payments/**", (route) =>
     route.fulfill({ json: account }),
   );
+  await page.route("**/api/v1/referrals/me", (route) =>
+    route.fulfill({ json: { enabled: false } }),
+  );
   await page.goto("/earnings", { waitUntil: "networkidle" });
   const table = page.getByRole("table", {
     name: "Approved awards and verified payments",

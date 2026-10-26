@@ -492,8 +492,8 @@ remain launch gates.
 ## Referral distributor
 
 `src/ReferralDistributor.sol` is a separate, non-upgradeable contract for the
-Slop Cash S.P. project-referral program (PRD section 11, "Referral program",
-an operator proposal the owner has not approved). It is not part of the
+Slop Cash S.P. project-referral program approved in PRD section 11,
+"Referral program". The program token is not deployed yet. It is separate from the
 escrow: it holds one ERC-20 (the program token), has no factory, no proxy, no
 project id and no vault role, and the escrow never calls it.
 

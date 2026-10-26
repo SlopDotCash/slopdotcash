@@ -49,6 +49,8 @@ read -ra legacy_accounts <<<"$(node integration/legacy-project.mjs)"
 read -ra monthly_accounts <<<"$(node integration/monthly-preload.mjs)"
 start_validator "${legacy_accounts[@]}" "${monthly_accounts[@]}"
 bun build adapter.ts --target=node --outfile=.local/adapter.mjs
+bun build monthly-reserve.ts --target=node --outfile=.local/monthly-reserve.mjs
+bun build ../../workers/payment-executor/monthly-release.ts --target=node --outfile=.local/monthly-release-service.mjs
 bun build funding.ts --target=node --outfile=.local/funding.mjs
 bun build commitment.ts --target=node --outfile=.local/commitment.mjs
 bun build owner-instructions.ts transactions.ts --target=node --outdir=.local --entry-naming='[name].mjs'

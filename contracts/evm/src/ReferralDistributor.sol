@@ -7,7 +7,7 @@ interface IReferralToken {
 }
 
 /// @notice Cumulative Merkle distributor for the Slop Cash S.P. project-referral program (PRD section 11,
-/// "Referral program", proposed). The contract holds one ERC-20. A bounded poster publishes one root per epoch
+/// "Referral program"). The contract holds one ERC-20. A bounded poster publishes one root per epoch
 /// over leaves of (account, cumulative amount); each root becomes claimable CLAIM_DELAY after it is posted, and
 /// the owner may void it inside that window. Referrers pull their own tokens: claim(cumulative, proof) pays
 /// cumulative minus what the caller already claimed. Nobody pushes a transfer and nobody holds a recipient list.

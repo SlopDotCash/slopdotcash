@@ -203,6 +203,36 @@ export async function ownerPlan(input, runtime) {
       !Buffer.from(state.network).equals(Buffer.from(hash(d.networkDomain)))
     )
       throw new Error("Reviewed project configuration mismatch");
+    if (input.operation === "release-monthly-wrong-sum") {
+      // This operation uses the built, reviewed read-only classifier. Existing owner
+      // operations do not require this optional release module to be built.
+      const { prepareSolanaMonthlyWrongSumRelease } = await import(
+        "../.local/monthly-reserve.mjs"
+      );
+      const plan = await prepareSolanaMonthlyWrongSumRelease(
+        {
+          ...d,
+          mint: d.asset,
+          rpcUrl: runtime.rpcUrl,
+          genesisHash: runtime.expectedGenesis,
+        },
+        input.period,
+        input.capture,
+        input.attestation,
+      );
+      return {
+        format: "solana-unsigned-legacy-transaction-v1",
+        programId: d.programId,
+        projectPda: d.projectPda,
+        operation: input.operation,
+        requiredSigner: plan.requiredSigner,
+        recentBlockhash: plan.blockhash,
+        lastValidBlockHeight: plan.lastValidBlockHeight,
+        networkFeeLamports: plan.networkFeeLamports,
+        transactionBase64: plan.transaction,
+        evidence: plan.evidence,
+      };
+    }
     if (input.operation === "propose-rotation")
       instructions.push(
         await program.methods

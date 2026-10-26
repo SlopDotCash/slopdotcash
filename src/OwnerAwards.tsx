@@ -5,6 +5,7 @@ import { formatBaseUnits } from "./lib/payments/contracts";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
+import OwnerReserveRelease from "./OwnerReserveRelease";
 import { loginHref } from "./Points";
 import { formatDateTime } from "./Presentation";
 
@@ -418,6 +419,12 @@ export default function OwnerAwards({
         <a href={`/projects/${project.slug}/funding`}>Project funding</a> ·{" "}
         <a href={`/projects/${project.slug}/manage`}>Project settings</a>
       </p>
+      {view?.deployment && (
+        <OwnerReserveRelease
+          key={`${view.projectId}:${view.period}:${view.manifestSha256}`}
+          view={view}
+        />
+      )}
     </main>
   );
 }

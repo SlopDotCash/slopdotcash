@@ -16,6 +16,11 @@ import {
   type ReferralAccrualConfig,
   RULE_VERSION,
 } from "./config";
+import {
+  ReferralGasBudgetError,
+  type ReferralGasCost,
+  type ReferralGasLimits,
+} from "./gas";
 import { buildTree, type Leaf } from "./merkle";
 
 export type Outcome =
@@ -109,9 +114,8 @@ export interface AccrualStore {
   claimWallet(githubId: string): Promise<string | null>;
   /** Wallets pinned by earlier files: referrer id to wallet. */
   pinnedWallets(): Promise<Map<string, string>>;
-  insertAccruals(rows: AccrualRow[]): Promise<void>;
-  /** Inserts the file and pins the wallets of referrers entering a tree for the first time. */
-  insertFile(file: AccrualFile): Promise<void>;
+  /** Atomically files the rows, exact file and first-use wallet pins under this run's lease. */
+  filePeriod(rows: AccrualRow[], file: AccrualFile, now: Date): Promise<void>;
 }
 
 export interface RunDependencies {
@@ -133,14 +137,11 @@ export const LOCK_MS = 10 * 60 * 1000;
 
 /** Bounded, single-line error text for logs. */
 export function message(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return (
-    text
-      .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/giu, "<url>")
-      .replace(/\s+/gu, " ")
-      .trim()
-      .slice(0, 400) || "unknown error"
-  );
+  // Provider errors can embed signed transaction bytes in message/details/cause.
+  // Do not copy that text to logs or public-facing diagnostic fields.
+  return error instanceof TypeError
+    ? "referral_invalid_input"
+    : "referral_operation_failed";
 }
 
 export function periodBounds(period: string): { start: string; end: string } {
@@ -543,9 +544,8 @@ export async function runAccrual(deps: RunDependencies): Promise<RunResult> {
     for (const period of pendingPeriods(filed, config.firstPeriod, now)) {
       const candidates = await store.candidates(period);
       const rows = await judge(period, runId, candidates, totals, deps);
-      await store.insertAccruals(rows);
       const file = await buildFile(period, epoch, runId, rows, totals, deps);
-      await store.insertFile(file);
+      await store.filePeriod(rows, file, deps.now());
       deps.log({
         event: "referral_accrual_filed",
         period,
@@ -621,6 +621,7 @@ export interface PreparedPost {
   txId: string;
   rawTx: string;
   evmNonce: number;
+  maximumNativeWei: string;
 }
 
 export type PostStatus =
@@ -641,7 +642,14 @@ export interface PosterClient {
     voided: boolean;
   }>;
   /** Simulates the post at the latest block, then signs it. */
-  prepare(epoch: number, root: string, total: bigint): Promise<PreparedPost>;
+  prepare(
+    epoch: number,
+    root: string,
+    total: bigint,
+    authorize?: (maximumWei: string) => Promise<void>,
+  ): Promise<PreparedPost>;
+  /** Signed gas limit and exact canonical receipt fee; pending costs stay unknown. */
+  nativeCost(row: PostRow): Promise<ReferralGasCost>;
   broadcast(rawTx: string): Promise<void>;
   status(row: PostRow): Promise<PostStatus>;
 }
@@ -654,7 +662,19 @@ export interface PostStore {
   postableFiles(): Promise<
     { period: string; merkleRoot: string; treeTotalBase: string }[]
   >;
-  insertPost(row: PostRow): Promise<void>;
+  unsettledGasPosts(network: string): Promise<PostRow[]>;
+  recordGas(row: PostRow, cost: ReferralGasCost): Promise<void>;
+  assertGasBudget(
+    network: string,
+    maximumWei: string,
+    limits: ReferralGasLimits,
+    now: Date,
+  ): Promise<void>;
+  insertPost(
+    row: PostRow,
+    maximumWei: string,
+    limits: ReferralGasLimits,
+  ): Promise<void>;
   updatePost(
     id: string,
     fields: Partial<
@@ -684,14 +704,18 @@ export interface PostResult {
     | "chain_mismatch"
     | "paused"
     | "pending_root"
+    | "gas_budget"
     | "precheck_failed";
   reconciled: number;
   reason?: string;
 }
 
-async function reconcilePosts(deps: PostDependencies): Promise<number> {
+async function reconcilePosts(
+  deps: PostDependencies,
+): Promise<{ reconciled: number; pending: boolean }> {
   const { store, client } = deps;
   let reconciled = 0;
+  let pending = false;
   for (const row of await store.openPosts(deps.config.network)) {
     const status = await client.status(row);
     const at = deps.now().toISOString();
@@ -733,6 +757,20 @@ async function reconcilePosts(deps: PostDependencies): Promise<number> {
         reconciled += 1;
         break;
       case "rebroadcast":
+        if (
+          BigInt((await client.nativeCost(row)).maximumWei) >
+          BigInt(deps.config.gas.perTransactionWei)
+        )
+          throw new ReferralGasBudgetError(
+            "The pending referral transaction exceeds the native fee limit",
+          );
+        // Its existing reservation is already included; identical retries add no liability.
+        await store.assertGasBudget(
+          row.network,
+          "0",
+          deps.config.gas,
+          deps.now(),
+        );
         try {
           await client.broadcast(row.rawTx);
           await store.updatePost(row.id, {
@@ -750,11 +788,15 @@ async function reconcilePosts(deps: PostDependencies): Promise<number> {
         break;
     }
   }
-  // A finalized root the owner voided afterwards: mark it so the halt applies.
+  // Recheck finalized posts through the same canonical receipt/event boundary.
   for (const row of await store.acceptedPosts(deps.config.network)) {
     if (row.state !== "finalized") continue;
-    const epoch = await client.epochAt(row.epoch);
-    if (!epoch.voided) continue;
+    const status = await client.status(row);
+    if (status.kind !== "finalized") {
+      pending = true;
+      continue;
+    }
+    if (!status.voided) continue;
     const at = deps.now().toISOString();
     await store.updatePost(row.id, { state: "voided", updatedAt: at });
     deps.log({
@@ -765,7 +807,7 @@ async function reconcilePosts(deps: PostDependencies): Promise<number> {
     });
     reconciled += 1;
   }
-  return reconciled;
+  return { reconciled, pending };
 }
 
 /**
@@ -779,8 +821,36 @@ async function reconcilePosts(deps: PostDependencies): Promise<number> {
 export async function postNextRoot(
   deps: PostDependencies,
 ): Promise<PostResult> {
+  try {
+    return await postWithinGasBudget(deps);
+  } catch (error) {
+    if (!(error instanceof ReferralGasBudgetError)) throw error;
+    deps.log({ event: "referral_post_gas_budget", reason: error.message });
+    return { status: "gas_budget", reconciled: 0, reason: error.message };
+  }
+}
+async function postWithinGasBudget(
+  deps: PostDependencies,
+): Promise<PostResult> {
   const { store, client, config } = deps;
-  const reconciled = await reconcilePosts(deps);
+  // An existing journal must never be sent or reconciled against replacement configuration.
+  const recorded = await store.acceptedPosts(config.network);
+  if (
+    recorded.some(
+      (row) =>
+        row.distributor !== config.distributor || row.token !== config.token,
+    )
+  )
+    return {
+      status: "chain_mismatch",
+      reconciled: 0,
+      reason: "journal deployment differs",
+    };
+  // Reconstruct legacy reserves from signed bytes. Never treat missing evidence as zero.
+  for (const row of await store.unsettledGasPosts(config.network))
+    await store.recordGas(row, await client.nativeCost(row));
+  const { reconciled, pending } = await reconcilePosts(deps);
+  if (pending) return { status: "in_flight", reconciled };
   const open = await store.openPosts(config.network);
   if (open.length > 0) return { status: "in_flight", reconciled };
   const accepted = await store.acceptedPosts(config.network);
@@ -854,7 +924,13 @@ export async function postNextRoot(
     return { status: "precheck_failed", reconciled, reason: precheck };
   }
   const epoch = state.nextEpoch;
-  const prepared = await client.prepare(epoch, candidate.merkleRoot, total);
+  const prepared = await client.prepare(
+    epoch,
+    candidate.merkleRoot,
+    total,
+    (maximumWei) =>
+      store.assertGasBudget(config.network, maximumWei, config.gas, deps.now()),
+  );
   const at = deps.now().toISOString();
   const row: PostRow = {
     id: `rpost_${deps.randomId()}`,
@@ -880,7 +956,9 @@ export async function postNextRoot(
     finalizedAt: null,
   };
   // Durable before broadcast: an unknown send is resent unchanged, never re-signed.
-  await store.insertPost(row);
+  // The conditional D1 batch repeats the budget check and commits raw bytes and
+  // reservation together. A losing concurrent signer can never broadcast its bytes.
+  await store.insertPost(row, prepared.maximumNativeWei, config.gas);
   try {
     await client.broadcast(prepared.rawTx);
   } catch (error) {

@@ -1,8 +1,8 @@
 # Slop referral-accrual Worker
 
 `slop-referral-accrual` files the project-referral accruals of each closed UTC
-month (PRD section 11, "Referral program", a proposal by the operator that the
-owner has not approved). The program is run by Slop Cash S.P. beside the
+month under [PRD section 11, "Referral program"](../../docs/slop-product-requirements.md#referral-program).
+The owner approved the program on 25 October 2026; posting activation remains separate. The program is run by Slop Cash S.P. beside the
 product, from its own token allocation. It is not a points feature, not a
 protocol change and not a contributor referral program: no manifest field, no
 scorer change, no cycle file, no creator transfer, and contributors and
@@ -31,8 +31,15 @@ them. The Worker has no HTTP route.
 
 ## What one run does
 
-The cron fires once a day. A run files every UTC month that has ended and is
-not filed yet, oldest first, starting at `REFERRAL_FIRST_PERIOD`.
+The filing and posting cron fires daily at 01:23 UTC. A run files every UTC
+month that has ended and is not filed yet, oldest first, starting at
+`REFERRAL_FIRST_PERIOD`.
+
+A separate cron refreshes claim records every 15 minutes after activation.
+It reads finalized chain evidence into D1; it never files accruals, signs or
+posts roots. The Payouts page and its Refresh record button read that cache.
+A confirmed claim appears after chain finality and the next successful
+refresh. A failed refresh retains the last verified totals as stale.
 
 1. Take the single lease in D1 (`referral_accrual_locks`, 10 minutes). A
    second run exits with `locked`.
@@ -58,9 +65,12 @@ not filed yet, oldest first, starting at `REFERRAL_FIRST_PERIOD`.
      `pool_cap`; an unlimited one is `accrued`. A capped row may accrue zero.
 3. Append the rows to `referral_accruals` (permanent, one row per obligation)
    and publish the month's file to `referral_accrual_files`: the exact bytes,
-   their SHA-256, the Merkle root, the tree total and the leaf count. Months
-   file in epoch order and a filed month never changes. A paid event observed
-   after its month was filed joins the month it was observed in.
+   their SHA-256, the Merkle root, the tree total and the leaf count. Save the
+   rows, file and new wallet pins in one D1 transaction under the run's lease.
+   If any insert fails or the lease is no longer valid, save none of them.
+   A restart reads the committed files before it resumes. Months file in
+   epoch order and a filed month never changes. A paid event observed after
+   its month was filed joins the month it was observed in.
 
 The file (`schema: slop-referral-accrual-file-v1`) lists the parameters, every
 judged accrual with its obligation id and paying transaction, the pool total,
@@ -90,11 +100,10 @@ There is no page, link or copy for them yet.
 
 ## Parameters
 
-All of these are operator proposals in `wrangler.toml`. The owner decides the
-rate, pool, caps and window before anything posts. Every value is required
-once the mode is not `off`; the code has no fallback.
+The initial values in `wrangler.toml` are approved in PRD section 11. Every
+value is required once the mode is not `off`; the code has no fallback.
 
-| Var | Meaning | Proposed |
+| Var | Meaning | Initial value |
 | --- | --- | --- |
 | `REFERRAL_RATE_BASE_PER_MICRO` | Program token base units per one stablecoin micro-unit | `3000000000000` (3 tokens per USDC at 18 decimals) |
 | `REFERRAL_POOL_BASE` | Lifetime pool, base units | 2,000,000 tokens |
@@ -130,12 +139,15 @@ and prints the run result and each filed file. It touches no hosted database.
 Live mode runs the accrual step exactly as `dry_run` does (files say
 `"mode": "live"`), then `postNextRoot` in `core.ts`:
 
-1. Reconcile every recorded send in `referral_root_posts` (migration 0087)
-   through the chain: a receipt in a finalized block with the filed root at
-   that epoch is `finalized`; a reverted receipt or a nonce taken by another
-   transaction is `failed` (the next run signs again); a send the node never
-   saw is rebroadcast from the stored bytes, never re-signed. A finalized
-   post the owner later voids on chain becomes `voided`.
+1. Check that the journal matches the configured distributor and token before
+   any recovery. Reconcile each send by exact transaction hash, canonical
+   block and transaction position below the finalized head. A successful post
+   must carry the exact distributor `RootPosted` event, epoch, root and total.
+   Only a canonical finalized revert is failed. An absent receipt with an
+   advanced nonce remains held: the nonce alone does not identify the winner.
+   If the nonce is still free, rebroadcast the stored bytes unchanged.
+   A nonfinal owner void holds the run without changing the journal; only a
+   canonical finalized `RootVoided` event makes the post permanently voided.
 2. Refuse while a send is in flight, and refuse after an owner void until the
    operator acknowledges it: set `void_acknowledged_at` and
    `void_acknowledgement` on the voided row with `wrangler d1 execute` after
@@ -158,11 +170,17 @@ Live mode runs the accrual step exactly as `dry_run` does (files say
    and nonce in the journal, then broadcast. A broadcast error leaves the
    row `unknown` for the next run to resend unchanged.
 
-Finality is read from the `finalized` block header, which the public
-Robinhood RPCs serve; state reads use `latest`. The poster key can post a
+The finalized header and canonical receipt/event evidence establish finality.
+State reads use `latest` for preflight and conservative holds; latest state
+alone cannot establish a terminal journal result. The poster key can post a
 capped root that the owner can void for seven days; it holds no tokens
 (`docs/security/referral-distributor-ai-review-2026-10-25.md`). Incident
 order: pause the distributor, rotate the poster, void, unpause.
+
+The signer uses the estimated gas limit plus 30% and quoted EIP-1559 fees.
+Its separate native fee limits are described below. Program-token pool and
+root caps do not replace those limits. Configuring them does not activate
+posting.
 
 Local proof: `bun run test:referral-accrual:anvil` starts Anvil on chain id
 46630, deploys the compiled contract and mock token with public fixture keys,
@@ -178,7 +196,70 @@ optional `RPC_URL_REFERRAL`.
 
 ## Deployment
 
-There is no release step for this Worker in `deploy.yml`. Nothing deploys it
-until the owner approves the program and adds a gated release in the shape of
-the fee converter's (`SLOP_FEE_CONVERTER_RELEASE`). Its tables come from the
-shared `slop-private` migrations (`0086_referral_accruals.sql`).
+The normal checked `main` release installs this private Worker through
+`scripts/release-referral.ts`, after the shared `slop-private` migrations.
+No manual Worker shell or separate release flag is needed. The helper verifies
+the exact source tag and one active version after deployment. In live mode it
+checks secret names without reading the poster key into CI.
+
+The owner requested full integration and activation on 25 October 2026, then
+confirmed that the program token is not deployed yet. Keep the reviewed mode
+Off until the actual token, funded distributor and required operating controls
+are verified. The November start and program amounts remain unchanged. A
+deployed Off Worker does not file accruals, sign roots or spend gas.
+
+### Poster native fee limits
+
+The approved limits are 0.0002 ETH per transaction and 0.002 ETH per UTC day,
+per configured network. The checked vars store integer wei. A quote above a
+limit pauses posting before signing. An atomic D1 batch rechecks the budget
+and stores the exact signed transaction with its maximum fee before broadcast.
+Only the winning batch may send; overlapping invocations cannot spend the same
+available budget. A lost batch response is recovered from the journal.
+
+Robinhood Nitro includes Ethereum data-posting cost in the estimated gas units.
+The reserve is signed gas limit times maximum fee per gas; no separate Base
+fee allowance is added. Final cost is gas used times effective gas price from
+the canonical finalized receipt, charged on that block's UTC day. Reverts cost
+gas too. Unknown sends retain their full reserve across midnight. Resending the
+same bytes reuses that reserve. Existing journal rows derive their limits from
+verified signed bytes; missing or inconsistent evidence never becomes zero.
+
+The migrated SQLite controls cover overlap, midnight, failed sends, reverts and
+identical retries. Local Anvil proves the actual quote/refusal and receipt-cost
+paths. These checks do not prove live network pricing or authorize funding or
+activation.
+
+### Independent root watch
+
+`scripts/check-referral-roots.ts` reads the public accrual API and Robinhood
+RPC without a key. The main-only `referral-root-watch.yml` job runs hourly.
+Its checked configuration names the distributor, token, deployment block and
+runtime-code hash. With Off mode and no deployment, it reports inactive; that
+is not qualification. Any configured deployment requires complete evidence.
+
+The checker verifies exact file hashes, ordered months, accrual arithmetic and
+caps, cumulative totals, wallet pins, tree roots and proofs. It compares the
+ordered nonempty files with canonical `RootPosted` and `RootVoided` receipts,
+checks event coverage against the contract, and distinguishes pending from
+finalized evidence. Unposted files are pending. Event scans use the network's
+bounded block ranges, including the poster's delayed void reconciliation.
+Contract epochs include voided posts; file epochs include
+empty files. The recorded period mapping is derived from the poster's ordered
+file sequence, because the contract does not store periods. Repeated roots
+remain separate ordered records.
+
+A month must appear by 02:00 UTC after it closes; the filing cron runs at
+01:23. Before that deadline a missing new file is pending. Missing, stale,
+changed or unavailable evidence after the deadline fails the job. GitHub
+Actions records the failure and summary. Configure and verify the operator's
+workflow-failure notification before activation; a passing job does not prove
+notification delivery. This watcher verifies the public file-to-root boundary.
+It does not independently re-decide private payout authority, holds or bans.
+
+The existing Anvil workflow exercises the watcher through the real public API
+handler and distributor. It proves good files and receipts, pending/final voids,
+and refusal of changed file bytes, roots, totals, wallets, missing events,
+noncanonical receipts, stale months and provider failure.
+The client fixture rejects ranges above Robinhood's 9,000-block limit and
+reconciles a posted and voided root after that range has elapsed.

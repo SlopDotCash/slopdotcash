@@ -62,6 +62,13 @@ type Run = {
   closureEnabled: (value: boolean) => void;
   pauseNextReopen: () => { entered: Promise<void>; release: () => void };
   loseNextReopenResponse: () => void;
+  loseNextAppealCommentResponse: (accepted?: boolean) => void;
+  rejectNextAppealComment: (status: number) => void;
+  pauseNextAppealComment: () => { entered: Promise<void>; release: () => void };
+  appealHistory: (
+    mode: "normal" | "unavailable" | "copied",
+    prefix?: number,
+  ) => void;
   closeByMaintainer: () => void;
   writes: string[];
   comments: string[];
@@ -134,6 +141,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let state = "open";
   let pauseReopen: (() => Promise<void>) | null = null;
   let loseReopenResponse = false;
+  let appealResponse: "accepted" | "unknown" | null = null;
+  let appealRejection: number | null = null;
+  let pauseAppeal: (() => Promise<void>) | null = null;
+  let appealHistoryMode = "normal";
+  let historyPrefix = 0;
   let verdict = { category: "spam" as Category, confidence: 0.97 };
   let config: string | null = null;
   let configTruncated = false;
@@ -307,16 +319,55 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         return Response.json({
           permission: path.includes("/maintainer/") ? "write" : "read",
         });
-      if (path.endsWith("/issues/5/comments") && request.method === "GET")
-        return Response.json([
+      if (path.endsWith("/issues/5/comments") && request.method === "GET") {
+        if (appealHistoryMode === "unavailable")
+          return new Response(null, { status: 503 });
+        const history = [
           {
             id: 1,
             body: "/slopbot appeal This is my real project page, not an advert.",
-            user: { id: AUTHOR },
+            user: { id: AUTHOR, type: "User" },
           },
-        ]);
+          ...Array.from({ length: historyPrefix }, (_, i) => ({
+            id: 10000 + i,
+            body: "Unrelated comment",
+            user: { id: OUTSIDER, type: "User" },
+          })),
+          ...comments.map((body, i) => ({
+            id: 901 + i,
+            body,
+            user: {
+              id: appealHistoryMode === "copied" ? OUTSIDER : 999,
+              type: "Bot",
+            },
+          })),
+        ];
+        const page = Number(url.searchParams.get("page") ?? 1);
+        return Response.json(history.slice((page - 1) * 100, page * 100));
+      }
       if (path.endsWith("/issues/5/comments")) {
-        comments.push(((await request.json()) as { body: string }).body);
+        const body = ((await request.json()) as { body: string }).body;
+        if (body.startsWith("<!-- slopbot:appeal:")) {
+          if (appealRejection !== null) {
+            const status = appealRejection;
+            appealRejection = null;
+            return new Response(null, { status });
+          }
+          if (pauseAppeal) {
+            const pause = pauseAppeal;
+            pauseAppeal = null;
+            await pause();
+          }
+          if (appealResponse === "unknown") {
+            appealResponse = null;
+            return new Response(null, { status: 503 });
+          }
+          comments.push(body);
+          if (appealResponse === "accepted") {
+            appealResponse = null;
+            return new Response(null, { status: 503 });
+          }
+        } else comments.push(body);
         return Response.json({ id: 900 + comments.length }, { status: 201 });
       }
       if (/\/issues\/comments\/\d+$/u.test(path)) {
@@ -447,6 +498,31 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       },
       loseNextReopenResponse: () => {
         loseReopenResponse = true;
+      },
+      rejectNextAppealComment: (status) => {
+        appealRejection = status;
+      },
+      loseNextAppealCommentResponse: (accepted = true) => {
+        appealResponse = accepted ? "accepted" : "unknown";
+      },
+      appealHistory: (mode, prefix = 0) => {
+        appealHistoryMode = mode;
+        historyPrefix = prefix;
+      },
+      pauseNextAppealComment: () => {
+        let entered!: () => void;
+        let release!: () => void;
+        const arrival = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const resumed = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        pauseAppeal = async () => {
+          entered();
+          await resumed;
+        };
+        return { entered: arrival, release };
       },
       pauseNextReopen: () => {
         let entered!: () => void;
@@ -1243,3 +1319,167 @@ test("a scam notice write failure is recovered after GitHub has closed the item"
     expect(run.writes).toEqual(githubWrites);
   });
 });
+
+for (const stage of ["draft", "escalation", "resolution"] as const) {
+  test(`a lost ${stage} comment response reconciles once through the actual queue`, async () => {
+    await closedItem(async (run) => {
+      await run.review();
+      const appealJob = run.job("appeal", { senderId: AUTHOR });
+      if (stage !== "draft") await run.deliver(appealJob);
+      const job =
+        stage === "draft"
+          ? appealJob
+          : run.job("appeal_command", {
+              senderId: AUTHOR,
+              command: stage === "escalation" ? "reject" : "accept",
+            });
+      run.loseNextAppealCommentResponse();
+      await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+      const body = run.comments.at(-1) ?? "";
+      expect(body).toStartWith("<!-- slopbot:appeal:");
+      expect(
+        run.sql(
+          `SELECT id FROM slopbot_actions WHERE review_key LIKE '%:${stage}' AND action='comment'`,
+        ),
+      ).toEqual([]);
+      // Reconciliation must inspect all pages, and cannot trust a copied marker.
+      run.appealHistory("copied", 150);
+      await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+      expect(run.comments.filter((c) => c === body)).toHaveLength(1);
+      run.appealHistory("normal", 150);
+      await run.deliver(job);
+      await run.deliver(job);
+      expect(run.comments.filter((c) => c === body)).toHaveLength(1);
+      expect(
+        run.sql(
+          `SELECT id FROM slopbot_actions WHERE review_key LIKE '%:${stage}' AND action='comment'`,
+        ),
+      ).toHaveLength(1);
+      expect(
+        run.sql(
+          `SELECT confirmed_comment_id FROM slopbot_appeal_publications WHERE publication_key LIKE '%:${stage}'`,
+        ),
+      ).toEqual([{ confirmed_comment_id: 900 + run.comments.length }]);
+    });
+  });
+}
+
+test("concurrent deliveries serialize the same appeal stage", async () => {
+  await closedItem(async (run) => {
+    await run.review();
+    const job = run.job("appeal", { senderId: AUTHOR });
+    const pause = run.pauseNextAppealComment();
+    const first = run.deliver(job);
+    await pause.entered;
+    try {
+      await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+    } finally {
+      pause.release();
+      await first;
+    }
+    await run.deliver(job);
+    expect(
+      run.comments.filter((c) => c.startsWith("<!-- slopbot:appeal:")),
+    ).toHaveLength(1);
+    expect(
+      run.sql(
+        "SELECT id FROM slopbot_actions WHERE review_key LIKE '%:draft' AND action='comment'",
+      ),
+    ).toHaveLength(1);
+  });
+});
+
+test("an expired publisher cannot complete or cause its successor to repeat the pending POST", async () => {
+  await closedItem(async (run) => {
+    await run.review();
+    const job = run.job("appeal", { senderId: AUTHOR });
+    const pause = run.pauseNextAppealComment();
+    const first = run.deliver(job).then(
+      () => "unexpected success",
+      (error: unknown) => String(error),
+    );
+    await pause.entered;
+    setSystemTime(new Date(Date.now() + 21 * 60 * 1000));
+    try {
+      await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+      expect(
+        run.sql(
+          "SELECT id FROM slopbot_actions WHERE review_key LIKE '%:draft' AND action='comment'",
+        ),
+      ).toEqual([]);
+    } finally {
+      pause.release();
+      expect(await first).toContain("appeal job was retried");
+    }
+    await run.deliver(job);
+    expect(
+      run.comments.filter((c) => c.startsWith("<!-- slopbot:appeal:")),
+    ).toHaveLength(1);
+    expect(
+      run.sql(
+        "SELECT id FROM slopbot_actions WHERE review_key LIKE '%:draft' AND action='comment'",
+      ),
+    ).toHaveLength(1);
+  });
+});
+
+test("missing evidence after an uncertain POST stays pending without a duplicate or false success", async () => {
+  await closedItem(async (run) => {
+    await run.review();
+    const job = run.job("appeal", { senderId: AUTHOR });
+    run.loseNextAppealCommentResponse(false);
+    await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+    const writes = run.writes.filter((s) =>
+      s.endsWith("/issues/5/comments"),
+    ).length;
+    await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+    expect(
+      run.writes.filter((s) => s.endsWith("/issues/5/comments")),
+    ).toHaveLength(writes);
+    expect(
+      run.sql(
+        "SELECT post_started_at IS NOT NULL AS pending, confirmed_comment_id FROM slopbot_appeal_publications",
+      ),
+    ).toEqual([{ pending: 1, confirmed_comment_id: null }]);
+    expect(
+      run.sql(
+        "SELECT id FROM slopbot_actions WHERE review_key LIKE '%:draft' AND action='comment'",
+      ),
+    ).toEqual([]);
+  });
+});
+
+test("unavailable comment history refuses a first POST but remains retryable", async () => {
+  await closedItem(async (run) => {
+    await run.review();
+    const job = run.job("appeal", { senderId: AUTHOR });
+    run.appealHistory("unavailable");
+    await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+    expect(
+      run.comments.filter((c) => c.startsWith("<!-- slopbot:appeal:")),
+    ).toHaveLength(0);
+    run.appealHistory("normal");
+    await run.deliver(job);
+    expect(
+      run.comments.filter((c) => c.startsWith("<!-- slopbot:appeal:")),
+    ).toHaveLength(1);
+  });
+});
+
+for (const status of [401, 403, 404, 410, 422, 429]) {
+  test(`a confirmed GitHub ${status} rejection allows an authorized appeal retry`, async () => {
+    await closedItem(async (run) => {
+      await run.review();
+      const job = run.job("appeal", { senderId: AUTHOR });
+      run.rejectNextAppealComment(status);
+      await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+      expect(
+        run.comments.filter((c) => c.startsWith("<!-- slopbot:appeal:")),
+      ).toHaveLength(0);
+      await run.deliver(job);
+      expect(
+        run.comments.filter((c) => c.startsWith("<!-- slopbot:appeal:")),
+      ).toHaveLength(1);
+    });
+  });
+}

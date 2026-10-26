@@ -506,6 +506,18 @@ item has no structured appeal. It reads D1 only and prints the job. `--send`
 then queues that one job. The consumer re-reads GitHub, keys the appeal by item
 revision, and posts the canonical draft and notices.
 
+Each appeal stage has one publication record and a 20-minute fenced lease.
+Before POST, the Worker records that delivery has started. A retry reads the
+complete bounded comment history and accepts only the configured App's exact
+appeal-and-stage marker. It records completion only after a confirmed response
+or reconciliation. An uncertain send with no matching comment stays pending;
+it retries reconciliation without posting again. Explicit GitHub authorization,
+rate-limit or validation rejections remain retryable after the cause is fixed.
+Copied markers, unavailable
+history and multiple matches cannot establish delivery. Local Worker/SQLite
+checks prove lost-response recovery, concurrent delivery and expired-holder
+fencing. Hosted delivery remains a separate acceptance check.
+
 ## Supporting code for value assessments
 
 Historical joint-record preparation can receive the independently fetched D1

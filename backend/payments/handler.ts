@@ -514,7 +514,7 @@ export async function handlePaymentsApi(
       }
     }
     const monthlyRoute =
-      /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))(?:\/(allocations|finalize|commitment))?$/.exec(
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))(?:\/(allocations|finalize|commitment|reserve-release))?$/.exec(
         path,
       );
     const monthlySettingsRoute =
@@ -555,6 +555,36 @@ export async function handlePaymentsApi(
             "Monthly award action",
           )) as Record<string, unknown>;
           const [, projectId, period, action] = monthlyRoute;
+          if (action === "reserve-release") {
+            if (
+              !body ||
+              ![
+                "manifestSha256,network",
+                "manifestSha256,network,planId,transactionId",
+              ].includes(Object.keys(body).sort().join(",")) ||
+              typeof body.network !== "string" ||
+              typeof body.manifestSha256 !== "string" ||
+              ("planId" in body &&
+                (typeof body.planId !== "string" ||
+                  !/^[a-f0-9]{64}$/.test(body.planId) ||
+                  typeof body.transactionId !== "string" ||
+                  body.transactionId.length > 130))
+            )
+              return json(400, { error: "invalid_release_review" });
+            return json(
+              200,
+              await deps.monthly.releaseReserve(projectId, period, actor, {
+                network: body.network,
+                manifestSha256: body.manifestSha256,
+                ...("planId" in body
+                  ? {
+                      planId: body.planId as string,
+                      transactionId: body.transactionId as string,
+                    }
+                  : {}),
+              }),
+            );
+          }
           if (action === "allocations") {
             if (
               typeof body?.githubUserId !== "string" ||

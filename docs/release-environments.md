@@ -31,6 +31,12 @@ ordering evidence. All staging publishers must use this concurrency lock and
 environment; this gate cannot coordinate an out-of-band manual deployment.
 This changes no production publication or acceptance rule.
 
+The approved referral Worker follows the normal checked `main` release. Its
+reviewed configuration starts Off and requires no manual Worker shell or
+separate release flag. Deployment verifies one active version tagged with the
+tested source. Live posting remains separate from deployment and requires the
+token, funded distributor and operating controls in PRD section 11.
+
 Staging uses separate private storage and keys. Its API is on the staging
 website origin. Its identity origin is `https://identity-staging.slop.cash`.
 Production continues to use `https://api.slop.cash` and

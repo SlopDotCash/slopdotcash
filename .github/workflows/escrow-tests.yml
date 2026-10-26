@@ -10,6 +10,8 @@ on:
       - 'workers/payments/**'
       - 'workers/security-payments/**'
       - 'workers/payment-executor/**'
+      - 'workers/referral-accrual/**'
+      - 'backend/referrals/**'
       - 'src/lib/payments/**'
       - 'src/lib/security-bounty.*'
       - 'src/lib/escrow-policy.*'
@@ -33,6 +35,7 @@ on:
       - 'scripts/payment-keeper/**'
       - 'scripts/prepare-payment-deployments.ts'
       - 'scripts/check-payout-readiness.ts'
+      - 'scripts/check-referral-roots.ts'
       - 'scripts/test-payout-browser.mjs'
       - 'scripts/child-environment.mjs'
       - 'scripts/prepare-e2e-fixture.mjs'
@@ -90,6 +93,7 @@ jobs:
       - run: bun run test:escrow-policy
       - run: bun run test:contracts:evm
       - run: bun run test:payments
+      - run: bun run test:referral-accrual:anvil
       - run: bunx playwright install --with-deps chromium
       - name: Load deployed public ledger for browser checks
         run: |
