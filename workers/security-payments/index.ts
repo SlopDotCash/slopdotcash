@@ -26,10 +26,4 @@ export default {
       .run();
     return payments.scheduled(controller, isolated);
   },
-  queue(
-    batch: Parameters<typeof payments.queue>[0],
-    env: PaymentsWorkerEnvironment,
-  ) {
-    return payments.queue(batch, privateEnvironment(env));
-  },
 };

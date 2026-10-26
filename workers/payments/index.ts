@@ -33,7 +33,10 @@ import {
   readVaultTotals as readSolanaVaultTotals,
   solanaPaymentAdapter,
 } from "../../contracts/solana/adapter";
-import { chainFamily, type EscrowChain } from "../../src/lib/escrow-policy.mjs";
+import {
+  chainFamily,
+  type PaymentDeploymentRecord,
+} from "../../src/lib/escrow-policy.mjs";
 import type { PayoutPolicy } from "../../src/lib/payments/contracts";
 import {
   monthlyCutoff,
@@ -46,37 +49,19 @@ import {
   parsePaymentNetworks,
 } from "./deployments";
 import { reconcileFailedAttempts } from "./reconcile";
-import { scanEvmPayments, scanSolanaPayments } from "./scanner";
+import { type ScanEvent, scanEvmPayments, scanSolanaPayments } from "./scanner";
 
-export interface PaymentDeployment {
-  evmUpgrade?: import("../../contracts/evm/adapter").EvmUpgrade;
+/** One reviewed registry deployment; the private bounty Worker adds its payout policy. */
+export type PaymentDeployment = PaymentDeploymentRecord & {
   payoutPolicy?: PayoutPolicy;
-  projectId: string;
-  network: string;
-  chain: EscrowChain;
-  vault: string;
-  programId?: string;
-  projectPda?: string;
-  asset: string;
-  owner: string;
-  identityAuthority: string;
-  feeRecipient: string;
-  rotationAuthority?: string;
-  codeSha256: string;
-  bindingDelaySeconds: string;
-  rotationDelaySeconds?: string;
-  factory?: string;
-  factoryCodeSha256?: string;
-  registrar?: string;
-  upgradeAuthority: string | null;
-  networkDomain?: string;
-  chainId?: string;
-  /** EVM only: executor gas ceiling, copied from the registry by prepare-payment-deployments. */
-  gasCeiling?: string;
-  /** EVM only: eth_getLogs page size, copied from the registry by prepare-payment-deployments. */
-  scanPageBlocks?: string;
-  deploymentTransaction?: string;
-}
+};
+/** The fields one chain step reads. Local integration chains (Anvil, fixtures)
+ * use network names outside the registry. */
+export type DeploymentView<
+  Fields extends keyof PaymentDeployment,
+  OptionalFields extends keyof PaymentDeployment = never,
+> = Pick<PaymentDeployment, Exclude<Fields, "network">> &
+  Partial<Pick<PaymentDeployment, OptionalFields>> & { network: string };
 export interface PaymentsWorkerEnvironment {
   /** Private worker only. Its entrypoint binds the separate private ledger. */
   PAYMENT_SCOPE?: "security-bounty";
@@ -471,19 +456,11 @@ export async function runMonthlyCommitments(
   if (failures.length)
     throw new AggregateError(failures, "Monthly commitment failures");
 }
-export interface PaymentEventMessage {
-  projectId: string;
-  network?: string;
-  transactionId: string;
-  eventIndex: number;
-  kind: "reserved" | "paid";
-  obligationId: string;
-}
 export async function ingestPaymentEvent(
   env: PaymentsWorkerEnvironment,
-  message: PaymentEventMessage,
-  now = new Date(),
-  reviewed?: readonly PaymentDeployment[],
+  message: ScanEvent,
+  now: Date,
+  reviewed: readonly PaymentDeployment[],
 ): Promise<void> {
   if (
     !message ||
@@ -495,11 +472,8 @@ export async function ingestPaymentEvent(
     (message.kind !== "reserved" && message.kind !== "paid")
   )
     throw new Error("Invalid chain event request");
-  const deployments = reviewed ?? (await registryDeployments(env)).deployments;
-  const matches = deployments.filter(
-    (d) =>
-      d.projectId === message.projectId &&
-      (message.network === undefined || d.network === message.network),
+  const matches = reviewed.filter(
+    (d) => d.projectId === message.projectId && d.network === message.network,
   );
   if (matches.length !== 1)
     throw new Error("Reviewed deployment unavailable or ambiguous");
@@ -571,7 +545,23 @@ export async function ingestPaymentEvent(
  * chain; they read the vault_snapshots row that the cron writes from this.
  */
 export async function readDeploymentVaultTotals(
-  deployment: PaymentDeployment,
+  deployment: DeploymentView<
+    | "chain"
+    | "vault"
+    | "asset"
+    | "owner"
+    | "identityAuthority"
+    | "feeRecipient"
+    | "codeSha256"
+    | "bindingDelaySeconds"
+    | "evmUpgrade",
+    | "chainId"
+    | "factory"
+    | "factoryCodeSha256"
+    | "registrar"
+    | "programId"
+    | "projectPda"
+  >,
   rpcUrl: string,
 ): Promise<VaultTotals> {
   if (chainFamily(deployment.chain) === "evm") {
@@ -633,7 +623,7 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
   }
   for (const deployment of deployments) {
     try {
-      const index = (event: PaymentEventMessage) =>
+      const index = (event: ScanEvent) =>
         ingestPaymentEvent(env, event, new Date(), deployments);
       if (chainFamily(deployment.chain) === "evm")
         await scanEvmPayments(
@@ -683,20 +673,5 @@ export default {
     }
     if (failures.length)
       throw new AggregateError(failures, "Payment worker failures");
-  },
-  async queue(
-    batch: {
-      messages: { body: PaymentEventMessage; ack(): void; retry(): void }[];
-    },
-    env: PaymentsWorkerEnvironment,
-  ) {
-    for (const message of batch.messages) {
-      try {
-        await ingestPaymentEvent(env, message.body);
-        message.ack();
-      } catch {
-        message.retry();
-      }
-    }
   },
 };
