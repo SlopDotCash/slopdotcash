@@ -43,26 +43,35 @@
 ## Current mainnet deployments
 
 The owner approved activation on every network on 24 October 2026. These are
-deployments, not project activations. The initial source is `main` at `bce5b0df`;
-Base's subsequent upgrade uses `208fbf5b`, as recorded below.
+deployments, not project activations. The initial source is `main` at `bce5b0df`.
+Base then received the `208fbf5b` upgrade, and all three EVM networks then
+received the bundled monthly reserve V2 upgrade from `7fdedd35`, as recorded below.
 The independent reviews were waived (#903), not completed.
 
-The initial EVM deployments (Base 8453, Ethereum 1, Robinhood Chain 4663)
-used the same addresses and runtime code. Ethereum and Robinhood still use
-this review; Base retains the proxy but now selects the implementations below.
+The EVM deployments (Base 8453, Ethereum 1, Robinhood Chain 4663) use the same
+addresses and runtime code. Since the bundled upgrade (26 October 2026), every
+network selects the same implementations:
 
 | Role                   | Address                                      | Runtime SHA-256                                                    |
 | ---------------------- | -------------------------------------------- | ------------------------------------------------------------------ |
 | Factory proxy          | `0xe51AbF8c6Dbb3Ca6E9AD09F2dc6EF141d7364aAb` | `afb62459ccdd87d344b8bfa367c8dc49586323316bb8a51f1dfbe753336c0509` |
-| Factory implementation | `0xc831Fc745a63161Df6Fae612bDFE77B969b329fE` | `62a3bf4a741b8084a63152835047bb71e8396b153a112225910d1dffecd64275` |
-| Vault implementation   | `0xe137dE4fbAc6438007703065C905a58b03322Fc8` | `1c21fa901dc924a7a2dd84b770b7d1cf69ef14ba97957ae5c8986232b8f9d551` |
+| Factory implementation | `0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f` | `976208154ce5e58f59d826e58273d917adc226109bf95ab4894b9cf144e4a1dd` |
+| Vault implementation   | `0x90C46e3E5be35B1048cD69403d1402Feed1240D8` | `155c7ea2fdeeaeccfd6daac64b6105e968c1927092f8761f34090a8b42e15bfc` |
+
+Superseded implementations: the initial `bce5b0df` factory
+`0xc831Fc745a63161Df6Fae612bDFE77B969b329fE` (`62a3bf4a…4275`) and vault
+`0xe137dE4fbAc6438007703065C905a58b03322Fc8` (`1c21fa90…d551`) on all three
+networks, and the Base-only `dd1af34d` vault template
+`0x6A79B8970E980159c362d11F37dC8BFFbF2da027` (`112ea257…b1e3`). No vault
+existed on any network before the upgrade, so no deployment record has an
+implementation history.
 
 Registrar `0xd64F35aC87D9a1FB8eBD44e745c24436B606cF60`, identity authority
 `0x31B87d13f9091bC3b8A5cb6F45C8b3cB99Ed6d70`, fee recipient
 `0x8f77C37D8650776bFe73c9b12B15209eE15D9b86`, upgrade authority and deployer
 `0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D`, binding delay 0. Sourcify has a
 full match for all three initial contracts on each chain. That verification
-does not cover the replacement Base implementations.
+does not cover the replacement implementations.
 
 Solana program `7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ`: upgrade
 authority `EmMRRFhjZmr2SN5RdhV98WPnUhgJxKMoE1itSwUsU8tr`, 681,392 bytes,
@@ -98,7 +107,8 @@ the independent read-only verifier checked all three canonical successful
 receipts, sender, nonce, zero native value and exact calldata. The factory's
 ERC-1967 slot selects `0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f`; its
 vault template is `0x6A79B8970E980159c362d11F37dC8BFFbF2da027`. Both runtime
-SHA-256 values match section 4.3. The proxy runtime remains
+SHA-256 values matched the `dd1af34d` kit. The bundled upgrade below has since
+replaced that vault template. The proxy runtime remains
 `afb62459ccdd87d344b8bfa367c8dc49586323316bb8a51f1dfbe753336c0509`.
 
 Registrar, identity authority, fee recipient and upgrade authority remain the
@@ -118,6 +128,51 @@ claimed; exact runtime and source checks are the independent proof here. The
 [sanitized finalized proof and checksum](https://github.com/SlopDotCash/slopdotcash/releases/tag/pr-evidence-base-upgrade-208fbf5b)
 include the independent readback, exact source mapping and local rehearsal;
 private signing journals and credentials are excluded.
+
+### Bundled monthly reserve V2 upgrade (all EVM networks)
+
+The owner authorized the section 4 kit for Base, Ethereum and Robinhood on
+25 October 2026. Contract source: merged `development` commit
+`7fdedd3507c3f79217ccc896ace0e0b7472ca092` (PR #1271), `ProjectEscrow.sol` git
+blob `ecccaa8b…c5b1`, SHA-256 `21378ff6…856e`. Before signing, the section 4.6
+fork rehearsal passed on each network at a current block (Base 53094704,
+Ethereum 26273695, Robinhood 98046027), and a local fork simulation of the
+exact ordered transactions passed. Every transaction is from the upgrade
+authority `0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D` with value zero. The
+factory step is `upgradeToAndCall(0x9f27…3e2f, setVaultImplementation(0x90C4…40D8))`
+(calldata keccak `0x885f5acc…89ec`). Base already ran factory implementation
+`0x9f27…3e2f`, so it needed two transactions.
+
+| Network | Nonce | Step | Transaction | Block |
+| --- | --- | --- | --- | --- |
+| Base | 6 | Deploy vault implementation | [`0x56dede80…6b24`](https://basescan.org/tx/0x56dede8043bfa5c9d90d917b17a16d338d4a22e08a623d4b4f8d244fe11b6b24) | 53096312 |
+| Base | 7 | Factory upgrade and template selection | [`0xc448c492…117e`](https://basescan.org/tx/0xc448c492019a7de81e71a9bb231f7411b0989364b84dadcdd308897f9081117e) | 53096318 |
+| Ethereum | 3 | Deploy vault implementation | [`0x050fc657…772f`](https://etherscan.io/tx/0x050fc657693254240c2339b1f755f208f4290a30ff77b4070dfa1527f34e772f) | 26273902 |
+| Ethereum | 4 | Deploy factory implementation | [`0x9cd100a5…7c4e`](https://etherscan.io/tx/0x9cd100a5a0e8d6395e50e72574c7fcf1ca89f75e73d0560e44381b68c3717c4e) | 26273904 |
+| Ethereum | 5 | Factory upgrade and template selection | [`0x749f9a9e…fd36`](https://etherscan.io/tx/0x749f9a9e40f4bbc151b35fcfe0de3490821763faaa73ab28f92570e23288fd36) | 26273905 |
+| Robinhood | 3 | Deploy vault implementation | `0xaf9222840b41ced1881a1fb34bae1c67c901dc0ae87dbcf6787390da9c15d851` | 98074427 |
+| Robinhood | 4 | Deploy factory implementation | `0x2f0e102930acedde302a7c8925053511650321677e9ee009b498f05cd2378cdc` | 98074435 |
+| Robinhood | 5 | Factory upgrade and template selection | `0x19c0da1b3c2ea8ca807a062d11996147ffc6e587e249d2d3746eed7f6512a889` | 98074439 |
+
+A read-only check at each finalized block confirmed: every receipt is
+successful and canonical, with the expected sender, nonce, zero value and
+exact calldata; the factory ERC-1967 slot selects `0x9f27…3e2f`;
+`vaultImplementation()` is `0x90C4…40D8`; the three runtime SHA-256 values
+match section 4.3 and the proxy runtime is unchanged; upgrade authority,
+registrar, identity authority and fee recipient are unchanged, with no pending
+identity authority and a binding delay of 0; `monthlyReserveVersion()` is 2;
+and the factory has no `VaultCreated` log from its deployment block.
+
+| Network | Finalized block | Block hash | Actual fees |
+| --- | --- | --- | --- |
+| Base | 53096431 | `0xc6fca3bdc7bc7d8ba74c925d2ae87be7f44957ce545c60f9a4410c14b75da74b` | 30365858256101 wei, including the L1 data fee |
+| Ethereum | 26273917 | `0xf3c40d96b590dd0b8211ba63cec6f2e2b325352cda6280cbeefe015fcb31633f` | 335919161746202 wei |
+| Robinhood | 98075067 | `0x47432ebb80acfcdf77088335088a45187ac20cffa45a4e0e08b8660ea3c9088d` | 132785835436000 wei |
+
+`supersededAtBlock` (section 4.7) is the block of each factory upgrade:
+Base 53096318, Ethereum 26273905, Robinhood 98074439. No vault proxy existed,
+so no vault upgrade was needed and no deployment record needs a history entry.
+`contracts/evm/factories.ts` holds the new review for all three networks.
 
 These steps deploy replacement UUPS EVM factories and vault implementations,
 and deploy or upgrade the Solana program with owner-controlled upgrades.
@@ -613,8 +668,9 @@ payments.
 ### First EVM vault: reviewed factory infrastructure
 
 `contracts/evm/factories.ts` holds only public network infrastructure reviews.
-Its Base review derives from the finalized upgrade above; other networks
-remain unavailable until their own finalized evidence is reviewed.
+Its Base, Ethereum and Robinhood reviews derive from the finalized bundled
+upgrade above. Other networks remain unavailable until their own finalized
+evidence is reviewed.
 An unsigned kit, a planned address or a local fork must not become a live pin.
 Reuse the network definitions in `ESCROW_NETWORKS`; do not add a project,
 owner, asset or vault as a bootstrap placeholder.
@@ -972,12 +1028,18 @@ or a permissionless executor submits for an approved and funded obligation.
 
 ## 4. EVM monthly reserve V2 upgrade
 
+This kit was executed on Base, Ethereum and Robinhood on 26 October 2026; see
+"Bundled monthly reserve V2 upgrade" above for the finalized record. Its
+rehearsal pins the pre-upgrade starting reviews, so it now refuses these
+networks. A later upgrade needs a new kit.
+
 This kit targets the contract source of PR #1271 (`SOURCE_COMMIT` below), which
 bundles the owner's signed release of an unsettleable monthly reserve into V2
 (owner decision, 25 October 2026). It replaces the `dd1af34d` kit and the
 earlier `239d0235`, `e55a804a` and `2a4e80b3` kits.
 
-`SOURCE_COMMIT` is the merged `development` commit that contains PR #1271.
+`SOURCE_COMMIT` is the merged `development` commit that contains PR #1271:
+`7fdedd3507c3f79217ccc896ace0e0b7472ca092`.
 Commit identities change on rebase, so the kit pins the contract file itself:
 `contracts/evm/src/ProjectEscrow.sol` has git blob
 `ecccaa8ba4ada0100aa643278b45d03c22c0c5b1` and SHA-256
@@ -990,7 +1052,7 @@ The zero-value factory upgrade `0x4cc82cf7f353dae6b473c8ea4844f10c4a597f69875968
 finalized in block `53093023`. Its factory implementation is `0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f`
 and its vault template is `0x6A79B8970E980159c362d11F37dC8BFFbF2da027`, with
 runtime SHA-256 `112ea2575a1d699cb128105bf5ba7ec78a0e22f8b83051bc2114d60567a5b1e3`.
-This does **not** install the bundled release target `0x90C46e3E…` below.
+That earlier upgrade did not install the bundled release target `0x90C46e3E…` below.
 The rehearsal uses that recorded Base starting review; other networks retain
 the `bce5b0df` starting review. It refuses any different runtime or role.
 
