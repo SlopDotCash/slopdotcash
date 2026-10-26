@@ -1840,7 +1840,12 @@ test("an open account appeal survives later project restrictions and needs an in
   expect((await decide("deny_reinstatement", ADMIN, 15)).status).toBe(409);
 });
 
-test("a malicious decision that closes a kept project appeal needs an independent moderator while an account appeal is open", async () => {
+/**
+ * ADMIN placed the restriction and banned OTHER. OTHER's account appeal and
+ * OWNER's project appeal are open when two confirmed malicious results keep
+ * both appeals, so the next record has sequence 7.
+ */
+async function keptAppealFlow() {
   const t = registry();
   t.deps.moderatorGithubIds = new Set([ADMIN, OWNER]);
   t.deps.adminGithubIds = new Set([ADMIN, OWNER]);
@@ -1924,6 +1929,11 @@ test("a malicious decision that closes a kept project appeal needs an independen
   // keeps both appeals open.
   expect(await vettingBan(5, "requested")).toBe("recorded");
   expect(await vettingBan(6, "requested")).toBe("recorded");
+  return { t, decide };
+}
+
+test("a malicious decision that closes a kept project appeal needs an independent moderator while an account appeal is open", async () => {
+  const { t, decide } = await keptAppealFlow();
   // The decision closes the kept project appeal, so ADMIN, who placed the
   // restriction, cannot make it even though OTHER's account appeal is open.
   const placerDecision = await decide("ban", ADMIN, 7, []);
@@ -1939,6 +1949,24 @@ test("a malicious decision that closes a kept project appeal needs an independen
       { projectId: "kept-appeal", state: "banned", appeal: "requested" },
     ],
   });
+});
+
+test("an account release leaves the kept project appeal for an independent malicious decision", async () => {
+  const { decide } = await keptAppealFlow();
+  // OWNER did not ban OTHER, so OWNER can release OTHER. The release decides
+  // only OTHER's appeal; the kept project appeal stays open.
+  const release = await decide("reinstate_accounts", OWNER, 7, [
+    { githubLogin: "other" },
+  ]);
+  expect(release.status).toBe(200);
+  expect(release.body.record).toMatchObject({ appealAfter: "requested" });
+  // ADMIN placed the restriction, so ADMIN still cannot close that appeal.
+  const placerDecision = await decide("ban", ADMIN, 8, []);
+  expect(placerDecision.status).toBe(403);
+  expect(placerDecision.body.error).toBe("independent_review_required");
+  const independent = await decide("ban", OWNER, 8, []);
+  expect(independent.status).toBe(200);
+  expect(independent.body.record).toMatchObject({ appealAfter: "denied" });
 });
 
 test("account-reinstatement upgrade preserves prior releases and separates future project decisions", async () => {

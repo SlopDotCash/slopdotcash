@@ -353,7 +353,9 @@ rate limit, and caches each answer for five minutes. The browser never calls
   longer lifts account bans. A moderator who did not ban an account, and who
   is not that account, uses `reinstate_accounts` to select accounts cleared
   by the evidence. The decision leaves the project
-  restriction and other accounts unchanged. Each release references its exact
+  restriction and other accounts unchanged. The project appeal also stays
+  open, including an appeal that malicious results kept for the moderator
+  decision. Each release references its exact
   ban in `project_account_reinstatements`; the existing enforcement journal
   records its reason and evidence. Migration 0072 preserves releases already
   made under the former project-wide rule. Signed-in accounts can use
