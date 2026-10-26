@@ -718,7 +718,8 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
       },
     }),
   );
-  await page.goto("/projects/eliza/manage");
+  // The form must finish loading before it is edited and published.
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
     project.contribution?.approvedScope ?? "",
   );

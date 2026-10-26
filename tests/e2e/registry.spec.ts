@@ -1787,7 +1787,10 @@ test("an owner initializes a legacy monthly project without shortening its accep
     );
     expect(refreshed).toBe(200);
     expect((await listedProject(page, project.id)).escrow).toBeUndefined();
-    await page.goto(`/projects/${project.id}/manage`);
+    // The form must finish loading before it is edited and published.
+    await page.goto(`/projects/${project.id}/manage`, {
+      waitUntil: "networkidle",
+    });
     await expect(
       page.getByLabel("Acceptance criteria", { exact: true }),
     ).toHaveValue(criteria);
