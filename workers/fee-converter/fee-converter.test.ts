@@ -1892,6 +1892,7 @@ describe("Solana vault fee claims", () => {
       () => new Date("2026-10-24T12:00:00Z"),
     );
     const state = {
+      nativeQuoteOut: null as string | null,
       nativeFee: 5000,
       rent: 1488440,
       walletDebit: 1493440,
@@ -1907,7 +1908,10 @@ describe("Solana vault fee claims", () => {
       if (_url.startsWith("https://jupiter.invalid/quote?")) {
         const p = new URL(_url).searchParams;
         const amount = p.get("amount")!;
-        const out = (BigInt(amount) * 100000000n) / 1000000000n;
+        const out =
+          state.nativeQuoteOut === null
+            ? (BigInt(amount) * 100000000n) / 1000000000n
+            : BigInt(state.nativeQuoteOut);
         return Response.json({
           inputMint: p.get("inputMint"),
           outputMint: p.get("outputMint"),
@@ -2238,6 +2242,16 @@ describe("Solana vault fee claims", () => {
       }),
     ).rejects.toThrow("transaction budget");
     expect(recorded).toBe(false);
+    expect(run.state.sent).toEqual([]);
+    expect(await run.nativeJournal.rows()).toEqual([]);
+  });
+
+  test("a zero-value native gas quote cannot authorize a Solana signature", async () => {
+    const run = solanaChain();
+    run.state.nativeQuoteOut = "0";
+    await expect(
+      run.client(true).vaultFees!.claim(vault(), async () => {}),
+    ).rejects.toThrow("cannot be priced");
     expect(run.state.sent).toEqual([]);
     expect(await run.nativeJournal.rows()).toEqual([]);
   });

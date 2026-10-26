@@ -508,7 +508,10 @@ export function createSolanaClient(
       maximum,
       limits.maxSlippageBps,
     );
-    if (BigInt(priced.outAmount) * limits.gasMultiple > valueMicro)
+    const costValue = BigInt(priced.outAmount);
+    if (costValue <= 0n)
+      throw new Error("Final Solana native cost cannot be priced");
+    if (costValue * limits.gasMultiple > valueMicro)
       throw new Error("Final Solana native cost exceeds the gas-cost multiple");
     await assertLease?.();
     const id = await journal.reserveSolana(solanaBase58(sha256(message)));
