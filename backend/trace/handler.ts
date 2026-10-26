@@ -1,4 +1,6 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
+import { encodeBase64Url } from "../../src/lib/byte-encoding";
 import {
   type DeploymentTier,
   deploymentOrigins,
@@ -52,7 +54,6 @@ import {
   normalizedContentType,
   readJsonObject,
   readTraceBody,
-  sha256Hex,
   validEventKind,
   validGitSha,
   validIdempotencyKey,
@@ -877,12 +878,7 @@ async function deriveUploadCapability(
       ),
     ),
   );
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
+  return encodeBase64Url(bytes);
 }
 
 async function createTraceIntent(

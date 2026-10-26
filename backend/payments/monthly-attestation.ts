@@ -11,6 +11,7 @@ import {
   solanaAllocationRoot,
   solanaMonthlyMessage,
 } from "../../contracts/solana/adapter";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -389,7 +390,7 @@ export async function prepareMonthlyAttestation(
           "invalid_freeze",
           "The freeze time is outside the commitment window.",
         );
-      messageHex = Array.from(
+      messageHex = bytesToHex(
         solanaMonthlyMessage(
           deployment.programId,
           deployment.projectPda,
@@ -399,8 +400,7 @@ export async function prepareMonthlyAttestation(
           frozenAt,
           deployment.networkDomain,
         ),
-        (b) => b.toString(16).padStart(2, "0"),
-      ).join("");
+      );
     }
   }
   return {

@@ -1,10 +1,11 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   type DeploymentTier,
   deploymentOrigins,
 } from "../../src/lib/deployment";
 import { POINTS_RULE } from "../../src/lib/points";
-import { randomToken, sha256Hex } from "../../workers/identity/crypto";
+import { randomToken } from "../../workers/identity/crypto";
 import { consumeExactRateLimit } from "../../workers/identity/rate-limit";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import {

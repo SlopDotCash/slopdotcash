@@ -2,8 +2,10 @@ import {
   bindProvenanceSource,
   parseProvenanceReport,
 } from "../../workers/vetting/provenance-report";
+
 /** Separate private vetting evidence. Policy and external controls have no defaults. */
 
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   assemblyAssessment,
   assemblyRecord,
@@ -21,7 +23,7 @@ import {
 import type { ProjectD1Database } from "../projects/cloudflare-persistence";
 import type { WebSession } from "../projects/contracts";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
-import { isRecord, readJsonObject, sha256Hex } from "../trace/validation";
+import { isRecord, readJsonObject } from "../trace/validation";
 import {
   chunkKey,
   chunkLayout,

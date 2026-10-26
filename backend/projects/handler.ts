@@ -1,4 +1,5 @@
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { assertPayoutExclusionTransition } from "../../src/lib/payout-exclusions.mjs";
 import type {
   EnforcementPreview,
@@ -44,7 +45,7 @@ import {
 } from "../http";
 import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
-import { readJsonObject, sha256Hex } from "../trace/validation";
+import { readJsonObject } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
 import {
   type EnforcementAction,

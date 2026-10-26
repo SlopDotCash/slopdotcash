@@ -4,6 +4,7 @@
  * serves a project (PRD VET-01, VET-06, VET-07).
  */
 
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { canonicalJson } from "../../src/lib/canonical-json";
 import { executableManifestContent } from "../../src/lib/project-revision-changes";
 import type {
@@ -29,7 +30,6 @@ import {
   projectRestriction,
   repositoryIdentity,
 } from "../projects/enforcement";
-import { sha256Hex } from "../trace/validation";
 import type { VettingArtifact } from "./result";
 import {
   isScanResult,

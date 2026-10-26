@@ -1,10 +1,10 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   decryptPkceVerifier,
   encryptPkceVerifier,
   pkceChallenge,
   randomToken,
-  sha256Hex,
 } from "../../workers/identity/crypto";
 import { cookieValue, json as jsonResponse } from "../http";
 import type { PointsDependencies } from "./handler";

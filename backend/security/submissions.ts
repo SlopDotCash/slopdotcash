@@ -19,6 +19,7 @@
  *   report in the reporter's browser.
  */
 import { readBoundedJson } from "../../src/lib/browser-json";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
 import type { D1QueryStatement as D1Statement } from "../d1";
 import { exactKeys, fail, requireActor } from "../http";
@@ -526,9 +527,7 @@ async function createSubmission(
     );
   const at = deps.now().toISOString();
   const id = `ss_${deps.randomId().replaceAll("-", "")}`;
-  const marker = [...crypto.getRandomValues(new Uint8Array(16))]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  const marker = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
   try {
     await deps.db.batch([
       deps.db

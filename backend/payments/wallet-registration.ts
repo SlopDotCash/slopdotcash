@@ -1,6 +1,6 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { GithubActor } from "../../src/lib/project-contracts";
 import type { WalletChain } from "../../src/lib/wallets";
-import { sha256Hex } from "../../workers/identity/crypto";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import { insertWalletClaim } from "../trace/cloudflare-persistence";
 /** Canonical registry bytes preserve the original Solana layout and Base chain field. */

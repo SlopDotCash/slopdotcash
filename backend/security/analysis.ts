@@ -10,6 +10,7 @@
  * through a public channel such as the Slopbot review path. D1 keeps the
  * proposal and the digest of the advisory text it read.
  */
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { D1Database, D1QueryStatement } from "../d1";
 import type { AdvisoryReader } from "./advisories";
 
@@ -302,16 +303,6 @@ export function surplusSecurityAnalyzer(options: {
       );
     },
   };
-}
-
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text),
-  );
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 export type AnalysisDependencies = {

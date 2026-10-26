@@ -8,10 +8,11 @@
  * `githubAppAdvisoryToken`. Report content is sent, digested and dropped: nothing
  * here logs, and results carry only typed enum values and identifiers.
  */
+
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { encodeBase64Url, ownedBuffer } from "../../src/lib/byte-encoding";
 import { canonicalJson } from "../../src/lib/canonical-json";
-import { sha256Hex } from "../../workers/identity/crypto";
 import { fail } from "../http";
 import type { ReportingReader } from "./reporting-readiness";
 

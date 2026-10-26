@@ -1,3 +1,4 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedBytes } from "../../src/lib/browser-json";
 import type { D1TransactionalDatabase as D1Database, D1Result } from "../d1";
 import { notifyWalletChanged } from "../notifications/events";
@@ -21,7 +22,6 @@ import type {
   WalletPossessionAttestationRecord,
   WalletPossessionChallengeRecord,
 } from "./contracts";
-import { sha256Hex } from "./validation";
 
 type R2Head = {
   size: number;

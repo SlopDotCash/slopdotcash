@@ -11,13 +11,18 @@
  * `/user` must name the signed-in account, so a reporter cannot authorize
  * as one GitHub account and report as another.
  */
+
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
-import { encodeBase64Url, ownedBuffer } from "../../src/lib/byte-encoding";
+import {
+  decodeBase64Url,
+  encodeBase64Url,
+  ownedBuffer,
+} from "../../src/lib/byte-encoding";
 import {
   constantTimeEqual,
   pkceChallenge,
   randomToken,
-  sha256Hex,
 } from "../../workers/identity/crypto";
 import {
   type IntakeInstallationCheck,
@@ -60,13 +65,6 @@ const SESSION_COOKIE = "__Host-slop_points";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
-
-function decodeBase64Url(value: string): Uint8Array {
-  if (!/^[A-Za-z0-9_-]+$/u.test(value)) throw new Error("Invalid base64url");
-  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
-}
 
 async function aesKey(secret: string): Promise<CryptoKey> {
   const bytes = decodeBase64Url(secret);

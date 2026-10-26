@@ -10,6 +10,7 @@
  * revision can be cleared.
  */
 
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { ProjectSetupStatus } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
@@ -28,12 +29,7 @@ import type {
 } from "../projects/contracts";
 import { type EdgeCache, purgeProjectCache } from "../projects/edge-cache";
 import { pausedByFlagsOnly, projectRestriction } from "../projects/enforcement";
-import {
-  isRecord,
-  readJsonObject,
-  readLimitedBody,
-  sha256Hex,
-} from "../trace/validation";
+import { isRecord, readJsonObject, readLimitedBody } from "../trace/validation";
 import type { VettingEvidence } from "./evidence";
 import type { ProjectFlagStore } from "./flags";
 import {
