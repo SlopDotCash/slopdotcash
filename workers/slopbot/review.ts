@@ -1635,6 +1635,7 @@ type AppealSession = {
   github: GitHubClient;
   repo: Repo;
   issue: Issue;
+  pull: Pull | null;
   revision: string;
   registration: Context["registration"];
 };
@@ -1669,8 +1670,8 @@ async function appealSession(
     `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
   );
   if (issue === null) return "ignored";
-  const { revision } = await itemRevision(github, job, issue);
-  return { github, repo, issue, revision, registration };
+  const { pull, revision } = await itemRevision(github, job, issue);
+  return { github, repo, issue, pull, revision, registration };
 }
 
 async function isMaintainer(
@@ -1692,19 +1693,20 @@ async function isMaintainer(
   );
 }
 
-/** The newest Slopbot finding on the item, or null when there is none. */
+/** The newest Slopbot finding on the item revision, or null when there is none. */
 async function latestFinding(
   db: store.D1Database,
   itemNodeId: string,
+  revision: string,
 ): Promise<Category | null> {
   const row = await db
     .prepare(
       `SELECT verdict FROM slopbot_reviews
-       WHERE item_node_id = ? AND status = 'completed' AND verdict IS NOT NULL
+       WHERE item_node_id = ? AND revision = ? AND status = 'completed' AND verdict IS NOT NULL
          AND action IN ('close', 'label', 'hold')
        ORDER BY completed_at DESC, review_key DESC LIMIT 1`,
     )
-    .bind(itemNodeId)
+    .bind(itemNodeId, revision)
     .first<{ verdict: string }>();
   if (row === null) return null;
   const category = (JSON.parse(row.verdict) as Verdict).category;
@@ -1871,7 +1873,7 @@ export async function recordHumanSignal(
       label,
     );
   }
-  const finding = await latestFinding(db, issue.node_id);
+  const finding = await latestFinding(db, issue.node_id, revision);
   if (finding === null) return kind;
   const appeal = await openAppeal(db, {
     appealKey: `appeal:${issue.node_id}:${revision}`,
@@ -1915,7 +1917,11 @@ async function triageAppeal(
   }
   if (current.draft_confidence === null)
     throw new Error("Appeal draft was not stored");
-  const penalty = await activePenalty(db, session.issue.node_id);
+  const penalty = await activePenalty(
+    db,
+    session.issue.node_id,
+    session.revision,
+  );
   const reason = escalationFor({
     category: finding,
     debitThirds: penalty?.debit_thirds ?? 0,
@@ -2137,7 +2143,11 @@ export async function applyAppealCommand(
   if (String(job.senderId) === env.SLOPBOT_APP_USER_ID) return "ignored";
   const session = await appealSession(env, job);
   if (typeof session === "string") return session;
-  const appeal = await latestAppealFor(db, session.issue.node_id);
+  const appeal =
+    (await appealByKey(
+      db,
+      `appeal:${session.issue.node_id}:${session.revision}`,
+    )) ?? (await latestAppealFor(db, session.issue.node_id));
   if (appeal === null) return "no open appeal";
   if (appeal.resolved_at !== null) {
     // Resume the recorded decision, including external writes interrupted
@@ -2219,9 +2229,10 @@ export async function applyAppealCommand(
   );
 }
 
-/** Applies a resolution once. An upheld appeal reopens an item while
- * Slopbot's close is current, removes Slopbot's finding label and reverses
- * the penalty once. A later human close stays.
+/** Applies a resolution once. An upheld appeal reopens an item at the appealed
+ * unmerged revision while Slopbot's close is current, removes that revision's
+ * finding label and reverses that revision's penalty once. A later human close,
+ * changed revision or merged pull request stays.
  */
 async function finishAppeal(
   env: ReviewEnv,
@@ -2245,42 +2256,52 @@ async function finishAppeal(
   if (current === null) throw new Error("Appeal is missing");
   if (current.resolved_at === null)
     return "a Slop moderator decides this appeal";
-  const { issue } = session;
+  const { issue, pull, revision } = session;
+  const appealPrefix = `appeal:${issue.node_id}:`;
+  const appealRevision = current.appeal_key.startsWith(appealPrefix)
+    ? current.appeal_key.slice(appealPrefix.length)
+    : revision;
   if (current.resolution === "upheld") {
-    const closedBySlopbot = await store.count(
-      db,
-      "SELECT COUNT(*) AS n FROM slopbot_actions WHERE item_node_id = ? AND action = 'close'",
-      issue.node_id,
-    );
-    // Reopen only Slopbot's own close, never a later human decision.
-    if (
-      issue.state === "closed" &&
-      closedBySlopbot > 0 &&
-      closedBySlopbotApp(env, issue)
-    ) {
-      await requireScope(db, job, "security");
-      const reopened = await session.github.request<{ state: string }>(
-        "PATCH",
-        `/repos/${job.owner}/${job.repo}/${job.itemKind === "pull_request" ? "pulls" : "issues"}/${job.number}`,
-        { state: "open" },
+    if (appealRevision === revision && !pull?.merged) {
+      const closedBySlopbot = await store.count(
+        db,
+        `SELECT COUNT(*) AS n
+         FROM slopbot_actions a JOIN slopbot_reviews r ON r.review_key = a.review_key
+         WHERE r.item_node_id = ? AND r.revision = ? AND a.action = 'close'`,
+        issue.node_id,
+        appealRevision,
       );
-      if (reopened.status !== 200 || reopened.data?.state !== "open")
-        throw new GitHubError(
-          reopened.status,
-          "GitHub did not confirm the reopen",
+      // Reopen only Slopbot's own close of the appealed unmerged revision,
+      // never a later human decision, changed revision or merged pull request.
+      if (
+        issue.state === "closed" &&
+        closedBySlopbot > 0 &&
+        closedBySlopbotApp(env, issue)
+      ) {
+        await requireScope(db, job, "security");
+        const reopened = await session.github.request<{ state: string }>(
+          "PATCH",
+          `/repos/${job.owner}/${job.repo}/${job.itemKind === "pull_request" ? "pulls" : "issues"}/${job.number}`,
+          { state: "open" },
         );
+        if (reopened.status !== 200 || reopened.data?.state !== "open")
+          throw new GitHubError(
+            reopened.status,
+            "GitHub did not confirm the reopen",
+          );
+      }
+      const finding = await latestFinding(db, issue.node_id, appealRevision);
+      for (const label of [
+        ...(finding !== null ? [categoryLabel(finding)] : []),
+        UNCERTAIN_LABEL,
+      ]) {
+        // A due hold can add its label after this appeal's issue snapshot.
+        // DELETE is idempotent; an absent label is also a confirmed removal.
+        if (label !== UNCERTAIN_LABEL && !hasLabel(issue, label)) continue;
+        await removeLabel(env, job, session.github, label);
+      }
     }
-    const finding = await latestFinding(db, issue.node_id);
-    for (const label of [
-      ...(finding !== null ? [categoryLabel(finding)] : []),
-      UNCERTAIN_LABEL,
-    ]) {
-      // A due hold can add its label after this appeal's issue snapshot.
-      // DELETE is idempotent; an absent label is also a confirmed removal.
-      if (label !== UNCERTAIN_LABEL && !hasLabel(issue, label)) continue;
-      await removeLabel(env, job, session.github, label);
-    }
-    await reversePenalty(db, issue.node_id, "appeal_upheld");
+    await reversePenalty(db, issue.node_id, "appeal_upheld", appealRevision);
   }
   await publishAppealState(env, job, session, current, "resolution");
   return `appeal ${current.resolution} by the ${current.resolved_by}`;

@@ -101,9 +101,10 @@ to `"true"` after the explicit production qualification and activation review.
    with the appeal text as untrusted data, drafts `uphold` or `deny` with a
    confidence. The draft is posted on the item. The appellant or a maintainer
    answers with `/slopbot accept` or `/slopbot reject`. An accepted `uphold`
-   reopens an item whose current close is Slopbot's (fresh `closed_by.id`),
-   removes the finding label and reverses the penalty. A later human close
-   stays. The appeal escalates to a moderator, with the
+   reopens an item at the appealed unmerged revision whose current close is
+   Slopbot's (fresh `closed_by.id`), removes that revision's finding label and
+   reverses that revision's penalty. A later human close, changed revision or
+   merged pull request stays. The appeal escalates to a moderator, with the
    `slopbot: moderator` label, when the draft is rejected, the finding is
    `scam`, the debit at stake is 24 thirds or more, the draft confidence is
    below 0.9, or the appeal is unresolved 7 days after it opened. A moderator

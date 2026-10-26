@@ -112,15 +112,29 @@ export async function recordPenalty(
 export async function activePenalty(
   db: D1Database,
   itemNodeId: string,
+  revision?: string,
 ): Promise<Penalty | null> {
-  return db
-    .prepare(
-      `SELECT item_node_id, author_github_id, category, debit_thirds, period,
-        moderator_review, reversed_at
-       FROM slopbot_penalties WHERE item_node_id = ? AND reversed_at IS NULL`,
-    )
-    .bind(itemNodeId)
-    .first<Penalty>();
+  return revision === undefined
+    ? db
+        .prepare(
+          `SELECT item_node_id, author_github_id, category, debit_thirds, period,
+            moderator_review, reversed_at
+           FROM slopbot_penalties WHERE item_node_id = ? AND reversed_at IS NULL`,
+        )
+        .bind(itemNodeId)
+        .first<Penalty>()
+    : db
+        .prepare(
+          `SELECT item_node_id, author_github_id, category, debit_thirds, period,
+            moderator_review, reversed_at
+           FROM slopbot_penalties WHERE item_node_id = ? AND reversed_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM slopbot_reviews r
+               WHERE r.review_key = slopbot_penalties.review_key AND r.revision = ?
+             )`,
+        )
+        .bind(itemNodeId, revision)
+        .first<Penalty>();
 }
 
 /** Reverses the debit once. Later appeals, reopens and retries change nothing. */
@@ -128,13 +142,27 @@ export async function reversePenalty(
   db: D1Database,
   itemNodeId: string,
   reason: "appeal_upheld" | "maintainer_reopen",
+  revision?: string,
 ): Promise<boolean> {
-  const result = await db
-    .prepare(
-      "UPDATE slopbot_penalties SET reversed_at = ?, reversal = ? WHERE item_node_id = ? AND reversed_at IS NULL",
-    )
-    .bind(new Date().toISOString(), reason, itemNodeId)
-    .run();
+  const result =
+    revision === undefined
+      ? await db
+          .prepare(
+            "UPDATE slopbot_penalties SET reversed_at = ?, reversal = ? WHERE item_node_id = ? AND reversed_at IS NULL",
+          )
+          .bind(new Date().toISOString(), reason, itemNodeId)
+          .run()
+      : await db
+          .prepare(
+            `UPDATE slopbot_penalties SET reversed_at = ?, reversal = ?
+             WHERE item_node_id = ? AND reversed_at IS NULL
+               AND EXISTS (
+                 SELECT 1 FROM slopbot_reviews r
+                 WHERE r.review_key = slopbot_penalties.review_key AND r.revision = ?
+               )`,
+          )
+          .bind(new Date().toISOString(), reason, itemNodeId, revision)
+          .run();
   return (result.meta?.changes ?? 0) === 1;
 }
 

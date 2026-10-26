@@ -1007,6 +1007,82 @@ test("an upheld appeal reopens only Slopbot's own close, never a later maintaine
   });
 });
 
+test("an appeal binds its finding, reopen, label removal and penalty reversal to the appealed unmerged revision", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.closureEnabled(false);
+    expect(await run.review()).toBe("labeled (spam)");
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+
+    // A newer head is closed and penalized before the earlier draft is answered.
+    run.head("a".repeat(40));
+    run.closureEnabled(true);
+    run.model("spam", 0.96);
+    expect(await run.review()).toBe("closed (spam)");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("appeal upheld by the appellant");
+    expect(run.currentState()).toBe("closed");
+    expect(run.labels).toContain("slopbot: spam");
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+
+    // Appealing the new head acts on the new head's appeal, not the resolved one.
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("appeal upheld by the appellant");
+    expect(run.currentState()).toBe("open");
+    expect(run.labels).not.toContain("slopbot: spam");
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: "appeal_upheld" }]);
+  });
+
+  for (const later of ["new head", "merged"] as const) {
+    await closedItem(async (run) => {
+      expect(await run.review()).toBe("closed (spam)");
+      run.model("none", 0.95);
+      expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+        "appeal drafted (uphold)",
+      );
+      if (later === "new head") run.head("d".repeat(40));
+      if (later === "merged") run.merged(true);
+      expect(
+        await run.deliver(
+          run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+        ),
+      ).toBe("appeal upheld by the appellant");
+      expect(run.currentState()).toBe("closed");
+      expect(
+        run.writes.filter((w) => w === "PATCH /repos/SlopDotCash/asi/pulls/5"),
+      ).toHaveLength(1);
+      expect(run.sql(PENALTY)).toMatchObject([{ reversal: "appeal_upheld" }]);
+    });
+  }
+
+  await closedItem(async (run) => {
+    run.closureEnabled(false);
+    expect(await run.review()).toBe("labeled (spam)");
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.review()).toBe("no action (none)");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal",
+    );
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_appeals")).toEqual([
+      { n: 0 },
+    ]);
+  });
+});
+
 test("a scam close escalates to a moderator; only a moderator decides, and a denial keeps the debit", async () => {
   await closedItem(async (run) => {
     run.model("scam", 0.97);
