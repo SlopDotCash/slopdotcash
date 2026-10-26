@@ -1366,6 +1366,17 @@ describe("project enforcement (ADM-06)", () => {
       async () => livePin,
     );
     expect(bannedClearance.state).toBe("banned");
+    // The confirmed-malicious re-ban supersedes the first appeal, so the
+    // applicant appeals the current restriction before reinstatement is
+    // attempted again; a project appeal from before the re-ban no longer
+    // opens it.
+    const reappealed = await call(
+      "POST",
+      "project-appeals",
+      "applicant",
+      appeal,
+      );
+    expect(reappealed.status).toBe(200);
     const scannedPin = livePin;
     livePin = { ...livePin, commitSha: "b".repeat(40) };
     const staleScan = await enforce("moderator", "reinstate");
@@ -1429,7 +1440,13 @@ describe("project enforcement (ADM-06)", () => {
       (await history.json()).projects[0].enforcement.records.map(
         (record: { action: string }) => record.action,
       ),
-    ).toEqual(["quarantine", "ban", "request_reinstatement", "ban"]);
+    ).toEqual([
+      "quarantine",
+      "ban",
+      "request_reinstatement",
+      "ban",
+      "request_reinstatement",
+  ]);
     // Independently preserve the append-only persistence contract. This is
     // historical database setup, never HTTP admission or a complete scan.
     if (!restricted || !latestRecord)
@@ -1730,6 +1747,31 @@ describe("project enforcement (ADM-06)", () => {
       appeal: "requested" as const,
       restrictedBy: [ADMIN],
       openedAtRevision: 1,
+      // The appeal itself must be the project's own: a banned account's
+      // appeal alone no longer opens project reinstatement.
+      records: [
+        {
+          id: "enf-project-appeal",
+          projectId: "open-registry",
+          sequence: 1,
+          action: "request_reinstatement" as const,
+          stateAfter: "quarantined" as const,
+          appealAfter: "requested" as const,
+          reason: "The release script was removed",
+          evidenceReference: "evidence",
+          repositoryGithubId: "",
+          repositoryKeys: [],
+          actor: APPLICANT,
+          actorRole: "project-applicant" as const,
+          decisionSource: "owner-request" as const,
+          beforeRevision: 1,
+          beforeManifestSha256: "",
+          afterRevision: null,
+          afterManifestSha256: null,
+          result: "no_revision_needed" as const,
+          createdAt: new Date().toISOString(),
+        },
+    ],
     };
     let refusal: unknown = null;
     try {
