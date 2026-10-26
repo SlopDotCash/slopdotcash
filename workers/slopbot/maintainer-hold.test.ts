@@ -28,6 +28,11 @@ async function uncertainReview(
     setDraft: (v: boolean) => void;
     setVerdict: (category: Category, nextConfidence: number) => void;
     job: (kind: string, extra: Record<string, unknown>) => Job;
+    pause: (
+      method: string,
+      path: string,
+      when: "before" | "after",
+    ) => { reached: Promise<void>; release: () => void };
     writes: string[];
     labels: { name: string }[];
     sql: (q: string) => unknown;
@@ -72,9 +77,38 @@ async function uncertainReview(
   const labels: { name: string }[] = [];
   let targetSha = "c".repeat(40);
   let patch = "-const a = 1;\n+const b = 1;";
+  // One-shot pauses order concurrent jobs around one GitHub request: "before"
+  // holds the request unapplied, "after" holds an already computed response.
+  const pauses: {
+    method: string;
+    path: string;
+    when: "before" | "after";
+    reach: () => void;
+    released: Promise<void>;
+  }[] = [];
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
+      const index = pauses.findIndex(
+        (entry) =>
+          entry.method === request.method &&
+          new URL(request.url).pathname.endsWith(entry.path),
+      );
+      const pause = index === -1 ? undefined : pauses.splice(index, 1)[0];
+      if (pause?.when === "before") {
+        pause.reach();
+        await pause.released;
+      }
+      const response = await respond(request);
+      if (pause?.when === "after") {
+        pause.reach();
+        await pause.released;
+      }
+      return response;
+    },
+  });
+  async function respond(request: Request): Promise<Response> {
+    {
       const url = new URL(request.url);
       const path = url.pathname;
       if (request.method !== "GET") writes.push(`${request.method} ${path}`);
@@ -202,8 +236,8 @@ async function uncertainReview(
         return Response.json([]);
       }
       return new Response(null, { status: 404 });
-    },
-  });
+    }
+  }
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = ((
     url: Parameters<typeof fetch>[0],
@@ -257,6 +291,18 @@ async function uncertainReview(
           deliveryId: `${kind}-${writes.length}`,
           ...extra,
         }) as Job,
+      pause: (method, path, when) => {
+        let reach = () => {};
+        let release = () => {};
+        const reached = new Promise<void>((resolve) => {
+          reach = resolve;
+        });
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        pauses.push({ method, path, when, reach, released });
+        return { reached, release };
+      },
       advanceTarget: (changedSource) => {
         targetSha = "d".repeat(40);
         if (changedSource) patch = "+different current target comparison";
@@ -445,5 +491,44 @@ test("an upheld appeal supersedes an open maintainer hold and removes slopbot:un
     expect(run.writes).toContain(
       "DELETE /repos/SlopDotCash/asi/issues/5/labels/slopbot%3Auncertain",
     );
+  });
+});
+
+test.each([
+  "the label write is in flight when the appeal is upheld",
+  "the hold labels after the appeal read the item but before it was upheld",
+])("an upheld appeal leaves no uncertainty label when %s", async (ordering) => {
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    expect(await run.review()).toMatch(/^held for maintainer until /);
+    run.setVerdict("none", 0.95);
+    setSystemTime(new Date(start + day));
+    await run.deliver([run.job("appeal", { senderId: 42 })]);
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = await run.tick();
+    expect(due.map((j) => j.kind)).toEqual(["maintainer_hold"]);
+    const accept = [
+      run.job("appeal_command", { command: "accept", senderId: 42 }),
+    ];
+    if (ordering.startsWith("the label write")) {
+      const label = run.pause("POST", "/issues/5/labels", "before");
+      const hold = run.deliver(due);
+      await label.reached;
+      await run.deliver(accept);
+      label.release();
+      await hold;
+    } else {
+      const read = run.pause("GET", "/issues/5", "after");
+      const appeal = run.deliver(accept);
+      await read.reached;
+      await run.deliver(due);
+      expect(run.labels.map((l) => l.name)).toContain("slopbot:uncertain");
+      read.release();
+      await appeal;
+    }
+    expect(run.labels.map((l) => l.name)).not.toContain("slopbot:uncertain");
+    expect(run.sql("SELECT resolution FROM slopbot_appeals")).toEqual([
+      { resolution: "upheld" },
+    ]);
   });
 });
