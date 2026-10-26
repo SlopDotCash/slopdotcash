@@ -840,9 +840,11 @@ interruption recovery and dead-letter operations still require hosted verificati
 
 ### Subscription assessment provenance
 
-The historical review may use the owner's existing ChatGPT subscription. A
-trusted internal publisher can supply `SubscriptionResult` with a separate
-`provenance` declaration: channel `chatgpt-subscription`, provider `openai`,
+The historical review may use the owner's existing ChatGPT or Claude
+subscription. A trusted internal publisher can supply `SubscriptionResult`
+with a separate `provenance` declaration: channel `chatgpt-subscription` with
+provider `openai`, or channel `claude-subscription` with provider `anthropic`
+(owner decision, 26 October 2026, for the SlopDotCash/slopdotcash slice),
 declared model and client, `identityEvidence: self-reported`, and null
 `exactVariant` and `apiReceipt`. This records the declared session identity;
 it does not claim that a provider response verified the model or billing.
