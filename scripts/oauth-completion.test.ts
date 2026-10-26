@@ -90,15 +90,9 @@ for (const scenario of [
     if (scenario === "success") {
       expect(persisted).toBe(true);
       expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
-      const nonce = /<script nonce="([^"]+)">/.exec(body)?.[1];
-      expect(nonce).toBeTruthy();
-      expect(response.headers.get("content-security-policy")).toContain(
-        `script-src 'nonce-${nonce}'`,
-      );
-      expect(body).toContain("window.setTimeout(() => window.close(), 800)");
     } else {
       expect(persisted).toBe(false);
-      expect(body).not.toMatch(/<script|window.close/);
     }
+    expect(body).not.toMatch(/<script|window.close/);
   });
 }

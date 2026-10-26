@@ -66,17 +66,16 @@ function html(
 ): Response {
   const headers = securityHeaders("text/html; charset=utf-8");
   const signedIn = status === 200;
-  const nonce = crypto.randomUUID();
   headers.set(
     "content-security-policy",
-    `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   );
   // All content is fixed by this handler. No callback parameter or identity is rendered.
   const site = deploymentOrigins(tier).site;
   return new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>${title} · slop.cash</title><style>
 *{box-sizing:border-box}body{margin:0;min-height:100svh;background:${brand.color.bg};color:${brand.color.ink};font:16px/1.5 system-ui,sans-serif;display:grid;grid-template-rows:auto 1fr}header{padding:24px 32px;border-bottom:1px solid ${brand.color.line};font-weight:800;letter-spacing:-.04em;font-size:24px}header span{color:${brand.color.accent}}main{width:min(100%,480px);margin:auto;padding:48px 28px;text-align:center}h1{font-size:clamp(28px,6vw,36px);line-height:1.15;letter-spacing:-.035em;margin:0 0 16px}p{margin:0 0 28px;color:${brand.color.muted};text-wrap:pretty}a{display:flex;align-items:center;justify-content:center;min-height:48px;padding:12px 20px;border-radius:${brand.radius.medium};background:${brand.color.accent};color:${brand.color.onAccent};font-weight:700;text-decoration:none}a:hover{background:${brand.color.accentHover}}a:focus-visible{outline:3px solid ${brand.color.ink};outline-offset:4px}.note{font-size:14px;margin:20px 0 0}.status{width:52px;height:52px;display:grid;place-items:center;border:1px solid ${brand.color.lineStrong};border-radius:50%;margin:0 auto 24px;color:${brand.color.accent};font-size:28px}
-</style></head><body><header>slop<span>.</span>cash</header><main><div class="status" aria-hidden="true">${signedIn ? "✓" : "!"}</div><h1>${title}</h1><p>${message}</p><a href="${site}">Return to Slop</a>${signedIn ? '<p class="note">If this window stays open, you can close it and return to your original tab or terminal.</p>' : ""}</main>${signedIn ? `<script nonce="${nonce}">window.setTimeout(() => window.close(), 800);</script>` : ""}</body></html>`,
+</style></head><body><header>slop<span>.</span>cash</header><main><div class="status" aria-hidden="true">${signedIn ? "✓" : "!"}</div><h1>${title}</h1><p>${message}</p><a href="${site}">Return to Slop</a>${signedIn ? '<p class="note">You can close this window and return to your original tab or terminal.</p>' : ""}</main></body></html>`,
     { status, headers },
   );
 }
