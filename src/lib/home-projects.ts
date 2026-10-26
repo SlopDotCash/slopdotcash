@@ -21,7 +21,10 @@ export function homeProjects(now = new Date()) {
   );
 }
 
-/** Every community-tier manifest stays listed, including paused projects. */
+/** Community-tier projects that are open for work; paused ones are not listed. */
 export function communityProjects() {
-  return PROJECTS.filter((project) => project.listingTier === "community");
+  return PROJECTS.filter(
+    (project) =>
+      project.listingTier === "community" && project.status !== "paused",
+  );
 }
