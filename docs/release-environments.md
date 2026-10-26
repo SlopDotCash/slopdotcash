@@ -14,6 +14,11 @@ Both branches require the full build, browser, and policy checks. A failed check
 must prevent publication. Never publish a local build or a pull-request build.
 The temporary `develop` branch has no publication authority after migration.
 
+Owner decision, 25 October 2026: branch protections and rulesets are not
+release requirements. Do not add or restore them during release work unless
+the owner asks. Continue the reviewed pull-request flow and the workflow
+quality checks described here.
+
 Staging publishes fully checked revisions in Git ancestry order. A newer push
 may queue while an older revision completes; it does not by itself invalidate
 that checked ancestor. The serialized `slop-staging` job checks that the candidate
@@ -91,8 +96,8 @@ production browser origin cannot use the staging identity flow, and vice versa.
 Optional X connection requires a separate configured provider application.
 
 Revert a faulty source change through a reviewed pull request, then release the
-new verified revision. Do not change branch protections or copy production
-storage to make a failed staging check pass. Existing installed skill receipts
+new verified revision. Do not copy production storage to make a failed staging
+check pass. Existing installed skill receipts
 retain their format; new installer authorization reads canonical `main`.
 
 During migration, keep the default branch and live production release policy on
