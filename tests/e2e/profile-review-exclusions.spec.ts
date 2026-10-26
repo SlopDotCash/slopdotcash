@@ -11,8 +11,13 @@ import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
 } from "../../src/lib/leaderboard";
-import type { ReviewExclusion } from "../../src/lib/leaderboard-types";
+import type {
+  GitHubActor,
+  LeaderboardInput,
+  ReviewExclusion,
+} from "../../src/lib/leaderboard-types";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
+import { valueScoringPolicy } from "../../src/lib/scoring-policy";
 import { cycleIndexFixture } from "../fixtures";
 import {
   GENERATED_AT,
@@ -28,7 +33,7 @@ function exclusion(
   pullRequestNumber: number,
   review: number,
   reason: ReviewExclusion["reason"],
-  reviewerId: string,
+  reviewer: GitHubActor,
 ): ReviewExclusion {
   const pullRequestId = `PR_review_exclusion_${pullRequestNumber}`;
   const reviewId = `PRR_review_exclusion_${review}`;
@@ -40,7 +45,7 @@ function exclusion(
     repository: "elizaOS/asi",
     url: `${ASI}/${pullRequestNumber}#pullrequestreview-${review}`,
     reason,
-    reviewerId,
+    reviewer,
   };
 }
 
@@ -51,11 +56,11 @@ function publishedSnapshot() {
     const snapshot = createLeaderboardSnapshot(penaltyScoreInput([]));
     snapshot.reviewExclusions = [
       ...(snapshot.reviewExclusions ?? []),
-      exclusion(71, 7101, "unchanged-outcome", PENALIZED_AUTHOR.id),
-      exclusion(72, 7201, "unchanged-outcome", PENALIZED_AUTHOR.id),
-      exclusion(73, 7301, "post-merge", PENALIZED_AUTHOR.id),
+      exclusion(71, 7101, "unchanged-outcome", PENALIZED_AUTHOR),
+      exclusion(72, 7201, "unchanged-outcome", PENALIZED_AUTHOR),
+      exclusion(73, 7301, "post-merge", PENALIZED_AUTHOR),
       // Another reviewer's exclusion never shows on this profile.
-      exclusion(74, 7401, "self-review", PROJECT_OWNER.id),
+      exclusion(74, 7401, "self-review", PROJECT_OWNER),
     ];
     assertLeaderboardSnapshot(snapshot);
     return snapshot;
@@ -80,10 +85,11 @@ function watch(page: Page) {
   return errors;
 }
 
-test("a profile lists its own unscored reviews with their reasons", async ({
-  page,
-}, info) => {
-  const snapshot = publishedSnapshot();
+async function prepareProfile(
+  page: Page,
+  snapshot: ReturnType<typeof createLeaderboardSnapshot>,
+  directory: GitHubActor[] = [],
+) {
   await page.clock.setFixedTime(VIEWED_AT);
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshot }),
@@ -102,7 +108,7 @@ test("a profile lists its own unscored reviews with their reasons", async ({
           count: 0,
           excluded: 0,
         })),
-        people: [],
+        people: directory.map((actor) => ({ ...actor, repositories: [] })),
       },
     }),
   );
@@ -112,17 +118,21 @@ test("a profile lists its own unscored reviews with their reasons", async ({
   await page.route("https://avatars.githubusercontent.com/**", async (route) =>
     route.fulfill({ response: await page.request.get("/slop-mark.svg") }),
   );
-  const errors = watch(page);
+  return watch(page);
+}
 
+test("a profile lists its own excluded reviews with their reasons", async ({
+  page,
+}, info) => {
+  const snapshot = publishedSnapshot();
+  const errors = await prepareProfile(page, snapshot);
   await page.goto(`/contributors/${PENALIZED_AUTHOR.login}`, {
     waitUntil: "networkidle",
   });
   const section = page.getByRole("region", {
-    name: "Reviews that did not score",
+    name: "Review credit exclusions",
   });
-  await expect(section).toContainText(
-    `3 in the last ${snapshot.window.days} days`,
-  );
+  await expect(section).toContainText("3 recorded in this snapshot");
   await expect(section).toContainText(
     "Did not change what merged: 2 · Submitted after the merge: 1",
   );
@@ -157,5 +167,211 @@ test("a profile lists its own unscored reviews with their reasons", async ({
     path: info.outputPath("profile-review-exclusions-mobile.png"),
     fullPage: true,
   });
+  expect(errors).toEqual([]);
+});
+
+const REVIEW_ONLY: GitHubActor = {
+  id: "MDQ6VXNlcjQ0",
+  login: "review-only",
+  avatarUrl: "https://avatars.githubusercontent.com/u/44?v=4",
+  url: "https://github.com/review-only",
+  kind: "User",
+};
+
+/** Real policy producer: tier-none and old positive reviews are both exclusions. */
+function reviewOnlySnapshot() {
+  const input = penaltyScoreInput([]);
+  const pull = input.mergedPullRequests.find((row) => row.id === "PR_november");
+  if (!pull) throw new Error("Missing accepted fixture work");
+  const reviews = [
+    { id: "PRR_none", submittedAt: "2026-11-04T00:00:00.000Z", tier: "none" },
+    {
+      id: "PRR_old",
+      submittedAt: "2026-10-01T00:00:00.000Z",
+      tier: "standard",
+    },
+  ];
+  input.valuePolicy = {
+    ...valueScoringPolicy(),
+    effectiveAt: "2026-09-01T00:00:00.000Z",
+  };
+  input.mergedPullRequests = input.mergedPullRequests.map((row) =>
+    row.id !== pull.id
+      ? row
+      : {
+          ...row,
+          createdAt: "2026-09-20T00:00:00.000Z",
+          reviews: reviews.map((review, index) => ({
+            id: review.id,
+            submittedAt: review.submittedAt,
+            body: "Checked the accepted behavior.",
+            state: "APPROVED",
+            url: `${pull.url}#pullrequestreview-${8001 + index}`,
+            author: REVIEW_ONLY,
+            inlineCommentCount: 0,
+            commitId: pull.headRefOid,
+          })),
+        },
+  );
+  input.mergedPullRequestOutcomes = input.mergedPullRequestOutcomes?.map(
+    (row) =>
+      row.id === pull.id
+        ? { ...row, createdAt: "2026-09-20T00:00:00.000Z" }
+        : row,
+  );
+  input.valueDecisions = new Map([
+    [
+      pull.id,
+      {
+        status: "assessed",
+        history: [{ recorded_at: "2026-11-19T00:00:00.000Z" }],
+        latestDigest: "c".repeat(64),
+        implementationActorNodeIds: [PENALIZED_AUTHOR.id],
+        record: {
+          pullRequestNodeId: pull.id,
+          repository: "elizaOS/asi",
+          headSha: pull.headRefOid,
+          occurredAt: pull.mergedAt,
+          assessment: {
+            tier: "small",
+            rationale: "Repairs the accepted behavior.",
+          },
+        },
+        assessment: {
+          tier: "small",
+          rationale: "Repairs the accepted behavior.",
+          reviews: reviews.map((review) => ({
+            sourceId: review.id,
+            tier: review.tier,
+            duplicateOf: null,
+            finding: "Checked the accepted behavior.",
+            outcome: "The outcome is retained.",
+            evidenceUrls: [],
+          })),
+        },
+      },
+    ],
+  ]) as unknown as LeaderboardInput["valueDecisions"];
+  const realNow = Date.now;
+  Date.now = () => VIEWED_AT.getTime();
+  try {
+    const snapshot = createLeaderboardSnapshot(input);
+    assertLeaderboardSnapshot(snapshot);
+    return snapshot;
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+test("a review-only nonmember sees accurate snapshot omissions", async ({
+  page,
+}, info) => {
+  const snapshot = reviewOnlySnapshot();
+  expect(snapshot.leaders.some((row) => row.actor.id === REVIEW_ONLY.id)).toBe(
+    false,
+  );
+  expect(snapshot.reviewExclusions?.map((row) => row.reason).sort()).toEqual([
+    "review-credit-outside-window",
+    "review-credit-zero-share",
+  ]);
+  const errors = await prepareProfile(page, snapshot);
+  await page.goto(`/contributors/${REVIEW_ONLY.login}`, {
+    waitUntil: "networkidle",
+  });
+  const section = page.getByRole("region", {
+    name: "Review credit exclusions",
+  });
+  await expect(section).toBeVisible();
+  await expect(section).toContainText("2 recorded in this snapshot");
+  await expect(section).toContainText("No review share: 1");
+  await expect(section).toContainText(
+    "Submitted outside the scoring window: 1",
+  );
+  await expect(section).toContainText("Earlier Points can remain.");
+  await expect(section).not.toContainText(/rounded|in the last/u);
+  await expect(section.getByRole("listitem")).toHaveCount(2);
+  const explanation = section.getByRole("link", { name: "How reviews score" });
+  await explanation.focus();
+  await expect(explanation).toBeFocused();
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  await page.screenshot({
+    path: info.outputPath("review-only-profile.png"),
+    fullPage: true,
+  });
+  await explanation.press("Enter");
+  await expect(page).toHaveURL(/\/how-it-works#points$/u);
+  expect(errors).toEqual([]);
+});
+
+test("the current directory vetoes a renamed or recycled review-only login", async ({
+  page,
+}) => {
+  const snapshot = reviewOnlySnapshot();
+  const renamed = {
+    ...REVIEW_ONLY,
+    login: "renamed-reviewer",
+    url: "https://github.com/renamed-reviewer",
+  };
+  const errors = await prepareProfile(page, snapshot, [renamed]);
+  await page.goto(`/contributors/${REVIEW_ONLY.login}`, {
+    waitUntil: "networkidle",
+  });
+  await expect(
+    page.getByText(
+      "Current contributor identity could not be verified. Contribution and wallet records are not shown.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Review credit exclusions" }),
+  ).toHaveCount(0);
+  await page.route("**/data/profiles.json", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        startedAt: VIEWED_AT.toISOString(),
+        generatedAt: VIEWED_AT.toISOString(),
+        repositories: TARGET_REPOSITORIES.map((repository) => ({
+          repository: repository.id,
+          count: 0,
+          excluded: 0,
+        })),
+        people: [{ ...REVIEW_ONLY, id: "MDQ6VXNlcjQ1", repositories: [] }],
+      },
+    }),
+  );
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(
+    page.getByText(
+      "Current contributor identity could not be verified. Contribution and wallet records are not shown.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Review credit exclusions" }),
+  ).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("legacy snapshots without reviewer metadata do not report zero exclusions", async ({
+  page,
+}) => {
+  const snapshot = publishedSnapshot();
+  for (const row of snapshot.reviewExclusions ?? []) delete row.reviewer;
+  assertLeaderboardSnapshot(snapshot);
+  const errors = await prepareProfile(page, snapshot);
+  await page.goto(`/contributors/${PENALIZED_AUTHOR.login}`, {
+    waitUntil: "networkidle",
+  });
+  await expect(
+    page.getByRole("heading", { name: PENALIZED_AUTHOR.login, exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Review credit exclusions" }),
+  ).toHaveCount(0);
   expect(errors).toEqual([]);
 });

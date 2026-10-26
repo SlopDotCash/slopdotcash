@@ -406,9 +406,9 @@ function reviewCredit(
     merges: credit("merged-pull-request"),
     reviews: credit("substantive-review"),
     exclusions: (snapshot.reviewExclusions ?? []).map(
-      // The reviewer ID lets the profile list its own unscored reviews.
+      // Cached actor identity lets a review-only profile resolve its records.
       (exclusion) =>
-        `${exclusion.reviewId}:${exclusion.reason}:${exclusion.reviewerId}`,
+        `${exclusion.reviewId}:${exclusion.reason}:${exclusion.reviewer?.id}`,
     ),
   };
 }

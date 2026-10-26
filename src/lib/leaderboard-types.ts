@@ -85,11 +85,11 @@ export interface ReviewExclusion {
   url: string;
   reason: ReviewExclusionReason;
   /**
-   * Immutable GitHub node ID of the reviewer, so a profile can list its own
-   * unscored reviews. Absent when GitHub returned no reviewer, and in
+   * Collected GitHub identity, so even a review-only profile can resolve its
+   * immutable actor ID. Absent when GitHub returned no reviewer, and in
    * snapshots published before this field existed.
    */
-  reviewerId?: string;
+  reviewer?: GitHubActor;
 }
 
 export interface PullRequestRecord {
