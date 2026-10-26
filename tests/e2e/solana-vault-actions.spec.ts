@@ -1241,9 +1241,9 @@ async function ownerSetupWorkflow(
     });
     expect(unreviewed.status()).toBe(422);
     expect((await unreviewed.json()).error).toBe("vault_creation_invalid");
-    const other = PROJECTS.find(
+    const other = PROJECTS.filter(
       (p) => p.id !== project.id && p.reward.kind === "monthly-pool",
-    );
+    )[bounty ? 1 : 0];
     if (!other) throw new Error("Second registry fixture missing");
     const retainedCreation = {
       ...reviewed.review.creation,
