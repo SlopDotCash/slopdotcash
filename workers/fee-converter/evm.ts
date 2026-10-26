@@ -34,6 +34,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import {
   type EvmEscrowConfig,
   type EvmUpgrade,
+  isCanonicalEvmReceipt,
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import type { Limits, NetworkConfig } from "./config";
@@ -735,8 +736,18 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
             throw error;
           });
         if (!receipt) continue;
+        const canonical = await client.getBlock({
+          blockNumber: receipt.blockNumber,
+        });
+        if (
+          !isCanonicalEvmReceipt(hash, receipt, canonical) ||
+          !["success", "reverted"].includes(receipt.status)
+        )
+          throw new Error("Fee send receipt identity differs");
         const landed = { txId: hash };
         const finalized = await client.getBlock({ blockTag: "finalized" });
+        if (typeof finalized.number !== "bigint" || finalized.number < 0n)
+          throw new Error("Fee send finality unavailable");
         if (receipt.blockNumber > finalized.number)
           return { kind: "pending", mined: true };
         if (receipt.status !== "success")

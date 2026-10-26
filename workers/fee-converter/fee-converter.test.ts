@@ -1026,6 +1026,147 @@ describe("EVM reconciliation", () => {
     expect(failure).not.toBeInstanceOf(FeeCapTooLowError);
   });
 
+  test.each([
+    ["original success", false, "0x1", "none", "finalized"],
+    ["replacement success", true, "0x1", "none", "finalized"],
+    ["original revert", false, "0x0", "none", "failed"],
+    ["replacement revert", true, "0x0", "none", "failed"],
+    ["wrong receipt hash", true, "0x1", "receiptHash", "submitted"],
+    ["wrong canonical hash", true, "0x1", "blockHash", "submitted"],
+    ["wrong canonical height", true, "0x1", "blockNumber", "submitted"],
+    ["missing canonical height", true, "0x1", "missingHeight", "submitted"],
+    ["missing finalized height", true, "0x1", "missingFinality", "submitted"],
+    ["wrong transaction slot", true, "0x1", "index", "submitted"],
+    ["missing block member", true, "0x0", "membership", "submitted"],
+    ["not finalized", true, "0x1", "finality", "submitted"],
+    ["canonical lookup unavailable", true, "0x1", "unavailable", "submitted"],
+  ])(
+    "canonical fee receipt: %s",
+    async (_name, replaced, receiptStatus, fault, state) => {
+      const { createEvmClient } = await import("./evm");
+      const hash = (value: number) =>
+        `0x${value.toString(16).padStart(64, "0")}`;
+      const original = hash(1);
+      const winner = replaced ? hash(2) : original;
+      const h = harness();
+      const prepare = h.chain.prepare;
+      h.chain.prepare = async (...args) => ({
+        ...(await prepare(...args)),
+        txId: original,
+      });
+      await runNetwork(h.network, h.deps);
+      const row = h.rows()[0];
+      if (replaced) {
+        expect(
+          await h.deps.store.acquireLock("base", "fixture-lease", h.clock.now),
+        ).toBe(true);
+        expect(
+          await h.deps.store.insertReplacement(
+            {
+              id: "replacement-fixture",
+              conversionId: String(row.id),
+              network: "base",
+              attempt: 1,
+              evmNonce: 1,
+              txId: winner,
+              rawTx: "0xfixture",
+              maxFeePerGas: "125",
+              maxPriorityFeePerGas: "25",
+              createdAt: h.clock.now.toISOString(),
+            },
+            "fixture-lease",
+            h.clock.now,
+          ),
+        ).toBe(true);
+        await h.deps.store.releaseLock("base", "fixture-lease", h.clock.now);
+      }
+      const calls: string[] = [];
+      const provider = (async (_url: unknown, init?: RequestInit) => {
+        const request = JSON.parse(String(init?.body));
+        calls.push(request.method);
+        let result: unknown;
+        if (request.method === "eth_getTransactionReceipt") {
+          result =
+            request.params[0] !== winner
+              ? null
+              : {
+                  transactionHash: fault === "receiptHash" ? hash(9) : winner,
+                  transactionIndex: fault === "index" ? "0x1" : "0x0",
+                  blockHash: hash(300),
+                  blockNumber: "0x64",
+                  from: WALLET,
+                  to: h.network.definition.router,
+                  cumulativeGasUsed: "0x5208",
+                  gasUsed: "0x5208",
+                  effectiveGasPrice: "0x1",
+                  contractAddress: null,
+                  logs:
+                    receiptStatus === "0x0"
+                      ? []
+                      : [
+                          {
+                            address: USDC,
+                            topics: [
+                              "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                              hash(0),
+                              `0x${WALLET.slice(2).padStart(64, "0")}`,
+                            ],
+                            data: hash(100),
+                            blockNumber: "0x64",
+                            blockHash: hash(300),
+                            transactionHash: winner,
+                            transactionIndex: "0x0",
+                            logIndex: "0x0",
+                            removed: false,
+                          },
+                        ],
+                  logsBloom: `0x${"00".repeat(256)}`,
+                  status: receiptStatus,
+                  type: "0x2",
+                };
+        } else if (request.method === "eth_getBlockByNumber") {
+          if (request.params[0] !== "finalized" && fault === "unavailable")
+            return Response.json({
+              jsonrpc: "2.0",
+              id: request.id,
+              error: { code: -32000, message: "unavailable" },
+            });
+          result = {
+            number:
+              (request.params[0] === "finalized" &&
+                fault === "missingFinality") ||
+              (request.params[0] !== "finalized" && fault === "missingHeight")
+                ? null
+                : request.params[0] === "finalized" && fault === "finality"
+                  ? "0x63"
+                  : fault === "blockNumber"
+                    ? "0x65"
+                    : "0x64",
+            hash: fault === "blockHash" ? hash(301) : hash(300),
+            timestamp: "0x1",
+            transactions: fault === "membership" ? [] : [winner],
+          };
+        } else if (request.method === "eth_call") result = hash(0);
+        else throw new Error(`Unexpected method: ${request.method}`);
+        return Response.json({ jsonrpc: "2.0", id: request.id, result });
+      }) as typeof fetch;
+      h.deps.client = (network) =>
+        createEvmClient({
+          config: network,
+          limits: h.deps.limits,
+          kyberClientId: "test",
+          fetch: provider,
+        });
+      await runNetwork(h.network, h.deps);
+      expect(h.rows()[0].state).toBe(state);
+      expect(h.rows()[0].landed_tx_id).toBe(
+        state === "submitted" ? null : winner,
+      );
+      if (state === "finalized") expect(h.rows()[0].amount_out).toBe("100");
+      expect(calls).not.toContain("eth_sendRawTransaction");
+    },
+  );
+
   /**
    * A node after the recorded swap (nonce 1) landed in a finalized block: the
    * finalized nonce count is 2. Methods in `failing` answer HTTP 429; the

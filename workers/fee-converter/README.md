@@ -319,6 +319,10 @@ replacement and before broadcast. The append also requires that same live
 lease, the still-open original and the next attempt number. A lost lease
 stops the run. Bytes already journaled remain available to its successor.
 
+**Receipt.** A final outcome requires the requested transaction hash in its
+exact canonical block position, at or below the finalized block. Missing or
+mismatched block evidence leaves the send open, including reverted attempts.
+
 **Journal.** Each replacement is stored in `fee_send_replacements`
 (migration `0087`) before it is broadcast: the row, attempt number, nonce,
 transaction hash, signed bytes and both fee fields. These rows cannot change
