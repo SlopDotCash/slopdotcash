@@ -14,6 +14,7 @@
  * cannot earn the same work twice.
  */
 
+import { isExactUtc } from "./record-validation.mjs";
 import { sha256Hex } from "./sha256";
 
 export const EXTERNAL_SOURCE_PLATFORMS = [
@@ -316,13 +317,7 @@ export function assertExternalSourceEvidence(
   ) {
     throw new TypeError(`${field}.contentSha256 must be a lowercase sha256`);
   }
-  if (
-    typeof candidate.capturedAt !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(
-      candidate.capturedAt,
-    ) ||
-    new Date(candidate.capturedAt).toISOString() !== candidate.capturedAt
-  ) {
+  if (!isExactUtc(candidate.capturedAt)) {
     throw new TypeError(`${field}.capturedAt is not a UTC timestamp`);
   }
   return {

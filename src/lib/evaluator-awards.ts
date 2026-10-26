@@ -1,4 +1,10 @@
-import { exactKeys, readRecord } from "./record-validation.mjs";
+import {
+  EXACT_UTC,
+  exactKeys,
+  isExactUtc,
+  readRecord,
+  boundedText as text,
+} from "./record-validation.mjs";
 /**
  * Validates the maintainer-approved bridge between an evaluator finding and a
  * capped public score event. Raw model output never reaches the ledger: only a
@@ -56,31 +62,9 @@ export interface EvaluatorAwardEvent extends ScoreEvent {
   };
 }
 
-function text(
-  value: unknown,
-  field: string,
-  options: { max: number; min?: number; pattern?: RegExp },
-): string {
-  if (
-    typeof value !== "string" ||
-    value.length < (options.min ?? 1) ||
-    value.length > options.max ||
-    options.pattern?.test(value) === false
-  ) {
-    throw new TypeError(`${field} is invalid`);
-  }
-  return value;
-}
-
 function iso(value: unknown, field: string): string {
-  const result = text(value, field, {
-    max: 24,
-    pattern: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
-  });
-  if (
-    !Number.isFinite(Date.parse(result)) ||
-    new Date(result).toISOString() !== result
-  ) {
+  const result = text(value, field, { max: 24, pattern: EXACT_UTC });
+  if (!isExactUtc(result)) {
     throw new TypeError(`${field} is not a UTC timestamp`);
   }
   return result;

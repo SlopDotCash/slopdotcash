@@ -3,6 +3,11 @@ import {
   assertSecurityEscrowPolicy,
   ESCROW_NETWORKS,
 } from "./escrow-policy.mjs";
+import {
+  isExactUtc,
+  readRecord,
+  exactKeys as sharedExactKeys,
+} from "./record-validation.mjs";
 /**
  * Public terms of a private security bounty program (PRD SEC-01, SEC-05,
  * SEC-06, SEC-18). The terms live in the project's D1 manifest revision as
@@ -54,16 +59,11 @@ function fail(field, problem = "is invalid") {
   throw new TypeError(`project.securityBounty.${field} ${problem}`);
 }
 
-function record(value, field) {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    fail(field, "must be an object");
-  return value;
-}
+const record = (value, field) =>
+  readRecord(value, `project.securityBounty.${field}`);
 
-function exactKeys(value, keys, field) {
-  if (Object.keys(value).sort().join("\0") !== [...keys].sort().join("\0"))
-    fail(field, "has unexpected or missing fields");
-}
+const exactKeys = (value, keys, field) =>
+  sharedExactKeys(value, keys, `project.securityBounty.${field}`);
 
 function text(value, field, max = 2000, min = 1, pattern = undefined) {
   if (
@@ -83,8 +83,7 @@ function integer(value, field, min, max) {
 }
 
 function timestamp(value, field) {
-  text(value, field, 24, 24, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
-  if (new Date(value).toISOString() !== value) fail(field);
+  if (!isExactUtc(value)) fail(field);
   return value;
 }
 

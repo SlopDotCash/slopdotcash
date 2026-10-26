@@ -8,6 +8,7 @@
  * a valid maintainer ratification remains the exception that takes
  * precedence. Payment authority stays separate: a score is never an award.
  */
+import { isExactUtc } from "./record-validation.mjs";
 import { VALUE_RUBRIC_VERSION } from "./value-assessment";
 
 export const VALUE_SCORING_POLICY_ID = "slop-value-v1" as const;
@@ -49,8 +50,6 @@ export interface ValueScoringPolicy {
   };
 }
 
-const EXACT_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
-
 /** Throws unless the policy is complete and well formed. */
 export function assertValueScoringPolicy(
   policy: ValueScoringPolicy,
@@ -62,10 +61,7 @@ export function assertValueScoringPolicy(
     policy.reviewCredit.pool !== REVIEW_CREDIT_POOL_RULE
   )
     throw new TypeError("Value scoring policy has an unknown version");
-  if (
-    !EXACT_UTC.test(policy.effectiveAt) ||
-    new Date(policy.effectiveAt).toISOString() !== policy.effectiveAt
-  )
+  if (!isExactUtc(policy.effectiveAt))
     throw new TypeError(
       "Value scoring policy effectiveAt must be an exact UTC timestamp",
     );

@@ -28,6 +28,7 @@ import {
 import { isAssetDecimals } from "./payments/contracts";
 import { apiRequest } from "./project-api";
 import type { ProjectDefinition } from "./projects.mjs";
+import { CANONICAL_UINT } from "./record-validation.mjs";
 import { sendSolanaWalletTransaction } from "./solana-vault-actions";
 
 export interface MonthlySetting {
@@ -84,7 +85,7 @@ export function vaultMonthlyCap(
     throw new Error(
       "The vault token's decimals differ from the project's monthly amount. Record the matching asset in a project revision first.",
     );
-  if (!/^(0|[1-9][0-9]*)$/.test(project.reward.monthlyCapMinor))
+  if (!CANONICAL_UINT.test(project.reward.monthlyCapMinor))
     throw new Error("The project's monthly amount is invalid.");
   return BigInt(project.reward.monthlyCapMinor);
 }
@@ -245,7 +246,7 @@ export function verifySolanaMonthlyPlan(
     transaction.lastValidBlockHeight < 0 ||
     typeof transaction.transaction !== "string" ||
     typeof transaction.networkFeeLamports !== "string" ||
-    !/^(0|[1-9][0-9]*)$/.test(transaction.networkFeeLamports)
+    !CANONICAL_UINT.test(transaction.networkFeeLamports)
   )
     throw new Error(
       "The prepared transaction differs from the reviewed setting.",

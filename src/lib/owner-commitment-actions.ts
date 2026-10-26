@@ -21,6 +21,7 @@ import {
 } from "./evm-vault-actions";
 import { acceptsPayoutFee } from "./payments/contracts";
 import { apiRequest } from "./project-api";
+import { CANONICAL_UINT } from "./record-validation.mjs";
 
 export type OwnerCommitmentPlan = MonthlyCommitmentPlan;
 export async function requestOwnerCommitment(
@@ -63,7 +64,7 @@ export async function requestOwnerCommitment(
   if (
     !chain ||
     gross > maxBaseUnitsForChain(chain) ||
-    !/^(0|[1-9][0-9]*)$/.test(value.award.fee) ||
+    !CANONICAL_UINT.test(value.award.fee) ||
     !acceptsPayoutFee(gross, BigInt(value.award.fee)) ||
     value.award.net !== (gross - BigInt(value.award.fee)).toString()
   )
