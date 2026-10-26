@@ -77,7 +77,7 @@ export interface ProjectContributor {
   projectedSharePartsPerMillion: number | null;
   /** Applied Slopbot debit thirds in this project and cycle. */
   penaltyThirds: number;
-  /** An explicit payout exclusion for this cycle; the score is kept. */
+  /** An explicit payout exclusion for this cycle; the Points are kept. */
   payoutExclusion: PayoutExclusionRelationship | null;
 }
 
