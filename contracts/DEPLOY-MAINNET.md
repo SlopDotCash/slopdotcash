@@ -26,6 +26,14 @@
 > until the upgrade, reconciliation accepts either fee rounding. The EVM
 > upgrade kit (deploy script, calldata, fork rehearsal and registry revision)
 > is in section 4; it is prepared and unsigned.
+>
+> Owner decision (25 October 2026): bundle the owner's signed release of an
+> unsettleable monthly reserve (`docs/escrow-unsettleable-month-release.md`)
+> into this pending upgrade. The section 4 kit now targets the bundled vault.
+> The Solana program also changes: the expected post-upgrade program hash
+> `d29200ec…` from source `edf3b341` (#914) is superseded. Redo the section 2
+> deterministic Solana build from the final merged source and record its new
+> hashes before the Solana upgrade. Do not use the old hash.
 
 # Owner-controlled escrow mainnet deployment
 
@@ -373,7 +381,9 @@ solana program show "$PROGRAM" -u "$RPC"   # Data Length must now be >= the size
 ```
 
 Example: the first-operator verifiable build for the next upgrade (#901,
-source `edf3b341`) is 672,560 bytes. The mainnet program has a 681,392-byte
+source `edf3b341`) was 672,560 bytes. That build and its hash are superseded by
+the bundled monthly-reserve release; rebuild from the final merged source and
+repeat this size check. The mainnet program has a 681,392-byte
 `Data Length`. `ADDITIONAL_BYTES` is negative, so do not extend the program
 account for this upgrade.
 
@@ -924,11 +934,30 @@ or a permissionless executor submits for an approved and funded obligation.
 
 ## 4. EVM monthly reserve V2 upgrade
 
-This kit targets contract source `dd1af34d22c08a8aecd9bb6c644831f2e2da85ac`.
-It replaces the earlier `239d0235`, `e55a804a` and `2a4e80b3` kits. The existing mainnet review is still
-`bce5b0df`, as listed above. Recheck that review before use. Rehearse this kit
-on a local fork before mainnet execution. The owner may authorize an agent to
-use the upgrade authority key for the reviewed plan. Follow the approved launch
+This kit targets the contract source of PR #1271 (`SOURCE_COMMIT` below), which
+bundles the owner's signed release of an unsettleable monthly reserve into V2
+(owner decision, 25 October 2026). It replaces the `dd1af34d` kit and the
+earlier `239d0235`, `e55a804a` and `2a4e80b3` kits.
+
+`SOURCE_COMMIT` is the merged `development` commit that contains PR #1271.
+Commit identities change on rebase, so the kit pins the contract file itself:
+`contracts/evm/src/ProjectEscrow.sol` has git blob
+`ecccaa8ba4ada0100aa643278b45d03c22c0c5b1` and SHA-256
+`21378ff6e3ac1c9b5868c7b4672d78d757fc3a6b259507cb445775abebb4856e`. Check both
+at `SOURCE_COMMIT` before use; any other contract file needs a new kit.
+
+Base already received the previous V2 kit from `main` `208fbf5b` (contract
+source `dd1af34d`): [owner record](https://github.com/SlopDotCash/slopdotcash/issues/904#issuecomment-6405728213).
+The zero-value factory upgrade `0x4cc82cf7f353dae6b473c8ea4844f10c4a597f69875968a3c8139d2f9cd00dd8`
+finalized in block `53093023`. Its factory implementation is `0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f`
+and its vault template is `0x6A79B8970E980159c362d11F37dC8BFFbF2da027`, with
+runtime SHA-256 `112ea2575a1d699cb128105bf5ba7ec78a0e22f8b83051bc2114d60567a5b1e3`.
+This does **not** install the bundled release target `0x90C46e3E…` below.
+The rehearsal uses that recorded Base starting review; other networks retain
+the `bce5b0df` starting review. It refuses any different runtime or role.
+
+Recheck the exact starting review before use. Rehearse this kit on a local
+fork before mainnet execution. Follow the approved execution authority, launch
 order and acceptance checks in section 0.
 
 ### 4.1 What changes
@@ -953,6 +982,7 @@ and existing mappings. New fields follow them:
 | `pendingMonthlyGross` (`uint128`) | 18 | 1, after the existing `entered` flag |
 | `ordinarySourceSequence` (`uint256`) | 19 | 0 |
 | `monthlyReserves` (mapping) | 20 | 0 |
+| `monthlyReleased` (mapping) | 21 | 0 |
 
 The factory's 10 fields are unchanged. No initializer or migration call is
 needed. Old source-use mappings remain authoritative; the new source sequence
@@ -978,10 +1008,11 @@ Runtime SHA-256 includes the implementation address in the UUPS self-reference.
 
 | Role | Address | Runtime SHA-256 | Bytes |
 | --- | --- | --- | --- |
-| Vault | `0x6A79B8970E980159c362d11F37dC8BFFbF2da027` | `112ea2575a1d699cb128105bf5ba7ec78a0e22f8b83051bc2114d60567a5b1e3` | 21,548 |
+| Vault | `0x90C46e3E5be35B1048cD69403d1402Feed1240D8` | `155c7ea2fdeeaeccfd6daac64b6105e968c1927092f8761f34090a8b42e15bfc` | 22,752 |
 | Factory | `0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f` | `976208154ce5e58f59d826e58273d917adc226109bf95ab4894b9cf144e4a1dd` | 6,879 |
 
-The factory matches the earlier kit; the vault does not. Reproduce addresses
+The factory matches the earlier kits. The vault differs from the `dd1af34d`
+kit (`0x6A79B897…`, `112ea257…`, 21,548 bytes), which is superseded. Reproduce addresses
 from the reviewed source:
 
 ```sh
@@ -1022,7 +1053,7 @@ Use these values only after the exact build and current-state checks pass:
 ```sh
 FACTORY=0xe51AbF8c6Dbb3Ca6E9AD09F2dc6EF141d7364aAb
 AUTHORITY=0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D
-NEW_VAULT=0x6A79B8970E980159c362d11F37dC8BFFbF2da027
+NEW_VAULT=0x90C46e3E5be35B1048cD69403d1402Feed1240D8
 NEW_FACTORY=0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f
 ```
 
@@ -1073,20 +1104,38 @@ Every write goes to the loopback Anvil fork. The script generates local test
 actors and impersonates the public authority there; it uses no live key.
 `LOGS_RPC` is an optional read-only provider for the complete vault inventory.
 
-The rehearsal checks old runtime pins and roles, authority-only upgrades,
-initializer refusal, unchanged legacy storage and awards, rounded-down
-historic fees, rounded-up new fees, atomic monthly creation and exact
+The rehearsal checks recorded starting runtime pins and roles, authority-only
+upgrades, initializer refusal, unchanged storage and awards, original
+historic fees (already rounded up on Base V2), rounded-up new fees, atomic monthly creation and exact
 pre-/post-upgrade receipt verification. It then reserves V2 funds on the
-upgraded legacy vault, keeps an old funded award unchanged, turns monthly
+upgraded vault, keeps an old funded award unchanged, turns monthly
 payment off, closes the admission window and completes both leaves and a
 payment. The totals adapter must include the pending reserve and prove that
-leaf creation does not debit free funds twice.
+leaf creation does not debit free funds twice. Next it admits a canonical
+two-leaf tree with a stored total that contradicts its authenticated sum.
+The read-only finalized inspection must positively classify that exact fault,
+and both genuine proofs must fail. Missing tree data never qualifies release.
+The fixture confirms that a manual award waits, checks the
+`MonthlyRelease` digest against an independent EIP-712 hash, refuses a
+non-owner sender, another signing key and a replay, and releases the reserve
+with the owner's call and the authority's signature. The released gross must
+return to free balance, the period must stay committed, and a manual award
+must then succeed.
 
 The script advances time on its local fork only to exercise the monthly
 window. Its blocks and receipts are local evidence. It does not qualify
 mainnet finality, actual fees, provider availability or the first live payout.
-Use the result for this exact contract source; earlier `239d0235`, `e55a804a` and `2a4e80b3` results do
-not qualify this revision. Retain any failed provider attempt with the successful retry.
+Use the result for this exact contract source; earlier `dd1af34d`, `239d0235`, `e55a804a` and `2a4e80b3` results do
+not qualify this revision.
+
+Earlier primitive-only local rehearsal for this kit: Base fork block `53092393` (hash
+`0xcf8d9ccde2e77b0fe78b8f0202269dcbde5c42b765f7b3510e3cea7cf68b2773`),
+result "all checks passed". It upgraded one local vault, reserved and completed
+a V2 month, released a faulty month and found no existing
+mainnet vault in the factory inventory at that block. That arbitrary-root
+fixture did not establish the release classifier. Repeat the corrected
+canonical-tree rehearsal from the current recorded V2 start at a current block
+before signing. Retain failed attempts, including starting-review refusals.
 
 ### 4.7 Choose `supersededAtBlock`
 
@@ -1102,7 +1151,7 @@ registry operation. Use the addresses and digests in section 4.3 as current
 `evmUpgrade`; retain each previous review in `history` with its verified
 `supersededAtBlock`. Never rewrite old history. A new deployment has no
 invented prior history. Proxy digests stay unchanged. Set `sourceCommit` to
-`dd1af34d22c08a8aecd9bb6c644831f2e2da85ac` and record the upgrade transaction
+the merged commit that contains PR #1271 (`SOURCE_COMMIT`), and record the upgrade transaction
 where the registry contract requires it.
 
 Regenerate pinned `PAYMENT_DEPLOYMENTS` from D1 and deploy the reviewed
