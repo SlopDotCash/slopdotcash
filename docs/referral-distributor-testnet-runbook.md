@@ -34,10 +34,10 @@ the contract is
   S.P. operator key or a multisig with no execution delay, not a decision
   market. Who holds them is the owner's decision.
 - `REFERRAL_EPOCH_CAP` in base units: the most the declared total may exceed
-  the highest total ever posted. For a rehearsal use
-  `250000000000000000000000` (250,000 tokens at 18 decimals). This contract
-  limit applies to a whole posted root; it is separate from the approved
-  250,000-token lifetime cap per referred project.
+  the highest total ever posted. The owner approved 2,000,000 tokens for the
+  whole root, or `2000000000000000000000000` at 18 decimals. The separate
+  per-project lifetime cap remains 250,000 tokens. Confirm the actual token
+  decimals before preparing its deployment.
 - `REFERRAL_POST_SPACING` in seconds: the least time between two live posts.
   The script defaults to 27 days (one post per calendar month with room for
   a late run). A rehearsal that wants to post two epochs in one session sets
@@ -85,7 +85,7 @@ SHA. All contract tests must pass.
 ```sh
 export REFERRAL_OWNER=0x...      # test owner
 export REFERRAL_POSTER=0x...     # test poster, differs from the owner
-export REFERRAL_EPOCH_CAP=250000000000000000000000
+export REFERRAL_EPOCH_CAP=2000000000000000000000000
 # Optional: least seconds between live posts, default 27 days.
 # export REFERRAL_POST_SPACING=600
 # Optional: mock supply minted to the distributor, default 2,000,000 tokens.
@@ -179,6 +179,7 @@ not committed; publish only reviewed safe deployment evidence.
   funding line agreed, counsel's review of the terms, an operating independent
   root watcher, a verified deployment on chain id 4663 with the program token,
   and the live poster configured with its separate key and deployed addresses.
-  Record any remaining gas and contract-limit choices before funding or signing.
+  The separate poster ceilings are 0.0002 ETH per transaction and 0.002 ETH
+  per UTC day. Verify their enforcement before funding or signing.
   The normal checked `main` release installs the Worker in its reviewed mode;
   the current mode is Off. No manual Worker shell or extra release flag is needed.
