@@ -2,19 +2,28 @@ import {
   bindProvenanceSource,
   parseProvenanceReport,
 } from "../../workers/vetting/provenance-report";
+
 /** Separate private vetting evidence. Policy and external controls have no defaults. */
 
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import type { WebSession } from "../../src/lib/project-contracts";
 import {
   assemblyAssessment,
   assemblyRecord,
   parseAssemblyManifest,
 } from "../../workers/vetting/assembly-manifest";
 import { assertFilesystemReferences } from "../../workers/vetting/filesystem-capture";
-import { fail } from "../api-error";
+import {
+  type ApiError,
+  apiErrorResponse,
+  fail,
+  isSameOriginJsonWrite,
+  JSON_HEADERS,
+  json as jsonResponse,
+} from "../http";
 import type { ProjectD1Database } from "../projects/cloudflare-persistence";
-import type { WebSession } from "../projects/contracts";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
-import { isRecord, readJsonObject, sha256Hex } from "../trace/validation";
+import { isRecord, readJsonObject } from "../trace/validation";
 import {
   chunkKey,
   chunkLayout,
@@ -32,7 +41,7 @@ import {
 } from "./scan-result";
 
 // Whole objects stay within the run ceiling; each read/upload part stays bounded.
-export const MAX_EVIDENCE_OBJECT_BYTES = EVIDENCE_RUN_BYTES;
+const MAX_EVIDENCE_OBJECT_BYTES = EVIDENCE_RUN_BYTES;
 const HEX = /^[a-f0-9]{64}$/u;
 const ID = /^[a-zA-Z0-9_-]{1,100}$/u;
 const KINDS = new Set([
@@ -78,12 +87,20 @@ export const EVIDENCE_POLICY = {
     "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6380038965",
 } as const;
 export type EvidencePolicy = typeof EVIDENCE_POLICY;
+function hasKeys(value: Record<string, unknown>, keys: string[]) {
+  return Object.keys(value).sort().join() === keys.sort().join();
+}
+function isText(value: unknown, max = 500): value is string {
+  return (
+    typeof value === "string" && value.trim() !== "" && value.length <= max
+  );
+}
 function exact(value: Record<string, unknown>, keys: string[]) {
-  if (Object.keys(value).sort().join() !== keys.sort().join())
+  if (!hasKeys(value, keys))
     fail(400, "invalid_request", "Unexpected evidence fields");
 }
 function text(value: unknown, max = 500): string {
-  if (typeof value !== "string" || !value.trim() || value.length > max)
+  if (!isText(value, max))
     fail(400, "invalid_request", "Invalid evidence text");
   return value;
 }
@@ -120,15 +137,9 @@ type ObjectRow = {
   object_key: string;
   chunks: string | null;
 };
-const headers = {
-  "cache-control": "private, no-store",
-  "content-type": "application/json; charset=utf-8",
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "no-referrer",
-  "x-robots-tag": "noindex",
-};
+const headers = { ...JSON_HEADERS, "x-robots-tag": "noindex" };
 const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers });
+  jsonResponse(status, body, { headers: { "x-robots-tag": "noindex" } });
 export class VettingEvidence {
   constructor(readonly deps: EvidenceDependencies) {}
   private signed(request: Request, maximum: number) {
@@ -295,9 +306,12 @@ export class VettingEvidence {
     return bucket;
   }
   private layout(row: ObjectRow): EvidenceChunk[] | null {
-    return row.chunks === null
-      ? null
-      : chunkLayout(JSON.parse(row.chunks), row.size_bytes);
+    if (row.chunks === null) return null;
+    try {
+      return chunkLayout(JSON.parse(row.chunks), row.size_bytes);
+    } catch {
+      fail(409, "evidence_corrupt", "Stored evidence chunk layout changed");
+    }
   }
   async bytes(row: ObjectRow, run: Run): Promise<Uint8Array> {
     const bucket = this.readable(row, run);
@@ -717,49 +731,14 @@ export class VettingEvidence {
       runtimeRunIdentity: "not-asserted-by-current-vm-format" as const,
     };
   }
-  async complete(result: VettingResult) {
-    const assessment = result.assessmentId,
-      runId = result.environment.runId,
-      traceSha = result.traceSha256;
-    try {
-      const run = await this.run(assessment, runId);
-      if (run.trace_sha256 !== traceSha || !run.assembly_sha256) return false;
-      const closure = await this.assemblyClosure(assessment, runId);
-      if (
-        closure.reviewInputSha256 !== result.assessed.inputManifestSha256 ||
-        result.modelReviews.some(
-          (review) => review.inputManifestSha256 !== closure.reviewInputSha256,
-        )
-      )
-        return false;
-      const objects =
-        (
-          await this.deps.db
-            .prepare(
-              "SELECT * FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=?",
-            )
-            .bind(assessment, runId)
-            .all<ObjectRow>()
-        ).results ?? [];
-      const inventory = new Set(objects.map((object) => object.sha256));
-      const required = [
-        traceSha,
-        result.assessed.inputManifestSha256,
-        ...result.modelReviews.map((review) => review.inputManifestSha256),
-        ...result.assessed.dependencyLocks.map((lock) => lock.sha256),
-        ...result.artifacts.flatMap((artifact) => [
-          artifact.sha256,
-          ...(artifact.parentSha256 ? [artifact.parentSha256] : []),
-        ]),
-      ];
-      if (required.some((digest) => !inventory.has(digest))) return false;
-      // assemblyClosure already rechecked every registered object.
-      // The existing canonical assembler is explicitly incomplete and grants no authority.
-      // Retaining every byte cannot change that contract. Unknown future states are refused.
-      return closure.providerCallsAuthorized && closure.publicationAuthorized;
-    } catch {
-      return false;
-    }
+  /**
+   * The v1 canonical assembler is explicitly incomplete and grants no
+   * authority (`parseAssemblyManifest` accepts only unauthorized assemblies),
+   * so retained v1 evidence never clears a result. Retaining every byte
+   * cannot change that contract.
+   */
+  async complete(_result: VettingResult): Promise<boolean> {
+    return false;
   }
   /**
    * A bounded scan's retained evidence: the private report, the exact
@@ -800,8 +779,12 @@ export class VettingEvidence {
         await this.verify(row, run);
       }
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      // A refusal (missing, pending, corrupt, expired or unconfigured
+      // evidence) means "not retained"; a failed read is not a refusal.
+      if (typeof (error as Partial<ApiError> | null)?.status === "number")
+        return false;
+      throw error;
     }
   }
   /** Retained evidence for either recorded schema; v1 keeps its closure rule. */
@@ -1535,9 +1518,7 @@ export class VettingEvidence {
       if (
         operator &&
         request.method !== "GET" &&
-        (request.headers.get("origin") !== new URL(request.url).origin ||
-          request.headers.get("content-type")?.split(";")[0] !==
-            "application/json")
+        !isSameOriginJsonWrite(request)
       )
         fail(403, "origin_forbidden", "Requests must come from this site");
       if (operator && path.length === 2 && request.method === "GET")
@@ -1594,9 +1575,9 @@ export class VettingEvidence {
             fail(405, "method_not_allowed", "Native downloads require GET");
           response = await this.download(request, assessment, run, sha);
         } catch (error) {
-          const e = error as { status?: number; code?: string };
-          response = json(e.status ?? 500, {
-            error: e.status ? e.code : "evidence_failure",
+          response = apiErrorResponse(error, {
+            label: "vetting evidence API failure",
+            respond: json,
           });
         }
         response.headers.set(
@@ -1621,12 +1602,11 @@ export class VettingEvidence {
         return await this.read(request, assessment, run, sha);
       return json(404, { error: "not_found" });
     } catch (error) {
-      const e = error as { status?: number; code?: string; message?: string };
-      const status = e.status ?? 500;
-      return json(status, {
-        error:
-          status === 500 ? "evidence_failure" : (e.code ?? "evidence_failure"),
-        message: status === 500 ? "Evidence operation failed" : e.message,
+      return apiErrorResponse(error, {
+        label: "vetting evidence API failure",
+        respond: json,
+        // Unavailable-evidence refusals tell the caller what to configure.
+        publicMessage: (status) => status === 503,
       });
     }
   }

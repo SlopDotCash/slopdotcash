@@ -80,23 +80,21 @@ try {
   const send = async (action) => {
     const delivery = `${action}-${++deliveryNumber}`;
     const started = Date.now();
+    // Resolve the local D1 proxies before concurrent queue/R2 work starts.
+    // Reusing their async first() calls avoids blocking Miniflare's event loop.
+    const delivered = db
+      .prepare("SELECT id FROM qualification_deliveries WHERE id=?")
+      .bind(`command:${delivery}`);
+    const failed = db
+      .prepare("SELECT phase FROM qualification_results WHERE phase=?")
+      .bind(`failed-${action}`);
+    assert.equal(await delivered.first(), null, `Existing ${delivery} receipt`);
+    assert.equal(await failed.first(), null, `Failed ${action}`);
     console.log(JSON.stringify({ phase: action, event: "started" }));
     await queue.send({ qualification: identity, action, delivery });
     const deadline = Date.now() + 120_000;
-    while (
-      !(await db
-        .prepare("SELECT id FROM qualification_deliveries WHERE id=?")
-        .bind(`command:${delivery}`)
-        .first())
-    ) {
-      assert.equal(
-        await db
-          .prepare("SELECT phase FROM qualification_results WHERE phase=?")
-          .bind(`failed-${action}`)
-          .first(),
-        null,
-        `Failed ${action}`,
-      );
+    while (!(await delivered.first())) {
+      assert.equal(await failed.first(), null, `Failed ${action}`);
       assert.ok(Date.now() < deadline, `Missing actual ${delivery} receipt`);
       await new Promise((r) => setTimeout(r, 100));
     }

@@ -10,19 +10,22 @@ export function fetchWithDeadline(url: string, init: RequestInit = {}) {
 /** Headers and a stream are shared by HTTP requests and responses. */
 type HttpBody = Pick<Response, "headers" | "body">;
 
-/** Bounded UTF-8 transport shared by app views and API request readers. */
-export async function readBoundedText(
+/**
+ * Bounded byte transport shared by app views and API request readers. Only a
+ * size over the limit throws a RangeError, so callers can tell it apart.
+ */
+export async function readBoundedBytes(
   response: HttpBody,
   maxBytes: number,
   label: string,
-): Promise<string> {
+): Promise<Uint8Array> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     if (!/^[0-9]+$/u.test(declaredLength)) {
       throw new Error(`${label} returned an invalid content length`);
     }
     if (BigInt(declaredLength) > BigInt(maxBytes)) {
-      throw new Error(`${label} exceeded the ${maxBytes}-byte limit`);
+      throw new RangeError(`${label} exceeded the ${maxBytes}-byte limit`);
     }
   }
 
@@ -30,9 +33,8 @@ export async function readBoundedText(
   if (!reader) {
     throw new Error(`${label} returned no readable body`);
   }
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const chunks: Uint8Array[] = [];
   let byteLength = 0;
-  let source = "";
   let complete = false;
   try {
     for (;;) {
@@ -40,24 +42,40 @@ export async function readBoundedText(
       if (chunk.done) break;
       byteLength += chunk.value.byteLength;
       if (byteLength > maxBytes) {
-        throw new Error(`${label} exceeded the ${maxBytes}-byte limit`);
+        throw new RangeError(`${label} exceeded the ${maxBytes}-byte limit`);
       }
-      source += decoder.decode(chunk.value, { stream: true });
+      chunks.push(chunk.value);
     }
-    source += decoder.decode();
     complete = true;
   } finally {
     if (!complete) {
       try {
         await reader.cancel();
       } catch {
-        // The original read/decoding failure is the actionable error.
+        // The original read failure is the actionable error.
       }
     }
     reader.releaseLock();
   }
 
-  return source;
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/** Bounded UTF-8 transport shared by app views and API request readers. */
+export async function readBoundedText(
+  response: HttpBody,
+  maxBytes: number,
+  label: string,
+): Promise<string> {
+  return new TextDecoder("utf-8", { fatal: true }).decode(
+    await readBoundedBytes(response, maxBytes, label),
+  );
 }
 
 export async function readBoundedJson(

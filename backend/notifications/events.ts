@@ -521,7 +521,7 @@ export type ScamReviewTarget = {
 
 /** The stored action path of a scam review notice. Rejects any target that
  * is not a canonical GitHub owner, repository, item kind and number. */
-export function scamReviewPath(target: ScamReviewTarget): string {
+function scamReviewPath(target: ScamReviewTarget): string {
   if (
     !GITHUB_OWNER.test(target.owner) ||
     !GITHUB_REPO.test(target.repo) ||

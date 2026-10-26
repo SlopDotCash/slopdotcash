@@ -13,36 +13,20 @@ import {
   type NotificationsResponse,
   notificationCursor,
 } from "../../src/lib/notifications";
+import type { D1Database, D1QueryStatement } from "../d1";
+import { isSameOriginJsonWrite, JSON_HEADERS, json } from "../http";
 import { SCAM_REVIEW_PATH, scamReviewGitHubUrl } from "./events";
 
 export interface NotificationsDependencies {
-  db: {
-    prepare(query: string): {
-      bind(...values: (string | number)[]): {
-        all<T>(): Promise<{ results: T[] }>;
-        run(): Promise<{ meta?: { changes?: number } }>;
-      };
-    };
-  };
+  db: D1Database<D1QueryStatement>;
   sessionActor(request: Request): Promise<{ githubId: string } | null>;
   now(): Date;
   moderatorGithubIds?: ReadonlySet<string>;
 }
 
-export const NOTIFICATIONS_PATH = "/api/v1/notifications";
+const NOTIFICATIONS_PATH = "/api/v1/notifications";
 const READ_PATH = `${NOTIFICATIONS_PATH}/read`;
 const LIST_LIMIT = 100;
-
-const headers = {
-  "content-type": "application/json; charset=utf-8",
-  "cache-control": "private, no-store",
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "no-referrer",
-};
-
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers });
-}
 
 interface Row {
   event_key: string;
@@ -105,11 +89,7 @@ export async function handleNotificationsApi(
     return json(405, { error: "method_not_allowed" });
   // Writes ride the SameSite session cookie, so they must come from this
   // origin as JSON; a cross-site form can never submit one.
-  if (
-    write &&
-    (request.headers.get("origin") !== url.origin ||
-      request.headers.get("content-type")?.split(";")[0] !== "application/json")
-  )
+  if (write && !isSameOriginJsonWrite(request))
     return json(403, { error: "origin_forbidden" });
   try {
     const actor = await deps.sessionActor(request);
@@ -132,7 +112,7 @@ export async function handleNotificationsApi(
       if (!rows.results[0]) return json(404, { error: "not_found" });
       return new Response(null, {
         status: 302,
-        headers: { ...headers, location: target },
+        headers: { ...JSON_HEADERS, location: target },
       });
     }
     if (appealRoute) {
@@ -166,7 +146,7 @@ export async function handleNotificationsApi(
       return new Response(null, {
         status: 302,
         headers: {
-          ...headers,
+          ...JSON_HEADERS,
           location: `https://github.com/${job.owner}/${job.repo}/${job.itemKind === "pull_request" ? "pull" : "issues"}/${job.number}`,
         },
       });

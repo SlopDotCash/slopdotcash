@@ -5,6 +5,7 @@ import {
   referralResponse,
 } from "../../src/lib/referral-claims";
 import type { FileReferrer } from "../../workers/referral-accrual/core";
+import { apiErrorResponse } from "../http";
 import {
   activeClaimEpoch,
   type ClaimCacheRow,
@@ -22,17 +23,31 @@ interface ReadStatement {
   bind(...values: (string | number)[]): ReadStatement;
   first<T>(): Promise<T | null>;
 }
+type ReferralClaimsDependencies = {
+  db: { prepare(query: string): ReadStatement };
+  sessionActor(request: Request): Promise<{ githubId: string } | null>;
+  now: () => Date;
+};
 export async function handleReferralClaims(
   request: Request,
-  deps: {
-    db: { prepare(query: string): ReadStatement };
-    sessionActor(request: Request): Promise<{ githubId: string } | null>;
-    now: () => Date;
-  },
+  deps: ReferralClaimsDependencies,
 ): Promise<Response | null> {
   if (new URL(request.url).pathname !== "/api/v1/referrals/me") return null;
   if (request.method !== "GET")
     return json({ error: "method_not_allowed" }, 405);
+  try {
+    return await referralAccount(request, deps);
+  } catch (caught) {
+    return apiErrorResponse(caught, {
+      label: "referral claims API failure",
+      respond: (status, body) => json(body, status),
+    });
+  }
+}
+async function referralAccount(
+  request: Request,
+  deps: ReferralClaimsDependencies,
+): Promise<Response> {
   const actor = await deps.sessionActor(request);
   if (!actor) return json({ error: "sign_in_required" }, 401);
   const cache = await deps.db

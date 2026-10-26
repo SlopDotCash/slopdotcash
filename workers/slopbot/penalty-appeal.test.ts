@@ -764,26 +764,26 @@ const APPEAL =
   "SELECT draft, escalation IS NOT NULL AS escalated, resolution, resolved_by FROM slopbot_appeals";
 const day = 24 * 60 * 60 * 1000;
 
-test("project closure consent is fresh and never overrides repository or production opt-outs", async () => {
-  // Synthetic decisions exercise authorization only, not model qualification.
-  for (const boundary of [
-    "absent",
-    "revoked",
-    "during confirmation",
-    "production off",
-    "file off",
-    "category off",
-    "invalid file",
-    "truncated file",
-    "non-file",
-    "unreadable file",
-    "redirect",
-    "empty success",
-    "forbidden",
-    "rate limited",
-    "server failure",
-    "malformed response",
-  ]) {
+// Each real consent boundary owns its fixture and the unchanged test timeout.
+for (const boundary of [
+  "absent",
+  "revoked",
+  "during confirmation",
+  "production off",
+  "file off",
+  "category off",
+  "invalid file",
+  "truncated file",
+  "non-file",
+  "unreadable file",
+  "redirect",
+  "empty success",
+  "forbidden",
+  "rate limited",
+  "server failure",
+  "malformed response",
+]) {
+  test(`project closure consent respects the ${boundary} boundary`, async () => {
     await closedItem(async (run) => {
       if (boundary === "absent") {
         run.consent(null);
@@ -844,7 +844,10 @@ test("project closure consent is fresh and never overrides repository or product
       expect(run.writes.some((path) => path.startsWith("PATCH "))).toBe(false);
       expect(run.sql(PENALTY)).toEqual([]);
     });
-  }
+  });
+}
+
+test("fresh project consent and confirmation permit closure without a repository file", async () => {
   // No file, no completed-review quota and a new installation: explicit
   // consent plus independent confirmation can reach the existing close path.
   await closedItem(async (run) => {

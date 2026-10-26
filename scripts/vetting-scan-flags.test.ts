@@ -11,10 +11,7 @@ import {
   handleProjectApi,
   type ProjectApiDependencies,
 } from "../backend/projects/handler";
-import {
-  flaggerAuthority,
-  vettingScanRequester,
-} from "../backend/projects/setup";
+import { flaggerAuthority } from "../backend/projects/setup";
 import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { githubFlaggerStanding } from "../backend/vetting/flagger-standing";
 import {
@@ -24,6 +21,7 @@ import {
 import {
   handleVettingApi,
   queueAutomaticScan,
+  vettingScanRequester,
 } from "../backend/vetting/handler";
 import {
   CloudflareVettingPersistence,

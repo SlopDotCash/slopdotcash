@@ -128,8 +128,8 @@ export function allocateReviewBudgetMinor(
 }
 
 /**
- * The additive review line is tier-only: finalized-trace weight remains part
- * of the shared-pool score and does not change this second allocation.
+ * The additive review line is tier-only: a finalized trace never changes this
+ * second allocation. Before November 2026 it can add shared-pool weight only.
  */
 export function additiveReviewBudgetWeights(
   events: readonly LeaderboardSnapshot["ledger"][number][],

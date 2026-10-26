@@ -452,10 +452,36 @@ lamports. Migration `0094_fee_solana_native_gas.sql` preserves all EVM records
 and extends the same durable journal to Solana; legacy `*_wei` SQL fields
 store lamports for Solana. Each signature reserves its full transaction
 ceiling until a canonical finalized receipt reconciles its actual cost.
-A signed but expired or missing transaction retains that reservation.
-No code path releases it. Four such sends hold the whole 20,000,000-lamport
-day budget, so Solana signing stops on every later UTC day until a reviewed
-resolution path exists.
+A signed but expired or missing transaction retains that reservation until
+both independent providers meet the owner-approved expiry policy (#905,
+26 October 2026). The signer records the signed blockhash's actual slot.
+Each provider must match mainnet genesis, retain history at least as old as
+that anchor, verify the same finalized anchor blockhash, return false for
+`isBlockhashValid` at finalized commitment, and return no full-history
+signature or finalized transaction. Null indexes alone are insufficient: both
+providers must also return every finalized block and its complete signature list
+from a common expired horizon back to the signed anchor. Each parent slot and
+blockhash must link, and none may contain the signed transaction. The scan
+retains immutable page evidence and a durable cursor under the current lease,
+processing up to 32 blocks per provider per run; restarts resume the fixed
+horizon. Missing blocks or signature lists keep the hold. Both completed scans must
+agree on the common horizon, block count and cumulative block/signature digest;
+a disagreement keeps the reservation even when neither lists the target.
+The journal and database enforce that agreement again at settlement.
+Stale contexts, pruned history, unknown
+or identical provider operators, receipt disagreement and provider failure
+keep the hold. A null receipt alone never releases native gas.
+
+An immutable `fee_solana_expiry_proofs` record and the zero-cost journal
+settlement commit atomically under the current network lease. The claim or
+swap is then marked failed before a later attempt; original signed bytes
+remain unchanged. Earlier records without a slot anchor remain held. This
+policy trusts two independent RPC history observations; it is not a
+cryptographic proof of absence. The default secondary is Allnodes PublicNode
+(`https://solana-rpc.publicnode.com`); a custodian may set
+`SOLANA_RECOVERY_RPC_URL` to an independently operated supported endpoint.
+Known operators are the Solana public service, PublicNode, Alchemy and Helius.
+Do not disguise aliases of one operator as independent services.
 
 Before signing, Solana prices the exact message with `getFeeForMessage`,
 reserves rent for every classic associated-account creation even if the

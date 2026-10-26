@@ -1,6 +1,8 @@
 /** Private GitHub evidence for copied contributions. A closure comment is a
  * discovery hint, never sufficient evidence for assigning implementation credit.
  */
+
+import { sameRepositoryCommitHints } from "./value-commit-hints";
 import type { FileChange, ValueEvidence } from "./value-evidence";
 import { retainedManifestIdentity } from "./value-manifest-identity";
 import {
@@ -8,6 +10,7 @@ import {
   valueDeletionCount,
   valuePatch,
 } from "./value-patch";
+import { hasRetainedMergeReference } from "./value-retained-reference";
 import type { WorkUnitSource } from "./value-work-unit";
 
 /** An exact same-author reopen already retains authenticated attribution.
@@ -107,14 +110,16 @@ function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
   return before !== null && before === history(accepted);
 }
 
-export function retainedCopySources(
+export async function retainedCopySources(
   original: WorkUnitSource,
   sources: readonly WorkUnitSource[],
-): WorkUnitSource[] {
+): Promise<WorkUnitSource[]> {
   const evidence = original.evidence;
   if (evidence.pull.merged_at !== null || evidence.indirectAcceptance)
     return [];
-  return sources.filter(({ evidence: integration }) => {
+  const retained: WorkUnitSource[] = [];
+  for (const source of sources) {
+    const integration = source.evidence;
     const accepted = integration.pull;
     if (
       integration.repositoryNodeId !== evidence.repositoryNodeId ||
@@ -129,21 +134,24 @@ export function retainedCopySources(
         ),
       )
     )
-      return false;
-    return (
-      sameAuthorReopen(evidence, integration) ||
-      evidence.comments.some(
-        (comment) =>
-          comment.user?.node_id === accepted.merged_by?.node_id &&
-          Date.parse(comment.created_at) >=
-            Date.parse(accepted.merged_at as string) &&
-          /\b(?:merged?|integrat(?:ed|ion))\b/iu.test(comment.body) &&
-          [...comment.body.matchAll(/\b[a-f0-9]{40}\b/gu)].some(
-            ([sha]) => sha === accepted.merge_commit_sha,
-          ),
+      continue;
+    let acknowledged = sameAuthorReopen(evidence, integration);
+    for (const comment of evidence.comments) {
+      if (
+        comment.user?.node_id === accepted.merged_by?.node_id &&
+        Date.parse(comment.created_at) >=
+          Date.parse(accepted.merged_at as string) &&
+        /\b(?:merged?|integrat(?:ed|ion))\b/iu.test(comment.body) &&
+        (sameRepositoryCommitHints(evidence.repository, comment.body).some(
+          (sha) => sha.length === 40 && sha === accepted.merge_commit_sha,
+        ) ||
+          (await hasRetainedMergeReference(evidence, comment, integration)))
       )
-    );
-  });
+        acknowledged = true;
+    }
+    if (acknowledged) retained.push(source);
+  }
+  return retained;
 }
 
 /** Keep the complete ordered changed lines, including whitespace. Context and
@@ -243,7 +251,7 @@ function preexistingHunks(
   return [...prior].sort();
 }
 
-export function retainedCopyBindings(sources: readonly WorkUnitSource[]) {
+export async function retainedCopyBindings(sources: readonly WorkUnitSource[]) {
   const bindings = new Map<
     string,
     {
@@ -257,7 +265,7 @@ export function retainedCopyBindings(sources: readonly WorkUnitSource[]) {
   >();
   const limitations = new Set<string>();
   for (const original of sources) {
-    const integrations = retainedCopySources(original, sources);
+    const integrations = await retainedCopySources(original, sources);
     const evidence = original.evidence;
     // An exact edit match plus a GitHub PR relationship is an ownership
     // ambiguity even if the acknowledgement is missing, removed, or forged.
