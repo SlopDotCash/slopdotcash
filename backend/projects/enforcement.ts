@@ -149,10 +149,16 @@ export function projectAppealState(
   if (restriction.state === "clear") return "none";
   const newestFirst = [...restriction.records].reverse();
   const boundary =
-    newestFirst.find((record) =>
-      ["ban", "quarantine", "reinstate", "deny_reinstatement"].includes(
-        record.action,
-      ),
+    newestFirst.find(
+      (record) =>
+        // An ordinary ban can retain the pending project appeal. A new
+        // malicious result or a decision that closes it starts a new boundary.
+        (record.action === "ban" &&
+          (record.actorRole === "vetting-service" ||
+            record.appealAfter !== "requested")) ||
+        ["quarantine", "reinstate", "deny_reinstatement"].includes(
+          record.action,
+        ),
     )?.sequence ?? 0;
   const request = newestFirst.find(
     (record) =>
