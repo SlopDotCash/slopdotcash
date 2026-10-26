@@ -5,6 +5,7 @@ import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { findProject } from "../../src/lib/projects.mjs";
+import { enqueueReopen } from "../../tests/slopbot-reopen-fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { Category, Job } from "./contracts";
 import worker from "./index";
@@ -29,6 +30,7 @@ async function uncertainReview(
     setMaintainerComments: (value: boolean) => void;
     setVerdict: (category: Category, nextConfidence: number) => void;
     job: (kind: string, extra: Record<string, unknown>) => Job;
+    reopen: () => Promise<Job>;
     interleave: (
       at: "issue" | "timeline" | "add",
       callback: () => Promise<void>,
@@ -246,6 +248,7 @@ async function uncertainReview(
   const sent: Job[] = [];
   const env = {
     SLOPBOT_DB: db as unknown as D1TransactionalDatabase,
+    SLOPBOT_WEBHOOK_SECRET: "local-synthetic-secret",
     SLOPBOT_APP_ID: "1",
     SLOPBOT_APP_PRIVATE_KEY: privateKey,
     SLOPBOT_APP_USER_ID: "999",
@@ -282,6 +285,21 @@ async function uncertainReview(
       setVerdict: (category: Category, nextConfidence: number) => {
         currentCategory = category;
         currentConfidence = nextConfidence;
+      },
+      reopen: async () => {
+        const body = {
+          ...job,
+          kind: "human_reopen" as const,
+          deliveryId: `webhook-reopen-${crypto.randomUUID()}`,
+          senderId: 43,
+        };
+        const response = await enqueueReopen(env as never, body, {
+          node_id: "PR_local",
+          updated_at: new Date().toISOString(),
+          head: { sha: "b".repeat(40) },
+        });
+        expect(await response.text()).toBe("queued");
+        return body;
       },
       job: (kind, extra) =>
         ({
@@ -641,7 +659,7 @@ test("a maintainer reopen removes the uncertain label and supersedes a due hold 
     expect(run.labels.map((entry) => entry.name)).toContain(
       "slopbot:uncertain",
     );
-    await run.deliver([run.job("human_reopen", { senderId: 43 })]);
+    await run.deliver([await run.reopen()]);
     expect(run.labels.map((entry) => entry.name)).not.toContain(
       "slopbot:uncertain",
     );
@@ -657,9 +675,7 @@ test("a maintainer reopen removes the uncertain label and supersedes a due hold 
       (job) => job.kind === "maintainer_hold",
     );
     expect(due).toHaveLength(1);
-    run.interleave("add", () =>
-      run.deliver([run.job("human_reopen", { senderId: 43 })]),
-    );
+    run.interleave("add", async () => run.deliver([await run.reopen()]));
     await run.deliver(due);
     expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
       { outcome: "superseded" },

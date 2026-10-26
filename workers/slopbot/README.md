@@ -109,6 +109,16 @@ to `"true"` after the explicit production qualification and activation review.
    in `PROJECT_MODERATOR_GITHUB_IDS` decides an escalated appeal with
    `/slopbot uphold` or `/slopbot deny`, never their own. Unset, no moderator
    decision is possible. A maintainer reopen always wins.
+   The signature-verified webhook receipt binds a reopen to its item, sender,
+   original revision and event time. Queue retries use that bound revision;
+   a changed head or issue text cannot inherit the decision. Older jobs without
+   that receipt make no decision. Confirm current GitHub maintainer authority
+   and an open item before applying it. The existing same-revision protection
+   also clears labels from reviews that raced with the reopen, including a
+   successful label write whose response was lost. Event time is audit evidence,
+   not a precision-based wait. Repeated cleanup keeps one penalty reversal and
+   never changes a prior denied appeal into an upheld decision.
+
 
 ## Project consent and repository restrictions
 

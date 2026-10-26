@@ -25,6 +25,7 @@ import {
 } from "./closure-eligibility";
 import {
   AUTHOR_DAILY_CAP,
+  CATEGORIES,
   type Category,
   CLOSE_CONFIDENCE,
   CONFIG_PATH,
@@ -81,6 +82,11 @@ import {
   reviewRegistration,
   scopeAllowed,
 } from "./registry";
+import {
+  confirmedReopenFor,
+  confirmReopen,
+  reopenSource,
+} from "./reopen-source";
 import { route } from "./routing";
 import type { ValueMergeVerifier } from "./value-merge-profile";
 
@@ -1039,6 +1045,7 @@ async function runReview(
   await store.assertReviewClaim(db, claim);
   await requireScope(db, job, scope);
   if (!routing.review) {
+    await clearConfirmedReopenFindings(env, job, context);
     await store.finishReview(db, reviewKey, claimToken, "skipped", {
       skipReason: routing.reason,
     });
@@ -1325,6 +1332,13 @@ async function runReview(
   );
   await store.assertReviewClaim(db, claim);
   await requireScope(db, job, scope);
+  if (await clearConfirmedReopenFindings(env, job, context)) {
+    await store.finishReview(db, reviewKey, claimToken, "completed", {
+      verdict,
+      action: "comment",
+    });
+    return "maintainer reopened this revision; finding removed";
+  }
   const label = categoryLabel(category);
   const labeled = await context.github.request<{ name: string }[]>(
     "POST",
@@ -1350,6 +1364,13 @@ async function runReview(
     "label",
     category,
   );
+  if (await clearConfirmedReopenFindings(env, job, context)) {
+    await store.finishReview(db, reviewKey, claimToken, "completed", {
+      verdict,
+      action: "label",
+    });
+    return "maintainer reopened this revision; finding removed";
+  }
   if (close && !(await stillMayClose(env, job, context, verdict))) {
     close = false;
     await upsertComment(
@@ -1668,6 +1689,56 @@ async function latestFinding(
   return category === "none" ? null : category;
 }
 
+/** A confirmed reopen protects the exact revision, including reviews that
+ * passed routing before its marker was recorded. The comment action stores
+ * the category before label POST, so a lost POST response is also recoverable.
+ */
+async function clearConfirmedReopenFindings(
+  env: ReviewEnv,
+  job: Job,
+  session: Pick<AppealSession, "github" | "issue" | "revision">,
+): Promise<boolean> {
+  const db = env.SLOPBOT_DB;
+  const { github, revision } = session;
+  if (!(await confirmedReopenFor(db, session.issue.node_id, revision)))
+    return false;
+  const issue = await github.get<Issue>(
+    `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
+  );
+  if (
+    !issue ||
+    issue.node_id !== session.issue.node_id ||
+    issue.state !== "open" ||
+    (await itemRevision(github, job, issue)).revision !== revision
+  )
+    return false;
+  const row = await db
+    .prepare(
+      `SELECT json_group_array(DISTINCT a.detail) AS categories
+     FROM slopbot_actions a JOIN slopbot_reviews r ON r.review_key = a.review_key
+     WHERE r.item_node_id = ? AND r.revision = ? AND a.action = 'comment'`,
+    )
+    .bind(issue.node_id, revision)
+    .first<{ categories: string }>();
+  for (const category of JSON.parse(row?.categories ?? "[]") as string[]) {
+    if (
+      category !== "none" &&
+      CATEGORIES.includes(category as Category) &&
+      hasLabel(issue, categoryLabel(category as Category))
+    )
+      await removeLabel(env, job, github, categoryLabel(category as Category));
+  }
+  const hold = await db
+    .prepare(
+      `SELECT 1 AS n FROM slopbot_maintainer_holds WHERE item_node_id = ? AND revision = ?
+      AND (resolved_at IS NULL OR outcome = 'labeled') LIMIT 1`,
+    )
+    .bind(issue.node_id, revision)
+    .first<{ n: number }>();
+  if (hold) await removeLabel(env, job, github, UNCERTAIN_LABEL);
+  return true;
+}
+
 // Appeals and human reopens both stop Slopbot from re-closing this revision.
 // A maintainer reopen reverses the penalty once and resolves an open appeal.
 // An author's appeal opens Slopbot triage (owner decision D8).
@@ -1680,6 +1751,17 @@ export async function recordHumanSignal(
   const session = await appealSession(env, job);
   if (typeof session === "string") return session;
   const { github, issue, revision } = session;
+  const source =
+    job.kind === "human_reopen" ? await reopenSource(db, job) : null;
+  if (job.kind === "human_reopen") {
+    if (!source) return "reopen source unavailable; no decision";
+    if (
+      source.itemNodeId !== issue.node_id ||
+      source.revision !== revision ||
+      issue.state !== "open"
+    )
+      return "reopen source changed; no decision";
+  }
   if (job.kind === "appeal" && job.senderId !== issue.user.id)
     return "only the author can appeal";
   let kind: "appeal" | "human_reopen" = job.kind;
@@ -1702,21 +1784,13 @@ export async function recordHumanSignal(
     String(job.senderId),
   );
   if (kind === "human_reopen") {
-    const finding = await latestFinding(db, issue.node_id);
-    if (finding !== null && hasLabel(issue, categoryLabel(finding)))
-      await removeLabel(env, job, github, categoryLabel(finding));
-    const hold = await db
-      .prepare(
-        `SELECT 1 AS n FROM slopbot_maintainer_holds
-          WHERE item_node_id = ? AND revision = ?
-            AND (resolved_at IS NULL OR outcome = 'labeled')`,
-      )
-      .bind(issue.node_id, revision)
-      .first<{ n: number }>();
-    if (hasLabel(issue, UNCERTAIN_LABEL) || hold !== null)
-      await removeLabel(env, job, github, UNCERTAIN_LABEL);
+    // The signed event and current authority have both been checked. A hold
+    // write that loses its response can reconcile this decision on its retry.
+    await confirmReopen(db, job.deliveryId);
+    if (!(await clearConfirmedReopenFindings(env, job, session)))
+      return "reopen source changed; no cleanup";
     await reversePenalty(db, issue.node_id, "maintainer_reopen");
-    const appeal = await latestAppealFor(db, issue.node_id);
+    const appeal = await appealByKey(db, `appeal:${issue.node_id}:${revision}`);
     if (appeal !== null) {
       await resolveAppeal(db, appeal.appeal_key, "upheld", "maintainer");
       const current = await appealByKey(db, appeal.appeal_key);
@@ -2300,12 +2374,12 @@ export async function applyMaintainerHold(
       db,
       `appeal:${hold.item_node_id}:${hold.revision}`,
     );
-    const reopened = await store.count(
+    const reopened = await confirmedReopenFor(
       db,
-      "SELECT COUNT(*) AS n FROM slopbot_actions WHERE review_key = ? AND action = 'human_reopen'",
-      `reopen:${hold.item_node_id}:${hold.revision}`,
+      hold.item_node_id,
+      hold.revision,
     );
-    if (appeal?.resolution !== "upheld" && reopened === 0) return null;
+    if (appeal?.resolution !== "upheld" && !reopened) return null;
     // A label may have landed during an appeal or before a lost response.
     // Keep the hold open for retry until GitHub confirms its removal.
     await removeLabel(env, job, github, UNCERTAIN_LABEL);

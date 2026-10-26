@@ -16,6 +16,7 @@ import {
   registeredRepository,
   reviewRegistration,
 } from "./registry";
+import { type ReopenItem, recordReopenSource } from "./reopen-source";
 import {
   handleRepositoryAccess,
   handleRepositoryRead,
@@ -79,8 +80,8 @@ type Payload = {
     owner: { login: string };
   };
   sender?: { id: number; type: string };
-  issue?: { number: number; pull_request?: unknown };
-  pull_request?: { number: number };
+  issue?: ReopenItem & { number: number; pull_request?: unknown };
+  pull_request?: ReopenItem & { number: number };
   comment?: { body: string; id?: number };
 };
 
@@ -445,6 +446,21 @@ export default {
             "repository is not registered in the Slop registry",
             { status: 202 },
           );
+        }
+        if (
+          job.kind === "human_reopen" &&
+          !(await recordReopenSource(
+            env.SLOPBOT_DB,
+            job,
+            job.itemKind === "pull_request"
+              ? payload.pull_request
+              : payload.issue,
+          ))
+        ) {
+          await store.completeDelivery(env.SLOPBOT_DB, deliveryId);
+          return new Response("reopen source unavailable; no decision", {
+            status: 202,
+          });
         }
         await env.SLOPBOT_QUEUE.send(job);
       }
