@@ -1,3 +1,4 @@
+import { decodeBase58Bytes } from "./base58.ts";
 import {
   exactKeys as exactFundingKeys,
   readRecord as fundingRecord,
@@ -6,29 +7,15 @@ import {
 
 /** Validates canonical public receiving addresses for each funding network. */
 
-const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 export const MAX_FUNDING_ROUTES = 32;
 
 function decodedBase58Length(value, minimumLength, maximumLength) {
-  if (
-    typeof value !== "string" ||
-    value.length < minimumLength ||
-    value.length > maximumLength
-  ) {
-    return null;
-  }
-  let number = 0n;
-  for (const character of value) {
-    const digit = BASE58.indexOf(character);
-    if (digit < 0) return null;
-    number = number * 58n + BigInt(digit);
-  }
-  let bytes = 0;
-  while (number > 0n) {
-    bytes += 1;
-    number >>= 8n;
-  }
-  return (value.match(/^1*/u)?.[0].length ?? 0) + bytes;
+  return typeof value === "string" &&
+    value.length >= minimumLength &&
+    value.length <= maximumLength &&
+    /^[1-9A-HJ-NP-Za-km-z]+$/u.test(value)
+    ? decodeBase58Bytes(value).length
+    : null;
 }
 
 function bech32Polymod(values) {
