@@ -616,7 +616,18 @@ export class CloudflareVettingPersistence {
         )
       )
         return { state: "banned", assessment: summarize(malicious) };
-      if (!(await this.retainedEvidence?.(finished)))
+      let retained: boolean | undefined;
+      try {
+        retained = await this.retainedEvidence?.(finished);
+      } catch {
+        console.error("vetting evidence read failure");
+        return {
+          state: "unverified",
+          reason:
+            "Slop could not read the retained evidence of the clean assessment. Retry later.",
+        };
+      }
+      if (!retained)
         return {
           state: "unverified",
           reason:

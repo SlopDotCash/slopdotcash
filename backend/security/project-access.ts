@@ -1,7 +1,7 @@
 /** Registered-project reporting authority. This grants no financial role. */
 import type { GithubActor } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
-import { fail } from "../api-error";
+import { fail } from "../http";
 import {
   type RepositoryAccessReader,
   readRepositoryAccess,

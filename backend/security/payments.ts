@@ -87,7 +87,7 @@ import {
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import { payoutFee } from "../../src/lib/payments/contracts";
-import { fail } from "../api-error";
+import { fail } from "../http";
 
 /** A private vault snapshot older than this does not prove free funds. */
 export const VAULT_SNAPSHOT_MAX_AGE_MS = 30 * 60_000;

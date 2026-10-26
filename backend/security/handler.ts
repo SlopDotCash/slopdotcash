@@ -15,13 +15,20 @@ import {
   type SecurityBountyTerms,
   securityBountySplit,
 } from "../../src/lib/security-bounty.mjs";
-import { type ApiError, fail } from "../api-error";
-import { pathParts } from "../api-path";
 import type {
   D1Result,
   D1QueryStatement as D1Statement,
   D1TransactionalDatabase,
 } from "../d1";
+import {
+  apiErrorResponse,
+  exactKeys,
+  fail,
+  isSameOriginJsonWrite,
+  json as jsonResponse,
+  pathParts,
+  requireActor,
+} from "../http";
 import { notifySecurityCase } from "../notifications/events";
 import {
   hasParticipationBan,
@@ -211,15 +218,9 @@ export function json(
   body: Record<string, unknown>,
   cacheControl = "private, no-store",
 ): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "cache-control": cacheControl,
-      "content-type": "application/json; charset=utf-8",
-      "referrer-policy": "no-referrer",
-      "x-content-type-options": "nosniff",
-      "x-robots-tag": "noindex",
-    },
+  return jsonResponse(status, body, {
+    cacheControl,
+    headers: { "x-robots-tag": "noindex" },
   });
 }
 
@@ -293,28 +294,6 @@ function timestampField(
       `${key} must be a ${past ? "past" : "future"} UTC time`,
     );
   return value;
-}
-
-export function exactKeys(
-  body: Record<string, unknown>,
-  required: string[],
-  optional: string[] = [],
-): void {
-  const allowed = new Set([...required, ...optional]);
-  if (
-    required.some((key) => !Object.hasOwn(body, key)) ||
-    Object.keys(body).some((key) => !allowed.has(key))
-  )
-    fail(400, "invalid_request", "Request body has unexpected fields");
-}
-
-export async function requireActor(
-  request: Request,
-  deps: SecurityApiDependencies,
-): Promise<Actor> {
-  const actor = await deps.sessionActor(request);
-  if (actor === null) fail(401, "unauthorized", "Sign in with GitHub");
-  return actor;
 }
 
 export async function currentReportingProject(
@@ -3265,12 +3244,7 @@ export async function handleSecurityApi(
   )
     return null;
   try {
-    if (
-      request.method !== "GET" &&
-      (request.headers.get("origin") !== new URL(request.url).origin ||
-        request.headers.get("content-type")?.split(";")[0] !==
-          "application/json")
-    )
+    if (request.method !== "GET" && !isSameOriginJsonWrite(request))
       fail(403, "origin_forbidden", "Requests must come from this site");
     if (
       request.method === "GET" &&
@@ -3312,28 +3286,10 @@ export async function handleSecurityApi(
     }
     return json(404, { error: "not_found" });
   } catch (caught) {
-    const error =
-      typeof caught === "object" && caught !== null
-        ? (caught as Partial<ApiError>)
-        : {};
-    const status =
-      Number.isSafeInteger(error.status) &&
-      Number(error.status) >= 400 &&
-      Number(error.status) <= 599
-        ? Number(error.status)
-        : 500;
     // Never log case content, identifiers or the request body.
-    if (status >= 500) console.error("security case API failure");
-    return json(status, {
-      error:
-        typeof error.code === "string" &&
-        /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
-          ? error.code
-          : "internal_error",
-      message:
-        status >= 500 || typeof error.message !== "string"
-          ? "Internal error"
-          : error.message,
+    return apiErrorResponse(caught, {
+      label: "security case API failure",
+      respond: json,
     });
   }
 }

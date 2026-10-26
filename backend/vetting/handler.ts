@@ -1,4 +1,3 @@
-import { pathParts } from "../api-path";
 /**
  * Community project security vetting API (PRD VET-01 to VET-08, MVP-12).
  *
@@ -13,7 +12,14 @@ import { pathParts } from "../api-path";
 
 import type { ProjectSetupStatus } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
-import { type ApiError, fail } from "../api-error";
+import {
+  type ApiError,
+  apiErrorResponse,
+  fail,
+  isSameOriginJsonWrite,
+  json as jsonResponse,
+  pathParts,
+} from "../http";
 import type {
   GithubActor,
   ProjectPersistence,
@@ -37,7 +43,7 @@ import {
   type VettingPin,
   vettedContentSha256,
 } from "./persistence";
-import { MAX_VETTING_RESULT_BYTES, VettingResultError } from "./result";
+import { MAX_VETTING_RESULT_BYTES } from "./result";
 import {
   isScanResult,
   parseRecordedVettingResult,
@@ -79,15 +85,7 @@ export type VettingApiDependencies = {
 };
 
 function json(status: number, body: Record<string, unknown>): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-      "referrer-policy": "no-referrer",
-      "x-content-type-options": "nosniff",
-    },
-  });
+  return jsonResponse(status, body, { cacheControl: "no-store" });
 }
 
 function base64Bytes(value: string): Uint8Array | null {
@@ -102,6 +100,11 @@ function base64Bytes(value: string): Uint8Array | null {
 
 type ServiceKey = { sha256: string; key: CryptoKey };
 
+function invalidServiceKeys(): ServiceKey[] {
+  console.error("VETTING_RESULT_PUBLIC_KEYS holds an invalid key");
+  return [];
+}
+
 /** The configured service keys; an empty list means the service is unavailable. */
 async function serviceKeys(value: string | undefined): Promise<ServiceKey[]> {
   const keys: ServiceKey[] = [];
@@ -109,7 +112,7 @@ async function serviceKeys(value: string | undefined): Promise<ServiceKey[]> {
     if (entry.trim() === "") continue;
     const raw = base64Bytes(entry);
     // A malformed key makes the whole configuration unusable, never partly trusted.
-    if (raw === null || raw.length !== 32) return [];
+    if (raw === null || raw.length !== 32) return invalidServiceKeys();
     try {
       keys.push({
         sha256: await sha256Hex(raw),
@@ -122,7 +125,7 @@ async function serviceKeys(value: string | undefined): Promise<ServiceKey[]> {
         ),
       });
     } catch {
-      return [];
+      return invalidServiceKeys();
     }
   }
   return keys;
@@ -696,13 +699,7 @@ export async function handleVettingApi(
   const route = `${request.method} ${parts.join("/")}`;
   try {
     // Admin writes ride the session cookie, so they must come from this site.
-    if (
-      admin &&
-      request.method !== "GET" &&
-      (request.headers.get("origin") !== new URL(request.url).origin ||
-        request.headers.get("content-type")?.split(";")[0] !==
-          "application/json")
-    )
+    if (admin && request.method !== "GET" && !isSameOriginJsonWrite(request))
       fail(403, "origin_forbidden", "Requests must come from this site");
     switch (route) {
       case "GET admin/vetting":
@@ -754,31 +751,11 @@ export async function handleVettingApi(
     }
     return json(404, { error: "not_found" });
   } catch (caught) {
-    const error =
-      caught instanceof VettingResultError
-        ? caught
-        : typeof caught === "object" && caught !== null
-          ? (caught as Partial<ApiError>)
-          : {};
-    const status =
-      Number.isSafeInteger(error.status) &&
-      Number(error.status) >= 400 &&
-      Number(error.status) <= 599
-        ? Number(error.status)
-        : 500;
-    if (status >= 500 && status !== 503) console.error("vetting API failure");
-    return json(status, {
-      error:
-        typeof error.code === "string" &&
-        /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
-          ? error.code
-          : "internal_error",
-      message:
-        status >= 500 && status !== 503
-          ? "Internal error"
-          : typeof error.message === "string"
-            ? error.message
-            : "Request failed",
+    return apiErrorResponse(caught, {
+      label: "vetting API failure",
+      respond: json,
+      // Unavailable-service refusals tell the caller to retry later.
+      publicMessage: (status) => status === 503,
     });
   }
 }

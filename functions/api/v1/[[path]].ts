@@ -74,6 +74,7 @@ import {
 } from "../../../backend/slopbot/value-import";
 import {
   CloudflareTracePersistence,
+  privateIntakeStatus,
   type R2Bucket,
 } from "../../../backend/trace/cloudflare-persistence";
 import { handleTraceApi } from "../../../backend/trace/handler";
@@ -264,10 +265,6 @@ type PagesContext = {
 };
 
 export const MAX_IDENTITY_RESPONSE_BYTES = 16 * 1024;
-type PrivateIntakeStatus =
-  | { status: "verified"; enabled: boolean; verifiedAt: string }
-  | { status: "rate_limited"; resetAt: string }
-  | { status: "unavailable" };
 
 async function readBoundedJson(
   response: Response,
@@ -305,35 +302,6 @@ async function readBoundedJson(
     offset += chunk.byteLength;
   }
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-}
-
-export async function privateIntakeStatus(
-  db: D1Database,
-  now = new Date(),
-): Promise<PrivateIntakeStatus> {
-  try {
-    const row = await db
-      .prepare(
-        "SELECT enabled, verified_at FROM private_intake_status WHERE singleton = 1",
-      )
-      .first<{ enabled: number; verified_at: string }>();
-    if (
-      !row ||
-      ![0, 1].includes(row.enabled) ||
-      typeof row.verified_at !== "string"
-    )
-      return { status: "unavailable" };
-    const age = now.getTime() - Date.parse(row.verified_at);
-    if (!Number.isFinite(age) || age < -300000 || age > 24 * 60 * 60 * 1000)
-      return { status: "unavailable" };
-    return {
-      status: "verified",
-      enabled: row.enabled === 1,
-      verifiedAt: row.verified_at,
-    };
-  } catch {
-    return { status: "unavailable" };
-  }
 }
 
 async function verifyIdentityAssertion(

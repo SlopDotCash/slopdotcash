@@ -1,4 +1,5 @@
 import { readBoundedJson } from "../../src/lib/browser-json";
+import { isSameOriginJsonWrite } from "../http";
 
 /** This binding targets a named Worker RPC entrypoint, never a public URL. */
 export interface HistoricalValueBinding {
@@ -26,12 +27,11 @@ export async function handleHistoricalValueImport(
     });
   if (request.method !== "POST")
     return respond(405, { error: "method_not_allowed" });
-  const mediaType = request.headers.get("content-type")?.split(";")[0];
   if (
-    request.headers.get("origin") !== new URL(request.url).origin ||
-    !["application/json", "multipart/form-data"].includes(mediaType ?? "")
+    !isSameOriginJsonWrite(request, ["application/json", "multipart/form-data"])
   )
     return respond(403, { error: "origin_forbidden" });
+  const mediaType = request.headers.get("content-type")?.split(";")[0];
   try {
     const actor = await deps.sessionActor(request);
     if (!actor) return respond(401, { error: "unauthorized" });
@@ -87,7 +87,9 @@ export async function handleHistoricalValueImport(
     );
     return respond(200, receipt);
   } catch {
-    // Do not echo source bodies, provider declarations or upstream errors.
+    // Log a fixed label only: never source bodies, provider declarations or
+    // upstream errors. The publisher reports refusals and outages alike.
+    console.error("historical value import failure");
     return respond(409, { error: "assessment_not_published" });
   }
 }

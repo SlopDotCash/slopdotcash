@@ -10,6 +10,7 @@ import type {
   CreateGrantInput,
   CreateRunInput,
   PersistenceResult,
+  PrivateIntakeStatus,
   RunProgressEvent,
   TraceObject,
   TracePersistence,
@@ -1201,4 +1202,39 @@ export class CloudflareTracePersistence implements TracePersistence {
       .first<WalletClaimRow>();
     return row === null ? null : mapWalletClaim(row);
   }
+}
+
+/**
+ * The hourly health workflow renews this observation. A row older than 24
+ * hours, or a failed read, keeps optional trace collection unavailable.
+ */
+export async function privateIntakeStatus(
+  db: D1Database,
+  now = new Date(),
+): Promise<PrivateIntakeStatus> {
+  let row: { enabled: number; verified_at: string } | null;
+  try {
+    row = await db
+      .prepare(
+        "SELECT enabled, verified_at FROM private_intake_status WHERE singleton = 1",
+      )
+      .first<{ enabled: number; verified_at: string }>();
+  } catch {
+    console.error("private intake status read failure");
+    return { status: "unavailable" };
+  }
+  if (
+    !row ||
+    ![0, 1].includes(row.enabled) ||
+    typeof row.verified_at !== "string"
+  )
+    return { status: "unavailable" };
+  const age = now.getTime() - Date.parse(row.verified_at);
+  if (!Number.isFinite(age) || age < -300000 || age > 24 * 60 * 60 * 1000)
+    return { status: "unavailable" };
+  return {
+    status: "verified",
+    enabled: row.enabled === 1,
+    verifiedAt: row.verified_at,
+  };
 }

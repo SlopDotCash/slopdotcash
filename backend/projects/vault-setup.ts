@@ -28,8 +28,8 @@ import type {
   VaultSetupReview,
 } from "../../src/lib/vault-setup";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
-import { fail } from "../api-error";
 import type { D1TransactionalDatabase } from "../d1";
+import { fail } from "../http";
 import type { GithubActor, ProjectRecord } from "./contracts";
 
 export interface OwnerVaultSetup {

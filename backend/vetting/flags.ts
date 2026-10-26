@@ -1,5 +1,3 @@
-import { pathParts } from "../api-path";
-
 /**
  * Two-contributor flags (PRD sections 4 and 8; audit finding 9; issue #911).
  *
@@ -19,7 +17,14 @@ import { pathParts } from "../api-path";
  */
 
 import type { SetupAuthority } from "../../src/lib/project-contracts";
-import { type ApiError, fail } from "../api-error";
+import {
+  apiErrorResponse,
+  fail,
+  isSameOriginJsonWrite,
+  json as jsonResponse,
+  pathParts,
+  requireActor,
+} from "../http";
 import { notifyProjectEnforcement } from "../notifications/events";
 import {
   hasParticipationBan,
@@ -377,15 +382,7 @@ export type ProjectFlagApiDependencies = {
 };
 
 function json(status: number, body: Record<string, unknown>): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-      "referrer-policy": "no-referrer",
-      "x-content-type-options": "nosniff",
-    },
-  });
+  return jsonResponse(status, body, { cacheControl: "no-store" });
 }
 
 /** The reporter's own view; it never reveals other members' flags. */
@@ -448,13 +445,12 @@ function readEvidenceUrl(value: unknown): string | null {
   return url.href;
 }
 
-async function requireActor(
-  request: Request,
-  deps: ProjectFlagApiDependencies,
-): Promise<GithubActor> {
-  const actor = await deps.sessionActor(request);
-  if (actor === null) fail(401, "unauthorized", "Sign in with GitHub");
-  return actor;
+function flaggerStandingUnavailable(): never {
+  fail(
+    503,
+    "flagger_standing_unavailable",
+    "Slop could not confirm your GitHub account and contributions. Nothing was filed. Try again later.",
+  );
 }
 
 /** Owner decision D3: who may flag. A failed read refuses the flag. */
@@ -469,8 +465,8 @@ async function requireEligibleFlagger(
     authority = await deps.repositoryAuthority(project.manifest, actor);
     standing = await deps.flaggerStanding(actor);
   } catch {
-    authority = { state: "retry", message: "" };
-    standing = { accountCreatedAt: "", hasAcceptedContribution: false };
+    console.error("flagger standing read failure");
+    flaggerStandingUnavailable();
   }
   if (authority.state === "verified")
     fail(
@@ -478,12 +474,7 @@ async function requireEligibleFlagger(
       "maintainer_cannot_flag",
       "Project maintainers fix or pause their own project instead of flagging it",
     );
-  if (authority.state === "retry" || standing.accountCreatedAt === "")
-    fail(
-      503,
-      "flagger_standing_unavailable",
-      "Slop could not confirm your GitHub account and contributions. Nothing was filed. Try again later.",
-    );
+  if (authority.state === "retry") flaggerStandingUnavailable();
   if (
     deps.now().getTime() - Date.parse(standing.accountCreatedAt) <
     FLAGGER_MIN_ACCOUNT_AGE_MS
@@ -659,12 +650,7 @@ export async function handleProjectFlagsApi(
   if (parts[0] !== "project-flags") return null;
   try {
     // Session writes must come from this site.
-    if (
-      request.method !== "GET" &&
-      (request.headers.get("origin") !== new URL(request.url).origin ||
-        request.headers.get("content-type")?.split(";")[0] !==
-          "application/json")
-    )
+    if (request.method !== "GET" && !isSameOriginJsonWrite(request))
       fail(403, "origin_forbidden", "Requests must come from this site");
     const projectId = parts[1] ?? "";
     const route = `${request.method} ${parts.length === 3 ? parts[2] : parts.length === 2 ? "" : "?"}`;
@@ -678,29 +664,9 @@ export async function handleProjectFlagsApi(
     }
     return json(404, { error: "not_found" });
   } catch (caught) {
-    const error =
-      typeof caught === "object" && caught !== null
-        ? (caught as Partial<ApiError>)
-        : {};
-    const status =
-      Number.isSafeInteger(error.status) &&
-      Number(error.status) >= 400 &&
-      Number(error.status) <= 599
-        ? Number(error.status)
-        : 500;
-    if (status >= 500) console.error("project flag API failure");
-    return json(status, {
-      error:
-        typeof error.code === "string" &&
-        /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
-          ? error.code
-          : "internal_error",
-      message:
-        status >= 500
-          ? "Internal error"
-          : typeof error.message === "string"
-            ? error.message
-            : "Request failed",
+    return apiErrorResponse(caught, {
+      label: "project flag API failure",
+      respond: json,
     });
   }
 }

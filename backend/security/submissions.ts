@@ -19,8 +19,8 @@
  *   report in the reporter's browser.
  */
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
-import { fail } from "../api-error";
 import type { D1QueryStatement as D1Statement } from "../d1";
+import { exactKeys, fail, requireActor } from "../http";
 import { notifySecurityReportReceived } from "../notifications/events";
 import {
   hasParticipationBan,
@@ -38,7 +38,6 @@ import {
   automaticIntake,
   caseInsertStatement,
   eventStatement,
-  exactKeys,
   GHSA,
   IDEMPOTENCY_KEY,
   inboxStatements,
@@ -47,7 +46,6 @@ import {
   pvrState,
   type ReportingContext,
   reportingContext,
-  requireActor,
   type SecurityApiDependencies,
   scheduleAnalysis,
   stringField,

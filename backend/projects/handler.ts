@@ -33,8 +33,15 @@ import {
   isVaultCreationId,
   type VaultSetupInput,
 } from "../../src/lib/vault-setup";
-import { type ApiError, fail } from "../api-error";
-import { pathParts } from "../api-path";
+import {
+  apiErrorResponse,
+  exactKeys,
+  fail,
+  isSameOriginJsonWrite,
+  json as jsonResponse,
+  pathParts,
+  requireActor,
+} from "../http";
 import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readJsonObject, sha256Hex } from "../trace/validation";
@@ -161,15 +168,9 @@ function json(
   body: Record<string, unknown>,
   cacheControl = "no-store",
 ): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "cache-control": cacheControl,
-      "content-type": "application/json; charset=utf-8",
-      "referrer-policy": "no-referrer",
-      "x-content-type-options": "nosniff",
-      "x-slop-project-api-contract": PROJECT_API_CONTRACT_VERSION,
-    },
+  return jsonResponse(status, body, {
+    cacheControl,
+    headers: { "x-slop-project-api-contract": PROJECT_API_CONTRACT_VERSION },
   });
 }
 
@@ -186,20 +187,6 @@ function boundedText(
     fail(400, "invalid_request", `${name} must be ${min} to ${max} characters`);
   }
   return trimmed;
-}
-
-function exactKeys(
-  body: Record<string, unknown>,
-  required: string[],
-  optional: string[] = [],
-): void {
-  const allowed = new Set([...required, ...optional]);
-  if (
-    required.some((key) => !Object.hasOwn(body, key)) ||
-    Object.keys(body).some((key) => !allowed.has(key))
-  ) {
-    fail(400, "invalid_request", "Request body has unexpected fields");
-  }
 }
 
 function invalidManifest(error: unknown): never {
@@ -797,9 +784,7 @@ async function requireSession(
   request: Request,
   deps: ProjectApiDependencies,
 ): Promise<WebSession> {
-  const actor = await deps.sessionActor(request);
-  if (actor === null) fail(401, "unauthorized", "Sign in with GitHub");
-  return sessionBody(actor, deps);
+  return sessionBody(await requireActor(request, deps), deps);
 }
 
 async function requireAdmin(
@@ -2685,15 +2670,11 @@ export async function handleProjectApi(
     )
     .join("/")}`;
   try {
-    // Writes ride the SameSite session cookie, so they must come from this
-    // origin as JSON; a cross-site form can never submit one.
     if (
       request.method !== "GET" &&
       parts.length > 0 &&
       isProjectRoute(parts) &&
-      (request.headers.get("origin") !== new URL(request.url).origin ||
-        request.headers.get("content-type")?.split(";")[0] !==
-          "application/json")
+      !isSameOriginJsonWrite(request)
     ) {
       fail(403, "origin_forbidden", "Requests must come from this site");
     }
@@ -2773,30 +2754,12 @@ export async function handleProjectApi(
     if (isProjectRoute(parts)) return json(404, { error: "not_found" });
     return null;
   } catch (caught) {
-    const error =
-      typeof caught === "object" && caught !== null
-        ? (caught as Partial<ApiError>)
-        : {};
-    const status =
-      Number.isSafeInteger(error.status) &&
-      Number(error.status) >= 400 &&
-      Number(error.status) <= 599
-        ? Number(error.status)
-        : 500;
-    if (status >= 500) console.error("project API failure");
-    return json(status, {
-      error:
-        typeof error.code === "string" &&
-        /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
-          ? error.code
-          : "internal_error",
-      message:
-        (status >= 500 &&
-          !(caught instanceof GithubLookupError) &&
-          error.code !== "vault_setup_unavailable") ||
-        typeof error.message !== "string"
-          ? "Internal error"
-          : error.message,
+    return apiErrorResponse(caught, {
+      label: "project API failure",
+      respond: json,
+      publicMessage: (_status, error, caught) =>
+        caught instanceof GithubLookupError ||
+        error.code === "vault_setup_unavailable",
     });
   }
 }

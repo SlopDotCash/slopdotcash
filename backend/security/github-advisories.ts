@@ -11,7 +11,7 @@
 import { encodeBase64Url, ownedBuffer } from "../../src/lib/byte-encoding";
 import { canonicalJson } from "../../src/lib/canonical-json";
 import { sha256Hex } from "../../workers/identity/crypto";
-import { fail } from "../api-error";
+import { fail } from "../http";
 import type { ReportingReader } from "./reporting-readiness";
 
 export type FailureCode =

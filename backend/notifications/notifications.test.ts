@@ -260,7 +260,7 @@ describe("notification events", () => {
   test("wallet changes and finalized payment events notify the contributor once", async () => {
     const { db, sqlite, rows } = open();
     const d1 = db as unknown as D1Database;
-    const member = { github_id: APPLICANT, login: "e2e-applicant" };
+    const member = { githubId: APPLICANT, githubLogin: "e2e-applicant" };
     const stewarded = JSON.stringify({
       id: "alpha",
       status: "paused",

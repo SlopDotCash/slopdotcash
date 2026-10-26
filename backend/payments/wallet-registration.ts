@@ -1,3 +1,4 @@
+import type { GithubActor } from "../../src/lib/project-contracts";
 import type { WalletChain } from "../../src/lib/wallets";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
@@ -5,7 +6,7 @@ import { notifyWalletChanged } from "../notifications/events";
 /** Canonical registry bytes preserve the original Solana layout and Base chain field. */
 export async function registerPaymentWallet(
   db: D1Database,
-  actor: { github_id: string; login: string },
+  actor: GithubActor,
   chain: WalletChain,
   address: string,
   now: string,
@@ -14,17 +15,17 @@ export async function registerPaymentWallet(
     .prepare(
       "SELECT id,wallet_address,github_login FROM wallet_claims w WHERE github_user_id=? AND chain=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
     )
-    .bind(actor.github_id, chain)
+    .bind(actor.githubId, chain)
     .first<{ id: string; wallet_address: string; github_login: string }>();
   if (
     current?.wallet_address === address &&
-    current.github_login.toLowerCase() === actor.login.toLowerCase()
+    current.github_login.toLowerCase() === actor.githubLogin.toLowerCase()
   )
     return { claimId: current.id };
   const predecessor = current?.id ?? null;
   const { sourceBodySha256, recordDigest } = await canonicalWalletClaimDigests({
-    githubActorId: actor.github_id,
-    githubLogin: actor.login,
+    githubActorId: actor.githubId,
+    githubLogin: actor.githubLogin,
     address,
     chain,
     observedAt: now,
@@ -39,8 +40,8 @@ export async function registerPaymentWallet(
         )
         .bind(
           id,
-          actor.github_id,
-          actor.login,
+          actor.githubId,
+          actor.githubLogin,
           address,
           chain,
           sourceBodySha256,
@@ -55,7 +56,7 @@ export async function registerPaymentWallet(
         )
         .bind(
           crypto.randomUUID(),
-          actor.github_id,
+          actor.githubId,
           `wallet-claim:${id}`,
           crypto.randomUUID(),
           now,
@@ -71,7 +72,7 @@ export async function registerPaymentWallet(
       .prepare(
         "SELECT id,wallet_address FROM wallet_claims w WHERE github_user_id=? AND chain=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
       )
-      .bind(actor.github_id, chain)
+      .bind(actor.githubId, chain)
       .first<{ id: string; wallet_address: string }>();
     if (tip && tip.id !== predecessor)
       return tip.wallet_address === address
