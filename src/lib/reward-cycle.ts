@@ -14,7 +14,11 @@ import {
 } from "./allocation-funding";
 import { fundingAssetForNetwork } from "./funding-address.mjs";
 import type { LeaderboardSnapshot } from "./leaderboard";
-import { createPaymentProjectView, cycleBounds } from "./project-view";
+import {
+  createPaymentProjectView,
+  cycleBounds,
+  requiredProjection,
+} from "./project-view";
 import type { ProjectDefinition, ProjectId } from "./projects.mjs";
 import { findProject } from "./projects.mjs";
 import {
@@ -254,7 +258,10 @@ export function createRewardCycleProposal(
       entries: view.leaders.map((leader) => ({
         actor: { id: leader.actor.id, login: leader.actor.login },
         score: leader.score,
-        sharePartsPerMillion: leader.projectedSharePartsPerMillion ?? 0,
+        sharePartsPerMillion: requiredProjection(
+          leader.projectedSharePartsPerMillion,
+          "share",
+        ),
         evidenceEventIds: leader.evidenceEventIds,
       })),
     });
@@ -292,7 +299,7 @@ export function createRewardCycleProposal(
     view.leaders.reduce(
       (total, leader) =>
         total +
-        BigInt(leader.projectedMinor ?? "0") +
+        BigInt(requiredProjection(leader.projectedMinor, "amount")) +
         BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0"),
       0n,
     ) + carriedOnlyMinor
@@ -363,7 +370,7 @@ export function createRewardCycleProposal(
         const wallet = resolvedWallet(input, leader.actor.id);
         const sharedPoolMinor =
           BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0") +
-          BigInt(leader.projectedMinor ?? "0");
+          BigInt(requiredProjection(leader.projectedMinor, "amount"));
         const reviewMinor = reviewAllocations.get(leader.actor.id) ?? 0n;
         const accruedMinor = (sharedPoolMinor + reviewMinor).toString();
         return {

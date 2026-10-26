@@ -80,6 +80,15 @@ export interface ProjectContributor {
   payoutExclusion: PayoutExclusionRelationship | null;
 }
 
+/**
+ * Reads a projection that this view's reward kind always sets. A null here is
+ * a broken invariant, never a zero amount or share.
+ */
+export function requiredProjection<T>(value: T | null, field: string): T {
+  if (value === null) throw new TypeError(`Missing projected ${field}`);
+  return value;
+}
+
 export interface ReceiptConflict {
   runId: string;
   reason:

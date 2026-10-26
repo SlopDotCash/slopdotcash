@@ -1,6 +1,10 @@
 import { Link } from "./Link";
 import type { PayoutExclusionRelationship } from "./lib/payout-exclusions.mjs";
-import type { ProjectContributor, ProjectView } from "./lib/project-view";
+import {
+  type ProjectContributor,
+  type ProjectView,
+  requiredProjection,
+} from "./lib/project-view";
 import {
   type ReviewerLeader,
   selectReviewerLeaders,
@@ -172,18 +176,22 @@ export function RewardValue({
         Excluded from payout ({PAYOUT_EXCLUSION_LABELS[leader.payoutExclusion]})
       </>
     );
+  if (view.reward.kind === "external-prize-share")
+    return (
+      <>
+        {formatPercent(
+          requiredProjection(leader.projectedSharePartsPerMillion, "share"),
+        )}{" "}
+        share
+      </>
+    );
   // Token amounts are in the token's base units, never dollars.
   if (
-    leader.simulatedMinor === null ||
-    view.project.rewardAsset?.kind === "token"
+    view.project.rewardAsset?.kind !== "token" &&
+    !monthlyPoolUnfunded(view.project.reward)
   ) {
-    return (
-      <>{formatPercent(leader.projectedSharePartsPerMillion ?? 0)} share</>
-    );
-  }
-  if (!monthlyPoolUnfunded(view.project.reward)) {
     return formatMicroUsdc(
-      leader.simulatedDisplayMinor ?? leader.simulatedMinor,
+      requiredProjection(leader.simulatedDisplayMinor, "display amount"),
     );
   }
   const totalWeight = view.leaders.reduce(
