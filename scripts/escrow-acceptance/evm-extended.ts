@@ -56,6 +56,7 @@ import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
 import {
   monthlyCutoff,
   PRD_MONTHLY_SCHEDULE,
+  parseMonthlySchedule,
 } from "../../src/lib/payments/monthly-allocation";
 import { preflightEvmDeployment } from "../../workers/payment-executor/core";
 import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
@@ -156,6 +157,13 @@ export async function runEvmExtended(
       run.deviations.push(note);
     }
   };
+  const monthlySchedule =
+    parseMonthlySchedule(process.env.ESCROW_ACCEPTANCE_MONTHLY_SCHEDULE) ??
+    PRD_MONTHLY_SCHEDULE;
+  if (monthlySchedule.firstPeriod !== PRD_MONTHLY_SCHEDULE.firstPeriod)
+    deviate(
+      `ESCROW_ACCEPTANCE_MONTHLY_SCHEDULE starts the keeper at ${monthlySchedule.firstPeriod}, before the PRD first period ${PRD_MONTHLY_SCHEDULE.firstPeriod}; the monthly result is prelaunch automation qualification, not the calendar observation.`,
+    );
   if (divisor !== 1n)
     deviate(
       "ESCROW_ACCEPTANCE_UNIT_DIVISOR scaled the scenario figures down; amounts are not at full scale.",
@@ -601,6 +609,7 @@ export async function runEvmExtended(
       signer: keys.relayer.address,
       rpcUrl: ctx.rpcUrl,
       perRun: 16,
+      monthlySchedule,
       gas: {
         perTransaction: text(perTransaction),
         perDay: text(perTransaction * 40n),
@@ -787,10 +796,10 @@ export async function runEvmExtended(
       (await reserveVersion()) === 2 ? "keeper-v2" : "executor-v1";
     const keeperPath = entry.checks.monthlyPath === "keeper-v2";
     if (keeperPath && !entry.checks.periods) {
-      // The keeper serves the PRD schedule only, from its first period.
-      const first = PRD_MONTHLY_SCHEDULE.firstPeriod;
+      // The keeper serves its configured schedule only, from its first period.
+      const first = monthlySchedule.firstPeriod;
       if (openMonthlyPeriod(await chain.latestTime()).open < first) {
-        const opens = monthlyCutoff(PRD_MONTHLY_SCHEDULE, first);
+        const opens = monthlyCutoff(monthlySchedule, first);
         throw new Waiting(
           `The project-operated keeper admits PRD periods from ${first}. That commitment window opens at ${opens?.toISOString()} chain time. No monthly transaction was sent.`,
           opens,

@@ -387,7 +387,7 @@ run. `off` reads none of them.
 | Var | Checked-in value | Meaning |
 | --- | --- | --- |
 | `FEE_CONVERTER_MODE` | `off` | `off`, `dry_run` or `live`. |
-| `FEE_CONVERTER_NETWORKS` | empty | Subset of `base,ethereum,robinhood,solana`. |
+| `FEE_CONVERTER_NETWORKS` | `base,ethereum,robinhood` | Candidate networks; mode remains off. |
 | `FEE_CONVERTER_ALLOWLIST` | empty | JSON object of extra tokens per network. |
 | `FEE_CONVERTER_MIN_VALUE_MICRO` | `5000000` (owner decision, 24 October 2026) | Minimum quoted USDC output. `0` converts every fee. |
 | `FEE_CONVERTER_GAS_MULTIPLE` | `10` (owner decision, 24 October 2026) | Output must be at least this many times the fee estimate. `0` disables the check. |
@@ -396,6 +396,7 @@ run. `off` reads none of them.
 | `FEE_CONVERTER_RUN_CAP_MICRO` | `1000000000` | Per-run, per-network value cap (1,000 USDC). |
 | `FEE_CONVERTER_DAILY_CAP_MICRO` | `5000000000` | Rolling 24-hour live value cap per network (5,000 USDC). |
 | `FEE_CONVERTER_SOLANA_FEE_MICRO` | `2000` | Solana fee estimate used for the gas multiple; an estimate, not policy. |
+| `FEE_CONVERTER_NATIVE_BUDGETS` | unset | Per-network JSON with exact decimal wei strings `perTransaction`, `perDay`, `additionalFeeReserve`. No defaults. |
 | `FEE_WALLET_<NETWORK>` | All four networks set | Public fee-wallet address. A network without one is refused. |
 | `KYBERSWAP_CLIENT_ID` | `slop-fee-converter` | Client id header for KyberSwap. |
 
@@ -416,6 +417,38 @@ Secrets (set only by the key custodian, never in D1, CI or the repository):
 In `live` mode the Worker refuses a network when its key is missing or does
 not derive the configured `FEE_WALLET_<NETWORK>` address. `dry_run` never
 reads a key.
+
+### Native fee budget
+
+The token-value caps above do not bound gas. Live EVM signing also needs its
+own native transaction and UTC-day limits. The owner has not selected these
+values. Keep mode off and leave them unset until the reviewed activation.
+Base needs a positive allowance for data and operator fees; Ethereum uses
+zero additional allowance. Robinhood remains retain-only and loads no key.
+Solana live signing remains blocked by its separate qualification gate.
+
+Before each approval, swap, fee claim or replacement, price the final gas
+limit and fee fields, include Base's additional allowance, and recheck the
+10-times-value rule. Refuse above either native ceiling. Base's oracle must
+also fit the allowance before signing. Variable Base charges are not a hard
+on-chain ceiling; an observed overrun stops further signing.
+
+Migration `0092_fee_native_gas.sql` reserves exact wei under the network
+lease. A revision fence prevents concurrent reservations from overspending.
+The existing durable signed-attempt insert atomically commits its reservation;
+an invalid or expired lease rolls back the whole insert. Broadcast happens
+only after this commit and a fresh lease check. A successor can retire an
+uncommitted prior-lease reservation because it cannot have reached broadcast.
+Committed attempts are never released merely because a swap expired, an RPC
+failed, or a business row says failed. Historical approval and swap hashes
+are both reconciled, including older rows that hold both.
+
+Same-nonce replacements reserve their largest maximum once. Unknown sends
+carry that liability across UTC midnight. Canonical finalized success and
+revert receipts settle the exact execution cost plus Base data/operator fees;
+missing cost evidence keeps the reserve. Actual costs are charged on the UTC
+day finality is observed. A late receipt therefore does not erase today's
+liability. The receipt block hash remains evidence of the chain event.
 
 ## Key custody
 

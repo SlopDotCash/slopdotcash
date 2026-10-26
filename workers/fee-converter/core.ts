@@ -62,6 +62,7 @@ export interface ConversionRow {
    * of its same-nonce replacements (migration 0087).
    */
   landedTxId?: string | null;
+  nativeGasId?: string | null;
 }
 
 /**
@@ -69,6 +70,7 @@ export interface ConversionRow {
  * It is stored before it is broadcast and never changes.
  */
 export interface SendReplacement {
+  nativeGasId?: string | null;
   id: string;
   conversionId: string;
   network: Network;
@@ -90,6 +92,7 @@ export type ReplacementResult =
       rawTx: string;
       maxFeePerGas: bigint;
       maxPriorityFeePerGas: bigint;
+      nativeGasId?: string;
     }
   /** No replacement is signed now. The send waits; `wait` says why. */
   | { wait: string };
@@ -111,6 +114,7 @@ export type QuoteResult = Quote | { noRoute: string };
 
 /** A signed send, recorded before it is broadcast. */
 export interface PreparedSend {
+  nativeGasId?: string;
   /** EVM approvals are separate immutable sends before a later swap. */
   kind?: "conversion" | "approval";
   txId: string;
@@ -138,6 +142,8 @@ export type SendStatus =
   | { kind: "rebroadcast"; rawTx?: string };
 
 export interface ChainClient {
+  /** Reconcile native liabilities, including business-terminal sends, before signing. */
+  reconcileNativeGas?(): Promise<void>;
   balance(token: string): Promise<bigint>;
   quote(token: string, amount: bigint): Promise<QuoteResult>;
   /** Prepare one approval or swap; the caller journals it before broadcast. */
@@ -209,11 +215,14 @@ export interface VaultFeeClient {
       evmNonce: number | null;
       expiresAt: number | null;
       amount: bigint;
+      nativeGasId?: string;
     }) => Promise<void>,
     /** EVM: the lowest nonce the claim may use (see nonceFloor). */
     nonceFloor?: number,
     /** Recheck the existing network lease before signing and broadcast. */
     assertLease?: () => Promise<void>,
+    /** Recheck the final prepared claim fee against this verified USDC value. */
+    valueMicro?: bigint,
   ): Promise<{ txId: string }>;
 }
 
@@ -265,7 +274,7 @@ export interface RunDependencies {
   projectTokens: (config: NetworkConfig) => Promise<string[]>;
   /** Escrow vaults named by D1 project manifests for this network. */
   projectVaults?: (config: NetworkConfig) => Promise<FeeVault[]>;
-  client: (config: NetworkConfig) => ChainClient;
+  client: (config: NetworkConfig, runId: string) => ChainClient;
   log: (event: Record<string, unknown>) => void;
 }
 
@@ -504,6 +513,7 @@ async function replaceSend(
     rawTx: result.rawTx,
     maxFeePerGas: result.maxFeePerGas.toString(),
     maxPriorityFeePerGas: result.maxPriorityFeePerGas.toString(),
+    nativeGasId: result.nativeGasId,
     createdAt: at,
   };
   // Journal before broadcast: after a restart the next run finds this
@@ -617,7 +627,8 @@ export async function runNetwork(
     const assertLease = async () => {
       if (!(await leased(true))) throw new Error("Fee conversion lock lost");
     };
-    const client = deps.client(config);
+    const client = deps.client(config, runId);
+    await client.reconcileNativeGas?.();
     const blocked = new Set<string>();
     // Reconciliation may rebroadcast exact bytes in dry_run. New replacement
     // signatures require live mode and a freshly checked network lease.
@@ -811,6 +822,7 @@ async function claimVaultFees(
           priceImpactBps: null,
           approvalTxId: null,
           txId: send.txId,
+          nativeGasId: send.nativeGasId,
           rawTx: send.rawTx,
           evmNonce: send.evmNonce,
           expiresAt: send.expiresAt,
@@ -831,7 +843,13 @@ async function claimVaultFees(
         blocked.add(accrued.asset);
       };
       await assertLease();
-      const { txId } = await fees.claim(vault, recordClaim, floor, assertLease);
+      const { txId } = await fees.claim(
+        vault,
+        recordClaim,
+        floor,
+        assertLease,
+        value,
+      );
       claimed += 1;
       report("fee_claim_included", { amount, txId });
     } catch (error) {
@@ -1033,6 +1051,7 @@ async function convert(
       kind: approval ? "approval" : "conversion",
       state: "submitted",
       txId: prepared.txId,
+      nativeGasId: prepared.nativeGasId,
       rawTx: prepared.rawTx,
       evmNonce: prepared.evmNonce,
       expiresAt: prepared.expiresAt,

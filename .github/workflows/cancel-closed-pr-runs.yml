@@ -20,17 +20,20 @@ jobs:
       - name: Cancel active pull request runs for the closed head
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
+          GH_REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           SELF_RUN: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          for status in queued in_progress waiting pending requested; do
-            gh api --paginate \
-              "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&status=$status&per_page=100" \
-              --jq '.workflow_runs[] | select(.event == "pull_request" or .event == "pull_request_target") | .id'
-          done | sort -u | while read -r run; do
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Missing pull request head commit."; exit 1; }
+          runs="$(gh run list --commit "$HEAD_SHA" --limit 100 --json databaseId,event,status \
+            --jq '.[] | select(.status != "completed") | select(.event == "pull_request" or .event == "pull_request_target") | .databaseId')"
+          echo "Active pull request runs for $HEAD_SHA: $(echo "$runs" | grep -c . || true)"
+          # Force cancellation also stops `always()` jobs, so a closed pull
+          # request does not keep a runner for a check that no longer matters.
+          for run in $runs; do
             if [ "$run" != "$SELF_RUN" ]; then
-              gh api -X POST "repos/$REPO/actions/runs/$run/cancel" >/dev/null || echo "Run $run already finished."
+              gh api -X POST "repos/$GH_REPO/actions/runs/$run/force-cancel" >/dev/null \
+                && echo "Cancelled run $run." || echo "Run $run already finished."
             fi
           done

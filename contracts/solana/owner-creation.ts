@@ -1,9 +1,10 @@
 /** Owner-signed creation, checked against a current reviewed deployment. */
 import {
-  type SolanaEscrowConfig,
+  type SolanaProgramConfig,
   solanaMintDecimals,
   solanaRpc,
   verifySolanaDeployment,
+  verifySolanaProgram,
 } from "./adapter";
 import {
   buildInitializeVaultInstructions,
@@ -11,14 +12,14 @@ import {
 } from "./owner-instructions";
 import { message } from "./transactions";
 import {
-  checkSolanaWalletTransaction,
+  checkSolanaCreationTransaction,
   prepareSolanaWalletTransaction,
   SolanaWalletActionError,
 } from "./wallet-transactions";
 
 export class SolanaVaultCreationFailed extends SolanaWalletActionError {}
 
-function candidate(template: SolanaEscrowConfig, input: SolanaVaultCreation) {
+function candidate(template: SolanaProgramConfig, input: SolanaVaultCreation) {
   if (
     input.programId !== template.programId ||
     input.networkDomain !== template.networkDomain ||
@@ -36,6 +37,7 @@ function candidate(template: SolanaEscrowConfig, input: SolanaVaultCreation) {
     config: {
       ...template,
       payoutPolicy: input.payoutPolicy ?? "ordinary",
+      projectId: input.projectDigest,
       projectPda: plan.projectPda,
       vault: plan.vault,
       owner: input.owner,
@@ -51,11 +53,11 @@ function object(value: unknown): Record<string, unknown> {
 
 /** No signature or broadcast; the owner reviews fees and signs in their wallet. */
 export async function prepareSolanaVaultCreation(
-  template: SolanaEscrowConfig,
+  template: SolanaProgramConfig,
   input: SolanaVaultCreation,
   registrationOnly = false,
 ) {
-  await verifySolanaDeployment(template);
+  await verifySolanaProgram(template);
   const { plan, config } = candidate(template, input);
   const decimals = await solanaMintDecimals(template, input.mint);
   const existing = object(
@@ -106,11 +108,11 @@ export async function prepareSolanaVaultCreation(
 
 /** Recover by signature alone; the finalized transaction supplies its blockhash. */
 export async function verifySolanaVaultCreation(
-  template: SolanaEscrowConfig,
+  template: SolanaProgramConfig,
   input: SolanaVaultCreation,
   transactionId: string,
 ) {
-  await verifySolanaDeployment(template);
+  await verifySolanaProgram(template);
   const { plan, config } = candidate(template, input);
   const raw = await solanaRpc(template, "getTransaction", [
     transactionId,
@@ -125,7 +127,7 @@ export async function verifySolanaVaultCreation(
   const blockhash = object(transaction.message).recentBlockhash;
   if (typeof blockhash !== "string")
     throw new SolanaWalletActionError("The creation blockhash is unavailable.");
-  const result = await checkSolanaWalletTransaction(
+  const result = await checkSolanaCreationTransaction(
     template,
     input.owner,
     message(input.owner, blockhash, plan.instructions),

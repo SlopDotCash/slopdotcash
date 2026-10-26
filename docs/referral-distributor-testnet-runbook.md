@@ -176,10 +176,11 @@ not committed; publish only reviewed safe deployment evidence.
   (three independent model reviews reconciled against 41 proof tests; every
   High and Medium finding fixed before the pull request opened).
 - It does not activate the program. Activation needs the token to exist, the
-  funding line agreed, counsel's review of the terms, an operating independent
+  funding line agreed, an operating independent
   root watcher, a verified deployment on chain id 4663 with the program token,
   and the live poster configured with its separate key and deployed addresses.
   The separate poster ceilings are 0.0002 ETH per transaction and 0.002 ETH
   per UTC day. Verify their enforcement before funding or signing.
   The normal checked `main` release installs the Worker in its reviewed mode;
   the current mode is Off. No manual Worker shell or extra release flag is needed.
+  Counsel review is not required (PRD section 11, owner decision of 26 October 2026).

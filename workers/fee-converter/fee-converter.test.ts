@@ -27,6 +27,7 @@ import {
 } from "./core";
 import { createEvmClient } from "./evm";
 import worker, { runOnce, triggerAt } from "./index";
+import { NativeGasJournal } from "./native-gas";
 import { createSolanaClient, parseTransaction } from "./solana";
 import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore, projectRewardTokens, projectVaults } from "./store";
@@ -45,6 +46,18 @@ const LIMITS = {
   FEE_CONVERTER_MAX_PRICE_IMPACT_BPS: "200",
   FEE_CONVERTER_RUN_CAP_MICRO: "1000000000",
   FEE_CONVERTER_DAILY_CAP_MICRO: "5000000000",
+  FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({
+    base: {
+      perTransaction: "10000000000000000",
+      perDay: "100000000000000000",
+      additionalFeeReserve: "1000000000000",
+    },
+    ethereum: {
+      perTransaction: "10000000000000000",
+      perDay: "100000000000000000",
+      additionalFeeReserve: "0",
+    },
+  }),
 };
 
 function config(extra: Record<string, string> = {}) {
@@ -229,12 +242,21 @@ describe("release gates", () => {
 
   test("a key that does not control the configured fee wallet is refused", async () => {
     const { generatePrivateKey } = await import("viem/accounts");
+    const { db } = sqliteD1();
     expect(() =>
       createEvmClient({
         config: config().networks[0],
         limits: config().limits,
         kyberClientId: "test",
         privateKey: generatePrivateKey(),
+        nativeGas: new NativeGasJournal(
+          db,
+          "base",
+          WALLET,
+          "fixture",
+          config().networks[0].nativeBudget!,
+          () => new Date(),
+        ),
       }),
     ).toThrow(/does not control the configured fee wallet/);
   });
@@ -264,11 +286,11 @@ describe("release gates", () => {
     ).toBe("off");
   });
 
-  test("the checked-in configuration carries the owner's recorded dust threshold and live networks without Solana", async () => {
+  test("the checked-in configuration keeps signing off while dedicated native limits remain unset", async () => {
     const toml = await Bun.file(
       new URL("./wrangler.toml", import.meta.url),
     ).text();
-    expect(toml).toMatch(/^FEE_CONVERTER_MODE = "live"$/mu);
+    expect(toml).toMatch(/^FEE_CONVERTER_MODE = "off"$/mu);
     expect(toml).toMatch(
       /^FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"$/mu,
     );

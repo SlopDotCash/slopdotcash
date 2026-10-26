@@ -25,9 +25,11 @@ import {
   parseTransaction,
   RpcRequestError,
   recoverTransactionAddress,
+  serializeTransaction,
   TransactionNotFoundError,
   type TransactionReceipt,
   TransactionReceiptNotFoundError,
+  type TransactionSerializableEIP1559,
   type TransactionSerializedEIP1559,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -49,6 +51,7 @@ import type {
   SendReplacement,
   SendStatus,
 } from "./core";
+import type { NativeGasJournal, RecordedNativeSend } from "./native-gas";
 
 const KYBER_API = "https://aggregator-api.kyberswap.com";
 /** KyberSwap's address for the chain's native currency, used to price gas. */
@@ -121,24 +124,6 @@ const REPLACEMENT_CAP_MULTIPLE = 3n;
  * send waits instead.
  */
 const REPLACEMENT_DEADLINE_MARGIN_SECONDS = 120;
-
-/**
- * The OP Stack GasPriceOracle predeploy. On Base a transaction also pays an
- * L1 data fee that its gas limit does not cover. Ethereum has no such fee,
- * and Arbitrum Nitro (Robinhood Chain) includes it in the gas estimate.
- */
-const L1_FEE_ORACLE: Partial<Record<NetworkConfig["network"], Address>> = {
-  base: "0x420000000000000000000000000000000000000f",
-};
-const L1_FEE_ABI = [
-  {
-    type: "function",
-    name: "getL1Fee",
-    stateMutability: "view",
-    inputs: [{ type: "bytes" }],
-    outputs: [{ type: "uint256" }],
-  },
-] as const;
 
 /** An open journaled send already holds this nonce or a later one. */
 function nonceHeld(nonce: number, nonceFloor: number): Error | null {
@@ -221,6 +206,7 @@ export interface EvmClientOptions {
   /** Local fork tests only: replaces the chain id the transaction signs for. */
   chainIdOverride?: number;
   sleep?: (ms: number) => Promise<void>;
+  nativeGas?: NativeGasJournal;
 }
 
 /** Parses a non-negative decimal dollar string into integer micro-units. */
@@ -273,6 +259,10 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     chain,
     transport: http(config.rpcUrl, { fetchFn: doFetch, retryCount: 1 }),
   }) as PublicClient;
+  if (options.privateKey && (!options.nativeGas || !config.nativeBudget))
+    throw new Error(
+      "Fee signing needs native limits and a durable budget journal",
+    );
   const account = options.privateKey
     ? (() => {
         if (!/^0x[0-9a-fA-F]{64}$/u.test(options.privateKey))
@@ -358,12 +348,76 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     return null;
   }
 
+  async function baseFee(
+    selector: "0xf1c7a58b" | "0x275aedd2",
+    amount: bigint,
+    blockNumber: bigint,
+  ) {
+    const result = await client.call({
+      to: "0x420000000000000000000000000000000000000f",
+      data: `${selector}${amount.toString(16).padStart(64, "0")}` as Hex,
+      blockNumber,
+    });
+    if (!result.data || !/^0x[0-9a-fA-F]{64}$/u.test(result.data))
+      throw new Error("Base data/operator fee evidence is unavailable");
+    return BigInt(result.data);
+  }
+  async function signIntent(
+    input: TransactionSerializableEIP1559,
+    valueMicro: bigint,
+    assertLease?: () => Promise<void>,
+    replaces?: string,
+  ) {
+    if (!account || !options.nativeGas || !config.nativeBudget)
+      throw new Error("Fee signing needs the durable native budget");
+    const unsigned = serializeTransaction(input);
+    const extra = BigInt(config.nativeBudget.additionalFeeReserve);
+    if (config.network === "base") {
+      const blockNumber = await client.getBlockNumber();
+      // Same oracle/allowance as the keeper; include worst-case signature size.
+      const data = await baseFee(
+        "0xf1c7a58b",
+        BigInt((unsigned.length - 2) / 2 + 68),
+        blockNumber,
+      );
+      const operator = await baseFee(
+        "0x275aedd2",
+        input.gas as bigint,
+        blockNumber,
+      );
+      if (data + operator > extra)
+        throw new Error(
+          "Base data/operator fees exceed the configured allowance",
+        );
+    }
+    const maximum =
+      (input.gas as bigint) * (input.maxFeePerGas as bigint) + extra;
+    const priced = await self.quote(NATIVE, maximum);
+    if (
+      "noRoute" in priced ||
+      priced.amountOut * limits.gasMultiple > valueMicro
+    )
+      throw new Error(
+        "Final prepared native fee exceeds the gas-cost multiple or cannot be priced",
+      );
+    await assertLease?.();
+    const nativeGasId = await options.nativeGas.reserve({
+      nonce: input.nonce as number,
+      intentHash: keccak256(unsigned),
+      maximumWei: maximum.toString(),
+      replaces,
+    });
+    await assertLease?.();
+    const raw = await account.signTransaction(input);
+    return { raw, hash: keccak256(raw), nativeGasId };
+  }
   async function signAndSend(
     to: Address,
     data: Hex,
     nonce: number,
+    valueMicro: bigint,
     assertLease?: () => Promise<void>,
-  ): Promise<{ raw: Hex; hash: Hex }> {
+  ): Promise<{ raw: Hex; hash: Hex; nativeGasId: string }> {
     if (!account)
       throw new Error("Signing is disabled without a fee-wallet key");
     const gas = await client.estimateGas({
@@ -373,19 +427,21 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       value: 0n,
     });
     const fees = await client.estimateFeesPerGas();
-    await assertLease?.();
-    const raw = await account.signTransaction({
-      chainId: chain.id,
-      type: "eip1559",
-      to,
-      data,
-      value: 0n,
-      nonce,
-      gas: (gas * 13n) / 10n,
-      maxFeePerGas: fees.maxFeePerGas,
-      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-    });
-    return { raw, hash: keccak256(raw) };
+    return signIntent(
+      {
+        chainId: chain.id,
+        type: "eip1559",
+        to,
+        data,
+        value: 0n,
+        nonce,
+        gas: (gas * 13n) / 10n,
+        maxFeePerGas: fees.maxFeePerGas,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      },
+      valueMicro,
+      assertLease,
+    );
   }
 
   async function verifiedVault(entry: FeeVault, atBlock?: bigint) {
@@ -512,7 +568,170 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     return received;
   }
 
+  async function recordedIntent(
+    send: RecordedNativeSend,
+  ): Promise<TransactionSerializableEIP1559> {
+    let intent: TransactionSerializableEIP1559;
+    if (send.rawTx) {
+      if (
+        keccak256(send.rawTx as Hex) !== send.txId ||
+        (
+          await recoverTransactionAddress({
+            serializedTransaction: send.rawTx as TransactionSerializedEIP1559,
+          })
+        ).toLowerCase() !== send.feeWallet
+      )
+        throw new Error("Recorded native send signature differs");
+      const {
+        r: _r,
+        s: _s,
+        v: _v,
+        yParity: _y,
+        ...parsed
+      } = parseTransaction(send.rawTx as Hex);
+      if (parsed.type !== "eip1559")
+        throw new Error("Recorded native send type is unsupported");
+      intent = parsed;
+    } else {
+      const tx = await client.getTransaction({ hash: send.txId as Hex });
+      if (
+        tx.hash.toLowerCase() !== send.txId.toLowerCase() ||
+        tx.from.toLowerCase() !== send.feeWallet ||
+        tx.type !== "eip1559"
+      )
+        throw new Error("Historical native transaction evidence differs");
+      intent = {
+        type: "eip1559",
+        chainId: tx.chainId,
+        nonce: tx.nonce,
+        to: tx.to ?? undefined,
+        data: tx.input,
+        value: tx.value,
+        gas: tx.gas,
+        maxFeePerGas: tx.maxFeePerGas,
+        maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
+        accessList: tx.accessList,
+      };
+      // A hash-only historical row still binds every signed fee field. Do not
+      // let an inconsistent RPC body shrink its unresolved gas liability.
+      const serialized = serializeTransaction(intent, {
+        r: tx.r,
+        s: tx.s,
+        v: tx.v,
+        yParity: tx.yParity,
+      });
+      if (
+        keccak256(serialized).toLowerCase() !== send.txId.toLowerCase() ||
+        (
+          await recoverTransactionAddress({
+            serializedTransaction: serialized,
+          })
+        ).toLowerCase() !== send.feeWallet
+      )
+        throw new Error("Historical native transaction signature differs");
+    }
+    if (
+      intent.chainId !== chain.id ||
+      intent.nonce === undefined ||
+      (send.nonce !== null && intent.nonce !== send.nonce) ||
+      intent.gas === undefined ||
+      intent.maxFeePerGas === undefined ||
+      intent.maxPriorityFeePerGas === undefined
+    )
+      throw new Error("Recorded native transaction bounds are unavailable");
+    return intent;
+  }
   const self: ChainClient & { address(): string | null } = {
+    async reconcileNativeGas() {
+      const journal = options.nativeGas;
+      if (!journal) return;
+      await journal.recoverUnsigned();
+      for (const send of await journal.unaccounted()) {
+        const tx = await recordedIntent(send);
+        await journal.importRecorded(
+          send,
+          tx.nonce as number,
+          keccak256(serializeTransaction(tx)),
+          (
+            (tx.gas as bigint) * (tx.maxFeePerGas as bigint) +
+            BigInt(journal.limits.additionalFeeReserve)
+          ).toString(),
+        );
+      }
+      for (const send of await journal.unsettled()) {
+        const receipt = await client
+          .getTransactionReceipt({ hash: send.txId as Hex })
+          .catch((e: unknown) => {
+            if (e instanceof TransactionReceiptNotFoundError) return null;
+            throw e;
+          });
+        if (!receipt) continue;
+        const block = await client.getBlock({
+          blockNumber: receipt.blockNumber,
+        });
+        const finalized = await client.getBlock({ blockTag: "finalized" });
+        if (
+          !isCanonicalEvmReceipt(send.txId, receipt, block) ||
+          typeof finalized.number !== "bigint" ||
+          !["success", "reverted"].includes(receipt.status)
+        )
+          throw new Error("Native fee receipt is not canonical");
+        if (receipt.blockNumber > finalized.number) continue;
+        const intent = await recordedIntent(send);
+        const tx = await client.getTransaction({ hash: send.txId as Hex });
+        if (
+          tx.hash.toLowerCase() !== send.txId.toLowerCase() ||
+          tx.from.toLowerCase() !== send.feeWallet ||
+          tx.blockHash !== receipt.blockHash ||
+          tx.blockNumber !== receipt.blockNumber ||
+          tx.transactionIndex !== receipt.transactionIndex ||
+          tx.nonce !== intent.nonce ||
+          tx.to?.toLowerCase() !== intent.to?.toLowerCase() ||
+          tx.input !== (intent.data ?? "0x") ||
+          tx.value !== (intent.value ?? 0n) ||
+          tx.gas !== intent.gas ||
+          tx.maxFeePerGas !== intent.maxFeePerGas ||
+          tx.maxPriorityFeePerGas !== intent.maxPriorityFeePerGas ||
+          receipt.from.toLowerCase() !== send.feeWallet ||
+          receipt.gasUsed < 0n ||
+          receipt.gasUsed > (intent.gas as bigint) ||
+          receipt.effectiveGasPrice < 0n ||
+          receipt.effectiveGasPrice > (intent.maxFeePerGas as bigint)
+        )
+          throw new Error(
+            "Native fee receipt differs from the signed transaction",
+          );
+        let actual = receipt.gasUsed * receipt.effectiveGasPrice;
+        if (config.network === "base") {
+          const raw = (await client.request({
+            method: "eth_getTransactionReceipt",
+            params: [send.txId as Hex],
+          })) as {
+            transactionHash?: string;
+            blockHash?: string;
+            l1Fee?: string;
+          } | null;
+          if (
+            !raw ||
+            raw.transactionHash?.toLowerCase() !== send.txId.toLowerCase() ||
+            raw.blockHash !== receipt.blockHash ||
+            !/^0x[0-9a-fA-F]+$/u.test(raw.l1Fee ?? "")
+          )
+            throw new Error("Finalized Base data fee is unavailable");
+          actual +=
+            BigInt(raw.l1Fee as string) +
+            (await baseFee("0x275aedd2", receipt.gasUsed, receipt.blockNumber));
+        }
+        await journal.settle(
+          { ...send, nonce: intent.nonce as number },
+          {
+            txId: send.txId,
+            actualWei: actual.toString(),
+            blockHash: receipt.blockHash,
+          },
+        );
+      }
+    },
     address: () => account?.address.toLowerCase() ?? null,
 
     async balance(token) {
@@ -626,6 +845,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
             args: [router, quote.amountIn],
           }),
           nonce,
+          quote.amountOut,
           assertLease,
         );
         return {
@@ -636,6 +856,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           expiresAt: null,
           approvalTxId: approval.hash,
           minAmountOut: 0n,
+          nativeGasId: approval.nativeGasId,
         };
       }
 
@@ -708,7 +929,13 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           "swap simulation returned less than the signed minimum",
         );
 
-      const swap = await signAndSend(router, built.data, nonce, assertLease);
+      const swap = await signAndSend(
+        router,
+        built.data,
+        nonce,
+        quote.amountOut,
+        assertLease,
+      );
       return {
         txId: swap.hash,
         rawTx: swap.raw,
@@ -716,6 +943,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         expiresAt: deadline,
         approvalTxId: null,
         minAmountOut: desc.minReturnAmount,
+        nativeGasId: swap.nativeGasId,
       };
     },
 
@@ -977,43 +1205,27 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
       )
         throw new Error("Recorded claim pays another fee wallet");
-      await assertLease();
-      const raw = await account.signTransaction({
-        chainId: chain.id,
-        type: "eip1559",
-        to: original.to as Address,
-        data: original.data,
-        value: original.value ?? 0n,
-        nonce: original.nonce,
-        gas: original.gas,
-        accessList: original.accessList,
-        maxFeePerGas,
-        maxPriorityFeePerGas,
-      });
-      // The worst-case fee of the replacement (its whole gas limit at the new
-      // maximum fee, plus any L1 data fee of its bytes) must stay within the
-      // approved gas-cost multiple of the value it moves. Unused bytes are
-      // discarded: nothing is journaled or broadcast.
-      const oracle = L1_FEE_ORACLE[config.network];
-      const l1Fee = oracle
-        ? await client.readContract({
-            address: oracle,
-            abi: L1_FEE_ABI,
-            functionName: "getL1Fee",
-            args: [raw],
-          })
-        : 0n;
-      const priced = await self.quote(
-        NATIVE,
-        original.gas * maxFeePerGas + l1Fee,
+      const signed = await signIntent(
+        {
+          chainId: chain.id,
+          type: "eip1559",
+          to: original.to as Address,
+          data: original.data,
+          value: original.value ?? 0n,
+          nonce: original.nonce,
+          gas: original.gas,
+          accessList: original.accessList,
+          maxFeePerGas,
+          maxPriorityFeePerGas,
+        },
+        BigInt(row.quoteValueMicro),
+        assertLease,
+        row.txId as string,
       );
-      if ("noRoute" in priced)
-        return { wait: "the replacement fee could not be priced" };
-      if (priced.amountOut * limits.gasMultiple > BigInt(row.quoteValueMicro))
-        return { wait: "the replacement fee is above the gas-cost multiple" };
       return {
-        txId: keccak256(raw),
-        rawTx: raw,
+        txId: signed.hash,
+        rawTx: signed.raw,
+        nativeGasId: signed.nativeGasId,
         maxFeePerGas,
         maxPriorityFeePerGas,
       };
@@ -1047,10 +1259,14 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         return "noRoute" in priced ? null : priced.amountOut;
       },
 
-      async claim(entry, recordClaim, nonceFloor = 0, assertLease) {
+      async claim(entry, recordClaim, nonceFloor = 0, assertLease, valueMicro) {
         const verified = await verifiedVault(entry);
         if (!verified) throw new Error("Vault pays another fee recipient");
         if (verified.amount === 0n) throw new Error("No accrued fees to claim");
+        if (valueMicro === undefined)
+          throw new Error(
+            "Fee claim needs its verified value for the final gas check",
+          );
         const { escrow, amount } = verified;
         const vault = escrow.vault;
         // One send at a time: a claim waits until no earlier fee-wallet
@@ -1069,6 +1285,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           vault as Address,
           CLAIM_FEES,
           latest,
+          valueMicro,
           assertLease,
         );
         await recordClaim({
@@ -1077,6 +1294,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           evmNonce: latest,
           expiresAt: null,
           amount,
+          nativeGasId: sent.nativeGasId,
         });
         await assertLease?.();
         await sendRaw(sent.raw);

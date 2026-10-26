@@ -16,8 +16,10 @@ import {
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import {
+  type MonthlySchedule,
   monthlyCutoff,
   PRD_MONTHLY_SCHEDULE,
+  parseMonthlySchedule,
   periodEnd,
 } from "../../src/lib/payments/monthly-allocation";
 import { assertProjectRegistry } from "../../src/lib/project-schema.mjs";
@@ -61,6 +63,11 @@ export interface KeeperConfiguration {
   gas: GasBudget;
   /** Maximum award checks per vault and examined EVM leaves per month per run. */
   perRun: number;
+  /**
+   * The deployment's `MONTHLY_PAYMENT_SCHEDULE`. Omitted, the keeper serves
+   * the PRD schedule; a test network may name an earlier first period.
+   */
+  monthlySchedule?: MonthlySchedule;
 }
 type Deployment = PaymentDeploymentRecord & {
   payoutPolicy: "ordinary" | "security-bounty";
@@ -191,6 +198,11 @@ export async function runKeeper(
     new Set(config.projectIds).size !== config.projectIds.length
   )
     throw new Error("Select projects and a positive per-run bound");
+  const schedule =
+    config.monthlySchedule === undefined
+      ? PRD_MONTHLY_SCHEDULE
+      : (parseMonthlySchedule(JSON.stringify(config.monthlySchedule)) ??
+        PRD_MONTHLY_SCHEDULE);
   const network = ESCROW_NETWORKS[config.network];
   if (!network) throw new Error("Unknown reviewed network");
   const origin = new URL(config.apiOrigin);
@@ -420,7 +432,7 @@ export async function runKeeper(
         );
         if (record.payoutPolicy === "ordinary") {
           for (
-            let period = PRD_MONTHLY_SCHEDULE.firstPeriod;
+            let period = schedule.firstPeriod;
             period < now.toISOString().slice(0, 7);
             period = periodEnd(period).toISOString().slice(0, 7)
           ) {
@@ -456,9 +468,9 @@ export async function runKeeper(
               });
             }
             if (!authorization) continue;
-            const cutoff = monthlyCutoff(PRD_MONTHLY_SCHEDULE, period);
+            const cutoff = monthlyCutoff(schedule, period);
             const closes = monthlyCutoff(
-              PRD_MONTHLY_SCHEDULE,
+              schedule,
               periodEnd(period).toISOString().slice(0, 7),
             );
             const admit =

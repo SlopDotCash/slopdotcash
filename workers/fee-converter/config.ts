@@ -3,6 +3,8 @@
  * a missing or malformed value refuses the run instead of guessing.
  */
 
+import { type NativeGasLimits, validateNativeLimits } from "./native-gas";
+
 export type Network = "base" | "ethereum" | "robinhood" | "solana";
 export type Mode = "off" | "dry_run" | "live";
 
@@ -92,6 +94,8 @@ export interface FeeConverterEnv {
   FEE_CONVERTER_RUN_CAP_MICRO?: string;
   FEE_CONVERTER_DAILY_CAP_MICRO?: string;
   FEE_CONVERTER_SOLANA_FEE_MICRO?: string;
+  /** Per-network exact wei limits; no defaults and no inherited keeper caps. */
+  FEE_CONVERTER_NATIVE_BUDGETS?: string;
   FEE_WALLET_BASE?: string;
   FEE_WALLET_ETHEREUM?: string;
   FEE_WALLET_ROBINHOOD?: string;
@@ -126,6 +130,7 @@ export interface NetworkConfig {
   feeWallet: string;
   rpcUrl: string;
   allowlist: string[];
+  nativeBudget?: NativeGasLimits;
 }
 
 export interface FeeConverterConfig {
@@ -230,6 +235,43 @@ export function parseConfig(env: FeeConverterEnv): FeeConverterConfig {
       allowlist: (list as string[]).map((t) => normalizeToken(network, t)),
     };
   });
+  if (env.FEE_CONVERTER_NATIVE_BUDGETS?.trim()) {
+    const budgets: unknown = JSON.parse(env.FEE_CONVERTER_NATIVE_BUDGETS);
+    if (!budgets || typeof budgets !== "object" || Array.isArray(budgets))
+      throw new TypeError("FEE_CONVERTER_NATIVE_BUDGETS must be a JSON object");
+    for (const [name, value] of Object.entries(budgets)) {
+      if (
+        !NETWORKS.includes(name as Network) ||
+        !value ||
+        typeof value !== "object"
+      )
+        throw new TypeError("Native budget names an invalid network or limit");
+      const limits = value as NativeGasLimits;
+      validateNativeLimits(limits);
+      if (
+        name === "base"
+          ? BigInt(limits.additionalFeeReserve) === 0n
+          : limits.additionalFeeReserve !== "0"
+      )
+        throw new TypeError(
+          "Base needs a positive data/operator allowance; other networks use zero",
+        );
+      const network = networks.find((n) => n.network === name) as
+        | NetworkConfig
+        | undefined;
+      if (network) network.nativeBudget = limits;
+    }
+  }
+  for (const network of networks as NetworkConfig[])
+    if (
+      mode === "live" &&
+      network.definition.family === "evm" &&
+      network.definition.usdc !== null &&
+      !network.nativeBudget
+    )
+      throw new TypeError(
+        `Native gas limits are required before live signing on ${network.network}`,
+      );
   const jupiterApiKey = env.JUPITER_API_KEY?.trim() || null;
   const running = mode !== "off";
   return {

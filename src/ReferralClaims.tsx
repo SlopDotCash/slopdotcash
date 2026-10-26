@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { readBoundedJson } from "./lib/browser-json";
 import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
@@ -19,9 +19,9 @@ interface Pending {
 function pendingKey(data: ReferralAccount) {
   return `slop:referral-claim:${data.program?.network}:${data.program?.distributor}:${data.wallet}`;
 }
-// Storage can be blocked or hold stale text. The chain rejects a repeated
-// cumulative claim, so an unreadable marker must not hide the verified record.
-function readPending(data: ReferralAccount): Pending | null {
+// An unreadable marker is unknown, not proof that no request was sent.
+// Keep this local status separate from the verified amounts.
+function readPending(data: ReferralAccount): Pending | null | undefined {
   try {
     const stored = localStorage.getItem(pendingKey(data));
     if (!stored) return null;
@@ -32,18 +32,19 @@ function readPending(data: ReferralAccount): Pending | null {
       typeof p.cumulative !== "string" ||
       !/^(0|[1-9][0-9]{0,77})$/.test(p.cumulative)
     )
-      return null;
+      return undefined;
     return p;
   } catch {
-    return null;
+    return undefined;
   }
 }
 function writePending(data: ReferralAccount, p: Pending | null) {
   try {
     if (p) localStorage.setItem(pendingKey(data), JSON.stringify(p));
     else localStorage.removeItem(pendingKey(data));
+    return true;
   } catch {
-    // The in-page pending state still blocks a second review this session.
+    return false;
   }
 }
 export function ReferralClaims() {
@@ -57,8 +58,19 @@ export function ReferralClaims() {
     data: ReferralAccount;
     wallet: Connection;
   } | null>(null);
-  const [pending, setPending] = useState<Pending | null>(null);
+  const [pending, setPending] = useState<Pending | null | undefined>(null);
+  const pendingIntent = useRef<{
+    key: string;
+    value: Pending | null | undefined;
+  } | null>(null);
   const [message, setMessage] = useState("");
+  const rememberPending = (
+    account: ReferralAccount,
+    value: Pending | null | undefined,
+  ) => {
+    pendingIntent.current = { key: pendingKey(account), value };
+    setPending(value);
+  };
   // biome-ignore lint/correctness/useExhaustiveDependencies: user refresh rechecks the cached record.
   useEffect(() => {
     const controller = new AbortController();
@@ -80,17 +92,28 @@ export function ReferralClaims() {
         setData(value);
         setLoadFailed(false);
         if (value.enabled && value.program && value.wallet) {
-          const p = readPending(value);
+          let p = readPending(value);
+          const previous = pendingIntent.current;
+          if (previous?.key === pendingKey(value)) {
+            // A missing, unreadable or older marker cannot erase this page's
+            // newer intent or confirm it using an earlier claim's total.
+            if (
+              previous.value &&
+              (!p || BigInt(previous.value.cumulative) >= BigInt(p.cumulative))
+            )
+              p = previous.value;
+            else if (previous.value === undefined && p === null) p = undefined;
+          }
           if (
             p &&
             value.claimedBase !== null &&
             BigInt(value.claimedBase) >= BigInt(p.cumulative)
           ) {
             writePending(value, null);
-            setPending(null);
+            rememberPending(value, null);
             setMessage("Your claim is verified.");
-          } else setPending(p);
-        }
+          } else rememberPending(value, p);
+        } else setPending(null);
       })
       .catch((e: unknown) => {
         if (!controller.signal.aborted) {
@@ -126,7 +149,7 @@ export function ReferralClaims() {
     data.claim !== null &&
     data.claimableBase !== null &&
     BigInt(data.claimableBase) > 0n &&
-    !pending;
+    pending === null;
   const connect = async (choice: PayoutWallet) => {
     setBusy(true);
     setError("");
@@ -155,18 +178,24 @@ export function ReferralClaims() {
           hash: null,
           cumulative: review.data.claim?.cumulativeBase ?? "0",
         };
-        writePending(review.data, p);
-        setPending(p);
+        if (!writePending(review.data, p))
+          throw new Error(
+            "Your browser could not save the claim status. Enable site storage, then retry. No wallet request was sent.",
+          );
+        rememberPending(review.data, p);
         requested = true;
       });
       const p = { hash, cumulative: review.data.claim?.cumulativeBase ?? "0" };
-      writePending(review.data, p);
-      setPending(p);
+      rememberPending(review.data, p);
+      if (!writePending(review.data, p))
+        setError(
+          "Your browser could not save the claim status. Keep this page open and check wallet activity.",
+        );
       setMessage("Claim submitted. Wait for the verified record to refresh.");
     } catch (e) {
       if ((e as { code?: unknown })?.code === 4001) {
         writePending(review.data, null);
-        setPending(null);
+        rememberPending(review.data, null);
         setMessage("The wallet request was cancelled.");
       } else
         setError(
@@ -265,10 +294,10 @@ export function ReferralClaims() {
         </p>
       )}
       {message && <p role="status">{message}</p>}
-      {pending && (
+      {pending !== null && (
         <div role="status">
           <p>
-            {pending.hash
+            {pending?.hash
               ? "A claim was submitted. It is not yet verified in this record."
               : "A wallet request may have been sent. Check wallet activity."}{" "}
             {link && (
@@ -281,8 +310,13 @@ export function ReferralClaims() {
             type="button"
             disabled={busy}
             onClick={() => {
-              writePending(data, null);
-              setPending(null);
+              if (!writePending(data, null)) {
+                setError(
+                  "Your browser could not clear the claim status. Enable site storage, then retry.",
+                );
+                return;
+              }
+              rememberPending(data, null);
               setReview(null);
               setError("");
               reload();
