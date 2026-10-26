@@ -1069,7 +1069,7 @@ try {
   loseNextSend = true;
   await assert.rejects(
     dispatchPayment(db, makeExecutor(), award, new Date()),
-    /RPC unavailable/,
+    /RPC HTTP failure: 503/,
   );
   await rpc("anvil_mine", ["0x1"]);
   // Reopen the durable SQLite journal, recreating execution state after the ambiguous submission.
