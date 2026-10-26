@@ -4192,7 +4192,6 @@ function createSnapshotWithReviewCutoff(
         deep: 9,
         specialist: 24,
       }[record.reviewLoad];
-      awardedReviewers.add(source.author.id);
       if (
         addScore(entries, ledger, participationBans, {
           id: `${pullRequest.id}:automated-review:${source.id}`,
@@ -4214,6 +4213,7 @@ function createSnapshotWithReviewCutoff(
           reason: `Automated ${record.reviewLoad} review${receipt.traceUpload ? " with finalized private trace" : " without private trace"}; maintainer scoring remains authoritative.`,
         })
       ) {
+        awardedReviewers.add(source.author.id);
         recordScoredSources([source]);
       }
     }
@@ -4243,7 +4243,6 @@ function createSnapshotWithReviewCutoff(
                 declaration.actor?.id === review.author?.id,
             )?.run
           : null;
-      awardedReviewers.add(review.author.id);
       const scored = addScore(entries, ledger, participationBans, {
         id: `${pullRequest.id}:reviewer:${review.author.id}`,
         actor: review.author,
@@ -4264,6 +4263,7 @@ function createSnapshotWithReviewCutoff(
         reason,
       });
       if (scored) {
+        awardedReviewers.add(review.author.id);
         if (reviewSource) {
           recordScoredSources([reviewSource]);
         }
@@ -4337,6 +4337,16 @@ function createSnapshotWithReviewCutoff(
           `Qualifying review ${review.id} is missing its submitted timestamp`,
         );
       }
+      if (
+        participationBannedAt(
+          participationBans,
+          review.author.id,
+          review.submittedAt,
+        )
+      ) {
+        excludeReview(pullRequest, review, "review-credit-account-banned");
+        continue;
+      }
       if (parseIsoTime(review.submittedAt) < parseIsoTime(reviewCutoff)) {
         awardReview(
           review,
@@ -4394,6 +4404,11 @@ function createSnapshotWithReviewCutoff(
           review.author?.id !== event.actor.id ||
           !review.commitId ||
           !review.submittedAt ||
+          participationBannedAt(
+            participationBans,
+            review.author.id,
+            review.submittedAt,
+          ) ||
           heads.has(review.commitId) ||
           reviewExclusionReason(review, pullRequest) !== null
         )
