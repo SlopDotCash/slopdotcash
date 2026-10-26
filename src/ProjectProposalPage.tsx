@@ -2135,7 +2135,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   };
   const amount = monthlyPoolValue(value.monthlyAmount);
   // The amount in the current asset's base units; null when it cannot be
-  // written with that asset's decimals. The server then refuses it.
+  // written with that asset's decimals.
   let amountMinor: string | null = null;
   if (amount.valid)
     try {
@@ -2197,6 +2197,15 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         (field) =>
           draft[field] !== undefined && draft[field] !== initial[field],
       ));
+  // A kept asset cannot hold more decimals than it has; the server would
+  // refuse the amount.
+  if (
+    choice.mode === "monthly" &&
+    amount.valid &&
+    amountMinor === null &&
+    (assetFixed || !assetTouched)
+  )
+    errors.monthlyAmount = `${current.rewardAsset?.symbol ?? "This asset"} allows at most ${decimals} decimal places.`;
   /** The submitted manifest: the current revision with the owner's edits. */
   const next = ((): ProjectDefinition => {
     const source = current;
