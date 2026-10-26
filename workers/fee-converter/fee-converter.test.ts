@@ -286,11 +286,29 @@ describe("release gates", () => {
     ).toBe("off");
   });
 
-  test("the checked-in configuration keeps signing off while dedicated native limits remain unset", async () => {
+  test("the checked-in configuration signs live only with the owner's native limits", async () => {
     const toml = await Bun.file(
       new URL("./wrangler.toml", import.meta.url),
     ).text();
-    expect(toml).toMatch(/^FEE_CONVERTER_MODE = "off"$/mu);
+    expect(toml).toMatch(/^FEE_CONVERTER_MODE = "live"$/mu);
+    const budgets = /^FEE_CONVERTER_NATIVE_BUDGETS = '(.+)'$/mu.exec(toml)?.[1];
+    expect(JSON.parse(budgets ?? "null")).toEqual({
+      base: {
+        perTransaction: "200000000000000",
+        perDay: "1000000000000000",
+        additionalFeeReserve: "10000000000000",
+      },
+      ethereum: {
+        perTransaction: "2000000000000000",
+        perDay: "5000000000000000",
+        additionalFeeReserve: "0",
+      },
+      robinhood: {
+        perTransaction: "200000000000000",
+        perDay: "1000000000000000",
+        additionalFeeReserve: "0",
+      },
+    });
     expect(toml).toMatch(
       /^FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"$/mu,
     );
