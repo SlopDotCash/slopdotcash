@@ -1,4 +1,5 @@
 import { keccak_256 } from "@noble/hashes/sha3.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import {
   decodeFunctionData,
   parseAbi,
@@ -29,6 +30,7 @@ import {
   evmMonthlyReserveDigest,
   evmMonthlySumTree,
   readEvmMonthlyReserve,
+  evmRpc as rpc,
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import {
@@ -37,10 +39,8 @@ import {
   type EscrowChain,
   isEscrowChain,
 } from "../../src/lib/escrow-policy.mjs";
-import {
-  acceptsPayoutFee,
-  type PayoutPolicy,
-} from "../../src/lib/payments/contracts";
+import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
+import type { PaymentDeployment } from "../payments/index";
 import { finalizedEvmRevert } from "../payments/reconcile";
 import { reconcileBindingWinner } from "./binding-recovery";
 import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
@@ -101,26 +101,29 @@ type Input = DispatchPayment & { idempotencyKey: string };
  */
 type BindingRequest = DispatchPayment & { idempotencyKey: string | null };
 type AttemptMode = "required" | "none";
-interface Deployment {
-  payoutPolicy?: PayoutPolicy;
-  projectId: string;
+type Deployment = Pick<
+  PaymentDeployment,
+  | "payoutPolicy"
+  | "projectId"
+  | "vault"
+  | "asset"
+  | "owner"
+  | "identityAuthority"
+  | "feeRecipient"
+  | "codeSha256"
+  | "bindingDelaySeconds"
+> & {
+  /** A registry network, or the local Anvil network of the integration harness. */
   network: string;
   chain: string;
-  vault: string;
   rpcUrl: string;
   chainId: string;
-  asset: string;
-  owner: string;
-  identityAuthority: string;
-  feeRecipient: string;
-  codeSha256: string;
-  bindingDelaySeconds: string;
   /** Reviewed executor gas ceiling in gas units, copied from the registry into the deployment record. */
   gasCeiling: string;
   factory: string;
   factoryCodeSha256: string;
   registrar: string;
-}
+};
 export interface Authorization extends DispatchPayment {
   projectId: string;
   grossBase: string;
@@ -144,36 +147,13 @@ export interface Attempt {
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 function hex(bytes: Uint8Array): Hex {
-  return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+  return `0x${bytesToHex(bytes)}`;
 }
 function digest(text: string) {
   return hex(keccak_256(new TextEncoder().encode(text)));
 }
 function transactionHash(raw: Hex) {
-  return hex(
-    keccak_256(
-      Uint8Array.from(raw.slice(2).match(/../g) ?? [], (b) =>
-        Number.parseInt(b, 16),
-      ),
-    ),
-  );
-}
-async function rpc(
-  config: Deployment,
-  method: string,
-  params: unknown[],
-): Promise<unknown> {
-  const response = await fetch(config.rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error("Chain RPC unavailable");
-  const body = (await response.json()) as { result?: unknown; error?: unknown };
-  if (body.error || !("result" in body))
-    throw new Error("Chain RPC rejected operation");
-  return body.result;
+  return hex(keccak_256(hexToBytes(raw.slice(2))));
 }
 function words(value: unknown, count: number): string[] {
   if (
@@ -2033,8 +2013,9 @@ export async function runStoredBindings(
             keys.filter((item) => item !== key),
           );
         });
-    } catch {
+    } catch (error) {
       report.failed += 1;
+      logBindingFailure("stored_binding_reconcile_failed", error);
     }
   }
   const checked = (candidate: BindingCandidate) =>
@@ -2055,11 +2036,21 @@ export async function runStoredBindings(
       const outcome = await bindStoredDestination(env, candidate);
       if (outcome.state === "submitted") submitted.add(outcome.transactionId);
       else report[outcome.state] += 1;
-    } catch {
+    } catch (error) {
       report.failed += 1;
+      logBindingFailure("stored_binding_failed", error);
     }
   }
   return { ...report, submitted: [...submitted] };
+}
+/** Fixed fields only: an error message can contain a private RPC URL. */
+function logBindingFailure(event: string, error: unknown) {
+  console.error(
+    JSON.stringify({
+      event,
+      kind: error instanceof Error ? error.name : "unknown",
+    }),
+  );
 }
 
 export function createEvmExecutor(env: ExecutorEnvironment): PaymentExecutor {
