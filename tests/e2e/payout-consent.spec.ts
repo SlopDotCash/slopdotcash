@@ -132,9 +132,12 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
 }, info) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (e) => {
+    if (e.type() === "error") errors.push(e.text());
+  });
   const authorized = await setup(page);
   await page.getByRole("button", { name: "Authorize payout wallet" }).click();
-  const review = page.getByRole("region", {
+  const review = page.getByRole("dialog", {
     name: "Review payout wallet consent",
   });
   await expect(review).toContainText(vault);
@@ -151,7 +154,13 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
     path: info.outputPath("payout-consent-review.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Sign with Browser wallet" }).focus();
+  await expect(
+    review.getByRole("heading", { name: "Review payout wallet consent" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Sign with Browser wallet" }),
+  ).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(
     page.getByRole("status").filter({ hasText: "Wallet consent saved" }),
@@ -193,6 +202,11 @@ for (const fault of ["account", "domain", "reject"] as const) {
 test("Solana recipient co-signs only the prepared binding and waits for payment finality", async ({
   page,
 }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (e) => {
+    if (e.type() === "error") errors.push(e.text());
+  });
   const { ed25519 } = await import("@noble/curves/ed25519.js");
   const { solanaBase58 } = await import("../../contracts/solana/adapter");
   const { bytes, encoder, instructionData, le, message, pda, SYSTEM } =
@@ -369,7 +383,28 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
     page.getByRole("status").filter({ hasText: "Binding submitted" }),
   ).toBeVisible();
   expect(completed).toBe(1);
+  expect(errors).toEqual([]);
   await expect(
     page.getByText("Paid, verified on chain", { exact: true }),
   ).toHaveCount(0);
+});
+
+test("payout consent remains readable with enlarged text and Escape restores the initiating control", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.addStyleTag({ content: "html { font-size: 200%; }" });
+  const action = page.getByRole("button", { name: "Authorize payout wallet" });
+  await action.click();
+  const dialog = page.getByRole("dialog", {
+    name: "Review payout wallet consent",
+  });
+  const bounds = await dialog.boundingBox();
+  expect(bounds).not.toBeNull();
+  const viewport = page.viewportSize();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width + 1);
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(action).toBeFocused();
 });
