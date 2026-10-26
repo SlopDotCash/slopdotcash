@@ -16,6 +16,7 @@ import {
   type Hex,
   keccak256,
   parseAbi,
+  parseTransaction,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { handleFeeConversionsApi } from "../../backend/fee-conversions/handler";
@@ -38,6 +39,13 @@ const supportedFaults = [
   "race",
   "finalized-role",
   "receipt-role",
+  // Same-nonce fee replacement cases. Each needs its own fresh fork for the
+  // same historical-bytecode reason as the other claim cases.
+  "bump-replaced",
+  "bump-original",
+  "bump-cap",
+  "bump-restart",
+  "bump-nonce",
 ];
 const faults =
   process.env.SLOP_TEST_CLAIM_FAULTS?.split(",") ?? supportedFaults;
@@ -785,7 +793,10 @@ try {
   // Each retry uses a fresh Worker invocation and the durable SQLite journal.
   console.log(`Claim fault cases: ${faults.join(", ")}`);
   for (const fault of faults.filter(
-    (fault) => fault !== "finalized-role" && fault !== "receipt-role",
+    (fault) =>
+      fault !== "finalized-role" &&
+      fault !== "receipt-role" &&
+      !fault.startsWith("bump-"),
   )) {
     const conversionsBefore = (
       sqlite
@@ -931,6 +942,431 @@ try {
     console.log(
       `7 ${fault}: unverified claim blocked conversion; same send recovered once`,
     );
+  }
+
+  if (faults[0].startsWith("bump-")) {
+    // Same-nonce fee replacement (owner decision of 25 October 2026). Anvil
+    // stops automatic mining and raises the base fee above the signed fee,
+    // so the claim stays unmined as it would while gas stays high.
+    const accrue = async (gross: bigint) => {
+      await rpc("anvil_impersonateAccount", [HOLDER]);
+      await call(
+        HOLDER,
+        AERO,
+        `0xa9059cbb${word(registrar)}${gross.toString(16).padStart(64, "0")}`,
+      );
+      await rpc("anvil_stopImpersonatingAccount", [HOLDER]);
+      for (const [to, data] of [
+        [
+          AERO,
+          encodeFunctionData({
+            abi: vaultAbi,
+            functionName: "approve",
+            args: [vault as Hex, gross],
+          }),
+        ],
+        [
+          vault,
+          encodeFunctionData({
+            abi: vaultAbi,
+            functionName: "deposit",
+            args: [gross],
+          }),
+        ],
+        [
+          vault,
+          encodeFunctionData({
+            abi: vaultAbi,
+            functionName: "withdrawUnused",
+            args: [gross],
+          }),
+        ],
+      ] as const)
+        await call(registrar, to, data);
+      await rpc("anvil_mine", ["0x80"]);
+    };
+    const hex = (value: bigint) => `0x${value.toString(16)}`;
+    const mineAtBaseFee = async (fee: bigint) => {
+      await rpc("anvil_setNextBlockBaseFeePerGas", [hex(fee)]);
+      await rpc("anvil_mine", ["0x1"]);
+    };
+    const receiptOf = (hash: string) =>
+      rpc("eth_getTransactionReceipt", [hash]) as Promise<{
+        status: string;
+      } | null>;
+    const inPool = async (hash: string) =>
+      (await rpc("eth_getTransactionByHash", [hash])) !== null;
+    let clock = Date.now();
+    const at = (ms: number) => {
+      clock += ms;
+      const fixed = new Date(clock);
+      return () => fixed;
+    };
+    const events: string[] = [];
+    const log = console.log;
+    const capture = async <T>(work: () => Promise<T>) => {
+      console.log = (line: unknown) => {
+        events.push(String(line));
+        log(line);
+      };
+      try {
+        return await work();
+      } finally {
+        console.log = log;
+      }
+    };
+    const latestClaim = () =>
+      sqlite
+        .query(
+          "SELECT id, tx_id, raw_tx, state, reason, landed_tx_id, amount_out FROM fee_conversions WHERE kind = 'claim' ORDER BY rowid DESC LIMIT 1",
+        )
+        .get() as {
+        id: string;
+        tx_id: string;
+        raw_tx: string;
+        state: string;
+        reason: string | null;
+        landed_tx_id: string | null;
+        amount_out: string | null;
+      };
+    const replacementsOf = (id: string) =>
+      sqlite
+        .query(
+          "SELECT attempt, tx_id, raw_tx, max_fee_per_gas, max_priority_fee_per_gas FROM fee_send_replacements WHERE conversion_id = ? ORDER BY attempt",
+        )
+        .all(id) as {
+        attempt: number;
+        tx_id: string;
+        raw_tx: string;
+        max_fee_per_gas: string;
+        max_priority_fee_per_gas: string;
+      }[];
+    const signedFee = (raw: string) => {
+      const parsed = parseTransaction(raw as Hex);
+      return {
+        max: parsed.maxFeePerGas as bigint,
+        tip: parsed.maxPriorityFeePerGas as bigint,
+        nonce: parsed.nonce,
+      };
+    };
+    const ceil = (value: bigint, percent: bigint) =>
+      (value * percent + 99n) / 100n;
+    // Starts one stalled claim: a fresh 2% fee, then a live recovery run
+    // whose claim is broadcast but not mined.
+    const stall = async (label: string) => {
+      await accrue(5_000n * 10n ** 18n);
+      const accrued = (await view(vault, "accruedFees")) as bigint;
+      await rpc("evm_setAutomine", [false]);
+      await runOnce(env, at(60 * 60 * 1000));
+      const claim = latestClaim();
+      if (claim.state !== "unknown" || !(await inPool(claim.tx_id)))
+        throw new Error(`${label}: the claim did not stall unmined`);
+      const original = signedFee(claim.raw_tx);
+      console.log(
+        `${label}: claim ${claim.tx_id} stalled; nonce ${original.nonce}, maxFeePerGas ${original.max}`,
+      );
+      return { claim, original, accrued };
+    };
+    // Mines with automatic mining back on, reconciles the claim, and sells
+    // the claimed fee so the next case starts with no open send.
+    const settle = async (label: string, accrued: bigint) => {
+      await rpc("evm_setAutomine", [true]);
+      await rpc("anvil_mine", ["0x80"]);
+      await runOnce(env, at(5 * 60 * 1000), undefined, "receipts");
+      const claim = latestClaim();
+      if (claim.state !== "finalized" || claim.amount_out !== String(accrued))
+        throw new Error(
+          `${label}: claim ${claim.state} with ${claim.amount_out}, expected ${accrued}`,
+        );
+      await rpc("anvil_mine", ["0x80"]);
+      await runOnce(env, at(5 * 60 * 1000), undefined, "receipts");
+      // The sale uses live KyberSwap routes against an older fork block and
+      // can fail simulation late in a long case. It is not under test here;
+      // only the claim is. Any outcome must be final, not an open send.
+      const sale = state();
+      console.log(
+        `${label} sale of the claimed fee: ${sale.state}${sale.reason ? ` (${sale.reason.slice(0, 80)})` : ""}`,
+      );
+      if (sale.state === "submitted" || sale.state === "unknown")
+        throw new Error(`${label}: the sale of the claimed fee is still open`);
+      if ((await view(vault, "accruedFees")) !== 0n)
+        throw new Error(`${label}: fees remain in the vault`);
+      return claim;
+    };
+    const claimsBefore = (
+      sqlite
+        .query("SELECT COUNT(*) AS n FROM fee_conversions WHERE kind = 'claim'")
+        .get() as { n: number }
+    ).n;
+
+    // 8a. A stalled claim is replaced at a higher fee, and the replacement lands.
+    if (faults[0] === "bump-replaced") {
+      const label = "8a stalled claim replaced";
+      const { claim, original, accrued } = await stall(label);
+      await mineAtBaseFee(original.max + 1n);
+      if (await receiptOf(claim.tx_id))
+        throw new Error(`${label}: the claim was mined below the base fee`);
+      // Too early: no replacement before the bounded wait.
+      await runOnce(env, at(60 * 1000), undefined, "receipts");
+      // Dry run reconciles, but never signs a replacement.
+      await runOnce(
+        { ...env, FEE_CONVERTER_MODE: "dry_run" },
+        at(4 * 60 * 1000),
+        undefined,
+        "receipts",
+      );
+      if (replacementsOf(claim.id).length !== 0)
+        throw new Error(`${label}: replaced early or in dry run`);
+      await runOnce(env, at(0), undefined, "receipts");
+      const [first, ...rest] = replacementsOf(claim.id);
+      if (!first) throw new Error(`${label}: no replacement was journaled`);
+      const bumped = signedFee(first.raw_tx);
+      if (
+        rest.length !== 0 ||
+        first.attempt !== 1 ||
+        bumped.nonce !== original.nonce ||
+        bumped.max !== ceil(original.max, 125n) ||
+        bumped.tip !== ceil(original.tip, 125n) ||
+        first.max_fee_per_gas !== String(bumped.max) ||
+        !(await inPool(first.tx_id)) ||
+        (await inPool(claim.tx_id))
+      )
+        throw new Error(`${label}: expected one +25% same-nonce replacement`);
+      await mineAtBaseFee(original.max - original.tip);
+      if (!(await receiptOf(first.tx_id)) || (await receiptOf(claim.tx_id)))
+        throw new Error(`${label}: the replacement did not land alone`);
+      const settled = await settle(label, accrued);
+      if (settled.landed_tx_id !== first.tx_id || settled.tx_id !== claim.tx_id)
+        throw new Error(`${label}: the landed replacement was not recorded`);
+      console.log(
+        `${label}: replacement ${first.tx_id} landed at maxFeePerGas ${bumped.max}; one claim of ${accrued}`,
+      );
+    }
+
+    // 8b. The original lands after its replacement was broadcast.
+    if (faults[0] === "bump-original") {
+      const label = "8b original lands after replacement";
+      const { claim, original, accrued } = await stall(label);
+      await mineAtBaseFee(original.max + 1n);
+      await runOnce(env, at(4 * 60 * 1000), undefined, "receipts");
+      const [first] = replacementsOf(claim.id);
+      if (!first || !(await inPool(first.tx_id)))
+        throw new Error(`${label}: no replacement was broadcast`);
+      // Another node still holds the original: it is mined first.
+      await rpc("anvil_dropTransaction", [first.tx_id]);
+      await rpc("eth_sendRawTransaction", [claim.raw_tx]);
+      await mineAtBaseFee(original.max - original.tip);
+      if (!(await receiptOf(claim.tx_id)) || (await receiptOf(first.tx_id)))
+        throw new Error(`${label}: the original did not land alone`);
+      const settled = await settle(label, accrued);
+      if (
+        settled.landed_tx_id !== claim.tx_id ||
+        replacementsOf(claim.id).length !== 1
+      )
+        throw new Error(`${label}: the landed original was not recorded`);
+      console.log(
+        `${label}: original ${claim.tx_id} landed after replacement ${first.tx_id}; one claim of ${accrued}`,
+      );
+    }
+
+    // 8c. Gas stays high: replacements stop at three times the original fee.
+    if (faults[0] === "bump-cap") {
+      const label = "8c replacement cap";
+      const { claim, original, accrued } = await stall(label);
+      let steps = 0;
+      for (; steps < 8; steps++) {
+        await mineAtBaseFee(original.max * 10n);
+        await capture(() =>
+          runOnce(env, at(4 * 60 * 1000), undefined, "receipts"),
+        );
+      }
+      const attempts = replacementsOf(claim.id);
+      const fees = attempts.map((attempt) => signedFee(attempt.raw_tx));
+      const last = fees.at(-1);
+      const capped = events.some(
+        (line) =>
+          line.includes('"event":"fee_send_waiting"') &&
+          line.includes("fee replacement cap reached"),
+      );
+      if (
+        attempts.length !== 5 ||
+        !last ||
+        last.max !== original.max * 3n ||
+        last.tip !== original.tip * 3n ||
+        fees.some(
+          (fee, index) =>
+            fee.nonce !== original.nonce ||
+            fee.max < ceil(index ? fees[index - 1].max : original.max, 110n),
+        ) ||
+        !capped
+      )
+        throw new Error(
+          `${label}: expected 5 replacements ending at 3x, got ${attempts.length}`,
+        );
+      // A restarted run does not pass the cap either.
+      await mineAtBaseFee(original.max * 10n);
+      await runOnce(env, at(4 * 60 * 1000), undefined, "receipts");
+      if (replacementsOf(claim.id).length !== 5)
+        throw new Error(`${label}: a later run exceeded the cap`);
+      // Anvil refuses a send whose maximum fee is below the base fee, so the
+      // node holds no attempt now; every attempt is in the journal. When the
+      // base fee falls, the next run sends the capped bytes again and signs
+      // nothing new.
+      await mineAtBaseFee(original.max - original.tip);
+      await runOnce(env, at(30 * 1000), undefined, "receipts");
+      if (
+        replacementsOf(claim.id).length !== 5 ||
+        !(await inPool(attempts[4].tx_id))
+      )
+        throw new Error(`${label}: the capped bytes were not sent again`);
+      await mineAtBaseFee(original.max - original.tip);
+      if (!(await receiptOf(attempts[4].tx_id)))
+        throw new Error(`${label}: the capped replacement did not land`);
+      const settled = await settle(label, accrued);
+      if (settled.landed_tx_id !== attempts[4].tx_id)
+        throw new Error(`${label}: the landed replacement was not recorded`);
+      console.log(
+        `${label}: ${attempts.length} replacements up to maxFeePerGas ${last.max} (3x ${original.max}); then waiting; one claim of ${accrued}`,
+      );
+    }
+
+    // 8d. A run stops after it journals a replacement and before the
+    // replacement reaches the node. The next run sends the same bytes.
+    if (faults[0] === "bump-restart") {
+      const label = "8d restart mid-replacement";
+      const { claim, original, accrued } = await stall(label);
+      await mineAtBaseFee(original.max + 1n);
+      const lostSend = (async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => {
+        const body = typeof init?.body === "string" ? init.body : "";
+        if (body.includes('"eth_sendRawTransaction"'))
+          throw new Error("local replacement send interrupted");
+        return fetch(input, init);
+      }) as typeof fetch;
+      await runOnce(env, at(4 * 60 * 1000), { fetch: lostSend }, "receipts");
+      const [first] = replacementsOf(claim.id);
+      const interrupted = latestClaim();
+      if (
+        !first ||
+        (await inPool(first.tx_id)) ||
+        interrupted.state !== "unknown" ||
+        !interrupted.reason?.startsWith("replacement broadcast")
+      )
+        throw new Error(`${label}: the journaled replacement was not lost`);
+      await runOnce(env, at(30 * 1000), undefined, "receipts");
+      const after = replacementsOf(claim.id);
+      if (
+        after.length !== 1 ||
+        after[0].raw_tx !== first.raw_tx ||
+        !(await inPool(first.tx_id)) ||
+        latestClaim().state !== "submitted"
+      )
+        throw new Error(
+          `${label}: the restart did not resend the journaled bytes`,
+        );
+      await mineAtBaseFee(original.max - original.tip);
+      const settled = await settle(label, accrued);
+      if (settled.landed_tx_id !== first.tx_id)
+        throw new Error(`${label}: the landed replacement was not recorded`);
+      console.log(
+        `${label}: journaled replacement ${first.tx_id} resent unchanged and landed; one claim of ${accrued}`,
+      );
+    }
+
+    // 8e. A load-balanced RPC lost a stuck claim, so the node reports its
+    // nonce as free. A send for another token must not take that nonce: the
+    // two would outbid each other through their replacements.
+    if (faults[0] === "bump-nonce") {
+      const label = "8e nonce held by an open send";
+      const WETH = "0x4200000000000000000000000000000000000006";
+      const { claim, original, accrued } = await stall(label);
+      await rpc("anvil_dropTransaction", [claim.tx_id]);
+      await rpc("evm_setAutomine", [true]);
+      const nonceAt = async (tag: string) =>
+        Number(await rpc("eth_getTransactionCount", [wallet, tag]));
+      if ((await nonceAt("pending")) !== original.nonce)
+        throw new Error(`${label}: the node still holds the claim`);
+      // WETH9 keeps balanceOf in slot 3. Funding by storage uses no nonce.
+      await rpc("anvil_setStorageAt", [
+        WETH,
+        keccak256(
+          encodeAbiParameters(
+            [{ type: "address" }, { type: "uint256" }],
+            [wallet as Hex, 3n],
+          ),
+        ),
+        `0x${(10n ** 16n).toString(16).padStart(64, "0")}`,
+      ]);
+      if ((await balanceOf(WETH, wallet)) !== 10n ** 16n)
+        throw new Error(`${label}: WETH was not funded`);
+      // The same RPC also refuses the claim's rebroadcast in this run.
+      const lostClaim = (async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => {
+        const body = typeof init?.body === "string" ? init.body : "";
+        if (
+          body.includes('"eth_sendRawTransaction"') &&
+          body.includes(claim.raw_tx)
+        )
+          throw new Error("local claim rebroadcast lost");
+        return fetch(input, init);
+      }) as typeof fetch;
+      const wethEnv = {
+        ...env,
+        FEE_CONVERTER_ALLOWLIST: JSON.stringify({
+          base: [AERO, UNROUTED, WETH],
+        }),
+      };
+      await runOnce(wethEnv, at(30 * 1000), { fetch: lostClaim }, "receipts");
+      const weth = state(WETH);
+      if (
+        weth.state !== "failed" ||
+        !weth.reason?.includes(
+          `nonce ${original.nonce} is held by an open journaled send`,
+        ) ||
+        (await nonceAt("latest")) !== original.nonce ||
+        (await nonceAt("pending")) !== original.nonce ||
+        latestClaim().state !== "unknown"
+      )
+        throw new Error(
+          `${label}: a new send took nonce ${original.nonce}: ${JSON.stringify(weth)}`,
+        );
+      console.log(
+        `${label}: WETH conversion refused before signing (${weth.reason})`,
+      );
+      // The next run sends the claim's journaled bytes; it lands on its nonce.
+      await runOnce(wethEnv, at(30 * 1000), undefined, "receipts");
+      if (!(await receiptOf(claim.tx_id)))
+        throw new Error(`${label}: the claim did not land on its nonce`);
+      const settled = await settle(label, accrued);
+      if (settled.landed_tx_id !== claim.tx_id)
+        throw new Error(`${label}: the landed claim was not recorded`);
+      console.log(
+        `${label}: claim ${claim.tx_id} kept nonce ${original.nonce} and landed; one claim of ${accrued}`,
+      );
+    }
+
+    const claims = sqlite
+      .query(
+        "SELECT state FROM fee_conversions WHERE kind = 'claim' ORDER BY rowid",
+      )
+      .all() as { state: string }[];
+    if (
+      claims.length !== claimsBefore + 1 ||
+      claims.slice(claimsBefore).some((claim) => claim.state !== "finalized")
+    )
+      throw new Error("the replacement case did not record one claim");
+    if (
+      (await view(vault, "freeBalance")) !== freeBeforeClaim ||
+      ((await view(vault, "reservedPrincipal")) as bigint) +
+        ((await view(vault, "reservedFees")) as bigint) !==
+        reserved
+    )
+      throw new Error("replacement cases changed principal or reserved awards");
+    console.log(`PASS: Base fork same-nonce fee replacement: ${faults[0]}`);
   }
 
   if (faults[0] === "receipt-role") {
@@ -1104,7 +1540,7 @@ try {
         ? "PASS: Base fork fee claim, deployment refusals, reviewed upgrade, principal preservation and conversion"
         : "PASS: Base fork live cycles (ordinary, lost send, lost response, below minimum, slippage refusal, unsupported route, verified vault fee claim)",
     );
-  } else {
+  } else if (!faults[0].startsWith("bump-")) {
     console.log(
       `PASS: Base fork ${faults[0]} claim recovery and principal preservation`,
     );

@@ -266,7 +266,94 @@ decides each unresolved row:
   prove it was never included. Before expiry, recovery checks the deployment
   and rebroadcasts the recorded bytes.
 
-The Worker never signs a second transaction for a send that could still land.
+The Worker never signs a transaction with a new nonce for a send that could
+still land. The only other transaction it signs for that send is a same-nonce
+fee replacement, described next.
+
+### Same-nonce fee replacement (EVM)
+
+Owner decision of 25 October 2026. EVM fee claims and conversion swaps are
+signed with a fixed maximum fee. If gas stays high, the send can stay unmined.
+The Worker then replaces it with a transaction that has the same nonce and a
+higher fee, in bounded steps.
+
+A replacement is signed only when all of these are true:
+
+- The mode is `live` and the network has a fee-wallet key. A dry run
+  reconciles but signs nothing.
+- The send is not mined. A mined send that waits for finality is not
+  replaced.
+- The latest attempt (the original or the last replacement) was journaled at
+  least 3 minutes ago (`REPLACEMENT_WAIT_MS` in `core.ts`).
+- The latest block base fee plus the current priority fee is above the
+  signed `maxFeePerGas` of the latest attempt.
+- The new fees fit the step and the cap. Each step raises `maxFeePerGas` and
+  `maxPriorityFeePerGas` by 25%, rounded up. Neither field can go above three
+  times the original send's value. Each step must raise both fields by at
+  least 10%, the minimum that nodes accept for an EIP-1559 replacement. When
+  the cap does not allow this, the cap is reached. With these values, a send
+  can have at most five replacements.
+- The worst-case fee (the original gas limit at the new `maxFeePerGas`, plus
+  on Base the L1 data fee of the replacement bytes from the GasPriceOracle
+  `getL1Fee`), priced in USDC, multiplied by `FEE_CONVERTER_GAS_MULTIPLE`, is not more
+  than the recorded USDC value of the send. This is the same approved
+  gas-cost threshold that the original send passed. The gas limit does not
+  change. A claim row records its quoted USDC value for this check. A claim
+  recorded before this change has no value, so it is not replaced.
+- A claim: the reviewed deployment is verified again, as for a rebroadcast.
+- A swap: its router deadline is more than 2 minutes away.
+
+If one of these is false, the send waits. The run logs `fee_send_waiting`
+with the reason, for example `fee replacement cap reached`. The send stays
+`submitted` or `unknown`. The token stays blocked until the send is
+reconciled.
+
+The replacement copies the recipient, calldata, value, gas limit, access list
+and nonce from the original signed bytes. Only the two fee fields change. The
+Worker does not quote a swap again under the same nonce.
+
+**Expired swap deadline.** A replacement keeps the calldata, so it also keeps
+the router deadline (20 minutes after signing). After that deadline, a
+same-nonce replacement would revert. The existing code has no zero-value
+self-cancel transaction, and this change does not add one. A swap within 2
+minutes of its deadline is not replaced; it waits. If it is mined later, it
+reverts and the row closes as `failed`. If the node drops it after the
+deadline, the row also closes as `failed`. A later run quotes and signs a new swap for
+the token. The token balance stays in the fee wallet during the wait.
+
+**Journal.** Each replacement is stored in `fee_send_replacements`
+(migration `0087`) before it is broadcast: the row, attempt number, nonce,
+transaction hash, signed bytes and both fee fields. These rows cannot change
+or be deleted. The original row in `fee_conversions` does not change.
+
+**Reconciliation.** The original and every replacement share one nonce, so
+at most one can be included. Reconciliation checks the receipt of each hash.
+The included transaction decides the one outcome of the row, with the same
+claim and swap receipt checks as before. `landed_tx_id` records which
+transaction landed. A claim or conversion is counted once, whichever attempt
+lands.
+
+**Nonce floor.** A new claim, approval or swap never takes a nonce at or
+below the nonce of an open journaled send (`submitted` or `unknown`) on that
+network. A node, for example one behind a load-balanced RPC, can drop a
+stuck send and report its nonce as free. Without this floor, a new send for
+another token could take that nonce, and the two sends would outbid each
+other through their replacements. The new send is refused before it is
+signed; the refused conversion closes as `failed` with the reason, and a
+later run tries again.
+
+**Restart.** A run can stop after it journals a replacement and before the
+node receives it. The next run sees that the latest attempt is not in the
+node. It sends the journaled bytes again; it does not sign another
+replacement. The same applies when a node refuses a replacement, for
+example because its maximum fee is still below the base fee: the row is
+`unknown`, and a later run sends the latest journaled bytes again or signs
+the next step. The wait, the step and the cap come from the journal, so
+repeated runs cannot pass the cap.
+
+**Not covered.** The ERC-20 approval before a swap is not journaled with its
+signed bytes, so it is not replaced. If an approval is not mined within one
+minute, the conversion fails before the swap is signed, as before.
 
 ## Configuration
 
@@ -319,7 +406,8 @@ the sweep keys; those wallets are not cold storage. A
 remote signer may replace it later. Signing stays narrow: only `live` mode on a
 network with a verified USDC target loads a key; the key signs only an exact
 approval to the pinned router, the checked swap, `claimFees()` (no
-arguments, no value) to a vault named in a D1 project manifest, and on Solana
+arguments, no value) to a vault named in a D1 project manifest, same-nonce fee
+replacements of that swap or claim, and on Solana
 `claim_fees` for a verified manifest vault into the fee wallet's own token
 account; errors and logs never include it.
 
@@ -451,7 +539,18 @@ after a lost send, lost response, incomplete transfer receipt or missing hash
 lookups. It also accepts the exact smaller fee after another caller claims
 first. Each recovery uses the same journaled claim and verifies it before a
 sale and finalized reconcile). The fee claim leaves both free principal and a reserved award
-unchanged. `SLOP_TEST_FEE_PORT` selects another local port. To run only this
+unchanged. The `bump-*` cases stop automatic mining and raises the base fee
+above the signed fee. It proves that a stalled claim gets a +25% same-nonce
+replacement only after the wait and never in a dry run, and that the
+replacement lands; that the original can land after its replacement was
+broadcast; that replacements stop at three times the original fee and a later
+run does not pass that cap; and that a run that stops after it journals a
+replacement sends the same bytes on the next run. `bump-nonce` drops a stuck
+claim from the node and proves that a WETH conversion is refused instead of
+taking the claim's nonce, and that the claim then lands on that nonce. Each
+case runs on a fresh
+fork and records one claim with the transaction that landed. To run only these
+cases, use `SLOP_TEST_CLAIM_FAULTS=bump-replaced,bump-original,bump-cap,bump-restart,bump-nonce bun run test:fee-converter:fork --fee-claim-only`. `SLOP_TEST_FEE_PORT` selects another local port. To run only this
 claim flow, use `bun run test:fee-converter:fork --fee-claim-only`.
 The Solana check uses a local
 `solana-test-validator` (port 28899) that clones the mainnet Jupiter and
