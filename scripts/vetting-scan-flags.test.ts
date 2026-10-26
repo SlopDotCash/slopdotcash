@@ -134,6 +134,7 @@ let flags: ProjectFlagStore;
 let beforeFlagBatch: (() => void) | null = null;
 let keys: Awaited<ReturnType<typeof vettingKeyPair>>;
 let livePin: VettingPin;
+let pinUp = true;
 let clock: Date;
 let ids = 0;
 let installation: "installed" | "missing" | "suspended" = "installed";
@@ -166,6 +167,7 @@ beforeEach(async () => {
   );
   keys = await vettingKeyPair();
   livePin = { commitSha: HEAD, templateSha256: TEMPLATE };
+  pinUp = true;
 });
 afterEach(async () => {
   await retained?.dispose();
@@ -173,7 +175,10 @@ afterEach(async () => {
 
 const actorOf = (request: Request) =>
   ACTORS[request.headers.get("x-test-actor") ?? ""] ?? null;
-const readLivePin = async () => livePin;
+const readLivePin = async () => {
+  if (!pinUp) throw new Error("GitHub unavailable");
+  return livePin;
+};
 const randomId = () =>
   `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`;
 const vettingDeps = () => ({
@@ -1197,6 +1202,155 @@ test("a non-exempt owner executable edit still pauses and queues its new content
       (assessment) =>
         assessment.revision === current.revision + 1 &&
         assessment.state === "pending",
+    ),
+  ).toHaveLength(1);
+});
+
+test("withdrawing a flag after the 90-day lifetime expires it by lifetime and returns 404", async () => {
+  await activeProject();
+  const created = await flag("alice");
+  expect(created.status).toBe(201);
+  const flagId = (await created.json()).flag.id as string;
+
+  clock = new Date(NOW.getTime() + 7_776_000_000);
+  const status = await flagApi(
+    sessionRequest("GET", "project-flags/open-registry", "alice"),
+  );
+  expect(status.status).toBe(200);
+  expect((await status.json()).flag).toBeNull();
+
+  const withdrawn = await flagApi(
+    sessionRequest("POST", "project-flags/open-registry/withdraw", "alice", {}),
+  );
+  expect(withdrawn.status).toBe(404);
+  expect((await withdrawn.json()).error).toBe("not_found");
+  expect(await flags.get(flagId)).toMatchObject({
+    id: flagId,
+    state: "expired",
+    closedAt: clock.toISOString(),
+    closedBy: "lifetime",
+  });
+
+  expect((await flag("alice", "prompt-injection")).status).toBe(201);
+});
+
+test("a cached scan from before a two-flag pause is refused and cannot reinstate the project", async () => {
+  const initialAssessmentId = await activeProject();
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  const second = await flag("bob");
+  expect(second.status).toBe(201);
+  expect(await second.json()).toMatchObject({
+    paused: true,
+    restriction: "quarantined",
+    freshScan: "queued",
+  });
+  const fresh = (await vetting.pendingAssessments()).at(-1);
+  if (!fresh) throw new Error("Missing pause scan");
+
+  const reused = await scanFixture(
+    fresh.id,
+    "clean",
+    { runId: "scan-run-1", reusedAssessmentId: initialAssessmentId },
+    false,
+  );
+  const response = await postResult(reused);
+  expect(response.status).toBe(422);
+  expect((await response.json()).error).toBe("reuse_mismatch");
+  expect((await publicProject()).status).toBe(410);
+  expect(await flags.activeFlags(clock)).toHaveLength(2);
+});
+
+test("a completed scan for a superseded commit pin records without lifting a flag pause until the live pin is scanned", async () => {
+  await activeProject();
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  const second = await flag("bob");
+  expect(second.status).toBe(201);
+  expect(await second.json()).toMatchObject({
+    paused: true,
+    restriction: "quarantined",
+    freshScan: "queued",
+  });
+  const stale = (await vetting.pendingAssessments()).at(-1);
+  if (!stale) throw new Error("Missing pause scan");
+
+  // The repository integration branch advances while the pause scan is in flight.
+  livePin = { commitSha: "e".repeat(40), templateSha256: TEMPLATE };
+  const staleScan = await scanFixture(stale.id, "clean", {
+    runId: "scan-run-2",
+  });
+  const recordedStale = await postResult(staleScan);
+  expect(recordedStale.status).toBe(200);
+  expect((await vetting.getAssessment(stale.id))?.state).toBe("clean");
+
+  // Because the completed scan does not match the live pin, the flag pause
+  // remains in place without a reinstatement enforcement record.
+  expect((await publicProject()).status).toBe(410);
+  expect(
+    (await projects.listEnforcements()).filter(
+      (entry) =>
+        entry.projectId === "open-registry" && entry.action === "reinstate",
+    ),
+  ).toHaveLength(0);
+
+  // Refresh queues a fresh scan at the current live pin, which reinstates.
+  const { queued } = await refresh();
+  expect(queued).toHaveLength(1);
+  const freshAssessment = await vetting.getAssessment(queued[0]);
+  expect(freshAssessment?.commitSha).toBe("e".repeat(40));
+  expect(
+    (
+      await postResult(
+        await scanFixture(queued[0], "clean", { runId: "scan-run-3" }),
+      )
+    ).status,
+  ).toBe(200);
+  expect((await publicProject()).status).toBe(200);
+  expect(
+    (await projects.listEnforcements()).filter(
+      (entry) =>
+        entry.projectId === "open-registry" && entry.action === "reinstate",
+    ),
+  ).toHaveLength(1);
+});
+
+test("a live-pin outage while a fresh clean scan lands defers the flag reinstatement to the next refresh", async () => {
+  await activeProject();
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  expect((await flag("bob")).status).toBe(201);
+  const pending = (await vetting.pendingAssessments()).at(-1);
+  if (!pending) throw new Error("Missing pause scan");
+  const result = await scanFixture(pending.id, "clean", {
+    runId: "scan-run-4",
+  });
+
+  pinUp = false;
+  expect((await postResult(result)).status).toBe(200);
+  expect((await vetting.getAssessment(pending.id))?.state).toBe("clean");
+  expect((await publicProject()).status).toBe(410);
+  // Refresh during the outage changes nothing.
+  expect((await refresh()) as unknown).toMatchObject({
+    queued: [],
+    reinstated: [],
+  });
+  expect((await publicProject()).status).toBe(410);
+
+  pinUp = true;
+  expect((await refresh()) as unknown).toMatchObject({
+    queued: [],
+    reinstated: [pending.id],
+  });
+  expect((await publicProject()).status).toBe(200);
+  expect((await refresh()) as unknown).toMatchObject({
+    queued: [],
+    reinstated: [],
+  });
+  expect(
+    (await projects.listEnforcements()).filter(
+      (entry) =>
+        entry.projectId === "open-registry" && entry.action === "reinstate",
     ),
   ).toHaveLength(1);
 });
