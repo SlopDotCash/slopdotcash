@@ -739,7 +739,7 @@ export function EarningsPage({
                                 {
                                   paid: "Paid, verified on chain",
                                   needs_wallet: `Awaiting wallet: add or confirm your ${CHAIN_NAMES[payment.chain]} wallet`,
-                                  ready: "Ready, payment queued",
+                                  ready: "Payment queued",
                                   submitted:
                                     "Submitted, waiting for chain verification",
                                   held: "Held, funds remain reserved",
