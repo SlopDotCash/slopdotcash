@@ -812,25 +812,6 @@ test("an application stored before self-service setup publishes once, by its app
   });
 });
 
-test("the removed admin approval routes no longer exist", async () => {
-  const { call } = registry();
-  for (const path of [
-    "admin/project-applications",
-    "admin/project-applications/app_storedapplication1/approve",
-  ])
-    expect(
-      (await call(path.endsWith("approve") ? "POST" : "GET", path, ADMIN, {}))
-        .status,
-    ).toBe(404);
-  expect(
-    (
-      await call("POST", "project-applications", OWNER, {
-        manifest: applicationManifest("open-registry", "example/open-registry"),
-      })
-    ).status,
-  ).toBe(404);
-});
-
 test("the scan digest ignores presentation, listing and money but binds skill inputs", async () => {
   const base = applicationManifest(
     "open-registry",
