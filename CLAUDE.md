@@ -45,6 +45,12 @@ alias only.
     attempts and reconcile either canonical finalized winner. The old binding
     may still win. Missing evidence is not cancellation proof. This exception
     does not authorize cancellation of payments or monthly commitments.
+    Owner decision of 25 October 2026: on a current project owner request,
+    the attester may sign release of the whole untouched monthly reserve only
+    after fresh finalized evidence proves that the complete retained allocation
+    matches the admitted root but has the wrong total. Missing, healthy, stale,
+    partly settled or already released allocations refuse. The owner separately
+    signs the release transaction. The Worker never submits it or withdraws funds.
   - One fee-wallet hot key per network (PRD TOK-07, MVP-07c, owner decision
     of 18 October 2026). It controls only the network fee wallet. It signs
     only the conversion of fees received in that wallet to USDC, through allowlisted routes, within the slippage limit,
