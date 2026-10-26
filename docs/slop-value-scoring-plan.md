@@ -172,6 +172,8 @@ checks. Production Cloudflare access and App private-key/webhook configuration
 remain pending. Existing worker billing qualification is incomplete. Do not represent App installation alone as an operating bot.
 
 The owner selected assessment within the existing ChatGPT subscription for
-the historical run. Do not start paid API calls for that backfill. The ongoing
-hosted Slopbot service still needs a supported model connection and its own
-approved operating budget; a ChatGPT subscription is not an API credential.
+the historical run. The SlopDotCash/slopdotcash slice uses the owner's Claude
+subscription (owner decision, 26 October 2026). Do not start paid API calls for
+that backfill. The ongoing hosted Slopbot service still needs a supported model
+connection and its own approved operating budget; a subscription is not an API
+credential.
