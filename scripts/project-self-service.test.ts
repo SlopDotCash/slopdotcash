@@ -1753,9 +1753,23 @@ test("an open account appeal survives later project restrictions and needs an in
     (await decide("ban", ADMIN, 2, [{ githubLogin: "other" }])).status,
   ).toBe(200);
   expect(await otherAppeal()).toBe(200);
-  // A moderator files the project appeal, and an independent moderator
-  // reinstates the project. OTHER's account ban and appeal stay open.
-  expect((await decide("request_reinstatement", OWNER, 4)).status).toBe(200);
+  // A moderator files the project appeal. That moderator cannot grant it, and
+  // an independent moderator reinstates the project. OTHER's account ban and
+  // appeal stay open.
+  const projectAppeal = await decide("request_reinstatement", OWNER, 4);
+  expect(projectAppeal.status).toBe(200);
+  expect(
+    t.sqlite
+      .query(
+        "SELECT recipient_github_id FROM notifications WHERE event_key = ? ORDER BY recipient_github_id",
+      )
+      .all(
+        `reinstatement-review:${(projectAppeal.body.record as { id: string }).id}`,
+      ),
+  ).toEqual([{ recipient_github_id: OTHER }]);
+  const selfGrant = await decide("reinstate", OWNER, 5);
+  expect(selfGrant.status).toBe(403);
+  expect(selfGrant.body.error).toBe("independent_review_required");
   const afterAppeal = await t.persistence.getProject(project.id);
   if (!afterAppeal) throw new Error("Project missing");
   expect(

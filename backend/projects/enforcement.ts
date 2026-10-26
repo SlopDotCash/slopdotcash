@@ -4,7 +4,8 @@
  * revision is appended in the same write when the manifest allows it, and is
  * shown as pending when it does not. A restriction can only restrict: it never
  * creates a project, grants featuring, or enables money. Reinstatement needs
- * an appeal and a moderator who did not place the restriction (ELG-02). The
+ * an appeal and a moderator who did not place the restriction or file the
+ * appeal (ELG-02, PRD section 10). The
  * project steward or the applicant who listed the project may file the
  * appeal; only a moderator decides it. Two standing rules act without a
  * moderator: two distinct contributor flags quarantine a project, and a
@@ -150,8 +151,10 @@ export function projectAppealState(
   return projectAppealOpen(restriction.records) ? "requested" : "none";
 }
 
-/** True when records, oldest first, end with an undecided project appeal. */
-function projectAppealOpen(records: ProjectEnforcement[]): boolean {
+/** The undecided project appeal, or undefined when none is open. */
+function openProjectAppeal(
+  records: ProjectEnforcement[],
+): ProjectEnforcement | undefined {
   const newestFirst = [...records].reverse();
   const boundary =
     newestFirst.find(
@@ -165,13 +168,17 @@ function projectAppealOpen(records: ProjectEnforcement[]): boolean {
           record.action,
         ),
     )?.sequence ?? 0;
-  const request = newestFirst.find(
+  return newestFirst.find(
     (record) =>
       record.action === "request_reinstatement" &&
       record.actorRole !== "banned-account" &&
       record.sequence > boundary,
   );
-  return request !== undefined;
+}
+
+/** True when records, oldest first, end with an undecided project appeal. */
+function projectAppealOpen(records: ProjectEnforcement[]): boolean {
+  return openProjectAppeal(records) !== undefined;
 }
 
 /** A shared project appeal must not claim that another account filed evidence. */
@@ -355,11 +362,16 @@ function refuse(code: string, message: string): never {
 function requireIndependentModerator(
   restriction: ProjectRestriction,
   actor: GithubActor,
+  granting = false,
 ): void {
+  const appellant = granting
+    ? openProjectAppeal(restriction.records)?.actor
+    : undefined;
   if (
     restriction.restrictedBy.some(
       (placed) => placed.githubId === actor.githubId,
-    )
+    ) ||
+    appellant?.githubId === actor.githubId
   )
     throw new EnforcementRefusal(
       403,
@@ -567,7 +579,7 @@ export function planEnforcement(input: {
       // A denial with no open project appeal decides the open account
       // appeals, so it needs independence from those account bans instead.
       if (action === "reinstate" || projectAppeal === "requested")
-        requireIndependentModerator(restriction, actor);
+        requireIndependentModerator(restriction, actor, action === "reinstate");
       else
         requireIndependentAccountModerator(
           restriction,

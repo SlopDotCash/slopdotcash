@@ -305,7 +305,8 @@ rate limit, and caches each answer for five minutes. The browser never calls
   record uses `banned-account` and `account-request`. Filing does not lift a
   restriction or grant project access. Only a moderator decides the appeal.
 - Reinstatement needs an open reinstatement request and a moderator who did
-  not place the restriction. Both preview and confirmation require a clean
+  not place the restriction and did not file the appeal. Both preview and
+  confirmation require a clean
   scan of the current restricted revision, requested after the latest restriction,
   at the live integration-branch head and current skill template. Missing,
   stale or incomplete clearance returns `vetting_required`. For a confirmed

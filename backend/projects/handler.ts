@@ -2401,16 +2401,19 @@ async function recordEnforcement(
           actor,
           at,
         },
-    // Only a moderator who did not place the restriction or account ban may decide it.
+    // Only a moderator who did not place the restriction or account ban, and
+    // who did not file the appeal, may decide it.
     action === "request_reinstatement"
       ? [...deps.moderatorGithubIds].filter((githubId) =>
           actorRole === "banned-account"
-            ? !activeAccountBans(restriction.records).some(
+            ? githubId !== actor.githubId &&
+              !activeAccountBans(restriction.records).some(
                 ({ account, record: ban }) =>
                   account.githubId === actor.githubId &&
                   ban.actor?.githubId === githubId,
               )
-            : !restriction.restrictedBy.some(
+            : githubId !== actor.githubId &&
+              !restriction.restrictedBy.some(
                 (placed) => placed.githubId === githubId,
               ),
         )
