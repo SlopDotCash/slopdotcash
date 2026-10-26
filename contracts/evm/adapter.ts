@@ -227,6 +227,23 @@ export {
 } from "./monthly-reserve";
 export { rpc as evmRpc };
 
+/** Explicit wallet-consent action: read the actor's current version only from a verified vault. */
+export async function readEvmBindingVersion(
+  config: EvmEscrowConfig,
+  actor: string,
+) {
+  if (!/^[1-9][0-9]*$/.test(actor) || BigInt(actor) > U64)
+    throw new Error("Invalid binding actor");
+  await verifyEvmDeployment(config);
+  const result = await rpc(config, "eth_call", [
+    { to: config.vault, data: `0xa45d1232${word(actor)}` },
+    "finalized",
+  ]);
+  if (typeof result !== "string" || !/^0x[0-9a-fA-F]{320}$/.test(result))
+    throw new Error("Binding version unavailable");
+  return uint64(result.slice(66, 130)).toString();
+}
+
 /** The reviewed factory rotates the identity authority only after this notice period. */
 export const EVM_AUTHORITY_ROTATION_DELAY = 0n;
 async function runtimeSha256(

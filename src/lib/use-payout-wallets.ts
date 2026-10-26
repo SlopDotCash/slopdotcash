@@ -1,6 +1,7 @@
 import type {
   SolanaSignAndSendTransactionFeature,
   SolanaSignMessageFeature,
+  SolanaSignTransactionFeature,
 } from "@solana/wallet-standard-features";
 import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletWithFeatures } from "@wallet-standard/base";
@@ -45,6 +46,7 @@ export type PayoutWallet = {
   family: EscrowFamily;
   /** Wallet Standard transaction support, discovered without connecting. */
   solanaFunding?: boolean;
+  solanaBinding?: boolean;
   /**
    * `chooseAccount` asks the wallet to show its account picker, for a change
    * of an already confirmed wallet. Wallets without one return their
@@ -55,6 +57,10 @@ export type PayoutWallet = {
     sign(message: string): Promise<string>;
     /** Available only for the selected EVM provider; every call rechecks its identity. */
     evmRequest?: (method: string, params: unknown[]) => Promise<unknown>;
+    solanaSign?: (
+      transaction: Uint8Array,
+      chain: `solana:${string}`,
+    ) => Promise<Uint8Array>;
     solanaSend?: (
       transaction: Uint8Array,
       chain: `solana:${string}`,
@@ -217,6 +223,7 @@ export function usePayoutWallets(): PayoutWallet[] {
           icon: wallet.icon,
           family: "solana",
           solanaFunding: "solana:signAndSendTransaction" in wallet.features,
+          solanaBinding: "solana:signTransaction" in wallet.features,
           async connect() {
             const { accounts } =
               await supported.features["standard:connect"].connect();
@@ -231,6 +238,46 @@ export function usePayoutWallets(): PayoutWallet[] {
               );
             return {
               address: account.address,
+              ...("solana:signTransaction" in wallet.features &&
+              account.features.includes("solana:signTransaction")
+                ? {
+                    async solanaSign(
+                      transaction: Uint8Array,
+                      chain: `solana:${string}`,
+                    ) {
+                      const current = wallet.accounts.find(
+                        (entry) => entry.address === account.address,
+                      );
+                      if (
+                        !standard.get().includes(wallet) ||
+                        !current?.chains.includes(chain) ||
+                        !current.features.includes("solana:signTransaction")
+                      )
+                        throw new Error(
+                          "The wallet account or network changed. Connect and review again.",
+                        );
+                      const feature = (
+                        wallet as WalletWithFeatures<SolanaSignTransactionFeature>
+                      ).features["solana:signTransaction"];
+                      if (
+                        !feature.supportedTransactionVersions.includes("legacy")
+                      )
+                        throw new Error(
+                          "This wallet does not support the vault transaction format.",
+                        );
+                      const [result] = await feature.signTransaction({
+                        account: current,
+                        chain,
+                        transaction,
+                      });
+                      if (!result?.signedTransaction)
+                        throw new Error(
+                          "Your wallet did not return a signed transaction.",
+                        );
+                      return result.signedTransaction;
+                    },
+                  }
+                : {}),
               ...("solana:signAndSendTransaction" in wallet.features &&
               account.features.includes("solana:signAndSendTransaction")
                 ? {

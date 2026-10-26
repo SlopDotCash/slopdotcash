@@ -16,6 +16,7 @@ export interface PaymentAsset {
 }
 export interface AccountPayment extends PaymentAsset {
   id: string;
+  vault: string;
   projectId: string;
   chain: PaymentChain;
   grossBase: string;
