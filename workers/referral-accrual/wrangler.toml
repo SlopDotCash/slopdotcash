@@ -9,10 +9,9 @@ compatibility_date = "2026-07-30"
 workers_dev = false
 preview_urls = false
 
-# No routes: the Worker runs only on its cron trigger. Once a day it files any
-# UTC month that has ended and is not filed yet.
+# No routes. Daily filing/posting is separate from the read-only claim refresh.
 [triggers]
-crons = ["23 1 * * *"]
+crons = ["23 1 * * *", "*/15 * * * *"]
 
 [[d1_databases]]
 binding = "REFERRAL_DB"
