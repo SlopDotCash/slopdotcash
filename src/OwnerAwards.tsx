@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import { formatBaseUnits } from "./lib/payments/contracts";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
 import type { ProjectDefinition } from "./lib/projects.mjs";
@@ -56,10 +57,7 @@ export default function OwnerAwards({
     } catch (reason) {
       return {
         pending: [],
-        error:
-          reason instanceof Error
-            ? reason.message
-            : "Saved commitments are unavailable.",
+        error: errorMessage(reason, "Saved commitments are unavailable."),
       };
     }
   });
@@ -131,9 +129,7 @@ export default function OwnerAwards({
     try {
       await action();
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Awards are unavailable.",
-      );
+      setError(errorMessage(reason, "Awards are unavailable."));
     } finally {
       setBusy(false);
     }

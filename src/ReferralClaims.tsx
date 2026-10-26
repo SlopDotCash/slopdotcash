@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
 import {
@@ -119,9 +120,7 @@ export function ReferralClaims() {
         if (!controller.signal.aborted) {
           setLoadFailed(true);
           setError(
-            e instanceof Error
-              ? e.message
-              : "Additional payout records could not load. Retry.",
+            errorMessage(e, "Additional payout records could not load. Retry."),
           );
         }
       });
@@ -160,9 +159,7 @@ export function ReferralClaims() {
       await reviewReferralClaim(data, wallet);
       setReview({ data, wallet });
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "The claim could not be reviewed.",
-      );
+      setError(errorMessage(e, "The claim could not be reviewed."));
     } finally {
       setBusy(false);
     }
@@ -201,9 +198,7 @@ export function ReferralClaims() {
         setError(
           requested
             ? "The send result is unknown. Check wallet activity before another attempt."
-            : e instanceof Error
-              ? e.message
-              : "The claim could not be sent.",
+            : errorMessage(e, "The claim could not be sent."),
         );
     } finally {
       setBusy(false);

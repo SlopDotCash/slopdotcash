@@ -124,11 +124,7 @@ export function InboxEmail() {
           : "Optional activity email is off.",
       );
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Your preference could not be saved.",
-      );
+      setError(errorMessage(cause, "Your preference could not be saved."));
     } finally {
       setBusy(false);
     }

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "./Link";
+import { errorMessage } from "./lib/errors";
 import { checkProjectSetup } from "./lib/project-api";
 import type { ProjectSetupStatus } from "./lib/project-contracts";
 import { formatMonthlyAmount } from "./lib/project-proposal";
@@ -94,11 +95,7 @@ export function ProjectSetupStatusPanel({
           setBusy(false);
         },
         (caught: unknown) => {
-          setError(
-            caught instanceof Error
-              ? caught.message
-              : "The setup check did not finish.",
-          );
+          setError(errorMessage(caught, "The setup check did not finish."));
           setBusy(false);
         },
       );

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AutomaticMonthlyPayment } from "./AutomaticMonthlyPayment";
 import { readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { CHAIN_NAMES, networkLabel } from "./lib/network-names";
@@ -155,11 +156,7 @@ export function useVaultTotals(
       })
       .catch((reason) => {
         if (!controller.signal.aborted)
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "Could not load vault totals.",
-          );
+          setError(errorMessage(reason, "Could not load vault totals."));
       });
     return () => controller.abort();
   }, [project.id, deployed, revision]);

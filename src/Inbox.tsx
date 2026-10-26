@@ -1,7 +1,9 @@
 /** Signed-in inbox for account, project and payment events (PRD NOT-01). */
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InboxEmail } from "./InboxEmail";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import {
   emailDeliveryLabel,
   MAX_NOTIFICATION_MARK,
@@ -121,7 +123,7 @@ export default function InboxPage() {
         setMessage(done);
       }
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : UNAVAILABLE);
+      setActionError(errorMessage(error, UNAVAILABLE));
     } finally {
       setBusy(false);
     }

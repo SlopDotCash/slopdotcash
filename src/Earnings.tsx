@@ -2,6 +2,7 @@ import { ExternalLink, Wallet as WalletIcon, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { browserDeployment } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import {
   chainFamily,
   ESCROW_CHAINS,
@@ -200,10 +201,7 @@ export function EarningsPage({
         if (e instanceof SignedOutError) {
           setSignedOut(true);
           setData(null);
-        } else
-          setError(
-            e instanceof Error ? e.message : "Could not load your payouts.",
-          );
+        } else setError(errorMessage(e, "Could not load your payouts."));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -236,11 +234,7 @@ export function EarningsPage({
         setSignedOut(true);
         setData(null);
       } else
-        setError(
-          e instanceof Error
-            ? e.message
-            : "Wallet confirmation failed. Please retry.",
-        );
+        setError(errorMessage(e, "Wallet confirmation failed. Please retry."));
     } finally {
       if (mounted.current) setBusy(null);
     }

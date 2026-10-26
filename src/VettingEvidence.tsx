@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { sha256Hex } from "./lib/async-sha256.mjs";
 import { fetchWithDeadline } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import { projectApiRequest } from "./lib/project-api";
 
 type EvidenceObject = {
@@ -47,7 +48,7 @@ export default function VettingEvidencePage() {
         ),
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Evidence could not be loaded");
+      setError(errorMessage(e, "Evidence could not be loaded"));
     } finally {
       setBusy(false);
     }
@@ -194,7 +195,7 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
           : "Complete bytes verified. Text is displayed without execution.",
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Evidence read failed");
+      setError(errorMessage(e, "Evidence read failed"));
     } finally {
       setBusy(false);
     }

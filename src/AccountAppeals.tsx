@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
+import { errorMessage } from "./lib/errors";
 import { projectApiRequest } from "./lib/project-api";
 import type { AppealState, RestrictionState } from "./lib/project-contracts";
-import { errorMessage } from "./Presentation";
 
 type AccountAppeal = {
   projectId: string;

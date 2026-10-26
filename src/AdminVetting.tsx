@@ -1,7 +1,5 @@
-import {
-  errorMessage as message,
-  formatNullableUtc as time,
-} from "./Presentation";
+import { errorMessage as message } from "./lib/errors";
+import { formatNullableUtc as time } from "./Presentation";
 /**
  * The admin view of community project security vetting (PRD VET-01 to
  * VET-08). It shows each project's revision-bound clearance, the restricted

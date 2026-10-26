@@ -22,6 +22,7 @@ import {
 import { SignInPanel } from "./Admin";
 import { Link } from "./Link";
 import { copyText } from "./lib/copy-text";
+import { errorMessage } from "./lib/errors";
 import {
   clearDraft,
   EMPTY_DRAFT,
@@ -45,7 +46,6 @@ import {
 } from "./lib/security-bounty.mjs";
 import {
   ExternalLinkAnchor,
-  errorMessage,
   formatNullableUtc as formatUtc,
 } from "./Presentation";
 

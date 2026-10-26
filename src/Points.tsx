@@ -731,9 +731,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
         setMessage(
           e instanceof TypeError
             ? "Could not reach Slop. Check your connection and try again."
-            : e instanceof Error
-              ? e.message
-              : "Sign-in unavailable",
+            : errorMessage(e, "Sign-in unavailable"),
         );
     } finally {
       if (active.current === c) {
@@ -1041,10 +1039,7 @@ function AccountSessions() {
         }
       },
       (caught) => {
-        if (active)
-          setError(
-            caught instanceof Error ? caught.message : "Sessions unavailable",
-          );
+        if (active) setError(errorMessage(caught, "Sessions unavailable"));
       },
     );
     return () => {
@@ -1078,11 +1073,7 @@ function AccountSessions() {
                       window.location.assign("/login");
                     } else setAttempt((value) => value + 1);
                   } catch (caught) {
-                    setError(
-                      caught instanceof Error
-                        ? caught.message
-                        : "Could not revoke session",
-                    );
+                    setError(errorMessage(caught, "Could not revoke session"));
                   }
                 }}
               >

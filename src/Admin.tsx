@@ -19,6 +19,7 @@ import { ProjectEnforcementPanel } from "./AdminProjectEnforcement";
 import { ActivationClearance, VettingSection } from "./AdminVetting";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
+import { errorMessage } from "./lib/errors";
 import {
   type AdminProject,
   type ProjectSessionState,
@@ -37,7 +38,7 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { loginHref } from "./Points";
-import { errorMessage, formatTime } from "./Presentation";
+import { formatTime } from "./Presentation";
 
 export function SignInPanel({
   state,

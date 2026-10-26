@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import type { EscrowDeployment } from "./lib/escrow-policy.mjs";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
@@ -158,10 +159,7 @@ export function OwnerVaultSetup({
         setClaims((account as unknown as { wallets: WalletClaim[] }).wallets);
       })
       .catch((e: unknown) => {
-        if (active)
-          setError(
-            e instanceof Error ? e.message : "Vault setup could not load.",
-          );
+        if (active) setError(errorMessage(e, "Vault setup could not load."));
       });
     return () => {
       active = false;
@@ -177,7 +175,7 @@ export function OwnerVaultSetup({
       setFailedCreation(
         (e as { code?: string })?.code === "vault_creation_failed",
       );
-      setError(e instanceof Error ? e.message : "The wallet request failed.");
+      setError(errorMessage(e, "The wallet request failed."));
     } finally {
       setBusy(false);
     }

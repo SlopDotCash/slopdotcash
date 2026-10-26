@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -68,8 +69,6 @@ function readPending(key: string, solana: boolean): Pending | null {
     );
   return value;
 }
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : "The wallet request failed.";
 
 /** Wallet-confirmed funding actions; no keys or signing authority enter Slop. */
 export function VaultActions({
@@ -95,7 +94,10 @@ export function VaultActions({
     try {
       return { pending: readPending(key, solana), error: "" };
     } catch (error) {
-      return { pending: null, error: message(error) };
+      return {
+        pending: null,
+        error: errorMessage(error, "The wallet request failed."),
+      };
     }
   });
   const [pending, setPending] = useState<Pending | null>(saved.pending);
@@ -129,7 +131,7 @@ export function VaultActions({
     try {
       await action();
     } catch (caught) {
-      setError(message(caught));
+      setError(errorMessage(caught, "The wallet request failed."));
     } finally {
       setBusy(false);
     }

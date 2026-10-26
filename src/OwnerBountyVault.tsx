@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { errorMessage } from "./lib/errors";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { ProjectApiError, projectApiRequest } from "./lib/project-api";
 import { formatAssetAmount } from "./lib/project-schema.mjs";
@@ -54,10 +55,7 @@ export function OwnerBountyVault({
       },
       (error: unknown) => {
         if (!active) return;
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Bounty funds could not load.";
+        const message = errorMessage(error, "Bounty funds could not load.");
         const temporary =
           error instanceof ProjectApiError &&
           (error.status === 0 || error.status >= 500);

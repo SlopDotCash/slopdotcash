@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "./Link";
+import { errorMessage } from "./lib/errors";
 import { publishProjectRevision, type RevisionResult } from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
 import { formatAssetAmount, parseAssetAmount } from "./lib/project-schema.mjs";
@@ -193,11 +194,7 @@ export function SecurityProgramEditor({
       );
       onPublished(result);
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Cannot publish the bounty terms. Retry.",
-      );
+      setError(errorMessage(cause, "Cannot publish the bounty terms. Retry."));
     } finally {
       setBusy(false);
     }
