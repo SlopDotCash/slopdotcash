@@ -2804,7 +2804,11 @@ export function createLeaderboardSnapshot(
         payments.attributions,
       ),
       attributionOrder: payments.attributions.map((record) => record.id),
-      reviewExclusions: payments.reviewExclusions ?? [],
+      // Only profiles read the reviewer, from the score copy. This copy omits
+      // it to save bytes under the 25 MiB Pages per-file limit.
+      reviewExclusions: (payments.reviewExclusions ?? []).map(
+        ({ reviewer: _reviewer, ...exclusion }) => exclusion,
+      ),
       attributions: changedPaymentRecords(
         snapshot.attributions,
         payments.attributions,
@@ -2968,6 +2972,7 @@ function createSnapshotWithReviewCutoff(
       repository: repositoryIdFromUrl(pullRequest.url),
       url: review.url,
       reason,
+      ...(review.author ? { reviewer: review.author } : {}),
     });
   };
   const scoredAttributionSources = new Map<string, GitHubTextSource>();
@@ -5244,12 +5249,15 @@ function assertReviewExclusionValue(
     "reviewId",
     "url",
   ];
-  if (
-    JSON.stringify(Object.keys(exclusion).sort()) !==
-    JSON.stringify(expectedKeys)
-  ) {
+  // `reviewer` is additive; earlier snapshots omit it.
+  const keys = Object.keys(exclusion)
+    .filter((key) => key !== "reviewer")
+    .sort();
+  if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
     throw new Error(`${path} must contain exactly the review exclusion fields`);
   }
+  if ("reviewer" in exclusion)
+    assertActorValue(exclusion.reviewer, `${path}.reviewer`);
   assertString(exclusion.id, `${path}.id`);
   assertString(exclusion.pullRequestId, `${path}.pullRequestId`);
   assertPositiveInteger(
@@ -7190,6 +7198,9 @@ export function assertLeaderboardSnapshot(
   assertActorCoherence([
     ...validatedLeaders.map((entry) => entry.actor),
     ...validatedLedger.map((event) => event.actor),
+    ...((reviewExclusions as ReviewExclusion[] | undefined)?.flatMap(
+      (exclusion) => (exclusion.reviewer ? [exclusion.reviewer] : []),
+    ) ?? []),
     ...validatedAttributions.flatMap((attribution) =>
       attribution.actor ? [attribution.actor] : [],
     ),
