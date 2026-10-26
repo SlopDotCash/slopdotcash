@@ -1920,16 +1920,18 @@ test("a malicious decision that closes a kept project appeal needs an independen
     ).status,
   ).toBe(200);
   expect((await decide("request_reinstatement", OWNER, 4)).status).toBe(200);
-  // A new confirmed malicious result keeps both appeals open.
+  // Two new confirmed malicious results arrive before a decision. Each one
+  // keeps both appeals open.
   expect(await vettingBan(5, "requested")).toBe("recorded");
-  // Its decision closes the kept project appeal, so ADMIN, who placed the
+  expect(await vettingBan(6, "requested")).toBe("recorded");
+  // The decision closes the kept project appeal, so ADMIN, who placed the
   // restriction, cannot make it even though OTHER's account appeal is open.
-  const placerDecision = await decide("ban", ADMIN, 6, []);
+  const placerDecision = await decide("ban", ADMIN, 7, []);
   expect(placerDecision.status).toBe(403);
   expect(placerDecision.body.error).toBe("independent_review_required");
   // An independent moderator denies the kept project appeal. OTHER's account
   // appeal was not banned again, so it stays open for its own decision.
-  const independent = await decide("ban", OWNER, 6, []);
+  const independent = await decide("ban", OWNER, 7, []);
   expect(independent.status).toBe(200);
   expect(independent.body.record).toMatchObject({ appealAfter: "denied" });
   expect((await t.call("GET", "project-appeals", OTHER)).body).toEqual({

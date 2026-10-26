@@ -150,8 +150,15 @@ export function projectAppealState(
   return projectAppealOpen(restriction.records) ? "requested" : "none";
 }
 
-/** True when records, oldest first, end with an undecided project appeal. */
-function projectAppealOpen(records: ProjectEnforcement[]): boolean {
+/**
+ * True when records, oldest first, end with an undecided project appeal.
+ * With `kept`, an appeal that confirmed malicious Bans kept also counts:
+ * the moderator decision on those Bans closes it.
+ */
+function projectAppealOpen(
+  records: ProjectEnforcement[],
+  kept = false,
+): boolean {
   const newestFirst = [...records].reverse();
   const boundary =
     newestFirst.find(
@@ -159,8 +166,9 @@ function projectAppealOpen(records: ProjectEnforcement[]): boolean {
         // An ordinary ban can retain the pending project appeal. A new
         // malicious result or a decision that closes it starts a new boundary.
         (record.action === "ban" &&
-          (record.actorRole === "vetting-service" ||
-            record.appealAfter !== "requested")) ||
+          (record.actorRole === "vetting-service"
+            ? !(kept && record.appealAfter === "requested")
+            : record.appealAfter !== "requested")) ||
         ["quarantine", "reinstate", "deny_reinstatement"].includes(
           record.action,
         ),
@@ -172,28 +180,6 @@ function projectAppealOpen(records: ProjectEnforcement[]): boolean {
       record.sequence > boundary,
   );
   return request !== undefined;
-}
-
-/**
- * True when the undecided confirmed malicious Ban kept a project appeal that
- * was open before it. The Ban starts a new project-appeal boundary, so the
- * moderator decision that follows closes that kept appeal.
- */
-function keptProjectAppeal(restriction: ProjectRestriction): boolean {
-  const scan = [...restriction.records]
-    .reverse()
-    .find(
-      (record) => record.action === "quarantine" || record.action === "ban",
-    );
-  return (
-    scan !== undefined &&
-    scan.action === "ban" &&
-    scan.actorRole === "vetting-service" &&
-    scan.appealAfter === "requested" &&
-    projectAppealOpen(
-      restriction.records.filter((record) => record.sequence < scan.sequence),
-    )
-  );
 }
 
 /** A shared project appeal must not claim that another account filed evidence. */
@@ -482,14 +468,13 @@ export function planEnforcement(input: {
       if (action === "ban" && restriction.state === "banned" && !deciding)
         refuse("already_restricted", "The project is already banned");
       // Deciding a confirmed malicious result bans the maintainer too. It
-      // closes the open project appeal, or the appeal that the result kept
-      // when no account appeal is open, and the open appeal of each account
-      // it bans again. Each appeal it closes needs its own independence.
+      // closes the open or kept project appeal, any kept appeal when no
+      // account appeal is open, and the open appeal of each account it bans
+      // again. Each appeal it closes needs its own independence.
       const closesProjectAppeal =
         deciding &&
         restriction.appeal === "requested" &&
-        (projectAppealState(restriction) === "requested" ||
-          keptProjectAppeal(restriction) ||
+        (projectAppealOpen(restriction.records, true) ||
           openAccountAppeals(restriction, restriction.bannedMaintainers)
             .size === 0);
       const reBanned = deciding
