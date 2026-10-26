@@ -247,3 +247,127 @@ test("unactivated referrals stay hidden; stale, paused and unknown claims cannot
   await expect(section.getByText("Unknown", { exact: true })).toHaveCount(4);
   expect(h.calls).toEqual([]);
 });
+
+test("blocked claim storage keeps amounts visible and refuses a wallet send", async ({
+  page,
+}) => {
+  const h = await setup(page);
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  await page.evaluate(() => {
+    const write = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("slop:referral-claim:"))
+        throw new DOMException("Storage is full", "QuotaExceededError");
+      return write.call(this, key, value);
+    };
+  });
+  const section = page.getByRole("region", { name: "Referral rewards" });
+  await expect(section).toContainText("80 program tokens");
+  await section.getByRole("button", { name: "Review with MetaMask" }).click();
+  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  await expect(section.getByRole("alert")).toContainText(
+    "save the claim status",
+  );
+  expect(h.calls).not.toContain("eth_sendTransaction");
+  await section.getByRole("button", { name: "Refresh record" }).click();
+  await expect(section).toContainText("80 program tokens");
+  expect(h.calls).not.toContain("eth_sendTransaction");
+});
+
+test("refresh retains an unverified claim when storage becomes unreadable", async ({
+  page,
+}) => {
+  const h = await setup(page);
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  const section = page.getByRole("region", { name: "Referral rewards" });
+  await section.getByRole("button", { name: "Review with MetaMask" }).click();
+  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  await expect(section).toContainText("Claim submitted");
+  await page.evaluate(() => {
+    const read = Storage.prototype.getItem;
+    Storage.prototype.getItem = function (key) {
+      if (key.startsWith("slop:referral-claim:"))
+        throw new DOMException("Storage is blocked", "SecurityError");
+      return read.call(this, key);
+    };
+  });
+  const refreshed = page.waitForResponse("**/api/v1/referrals/me");
+  await section.getByRole("button", { name: "Refresh record" }).click();
+  await refreshed;
+  await expect(section).toContainText("not yet verified");
+  await expect(
+    section.getByRole("link", { name: "View transaction" }),
+  ).toBeVisible();
+  await expect(
+    section.getByRole("button", { name: "Review with MetaMask" }),
+  ).toHaveCount(0);
+  expect(h.calls.filter((m) => m === "eth_sendTransaction")).toHaveLength(1);
+  const settled = record();
+  settled.claimedBase = (100n * unit).toString();
+  settled.claimableBase = "0";
+  settled.claim = null;
+  h.set(settled);
+  await section.getByRole("button", { name: "Refresh record" }).click();
+  await expect(section).toContainText("Your claim is verified");
+});
+
+test("an unreadable pending marker does not hide amounts or permit an unchecked retry", async ({
+  page,
+}) => {
+  const h = await setup(page);
+  await page.addInitScript(
+    ({ wallet, distributor }) => {
+      localStorage.setItem(
+        `slop:referral-claim:robinhood-testnet:${distributor}:${wallet}`,
+        "{broken",
+      );
+    },
+    { wallet, distributor },
+  );
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  const section = page.getByRole("region", { name: "Referral rewards" });
+  await expect(section).toContainText("80 program tokens");
+  await expect(section).toContainText("Check wallet activity");
+  await expect(
+    section.getByRole("button", { name: "Review with MetaMask" }),
+  ).toHaveCount(0);
+  await section
+    .getByRole("button", { name: "I checked wallet activity. Review again" })
+    .click();
+  await section.getByRole("button", { name: "Review with MetaMask" }).click();
+  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  await expect(section).toContainText("Claim submitted");
+  expect(h.calls.filter((m) => m === "eth_sendTransaction")).toHaveLength(1);
+});
+
+test("an older stored claim cannot confirm the newer request on this page", async ({
+  page,
+}) => {
+  const h = await setup(page);
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  const section = page.getByRole("region", { name: "Referral rewards" });
+  await section.getByRole("button", { name: "Review with MetaMask" }).click();
+  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  await expect(section).toContainText("Claim submitted");
+  await page.evaluate(
+    ({ wallet, distributor, cumulative }) => {
+      localStorage.setItem(
+        `slop:referral-claim:robinhood-testnet:${distributor}:${wallet}`,
+        JSON.stringify({ hash: `0x${"a".repeat(64)}`, cumulative }),
+      );
+    },
+    { wallet, distributor, cumulative: (20n * unit).toString() },
+  );
+  const refreshed = page.waitForResponse("**/api/v1/referrals/me");
+  await section.getByRole("button", { name: "Refresh record" }).click();
+  await refreshed;
+  await expect(section).toContainText("not yet verified");
+  await expect(section).not.toContainText("Your claim is verified");
+  await expect(
+    section.getByRole("button", { name: "Review with MetaMask" }),
+  ).toHaveCount(0);
+  await expect(
+    section.getByRole("link", { name: "View transaction" }),
+  ).toHaveAttribute("href", new RegExp(`0x${"f".repeat(64)}$`));
+  expect(h.calls.filter((m) => m === "eth_sendTransaction")).toHaveLength(1);
+});
