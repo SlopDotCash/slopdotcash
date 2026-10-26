@@ -354,6 +354,7 @@ export class CloudflareTracePersistence implements TracePersistence {
       SELECT id, github_user_id, ?, ?, ?, ?, ? FROM trace_runs
       WHERE id = ? AND github_user_id = ? AND state != 'finalized'
         AND (trace_sha256 IS NULL OR trace_sha256 = ?)
+        AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})
       ON CONFLICT(run_id) DO NOTHING`)
       .bind(
         object.sha256,
@@ -364,6 +365,7 @@ export class CloudflareTracePersistence implements TracePersistence {
         input.runId,
         input.githubId,
         object.sha256,
+        input.githubId,
       )
       .run();
     const reserved = await this.db
@@ -373,7 +375,8 @@ export class CloudflareTracePersistence implements TracePersistence {
         AND reservation.trace_sha256 = ? AND reservation.r2_key = ?
         AND reservation.size_bytes = ? AND reservation.content_type = ?
         AND run.state != 'finalized'
-        AND (run.trace_sha256 IS NULL OR run.trace_sha256 = ?)`)
+        AND (run.trace_sha256 IS NULL OR run.trace_sha256 = ?)
+        AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`)
       .bind(
         input.runId,
         input.githubId,
@@ -382,6 +385,7 @@ export class CloudflareTracePersistence implements TracePersistence {
         object.sizeBytes,
         object.contentType,
         object.sha256,
+        input.githubId,
       )
       .first();
     return reserved !== null;
@@ -413,8 +417,9 @@ export class CloudflareTracePersistence implements TracePersistence {
       .prepare(
         `UPDATE trace_upload_intents SET consumed_at = ?
          WHERE token_hash = ? AND run_id = ? AND github_user_id = ?
-           AND trace_sha256 = ? AND size_bytes = ? AND content_type = ?
-           AND consumed_at IS NULL AND expires_at > ?`,
+          AND trace_sha256 = ? AND size_bytes = ? AND content_type = ?
+          AND consumed_at IS NULL AND expires_at > ?
+          AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
       )
       .bind(
         input.intentConsumedAt,
@@ -425,6 +430,7 @@ export class CloudflareTracePersistence implements TracePersistence {
         input.object.sizeBytes,
         input.object.contentType,
         input.intentConsumedAt,
+        input.githubId,
       );
     const objectInsert = this.db
       .prepare(
@@ -494,6 +500,7 @@ export class CloudflareTracePersistence implements TracePersistence {
          SET trace_sha256 = ?, state = 'trace_uploaded'
          WHERE id = ? AND github_user_id = ? AND state != 'finalized'
            AND (trace_sha256 IS NULL OR trace_sha256 = ?)
+           AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})
            AND EXISTS (
              SELECT 1 FROM trace_uploads
              WHERE github_user_id = ? AND idempotency_key = ?
@@ -510,6 +517,7 @@ export class CloudflareTracePersistence implements TracePersistence {
         input.runId,
         input.githubId,
         input.object.sha256,
+        input.githubId,
         input.githubId,
         input.idempotencyKey,
         input.runId,
@@ -558,7 +566,12 @@ export class CloudflareTracePersistence implements TracePersistence {
         input.idempotencyKey,
         input.intentConsumedAt,
       );
-      if (stillAvailable === null) return { status: "conflict" };
+      if (
+        stillAvailable === null ||
+        (await this.hasParticipationBan(input.githubId))
+      ) {
+        return { status: "conflict" };
+      }
       throw error;
     }
     const updated = await this.getRun(input.runId);
@@ -573,13 +586,15 @@ export class CloudflareTracePersistence implements TracePersistence {
     githubId: string,
     finalizedAt: string,
   ): Promise<TraceRun | null> {
-    await this.db
+    const updated = await this.db
       .prepare(
         `UPDATE trace_runs SET state = 'finalized', finalized_at = COALESCE(finalized_at, ?)
-         WHERE id = ? AND github_user_id = ? AND trace_sha256 IS NOT NULL`,
+         WHERE id = ? AND github_user_id = ? AND trace_sha256 IS NOT NULL
+           AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
       )
-      .bind(finalizedAt, runId, githubId)
+      .bind(finalizedAt, runId, githubId, githubId)
       .run();
+    if ((updated.meta?.changes ?? 0) !== 1) return null;
     const run = await this.getRun(runId);
     return run?.githubId === githubId && run.state === "finalized" ? run : null;
   }
@@ -652,6 +667,9 @@ export class CloudflareTracePersistence implements TracePersistence {
       .bind(intent.githubId, intent.idempotencyKey)
       .first<UploadIntentRow>();
     if (existing !== null) {
+      if (await this.hasParticipationBan(intent.githubId)) {
+        return { status: "conflict" };
+      }
       const mapped = mapUploadIntent(existing);
       if (
         mapped.runId !== intent.runId ||
@@ -665,9 +683,15 @@ export class CloudflareTracePersistence implements TracePersistence {
         await this.db
           .prepare(
             `UPDATE trace_upload_intents SET expires_at = ?
-             WHERE token_hash = ? AND consumed_at IS NULL AND expires_at <= ?`,
+             WHERE token_hash = ? AND consumed_at IS NULL AND expires_at <= ?
+               AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
           )
-          .bind(intent.expiresAt, mapped.tokenHash, intent.createdAt)
+          .bind(
+            intent.expiresAt,
+            mapped.tokenHash,
+            intent.createdAt,
+            intent.githubId,
+          )
           .run();
         const renewed = await this.db
           .prepare("SELECT * FROM trace_upload_intents WHERE token_hash = ?")
@@ -698,7 +722,7 @@ export class CloudflareTracePersistence implements TracePersistence {
           `INSERT INTO trace_upload_intents (
             token_hash, run_id, github_user_id, trace_sha256, size_bytes,
             content_type, idempotency_key, created_at, expires_at, consumed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+          ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL WHERE NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
         )
         .bind(
           intent.tokenHash,
@@ -710,13 +734,17 @@ export class CloudflareTracePersistence implements TracePersistence {
           intent.idempotencyKey,
           intent.createdAt,
           intent.expiresAt,
+          intent.githubId,
         )
         .run();
     } catch {
       return { status: "conflict" };
     }
-    if (!inserted.success || (inserted.meta?.changes ?? 0) !== 1) {
+    if (!inserted.success) {
       throw new Error("Trace upload intent insertion failed");
+    }
+    if ((inserted.meta?.changes ?? 0) !== 1) {
+      return { status: "conflict" };
     }
     return { status: "created", value: intent };
   }
