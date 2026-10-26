@@ -4,6 +4,7 @@
  * in the manifest; page views never read chain.
  */
 
+import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   REWARD_ASSET_NETWORKS,
   type RewardAssetNetwork,
@@ -49,10 +50,17 @@ async function rpc(
     throw new TokenMetadataError(
       `The network RPC returned HTTP ${response.status}`,
     );
-  const text = await response.text();
-  if (text.length > MAX_RPC_BYTES)
-    throw new TokenMetadataError("The network RPC response is too large");
-  const body = JSON.parse(text) as { result?: unknown; error?: unknown };
+  let body: { result?: unknown; error?: unknown };
+  try {
+    body = (await readBoundedJson(response, MAX_RPC_BYTES, "network RPC")) as {
+      result?: unknown;
+      error?: unknown;
+    };
+  } catch (error) {
+    if (error instanceof RangeError)
+      throw new TokenMetadataError("The network RPC response is too large");
+    throw error;
+  }
   if (body.error !== undefined || !Object.hasOwn(body, "result"))
     throw new TokenMetadataError("The network RPC refused the request");
   return body.result;

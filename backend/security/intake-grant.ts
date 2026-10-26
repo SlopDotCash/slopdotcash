@@ -11,6 +11,7 @@
  * `/user` must name the signed-in account, so a reporter cannot authorize
  * as one GitHub account and report as another.
  */
+import { readBoundedJson } from "../../src/lib/browser-json";
 import { encodeBase64Url, ownedBuffer } from "../../src/lib/byte-encoding";
 import {
   constantTimeEqual,
@@ -22,7 +23,6 @@ import {
   type IntakeInstallationCheck,
   type PrivateAdvisoryClient,
   type ReporterGrant,
-  readBoundedJson,
   reporterGrant,
 } from "./github-advisories";
 import type { PrivateReportAnalyzer } from "./report-analysis";
@@ -372,7 +372,7 @@ export function githubIntakeOAuth(options: {
           },
         );
         if (!response.ok) return null;
-        const body = (await readBoundedJson(response, 64 * 1024)) as {
+        const body = (await readBoundedJson(response, 64 * 1024, "GitHub")) as {
           access_token?: unknown;
           token_type?: unknown;
         };

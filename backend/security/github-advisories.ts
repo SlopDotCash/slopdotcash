@@ -8,6 +8,7 @@
  * `githubAppAdvisoryToken`. Report content is sent, digested and dropped: nothing
  * here logs, and results carry only typed enum values and identifiers.
  */
+import { readBoundedJson } from "../../src/lib/browser-json";
 import { encodeBase64Url, ownedBuffer } from "../../src/lib/byte-encoding";
 import { canonicalJson } from "../../src/lib/canonical-json";
 import { sha256Hex } from "../../workers/identity/crypto";
@@ -328,44 +329,6 @@ export async function advisoryFacts(
   };
 }
 
-/** Reads at most `limit` bytes of JSON; throws past it. */
-export async function readBoundedJson(
-  response: Pick<Response, "headers" | "body">,
-  limit: number,
-): Promise<unknown> {
-  const declared = response.headers.get("content-length");
-  if (
-    declared !== null &&
-    (!/^\d+$/u.test(declared) || Number(declared) > limit)
-  )
-    throw new RangeError("response too large");
-  if (!response.body) throw new TypeError("no body");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      total += chunk.value.byteLength;
-      if (total > limit) {
-        await reader.cancel();
-        throw new RangeError("response too large");
-      }
-      chunks.push(chunk.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-}
-
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
 function headers(token: string): Record<string, string> {
@@ -414,7 +377,7 @@ export function githubAdvisoryClient(options: {
           grant.token,
         );
         if (response.status !== 200) return { ok: false };
-        const user = (await readBoundedJson(response, 64 * 1024)) as {
+        const user = (await readBoundedJson(response, 64 * 1024, "GitHub")) as {
           id?: unknown;
           login?: unknown;
         };
@@ -467,7 +430,7 @@ export function githubAdvisoryClient(options: {
       if (response.status === 201) {
         try {
           const facts = await advisoryFacts(
-            await readBoundedJson(response, MAX_ADVISORY_BYTES),
+            await readBoundedJson(response, MAX_ADVISORY_BYTES, "GitHub"),
             marker,
           );
           // A 201 counts only when it names this repository and this author.
@@ -514,7 +477,7 @@ export function githubAdvisoryClient(options: {
           return { kind: "error" };
         }
         const facts = await advisoryFacts(
-          await readBoundedJson(response, MAX_ADVISORY_BYTES),
+          await readBoundedJson(response, MAX_ADVISORY_BYTES, "GitHub"),
           marker,
         );
         if (facts === null || facts.ghsa !== ghsa) return { kind: "error" };
@@ -542,7 +505,11 @@ export function githubAdvisoryClient(options: {
             return { kind: "error" };
           }
           const link = response.headers.get("link");
-          const items = await readBoundedJson(response, MAX_LIST_BYTES);
+          const items = await readBoundedJson(
+            response,
+            MAX_LIST_BYTES,
+            "GitHub",
+          );
           if (!Array.isArray(items)) return { kind: "error" };
           let reachedSince = false;
           for (const item of items) {
@@ -692,7 +659,7 @@ async function repositoryInstallation(
       await response.body?.cancel().catch(() => undefined);
       return { state: response.status === 404 ? "no" : "unknown" };
     }
-    const body = (await readBoundedJson(response, 64 * 1024)) as {
+    const body = (await readBoundedJson(response, 64 * 1024, "GitHub")) as {
       id?: unknown;
     };
     const id = githubId(body?.id);
@@ -751,7 +718,7 @@ export function githubAppAdvisoryToken(
         await response.body?.cancel().catch(() => undefined);
         return null;
       }
-      const body = (await readBoundedJson(response, 64 * 1024)) as {
+      const body = (await readBoundedJson(response, 64 * 1024, "GitHub")) as {
         token?: unknown;
       };
       // Installation tokens are opaque and can exceed 255 characters. The
@@ -794,7 +761,11 @@ export function githubAppReportingReader(
         await repository.body?.cancel();
         return { kind: "unavailable" };
       }
-      const facts = (await readBoundedJson(repository, 64 * 1024)) as {
+      const facts = (await readBoundedJson(
+        repository,
+        64 * 1024,
+        "GitHub",
+      )) as {
         id?: unknown;
         node_id?: unknown;
         full_name?: unknown;
@@ -816,7 +787,7 @@ export function githubAppReportingReader(
         await response.body?.cancel();
         return { kind: "unavailable" };
       }
-      const value = (await readBoundedJson(response, 64 * 1024)) as {
+      const value = (await readBoundedJson(response, 64 * 1024, "GitHub")) as {
         enabled?: unknown;
       };
       if (typeof value.enabled !== "boolean") return { kind: "unavailable" };

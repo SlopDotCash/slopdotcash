@@ -18,6 +18,7 @@
  * - There is no public fallback. A refused or unavailable intake leaves the
  *   report in the reporter's browser.
  */
+import { readBoundedJson } from "../../src/lib/browser-json";
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
 import type { D1QueryStatement as D1Statement } from "../d1";
 import { exactKeys, fail, requireActor } from "../http";
@@ -32,7 +33,6 @@ import {
   markerLine,
   parseReportInput,
   type ReporterGrant,
-  readBoundedJson,
 } from "./github-advisories";
 import {
   automaticIntake,
@@ -376,7 +376,7 @@ function expectedRevision(body: Record<string, unknown>): number {
 async function readBody(request: Request): Promise<Record<string, unknown>> {
   let value: unknown;
   try {
-    value = await readBoundedJson(request, MAX_SEND_BYTES);
+    value = await readBoundedJson(request, MAX_SEND_BYTES, "Report request");
   } catch {
     fail(400, "invalid_request", "Request body must be a JSON object");
   }

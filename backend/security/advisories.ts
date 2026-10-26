@@ -1,3 +1,5 @@
+import { readBoundedJson } from "../../src/lib/browser-json";
+
 /**
  * Reads a program repository's GitHub private vulnerability reports (PRD
  * section 8, MVP-13). This is how Slop verifies receipt without a person:
@@ -111,15 +113,6 @@ export function parsePrivateReport(value: unknown): GithubPrivateReport | null {
   };
 }
 
-async function boundedJson(response: Response): Promise<unknown> {
-  const length = Number(response.headers.get("content-length") ?? "0");
-  if (length > MAX_RESPONSE_BYTES) throw new Error("GitHub response too large");
-  const body = await response.text();
-  if (body.length > MAX_RESPONSE_BYTES)
-    throw new Error("GitHub response too large");
-  return JSON.parse(body);
-}
-
 function nextPage(link: string | null): string | null {
   if (link === null) return null;
   for (const part of link.split(",")) {
@@ -167,7 +160,11 @@ export function githubAdvisoryReader(options: {
           if (page === MAX_PAGES) return { state: "unavailable" };
           const response = await get(url, token);
           if (!response.ok) return { state: "unavailable" };
-          const body = await boundedJson(response);
+          const body = await readBoundedJson(
+            response,
+            MAX_RESPONSE_BYTES,
+            "GitHub advisory",
+          );
           if (!Array.isArray(body)) return { state: "unavailable" };
           for (const entry of body) {
             const report = parsePrivateReport(entry);
@@ -199,7 +196,13 @@ export function githubAdvisoryReader(options: {
           token,
         );
         if (!response.ok) return { state: "unavailable" };
-        const report = parsePrivateReport(await boundedJson(response));
+        const report = parsePrivateReport(
+          await readBoundedJson(
+            response,
+            MAX_RESPONSE_BYTES,
+            "GitHub advisory",
+          ),
+        );
         return report ? { state: "found", report } : { state: "unavailable" };
       } catch {
         return { state: "unavailable" };

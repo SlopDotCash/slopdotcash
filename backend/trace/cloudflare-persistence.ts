@@ -1,3 +1,4 @@
+import { readBoundedBytes } from "../../src/lib/browser-json";
 import type { D1TransactionalDatabase as D1Database, D1Result } from "../d1";
 import { notifyWalletChanged } from "../notifications/events";
 import {
@@ -1024,28 +1025,17 @@ export class CloudflareTracePersistence implements TracePersistence {
     }
     const response = new Response(value.body);
     if (response.body === null) return null;
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
+    let bytes: Uint8Array;
     try {
-      for (;;) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        total += chunk.value.byteLength;
-        if (total > object.sizeBytes) {
-          await reader.cancel("R2 object exceeded immutable size");
-          return null;
-        }
-        chunks.push(chunk.value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
+      bytes = await readBoundedBytes(
+        response,
+        object.sizeBytes,
+        "R2 trace object",
+      );
+    } catch (error) {
+      // An object past its immutable size is not the recorded trace.
+      if (error instanceof RangeError) return null;
+      throw error;
     }
     if (
       bytes.byteLength !== object.sizeBytes ||

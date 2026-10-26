@@ -102,6 +102,7 @@ import {
 import { REVIEWED_EVM_FACTORIES } from "../../../contracts/evm/factories";
 import type { SolanaEscrowConfig } from "../../../contracts/solana/adapter";
 import { REVIEWED_SOLANA_PROGRAMS } from "../../../contracts/solana/programs";
+import { readBoundedJson } from "../../../src/lib/browser-json";
 import { deploymentTier } from "../../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
@@ -266,44 +267,6 @@ type PagesContext = {
 
 export const MAX_IDENTITY_RESPONSE_BYTES = 16 * 1024;
 
-async function readBoundedJson(
-  response: Response,
-  maximumBytes: number,
-): Promise<unknown> {
-  const declared = response.headers.get("content-length");
-  if (
-    declared !== null &&
-    (!/^\d+$/u.test(declared) || Number(declared) > maximumBytes)
-  ) {
-    throw new Error("Response exceeds the allowed size");
-  }
-  if (response.body === null) throw new Error("Response is empty");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maximumBytes) {
-        await reader.cancel("response too large");
-        throw new Error("Response exceeds the allowed size");
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-}
-
 async function verifyIdentityAssertion(
   identityService: Env["SLOP_IDENTITY"],
   assertion: string,
@@ -319,7 +282,11 @@ async function verifyIdentityAssertion(
     }),
   );
   if (!response.ok) return null;
-  const body = await readBoundedJson(response, MAX_IDENTITY_RESPONSE_BYTES);
+  const body = await readBoundedJson(
+    response,
+    MAX_IDENTITY_RESPONSE_BYTES,
+    "identity",
+  );
   if (typeof body !== "object" || body === null) return null;
   const id = (body as { githubActorId?: unknown }).githubActorId;
   const login = (body as { githubLogin?: unknown }).githubLogin;
@@ -372,7 +339,11 @@ async function githubRepository(
   });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
-  return (await readBoundedJson(response, 512 * 1024)) as GithubRepositoryFacts;
+  return (await readBoundedJson(
+    response,
+    512 * 1024,
+    "GitHub",
+  )) as GithubRepositoryFacts;
 }
 
 /**
@@ -911,6 +882,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
           return (await readBoundedJson(
             response,
             4 * 1024 * 1024,
+            "monthly reserve release",
           )) as MonthlyReleaseResult;
         },
       }),
