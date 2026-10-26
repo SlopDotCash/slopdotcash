@@ -5,7 +5,6 @@ import { execFileSync } from "node:child_process";
  */
 
 import { defineConfig, devices } from "@playwright/test";
-import { localEvidencePolicy } from "./tests/vetting-evidence-fixture";
 
 const externalBaseUrl =
   process.env.SLOP_BASE_URL ??
@@ -98,7 +97,7 @@ const registryArguments = registryPersistTo
         : ""
     }${
       registryVettingKey
-        ? ` --binding VETTING_RESULT_PUBLIC_KEYS=${registryVettingKey} --r2 VETTING_EVIDENCE --binding 'VETTING_EVIDENCE_POLICY=${JSON.stringify({ ...localEvidencePolicy(new Date()), maxObjectBytes: 32 * 1024 * 1024 }).replaceAll("'", "'\\''")}'`
+        ? ` --binding VETTING_RESULT_PUBLIC_KEYS=${registryVettingKey} --r2 VETTING_EVIDENCE`
         : ""
     }${registryNotify ? ` --service SLOP_NOTIFY=${registryNotify}` : ""}${
       registrySlopbot ? ` --service SLOPBOT=${registrySlopbot}` : ""

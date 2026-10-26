@@ -177,8 +177,8 @@ that binding cannot be cancelled. While a rotation waits out its delay, or after
 the owner cancels it, no caller can pay any earlier wallet: a contributor who
 rotates away from a lost or compromised wallet freezes payment to it at once,
 and payment resumes only to the new binding once it is ready. This is the
-stale-binding rule in `docs/base-solana-payout-plan.md`: a finalized change
-invalidates payment to the earlier destination. A payment names the version it
+stale-binding rule: a finalized change invalidates payment to the earlier
+destination. A payment names the version it
 expects, and a payment naming any other version fails. If payment executes
 first, a later rotation cannot repay the award. Every award ID and source
 digest is consumed permanently. Source
@@ -301,7 +301,7 @@ and the recipient receives `gross - fee`. A 100-USDC award costs the project
 100 USDC and sends 98 USDC to the contributor plus 2 USDC of fees. The 2% is
 paid in the vault token. Each unused-fund withdrawal pays the same 2%:
 `withdrawalFee(gross) = payoutFee(gross) = ceil(gross / 50)`, rounded up once
-per withdrawal (PRD section 18). Withdrawing 850 USDC of free funds pays 17 USDC
+per withdrawal (PRD section 6). Withdrawing 850 USDC of free funds pays 17 USDC
 and sends 833 USDC to the owner. Every award or withdrawal of at least one base
 unit pays at least one unit of fee, so splitting never lowers the fee (owner
 decision of 24 October 2026; rounding down let a split into pieces under 50

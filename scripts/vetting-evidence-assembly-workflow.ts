@@ -7,7 +7,6 @@ import type { ProjectD1Database } from "../backend/projects/cloudflare-persisten
 import { EVIDENCE_CHUNK_BYTES } from "../backend/vetting/evidence-chunks";
 import {
   EVIDENCE_OWNER_GITHUB_ID,
-  localEvidencePolicy,
   localVettingEvidence,
 } from "../tests/vetting-evidence-fixture";
 import { assembleEvidence } from "../workers/vetting/assembly";
@@ -130,10 +129,8 @@ export async function retainActualAssembly(input: {
     );
   for (const file of manifest.files)
     assert.equal(candidates.get(file.sha256)!.length, file.bytes);
-  const policy = localEvidencePolicy(input.now());
-  policy.maxObjectBytes = 32 * 1024 * 1024;
   const retained =
-    input.retained ?? (await localVettingEvidence(input.db, input.now, policy));
+    input.retained ?? (await localVettingEvidence(input.db, input.now));
   const traceSha256 = manifest.files.find(
     (file) => file.role === "untrusted-trace",
   )!.sha256;
@@ -599,11 +596,7 @@ if (import.meta.main) {
   await mkdir(outputDirectory, { recursive: true });
   const fixture = await retainedAssemblyFixture({
     sourceDirectory,
-    createEvidence: (db, now) =>
-      localVettingEvidence(db, now, {
-        ...localEvidencePolicy(now()),
-        maxObjectBytes: 32 * 1024 * 1024,
-      }),
+    createEvidence: (db, now) => localVettingEvidence(db, now),
   });
   try {
     const result = await retainActualAssembly({

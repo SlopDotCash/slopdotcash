@@ -200,7 +200,6 @@ type Env = {
   VETTING_RESULT_PUBLIC_KEYS?: string;
   VETTING_SANDBOX?: { fetch(request: Request): Promise<Response> };
   VETTING_EVIDENCE?: R2Bucket;
-  VETTING_EVIDENCE_POLICY?: string;
   /** Optional RPC overrides for reward token decimals verification. */
   REWARD_RPC_BASE?: string;
   REWARD_RPC_ETHEREUM?: string;
@@ -517,7 +516,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const evidence = new VettingEvidence({
     db: context.env.SLOP_DB,
     bucket: context.env.VETTING_EVIDENCE,
-    policy: context.env.VETTING_EVIDENCE_POLICY,
     session: async (request) => {
       const actor = await sessionGithubActor(
         request,

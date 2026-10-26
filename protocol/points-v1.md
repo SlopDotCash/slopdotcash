@@ -237,7 +237,8 @@ provides a dated development/PR bootstrap; it is not a live-data claim.
 
 Profiles use GitHub's public avatar with an initials fallback. GitHub and
 verified opt-in X links are shown without implying organization authority.
-Verified cycle receipts use immutable actor IDs and integer USDC micro-units.
+Verified cycle receipts use immutable actor IDs and integer base units of
+their asset (micro-units for USDC).
 Direct-payment disclosures appear as a separate reported-transfer total with
 transaction links; they never become verified settlement records or inflate
 the verified receipt total. Estimates and points are not money received.

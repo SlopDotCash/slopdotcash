@@ -25,7 +25,9 @@ FEE_CONVERTER_MODE = "live"
 # Comma-separated subset of base,ethereum,robinhood,solana.
 # Conditional owner activation requires verified funding and limits. Native
 # operating limits below are owner-approved. Solana's separate rotation
-# authority is verified; native gas limits and accounting still gate signing.
+# authority is verified; approved lamport limits use the durable native journal.
+# Solana stays excluded until this control release and the approved gas top-up
+# are finalized; its final activation uses a separate reviewed network change.
 FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"
 # Optional operator allowlist, e.g. {"base":["0x..."]}. Project reward assets
 # from D1 are always candidates; arbitrary airdropped tokens never are.
@@ -42,12 +44,15 @@ FEE_CONVERTER_MAX_PRICE_IMPACT_BPS = "200"
 FEE_CONVERTER_RUN_CAP_MICRO = "1000000000"
 FEE_CONVERTER_DAILY_CAP_MICRO = "5000000000"
 FEE_CONVERTER_SOLANA_FEE_MICRO = "2000"
-# Native gas budgets in decimal wei (owner decision, 26 October 2026): Base
+# Native gas budgets: decimal wei on EVM; lamports on Solana (26 October 2026).
+# Solana: 0.005 SOL per transaction / 0.02 SOL per UTC day, including rent
+# and priority fees. These supersede the first 0.001 / 0.01 SOL proposal.
+# Base
 # 0.0001 ETH per transaction and 0.001 ETH per UTC day with a 0.00005 ETH
 # data/operator allowance inside the transaction ceiling; Ethereum 0.001 and
 # 0.01 ETH; Robinhood 0.0002 and 0.002 ETH. These supersede the earlier values.
 # Base requires a positive allowance; other networks use "0".
-FEE_CONVERTER_NATIVE_BUDGETS = '{"base":{"perTransaction":"100000000000000","perDay":"1000000000000000","additionalFeeReserve":"50000000000000"},"ethereum":{"perTransaction":"1000000000000000","perDay":"10000000000000000","additionalFeeReserve":"0"},"robinhood":{"perTransaction":"200000000000000","perDay":"2000000000000000","additionalFeeReserve":"0"}}'
+FEE_CONVERTER_NATIVE_BUDGETS = '{"base":{"perTransaction":"100000000000000","perDay":"1000000000000000","additionalFeeReserve":"50000000000000"},"ethereum":{"perTransaction":"1000000000000000","perDay":"10000000000000000","additionalFeeReserve":"0"},"robinhood":{"perTransaction":"200000000000000","perDay":"2000000000000000","additionalFeeReserve":"0"},"solana":{"perTransaction":"5000000","perDay":"20000000","additionalFeeReserve":"0"}}'
 # Robinhood fees are not_converted: retain each received asset unchanged.
 # No conversion target, quote, signing key load, swap or bridge is needed.
 # Published network fee wallets (docs/slop-product-requirements.md TOK-06). Robinhood

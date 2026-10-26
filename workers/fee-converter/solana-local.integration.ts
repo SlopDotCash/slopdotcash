@@ -10,6 +10,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { solanaBase58 } from "../../contracts/solana/adapter";
+import {
+  concat,
+  createAta,
+  le,
+  message,
+  TOKEN,
+} from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { runOnce } from "./index";
 import { associatedTokenAccount, parseTransaction } from "./solana";
@@ -29,7 +36,7 @@ const BUILTIN = new Set([
   "Sysvar1nstructions1111111111111111111111111",
   "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
 ]);
-const JUPITER_API = "https://lite-api.jup.ag/swap/v1";
+const JUPITER_API = "https://api.jup.ag/swap/v1";
 const PORT = 28899;
 const RPC = `http://127.0.0.1:${PORT}`;
 const AMOUNT = 30_000_000n; // 30 JUP
@@ -42,8 +49,12 @@ const pinnedRoute: typeof fetch = (async (
   init?: RequestInit,
 ) => {
   const url = String(input);
-  if (url.startsWith(`${JUPITER_API}/quote?`))
-    return fetch(url + routeParams, init);
+  if (url.startsWith(`${JUPITER_API}/quote?`)) {
+    const pinned = new URL(url);
+    for (const [key, value] of new URLSearchParams(routeParams.slice(1)))
+      pinned.searchParams.set(key, value);
+    return fetch(pinned.toString(), init);
+  }
   if (url === `${JUPITER_API}/swap` && typeof init?.body === "string") {
     const body = JSON.parse(init.body);
     return fetch(url, {
@@ -78,6 +89,9 @@ const seed = crypto.getRandomValues(new Uint8Array(32));
 const publicKey = ed25519.getPublicKey(seed);
 const wallet = solanaBase58(publicKey);
 const keypair = JSON.stringify([...seed, ...publicKey]);
+const fundingSeed = crypto.getRandomValues(new Uint8Array(32));
+const fundingWallet = solanaBase58(ed25519.getPublicKey(fundingSeed));
+const fundingAccount = associatedTokenAccount(fundingWallet, JUP);
 console.log(`throwaway fee wallet ${wallet}`);
 
 // Learn the route's accounts from an unsigned Jupiter transaction for this wallet.
@@ -118,10 +132,10 @@ const accountFile = join(dir, "jup-account.json");
 writeFileSync(
   accountFile,
   JSON.stringify({
-    pubkey: jupAccount,
+    pubkey: fundingAccount,
     account: {
       lamports: 2_039_280,
-      data: [tokenAccount(JUP, wallet, AMOUNT), "base64"],
+      data: [tokenAccount(JUP, fundingWallet, AMOUNT), "base64"],
       owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
       executable: false,
       rentEpoch: 0,
@@ -162,7 +176,7 @@ const validator = Bun.spawn(
     USDC,
     ...clones.flatMap((key) => ["--maybe-clone", key]),
     "--account",
-    jupAccount,
+    fundingAccount,
     accountFile,
   ],
   { stdout: "ignore", stderr: "inherit" },
@@ -196,6 +210,75 @@ try {
     );
     if (!info.value) throw new Error(`mint ${mint} was not cloned`);
   }
+  // A real local SPL transfer creates the receipt. Only the funder's initial
+  // token account is seeded; the fee wallet starts without a JUP account.
+  const funded = await rpc<string>("requestAirdrop", [
+    fundingWallet,
+    100000000,
+  ]);
+  async function finalized(signature: string) {
+    for (let i = 0; i < 120; i++) {
+      const state = await rpc<{
+        value: ({ err: unknown; confirmationStatus: string } | null)[];
+      }>("getSignatureStatuses", [
+        [signature],
+        { searchTransactionHistory: true },
+      ]);
+      if (state.value[0]?.confirmationStatus === "finalized") {
+        if (state.value[0].err !== null)
+          throw new Error("local receipt transaction failed");
+        return;
+      }
+      await Bun.sleep(500);
+    }
+    throw new Error("local receipt transaction did not finalize");
+  }
+  await finalized(funded);
+  const latest = await rpc<{ value: { blockhash: string } }>(
+    "getLatestBlockhash",
+    [{ commitment: "confirmed" }],
+  );
+  const incoming = message(fundingWallet, latest.value.blockhash, [
+    createAta(fundingWallet, JUP, wallet),
+    {
+      program: TOKEN,
+      accounts: [
+        { key: fundingAccount, write: true },
+        { key: jupAccount, write: true },
+        { key: fundingWallet, write: false },
+      ],
+      data: concat(Uint8Array.of(3), le(AMOUNT)),
+    },
+  ]);
+  const receiptSignature = await rpc<string>("sendTransaction", [
+    btoa(
+      String.fromCharCode(
+        ...concat(
+          Uint8Array.of(1),
+          ed25519.sign(incoming, fundingSeed),
+          incoming,
+        ),
+      ),
+    ),
+    { encoding: "base64", preflightCommitment: "confirmed" },
+  ]);
+  await finalized(receiptSignature);
+  const received = await rpc<{ value: { amount: string } }>(
+    "getTokenAccountBalance",
+    [jupAccount],
+  );
+  if (received.value.amount !== AMOUNT.toString())
+    throw new Error(
+      "local fee wallet did not receive the intended SPL receipt",
+    );
+  console.log(
+    JSON.stringify({
+      check: "actual local SPL receipt",
+      receiptSignature,
+      amount: received.value.amount,
+      mainnet: false,
+    }),
+  );
   const { db, sqlite } = sqliteD1();
   const env = {
     FEE_DB: db,
@@ -203,6 +286,14 @@ try {
     FEE_CONVERTER_NETWORKS: "solana",
     FEE_WALLET_SOLANA: wallet,
     FEE_WALLET_KEY_SOLANA: keypair,
+    FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({
+      solana: {
+        perTransaction: "5000000",
+        perDay: "20000000",
+        additionalFeeReserve: "0",
+      },
+    }),
+    JUPITER_API_URL: JUPITER_API,
     RPC_URL_SOLANA: RPC,
     // Harness limits for a local chain only; production limits come from
     // the reviewed wrangler.toml.
@@ -217,7 +308,6 @@ try {
   const overrides = {
     fetch: pinnedRoute,
     localBlockhash: true,
-    allowSolanaLive: true,
   };
   const state = () =>
     sqlite
@@ -229,8 +319,8 @@ try {
       reason: string | null;
     };
   console.log(
-    "run 1:",
-    JSON.stringify(await runOnce(env, undefined, overrides)),
+    "run 1 (receipt trigger):",
+    JSON.stringify(await runOnce(env, undefined, overrides, "receipts")),
     state(),
   );
   if (state().state !== "submitted") throw new Error("send was not submitted");
@@ -269,6 +359,45 @@ try {
     .query("SELECT COUNT(*) AS n FROM fee_conversions")
     .get() as { n: number };
   if (count.n !== 1) throw new Error("a repeat run added a record");
+  const native = sqlite
+    .query(
+      "SELECT tx_id,maximum_wei,actual_wei FROM fee_native_gas WHERE state='signed'",
+    )
+    .all() as {
+    tx_id: string;
+    maximum_wei: string;
+    actual_wei: string | null;
+  }[];
+  if (native.length !== 1 || native[0].actual_wei === null)
+    throw new Error("Solana native cost did not reconcile through its journal");
+  const receipt = await rpc<{
+    meta: { preBalances: number[]; postBalances: number[]; fee: number };
+  }>("getTransaction", [
+    native[0].tx_id,
+    {
+      commitment: "finalized",
+      encoding: "json",
+      maxSupportedTransactionVersion: 0,
+    },
+  ]);
+  const debit =
+    BigInt(receipt.meta.preBalances[0]) - BigInt(receipt.meta.postBalances[0]);
+  if (
+    BigInt(native[0].actual_wei) !== debit ||
+    debit < BigInt(receipt.meta.fee) ||
+    debit > BigInt(native[0].maximum_wei)
+  )
+    throw new Error(
+      "Solana native cost differs from the canonical fee-payer debit",
+    );
+  console.log(
+    JSON.stringify({
+      check: "Solana native budget finalized cost",
+      reservedLamports: native[0].maximum_wei,
+      actualLamports: native[0].actual_wei,
+      networkFeeLamports: receipt.meta.fee,
+    }),
+  );
   console.log("PASS: Solana local live cycle");
 } finally {
   validator.kill();
