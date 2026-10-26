@@ -263,7 +263,7 @@ test("zero-line file changes are not deterministically empty", () => {
   const pull = {
     draft: false,
     merged: false,
-    base: { sha: "baseline" },
+    base: { sha: "baseline", ref: "main", repo: { id: 1 } },
     head: { sha: "a".repeat(40) },
     changed_files: 1,
     additions: 0,
@@ -436,22 +436,34 @@ describe("neutralize", () => {
 });
 
 describe("pullDiff", () => {
+  const pull = {
+    head: { sha: "b".repeat(40) },
+    base: { sha: "a".repeat(40), ref: "main", repo: { id: 1 } },
+  };
+  const source = (files: unknown[], requests: string[] = []) =>
+    ({
+      get: async (path: string) => {
+        requests.push(path);
+        if (path.endsWith("/branches/main"))
+          return { commit: { sha: "c".repeat(40) } };
+        return {
+          base_commit: { sha: "c".repeat(40) },
+          merge_base_commit: { sha: "c".repeat(40) },
+          files,
+        };
+      },
+    }) as unknown as Parameters<typeof pullDiff>[0];
+
   test("renames from different source paths remain distinct", async () => {
-    const readRename = (source: string) =>
+    const readRename = (previous_filename: string) =>
       pullDiff(
-        {
-          get: async () => [
-            {
-              filename: "target.ts",
-              previous_filename: source,
-              status: "renamed",
-            },
-          ],
-        } as unknown as Parameters<typeof pullDiff>[0],
+        source([
+          { filename: "target.ts", previous_filename, status: "renamed" },
+        ]),
         "owner",
         "repo",
-        7,
         1,
+        pull,
       );
     const first = await readRename("a.ts");
     const second = await readRename("b.ts");
@@ -460,51 +472,36 @@ describe("pullDiff", () => {
     expect(second.diff).toContain("b.ts -> target.ts");
   });
 
-  test("marks a pull request with more than three full pages as truncated", async () => {
+  test("marks a saturated comparison as incomplete instead of trusting stale PR counts", async () => {
     const requests: string[] = [];
-    const github = {
-      get: async (path: string) => {
-        requests.push(path);
-        const page = Number(
-          new URL(`https://example.test${path}`).searchParams.get("page"),
-        );
-        return Array.from({ length: 100 }, (_, index) => ({
-          filename: `file-${(page - 1) * 100 + index + 1}.ts`,
-          status: "modified",
-          patch: "+changed",
-        }));
-      },
-    } as unknown as Parameters<typeof pullDiff>[0];
-
-    const result = await pullDiff(github, "owner", "repo", 7, 301);
-
-    expect(requests).toHaveLength(3);
+    const github = source(
+      Array.from({ length: 300 }, (_, index) => ({
+        filename: `file-${index + 1}.ts`,
+        status: "modified",
+        patch: "+changed",
+      })),
+      requests,
+    );
+    const result = await pullDiff(github, "owner", "repo", 1, pull);
+    expect(requests).toEqual([
+      "/repos/owner/repo/branches/main",
+      `/repos/owner/repo/compare/${"c".repeat(40)}...${"b".repeat(40)}?per_page=1&page=1`,
+    ]);
     expect(result.diff).toContain("file-300.ts");
     expect(result.truncated).toBe(true);
   });
 
-  test("continues pagination after an omitted GitHub patch", async () => {
-    const requests: string[] = [];
-    const github = {
-      get: async (path: string) => {
-        requests.push(path);
-        const page = Number(
-          new URL(`https://example.test${path}`).searchParams.get("page"),
-        );
-        if (page === 1) {
-          return Array.from({ length: 100 }, (_, index) => ({
-            filename: index === 0 ? "large.bin" : `file-${index + 1}.ts`,
-            status: "modified",
-            patch: index === 0 ? undefined : "+changed",
-          }));
-        }
-        return [{ filename: "tail.ts", status: "modified", patch: "+tail" }];
-      },
-    } as unknown as Parameters<typeof pullDiff>[0];
-
-    const result = await pullDiff(github, "owner", "repo", 8, 101);
-
-    expect(requests).toHaveLength(2);
+  test("retains later paths when an earlier GitHub patch is unavailable", async () => {
+    const result = await pullDiff(
+      source([
+        { filename: "large.bin", status: "modified" },
+        { filename: "tail.ts", status: "modified", patch: "+tail" },
+      ]),
+      "owner",
+      "repo",
+      1,
+      pull,
+    );
     expect(result.diff).toContain("(binary or too large to show)");
     expect(result.diff).toContain("tail.ts");
     expect(result.truncated).toBe(true);

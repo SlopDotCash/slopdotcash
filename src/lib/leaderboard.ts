@@ -242,6 +242,7 @@ export const REVIEW_EXCLUSION_REASONS = [
   "review-credit-reviewer-limit",
   "review-credit-zero-share",
   "review-credit-outside-window",
+  "review-credit-before-policy",
   "review-credit-account-banned",
 ] as const;
 
@@ -3842,6 +3843,13 @@ function createSnapshotWithReviewCutoff(
     }
     if (!value)
       throw new Error("Value decision omitted a collected formal review");
+    // A later merge does not bring earlier review activity under a new policy.
+    // Publish an omission, including for tier none, so Points keeps its prior
+    // award instead of treating the assessment as a correction to that period.
+    if (review.submittedAt && !underValuePolicy(review.submittedAt)) {
+      excludeReview(pullRequest, review, "review-credit-before-policy");
+      return null;
+    }
     const thirds = REVIEW_VALUE_THIRDS[value.tier];
     if (thirds === 0) {
       // An assessed tier-none review earns nothing, but the ruling must
@@ -4275,9 +4283,13 @@ function createSnapshotWithReviewCutoff(
         evaluatedReviewReservations.has(
           `${repositoryId}\0${pullRequest.number}\0${reviewerId}`,
         );
-      // An evaluated award pays this reviewer outside the pool. The unit
-      // size still caps the other reviewers' shares.
-      if (valueReviews && reservedEvaluatedReview) {
+      // A reserved or earlier-policy review takes no pool share. Its unit
+      // still contributes to the pull request's assessed size.
+      if (
+        valueReviews &&
+        (reservedEvaluatedReview ||
+          (review.submittedAt && !underValuePolicy(review.submittedAt)))
+      ) {
         assessedSizeFloor = Math.max(
           assessedSizeFloor,
           assessedSizeThirdsForReview(pullRequest, review),
@@ -4469,7 +4481,10 @@ function createSnapshotWithReviewCutoff(
         evaluatedReviewReservations.has(
           `${repositoryId}\0${pull.number}\0${reviewerId}`,
         );
-      if (reservedEvaluatedReview) {
+      if (
+        reservedEvaluatedReview ||
+        (review.submittedAt && !underValuePolicy(review.submittedAt))
+      ) {
         assessedSizeFloor = Math.max(
           assessedSizeFloor,
           assessedSizeThirdsForReview(pull, review),
@@ -4825,6 +4840,7 @@ function createSnapshotWithReviewCutoff(
       },
     },
     leaders,
+    ...(valuePolicy ? { valuePolicyEffectiveAt: valuePolicy.effectiveAt } : {}),
     ...(input.valueDecisions === undefined
       ? {}
       : {
@@ -7198,6 +7214,30 @@ export function assertLeaderboardSnapshot(
     )
   )
     throw new Error("Value score events require assessment coverage");
+  if (snapshot.valuePolicyEffectiveAt !== undefined) {
+    assertIsoTimestamp(
+      snapshot.valuePolicyEffectiveAt,
+      "snapshot.valuePolicyEffectiveAt",
+    );
+    if (
+      new Date(snapshot.valuePolicyEffectiveAt).toISOString() !==
+        snapshot.valuePolicyEffectiveAt ||
+      parseIsoTime(snapshot.valuePolicyEffectiveAt) <
+        parseIsoTime(VALUE_SCORING_APPROVED_HISTORY_FROM)
+    )
+      throw new Error(
+        "The value policy cannot reinterpret earlier policy periods",
+      );
+  }
+  if (
+    snapshot.valuePolicyEffectiveAt === undefined &&
+    (snapshot.reviewExclusions as ReviewExclusion[] | undefined)?.some(
+      (exclusion) => exclusion.reason === "review-credit-before-policy",
+    )
+  )
+    throw new Error(
+      "Review policy omissions require the selected policy boundary",
+    );
   if (snapshot.valueAssessmentCoverage !== undefined) {
     if (!Array.isArray(snapshot.valueAssessmentCoverage))
       throw new Error("snapshot.valueAssessmentCoverage must be an array");
@@ -7261,6 +7301,13 @@ export function assertLeaderboardSnapshot(
       throw new Error("Value coverage must retain every closed source");
     for (const event of validatedLedger) {
       if (!event.scoreDecisionSourceId?.startsWith("value:")) continue;
+      if (
+        snapshot.valuePolicyEffectiveAt !== undefined &&
+        event.category === "substantive-review" &&
+        parseIsoTime(event.occurredAt) <
+          parseIsoTime(snapshot.valuePolicyEffectiveAt)
+      )
+        throw new Error("Value review event predates its selected policy");
       if (
         parseIsoTime(event.occurredAt) < parseIsoTime(window.from) ||
         parseIsoTime(event.occurredAt) >= parseIsoTime(window.to)
