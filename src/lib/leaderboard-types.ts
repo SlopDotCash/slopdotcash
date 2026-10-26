@@ -84,6 +84,12 @@ export interface ReviewExclusion {
   repository: RepositoryId;
   url: string;
   reason: ReviewExclusionReason;
+  /**
+   * Collected GitHub identity, so even a review-only profile can resolve its
+   * immutable actor ID. Absent when GitHub returned no reviewer, and in
+   * snapshots published before this field existed.
+   */
+  reviewer?: GitHubActor;
 }
 
 export interface PullRequestRecord {
