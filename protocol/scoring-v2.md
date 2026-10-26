@@ -126,8 +126,9 @@ closed. See [`evaluations/README.md`](../evaluations/README.md).
 
 ## Evidence bonuses
 
-These are historical allocation terms. From November 2026, monthly shares
-use accepted-work Points only; a trace adds no payment weight (PRD section 7).
+These are historical allocation terms. From November 2026, all reward shares,
+monthly and external-prize, use accepted-work Points only; a trace adds no
+payment weight (PRD section 7).
 Keep old calculations and funded awards unchanged. Unpaid September–October
 corrections remain subject to the reviewed historical reconciliation.
 
