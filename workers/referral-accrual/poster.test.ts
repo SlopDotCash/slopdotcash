@@ -1,12 +1,17 @@
 import type { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   encodeAbiParameters,
   encodeEventTopics,
+  encodeFunctionData,
+  keccak256,
+  parseAbi,
   parseAbiItem,
   toFunctionSelector,
 } from "viem";
+import * as accountFactories from "viem/accounts";
+import { privateKeyToAccount } from "viem/accounts";
 import { type PosterConfig, parseConfig } from "./config";
 import {
   type ChainState,
@@ -24,7 +29,11 @@ import { D1AccrualStore } from "./store";
 const ONE = 10n ** 18n;
 const DISTRIBUTOR = `0x${"d".repeat(40)}`;
 const TOKEN = `0x${"7".repeat(40)}`;
-const SIGNER = `0x${"5".repeat(40)}`;
+// Public Anvil account 1; never a deployed account or a credential.
+const TEST_ACCOUNT = privateKeyToAccount(
+  "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+);
+const SIGNER = TEST_ACCOUNT.address.toLowerCase();
 const ROOT_A = `0x${"a".repeat(64)}`;
 const ROOT_B = `0x${"b".repeat(64)}`;
 
@@ -44,6 +53,8 @@ const LIVE_VARS = {
   REFERRAL_DISTRIBUTOR_ADDRESS: DISTRIBUTOR,
   REFERRAL_TOKEN_ADDRESS: TOKEN,
   REFERRAL_POST_NETWORK: "robinhood-testnet",
+  REFERRAL_MAX_NATIVE_PER_TX_WEI: "200000000000000",
+  REFERRAL_MAX_NATIVE_PER_DAY_WEI: "2000000000000000",
 };
 
 const POSTER: PosterConfig = {
@@ -52,6 +63,7 @@ const POSTER: PosterConfig = {
   distributor: DISTRIBUTOR,
   token: TOKEN,
   rpcUrl: "http://127.0.0.1:1",
+  gas: { perTransactionWei: "200000000000000", perDayWei: "2000000000000000" },
 };
 
 function sha(text: string) {
@@ -129,14 +141,19 @@ function fakeChain(overrides: Partial<ChainState> = {}): FakeChain {
       if (!epoch) throw new Error(`no epoch ${index}`);
       return epoch;
     },
-    async prepare(epoch, root, total) {
+    async prepare(epoch, root, total, authorize) {
+      await authorize?.("1000");
       chain.prepared.push({ epoch, root, total });
       counter += 1;
       return {
         txId: `0x${counter.toString(16).padStart(64, "0")}`,
         rawTx: `0x${"f".repeat(20)}${counter.toString(16).padStart(4, "0")}`,
         evmNonce: counter - 1,
+        maximumNativeWei: "1000",
       };
+    },
+    async nativeCost() {
+      return { maximumWei: "1000", actualWei: null, settledDay: null };
     },
     async broadcast(raw) {
       if (chain.broadcastError) throw chain.broadcastError;
@@ -489,9 +506,33 @@ describe("posting the next root", () => {
 });
 
 // Actual viem client and all migrated SQLite tables; the RPC replies are controlled
-// local evidence, not a provider or chain qualification. No signing key is used.
+// local evidence, not provider or chain qualification. Public Anvil fixture key only.
 async function receiptHarness() {
   const chain = fakeChain();
+  chain.prepare = async (epoch, root, total, authorize) => {
+    await authorize?.("21000");
+    const rawTx = await TEST_ACCOUNT.signTransaction({
+      chainId: 46630,
+      type: "eip1559",
+      to: DISTRIBUTOR as `0x${string}`,
+      nonce: 0,
+      value: 0n,
+      gas: 21000n,
+      maxFeePerGas: 1n,
+      maxPriorityFeePerGas: 1n,
+      data: encodeFunctionData({
+        abi: parseAbi(["function postRoot(uint256,bytes32,uint256)"]),
+        functionName: "postRoot",
+        args: [BigInt(epoch), root as `0x${string}`, total],
+      }),
+    });
+    return {
+      txId: keccak256(rawTx),
+      rawTx,
+      evmNonce: 0,
+      maximumNativeWei: "21000",
+    };
+  };
   const h = harness(chain);
   addFile(h.sqlite, "2026-11", 0, ROOT_A, ONE);
   await postNextRoot(h.deps);
@@ -749,6 +790,207 @@ describe("canonical poster journal through actual client", () => {
       await expect(h.client.broadcast(h.row.rawTx)).rejects.toThrow(
         "hash differs",
       );
+    } finally {
+      h.sqlite.close();
+    }
+  });
+});
+
+describe("durable referral native fee budgets", () => {
+  const limits = { perTransactionWei: "1000", perDayWei: "1500" };
+  test("actual quote over the cap never invokes the account signer or broadcast", async () => {
+    let signed = 0,
+      sent = 0;
+    const originalFactory = accountFactories.privateKeyToAccount;
+    const observer = spyOn(
+      accountFactories,
+      "privateKeyToAccount",
+    ).mockImplementation((...args) => {
+      const account = originalFactory(...args);
+      const sign = account.signTransaction;
+      return Object.assign(account, {
+        signTransaction: async (...parameters: unknown[]) => {
+          signed++;
+          return Reflect.apply(sign, account, parameters);
+        },
+      });
+    });
+    const fetchRpc = (async (_url, init) => {
+      const { id, method } = JSON.parse(String(init?.body));
+      const result =
+        method === "eth_call"
+          ? "0x"
+          : method === "eth_estimateGas"
+            ? "0x5208"
+            : method === "eth_getTransactionCount"
+              ? "0x0"
+              : method === "eth_maxPriorityFeePerGas"
+                ? "0x1"
+                : method === "eth_getBlockByNumber"
+                  ? {
+                      number: "0x1",
+                      hash: `0x${"a".repeat(64)}`,
+                      parentHash: `0x${"b".repeat(64)}`,
+                      timestamp: "0x1",
+                      baseFeePerGas: "0x1",
+                      gasUsed: "0x0",
+                      gasLimit: "0x100000",
+                      transactions: [],
+                    }
+                  : undefined;
+      if (method === "eth_sendRawTransaction") sent++;
+      if (result === undefined)
+        throw new Error(`Unexpected quote request ${method}`);
+      return Response.json({ jsonrpc: "2.0", id, result });
+    }) as typeof fetch;
+    try {
+      const client = createEvmPoster({
+        config: { ...POSTER, gas: { perTransactionWei: "1", perDayWei: "2" } },
+        privateKey:
+          "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+        fetch: fetchRpc,
+      });
+      await expect(client.prepare(0, ROOT_A, ONE)).rejects.toThrow(
+        /native fee limit/u,
+      );
+      expect(signed).toBe(0);
+      expect(sent).toBe(0);
+      const allowed = createEvmPoster({
+        config: POSTER,
+        fetch: fetchRpc,
+        privateKey:
+          "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+      });
+      await allowed.prepare(0, ROOT_A, ONE);
+      expect(signed).toBe(1); // The observer reaches the real account signer on an allowed quote.
+      expect(sent).toBe(0);
+    } finally {
+      observer.mockRestore();
+    }
+  });
+  test("unknown sends retain one reservation across midnight and unchanged rebroadcast", async () => {
+    const chain = fakeChain();
+    const h = harness(chain);
+    h.deps.config = { ...POSTER, gas: limits };
+    addFile(h.sqlite, "2026-11", 0, ROOT_A, ONE);
+    chain.broadcastError = new Error("send outcome unknown");
+    expect((await postNextRoot(h.deps)).status).toBe("posted");
+    h.deps.now = () => new Date("2026-12-04T00:00:00.000Z");
+    await expect(
+      h.deps.store.assertGasBudget(POSTER.network, "600", limits, h.deps.now()),
+    ).rejects.toThrow(/budget reached/u);
+    chain.broadcastError = null;
+    chain.statusFor = () => ({ kind: "rebroadcast" });
+    expect((await postNextRoot(h.deps)).status).toBe("in_flight");
+    expect(chain.prepared).toHaveLength(1);
+    expect(chain.broadcasts).toHaveLength(1);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT maximum_wei,actual_wei,settled_day FROM referral_post_gas",
+        )
+        .all(),
+    ).toEqual([{ maximum_wei: 1000, actual_wei: null, settled_day: null }]);
+    h.sqlite.close();
+  });
+  test("reverted costs consume the receipt UTC day's budget and release only later-day capacity", async () => {
+    const chain = fakeChain();
+    const h = harness(chain);
+    h.deps.config = { ...POSTER, gas: limits };
+    addFile(h.sqlite, "2026-11", 0, ROOT_A, ONE);
+    await postNextRoot(h.deps);
+    chain.statusFor = () => ({ kind: "failed", reason: "canonical revert" });
+    chain.nativeCost = async () => ({
+      maximumWei: "1000",
+      actualWei: "900",
+      settledDay: "2026-12-04",
+    });
+    h.deps.now = () => new Date("2026-12-04T00:00:00.000Z");
+    expect((await postNextRoot(h.deps)).status).toBe("gas_budget");
+    expect(chain.prepared).toHaveLength(1);
+    expect(chain.broadcasts).toHaveLength(1);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT maximum_wei,actual_wei,settled_day FROM referral_post_gas",
+        )
+        .all(),
+    ).toEqual([
+      { maximum_wei: 1000, actual_wei: 900, settled_day: "2026-12-04" },
+    ]);
+    h.deps.now = () => new Date("2026-12-05T00:00:00.000Z");
+    expect((await postNextRoot(h.deps)).status).toBe("posted");
+    expect(chain.broadcasts).toHaveLength(2);
+    h.sqlite.close();
+  });
+  test("overlapping quotes cannot commit or broadcast two native liabilities", async () => {
+    const chain = fakeChain();
+    const h = harness(chain);
+    h.deps.config = { ...POSTER, gas: limits };
+    addFile(h.sqlite, "2026-11", 0, ROOT_A, ONE);
+    const original = chain.prepare;
+    let arrived = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    chain.prepare = async (...args) => {
+      const prepared = await original(...args);
+      if (++arrived === 2) release();
+      await barrier;
+      return prepared;
+    };
+    const results = await Promise.allSettled([
+      postNextRoot(h.deps),
+      postNextRoot(h.deps),
+    ]);
+    expect(
+      results.filter(
+        (r) => r.status === "fulfilled" && r.value.status === "posted",
+      ),
+    ).toHaveLength(1);
+    expect(chain.broadcasts).toHaveLength(1);
+    expect(h.posts()).toHaveLength(1);
+    expect(
+      h.sqlite
+        .query("SELECT sum(maximum_wei) total FROM referral_post_gas")
+        .get(),
+    ).toEqual({ total: 1000 });
+    h.sqlite.close();
+  });
+  test("lower transaction cap refuses before signing or any journal reservation", async () => {
+    const chain = fakeChain();
+    const h = harness(chain);
+    h.deps.config = {
+      ...POSTER,
+      gas: { perTransactionWei: "999", perDayWei: "1500" },
+    };
+    addFile(h.sqlite, "2026-11", 0, ROOT_A, ONE);
+    expect((await postNextRoot(h.deps)).status).toBe("gas_budget");
+    expect(chain.prepared).toHaveLength(0);
+    expect(chain.broadcasts).toHaveLength(0);
+    expect(h.posts()).toHaveLength(0);
+    h.sqlite.close();
+  });
+  test("actual client prices only canonical receipt evidence and derives legacy signed liability", async () => {
+    const h = await receiptHarness();
+    try {
+      h.setFault("missing_advanced");
+      expect(await h.client.nativeCost(h.row)).toEqual({
+        maximumWei: "21000",
+        actualWei: null,
+        settledDay: null,
+      });
+      h.setFault("wrong_index");
+      await expect(h.client.nativeCost(h.row)).rejects.toThrow(
+        /identity differs/u,
+      );
+      h.setFault("valid");
+      expect(await h.client.nativeCost(h.row)).toEqual({
+        maximumWei: "21000",
+        actualWei: "21000",
+        settledDay: "1970-01-01",
+      });
     } finally {
       h.sqlite.close();
     }
