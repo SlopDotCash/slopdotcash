@@ -294,18 +294,18 @@ describe("release gates", () => {
     const budgets = /^FEE_CONVERTER_NATIVE_BUDGETS = '(.+)'$/mu.exec(toml)?.[1];
     expect(JSON.parse(budgets ?? "null")).toEqual({
       base: {
-        perTransaction: "200000000000000",
+        perTransaction: "100000000000000",
         perDay: "1000000000000000",
-        additionalFeeReserve: "10000000000000",
+        additionalFeeReserve: "50000000000000",
       },
       ethereum: {
-        perTransaction: "2000000000000000",
-        perDay: "5000000000000000",
+        perTransaction: "1000000000000000",
+        perDay: "10000000000000000",
         additionalFeeReserve: "0",
       },
       robinhood: {
         perTransaction: "200000000000000",
-        perDay: "1000000000000000",
+        perDay: "2000000000000000",
         additionalFeeReserve: "0",
       },
     });
