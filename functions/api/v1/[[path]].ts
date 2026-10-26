@@ -100,6 +100,7 @@ import {
 } from "../../../contracts/evm/adapter";
 import { REVIEWED_EVM_FACTORIES } from "../../../contracts/evm/factories";
 import type { SolanaEscrowConfig } from "../../../contracts/solana/adapter";
+import { REVIEWED_SOLANA_PROGRAMS } from "../../../contracts/solana/programs";
 import { deploymentTier } from "../../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
@@ -605,6 +606,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       solanaFundingConfig(projectId, network, vault, "security-bounty"),
     vaultSetup: ownerVaultSetupService({
       factories: REVIEWED_EVM_FACTORIES,
+      programs: REVIEWED_SOLANA_PROGRAMS,
       db: context.env.SLOP_DB,
       projects: () => projectPersistence.listProjects(),
       networks: () => parsePaymentNetworks(context.env.PAYMENT_NETWORKS),

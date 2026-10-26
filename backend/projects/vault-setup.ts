@@ -7,13 +7,14 @@ import {
   verifyEvmVaultCreation,
 } from "../../contracts/evm/adapter";
 import type { ReviewedEvmFactory } from "../../contracts/evm/factories";
-import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
+import type { SolanaProgramConfig } from "../../contracts/solana/adapter";
 import {
   prepareSolanaVaultCreation,
   SolanaVaultCreationFailed,
   verifySolanaVaultCreation,
 } from "../../contracts/solana/owner-creation";
 import type { SolanaVaultCreation } from "../../contracts/solana/owner-instructions";
+import type { ReviewedSolanaProgram } from "../../contracts/solana/programs";
 import { SolanaWalletActionError } from "../../contracts/solana/wallet-transactions";
 import {
   ESCROW_NETWORKS,
@@ -66,6 +67,7 @@ export function ownerVaultSetupService(deps: {
   networks(): string[];
   rpcUrl(network: string): string;
   factories?: readonly ReviewedEvmFactory[];
+  programs?: readonly ReviewedSolanaProgram[];
 }): OwnerVaultSetup {
   async function templates(
     project: ProjectRecord,
@@ -140,6 +142,46 @@ export function ownerVaultSetupService(deps: {
     }
     return reviewed;
   }
+  async function programs(
+    project: ProjectRecord,
+    payoutPolicy: PayoutPolicy = "ordinary",
+  ): Promise<ReviewedSolanaProgram[]> {
+    const served = deps.networks();
+    const chain =
+      payoutPolicy === "security-bounty"
+        ? project.manifest.securityBounty?.amount.network
+        : project.manifest.reward.chain;
+    const reviewed = (deps.programs ?? []).filter(
+      (p) =>
+        served.includes(p.network) &&
+        ESCROW_NETWORKS[p.network]?.family === "solana" &&
+        ESCROW_NETWORKS[p.network].chain === chain,
+    );
+    // Retain existing deployments as infrastructure sources, never as new project records.
+    for (const { deployment: d } of await templates(project, payoutPolicy)) {
+      if (
+        !d.programId ||
+        !d.networkDomain ||
+        !d.rotationAuthority ||
+        d.rotationDelaySeconds === null
+      )
+        continue;
+      reviewed.push({
+        network: d.network,
+        sourceCommit: d.sourceCommit,
+        programId: d.programId,
+        networkDomain: d.networkDomain,
+        codeSha256: d.codeSha256,
+        upgradeAuthority: d.upgradeAuthority,
+        identityAuthority: d.identityAuthority,
+        feeRecipient: d.feeRecipient,
+        rotationAuthority: d.rotationAuthority,
+        bindingDelaySeconds: d.bindingDelaySeconds,
+        rotationDelaySeconds: d.rotationDelaySeconds,
+      });
+    }
+    return reviewed;
+  }
   async function resolve(
     project: ProjectRecord,
     actor: GithubActor,
@@ -199,32 +241,14 @@ export function ownerVaultSetupService(deps: {
           "vault_setup_unavailable",
           "The monthly amount exceeds the Solana vault limit.",
         );
-      for (const { deployment: template, payoutPolicy } of await templates(
-        project,
-        input.payoutPolicy,
-      )) {
-        if (
-          template.network !== input.network ||
-          !template.programId ||
-          !template.projectPda ||
-          !template.networkDomain ||
-          !template.rotationAuthority ||
-          !template.rotationDelaySeconds ||
-          !network.genesisHash
-        )
+      let creationError: SolanaWalletActionError | undefined;
+      for (const template of await programs(project, input.payoutPolicy)) {
+        if (template.network !== input.network || !network.genesisHash)
           continue;
-        const config: SolanaEscrowConfig = {
+        const config: SolanaProgramConfig = {
           ...template,
-          programId: template.programId,
-          projectPda: template.projectPda,
-          networkDomain: template.networkDomain,
           genesisHash: network.genesisHash,
-          rotationAuthority: template.rotationAuthority,
-          rotationDelaySeconds: template.rotationDelaySeconds,
           rpcUrl: deps.rpcUrl(input.network),
-          projectId: project.id,
-          mint: template.asset,
-          payoutPolicy,
         };
         const creation: SolanaVaultCreation = {
           programId: config.programId,
@@ -258,11 +282,15 @@ export function ownerVaultSetupService(deps: {
             prepared,
           };
         } catch (error) {
-          if (error instanceof SolanaWalletActionError)
-            fail(422, "vault_creation_invalid", error.message);
+          // A finalized creation can predate the current infrastructure pin.
+          // Try only retained reviewed configurations, never trust account fields
+          // as a new review. Preserve the failure if none matches this vault.
+          if (error instanceof SolanaWalletActionError) creationError ??= error;
           // Only a current verified program and Config may anchor new owner creation.
         }
       }
+      if (creationError)
+        fail(422, "vault_creation_invalid", creationError.message);
       fail(
         503,
         "vault_setup_unavailable",
@@ -320,6 +348,9 @@ export function ownerVaultSetupService(deps: {
           ...(await factories(project, payoutPolicy)).map(
             (factory) => factory.network,
           ),
+          ...(await programs(project, payoutPolicy)).map(
+            (program) => program.network,
+          ),
         ]),
       ];
     },
@@ -373,6 +404,9 @@ export function ownerVaultSetupService(deps: {
           if (!verified) return null;
           return {
             ...result.template,
+            factory: null,
+            factoryCodeSha256: null,
+            registrar: null,
             ...verified,
             owner: result.creation.owner,
             asset: result.creation.mint,

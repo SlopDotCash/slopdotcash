@@ -33,6 +33,7 @@ if (
   throw new Error("Local endpoints required");
 const origin = `http://127.0.0.1:${port}`;
 const servedNetwork = (input.factory?.network ??
+  input.program?.network ??
   input.template.escrow.deployments[0].network) as keyof typeof ESCROW_NETWORKS;
 const { sqlite, db } = sqliteD1(
   readdirSync("migrations")
@@ -41,10 +42,7 @@ const { sqlite, db } = sqliteD1(
 );
 const persistence = new CloudflareProjectPersistence(db);
 const now = () => new Date();
-for (const manifest of [
-  input.project,
-  ...(input.template ? [input.template] : []),
-]) {
+function seedProject(manifest: ProjectDefinition) {
   const text = JSON.stringify(manifest);
   const digest = sha256Hex(text);
   sqlite
@@ -65,6 +63,11 @@ for (const manifest of [
       now().toISOString(),
     );
 }
+for (const manifest of [
+  input.project,
+  ...(input.template ? [input.template] : []),
+])
+  seedProject(manifest);
 const actor = { githubId: "900000071", githubLogin: "vault-owner" };
 const token = "vault_setup_local_session_".padEnd(64, "x");
 sqlite
@@ -159,6 +162,7 @@ const deps: ProjectApiDependencies = {
   },
   vaultSetup: ownerVaultSetupService({
     factories: input.factory ? [input.factory] : [],
+    programs: input.program ? [input.program] : [],
     db,
     projects: () => persistence.listProjects(),
     networks: () => (templatesEnabled ? [servedNetwork] : []),
@@ -180,6 +184,9 @@ Bun.serve({
           const body = await request.json();
           if (input.factory && body.factoryReview)
             Object.assign(input.factory, body.factoryReview);
+          if (input.program && body.programReview)
+            Object.assign(input.program, body.programReview);
+          if (body.retainedProject) seedProject(body.retainedProject);
           if (body.reviewCurrentVault === true) {
             const current = await persistence.getProject(input.project.id);
             if (!current || !deps.vaultSetup)

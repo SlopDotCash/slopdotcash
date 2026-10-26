@@ -3,8 +3,10 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import {
   type SolanaEscrowConfig,
+  type SolanaProgramConfig,
   solanaRpc,
   verifySolanaDeployment,
+  verifySolanaProgram,
 } from "./adapter";
 import { bytes, concat, type Instruction, message } from "./transactions";
 
@@ -19,7 +21,7 @@ function object(value: unknown): Record<string, unknown> {
 }
 /** Plans and simulates only. This module never signs or broadcasts. */
 export async function prepareSolanaWalletTransaction(
-  config: SolanaEscrowConfig,
+  config: { rpcUrl: string },
   wallet: string,
   instructions: Instruction[],
 ) {
@@ -88,6 +90,25 @@ export async function checkSolanaWalletTransaction(
   msg: Uint8Array,
   transactionId: string,
 ) {
+  await verifySolanaDeployment(config);
+  return checkTransaction(config, wallet, msg, transactionId);
+}
+/** Creation has no project yet; verify infrastructure and the exact finalized message. */
+export async function checkSolanaCreationTransaction(
+  config: SolanaProgramConfig,
+  wallet: string,
+  msg: Uint8Array,
+  transactionId: string,
+) {
+  await verifySolanaProgram(config);
+  return checkTransaction(config, wallet, msg, transactionId);
+}
+async function checkTransaction(
+  config: { rpcUrl: string },
+  wallet: string,
+  msg: Uint8Array,
+  transactionId: string,
+) {
   const signature = decodeBase58Bytes(transactionId);
   if (signature.length !== 64)
     throw new SolanaWalletActionError(
@@ -97,7 +118,6 @@ export async function checkSolanaWalletTransaction(
     throw new SolanaWalletActionError(
       "This transaction does not match the pending wallet action. Check its signature in your wallet.",
     );
-  await verifySolanaDeployment(config);
   const response = object(
     await solanaRpc(config, "getSignatureStatuses", [
       [transactionId],
