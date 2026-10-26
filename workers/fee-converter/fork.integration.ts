@@ -186,6 +186,15 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const response = await nativeFetch(input, init);
   if (new URL(url).origin === RPC && typeof init?.body === "string") {
     const result = await response.clone().json();
+    // Local Anvil has no Base data fee. The local oracle is also exactly zero.
+    if (
+      local &&
+      JSON.parse(init.body).method === "eth_getTransactionReceipt" &&
+      result.result
+    ) {
+      result.result.l1Fee = "0x0";
+      return Response.json(result);
+    }
     if (result.error) {
       const request = JSON.parse(init.body);
       console.log(
@@ -340,6 +349,13 @@ try {
     FEE_CONVERTER_MAX_PRICE_IMPACT_BPS: "200",
     FEE_CONVERTER_RUN_CAP_MICRO: "1000000000",
     FEE_CONVERTER_DAILY_CAP_MICRO: "5000000000",
+    FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({
+      base: {
+        perTransaction: "10000000000000000",
+        perDay: "100000000000000000",
+        additionalFeeReserve: "1000000000000",
+      },
+    }),
     FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [AERO, UNROUTED] }),
   };
   // Loses a swap send after the separate approval has finalized,
@@ -938,7 +954,11 @@ try {
         .run(manifest, revision);
   };
   const parsed = parseConfig(env);
-  const feeClient = chainClient(env, parsed, parsed.networks[0]).vaultFees;
+  const feeClient = chainClient(
+    { ...env, FEE_CONVERTER_MODE: "dry_run" },
+    { ...parsed, mode: "dry_run" },
+    parsed.networks[0],
+  ).vaultFees;
   if (!feeClient) throw new Error("EVM client lacks fee claims");
   const refusal = async (
     label: string,
@@ -1917,6 +1937,51 @@ try {
       `PASS: ${local ? "Local EVM fixture" : "Base fork"} ${faults[0]} claim recovery and principal preservation`,
     );
   }
+  const nativeRows = sqlite
+    .query<
+      {
+        tx_id: string;
+        maximum_wei: string;
+        actual_wei: string | null;
+        state: string;
+      },
+      []
+    >(
+      "SELECT tx_id,maximum_wei,actual_wei,state FROM fee_native_gas WHERE state='signed'",
+    )
+    .all();
+  assert(nativeRows.length > 0, "actual sends must have native gas records");
+  let verifiedCosts = 0;
+  for (const cost of nativeRows) {
+    if (cost.actual_wei === null || cost.actual_wei === "0") continue;
+    const receipt = (await rpc("eth_getTransactionReceipt", [cost.tx_id])) as {
+      gasUsed: string;
+      effectiveGasPrice: string;
+      l1Fee?: string;
+    } | null;
+    assert(receipt, "settled gas needs its actual receipt");
+    if (local)
+      assert.equal(
+        BigInt(cost.actual_wei),
+        BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice),
+      );
+    assert(BigInt(cost.actual_wei) <= BigInt(cost.maximum_wei));
+    verifiedCosts++;
+  }
+  assert(
+    verifiedCosts > 0,
+    "at least one canonical finalized native cost must reconcile",
+  );
+  console.log(
+    JSON.stringify({
+      check: "native fee journal reconciles actual local receipts",
+      signed: nativeRows.length,
+      verifiedCosts,
+      localBaseAdditionalFees: local
+        ? "zero by explicit local oracle and receipt overlay"
+        : "real provider",
+    }),
+  );
 } finally {
   anvil.kill();
   await anvil.exited;

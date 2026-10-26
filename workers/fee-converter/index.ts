@@ -29,6 +29,7 @@ import {
   runNetwork,
 } from "./core";
 import { createEvmClient } from "./evm";
+import { NativeGasJournal } from "./native-gas";
 import { createSolanaClient } from "./solana";
 import {
   D1ConversionStore,
@@ -61,6 +62,8 @@ export function chainClient(
     localBlockhash?: boolean;
     /** Local validator harness only; the hosted Worker never sets it. */
     allowSolanaLive?: boolean;
+    nativeGas?: NativeGasJournal;
+    now?: () => Date;
   } = {},
 ): ChainClient {
   // Older Solana deployments give the fee recipient rotation authority.
@@ -78,6 +81,14 @@ export function chainClient(
   // A network without a verified USDC target never signs either: it only
   // reconciles recorded sends, which needs no key.
   const signs = config.mode === "live" && network.definition.usdc !== null;
+  if (
+    signs &&
+    network.definition.family === "evm" &&
+    (!network.nativeBudget || !overrides.nativeGas)
+  )
+    throw new Error(
+      "Live fee signing needs native limits and the durable budget journal",
+    );
   const secret = signs ? networkKey(env, network.network) : undefined;
   if (signs && secret === undefined)
     throw new Error(
@@ -91,6 +102,8 @@ export function chainClient(
         privateKey: secret,
         fetch: overrides.fetch,
         chainIdOverride: overrides.chainIdOverride,
+        nativeGas: overrides.nativeGas,
+        now: overrides.now,
       })
     : createSolanaClient({
         config: network,
@@ -144,7 +157,22 @@ export async function runOnce(
                 ...entry,
                 vault: normalizeToken(n.network, entry.vault),
               })),
-          client: (n) => chainClient(env, config, n, overrides),
+          client: (n, runId) =>
+            chainClient(env, config, n, {
+              ...overrides,
+              now,
+              nativeGas:
+                n.nativeBudget && n.definition.family === "evm"
+                  ? new NativeGasJournal(
+                      env.FEE_DB,
+                      n.network,
+                      n.feeWallet,
+                      runId,
+                      n.nativeBudget,
+                      now,
+                    )
+                  : undefined,
+            }),
           log: (event) => console.log(JSON.stringify(event)),
         }),
       );
