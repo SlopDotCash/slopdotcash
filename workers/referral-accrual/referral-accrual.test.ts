@@ -928,22 +928,40 @@ describe("one accrual run", () => {
     ).toEqual({ n: 0 });
   });
 
-  test("the scheduled handler runs once and the Worker serves no route", async () => {
+  test("only the daily schedule files accruals and the Worker serves no route", async () => {
     const { db, sqlite } = sqliteD1();
     const settled: Promise<unknown>[] = [];
-    // The handler reads the real clock, so start the program two months back
-    // and expect every month that has ended since to be filed, empty.
     const start = new Date();
     start.setUTCMonth(start.getUTCMonth() - 2, 1);
     const firstPeriod = start.toISOString().slice(0, 7);
+    const currentEnv = env(db, { REFERRAL_FIRST_PERIOD: firstPeriod });
+    // A delayed trigger must use execution time for filing and gas budgets.
     await worker.scheduled(
-      { scheduledTime: Date.now() },
-      env(db, { REFERRAL_FIRST_PERIOD: firstPeriod }),
+      {
+        scheduledTime: Date.parse("2001-01-02T01:15:00Z"),
+        cron: "*/15 * * * *",
+      },
+      currentEnv,
       { waitUntil: (promise) => settled.push(promise) },
     );
     await Promise.all(settled);
-    expect(files(sqlite).length).toBeGreaterThanOrEqual(2);
-    expect(files(sqlite)[0].period).toBe(firstPeriod);
+    expect(files(sqlite)).toEqual([]);
+    settled.length = 0;
+    await worker.scheduled(
+      { scheduledTime: Date.parse("2001-01-02T01:23:00Z"), cron: "23 1 * * *" },
+      currentEnv,
+      { waitUntil: (promise) => settled.push(promise) },
+    );
+    await Promise.all(settled);
+    expect(files(sqlite).map((file) => file.period)).toEqual(
+      [0, 1].map((offset) =>
+        new Date(
+          Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + offset, 1),
+        )
+          .toISOString()
+          .slice(0, 7),
+      ),
+    );
     expect((await worker.fetch()).status).toBe(404);
   });
 });

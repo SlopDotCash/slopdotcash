@@ -89,11 +89,16 @@ export async function runOnce(
 
 export default {
   async scheduled(
-    _controller: { scheduledTime: number } | undefined,
+    controller: { scheduledTime: number; cron: string },
     env: Env,
     ctx: { waitUntil(promise: Promise<unknown>): void },
   ) {
-    ctx.waitUntil(refreshReferralClaims(env));
+    if (controller.cron === "*/15 * * * *") {
+      ctx.waitUntil(refreshReferralClaims(env));
+      return;
+    }
+    if (controller.cron !== "23 1 * * *")
+      throw new Error("Unknown referral schedule");
     ctx.waitUntil(
       runOnce(env)
         .then((result) =>

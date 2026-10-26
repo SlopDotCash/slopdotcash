@@ -22,7 +22,7 @@ import {
   type ReferralWatchFetch,
   referralWatchConfig,
 } from "../../scripts/check-referral-roots";
-import { runOnce } from "./index";
+import worker, { runOnce } from "./index";
 import { buildTree } from "./merkle";
 import { sqliteD1 } from "./sqlite-d1";
 
@@ -52,6 +52,10 @@ const anvil = spawn(
     "0",
     "--gas-price",
     "1000000",
+    // Leave the seven-day claim window in the past so the scheduled handler
+    // can use its real execution clock without a production clock override.
+    "--timestamp",
+    String(Math.floor(Date.now() / 1000) - 8 * 24 * 3600),
   ],
   {
     stdio: "ignore",
@@ -762,7 +766,30 @@ try {
     "an omitted finalized claim cannot advance the cache",
   );
   assert.equal((await claimAccount()).status, "stale");
-  await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
+  const postingRecords = () =>
+    ["referral_accrual_files", "referral_accruals", "referral_root_posts"].map(
+      (table) => sqlite.query(`SELECT * FROM ${table}`).all(),
+    );
+  const beforeRefreshRecords = postingRecords();
+  const beforeRefreshNonce = await rpc("eth_getTransactionCount", [
+    poster,
+    "latest",
+  ]);
+  const refreshTasks: Promise<unknown>[] = [];
+  // Exercise the deployed entry point with live mode selected but no usable
+  // signing key. This tick must only refresh the finalized claim projection.
+  await worker.scheduled(
+    { cron: "*/15 * * * *", scheduledTime: cacheClock.getTime() },
+    { ...claimEnv, REFERRAL_POSTER_KEY: "unusable on a cache-only tick" },
+    { waitUntil: (promise) => refreshTasks.push(promise) },
+  );
+  await Promise.all(refreshTasks);
+  cacheClock = new Date();
+  assert.deepEqual(postingRecords(), beforeRefreshRecords);
+  assert.equal(
+    await rpc("eth_getTransactionCount", [poster, "latest"]),
+    beforeRefreshNonce,
+  );
   assert.equal((await claimAccount()).claimedBase, CUMULATIVE.toString());
   assert.equal((await claimAccount()).claimableBase, "0");
   await assert.rejects(
@@ -805,6 +832,7 @@ try {
       post: post.tx_id,
       claimed: CUMULATIVE.toString(),
       cachedClaimApiCanonicalFinality: true,
+      scheduledClaimRefreshNeverFilesOrPosts: true,
       cacheOmittedRootVoidAndClaimRefusedWithoutCursorAdvance: true,
       cachedClaimApiProviderFailureRetainsTotals: true,
       nonfinalVoidHeld: true,

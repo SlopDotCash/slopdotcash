@@ -31,8 +31,15 @@ them. The Worker has no HTTP route.
 
 ## What one run does
 
-The cron fires once a day. A run files every UTC month that has ended and is
-not filed yet, oldest first, starting at `REFERRAL_FIRST_PERIOD`.
+The filing and posting cron fires daily at 01:23 UTC. A run files every UTC
+month that has ended and is not filed yet, oldest first, starting at
+`REFERRAL_FIRST_PERIOD`.
+
+A separate cron refreshes claim records every 15 minutes after activation.
+It reads finalized chain evidence into D1; it never files accruals, signs or
+posts roots. The Payouts page and its Refresh record button read that cache.
+A confirmed claim appears after chain finality and the next successful
+refresh. A failed refresh retains the last verified totals as stale.
 
 1. Take the single lease in D1 (`referral_accrual_locks`, 10 minutes). A
    second run exits with `locked`.
