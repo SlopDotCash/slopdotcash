@@ -107,6 +107,10 @@ record. A different key or profile requires its own reviewed evidence; old
 results do not qualify it. Synthetic controls are useful tests but do not prove
 real model qualification. Activation remains separate.
 
+Owner decision, 26 October 2026: this verifier is not part of launch acceptance
+(PRD section 11). No verifier host exists, so objective-quality closure stays
+unavailable.
+
 Keep `SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256` unset until that review passes.
 Only the protected production release may set it to the qualified profile.
 This setting represents the separate maintainer qualification, not verifier

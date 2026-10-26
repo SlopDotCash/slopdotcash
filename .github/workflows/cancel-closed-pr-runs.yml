@@ -1,0 +1,36 @@
+name: Cancel CI for closed pull requests
+
+# A merged or closed pull request no longer needs its checks. Cancel the
+# remaining pull request runs for its final head so they release runners.
+# Push, schedule and manual runs are never touched. No pull request code is
+# checked out or executed.
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  cancel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Cancel active pull request runs for the closed head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SELF_RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          for status in queued in_progress waiting pending requested; do
+            gh api --paginate \
+              "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&status=$status&per_page=100" \
+              --jq '.workflow_runs[] | select(.event == "pull_request" or .event == "pull_request_target") | .id'
+          done | sort -u | while read -r run; do
+            if [ "$run" != "$SELF_RUN" ]; then
+              gh api -X POST "repos/$REPO/actions/runs/$run/cancel" >/dev/null || echo "Run $run already finished."
+            fi
+          done
