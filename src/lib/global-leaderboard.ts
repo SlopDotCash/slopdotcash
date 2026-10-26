@@ -10,7 +10,7 @@ import { compareActors } from "./github-actor";
 
 import type { CycleIndex } from "./cycle-index";
 import type { GitHubActor, LeaderboardSnapshot } from "./leaderboard";
-import type { ProjectView } from "./project-view";
+import { type ProjectView, requiredProjection } from "./project-view";
 import { findIngestedProjectByRepositoryId } from "./projects.mjs";
 import { type PenaltyDeductions, penaltyDeductions } from "./score-penalties";
 
@@ -151,7 +151,10 @@ export function createGlobalLeaders(
       const current = byActor.get(leader.actor.id) ?? emptyLeader(leader.actor);
       current.actor = leader.actor;
       current.tokens += leader.usage.relevantTokens;
-      current.projectedMinor += BigInt(leader.projectedMinor ?? "0");
+      if (view.reward.kind === "monthly-pool")
+        current.projectedMinor += BigInt(
+          requiredProjection(leader.projectedMinor, "amount"),
+        );
       byActor.set(leader.actor.id, current);
     }
   }
