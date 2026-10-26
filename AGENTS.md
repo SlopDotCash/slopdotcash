@@ -69,6 +69,11 @@ alias only.
     activates posting. Root
     posting stays on Robinhood Chain Testnet until that activation. This
     exception grants no authority over project vaults or contributor payments.
+    The whole-root growth limit is 2,000,000 program tokens; each project still
+    has a 250,000-token lifetime cap. The separate poster gas ceilings are
+    0.0002 ETH per transaction and 0.002 ETH per UTC day (owner decision,
+    25 October 2026). Pause above either ceiling; retain uncertain attempts.
+    These limits do not authorize funding or activation.
 - The owner may authorize an agent to use necessary existing credentials
   privately and execute reviewed setup, testnet or mainnet plans (owner
   decision, 25 October 2026; PRD section 11). Stay within the authorized
