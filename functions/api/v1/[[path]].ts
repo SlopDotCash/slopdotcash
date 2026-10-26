@@ -36,7 +36,10 @@ import {
   type ProjectApiDependencies,
   refreshProjectSetup,
 } from "../../../backend/projects/handler";
-import { slopbotRepositoryAccess } from "../../../backend/projects/repository-access";
+import {
+  slopbotGithubFetch,
+  slopbotRepositoryAccess,
+} from "../../../backend/projects/repository-access";
 import {
   flaggerAuthority,
   readRepositoryAccess,
@@ -532,10 +535,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     async (assessment) =>
       assessment.result !== null && evidence.retained(assessment.result),
   );
+  const apiOrigin = githubApiOrigin(context.env.SLOP_GITHUB_API_ORIGIN);
   const github = {
-    fetch: (url: string, init: RequestInit) => fetch(url, init),
+    fetch: slopbotGithubFetch(context.env.SLOPBOT, apiOrigin, (url, init) =>
+      fetch(url, init),
+    ),
     token: context.env.SLOP_GITHUB_READ_TOKEN,
-    apiOrigin: githubApiOrigin(context.env.SLOP_GITHUB_API_ORIGIN),
+    apiOrigin,
     cache: vettingBranchCache(context.request),
   };
   const loadTemplate = assetTemplateSource(

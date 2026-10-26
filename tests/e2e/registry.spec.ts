@@ -2232,6 +2232,36 @@ test("repository lookup failures explain the next action and preserve the draft 
       "Private upstream diagnostic",
     );
   }
+  // GitHub limits the shared anonymous Pages address. After Slopbot is
+  // installed, the repository's own installation reads its facts.
+  const limited = `e2e-owner/slopbot-lookup-${test.info().project.name.replace(/-chromium$/u, "")}`;
+  expect(
+    (
+      await fetch(
+        `${GITHUB_FIXTURE}/__fixture/public-repository/${limited}/rate-limited`,
+        { method: "PUT" },
+      )
+    ).status,
+  ).toBe(204);
+  const lookUp = page.getByRole("button", {
+    name: "Look up on GitHub",
+    exact: true,
+  });
+  await repository.fill(limited);
+  await lookUp.click();
+  await expect(page.locator(".lookup-status")).toContainText(
+    "GitHub limited lookups.",
+  );
+  await setSlopbot(`${limited}/installed`);
+  await lookUp.click();
+  await expect(page.locator(".lookup-status")).toContainText("Found ");
+  await expect(
+    page.getByRole("textbox", { name: "Integration branch", exact: true }),
+  ).toHaveValue("main");
+  await page.screenshot({
+    path: test.info().outputPath("repository-lookup-through-slopbot.png"),
+    fullPage: true,
+  });
   await repository.fill(fixtureProjects().owned.repository);
   await page
     .getByRole("button", { name: "Look up on GitHub", exact: true })

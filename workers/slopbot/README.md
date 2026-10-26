@@ -927,6 +927,18 @@ with GitHub's base permission (maintain reads as write). It returns no token.
 Any GitHub failure is HTTP 503; setup shows it as a retry. Installation
 records in D1 alone never answer this check.
 
+The same binding serves
+`GET https://slopbot.internal/v1/repository-read?path=/repos/OWNER/REPO[/branches/BRANCH|/license?ref=SHA]`.
+Setup lookups and the vetting branch-head pin read one repository's public
+facts, one branch or its LICENSE at one commit with that repository's own
+installation token, so they do not depend on the anonymous GitHub rate limit
+of the shared Pages address. Any other path, or a path that URL normalization
+changes, is HTTP 400. Without an active installation, or for a repository
+that is not public, the answer is HTTP 404
+without the `x-slopbot-repository-read` header, and the site makes its
+ordinary read. GitHub's 200 and 404 answers pass through with that header;
+any other answer is HTTP 503. It returns no token.
+
 ## Objective quality verification
 
 The [trusted evidence contract](QUALITY.md) implements the approved objective
