@@ -26,6 +26,15 @@ export const REFERRAL_EVENTS = parseAbi([
   "event Unpaused(address account,uint256 indexed extendedEpoch,uint64 newClaimableAt)",
   "event Rescued(address indexed to,uint256 amount)",
 ]);
+const COVERAGE_ABI = parseAbi([
+  "function nextEpoch() view returns (uint256)",
+  "function totalClaimed() view returns (uint256)",
+  "function epochAt(uint256) view returns ((bytes32 root,uint256 total,uint64 postedAt,bool voided))",
+]);
+const TOKEN_ABI = parseAbi([
+  "function decimals() view returns (uint8)",
+  "function balanceOf(address) view returns (uint256)",
+]);
 export interface ClaimEpoch {
   epoch: number;
   period: string;
@@ -122,7 +131,7 @@ export async function refreshReferralClaims(
       ) ||
       (await client.readContract({
         address: program.token,
-        abi: parseAbi(["function decimals() view returns (uint8)"]),
+        abi: TOKEN_ABI,
         functionName: "decimals",
       })) !== program.decimals
     )
@@ -275,21 +284,92 @@ export async function refreshReferralClaims(
         snapshot.pauseAt = null;
       } else if (event.eventName === "Rescued") snapshot.ended = true;
     }
-    snapshot.latestPaused = await client.readContract({
-      address: program.distributor,
-      abi: REFERRAL_ABI,
-      functionName: "paused",
-    });
-    if (
-      (await client.getBlock({ blockNumber: finalized.number })).hash !==
-      finalized.hash
-    )
-      throw new Error("Referral finality changed during refresh");
     snapshot.block = {
       number: finalized.number.toString(),
       hash: finalized.hash,
       timestamp: Number(finalized.timestamp),
     };
+    // Latest state cannot prove finality. It can refuse an incomplete log
+    // projection or a head that has not caught up with a recent transaction.
+    // Keep the old cursor on disagreement so the next run scans the gap again.
+    const last = snapshot.epochs.at(-1);
+    const [epochCount, totalClaimed, paused, currentRoot, lastEpoch, balance] =
+      await Promise.all([
+        client.readContract({
+          address: program.distributor,
+          abi: COVERAGE_ABI,
+          functionName: "nextEpoch",
+        }),
+        client.readContract({
+          address: program.distributor,
+          abi: COVERAGE_ABI,
+          functionName: "totalClaimed",
+        }),
+        client.readContract({
+          address: program.distributor,
+          abi: REFERRAL_ABI,
+          functionName: "paused",
+        }),
+        client.readContract({
+          address: program.distributor,
+          abi: REFERRAL_ABI,
+          functionName: "currentRoot",
+        }),
+        last
+          ? client.readContract({
+              address: program.distributor,
+              abi: COVERAGE_ABI,
+              functionName: "epochAt",
+              args: [BigInt(last.epoch)],
+            })
+          : null,
+        client.readContract({
+          address: program.token,
+          abi: TOKEN_ABI,
+          functionName: "balanceOf",
+          args: [program.distributor],
+        }),
+      ]);
+    const claimed = Object.values(snapshot.claimed).reduce(
+      (sum, value) => sum + BigInt(value),
+      0n,
+    );
+    const active = activeClaimEpoch(snapshot);
+    const maximum = snapshot.epochs
+      .filter((e) => !e.voided)
+      .reduce(
+        (total, e) =>
+          BigInt(e.totalBase) > total ? BigInt(e.totalBase) : total,
+        0n,
+      );
+    if (
+      epochCount !== BigInt(snapshot.epochs.length) ||
+      totalClaimed !== claimed ||
+      paused !== snapshot.paused ||
+      (last &&
+        (!lastEpoch ||
+          lastEpoch.root !== last.root ||
+          lastEpoch.total !== BigInt(last.totalBase) ||
+          lastEpoch.voided !== last.voided ||
+          Number(lastEpoch.postedAt) + 7 * 24 * 3600 !== last.claimableAt)) ||
+      (active
+        ? currentRoot[0] !== active.root ||
+          currentRoot[1] !== BigInt(active.totalBase) ||
+          currentRoot[2] !== BigInt(active.epoch)
+        : BigInt(currentRoot[0]) !== 0n ||
+          currentRoot[1] !== 0n ||
+          currentRoot[2] !== (1n << 256n) - 1n) ||
+      (!snapshot.ended && balance + claimed < maximum)
+    )
+      throw new Error(
+        "Referral event projection is incomplete or awaits finality",
+      );
+    snapshot.latestPaused = paused;
+    if (
+      (await client.getBlock({ blockNumber: finalized.number })).hash !==
+      finalized.hash
+    )
+      throw new Error("Referral finality changed during refresh");
     snapshot.observedAt = now.toISOString();
     // Publish the complete projection at once; a concurrent older refresh cannot overwrite it.
     await env.REFERRAL_DB.prepare(

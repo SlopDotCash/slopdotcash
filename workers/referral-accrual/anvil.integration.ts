@@ -303,6 +303,73 @@ try {
     },
     { preconnect: fetch.preconnect },
   );
+  const claimEnv = {
+    ...env,
+    REFERRAL_DEPLOYMENT_BLOCK: distributorBlock.toString(),
+    REFERRAL_DISTRIBUTOR_CODE_HASH: watchConfig.codeHash,
+  };
+  // The target network cannot serve finalized eth_call state. Reject it here
+  // so the real cache must use finalized headers and canonical event receipts.
+  const claimFetch = Object.assign(
+    async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const body = await request.clone().json();
+      if (body.method === "eth_call") assert.equal(body.params[1], "latest");
+      return boundedRpc(request);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  let cacheClock = new Date(
+    Number(
+      BigInt((await rpc("eth_getBlockByNumber", ["latest", false])).timestamp),
+    ) * 1000,
+  );
+  const claimAccount = async () => {
+    const response = await handleReferralClaims(
+      new Request("https://slop.cash/api/v1/referrals/me"),
+      {
+        db,
+        sessionActor: async () => ({ githubId: "900000100" }),
+        now: () => cacheClock,
+      },
+    );
+    assert.equal(response?.status, 200);
+    return response?.json();
+  };
+  const omitEvent = (signature: string) =>
+    Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const method = (await request.clone().json()).method;
+        const response = await claimFetch(request);
+        if (method !== "eth_getLogs") return response;
+        const result = await response.json();
+        const topic = keccak256(new TextEncoder().encode(signature));
+        result.result = result.result.filter(
+          (log: { topics: string[] }) => log.topics[0] !== topic,
+        );
+        return Response.json(result);
+      },
+      { preconnect: fetch.preconnect },
+    );
+  const cachedBody = () =>
+    (
+      sqlite
+        .query("SELECT body FROM referral_claim_cache WHERE id='program'")
+        .get() as { body: string | null } | null
+    )?.body ?? null;
+  await assert.rejects(
+    refreshReferralClaims(
+      claimEnv,
+      cacheClock,
+      omitEvent("RootPosted(uint256,bytes32,uint256,uint64)"),
+    ),
+  );
+  assert.equal(cachedBody(), null, "an omitted root cannot advance the cache");
+  cacheClock = new Date(cacheClock.getTime() + 1000);
+  await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
+  assert.equal((await claimAccount()).claimableBase, "0");
+
   const readEvidence: ReferralWatchFetch = async (input, init) => {
     const request = new Request(input, init);
     if (new URL(request.url).origin === publicOrigin) {
@@ -553,44 +620,24 @@ try {
     ).state,
     "voided",
   );
+  cacheClock = new Date(cacheClock.getTime() + 1000);
+  const beforeOmittedVoid = cachedBody();
+  await assert.rejects(
+    refreshReferralClaims(
+      claimEnv,
+      cacheClock,
+      omitEvent("RootVoided(uint256,bytes32)"),
+    ),
+  );
+  assert.equal(
+    cachedBody(),
+    beforeOmittedVoid,
+    "an omitted void cannot advance the cache",
+  );
+  await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
+  assert.equal((await claimAccount()).latestVoided, true);
   sqlite.exec("ROLLBACK TO owner_void_control; RELEASE owner_void_control");
   assert.equal(await rpc("evm_revert", [snapshot]), true);
-
-  const claimEnv = {
-    ...env,
-    REFERRAL_DEPLOYMENT_BLOCK: distributorBlock.toString(),
-    REFERRAL_DISTRIBUTOR_CODE_HASH: watchConfig.codeHash,
-  };
-  // The target network cannot serve finalized eth_call state. Reject it here
-  // so the real cache must use finalized headers and canonical event receipts.
-  const claimFetch = Object.assign(
-    async (input: string | URL | Request, init?: RequestInit) => {
-      const request = new Request(input, init);
-      const body = await request.clone().json();
-      if (body.method === "eth_call") assert.equal(body.params[1], "latest");
-      return boundedRpc(request);
-    },
-    { preconnect: fetch.preconnect },
-  );
-  let cacheClock = new Date(
-    Number(
-      BigInt((await rpc("eth_getBlockByNumber", ["latest", false])).timestamp),
-    ) * 1000,
-  );
-  const claimAccount = async () => {
-    const response = await handleReferralClaims(
-      new Request("https://slop.cash/api/v1/referrals/me"),
-      {
-        db,
-        sessionActor: async () => ({ githubId: "900000100" }),
-        now: () => cacheClock,
-      },
-    );
-    assert.equal(response?.status, 200);
-    return response?.json();
-  };
-  await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
-  assert.equal((await claimAccount()).claimableBase, "0");
 
   // Seven days later the referrer claims its cumulative with the file's proof.
   await rpc("evm_increaseTime", [7 * 24 * 3600]);
@@ -632,7 +679,8 @@ try {
     referrerWallet,
   );
   cacheClock = new Date(cacheClock.getTime() + 1000);
-  await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
+  await assert.rejects(refreshReferralClaims(claimEnv, cacheClock, claimFetch));
+  assert.equal((await claimAccount()).status, "stale");
   assert.equal(
     (await claimAccount()).claimedBase,
     "0",
@@ -640,6 +688,20 @@ try {
   );
   await rpc("anvil_mine", ["0x41"]);
   cacheClock = new Date(cacheClock.getTime() + 1000);
+  const beforeOmittedClaim = cachedBody();
+  await assert.rejects(
+    refreshReferralClaims(
+      claimEnv,
+      cacheClock,
+      omitEvent("Claimed(address,uint256,uint256,uint256)"),
+    ),
+  );
+  assert.equal(
+    cachedBody(),
+    beforeOmittedClaim,
+    "an omitted finalized claim cannot advance the cache",
+  );
+  assert.equal((await claimAccount()).status, "stale");
   await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
   assert.equal((await claimAccount()).claimedBase, CUMULATIVE.toString());
   assert.equal((await claimAccount()).claimableBase, "0");
@@ -683,6 +745,7 @@ try {
       post: post.tx_id,
       claimed: CUMULATIVE.toString(),
       cachedClaimApiCanonicalFinality: true,
+      cacheOmittedRootVoidAndClaimRefusedWithoutCursorAdvance: true,
       cachedClaimApiProviderFailureRetainsTotals: true,
       nonfinalVoidHeld: true,
       canonicalFinalVoidRecorded: true,
