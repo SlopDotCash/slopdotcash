@@ -71,10 +71,6 @@ pre {
   text-transform: uppercase;
 }
 
-.hero h1 {
-  line-height: 0.86;
-}
-
 .hero-action {
   color: var(--orange);
   letter-spacing: -0.04em;
@@ -147,15 +143,6 @@ pre {
   background: rgba(243, 239, 230, 0.12);
 }
 
-.inverse-button {
-  background: var(--ink);
-  color: var(--on-accent);
-}
-
-.inverse-button:hover {
-  background: #ffffff;
-}
-
 .ghost-button {
   background: transparent;
   color: var(--ink);
@@ -183,9 +170,7 @@ pre {
 
 /* Plain buttons inside panels and forms share the secondary treatment. */
 .points-panel button:not(.button),
-.data-panel button:not(.button),
 .funding-workbench button:not(.button),
-.wallet-registration button:not(.button),
 .earnings-page button:not(.button),
 .login-page button:not(.button),
 .proposal-form button:not(.button) {
@@ -203,7 +188,6 @@ pre {
 
 .points-panel button:not(.button):hover:not(:disabled),
 .funding-workbench button:not(.button):hover:not(:disabled),
-.wallet-registration button:not(.button):hover:not(:disabled),
 .earnings-page button:not(.button):hover:not(:disabled),
 .login-page button:not(.button):hover:not(:disabled),
 .proposal-form button:not(.button):hover:not(:disabled) {
@@ -213,7 +197,6 @@ pre {
 
 .points-panel button:not(.button):disabled,
 .funding-workbench button:not(.button):disabled,
-.wallet-registration button:not(.button):disabled,
 .earnings-page button:not(.button):disabled,
 .login-page button:not(.button):disabled,
 .proposal-form button:not(.button):disabled {
@@ -648,6 +631,7 @@ label {
 
 .hero h1 {
   font-size: clamp(56px, 9vw, 136px);
+  line-height: 0.86;
 }
 
 .hero-copy {
@@ -751,11 +735,6 @@ label {
   justify-content: flex-start;
   margin-top: auto;
   text-align: left;
-}
-
-.project-bounty strong {
-  font-family: var(--brand-font-data);
-  letter-spacing: -0.04em;
 }
 
 .project-rows {
@@ -1005,16 +984,9 @@ label {
 }
 
 /* Tabs. */
-.leaderboard-mode-tabs button,
 [role="tablist"] [role="tab"] {
   font-size: 15px;
   font-weight: 600;
-}
-
-.leaderboard-mode-tabs button[aria-selected="true"] {
-  box-shadow: 0 2px 0 var(--orange);
-  color: var(--ink);
-  font-weight: 700;
 }
 
 /* Data and state colors. */
@@ -1023,16 +995,12 @@ label {
 }
 
 /* Cards and panels shared across records. */
-.reward-card,
-.agent-handoff,
-.leaderboard-cycle-summary,
-.leaderboard-record-summary {
+.reward-card {
   border: 1px solid var(--line-strong);
   border-radius: var(--brand-radius-large);
 }
 
-.reward-card > span,
-.leaderboard-cycle-summary span {
+.reward-card > span {
   color: var(--orange);
 }
 
@@ -1106,12 +1074,6 @@ label {
   font-size: clamp(40px, 4vw, 56px);
   letter-spacing: -0.03em;
   line-height: 0.95;
-}
-
-.project-bounty.project-bounty-unfunded strong {
-  font-size: clamp(26px, 2.4vw, 32px);
-  letter-spacing: -0.02em;
-  text-transform: uppercase;
 }
 
 .project-money-state,
