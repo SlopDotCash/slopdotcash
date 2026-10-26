@@ -5,19 +5,19 @@
  */
 
 import { decodeBase58Bytes } from "./base58";
-import { chainFamily } from "./escrow-policy.mjs";
+import { chainFamily, type EscrowChain } from "./escrow-policy.mjs";
 import { isFundingAddress } from "./funding-address.mjs";
 
 export const WALLET_CLAIM_REPOSITORY = "SlopDotCash/slopdotcash" as const;
 
 /** Networks a contributor may publish a payout wallet for, one claim each. */
-export const WALLET_CHAINS = [
+export type WalletChain = EscrowChain;
+export const WALLET_CHAINS: readonly WalletChain[] = [
   "solana",
   "base",
   "robinhood",
   "ethereum",
-] as const;
-export type WalletChain = (typeof WALLET_CHAINS)[number];
+];
 
 export interface PublishedWallet<Chain extends WalletChain = WalletChain> {
   address: string;

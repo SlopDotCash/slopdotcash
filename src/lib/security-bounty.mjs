@@ -2,6 +2,7 @@ import { formatBaseUnits } from "./base-units.mjs";
 import {
   assertEscrowTransition,
   assertSecurityEscrowPolicy,
+  ESCROW_CHAINS,
   ESCROW_NETWORKS,
 } from "./escrow-policy.mjs";
 import {
@@ -31,7 +32,7 @@ export const SECURITY_SPLIT = Object.freeze({
 });
 const CURRENCIES = Object.freeze({
   USD: { decimals: 2, networks: [null] },
-  USDC: { decimals: 6, networks: ["base", "ethereum", "robinhood", "solana"] },
+  USDC: { decimals: 6, networks: ESCROW_CHAINS },
 });
 /** At most 10^15 minor units, the same bound as the monthly pool cap. */
 const MAX_GROSS_MINOR = 1_000_000_000_000_000n;

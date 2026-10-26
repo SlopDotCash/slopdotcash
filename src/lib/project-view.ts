@@ -12,6 +12,7 @@ import {
   allocationFundingMinor,
   deriveAllocationFundingBasis,
 } from "./allocation-funding";
+import type { EscrowChain } from "./escrow-policy.mjs";
 import { fundingAssetForNetwork } from "./funding-address.mjs";
 import type {
   CapUsageStatus,
@@ -102,7 +103,7 @@ export type ProjectRewardProjection =
   | {
       kind: "monthly-pool";
       currency: "USDC" | "USDG";
-      chain: "solana" | "base" | "robinhood" | "ethereum";
+      chain: EscrowChain;
       capMinor: string;
       projectedPrincipalMinor: string;
       platformFeeMinor: string;
