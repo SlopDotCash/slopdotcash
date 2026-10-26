@@ -1,8 +1,8 @@
 # Project funding
 
 Slop has one funding mode: the project escrow vault. The owner chose this mode
-on 18 October 2026. Each project that adopts escrow has one reviewed escrow
-deployment on its settlement network. The project owner creates its own vault
+on 18 October 2026. Each vault must use a reviewed deployment on the project's
+settlement network. The project owner creates its own vault
 (owner decision D13, 24 October 2026). A vault has one purpose: ordinary awards
 or private bounties, so the two never share a balance. The project owner
 deposits funds into that vault, authorizes each gross award, and can withdraw
@@ -11,13 +11,21 @@ can also turn on a bounded monthly commitment: after the monthly cutoff, anyone
 can commit that month's allocation when the identity attester signed it, within
 the owner's monthly cap and once per month. The owner can turn it off at any
 time. The contract enforces reserved awards, fees, and exact-once payment. It
-has no service charge. Slop holds no balance and cannot move funds.
+has no service charge. The contracts hold project funds.
+
+Slop's fee-claim and conversion key can claim only accrued fees from reviewed
+vaults to the same fee wallet and convert received fees. It cannot withdraw
+free funds or reserved awards. Slop's identity attester signs wallet bindings
+and bounded monthly allocations. A compromised identity key can redirect
+unpaid awards; owner-held upgrade keys can change the contract logic that
+governs vault funds. The [canonical PRD, sections 6 and 11](../docs/slop-product-requirements.md#6-funds-and-payments)
+records these powers, limits and accepted risks. Contract balances do not remove
+these key risks.
 
 The escrow rules are in these documents:
 
-- [`docs/payouts-mvp.md`](../docs/payouts-mvp.md) and
-  [`docs/base-solana-payout-plan.md`](../docs/base-solana-payout-plan.md):
-  the approved escrow scope.
+- [Canonical PRD, sections 4, 6 and 11](../docs/slop-product-requirements.md):
+  current project setup, funding scope, authority and acceptance requirements.
 - [`contracts/evm/README.md`](../contracts/evm/README.md) and
   [`contracts/solana/README.md`](../contracts/solana/README.md): the contract
   rules and the key recovery runbook.
@@ -25,8 +33,15 @@ The escrow rules are in these documents:
   projection and the escrow indexer.
 
 The escrow deployment is part of the canonical project manifest in the D1
-registry. A deployment appears on the site only through a reviewed admin
-revision. GitHub identity does not prove wallet control.
+registry. The verified project owner registers the deployment through project
+setup. The API verifies its on-chain identity and appends an immutable registry
+revision; routine admin approval is not required. GitHub identity does not prove
+wallet control.
+
+[`docs/payouts-mvp.md`](../docs/payouts-mvp.md) and
+[`docs/base-solana-payout-plan.md`](../docs/base-solana-payout-plan.md) retain
+historical implementation decisions. They do not override the current PRD or
+change existing funded awards and payment records.
 
 ## Removed legacy mode
 

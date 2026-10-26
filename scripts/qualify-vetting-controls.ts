@@ -506,6 +506,8 @@ async function main() {
     workerVersion = assertVersion(null);
     uncertainCreations.delete(run);
     await assertBindings();
+    await command("access");
+    report.access = await waitFor("access");
     await command("seed");
     report.seed = await waitFor("seed");
     const until = Date.now() + 240_000;
@@ -543,6 +545,17 @@ async function main() {
     report.acknowledgedVerifyCommands = 2;
     await command("corrupt");
     report.corrupt = await waitFor("corrupt");
+    await command("retention");
+    report.retention = await waitFor("retention");
+    await command("retention");
+    report.replayedRetention = await waitFor("retention");
+    const retentionDeliveries = await query(
+      owned.databases[0].uuid,
+      "SELECT count(*) n FROM qualification_deliveries WHERE action='retention'",
+    );
+    if (Number(retentionDeliveries[0]?.n) !== 2)
+      throw new Error("Repeated retention verification was not delivered");
+    report.acknowledgedRetentionCommands = 2;
     success = true;
   } finally {
     try {
