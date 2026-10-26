@@ -89,6 +89,7 @@ for (const scenario of [
     expect(response.headers.get("cache-control")).toBe("no-store");
     if (scenario === "success") {
       expect(persisted).toBe(true);
+      expect(body).not.toContain("close automatically");
       expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
     } else {
       expect(persisted).toBe(false);

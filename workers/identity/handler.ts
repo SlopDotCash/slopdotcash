@@ -333,7 +333,7 @@ async function oauthCallback(
     const response = html(
       200,
       "Signed in",
-      "You can return to your original tab or terminal. This window will try to close automatically.",
+      "Your GitHub sign-in is complete. Return to your original tab or terminal.",
       deps.tier,
     );
     clearStateCookie(response.headers);
