@@ -944,6 +944,66 @@ test("a spam close debits 3 thirds once; an accepted uphold draft reopens the it
   });
 });
 
+test("an upheld appeal reopens only Slopbot's own close, never a later maintainer close", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // A maintainer restores the item, then closes it as their own decision.
+    expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+    run.closeByMaintainer();
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("appeal upheld by the appellant");
+    expect(run.currentState()).toBe("closed");
+    expect(
+      run.writes.filter((w) => w === "PATCH /repos/SlopDotCash/asi/pulls/5"),
+    ).toHaveLength(1);
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "maintainer_reopen",
+      },
+    ]);
+    expect(run.comments.at(-1)).toContain("**Appeal upheld**");
+  });
+  // Missing closer evidence keeps the upheld decision pending, not reopened.
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.model("none", 0.95);
+    await run.deliver(run.job("appeal", { senderId: AUTHOR }));
+    run.closerEvidence(false);
+    await expect(
+      run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).rejects.toThrow("appeal job was retried");
+    expect(run.currentState()).toBe("closed");
+    run.closerEvidence(true);
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("appeal already resolved");
+    expect(run.currentState()).toBe("open");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "appeal_upheld",
+      },
+    ]);
+    expect(run.comments.at(-1)).toContain("**Appeal upheld**");
+  });
+});
+
 test("a scam close escalates to a moderator; only a moderator decides, and a denial keeps the debit", async () => {
   await closedItem(async (run) => {
     run.model("scam", 0.97);
