@@ -658,14 +658,23 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           ).toString(),
         );
       }
-      for (const send of await journal.unsettled()) {
-        const receipt = await client
+      const receiptOf = (send: RecordedNativeSend) =>
+        client
           .getTransactionReceipt({ hash: send.txId as Hex })
           .catch((e: unknown) => {
             if (e instanceof TransactionReceiptNotFoundError) return null;
             throw e;
           });
-        if (!receipt) continue;
+      const missing = new Map<string, RecordedNativeSend[]>();
+      const landed = new Set<string>();
+      for (const send of await journal.unsettled()) {
+        const attempt = `${send.feeWallet}:${send.nonce}`;
+        const receipt = await receiptOf(send);
+        if (!receipt) {
+          missing.set(attempt, [...(missing.get(attempt) ?? []), send]);
+          continue;
+        }
+        landed.add(attempt);
         const block = await client.getBlock({
           blockNumber: receipt.blockNumber,
         });
@@ -730,6 +739,29 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
             blockHash: receipt.blockHash,
           },
         );
+      }
+      // Another transaction consumed the nonce in a finalized block, so no
+      // journaled attempt at it can land and none cost gas. Release the
+      // liability once, bound to that block. Receipts are read again after
+      // the finalized block, so an attempt included at or before it is seen.
+      for (const [attempt, sends] of missing) {
+        if (landed.has(attempt) || sends[0].nonce === null) continue;
+        const finalized = await client.getBlock({ blockTag: "finalized" });
+        if (typeof finalized.number !== "bigint" || !finalized.hash)
+          throw new Error("Finalized block is unavailable");
+        const consumed = await client.getTransactionCount({
+          address: sends[0].feeWallet as Address,
+          blockNumber: finalized.number,
+        });
+        if (consumed <= sends[0].nonce) continue;
+        let receipt = false;
+        for (const send of sends) if (await receiptOf(send)) receipt = true;
+        if (receipt) continue;
+        await journal.settle(sends[0], {
+          txId: sends[0].txId,
+          actualWei: "0",
+          blockHash: finalized.hash,
+        });
       }
     },
     address: () => account?.address.toLowerCase() ?? null,

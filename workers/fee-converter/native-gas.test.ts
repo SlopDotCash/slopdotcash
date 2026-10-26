@@ -278,6 +278,78 @@ test("same-nonce replacements reserve their maximum once and settle exactly one 
   ).toHaveLength(1);
 });
 
+test.each(["consumed", "open", "landed-late"])(
+  "a nonce another transaction consumed in a finalized block releases its unlanded liability: %s",
+  async (chain) => {
+    const h = await fixture({
+      perTransaction: "3000000",
+      perDay: "3000000",
+      additionalFeeReserve: "0",
+    });
+    const sent = await h.commit();
+    let receipts = 0;
+    const rpcFetch = (async (_url: unknown, init?: RequestInit) => {
+      const q = JSON.parse(String(init?.body));
+      let result: unknown;
+      if (q.method === "eth_getTransactionReceipt")
+        // The late case lands before the finalized read: only the re-check sees it.
+        result =
+          chain === "landed-late" && receipts++ > 0
+            ? {
+                transactionHash: sent.txId,
+                blockHash: hash(16),
+                blockNumber: "0x10",
+                transactionIndex: "0x0",
+                from: h.wallet,
+                to: token,
+                status: "0x1",
+                gasUsed: "0x5208",
+                effectiveGasPrice: "0x64",
+                cumulativeGasUsed: "0x5208",
+                logs: [],
+                logsBloom: `0x${"0".repeat(512)}`,
+                type: "0x2",
+              }
+            : null;
+      else if (
+        q.method === "eth_getBlockByNumber" &&
+        q.params[0] === "finalized"
+      )
+        result = { number: "0x10", hash: hash(16), transactions: [] };
+      else if (
+        q.method === "eth_getTransactionCount" &&
+        q.params[0] === h.wallet &&
+        q.params[1] === "0x10"
+      )
+        result = chain === "open" ? "0x0" : "0x1";
+      else throw new Error(`Unapproved test request ${q.method}`);
+      return Response.json({ jsonrpc: "2.0", id: q.id, result });
+    }) as typeof fetch;
+    const client = createEvmClient({
+      config: h.config.networks[0],
+      limits: h.config.limits,
+      kyberClientId: "test",
+      nativeGas: h.journal,
+      fetch: rpcFetch,
+      now: h.now,
+    });
+    await client.reconcileNativeGas!();
+    const [attempt] = await h.journal.rows();
+    expect(attempt.tx_id).toBe(sent.txId);
+    if (chain === "consumed") {
+      expect(attempt.actual_wei).toBe("0");
+      expect(attempt.settled_day).toBe("2026-10-26");
+      expect(attempt.receipt_block_hash).toBe(hash(16));
+      await h.reserve(h.tx(1));
+      // Settled evidence is permanent: a later run does not settle it again.
+      await client.reconcileNativeGas!();
+    } else {
+      expect(attempt.actual_wei).toBeNull();
+      await expect(h.reserve(h.tx(1))).rejects.toThrow("Native daily budget");
+    }
+  },
+);
+
 test("business failure and router expiry do not release signed gas; overruns hold future signing", async () => {
   const h = await fixture({
     perTransaction: "3000000",
@@ -372,6 +444,13 @@ test.each(["complete", "changed-fee", "missing-signature"])(
               }),
         };
       else if (q.method === "eth_getTransactionReceipt") result = null;
+      // The finalized nonce is still open, so the unlanded send stays a liability.
+      else if (
+        q.method === "eth_getBlockByNumber" &&
+        q.params[0] === "finalized"
+      )
+        result = { number: "0x10", hash: hash(16), transactions: [] };
+      else if (q.method === "eth_getTransactionCount") result = "0x0";
       else throw new Error(`Unapproved test request ${q.method}`);
       return Response.json({ jsonrpc: "2.0", id: q.id, result });
     }) as typeof fetch;
