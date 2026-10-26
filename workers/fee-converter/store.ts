@@ -1,5 +1,10 @@
 import type { Network } from "./config";
-import type { ConversionRow, ConversionStore, FeeVault } from "./core";
+import type {
+  ConversionRow,
+  ConversionStore,
+  FeeVault,
+  SendReplacement,
+} from "./core";
 
 type D1Value = string | number | null;
 interface D1Statement {
@@ -49,6 +54,7 @@ const COLUMNS: [keyof ConversionRow, string][] = [
   ["updatedAt", "updated_at"],
   ["submittedAt", "submitted_at"],
   ["finalizedAt", "finalized_at"],
+  ["landedTxId", "landed_tx_id"],
 ];
 const COLUMN = new Map(COLUMNS);
 const SELECT = COLUMNS.map(([, column]) => column).join(", ");
@@ -115,7 +121,8 @@ export class D1ConversionStore implements ConversionStore {
       .prepare(
         `SELECT ${SELECT} FROM fee_conversions
           WHERE network = ? AND mode = 'live'
-            AND state IN ('submitted', 'unknown', 'quoted')
+            AND (state IN ('submitted', 'unknown', 'quoted') OR
+              (approval_tx_id IS NOT NULL AND raw_tx IS NULL AND tx_id IS NULL))
           ORDER BY created_at`,
       )
       .bind(network)
@@ -123,18 +130,23 @@ export class D1ConversionStore implements ConversionStore {
     return results.map(fromRow);
   }
 
-  async insert(row: ConversionRow) {
-    await this.db
+  async insert(row: ConversionRow, lease?: { runId: string; now: Date }) {
+    const result = await this.db
       .prepare(
-        `INSERT INTO fee_conversions (${SELECT}) VALUES (${COLUMNS.map(() => "?").join(", ")})`,
+        `INSERT INTO fee_conversions (${SELECT}) SELECT ${COLUMNS.map(() => "?").join(", ")}${lease ? " WHERE EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ? AND run_id = ? AND expires_at >= ?)" : ""}`,
       )
       .bind(
         ...COLUMNS.map(
           ([key]) =>
-            (key === "kind" ? (row.kind ?? "conversion") : row[key]) as D1Value,
+            (key === "kind"
+              ? (row.kind ?? "conversion")
+              : (row[key] ?? null)) as D1Value,
         ),
+        ...(lease ? [row.network, lease.runId, lease.now.toISOString()] : []),
       )
       .run();
+    if ((result.meta?.changes ?? 0) !== 1)
+      throw new Error("Fee send lost its lease before journaling");
   }
 
   async update(id: string, fields: Partial<ConversionRow>) {
@@ -156,6 +168,79 @@ export class D1ConversionStore implements ConversionStore {
       .run();
     if ((result.meta?.changes ?? 0) !== 1)
       throw new Error("Fee conversion record was not updated");
+  }
+
+  async replacements(conversionId: string) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT id, conversion_id, network, attempt, evm_nonce, tx_id, raw_tx,
+                max_fee_per_gas, max_priority_fee_per_gas, created_at
+           FROM fee_send_replacements WHERE conversion_id = ?
+          ORDER BY attempt`,
+      )
+      .bind(conversionId)
+      .all<Record<string, D1Value>>();
+    return results.map(
+      (row): SendReplacement => ({
+        id: row.id as string,
+        conversionId: row.conversion_id as string,
+        network: row.network as Network,
+        attempt: row.attempt as number,
+        evmNonce: row.evm_nonce as number,
+        txId: row.tx_id as string,
+        rawTx: row.raw_tx as string,
+        maxFeePerGas: row.max_fee_per_gas as string,
+        maxPriorityFeePerGas: row.max_priority_fee_per_gas as string,
+        createdAt: row.created_at as string,
+      }),
+    );
+  }
+
+  async insertReplacement(
+    replacement: SendReplacement,
+    runId: string,
+    now: Date,
+  ) {
+    const result = await this.db
+      .prepare(
+        `INSERT INTO fee_send_replacements (id, conversion_id, network, attempt,
+           evm_nonce, tx_id, raw_tx, max_fee_per_gas, max_priority_fee_per_gas,
+           created_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM fee_converter_locks
+             WHERE network = ? AND run_id = ? AND expires_at >= ?
+          ) AND EXISTS (
+            SELECT 1 FROM fee_conversions
+             WHERE id = ? AND network = ? AND evm_nonce = ?
+               AND mode = 'live' AND state IN ('submitted', 'unknown')
+          ) AND ? = (
+            SELECT COALESCE(MAX(attempt), 0) + 1 FROM fee_send_replacements
+             WHERE conversion_id = ?
+          )`,
+      )
+      .bind(
+        replacement.id,
+        replacement.conversionId,
+        replacement.network,
+        replacement.attempt,
+        replacement.evmNonce,
+        replacement.txId,
+        replacement.rawTx,
+        replacement.maxFeePerGas,
+        replacement.maxPriorityFeePerGas,
+        replacement.createdAt,
+        replacement.network,
+        runId,
+        now.toISOString(),
+        replacement.conversionId,
+        replacement.network,
+        replacement.evmNonce,
+        replacement.attempt,
+        replacement.conversionId,
+      )
+      .run();
+    return (result.meta?.changes ?? 0) === 1;
   }
 
   async liveValueSince(network: Network, since: string) {

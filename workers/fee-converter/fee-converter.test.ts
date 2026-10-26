@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { FeeCapTooLowError } from "viem";
 import { handleFeeConversionsApi } from "../../backend/fee-conversions/handler";
 import {
   PROJECT_DISCRIMINATOR,
@@ -706,48 +707,129 @@ describe("conversion policy", () => {
 });
 
 describe("idempotent sends", () => {
-  test("an approval is recorded before it can be broadcast", async () => {
+  test("an approval is journaled before an ambiguous broadcast and excludes conversion totals", async () => {
     const h = harness();
-    h.chain.prepare = async (_token, quote, recordApproval) => {
-      await recordApproval({ txId: `0x${"a".repeat(64)}`, evmNonce: 7 });
+    h.chain.prepare = async () => ({
+      kind: "approval",
+      txId: `0x${"a".repeat(64)}`,
+      rawTx: "0xapproval",
+      evmNonce: 7,
+      expiresAt: null,
+      approvalTxId: `0x${"a".repeat(64)}`,
+      minAmountOut: 0n,
+    });
+    h.chain.broadcast = async () => {
       expect(h.rows()[0]).toMatchObject({
-        state: "quoted",
-        approval_tx_id: `0x${"a".repeat(64)}`,
-        raw_tx: null,
+        kind: "approval",
+        state: "submitted",
+        raw_tx: "0xapproval",
         evm_nonce: 7,
       });
-      throw new Error(`approval broadcast failed for ${quote.amountIn}`);
+      throw new Error("approval response lost");
     };
-
     await runNetwork(h.network, h.deps);
-
     expect(h.rows()[0]).toMatchObject({
-      state: "failed",
-      approval_tx_id: `0x${"a".repeat(64)}`,
-      raw_tx: null,
+      kind: "approval",
+      state: "unknown",
+      raw_tx: "0xapproval",
       evm_nonce: 7,
-      reason: "prepare: approval broadcast failed for 20000000",
+      reason: "broadcast: approval response lost",
     });
+    expect(await h.deps.store.liveValueSince("base", "2000")).toBe(0n);
+    expect(await h.deps.store.latest("base", TOKEN)).toBeNull();
+    const { handleFeeConversionsApi } = await import(
+      "../../backend/fee-conversions/handler"
+    );
+    const response = await handleFeeConversionsApi(
+      new Request("https://slop.cash/api/v1/admin/fee-conversions"),
+      {
+        db: h.db,
+        adminGithubIds: new Set(["1"]),
+        sessionActor: async () => ({ githubId: "1" }),
+      },
+    );
+    const body = (await response?.json()) as {
+      recent: unknown[];
+      totals: unknown[];
+    };
+    expect(body.recent).toEqual([]);
+    expect(body.totals).toEqual([]);
+    let prepared = false;
+    h.chain.prepare = async () => {
+      prepared = true;
+      throw new Error("must not prepare");
+    };
+    h.chain.statusFor = () => ({ kind: "rebroadcast" });
+    const delivered: string[] = [];
+    h.chain.broadcast = async (raw) => {
+      delivered.push(raw);
+    };
+    await runNetwork(h.network, h.deps);
+    expect(prepared).toBe(false);
+    expect(delivered).toEqual(["0xapproval"]);
+    expect(h.rows()).toHaveLength(1);
   });
 
-  test("a recorded approval does not block the swap that follows", async () => {
+  test("a canonical approval permits a fresh later swap without counting the approval value", async () => {
     const h = harness();
     const prepareSwap = h.chain.prepare;
-    h.chain.prepare = async (token, quote, recordApproval) => {
-      await recordApproval({ txId: `0x${"a".repeat(64)}`, evmNonce: 6 });
-      const swap = await prepareSwap(token, quote, recordApproval);
-      return { ...swap, approvalTxId: `0x${"a".repeat(64)}` };
-    };
-
-    await runNetwork(h.network, h.deps);
-
-    expect(h.chain.sent).toEqual(["0xraw1"]);
-    expect(h.rows()[0]).toMatchObject({
-      state: "submitted",
-      approval_tx_id: `0x${"a".repeat(64)}`,
-      raw_tx: "0xraw1",
-      evm_nonce: 1,
+    h.chain.prepare = async () => ({
+      kind: "approval",
+      txId: `0x${"a".repeat(64)}`,
+      rawTx: "0xapproval",
+      evmNonce: 6,
+      expiresAt: null,
+      approvalTxId: `0x${"a".repeat(64)}`,
+      minAmountOut: 0n,
     });
+    await runNetwork(h.network, h.deps);
+    expect(h.rows()[0].kind).toBe("approval");
+    h.chain.statusFor = (row) =>
+      row.kind === "approval"
+        ? { kind: "finalized", amountOut: 0n }
+        : { kind: "pending" };
+    h.chain.prepare = prepareSwap;
+    h.clock.now = new Date(h.clock.now.getTime() + 1000);
+    await runNetwork(h.network, h.deps);
+    expect(h.chain.sent).toEqual(["0xapproval", "0xraw1"]);
+    expect(
+      h.rows().map((row) => [row.kind, row.state, row.amount_out]),
+    ).toEqual([
+      ["approval", "finalized", "0"],
+      ["conversion", "submitted", null],
+    ]);
+    expect(await h.deps.store.liveValueSince("base", "2000")).toBe(20_000_000n);
+  });
+
+  test("a legacy failed approval hash stays held without inventing its raw bytes", async () => {
+    const h = harness();
+    h.sqlite.exec(`INSERT INTO fee_conversions
+      (id,run_id,network,mode,fee_wallet,token,target_token,amount_in,approval_tx_id,evm_nonce,state,reason,created_at,updated_at)
+      VALUES('old-approval','old-run-0001','base','live','${WALLET}','${TOKEN}','${USDC}','20000000','0x${"a".repeat(64)}',7,'failed','old approval timeout','before','before')`);
+    const before = h.rows()[0];
+    h.chain.statusFor = (row) => {
+      expect(row.kind).toBe("approval");
+      expect(row.rawTx).toBeNull();
+      expect(row.txId).toBe(`0x${"a".repeat(64)}`);
+      return { kind: "pending", mined: true };
+    };
+    await runNetwork(h.network, h.deps);
+    expect(h.chain.prepared).toBe(0);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.rows()).toEqual([before]);
+
+    // A dropped legacy hash also reserves its nonce against another token.
+    h.deps.projectTokens = async () => [OTHER];
+    h.chain.balances.set(OTHER, 20_000_000n);
+    let floor: number | undefined;
+    h.chain.prepare = async (_token, _quote, nonceFloor) => {
+      floor = nonceFloor;
+      throw new Error("node nonce is below the retained approval");
+    };
+    await runNetwork(h.network, h.deps);
+    expect(floor).toBe(8);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.rows()[0]).toEqual(before);
   });
 
   test("an unknown send blocks a new attempt until it is reconciled", async () => {
@@ -904,10 +986,10 @@ describe("idempotent sends", () => {
     const prepare = h.chain.prepare;
     // The lease this run holds at the moment each chunk starts to sign.
     const leaseAtSign: string[] = [];
-    h.chain.prepare = async (token, quote, recordApproval) => {
+    h.chain.prepare = async (token, quote, nonceFloor) => {
       leaseAtSign.push(h.locks()[0]?.expires_at ?? "none");
       h.clock.now = new Date(h.clock.now.getTime() + 8 * 60 * 1000);
-      return prepare(token, quote, recordApproval);
+      return prepare(token, quote, nonceFloor);
     };
     h.chain.statusFor = () => ({ kind: "finalized", amountOut: 1n });
     const startedAt = h.clock.now.getTime();
@@ -935,26 +1017,394 @@ describe("idempotent sends", () => {
     h.chain.balances.set(TOKEN, 20_000_000n);
     h.chain.balances.set(OTHER, 20_000_000n);
     const prepare = h.chain.prepare;
-    h.chain.prepare = async (token, quote, recordApproval) => {
+    h.chain.prepare = async (token, quote, nonceFloor) => {
       // A send waits for receipts; this one outlives the lease and the
       // successor run takes it before the next chunk.
       h.clock.now = new Date(h.clock.now.getTime() + 15 * 60 * 1000);
       await h.deps.store.acquireLock("base", "successor", h.clock.now);
-      return prepare(token, quote, recordApproval);
+      return prepare(token, quote, nonceFloor);
     };
 
     const result = await runNetwork(h.network, h.deps);
 
-    // The first chunk signed; the loop stopped instead of signing a second.
+    // Preparation returned after takeover. Its bytes are not persisted or
+    // broadcast, and the loop stops instead of preparing a second chunk.
     expect(h.chain.prepared).toBe(1);
-    expect(result.records.submitted).toBe(1);
+    expect(result.records.submitted).toBe(0);
+    expect(result.records.failed).toBe(1);
+    expect(h.chain.sent).toEqual([]);
     expect(h.events).toContainEqual(
       expect.objectContaining({ event: "fee_conversion_lock_lost" }),
     );
   });
 });
 
+describe("replacement lease and restart recovery", () => {
+  async function pending() {
+    const h = harness();
+    await runNetwork(h.network, h.deps);
+    h.chain.sent.length = 0;
+    h.clock.now = new Date(h.clock.now.getTime() + 4 * 60 * 1000);
+    let replacements = 0;
+    h.chain.replace = async (_row, _history, assertLease) => {
+      await assertLease?.();
+      replacements += 1;
+      return {
+        txId: `0x${"b".repeat(64)}`,
+        rawTx: "0xreplacement",
+        maxFeePerGas: 125n,
+        maxPriorityFeePerGas: 25n,
+      };
+    };
+    const takeover = async () => {
+      h.clock.now = new Date(h.clock.now.getTime() + 15 * 60 * 1000);
+      expect(
+        await h.deps.store.acquireLock("base", "successor", h.clock.now),
+      ).toBe(true);
+    };
+    return { ...h, takeover, replacements: () => replacements };
+  }
+
+  test("a slow reconciliation cannot replace after lease takeover", async () => {
+    const h = await pending();
+    h.chain.status = async () => {
+      await h.takeover();
+      return { kind: "pending" };
+    };
+    let entered = false;
+    h.chain.replace = async () => {
+      entered = true;
+      return {
+        txId: `0x${"b".repeat(64)}`,
+        rawTx: "0xreplacement",
+        maxFeePerGas: 125n,
+        maxPriorityFeePerGas: 25n,
+      };
+    };
+    await runNetwork(h.network, h.deps);
+    expect(entered).toBe(false);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(0);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.locks()[0].run_id).toBe("successor");
+  });
+
+  test("replacement work that outlives its lease keeps the original pending", async () => {
+    const h = await pending();
+    h.chain.replace = async () => {
+      await h.takeover();
+      return {
+        txId: `0x${"b".repeat(64)}`,
+        rawTx: "0xreplacement",
+        maxFeePerGas: 125n,
+        maxPriorityFeePerGas: 25n,
+      };
+    };
+    await runNetwork(h.network, h.deps);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(0);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.rows()[0].state).toBe("submitted");
+  });
+
+  test("the replacement append refuses a successor lease taken during the database wait", async () => {
+    const h = await pending();
+    const insert = h.deps.store.insertReplacement.bind(h.deps.store);
+    h.deps.store.insertReplacement = async (...args) => {
+      await h.takeover();
+      return insert(...args);
+    };
+    await runNetwork(h.network, h.deps);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(0);
+    expect(h.chain.sent).toEqual([]);
+  });
+
+  test("an append cannot revive an original settled during the database wait", async () => {
+    const h = await pending();
+    const insert = h.deps.store.insertReplacement.bind(h.deps.store);
+    h.deps.store.insertReplacement = async (...args) => {
+      await h.deps.store.update(String(h.rows()[0].id), {
+        state: "failed",
+        reason: "canonical reverted receipt",
+      });
+      return insert(...args);
+    };
+    await runNetwork(h.network, h.deps);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(0);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.rows()[0].state).toBe("failed");
+  });
+
+  test("lease loss after journaling preserves bytes without broadcasting", async () => {
+    const h = await pending();
+    const insert = h.deps.store.insertReplacement.bind(h.deps.store);
+    h.deps.store.insertReplacement = async (...args) => {
+      const written = await insert(...args);
+      await h.takeover();
+      return written;
+    };
+    await runNetwork(h.network, h.deps);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(1);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.rows()[0].state).toBe("submitted");
+  });
+
+  test("a delayed restart delivers journaled bytes before another fee step", async () => {
+    const h = await pending();
+    await runNetwork(h.network, h.deps);
+    expect(h.replacements()).toBe(1);
+    h.chain.sent.length = 0;
+    h.clock.now = new Date(h.clock.now.getTime() + 4 * 60 * 1000);
+    h.chain.status = async () => ({
+      kind: "rebroadcast",
+      rawTx: "0xreplacement",
+    });
+    await runNetwork(h.network, h.deps);
+    expect(h.replacements()).toBe(1);
+    expect(h.chain.sent).toEqual(["0xreplacement"]);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(1);
+  });
+
+  test("an explicit node fee refusal can escalate after trying the journaled bytes", async () => {
+    const h = await pending();
+    const attempts: string[] = [];
+    h.chain.status = async () => ({ kind: "rebroadcast", rawTx: "0xraw1" });
+    h.chain.broadcast = async (raw) => {
+      attempts.push(raw);
+      if (raw === "0xraw1") throw new FeeCapTooLowError();
+    };
+    await runNetwork(h.network, h.deps);
+    expect(attempts).toEqual(["0xraw1", "0xreplacement"]);
+    expect(h.replacements()).toBe(1);
+    expect(h.rows()[0].state).toBe("submitted");
+  });
+
+  test("an uncertain rebroadcast never skips to a new fee step", async () => {
+    const h = await pending();
+    h.chain.status = async () => ({ kind: "rebroadcast", rawTx: "0xraw1" });
+    h.chain.broadcastError = new Error("response lost");
+    await runNetwork(h.network, h.deps);
+    expect(h.replacements()).toBe(0);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(0);
+    expect(h.rows()[0].state).toBe("unknown");
+  });
+});
+
 describe("EVM reconciliation", () => {
+  test.each([
+    ["max fee per gas less than block base fee", true],
+    ["fee cap less than block base fee", true],
+    ["transaction is outdated", false],
+  ])(
+    "only explicit RPC fee refusal permits replacement: %s",
+    async (message, feeRefused) => {
+      const { createEvmClient } = await import("./evm");
+      const h = harness();
+      const calls: string[] = [];
+      const client = createEvmClient({
+        config: h.network,
+        limits: h.deps.limits,
+        kyberClientId: "test",
+        fetch: (async (_url: unknown, init?: RequestInit) => {
+          const request = JSON.parse(String(init?.body));
+          calls.push(request.method);
+          return Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { code: -32000, message },
+          });
+        }) as typeof fetch,
+      });
+      let failure: unknown;
+      try {
+        await client.broadcast("0x01");
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure instanceof FeeCapTooLowError).toBe(feeRefused);
+      expect(failure).toBeInstanceOf(Error);
+      expect(calls.every((method) => method === "eth_sendRawTransaction")).toBe(
+        true,
+      );
+    },
+  );
+
+  test("a transport error mentioning a low fee is still an uncertain send", async () => {
+    const { createEvmClient } = await import("./evm");
+    const h = harness();
+    const client = createEvmClient({
+      config: h.network,
+      limits: h.deps.limits,
+      kyberClientId: "test",
+      fetch: (async () => {
+        throw new Error(
+          "connection lost: max fee per gas less than block base fee",
+        );
+      }) as unknown as typeof fetch,
+    });
+    let failure: unknown;
+    try {
+      await client.broadcast("0x01");
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(FeeCapTooLowError);
+  });
+
+  test.each([
+    ["original success", false, "0x1", "none", "finalized"],
+    ["replacement success", true, "0x1", "none", "finalized"],
+    ["original revert", false, "0x0", "none", "failed"],
+    ["replacement revert", true, "0x0", "none", "failed"],
+    ["wrong receipt hash", true, "0x1", "receiptHash", "submitted"],
+    ["wrong canonical hash", true, "0x1", "blockHash", "submitted"],
+    ["wrong canonical height", true, "0x1", "blockNumber", "submitted"],
+    ["missing canonical height", true, "0x1", "missingHeight", "submitted"],
+    ["missing finalized height", true, "0x1", "missingFinality", "submitted"],
+    ["wrong transaction slot", true, "0x1", "index", "submitted"],
+    ["missing block member", true, "0x0", "membership", "submitted"],
+    ["not finalized", true, "0x1", "finality", "submitted"],
+    ["canonical lookup unavailable", true, "0x1", "unavailable", "submitted"],
+  ])(
+    "canonical fee receipt: %s",
+    async (_name, replaced, receiptStatus, fault, state) => {
+      const { createEvmClient } = await import("./evm");
+      const hash = (value: number) =>
+        `0x${value.toString(16).padStart(64, "0")}`;
+      const original = hash(1);
+      const winner = replaced ? hash(2) : original;
+      const h = harness();
+      const prepare = h.chain.prepare;
+      h.chain.prepare = async (...args) => ({
+        ...(await prepare(...args)),
+        txId: original,
+      });
+      await runNetwork(h.network, h.deps);
+      const row = h.rows()[0];
+      if (replaced) {
+        expect(
+          await h.deps.store.acquireLock("base", "fixture-lease", h.clock.now),
+        ).toBe(true);
+        expect(
+          await h.deps.store.insertReplacement(
+            {
+              id: "replacement-fixture",
+              conversionId: String(row.id),
+              network: "base",
+              attempt: 1,
+              evmNonce: 1,
+              txId: winner,
+              rawTx: "0xfixture",
+              maxFeePerGas: "125",
+              maxPriorityFeePerGas: "25",
+              createdAt: h.clock.now.toISOString(),
+            },
+            "fixture-lease",
+            h.clock.now,
+          ),
+        ).toBe(true);
+        await h.deps.store.releaseLock("base", "fixture-lease", h.clock.now);
+      }
+      const calls: string[] = [];
+      const provider = (async (_url: unknown, init?: RequestInit) => {
+        const request = JSON.parse(String(init?.body));
+        calls.push(request.method);
+        let result: unknown;
+        if (request.method === "eth_getTransactionReceipt") {
+          result =
+            request.params[0] !== winner
+              ? null
+              : {
+                  transactionHash: fault === "receiptHash" ? hash(9) : winner,
+                  transactionIndex: fault === "index" ? "0x1" : "0x0",
+                  blockHash: hash(300),
+                  blockNumber: "0x64",
+                  from: WALLET,
+                  to: h.network.definition.router,
+                  cumulativeGasUsed: "0x5208",
+                  gasUsed: "0x5208",
+                  effectiveGasPrice: "0x1",
+                  contractAddress: null,
+                  logs:
+                    receiptStatus === "0x0"
+                      ? []
+                      : [
+                          {
+                            address: USDC,
+                            topics: [
+                              "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                              hash(0),
+                              `0x${WALLET.slice(2).padStart(64, "0")}`,
+                            ],
+                            data: hash(100),
+                            blockNumber: "0x64",
+                            blockHash: hash(300),
+                            transactionHash: winner,
+                            transactionIndex: "0x0",
+                            logIndex: "0x0",
+                            removed: false,
+                          },
+                        ],
+                  logsBloom: `0x${"00".repeat(256)}`,
+                  status: receiptStatus,
+                  type: "0x2",
+                };
+        } else if (request.method === "eth_getBlockByNumber") {
+          if (request.params[0] !== "finalized" && fault === "unavailable")
+            return Response.json({
+              jsonrpc: "2.0",
+              id: request.id,
+              error: { code: -32000, message: "unavailable" },
+            });
+          result = {
+            number:
+              (request.params[0] === "finalized" &&
+                fault === "missingFinality") ||
+              (request.params[0] !== "finalized" && fault === "missingHeight")
+                ? null
+                : request.params[0] === "finalized" && fault === "finality"
+                  ? "0x63"
+                  : fault === "blockNumber"
+                    ? "0x65"
+                    : "0x64",
+            hash: fault === "blockHash" ? hash(301) : hash(300),
+            timestamp: "0x1",
+            transactions: fault === "membership" ? [] : [winner],
+          };
+        } else if (request.method === "eth_call") result = hash(0);
+        else throw new Error(`Unexpected method: ${request.method}`);
+        return Response.json({ jsonrpc: "2.0", id: request.id, result });
+      }) as typeof fetch;
+      h.deps.client = (network) =>
+        createEvmClient({
+          config: network,
+          limits: h.deps.limits,
+          kyberClientId: "test",
+          fetch: provider,
+        });
+      await runNetwork(h.network, h.deps);
+      expect(h.rows()[0].state).toBe(state);
+      expect(h.rows()[0].landed_tx_id).toBe(
+        state === "submitted" ? null : winner,
+      );
+      if (state === "finalized") expect(h.rows()[0].amount_out).toBe("100");
+      expect(calls).not.toContain("eth_sendRawTransaction");
+    },
+  );
+
   /**
    * A node after the recorded swap (nonce 1) landed in a finalized block: the
    * finalized nonce count is 2. Methods in `failing` answer HTTP 429; the
@@ -1139,7 +1589,7 @@ describe("D1 contract", () => {
        '20', 'kyberswap', '{"route":"settled"}', '0xabc2', '0x0304', 3, 1233, '7',
        'finalized', 'before', 'then', 'before', '8', 'then')`);
     const before = sqlite
-      .query("SELECT * FROM fee_conversions ORDER BY id")
+      .prepare("SELECT * FROM fee_conversions ORDER BY id")
       .all() as Record<string, unknown>[];
     sqlite.exec(
       readFileSync(new URL("0082_fee_claim_journal.sql", dir), "utf8"),
@@ -1164,6 +1614,36 @@ describe("D1 contract", () => {
     expect(
       sqlite.prepare("SELECT * FROM fee_conversions ORDER BY id").all(),
     ).toEqual(after);
+    sqlite.exec(
+      readFileSync(new URL("0087_fee_send_replacements.sql", dir), "utf8"),
+    );
+    sqlite.exec(
+      `INSERT INTO fee_send_replacements VALUES ('replacement-old', 'id-submitted', 'base', 1, 4, '0x${"a".repeat(64)}', '0x0506', '125', '25', 'then')`,
+    );
+    sqlite.exec(`INSERT INTO fee_conversions
+      (id,run_id,network,mode,fee_wallet,token,target_token,amount_in,approval_tx_id,evm_nonce,state,reason,created_at,updated_at)
+      VALUES('old-approval','old-run-0001','base','live','${WALLET}','${TOKEN}','${USDC}','7','0x${"b".repeat(64)}',7,'failed','old approval timeout','before','before')`);
+    const priorRows = sqlite
+      .prepare("SELECT * FROM fee_conversions ORDER BY id")
+      .all();
+    const priorAttempts = sqlite
+      .query("SELECT * FROM fee_send_replacements")
+      .all();
+    sqlite.exec(
+      readFileSync(new URL("0088_fee_approval_journal.sql", dir), "utf8"),
+    );
+    expect(
+      sqlite.prepare("SELECT * FROM fee_conversions ORDER BY id").all(),
+    ).toEqual(priorRows);
+    expect(sqlite.query("SELECT * FROM fee_send_replacements").all()).toEqual(
+      priorAttempts,
+    );
+    expect(() =>
+      sqlite.exec("UPDATE fee_send_replacements SET raw_tx='0x9999'"),
+    ).toThrow(/permanent/);
+    expect(() =>
+      sqlite.exec("DELETE FROM fee_conversions WHERE id='old-approval'"),
+    ).toThrow(/permanent/);
     sqlite.close();
   });
 

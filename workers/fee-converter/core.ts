@@ -10,6 +10,7 @@
  * a failed quote, route or price left behind.
  */
 
+import { FeeCapTooLowError } from "viem";
 import type { Limits, Mode, Network, NetworkConfig } from "./config";
 import { LOCK_MS } from "./store";
 
@@ -26,8 +27,8 @@ export type ConversionState =
 
 export interface ConversionRow {
   id: string;
-  /** Existing rows are conversions. Claims share the same pending-token guard. */
-  kind?: "conversion" | "claim";
+  /** Existing rows are conversions. All send kinds share the pending-token guard. */
+  kind?: "conversion" | "claim" | "approval";
   runId: string;
   network: Network;
   mode: "dry_run" | "live";
@@ -56,7 +57,42 @@ export interface ConversionRow {
   updatedAt: string;
   submittedAt: string | null;
   finalizedAt: string | null;
+  /**
+   * The transaction the final outcome comes from: the original send or one
+   * of its same-nonce replacements (migration 0087).
+   */
+  landedTxId?: string | null;
 }
+
+/**
+ * One same-nonce EVM fee replacement of a journaled send (migration 0087).
+ * It is stored before it is broadcast and never changes.
+ */
+export interface SendReplacement {
+  id: string;
+  conversionId: string;
+  network: Network;
+  /** 1 is the first replacement; the original send is attempt 0. */
+  attempt: number;
+  evmNonce: number;
+  txId: string;
+  rawTx: string;
+  /** Wei, as decimal strings. */
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
+  createdAt: string;
+}
+
+/** A signed replacement that is not yet journaled or broadcast. */
+export type ReplacementResult =
+  | {
+      txId: string;
+      rawTx: string;
+      maxFeePerGas: bigint;
+      maxPriorityFeePerGas: bigint;
+    }
+  /** No replacement is signed now. The send waits; `wait` says why. */
+  | { wait: string };
 
 export interface Quote {
   route: "kyberswap" | "jupiter";
@@ -75,42 +111,59 @@ export type QuoteResult = Quote | { noRoute: string };
 
 /** A signed send, recorded before it is broadcast. */
 export interface PreparedSend {
+  /** EVM approvals are separate immutable sends before a later swap. */
+  kind?: "conversion" | "approval";
   txId: string;
   rawTx: string;
   evmNonce: number | null;
-  expiresAt: number;
+  expiresAt: number | null;
   approvalTxId: string | null;
   /** The minimum output the signed transaction enforces. */
   minAmountOut: bigint;
 }
 
-/**
- * An ERC-20 approval that must be durable before it is broadcast. Only its
- * hash and nonce are kept: `raw_tx` is immutable once set and holds the swap.
- */
-export interface PreparedApproval {
-  txId: string;
-  evmNonce: number;
-}
-
 export type SendStatus =
-  | { kind: "pending" }
-  | { kind: "finalized"; amountOut: bigint }
-  | { kind: "failed"; reason: string }
-  /** Not seen on chain and still valid: send the same bytes again. */
-  | { kind: "rebroadcast" };
+  /**
+   * `mined`: the nonce is used on chain (included but not finalized, or
+   * consumed while the claim receipt is unavailable). Never replaced.
+   */
+  | { kind: "pending"; mined?: boolean }
+  /** `txId`: the attempt (original or replacement) that landed. */
+  | { kind: "finalized"; amountOut: bigint; txId?: string }
+  | { kind: "failed"; reason: string; txId?: string }
+  /**
+   * Not seen on chain and still valid: send the same bytes again. `rawTx` is
+   * the latest journaled replacement, when one exists.
+   */
+  | { kind: "rebroadcast"; rawTx?: string };
 
 export interface ChainClient {
   balance(token: string): Promise<bigint>;
   quote(token: string, amount: bigint): Promise<QuoteResult>;
-  /** Records and sends any approval, then builds, simulates and signs the swap. */
+  /** Prepare one approval or swap; the caller journals it before broadcast. */
   prepare(
     token: string,
     quote: Quote,
-    recordApproval: (approval: PreparedApproval) => Promise<void>,
+    /** EVM: the lowest nonce the send may use (see nonceFloor). */
+    nonceFloor?: number,
+    assertLease?: () => Promise<void>,
   ): Promise<PreparedSend>;
   broadcast(rawTx: string): Promise<void>;
-  status(row: ConversionRow): Promise<SendStatus>;
+  /** `replacements`: the journaled same-nonce replacements of the row. */
+  status(
+    row: ConversionRow,
+    replacements?: readonly SendReplacement[],
+  ): Promise<SendStatus>;
+  /**
+   * EVM only. Signs one same-nonce replacement of an unmined send with a
+   * bounded higher fee, or says why the send must wait. It never broadcasts.
+   */
+  replace?(
+    row: ConversionRow,
+    replacements: readonly SendReplacement[],
+    /** Recheck ownership immediately before creating signed bytes. */
+    assertLease: () => Promise<void>,
+  ): Promise<ReplacementResult>;
   /**
    * Issue #905: a vault keeps its 2% fees until someone calls the
    * permissionless claim (EVM `claimFees()`, Solana `claim_fees`). Its
@@ -157,6 +210,10 @@ export interface VaultFeeClient {
       expiresAt: number | null;
       amount: bigint;
     }) => Promise<void>,
+    /** EVM: the lowest nonce the claim may use (see nonceFloor). */
+    nonceFloor?: number,
+    /** Recheck the existing network lease before signing and broadcast. */
+    assertLease?: () => Promise<void>,
   ): Promise<{ txId: string }>;
 }
 
@@ -174,7 +231,10 @@ export interface ConversionStore {
   renewLock(network: Network, runId: string, now: Date): Promise<boolean>;
   /** Live rows still waiting on chain: submitted, unknown and abandoned quotes. */
   openRows(network: Network): Promise<ConversionRow[]>;
-  insert(row: ConversionRow): Promise<void>;
+  insert(
+    row: ConversionRow,
+    lease?: { runId: string; now: Date },
+  ): Promise<void>;
   update(
     id: string,
     fields: Partial<Omit<ConversionRow, "id" | "createdAt">>,
@@ -182,6 +242,13 @@ export interface ConversionStore {
   /** Quoted value of live sends created since `since`, in micro-units. */
   liveValueSince(network: Network, since: string): Promise<bigint>;
   latest(network: Network, token: string): Promise<ConversionRow | null>;
+  /** Journaled same-nonce replacements of one row, in attempt order. */
+  replacements(conversionId: string): Promise<SendReplacement[]>;
+  insertReplacement(
+    replacement: SendReplacement,
+    runId: string,
+    now: Date,
+  ): Promise<boolean>;
 }
 
 export type RunTrigger = "receipts" | "recovery";
@@ -216,6 +283,12 @@ export interface NetworkRunResult {
 }
 
 const QUOTE_ABANDON_MS = 60 * 60 * 1000;
+/**
+ * How long the latest attempt of an EVM send must stay unmined before a
+ * same-nonce fee replacement may be signed (owner decision of 25 October
+ * 2026). A claim already waits about one minute for its receipt.
+ */
+export const REPLACEMENT_WAIT_MS = 3 * 60 * 1000;
 const RESCALE_ATTEMPTS = 3;
 /**
  * How long a run may go without renewing its lease. A run renews at a chunk
@@ -264,8 +337,21 @@ async function reconcile(
   row: ConversionRow,
   client: ChainClient,
   deps: RunDependencies,
+  runId: string,
+  assertLease: () => Promise<void>,
 ): Promise<boolean> {
   const now = deps.now();
+  if (row.approvalTxId !== null && row.rawTx === null && row.txId === null) {
+    // Older versions kept only the approval hash and could mark a timeout
+    // failed. Never invent its bytes or use a higher nonce to bypass it.
+    const status = await client.status({
+      ...row,
+      kind: "approval",
+      txId: row.approvalTxId,
+      expiresAt: null,
+    });
+    return status.kind === "finalized" || status.kind === "failed";
+  }
   if (row.state === "quoted") {
     // A live quote that never reached a signed send is safe to close: no
     // transaction bytes exist for it.
@@ -279,10 +365,15 @@ async function reconcile(
     }
     return false;
   }
-  const status = await client.status(row);
+  const replacements = client.replace
+    ? await deps.store.replacements(row.id)
+    : [];
+  const status = await client.status(row, replacements);
   const at = deps.now().toISOString();
   switch (status.kind) {
     case "pending":
+      if (!status.mined)
+        await replaceSend(row, replacements, client, deps, runId, assertLease);
       return false;
     case "finalized": {
       const after = await client
@@ -299,15 +390,18 @@ async function reconcile(
         finalizedAt: at,
         updatedAt: at,
         reason: below ? "finalized below the signed minimum" : null,
+        landedTxId: status.txId ?? row.txId,
       });
       deps.log({
         event:
           row.kind === "claim"
             ? "fee_claim_finalized"
-            : "fee_conversion_finalized",
+            : row.kind === "approval"
+              ? "fee_approval_finalized"
+              : "fee_conversion_finalized",
         network: row.network,
         token: row.token,
-        txId: row.txId,
+        txId: status.txId ?? row.txId,
         amountOut: status.amountOut.toString(),
       });
       return true;
@@ -317,11 +411,16 @@ async function reconcile(
         state: "failed",
         reason: status.reason,
         updatedAt: at,
+        // A reverted attempt landed; other failures have no landed send.
+        ...(status.txId ? { landedTxId: status.txId } : {}),
       });
       return true;
     case "rebroadcast":
+      // A restart first delivers the exact journaled attempt, even after the
+      // replacement wait elapsed. An unknown response never proves refusal.
+      await assertLease();
       try {
-        await client.broadcast(row.rawTx as string);
+        await client.broadcast(status.rawTx ?? (row.rawTx as string));
         await deps.store.update(row.id, {
           state: "submitted",
           reason: null,
@@ -333,9 +432,136 @@ async function reconcile(
           reason: `rebroadcast: ${message(error)}`,
           updatedAt: at,
         });
+        // A definite node fee-cap refusal permits the next bounded step.
+        // Transport failure or any other uncertain result keeps these bytes.
+        if (error instanceof FeeCapTooLowError)
+          await replaceSend(
+            row,
+            replacements,
+            client,
+            deps,
+            runId,
+            assertLease,
+          );
       }
       return false;
   }
+}
+
+/**
+ * Same-nonce fee replacement (owner decision of 25 October 2026). Live mode
+ * only. When the latest attempt stayed unmined for REPLACEMENT_WAIT_MS, the
+ * chain client may sign one replacement with the same nonce, recipient,
+ * calldata and value and a bounded higher fee. The replacement is journaled
+ * before it is broadcast, so a restart rebroadcasts it instead of signing
+ * another. Returns true when a replacement was journaled.
+ */
+async function replaceSend(
+  row: ConversionRow,
+  replacements: readonly SendReplacement[],
+  client: ChainClient,
+  deps: RunDependencies,
+  runId: string,
+  assertLease: () => Promise<void>,
+): Promise<boolean> {
+  if (
+    deps.mode !== "live" ||
+    !client.replace ||
+    row.mode !== "live" ||
+    row.evmNonce === null ||
+    row.rawTx === null
+  )
+    return false;
+  const last = replacements.at(-1)?.createdAt ?? row.submittedAt;
+  if (
+    last === null ||
+    deps.now().getTime() - Date.parse(last) < REPLACEMENT_WAIT_MS
+  )
+    return false;
+  await assertLease();
+  const result = await client.replace(row, replacements, assertLease);
+  if ("wait" in result) {
+    deps.log({
+      event: "fee_send_waiting",
+      network: row.network,
+      kind: row.kind ?? "conversion",
+      token: row.token,
+      txId: row.txId,
+      attempts: replacements.length,
+      reason: result.wait,
+    });
+    return false;
+  }
+  await assertLease();
+  const at = deps.now().toISOString();
+  const replacement: SendReplacement = {
+    id: deps.randomId(),
+    conversionId: row.id,
+    network: row.network,
+    attempt: replacements.length + 1,
+    evmNonce: row.evmNonce,
+    txId: result.txId,
+    rawTx: result.rawTx,
+    maxFeePerGas: result.maxFeePerGas.toString(),
+    maxPriorityFeePerGas: result.maxPriorityFeePerGas.toString(),
+    createdAt: at,
+  };
+  // Journal before broadcast: after a restart the next run finds this
+  // attempt and rebroadcasts its bytes instead of signing another one.
+  if (!(await deps.store.insertReplacement(replacement, runId, deps.now())))
+    throw new Error("Replacement lost its lease or pending attempt");
+  await assertLease();
+  try {
+    await client.broadcast(result.rawTx);
+    await deps.store.update(row.id, {
+      state: "submitted",
+      reason: null,
+      updatedAt: at,
+    });
+  } catch (error) {
+    await deps.store.update(row.id, {
+      state: "unknown",
+      reason: `replacement broadcast: ${message(error)}`,
+      updatedAt: at,
+    });
+  }
+  deps.log({
+    event: "fee_send_replaced",
+    network: row.network,
+    kind: row.kind ?? "conversion",
+    token: row.token,
+    txId: row.txId,
+    replacementTxId: result.txId,
+    attempt: replacement.attempt,
+    maxFeePerGas: replacement.maxFeePerGas,
+    maxPriorityFeePerGas: replacement.maxPriorityFeePerGas,
+  });
+  return true;
+}
+
+/**
+ * The lowest EVM nonce a new send may use: one above every open journaled
+ * send (`submitted` or `unknown`), including legacy approval hashes. A node that dropped a stuck send reports
+ * its nonce as free; a new send must not take it, or the two would outbid
+ * each other through their fee replacements.
+ */
+async function nonceFloor(
+  network: Network,
+  store: ConversionStore,
+): Promise<number> {
+  let floor = 0;
+  for (const row of await store.openRows(network))
+    if (
+      (row.state === "submitted" ||
+        row.state === "unknown" ||
+        (row.approvalTxId !== null &&
+          row.rawTx === null &&
+          row.txId === null)) &&
+      row.evmNonce !== null &&
+      row.evmNonce >= floor
+    )
+      floor = row.evmNonce + 1;
+  return floor;
 }
 
 function emptyRecords(): Record<ConversionState, number> {
@@ -371,13 +597,34 @@ export async function runNetwork(
     return { ...result, status: "locked" };
   }
   try {
+    // The lease must cover every send this run starts. Renew before a chunk
+    // once the interval has passed; a renewal that fails means the lease
+    // lapsed or another run took it over, so no send may be signed here.
+    const leased = async (force = false) => {
+      const at = deps.now();
+      if (ownsLock && (force || at.getTime() - renewedAt >= RUN_BUDGET_MS)) {
+        ownsLock = await deps.store.renewLock(config.network, runId, at);
+        if (!ownsLock)
+          deps.log({
+            event: "fee_conversion_lock_lost",
+            network: config.network,
+          });
+        else renewedAt = at.getTime();
+      }
+      return ownsLock;
+    };
+
+    const assertLease = async () => {
+      if (!(await leased(true))) throw new Error("Fee conversion lock lost");
+    };
     const client = deps.client(config);
     const blocked = new Set<string>();
-    // Reconciliation is read-only on chain apart from rebroadcasting the
-    // exact recorded bytes, so it also runs in dry_run after a live period.
+    // Reconciliation may rebroadcast exact bytes in dry_run. New replacement
+    // signatures require live mode and a freshly checked network lease.
     for (const row of await deps.store.openRows(config.network)) {
       try {
-        if (await reconcile(row, client, deps)) result.reconciled += 1;
+        if (await reconcile(row, client, deps, runId, assertLease))
+          result.reconciled += 1;
         else blocked.add(row.token);
       } catch (error) {
         blocked.add(row.token);
@@ -405,23 +652,6 @@ export async function runNetwork(
       ...new Set([...(await deps.projectTokens(config)), ...config.allowlist]),
     ].filter((token) => token !== usdc);
 
-    // The lease must cover every send this run starts. Renew before a chunk
-    // once the interval has passed; a renewal that fails means the lease
-    // lapsed or another run took it over, so no send may be signed here.
-    const leased = async () => {
-      const at = deps.now();
-      if (ownsLock && at.getTime() - renewedAt >= RUN_BUDGET_MS) {
-        ownsLock = await deps.store.renewLock(config.network, runId, at);
-        if (!ownsLock)
-          deps.log({
-            event: "fee_conversion_lock_lost",
-            network: config.network,
-          });
-        else renewedAt = at.getTime();
-      }
-      return ownsLock;
-    };
-
     // A recovery scan first moves fees accrued in the network's vaults into
     // the fee wallet, so the balance reads below see them as a receipt.
     if (client.vaultFees && deps.projectVaults && deps.trigger !== "receipts")
@@ -435,6 +665,7 @@ export async function runNetwork(
         leased,
         blocked,
         runId,
+        assertLease,
       );
 
     const since = new Date(
@@ -471,6 +702,7 @@ export async function runNetwork(
             runValue,
             dayValue,
           },
+          assertLease,
         );
         result.records[outcome.state] += 1;
         if (outcome.committedMicro > 0n) {
@@ -510,6 +742,7 @@ async function claimVaultFees(
   leased: () => Promise<boolean>,
   blocked: Set<string>,
   runId: string,
+  assertLease: () => Promise<void>,
 ): Promise<number> {
   const { limits } = deps;
   let claimed = 0;
@@ -554,7 +787,10 @@ async function claimVaultFees(
         report("fee_claim_quoted", { amount, valueMicro: value.toString() });
         continue;
       }
-      const { txId } = await fees.claim(vault, async (send) => {
+      const floor = await nonceFloor(config.network, deps.store);
+      const recordClaim: Parameters<VaultFeeClient["claim"]>[1] = async (
+        send,
+      ) => {
         const at = deps.now().toISOString();
         const claimRow: ConversionRow = {
           id: deps.randomId(),
@@ -569,7 +805,8 @@ async function claimVaultFees(
           route: null,
           quoteAmountOut: null,
           minAmountOut: null,
-          quoteValueMicro: null,
+          // The claimed fee's USDC value bounds any later fee replacement.
+          quoteValueMicro: Number(value),
           quote: JSON.stringify(vault),
           priceImpactBps: null,
           approvalTxId: null,
@@ -588,10 +825,13 @@ async function claimVaultFees(
           submittedAt: at,
           finalizedAt: null,
         };
-        await deps.store.insert(claimRow);
+        await assertLease();
+        await deps.store.insert(claimRow, { runId, now: deps.now() });
         claimId = claimRow.id;
         blocked.add(accrued.asset);
-      });
+      };
+      await assertLease();
+      const { txId } = await fees.claim(vault, recordClaim, floor, assertLease);
       claimed += 1;
       report("fee_claim_included", { amount, txId });
     } catch (error) {
@@ -621,6 +861,7 @@ async function convert(
   client: ChainClient,
   deps: RunDependencies,
   budget: Budget,
+  assertLease: () => Promise<void>,
 ): Promise<{ state: ConversionState; committedMicro: bigint }> {
   const { limits } = deps;
   const at = () => deps.now().toISOString();
@@ -765,41 +1006,45 @@ async function convert(
     return { state: "quoted", committedMicro: quote.amountOut };
   }
 
-  await deps.store.insert(row);
   let prepared: PreparedSend;
   try {
-    prepared = await client.prepare(token, quote, async (approval) => {
-      await deps.store.update(row.id, {
-        approvalTxId: approval.txId,
-        evmNonce: approval.evmNonce,
-        updatedAt: at(),
-      });
-    });
+    const floor = await nonceFloor(config.network, deps.store);
+    await assertLease();
+    prepared = await client.prepare(token, quote, floor, assertLease);
     // Match migration 0078: at most 128 KiB encoded as hex plus its prefix.
-    // Refuse before persistence and broadcast, with a terminal failed record.
     if (prepared.rawTx.length > 262146)
       throw new Error("signed transaction exceeds the storage limit");
+    await assertLease();
   } catch (error) {
-    await deps.store.update(row.id, {
+    await record({
+      ...row,
       state: "failed",
       reason: `prepare: ${message(error)}`,
       updatedAt: at(),
     });
     return { state: "failed", committedMicro: 0n };
   }
-  // Record the signed bytes before they leave the Worker; the unique open-row
-  // index refuses a second unresolved send for this token.
-  await deps.store.update(row.id, {
-    state: "submitted",
-    txId: prepared.txId,
-    rawTx: prepared.rawTx,
-    evmNonce: prepared.evmNonce,
-    expiresAt: prepared.expiresAt,
-    approvalTxId: prepared.approvalTxId,
-    minAmountOut: prepared.minAmountOut.toString(),
-    submittedAt: at(),
-    updatedAt: at(),
-  });
+  const approval = prepared.kind === "approval";
+  // One row per signed intent; approval bytes are never overwritten by a swap.
+  // The pending-token index prevents a second intent until this one resolves.
+  await deps.store.insert(
+    {
+      ...row,
+      kind: approval ? "approval" : "conversion",
+      state: "submitted",
+      txId: prepared.txId,
+      rawTx: prepared.rawTx,
+      evmNonce: prepared.evmNonce,
+      expiresAt: prepared.expiresAt,
+      approvalTxId: prepared.approvalTxId,
+      minAmountOut: approval ? null : prepared.minAmountOut.toString(),
+      submittedAt: at(),
+      updatedAt: at(),
+    },
+    { runId: budget.runId, now: deps.now() },
+  );
+  await assertLease();
+  const committedMicro = approval ? 0n : quote.amountOut;
   try {
     await client.broadcast(prepared.rawTx);
   } catch (error) {
@@ -808,15 +1053,15 @@ async function convert(
       reason: `broadcast: ${message(error)}`,
       updatedAt: at(),
     });
-    return { state: "unknown", committedMicro: quote.amountOut };
+    return { state: "unknown", committedMicro };
   }
   deps.log({
-    event: "fee_conversion_submitted",
+    event: approval ? "fee_approval_submitted" : "fee_conversion_submitted",
     network: config.network,
     token,
     txId: prepared.txId,
     amountIn: amount.toString(),
     minAmountOut: prepared.minAmountOut.toString(),
   });
-  return { state: "submitted", committedMicro: quote.amountOut };
+  return { state: "submitted", committedMicro };
 }
