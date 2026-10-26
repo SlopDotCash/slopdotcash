@@ -108,6 +108,7 @@ export function addedValuePatchRecovery(
             atob(source.content.replace(/\s+/gu, "")),
             (c) => c.charCodeAt(0),
           );
+          totalBytes += bytes.length;
           text = new TextDecoder("utf-8", {
             fatal: true,
             ignoreBOM: true,
@@ -115,7 +116,6 @@ export function addedValuePatchRecovery(
         } catch {
           continue;
         }
-        totalBytes += bytes.length;
         if (
           bytes.length !== source.size ||
           totalBytes > 2 * 1024 * 1024 ||

@@ -122,24 +122,27 @@ test("larger added files still require exact Git bytes, UTF-8 and line counts", 
   }
 });
 
-test("invalid Git bytes consume decoded budget and all reads remain bounded", async () => {
-  const invalid = { ...blob(textOfSize(700_000)), sha: "c".repeat(40) };
-  const valid = blob(textOfSize(700_000));
-  const { recover } = fixture(
-    new Map([
-      [request(submitted), invalid],
-      [request(accepted), valid],
-      [request(accepted, "over-budget.txt"), valid],
-    ]),
-  );
-  const rejected = added();
-  const acceptedFile = added();
-  const overBudget = added("over-budget.txt");
-  await recover([rejected], submitted);
-  await recover([acceptedFile, overBudget], accepted);
-  expect(rejected.patch).toBeUndefined();
-  expect(hasCompleteValuePatch(acceptedFile)).toBe(true);
-  expect(overBudget.patch).toBeUndefined();
+test("invalid hash and UTF-8 consume decoded budget; all reads remain bounded", async () => {
+  const bytes = Buffer.from(textOfSize(700_000));
+  const valid = blob(bytes);
+  bytes[17] = 0xff;
+  for (const invalid of [{ ...valid, sha: "c".repeat(40) }, blob(bytes)]) {
+    const { recover } = fixture(
+      new Map([
+        [request(submitted), invalid],
+        [request(accepted), valid],
+        [request(accepted, "over-budget.txt"), valid],
+      ]),
+    );
+    const rejected = added();
+    const acceptedFile = added();
+    const overBudget = added("over-budget.txt");
+    await recover([rejected], submitted);
+    await recover([acceptedFile, overBudget], accepted);
+    expect(rejected.patch).toBeUndefined();
+    expect(hasCompleteValuePatch(acceptedFile)).toBe(true);
+    expect(overBudget.patch).toBeUndefined();
+  }
 
   const files = Array.from({ length: 17 }, (_, i) => added(`file-${i}.txt`));
   const bounded = fixture(
