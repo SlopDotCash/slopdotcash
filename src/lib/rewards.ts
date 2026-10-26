@@ -142,7 +142,7 @@ export interface RewardAllocationManifest {
   capMinor: string;
   carriedMinor?: string;
   minimumTransferMinor?: typeof MINIMUM_TRANSFER_MINOR;
-  feeBasisPoints: typeof PLATFORM_FEE_BASIS_POINTS;
+  feeBasisPoints: 100 | 200 | 1000;
   scoringRuleVersion: string;
   sourceSnapshotSha256: string;
   allocations: RewardAllocation[];
@@ -1340,7 +1340,7 @@ export function assertRewardAllocationManifest(
           minimumTransferMinor: MINIMUM_TRANSFER_MINOR,
         }
       : {}),
-    feeBasisPoints: PLATFORM_FEE_BASIS_POINTS,
+    feeBasisPoints: project.reward.feeBasisPoints,
     scoringRuleVersion: text(
       manifest.scoringRuleVersion,
       "allocation manifest.scoringRuleVersion",
