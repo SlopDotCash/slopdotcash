@@ -1,10 +1,57 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  test,
+} from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { decodeFunctionData, encodeFunctionResult, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { FACTORY, openEvmRun } from "./evm";
+import { fixtureCheckout } from "../../tests/fixture-checkout";
+
+let FACTORY: typeof import("./evm").FACTORY;
+let openEvmRun: typeof import("./evm").openEvmRun;
+let sourceFixture: string;
+
+beforeAll(async () => {
+  // The release job refreshes tracked registry inputs. These closed RPC tests
+  // need their own committed source, without weakening the live runner's guard.
+  sourceFixture = fixtureCheckout("slop-keeper-source-");
+  for (const args of [
+    ["init", "--quiet"],
+    ["add", "--all"],
+    [
+      "-c",
+      "user.name=Slop test fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "commit",
+      "--quiet",
+      "-m",
+      "Commit synthetic acceptance fixture",
+    ],
+  ]) {
+    const result = Bun.spawnSync(["git", ...args], { cwd: sourceFixture });
+    if (result.exitCode !== 0) throw new Error("Fixture Git setup failed");
+  }
+  ({ FACTORY, openEvmRun } = await import(
+    pathToFileURL(join(sourceFixture, "scripts", "escrow-acceptance", "evm.ts"))
+      .href
+  ));
+}, 30_000);
+
+afterAll(() => {
+  if (sourceFixture) rmSync(sourceFixture, { recursive: true, force: true });
+});
 
 // Public synthetic scalars only. The actual opener reads only this closed RPC
 // fixture; these tests never run a scenario, sign, or broadcast a transaction.
