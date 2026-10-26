@@ -1,5 +1,6 @@
 /** A private, owner-requested attestation; never a submission or a withdrawal. */
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { recoverAddress } from "viem";
 import type { D1TransactionalDatabase } from "../../backend/d1";
 import type { MonthlyReleaseCheck } from "../../backend/payments/monthly-reserve-release";
@@ -34,8 +35,6 @@ import type { ProjectRecord } from "../../src/lib/project-contracts";
 import { sha256Hex } from "../../src/lib/sha256";
 import type { JournalStore } from "./core";
 
-const hex = (value: Uint8Array) =>
-  Array.from(value, (b) => b.toString(16).padStart(2, "0")).join("");
 export interface MonthlyReleaseDependencies {
   db: D1TransactionalDatabase;
   journal: JournalStore;
@@ -100,8 +99,6 @@ export async function prepareMonthlyReserveRelease(
       await deps.journal.put(key, { request, authority, messageHex, evidence });
     const signatureHex =
       previous?.signatureHex ?? (await deps.sign(messageHex));
-    const bytes = (value: string) =>
-      Uint8Array.from(value.match(/../g) ?? [], (b) => Number.parseInt(b, 16));
     if (
       deps.family === "evm"
         ? !/^[0-9a-f]{130}$/i.test(signatureHex) ||
@@ -113,8 +110,8 @@ export async function prepareMonthlyReserveRelease(
           ).toLowerCase() !== authority.toLowerCase()
         : !/^[0-9a-f]{128}$/i.test(signatureHex) ||
           !ed25519.verify(
-            bytes(signatureHex),
-            bytes(messageHex),
+            hexToBytes(signatureHex),
+            hexToBytes(messageHex),
             decodeBase58Bytes(authority),
             { zip215: false },
           )
@@ -188,7 +185,7 @@ export async function prepareMonthlyReserveRelease(
       return evidence;
     }
     const signatureHex = await sign(
-      hex(solanaMonthlyReleaseMessage(evidence, config.networkDomain)),
+      bytesToHex(solanaMonthlyReleaseMessage(evidence, config.networkDomain)),
       evidence.identityAuthority,
       evidence,
     );

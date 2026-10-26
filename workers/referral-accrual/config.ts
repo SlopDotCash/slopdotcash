@@ -7,9 +7,8 @@
  */
 
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
+import type { Mode } from "../fee-converter/config";
 import { type ReferralGasLimits, validateGasLimits } from "./gas";
-
-export type Mode = "off" | "dry_run" | "live";
 
 export const RULE_VERSION = "referral-accrual-v1";
 

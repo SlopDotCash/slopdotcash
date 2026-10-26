@@ -1,6 +1,6 @@
 /** Harmless isolation probes shared by local and protected hosted qualification. */
 import assert from "node:assert/strict";
-import { sha256Hex } from "../../backend/trace/validation";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { QueueConnection } from "../vetting/queue";
 import {
   type ArtifactInterpreter,

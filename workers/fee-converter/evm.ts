@@ -125,13 +125,12 @@ const REPLACEMENT_CAP_MULTIPLE = 3n;
  */
 const REPLACEMENT_DEADLINE_MARGIN_SECONDS = 120;
 
-/** An open journaled send already holds this nonce or a later one. */
-function nonceHeld(nonce: number, nonceFloor: number): Error | null {
-  return nonce < nonceFloor
-    ? new Error(
-        `fee-wallet nonce ${nonce} is held by an open journaled send; next free nonce is ${nonceFloor}`,
-      )
-    : null;
+/** Refuses a nonce that an open journaled send already holds. */
+function assertNonceFree(nonce: number, nonceFloor: number) {
+  if (nonce < nonceFloor)
+    throw new Error(
+      `fee-wallet nonce ${nonce} is held by an open journaled send; next free nonce is ${nonceFloor}`,
+    );
 }
 
 const ceilPercent = (value: bigint, percent: bigint) =>
@@ -203,8 +202,6 @@ export interface EvmClientOptions {
   privateKey?: string;
   fetch?: Fetch;
   now?: () => Date;
-  /** Local fork tests only: replaces the chain id the transaction signs for. */
-  chainIdOverride?: number;
   sleep?: (ms: number) => Promise<void>;
   nativeGas?: NativeGasJournal;
 }
@@ -232,9 +229,7 @@ interface KyberRoute {
   routerAddress: string;
 }
 
-export function createEvmClient(options: EvmClientOptions): ChainClient & {
-  address(): string | null;
-} {
+export function createEvmClient(options: EvmClientOptions): ChainClient {
   const { config, limits } = options;
   const definition = config.definition;
   const doFetch = options.fetch ?? fetch;
@@ -250,7 +245,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
   };
   const wallet = config.feeWallet as Address;
   const chain: Chain = defineChain({
-    id: options.chainIdOverride ?? (definition.chainId as number),
+    id: definition.chainId as number,
     name: config.network,
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     rpcUrls: { default: { http: [config.rpcUrl] } },
@@ -311,6 +306,35 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     return body.data as T;
   }
 
+  /** A KyberSwap route from `token` to this network's USDC. */
+  const kyberRoute = (token: string, amountIn: bigint) =>
+    kyber<KyberRoute>(
+      `routes?${new URLSearchParams({
+        tokenIn: token,
+        tokenOut: usdc(),
+        amountIn: amountIn.toString(),
+        gasInclude: "true",
+      })}`,
+    );
+  /** The vault a claim row recorded when it was journaled. */
+  const recordedVault = (row: ConversionRow) =>
+    JSON.parse(row.quote as string) as FeeVault;
+  /** A recorded claim is resent or replaced only while it pays this wallet. */
+  async function assertRecordedClaim(row: ConversionRow) {
+    if (row.kind === "claim" && !(await verifiedVault(recordedVault(row))))
+      throw new Error("Recorded claim pays another fee wallet");
+  }
+  /** The approval calldata grants exactly the row's amount to the pinned router. */
+  function boundedApproval(row: ConversionRow, data: Hex, value?: bigint) {
+    const decoded = decodeFunctionData({ abi: erc20Abi, data });
+    return (
+      (value ?? 0n) === 0n &&
+      decoded.functionName === "approve" &&
+      decoded.args[0].toLowerCase() === router &&
+      decoded.args[1] === BigInt(row.amountIn)
+    );
+  }
+
   async function sendRaw(raw: Hex): Promise<void> {
     try {
       await client.request({
@@ -339,9 +363,13 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
   async function waitForReceipt(hash: Hex) {
     const deadline = Date.now() + RECEIPT_WAIT_MS;
     while (Date.now() < deadline) {
+      // Only "not mined yet" waits; any other RPC failure is reported.
       const receipt = await client
         .getTransactionReceipt({ hash })
-        .catch(() => null);
+        .catch((error: unknown) => {
+          if (error instanceof TransactionReceiptNotFoundError) return null;
+          throw error;
+        });
       if (receipt) return receipt;
       await sleep(2_000);
     }
@@ -641,7 +669,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       throw new Error("Recorded native transaction bounds are unavailable");
     return intent;
   }
-  const self: ChainClient & { address(): string | null } = {
+  const self: ChainClient = {
     async reconcileNativeGas() {
       const journal = options.nativeGas;
       if (!journal) return;
@@ -734,8 +762,6 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         );
       }
     },
-    address: () => account?.address.toLowerCase() ?? null,
-
     async balance(token) {
       return client.readContract({
         address: token as Address,
@@ -748,14 +774,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     async quote(token, amount): Promise<QuoteResult> {
       let route: KyberRoute;
       try {
-        route = await kyber<KyberRoute>(
-          `routes?${new URLSearchParams({
-            tokenIn: token,
-            tokenOut: usdc(),
-            amountIn: amount.toString(),
-            gasInclude: "true",
-          })}`,
-        );
+        route = await kyberRoute(token, amount);
       } catch (error) {
         const status = (error as { status?: number }).status;
         // 4xx: no pool or an unsupported token. Anything else is a fault.
@@ -836,8 +855,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       });
       // A node that dropped an open send reports its nonce as free. Never
       // reuse it: the two sends would outbid each other.
-      const held = nonceHeld(nonce, nonceFloor);
-      if (held) throw held;
+      assertNonceFree(nonce, nonceFloor);
       if (allowance < quote.amountIn) {
         const approval = await signAndSend(
           token as Address,
@@ -864,14 +882,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
 
       // Re-route at the moment of signing with half the slippage budget, so
       // the signed minimum stays at or above the recorded quote minimum.
-      const fresh = await kyber<KyberRoute>(
-        `routes?${new URLSearchParams({
-          tokenIn: token,
-          tokenOut: usdc(),
-          amountIn: quote.amountIn.toString(),
-          gasInclude: "true",
-        })}`,
-      );
+      const fresh = await kyberRoute(token, quote.amountIn);
       const deadline = Math.floor(now().getTime() / 1000) + DEADLINE_SECONDS;
       const built = await kyber<{
         data: Hex;
@@ -988,21 +999,14 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           return { kind: "pending", mined: true };
         if (row.kind === "approval") {
           const transaction = await client.getTransaction({ hash });
-          const decoded = decodeFunctionData({
-            abi: erc20Abi,
-            data: transaction.input,
-          });
           if (
             transaction.hash.toLowerCase() !== hash.toLowerCase() ||
             transaction.from.toLowerCase() !== wallet ||
             transaction.to?.toLowerCase() !== row.token.toLowerCase() ||
             transaction.nonce !== row.evmNonce ||
-            transaction.value !== 0n ||
             transaction.blockHash !== receipt.blockHash ||
             transaction.blockNumber !== receipt.blockNumber ||
-            decoded.functionName !== "approve" ||
-            decoded.args[0].toLowerCase() !== router ||
-            decoded.args[1] !== BigInt(row.amountIn)
+            !boundedApproval(row, transaction.input, transaction.value)
           )
             throw new Error("Approval receipt differs from its bounded intent");
           if (receipt.status !== "success")
@@ -1031,10 +1035,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         if (row.kind === "claim")
           return {
             kind: "finalized",
-            amountOut: await claimReceipt(
-              JSON.parse(row.quote as string) as FeeVault,
-              receipt,
-            ),
+            amountOut: await claimReceipt(recordedVault(row), receipt),
             ...landed,
           };
         const logs = parseEventLogs({
@@ -1073,11 +1074,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         // revert, so it only waits.
         if (row.kind !== "claim" && row.kind !== "approval" && deadlinePassed)
           return { kind: "pending" };
-        if (
-          row.kind === "claim" &&
-          !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
-        )
-          throw new Error("Recorded claim pays another fee wallet");
+        await assertRecordedClaim(row);
         return { kind: "rebroadcast", rawTx: latestRaw };
       }
       // Our nonce consumed in a finalized block by another transaction means
@@ -1099,11 +1096,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           kind: "failed",
           reason: "router deadline passed before inclusion",
         };
-      if (
-        row.kind === "claim" &&
-        !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
-      )
-        throw new Error("Recorded claim pays another fee wallet");
+      await assertRecordedClaim(row);
       // A historical approval hash without retained bytes cannot be resent.
       if (row.rawTx === null) return { kind: "pending", mined: true };
       return { kind: "rebroadcast", rawTx: latestRaw };
@@ -1128,7 +1121,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       );
       const recipient =
         row.kind === "claim"
-          ? (JSON.parse(row.quote as string) as FeeVault).vault
+          ? recordedVault(row).vault
           : row.kind === "approval"
             ? row.token
             : router;
@@ -1163,19 +1156,11 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         return {
           wait: "router deadline too close; a same-nonce replacement would revert",
         };
-      if (row.kind === "approval") {
-        const decoded = decodeFunctionData({
-          abi: erc20Abi,
-          data: original.data,
-        });
-        if (
-          (original.value ?? 0n) !== 0n ||
-          decoded.functionName !== "approve" ||
-          decoded.args[0].toLowerCase() !== router ||
-          decoded.args[1] !== BigInt(row.amountIn)
-        )
-          throw new Error("Recorded approval differs from its bounded intent");
-      }
+      if (
+        row.kind === "approval" &&
+        !boundedApproval(row, original.data as Hex, original.value)
+      )
+        throw new Error("Recorded approval differs from its bounded intent");
       const block = await client.getBlock({ blockTag: "latest" });
       if (block.baseFeePerGas === null || block.baseFeePerGas === undefined)
         return { wait: "the current network base fee is unavailable" };
@@ -1202,11 +1187,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         return { wait: "fee replacement cap reached" };
       if (row.quoteValueMicro === null)
         return { wait: "the send has no recorded value to bound its fee" };
-      if (
-        row.kind === "claim" &&
-        !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
-      )
-        throw new Error("Recorded claim pays another fee wallet");
+      await assertRecordedClaim(row);
       const signed = await signIntent(
         {
           chainId: chain.id,
@@ -1281,8 +1262,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           throw new Error("an earlier fee-wallet transaction is still pending");
         if (!recordClaim)
           throw new Error("Fee claim requires a durable send record");
-        const held = nonceHeld(latest, nonceFloor);
-        if (held) throw held;
+        assertNonceFree(latest, nonceFloor);
         const sent = await signAndSend(
           vault as Address,
           CLAIM_FEES,

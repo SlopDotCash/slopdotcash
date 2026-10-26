@@ -1,20 +1,20 @@
 /** Read-only signed queue and revision/template acquisition. No result-write capability. */
-import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readLimitedBody } from "../../backend/trace/validation";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
-import { acquireRepository } from "./acquire";
-import { signedServiceHeaders } from "./service";
+import { readRecord } from "../../src/lib/record-validation.mjs";
+import { sha256Hex as sha256 } from "../../src/lib/sha256";
+import { AcquisitionRefusal, acquireRepository } from "./acquire";
+import {
+  serviceOrigin,
+  signedVettingFetch,
+  type VettingConnection,
+} from "./service";
 
-const sha256 = (bytes: Uint8Array | string) =>
-  createHash("sha256").update(bytes).digest("hex");
 const HEX = /^[0-9a-f]{64}$/u;
 const COMMIT = /^[0-9a-f]{40}$/u;
-const object = (value: unknown): Record<string, unknown> => {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid service record");
-  return value as Record<string, unknown>;
-};
+const object = (value: unknown) => readRecord(value, "Service record");
 const safePath = (value: unknown): string => {
   if (
     typeof value !== "string" ||
@@ -38,76 +38,42 @@ export type QueuedAssessment = {
   commitSha: string;
   templateSha256: string;
 };
-export type QueueConnection = {
-  origin: string;
-  privateKey: CryptoKey;
-  publicKey: CryptoKey;
-  fetch?: typeof fetch;
-  now?: () => Date;
-};
-function originOf(value: string) {
-  const url = new URL(value);
-  if (
-    url.protocol !== "https:" ||
-    url.origin !== value ||
-    url.username ||
-    url.password
-  )
-    throw new Error("An explicit HTTPS service origin is required");
-  return value;
+export type QueueConnection = VettingConnection;
+/** A pinned input of at most 1 MiB. */
+async function pinnedBytes(response: Response): Promise<Uint8Array> {
+  if (!response.ok || !response.body) {
+    await response.body?.cancel();
+    throw new Error("Pinned input unavailable");
+  }
+  return readLimitedBody(response, 1024 * 1024);
 }
 async function bytes(
   fetcher: typeof fetch,
   url: string,
   headers?: HeadersInit,
-): Promise<Buffer> {
-  const response = await fetcher(url, {
-    method: "GET",
-    headers,
-    redirect: "error",
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok || !response.body) {
-    await response.body?.cancel();
-    throw new Error("Pinned input unavailable");
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      size += chunk.value.byteLength;
-      if (size > 1024 * 1024) throw new Error("Pinned input size limit");
-      chunks.push(chunk.value);
-    }
-  } finally {
-    await reader.cancel();
-  }
-  return Buffer.concat(chunks);
+): Promise<Uint8Array> {
+  return pinnedBytes(
+    await fetcher(url, {
+      method: "GET",
+      headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    }),
+  );
 }
+const json = (bytes: Uint8Array) =>
+  object(JSON.parse(new TextDecoder().decode(bytes)));
 export async function readPendingAssessments(
   connection: QueueConnection,
 ): Promise<QueuedAssessment[]> {
-  const origin = originOf(connection.origin);
-  const path = "/api/v1/vetting/requests";
-  const at = (connection.now?.() ?? new Date()).toISOString();
-  const value = object(
-    JSON.parse(
-      (
-        await bytes(
-          connection.fetch ?? fetch,
-          `${origin}${path}`,
-          await signedServiceHeaders({
-            signer: connection,
-            method: "GET",
-            pathAndQuery: path,
-            body: new Uint8Array(),
-            at: new Date(at),
-          }),
-        )
-      ).toString("utf8"),
+  const origin = serviceOrigin(connection.origin);
+  const value = json(
+    await pinnedBytes(
+      await signedVettingFetch(connection, {
+        method: "GET",
+        path: "/api/v1/vetting/requests",
+        timeoutMs: 15_000,
+      }),
     ),
   );
   if (
@@ -168,14 +134,10 @@ export async function acquireQueuedAssessment(
   ).find((item) => item.assessmentId === assessmentId);
   if (!assessment) throw new Error("Assessment is no longer pending");
   const origin = connection.origin;
-  const revision = object(
-    JSON.parse(
-      (
-        await bytes(
-          fetcher,
-          `${origin}/api/v1/project-revisions/${assessment.projectId}/${assessment.revision}`,
-        )
-      ).toString("utf8"),
+  const revision = json(
+    await bytes(
+      fetcher,
+      `${origin}/api/v1/project-revisions/${assessment.projectId}/${assessment.revision}`,
     ),
   );
   if (
@@ -191,20 +153,16 @@ export async function acquireQueuedAssessment(
     manifest.id !== assessment.projectId ||
     manifest.repositories.length !== 1
   )
-    throw new Error("Unsupported repository inventory");
-  const repositoryIdentity = object(
-    JSON.parse(
-      (
-        await bytes(
-          fetcher,
-          `https://api.github.com/repos/${manifest.repositories[0].id}`,
-          {
-            accept: "application/vnd.github+json",
-            "x-github-api-version": "2022-11-28",
-            "user-agent": "slop-vetting-acquisition",
-          },
-        )
-      ).toString("utf8"),
+    throw new AcquisitionRefusal("Unsupported repository inventory");
+  const repositoryIdentity = json(
+    await bytes(
+      fetcher,
+      `https://api.github.com/repos/${manifest.repositories[0].id}`,
+      {
+        accept: "application/vnd.github+json",
+        "x-github-api-version": "2022-11-28",
+        "user-agent": "slop-vetting-acquisition",
+      },
     ),
   );
   if (
@@ -216,13 +174,9 @@ export async function acquireQueuedAssessment(
       manifest.repositories[0].id.toLowerCase() ||
     repositoryIdentity.private !== false
   )
-    throw new Error("Immutable repository identity mismatch");
-  const index = object(
-    JSON.parse(
-      (await bytes(fetcher, `${origin}/skill-templates/index.json`)).toString(
-        "utf8",
-      ),
-    ),
+    throw new AcquisitionRefusal("Immutable repository identity mismatch");
+  const index = json(
+    await bytes(fetcher, `${origin}/skill-templates/index.json`),
   );
   if (
     index.schemaVersion !== "1" ||
@@ -286,9 +240,7 @@ export async function acquireQueuedAssessment(
     );
     if (sha256(sourceInventoryBytes) !== acquired.inventorySha256)
       throw new Error("Source inventory changed");
-    const sourceInventory = object(
-      JSON.parse(sourceInventoryBytes.toString("utf8")),
-    );
+    const sourceInventory = json(sourceInventoryBytes);
     if (
       !Array.isArray(sourceInventory.visibilityGaps) ||
       sourceInventory.visibilityGaps.some((gap) => typeof gap !== "string")
@@ -313,7 +265,7 @@ export async function acquireQueuedAssessment(
       const content = await bytes(fetcher, source.url);
       templateBytes += content.byteLength;
       if (templateBytes > 32 * 1024 * 1024)
-        throw new Error("Template acquisition size limit");
+        throw new AcquisitionRefusal("Template acquisition size limit");
       if (sha256(content) !== source.sha256)
         throw new Error("Template file bytes changed");
       const objectPath = join(acquired.directory, "objects", source.sha256);

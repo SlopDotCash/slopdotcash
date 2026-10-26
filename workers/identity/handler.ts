@@ -1,5 +1,7 @@
 import { type ApiError, fail } from "../../backend/http";
+import { readLimitedBody } from "../../backend/trace/validation";
 import brand from "../../brand/tokens.json" with { type: "json" };
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   type DeploymentTier,
   deploymentOrigins,
@@ -20,7 +22,6 @@ import {
   deriveAssertionToken,
   encryptPkceVerifier,
   pkceChallenge,
-  sha256Hex,
 } from "./crypto";
 
 export type IdentityWorkerDependencies = {
@@ -81,38 +82,15 @@ function html(
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
-  const declared = request.headers.get("content-length");
-  if (
-    declared !== null &&
-    (!/^\d+$/u.test(declared) || Number(declared) > 4096)
-  ) {
-    fail(413, "request_too_large", "Request body is too large");
-  }
   if (request.body === null) {
     fail(400, "invalid_request", "Request body is required");
   }
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
+  let bytes: Uint8Array;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > 4096) {
-        await reader.cancel("request body too large");
-        fail(413, "request_too_large", "Request body is too large");
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
+    bytes = await readLimitedBody(request, 4096);
+  } catch {
+    // An invalid or excessive declared length and an oversized stream.
+    fail(413, "request_too_large", "Request body is too large");
   }
   let value: unknown;
   try {

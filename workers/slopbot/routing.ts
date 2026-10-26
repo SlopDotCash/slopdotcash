@@ -7,8 +7,6 @@ import type { ReviewScope } from "./registry";
 
 export type RoutingInput = {
   config: RepositoryConfig;
-  installationActive: boolean;
-  repositoryPrivate: boolean;
   itemKind: "issue" | "pull_request";
   itemOpen: boolean;
   draft: boolean;
@@ -35,15 +33,9 @@ export type Routing =
       reason: string;
     };
 
+// The caller has already refused a removed or suspended installation and a
+// private repository.
 export function route(input: RoutingInput): Routing {
-  if (!input.installationActive)
-    return { review: false, reason: "installation removed or suspended" };
-  // Surplus may never see private content, and v2 supports public repositories only.
-  if (input.repositoryPrivate)
-    return {
-      review: false,
-      reason: "private repositories are outside Slopbot v2",
-    };
   if (input.itemKind === "issue" && !input.config.issues)
     return { review: false, reason: "issue review disabled" };
   if (input.itemKind === "pull_request" && !input.config.pullRequests) {

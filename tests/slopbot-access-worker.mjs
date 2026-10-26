@@ -7,12 +7,7 @@
 
 import { githubAppReportingReader } from "../backend/security/github-advisories";
 import { refreshRegisteredReporting } from "../workers/slopbot/reporting-readiness";
-import {
-  handleRepositoryAccess,
-  handleRepositoryRead,
-  REPOSITORY_ACCESS_URL,
-  REPOSITORY_READ_URL,
-} from "../workers/slopbot/repository-access";
+import { routeRepositoryAccess } from "../workers/slopbot/repository-access";
 
 export default {
   fetch(request, env) {
@@ -34,23 +29,16 @@ export default {
         }),
       ).then((result) => Response.json(result));
     }
-    const route = `${url.origin}${url.pathname}`;
-    const handler =
-      route === REPOSITORY_ACCESS_URL
-        ? handleRepositoryAccess
-        : route === REPOSITORY_READ_URL
-          ? handleRepositoryRead
-          : null;
-    if (request.method !== "GET" || handler === null)
-      return new Response("not found", { status: 404 });
-    return handler(request, env, (input, init) => {
-      const target = new URL(String(input));
-      if (target.origin !== "https://api.github.com")
-        throw new Error("Slopbot fixture reached an unexpected origin");
-      return fetch(
-        `${env.GITHUB_FIXTURE_ORIGIN}/__slopbot${target.pathname}${target.search}`,
-        init,
-      );
-    });
+    return (
+      routeRepositoryAccess(request, env, (input, init) => {
+        const target = new URL(String(input));
+        if (target.origin !== "https://api.github.com")
+          throw new Error("Slopbot fixture reached an unexpected origin");
+        return fetch(
+          `${env.GITHUB_FIXTURE_ORIGIN}/__slopbot${target.pathname}${target.search}`,
+          init,
+        );
+      }) ?? new Response("not found", { status: 404 })
+    );
   },
 };

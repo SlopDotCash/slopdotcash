@@ -48,8 +48,6 @@ describe("custom collaborator roles", () => {
     expect(exemption).toBe(permission.exempt ? "exempt" : "not-exempt");
     const input = {
       config: labelOnlyConfig(),
-      installationActive: true,
-      repositoryPrivate: false,
       itemKind: "pull_request" as const,
       itemOpen: true,
       draft: false,
@@ -381,8 +379,6 @@ describe("item text that instructs Slopbot to close another item", () => {
   test("a marker planted by a non-participant creates no penalty", () => {
     const routing = route({
       config: labelOnlyConfig(),
-      installationActive: true,
-      repositoryPrivate: false,
       itemKind: "issue",
       itemOpen: true,
       draft: false,
