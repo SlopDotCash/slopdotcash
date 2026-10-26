@@ -349,7 +349,7 @@ Raw evidence stays outside the repository. `value-review.ts` shares the strict
 value rubric with the hosted model route. It does not publish scores or approve
 awards. Source-bound publication, ingestion and complete historical calibration
 must pass before this route can be activated. The September/October review uses
-the owner's existing ChatGPT subscription; it does not authorize paid API calls.
+the owner's existing ChatGPT or Claude subscription; it does not authorize paid API calls.
 A hosted service still requires its own supported runtime credentials.
 
 Local evidence checks used real GitHub sources: Eliza #34772 has matching full
