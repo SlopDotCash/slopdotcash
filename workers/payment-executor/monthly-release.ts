@@ -10,6 +10,7 @@ import {
 import {
   type EvmEscrowConfig,
   evmRpc,
+  isCanonicalEvmReceipt,
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import {
@@ -269,14 +270,32 @@ export async function checkMonthlyReserveRelease(
     transactionHash: string;
     blockNumber: string;
     blockHash: string;
+    transactionIndex: string;
+    from: string;
+    to: string;
   } | null;
   if (!receipt) return { status: "pending" } as const;
   const transaction = (await evmRpc(config, "eth_getTransactionByHash", [
     input.transactionId,
-  ])) as { from: string; to: string; input: string; value: string } | null;
+  ])) as {
+    hash: string;
+    blockHash: string;
+    blockNumber: string;
+    transactionIndex: string;
+    from: string;
+    to: string;
+    input: string;
+    value: string;
+  } | null;
   const expected = plan.prepared.transaction;
   if (
     !transaction ||
+    transaction.hash.toLowerCase() !== input.transactionId.toLowerCase() ||
+    transaction.blockHash.toLowerCase() !== receipt.blockHash.toLowerCase() ||
+    BigInt(transaction.blockNumber) !== BigInt(receipt.blockNumber) ||
+    BigInt(transaction.transactionIndex) !== BigInt(receipt.transactionIndex) ||
+    receipt.from.toLowerCase() !== expected.from.toLowerCase() ||
+    receipt.to?.toLowerCase() !== expected.to.toLowerCase() ||
     transaction.from.toLowerCase() !== expected.from.toLowerCase() ||
     transaction.to?.toLowerCase() !== expected.to.toLowerCase() ||
     transaction.input.toLowerCase() !== expected.data.toLowerCase() ||
@@ -292,10 +311,17 @@ export async function checkMonthlyReserveRelease(
   const block = (await evmRpc(config, "eth_getBlockByNumber", [
     receipt.blockNumber,
     false,
-  ])) as { hash: string };
+  ])) as { hash: string; number: string; transactions: string[] } | null;
   if (
-    block.hash !== receipt.blockHash ||
-    receipt.transactionHash.toLowerCase() !== input.transactionId.toLowerCase()
+    !isCanonicalEvmReceipt(
+      input.transactionId,
+      {
+        ...receipt,
+        blockNumber: BigInt(receipt.blockNumber),
+        transactionIndex: Number(BigInt(receipt.transactionIndex)),
+      },
+      block ? { ...block, number: BigInt(block.number) } : null,
+    )
   )
     throw new Error("Transaction is not canonical and finalized");
   await verifyEvmDeployment(config, receipt.blockNumber);

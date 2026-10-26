@@ -724,6 +724,66 @@ try {
             "held",
           );
           assert.equal(releaseSigns, 1, "a released reserve never signs again");
+          for (const fault of [
+            "canonical-membership",
+            "receipt-index",
+            "transaction-block",
+            "receipt-owner",
+          ]) {
+            await assert.rejects(
+              checkMonthlyReserveRelease(
+                {
+                  ...releaseDependencies,
+                  evm: async () => ({
+                    ...config,
+                    rpcUrl: undefined,
+                    request: async (method, params) => {
+                      const actual = await rpc(method, params);
+                      if (
+                        method === "eth_getBlockByNumber" &&
+                        params[0] !== "finalized" &&
+                        fault === "canonical-membership"
+                      )
+                        return { ...(actual as object), transactions: [] };
+                      if (
+                        method === "eth_getTransactionReceipt" &&
+                        fault === "receipt-index"
+                      )
+                        return {
+                          ...(actual as object),
+                          transactionIndex: "0x1",
+                        };
+                      if (
+                        method === "eth_getTransactionByHash" &&
+                        fault === "transaction-block"
+                      )
+                        return {
+                          ...(actual as object),
+                          blockHash: `0x${"0".repeat(64)}`,
+                        };
+                      if (
+                        method === "eth_getTransactionReceipt" &&
+                        fault === "receipt-owner"
+                      )
+                        return {
+                          ...(actual as object),
+                          from: recipient.address,
+                        };
+                      return actual;
+                    },
+                  }),
+                },
+                {
+                  ...releaseRequest,
+                  planId: serviceRelease.planId,
+                  transactionId: actualReleaseHash,
+                },
+              ),
+              /canonical|reviewed release/,
+              fault,
+            );
+          }
+
           assert.equal(
             (
               await checkMonthlyReserveRelease(
@@ -1721,6 +1781,8 @@ try {
         optedOutAndWindowExpired: "leaves-completed",
         replay: "refused",
         withdrawalOfReservedFunds: "refused",
+        monthlyReleaseService:
+          "retained D1 capture; idempotent authority signature; exact owner release; canonical slot and transaction identity verified",
         monthlyReleaseInspection: legacyRoot
           ? "not-run-on-legacy"
           : "wrong-sum-only; healthy/missing/mismatch/noncanonical held",

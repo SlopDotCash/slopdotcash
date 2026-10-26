@@ -90,6 +90,7 @@ export default function OwnerReserveRelease({
       {notice && <p role="status">{notice}</p>}
       {storageError && (
         <button
+          className="button secondary-button"
           type="button"
           disabled={busy}
           onClick={() =>
@@ -131,6 +132,7 @@ export default function OwnerReserveRelease({
             </p>
           )}
           <button
+            className="button secondary-button"
             type="button"
             disabled={busy || !hash.trim()}
             onClick={() =>
@@ -161,6 +163,7 @@ export default function OwnerReserveRelease({
           </button>
           {!pending.hash && (
             <button
+              className="button secondary-button"
               type="button"
               disabled={busy}
               onClick={() => {
@@ -177,6 +180,7 @@ export default function OwnerReserveRelease({
       ) : (
         <>
           <button
+            className="button secondary-button"
             type="button"
             disabled={busy || storageError || !view.deployment}
             onClick={() =>
@@ -213,6 +217,7 @@ export default function OwnerReserveRelease({
                   <legend>Connect the vault owner's wallet</legend>
                   {wallets.map((provider) => (
                     <button
+                      className="button secondary-button"
                       type="button"
                       key={provider.id}
                       onClick={() =>
@@ -233,6 +238,7 @@ export default function OwnerReserveRelease({
                 </fieldset>
               ) : (
                 <button
+                  className="button primary-button"
                   type="button"
                   disabled={busy}
                   onClick={() =>
