@@ -535,6 +535,7 @@ export function planEnforcement(input: {
     }
   }
 
+}
 /** The public reason text of the revision an action appends. */
 export function enforcementRevisionReason(
   action: EnforcementAction,
