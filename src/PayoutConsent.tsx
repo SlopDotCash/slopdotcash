@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { evmBindingTypedData } from "../contracts/evm/adapter";
 import { readBoundedJson } from "./lib/browser-json";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
@@ -48,12 +49,17 @@ export function PayoutConsent({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const reviewHeading = useRef<HTMLHeadingElement>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const headingId = useId();
   const actionButton = useRef<HTMLButtonElement>(null);
   const result = useRef<HTMLParagraphElement>(null);
   const wasOpen = useRef(false);
   useEffect(() => {
-    if (open) reviewHeading.current?.focus();
-    else if (wasOpen.current)
+    if (open) {
+      dialog.current?.showModal();
+      reviewHeading.current?.focus();
+    } else dialog.current?.close();
+    if (!open && wasOpen.current)
       (notice ? result.current : actionButton.current)?.focus();
     wasOpen.current = open;
   }, [open, notice]);
@@ -214,17 +220,33 @@ export function PayoutConsent({
           Authorize payout wallet
         </button>
       )}
-      {open && (
-        <section aria-label="Review payout wallet consent">
-          <h3 tabIndex={-1} ref={reviewHeading}>
+      {createPortal(
+        <dialog
+          ref={dialog}
+          className="wallet-picker payout-consent-dialog"
+          aria-labelledby={headingId}
+          onCancel={(event) => {
+            if (busy) event.preventDefault();
+            else {
+              setOpen(false);
+              setError("");
+            }
+          }}
+          onClose={() => setOpen(false)}
+        >
+          <h2 id={headingId} tabIndex={-1} ref={reviewHeading}>
             Review payout wallet consent
-          </h3>
+          </h2>
           <p>
-            Authorize <span className="wallet-address">{claim.address}</span> to
-            receive your awards from vault{" "}
-            <span className="wallet-address">{payment.vault}</span> on{" "}
+            Receive your awards from this vault on{" "}
             {networkLabel(payment.network)}.
           </p>
+          <dl>
+            <dt>Confirmed payout address</dt>
+            <dd className="wallet-address">{claim.address}</dd>
+            <dt>Project vault</dt>
+            <dd className="wallet-address">{payment.vault}</dd>
+          </dl>
           <p>
             {network.family === "evm"
               ? "Sign a destination authorization. This does not transfer funds from your wallet."
@@ -240,30 +262,33 @@ export function PayoutConsent({
               .
             </p>
           )}
-          {wallets.map((wallet) => (
+          <div className="wallet-picker-list">
+            {wallets.map((wallet) => (
+              <button
+                key={wallet.id}
+                type="button"
+                className="button secondary-button"
+                disabled={busy}
+                onClick={() => void authorize(wallet)}
+              >
+                {busy ? "Confirm in your wallet…" : `Sign with ${wallet.name}`}
+              </button>
+            ))}
             <button
-              key={wallet.id}
               type="button"
-              className="button secondary-button"
               disabled={busy}
-              onClick={() => void authorize(wallet)}
+              onClick={() => {
+                setOpen(false);
+                setError("");
+              }}
             >
-              {busy ? "Confirm in your wallet…" : `Sign with ${wallet.name}`}
+              Cancel
             </button>
-          ))}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              setOpen(false);
-              setError("");
-            }}
-          >
-            Cancel
-          </button>
-        </section>
+          </div>
+          {error && <p role="alert">{error}</p>}
+        </dialog>,
+        document.body,
       )}
-      {error && <p role="alert">{error}</p>}
       {notice && (
         <p role="status" tabIndex={-1} ref={result}>
           {notice}

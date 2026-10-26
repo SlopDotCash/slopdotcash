@@ -5099,3 +5099,22 @@ html:has(.security-page) {
     width: 100%;
   }
 }
+
+.payout-consent {
+  min-width: 12rem;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+.payout-consent-dialog {
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+.payout-consent-dialog h2 {
+  font-size: 1.3rem;
+}
+.payout-consent-dialog .wallet-address {
+  max-width: none;
+  margin: 0.25rem 0 1rem;
+  font-size: 0.875rem;
+}
