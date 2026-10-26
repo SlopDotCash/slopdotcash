@@ -1,3 +1,4 @@
+import type { ActorRef } from "./leaderboard-types";
 import type { SlopDatabaseWalletProof, WalletProof } from "./wallet-proof";
 
 export type { ProfileReadmeWalletProof, WalletProof } from "./wallet-proof";
@@ -90,7 +91,7 @@ export interface UnsafeDestinationReport {
 
 export interface RewardAllocation {
   intentId: string;
-  actor: { id: string; login: string };
+  actor: ActorRef;
   score: number;
   suggestedMinor: string;
   accruedMinor?: string;
@@ -173,7 +174,7 @@ export interface ExternalContributionShareManifest {
   sourceSnapshotSha256: string;
   platformSharePartsPerMillion: number;
   entries: Array<{
-    actor: { id: string; login: string };
+    actor: ActorRef;
     score: number;
     sharePartsPerMillion: number;
     evidenceEventIds: string[];
@@ -238,10 +239,7 @@ export function feeForPrincipal(
   return ((BigInt(principalMinor) * BigInt(basisPoints)) / 10_000n).toString();
 }
 
-function assertActor(
-  value: unknown,
-  path: string,
-): { id: string; login: string } {
+function assertActor(value: unknown, path: string): ActorRef {
   const actor = record(value, path);
   exactKeys(actor, ["id", "login"], path);
   return {
@@ -268,7 +266,7 @@ function assertEvidenceIds(value: unknown, path: string): string[] {
 function assertWallet(
   value: unknown,
   path: string,
-  actor: { id: string; login: string },
+  actor: ActorRef,
   expectedChain: SettlementNetwork | null,
 ): WalletProof | null {
   if (value === null) return null;
@@ -474,7 +472,7 @@ export function isSafeSuccessorWallet(
 
 export function assertUnsafeDestinationReport(
   value: unknown,
-  actor: { id: string; login: string },
+  actor: ActorRef,
   path = "unsafe destination report",
 ): UnsafeDestinationReport {
   const report = record(value, path);

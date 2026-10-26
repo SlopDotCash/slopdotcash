@@ -29,6 +29,7 @@ import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
 import type { ScoreEvent } from "./lib/leaderboard";
+import type { ActorRef } from "./lib/leaderboard-types";
 import {
   assemblePoints,
   POINTS_NOTICE,
@@ -80,7 +81,7 @@ function AdminAccountLink({ onNavigate }: { onNavigate: () => void }) {
 }
 
 interface Membership {
-  actor: { id: string; login: string };
+  actor: ActorRef;
   joinedAt: string;
   public: boolean;
   welcome: number;
@@ -1695,7 +1696,7 @@ function SocialConnections() {
   );
 }
 type Person = {
-  actor: { id: string; login: string };
+  actor: ActorRef;
   welcome: number;
   socialPoints: number;
   x: XAccount | null;

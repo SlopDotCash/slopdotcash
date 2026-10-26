@@ -30,6 +30,9 @@ export interface GitHubActor {
   kind: GitHubActorKind;
 }
 
+/** The stable identity of an actor in cycle and reward records. */
+export type ActorRef = Pick<GitHubActor, "id" | "login">;
+
 export interface GitHubLabel {
   id: string;
   name: string;

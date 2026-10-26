@@ -40,6 +40,7 @@ import {
   projectApiRequest,
   useProjectSession,
 } from "./lib/project-api";
+import type { GithubActor } from "./lib/project-contracts";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import {
   formatSecurityAmount,
@@ -871,7 +872,7 @@ type SecurityCase = {
   severity?: string | null;
   lossFinding?: string | null;
   appealState?: string;
-  reporter?: { githubId: string; githubLogin: string };
+  reporter?: GithubActor;
   payee?: { githubLogin: string };
   analysis?: Analysis | null;
   appealTriage?: AppealTriage | null;
@@ -883,16 +884,12 @@ type SecurityCase = {
   rootCauseKey?: string | null;
   duplicateOf?: string | null;
   evidenceDigest?: string | null;
-  triagers?: {
-    githubId: string;
-    githubLogin: string;
-    revokedAt: string | null;
-  }[];
+  triagers?: (GithubActor & { revokedAt: string | null })[];
   events?: CaseEvent[];
 };
 
 type CaseList = {
-  viewer: { githubId: string; githubLogin: string };
+  viewer: GithubActor;
   programs: { projectId: string; roles: string[] }[];
   cases: SecurityCase[];
   authorityUnavailable?: boolean;
