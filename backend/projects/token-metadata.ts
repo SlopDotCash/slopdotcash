@@ -4,6 +4,7 @@
  * in the manifest; page views never read chain.
  */
 
+import { TOKEN as SPL_TOKEN_PROGRAM } from "../../contracts/solana/transactions";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   REWARD_ASSET_NETWORKS,
@@ -29,8 +30,6 @@ export const DEFAULT_REWARD_RPC_URLS: Readonly<
   solana: "https://api.mainnet-beta.solana.com",
 });
 
-/** The classic SPL Token program; Token-2022 mints are not accepted. */
-const SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const MAX_RPC_BYTES = 64 * 1024;
 const SYMBOL = /^[A-Za-z0-9$._-]{1,16}$/u;
 
@@ -157,6 +156,7 @@ async function solanaMetadata(
   const account = result?.value;
   if (!account)
     throw new TokenMetadataError("No account exists at that mint address");
+  // The classic SPL Token program; Token-2022 mints are not accepted.
   if (account.owner !== SPL_TOKEN_PROGRAM)
     throw new TokenMetadataError("The mint is not a classic SPL Token mint");
   const parsed = account.data?.parsed;
