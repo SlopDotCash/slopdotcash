@@ -24,6 +24,24 @@ export interface ExpiryCoverage {
   complete: boolean;
   revision: number;
 }
+/** Both retained complete histories must describe the same finalized chain. */
+export function matchingCompletedCoverage(
+  a?: ExpiryCoverage,
+  b?: ExpiryCoverage,
+): boolean {
+  return (
+    !!a?.complete &&
+    !!b?.complete &&
+    a.blocks > 0 &&
+    a.txId === b.txId &&
+    a.blockhash === b.blockhash &&
+    a.blockhashSlot === b.blockhashSlot &&
+    a.tipSlot === b.tipSlot &&
+    a.tipHash === b.tipHash &&
+    a.blocks === b.blocks &&
+    a.digest === b.digest
+  );
+}
 export interface ExpiryCoverageStore {
   read(txId: string, operator: string): Promise<ExpiryCoverage | null>;
   save(
@@ -254,7 +272,11 @@ export async function proveSolanaExpiry(
       coverage: scan,
     });
   }
-  return allComplete
+  return allComplete &&
+    matchingCompletedCoverage(
+      observations[0]?.coverage,
+      observations[1]?.coverage,
+    )
     ? { txId, blockhash, blockhashSlot, providers: observations }
     : null;
 }

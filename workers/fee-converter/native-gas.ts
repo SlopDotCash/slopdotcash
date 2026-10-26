@@ -1,9 +1,10 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { Network } from "./config";
-import type {
-  ExpiryCoverage,
-  ExpiryCoverageStore,
-  ExpiryProof,
+import {
+  type ExpiryCoverage,
+  type ExpiryCoverageStore,
+  type ExpiryProof,
+  matchingCompletedCoverage,
 } from "./solana-expiry";
 import type { FeeD1Database } from "./store";
 
@@ -329,6 +330,13 @@ export class NativeGasJournal {
           "Solana expiry lacks positive retained block-history coverage",
         );
     }
+    if (
+      !matchingCompletedCoverage(
+        proof.providers[0].coverage,
+        proof.providers[1].coverage,
+      )
+    )
+      throw new Error("Solana completed provider histories disagree");
     const json = JSON.stringify(proof);
     const digest = Array.from(sha256(new TextEncoder().encode(json)), (b) =>
       b.toString(16).padStart(2, "0"),

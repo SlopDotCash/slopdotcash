@@ -267,3 +267,23 @@ for (const fault of [
       await expect(work).rejects.toThrow("archive unavailable");
     else expect(await work).toBeNull();
   });
+
+test("completed histories that disagree on unrelated signatures retain the reservation", async () => {
+  const a = provider("alchemy"),
+    b = provider("allnodes-publicnode");
+  const rpc: RecoveryRpc = async <T>(method: string, params: unknown[]) => {
+    const result = await b.rpc<T>(method, params);
+    if (method === "getBlock" && params[0] === 200)
+      return {
+        ...(result as object),
+        signatures: ["unrelated-landed-signature"],
+      } as T;
+    return result;
+  };
+  expect(
+    await proveSolanaExpiry("target-signature", "signed-blockhash", 100, [
+      a,
+      { operator: b.operator, rpc },
+    ]),
+  ).toBeNull();
+});

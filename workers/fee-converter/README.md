@@ -464,7 +464,10 @@ from a common expired horizon back to the signed anchor. Each parent slot and
 blockhash must link, and none may contain the signed transaction. The scan
 retains immutable page evidence and a durable cursor under the current lease,
 processing up to 32 blocks per provider per run; restarts resume the fixed
-horizon. Missing blocks or signature lists keep the hold.
+horizon. Missing blocks or signature lists keep the hold. Both completed scans must
+agree on the common horizon, block count and cumulative block/signature digest;
+a disagreement keeps the reservation even when neither lists the target.
+The journal and database enforce that agreement again at settlement.
 Stale contexts, pruned history, unknown
 or identical provider operators, receipt disagreement and provider failure
 keep the hold. A null receipt alone never releases native gas.

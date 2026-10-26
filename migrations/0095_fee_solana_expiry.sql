@@ -70,6 +70,10 @@ BEGIN
   SELECT CASE WHEN json_array_length(NEW.proof_json,'$.providers')!=2
     OR json_extract(NEW.proof_json,'$.txId') IS NOT NEW.tx_id
     OR json_extract(NEW.proof_json,'$.providers[0].operator') IS json_extract(NEW.proof_json,'$.providers[1].operator')
+    OR json_extract(NEW.proof_json,'$.providers[0].coverage.tipSlot') IS NOT json_extract(NEW.proof_json,'$.providers[1].coverage.tipSlot')
+    OR json_extract(NEW.proof_json,'$.providers[0].coverage.tipHash') IS NOT json_extract(NEW.proof_json,'$.providers[1].coverage.tipHash')
+    OR json_extract(NEW.proof_json,'$.providers[0].coverage.blocks') IS NOT json_extract(NEW.proof_json,'$.providers[1].coverage.blocks')
+    OR json_extract(NEW.proof_json,'$.providers[0].coverage.digest') IS NOT json_extract(NEW.proof_json,'$.providers[1].coverage.digest')
     OR (SELECT count(*) FROM json_each(NEW.proof_json,'$.providers') p
       JOIN fee_solana_expiry_scans s ON s.tx_id=NEW.tx_id AND s.operator=json_extract(p.value,'$.operator')
       WHERE json_extract(s.scan_json,'$.complete')=1

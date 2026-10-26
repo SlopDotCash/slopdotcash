@@ -941,6 +941,40 @@ test("expiry evidence and zero-cost resolution commit atomically under the curre
   await expect(
     journal.expiryCoverageStore().save(null, firstCoverage, []),
   ).rejects.toThrow();
+  for (const field of ["tipSlot", "tipHash", "blocks", "digest"] as const) {
+    const previous = proof.providers[1].coverage;
+    if (!previous) throw new Error("Expected second coverage");
+    const changed = { ...previous, revision: previous.revision + 1 };
+    if (field === "tipSlot" || field === "blocks") changed[field]++;
+    else changed[field] = `different-${changed[field]}`;
+    await journal.expiryCoverageStore().save(previous, changed, []);
+    proof.providers[1].coverage = changed;
+    await expect(journal.resolveSolanaExpiry(send, proof)).rejects.toThrow(
+      "histories disagree",
+    );
+    expect(() =>
+      f.sqlite
+        .query(
+          "INSERT INTO fee_solana_expiry_proofs(tx_id,fee_wallet,run_id,proof_json,proof_sha256,observed_at) VALUES(?,?,?,?,?,?)",
+        )
+        .run(
+          send.txId,
+          wallet,
+          f.run,
+          JSON.stringify(proof),
+          "d".repeat(64),
+          f.now().toISOString(),
+        ),
+    ).toThrow("block-history coverage");
+    expect((await journal.rows())[0].actual_wei).toBeNull();
+    expect(await journal.solanaExpiryResolved(send.txId)).toBe(false);
+    await expect(
+      journal.reserveSolana(`disagreement-${field}`, 101),
+    ).rejects.toThrow("daily budget");
+    const restored = { ...previous, revision: changed.revision + 1 };
+    await journal.expiryCoverageStore().save(changed, restored, []);
+    proof.providers[1].coverage = restored;
+  }
   await expect(journal.reserveSolana("another-intent", 101)).rejects.toThrow(
     "daily budget",
   );
