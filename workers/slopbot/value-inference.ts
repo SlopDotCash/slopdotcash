@@ -119,6 +119,8 @@ export async function runValueInference<T>(
     if (!completed) throw new Error("Validated inference was not retained");
     return { ...completed, blockReason: null };
   }
+  // A failed authority check is not a refusal by the registry; retry it.
+  if (result.failure !== undefined) throw result.failure;
   return {
     ...result,
     inferredAt,

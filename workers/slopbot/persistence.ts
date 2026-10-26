@@ -10,11 +10,7 @@ import { notifySlopbotInstallationLost } from "../../backend/notifications/event
 import { PRICE_VERSION, priceUsage } from "./contracts";
 import type { CallRecord } from "./models";
 
-export type {
-  D1Database,
-  D1Statement,
-  D1TransactionalDatabase,
-} from "../../backend/d1";
+export type { D1Database, D1TransactionalDatabase } from "../../backend/d1";
 
 const now = () => new Date().toISOString();
 
@@ -189,6 +185,17 @@ export async function installation(db: D1Database, installationId: number) {
       suspended_at: string | null;
       removed_at: string | null;
     }>();
+}
+
+/** True while the installation is neither removed nor suspended. */
+export async function installationActive(
+  db: D1Database,
+  installationId: number,
+): Promise<boolean> {
+  const state = await installation(db, installationId);
+  return (
+    state !== null && state.removed_at === null && state.suspended_at === null
+  );
 }
 
 export async function count(

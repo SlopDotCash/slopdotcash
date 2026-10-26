@@ -83,14 +83,7 @@ export type ConfigResult =
   | { ok: true; config: RepositoryConfig }
   | { ok: false; config: RepositoryConfig; problem: string };
 
-export function parseRepositoryConfig(text: string | null): ConfigResult {
-  if (text === null) {
-    return {
-      ok: false,
-      config: labelOnlyConfig(),
-      problem: `${CONFIG_PATH} is missing`,
-    };
-  }
+export function parseRepositoryConfig(text: string): ConfigResult {
   let raw: unknown;
   try {
     raw = JSON.parse(text);

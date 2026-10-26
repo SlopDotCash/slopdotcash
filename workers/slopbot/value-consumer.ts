@@ -281,9 +281,16 @@ export async function consumeValueRequest(
         : null,
     );
     return await finish("published", true);
-  } catch {
-    // Do not persist provider/source exception bodies. A lost lease also refuses
-    // this transition, leaving recovery to the new owner or the lease expiry.
+  } catch (error) {
+    // Do not persist or log provider/source exception bodies. A lost lease also
+    // refuses this transition, leaving recovery to the new owner or the lease expiry.
+    console.error(
+      JSON.stringify({
+        event: "value_request_retry",
+        delivery: job.deliveryId,
+        kind: error instanceof Error ? error.name : "unknown",
+      }),
+    );
     return await finish("retry");
   }
 }

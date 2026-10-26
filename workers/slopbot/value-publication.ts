@@ -7,7 +7,7 @@ import {
 } from "../../src/lib/repositories.mjs";
 import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
-import { type D1Database, installation } from "./persistence";
+import { type D1Database, installationActive } from "./persistence";
 import { registeredProject, requireRegisteredRepository } from "./registry";
 import { loadPolicy, type ReviewEnv } from "./review";
 import { readValueDecision } from "./value-consumption";
@@ -189,8 +189,7 @@ export async function assertValueInstallation(
   db: D1Database,
   installationId: number,
 ) {
-  const state = await installation(db, installationId);
-  if (!state || state.removed_at !== null || state.suspended_at !== null)
+  if (!(await installationActive(db, installationId)))
     throw new Error("Value publication installation is inactive");
 }
 
