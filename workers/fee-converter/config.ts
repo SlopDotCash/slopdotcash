@@ -3,9 +3,11 @@
  * a missing or malformed value refuses the run instead of guessing.
  */
 
+import type { EscrowChain } from "../../src/lib/escrow-policy.mjs";
 import { type NativeGasLimits, validateNativeLimits } from "./native-gas";
 
-export type Network = "base" | "ethereum" | "robinhood" | "solana";
+export type Network = EscrowChain;
+/** A signing job's run mode; `off` and `dry_run` never load a key. */
 export type Mode = "off" | "dry_run" | "live";
 
 export const NETWORKS: readonly Network[] = [
@@ -156,13 +158,6 @@ export function isTokenAddress(network: Network, value: unknown): boolean {
     : SOLANA_ADDRESS.test(value);
 }
 
-/** Lowercases EVM addresses; Solana addresses are case-sensitive. */
-export function normalizeToken(network: Network, value: string): string {
-  return NETWORK_DEFINITIONS[network].family === "evm"
-    ? value.toLowerCase()
-    : value;
-}
-
 /**
  * Conversion limits are economic and security policy (PRD section 9, "Fee
  * conversion": routes, limits and custody remain approvals). The code holds
@@ -231,9 +226,9 @@ export function parseConfig(env: FeeConverterEnv): FeeConverterConfig {
     return {
       network,
       definition,
-      feeWallet: normalizeToken(network, feeWallet),
+      feeWallet,
       rpcUrl,
-      allowlist: (list as string[]).map((t) => normalizeToken(network, t)),
+      allowlist: list as string[],
     };
   });
   if (env.FEE_CONVERTER_NATIVE_BUDGETS?.trim()) {
