@@ -12,6 +12,7 @@ import {
   matchesHistoricalIntegrationBranch,
   type ValueBranchPolicy,
 } from "./value-branch-policy";
+import { githubLinkDestinations } from "./value-commit-hints";
 import {
   needsFullValueComparison,
   recoverFullValueComparisons,
@@ -372,15 +373,7 @@ async function relatedPullRequests(
   for (const text of sourceTexts) {
     // Link destinations own the reference scope. In release notes, a label
     // such as #412 may point to an upstream repository rather than this one.
-    const referencesText = text
-      .replace(
-        /<a\b[^>]*\bhref=(["'])(https:\/\/(?:redirect\.)?github\.com\/[^"']+)\1[^>]*>[\s\S]*?<\/a>/giu,
-        "$2",
-      )
-      .replace(
-        /\[[^\]\n]*\]\((https:\/\/(?:redirect\.)?github\.com\/[^\s)]+)\)/gu,
-        "$1",
-      );
+    const referencesText = githubLinkDestinations(text);
     for (const match of referencesText.matchAll(
       /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu,
     )) {
@@ -600,7 +593,7 @@ export async function collectValueEvidence(
   )
     throw new Error("Repository policy does not match the evidence source");
   const path = `${root}/pulls/${number}`;
-  const rawPull = await client.get<Pull>(path);
+  const rawPull = await client.get<Pull & { created_at: string }>(path);
   if (!rawPull) throw new Error("Pull request unavailable");
   const {
     node_id,
@@ -688,13 +681,6 @@ export async function collectValueEvidence(
   );
   const comments = rawComments.map(comment);
   const reviewComments = rawReviewComments.map(comment);
-  const retainedMergeReferences = await collectRetainedMergeReferences(client, {
-    repository,
-    repositoryNodeId: repositoryIdentity.node_id,
-    repositoryDatabaseId: repositoryIdentity.id,
-    pull,
-    comments,
-  });
   const limitations: string[] = [];
   if (repositoryPolicy === null)
     limitations.push("Registered repository scoring policy is unavailable");
@@ -898,6 +884,20 @@ export async function collectValueEvidence(
       collectCommitChanges(client, root, sha, "Indirect integration commit"),
   );
   limitations.push(...indirect.limitations);
+  // Retained copies never use an indirect-accepted source. A reference there
+  // could not authorize credit; it would only change the source digest.
+  const retained =
+    indirect.acceptance === null
+      ? await collectRetainedMergeReferences(client, {
+          repository,
+          repositoryNodeId: repositoryIdentity.node_id,
+          repositoryDatabaseId: repositoryIdentity.id,
+          pull,
+          comments,
+          createdAt: rawPull.created_at,
+        })
+      : { references: [], limitations: [] };
+  limitations.push(...retained.limitations);
   if (indirect.acceptance !== null) {
     evidenceUrls.push(
       indirect.acceptance.observationUrl,
@@ -1012,7 +1012,9 @@ export async function collectValueEvidence(
     reviews,
     comments,
     reviewComments,
-    ...(retainedMergeReferences.length ? { retainedMergeReferences } : {}),
+    ...(retained.references.length
+      ? { retainedMergeReferences: retained.references }
+      : {}),
     limitations,
     evidenceUrls,
     eligibleReviewIds,

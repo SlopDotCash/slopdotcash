@@ -336,12 +336,20 @@ an unchanged source keeps its original digest. Nonempty resolution evidence is
 never copied from the submitted assessment into the fresh source.
 
 For copied work, a maintainer's short merge reference must resolve through
-GitHub in the same repository to the exact accepted merge. Collection binds
-the resolution to the original comment, actor, timestamps and repository/PR
-identities. Import and publication refresh it. Missing, ambiguous or changed
-evidence cannot assign the copied work; complete edits, author retention and
-unique original attribution remain required. Full merge references keep their
-existing checks. No acknowledgement text or historical capture is rewritten.
+GitHub in the same repository to the exact accepted merge. GitHub must also
+show that the commenter merged that pull request, that the comment came after
+the merge, and that the closed PR was created before the merge. A later
+duplicate is never the original. Collection binds the resolution to the
+original comment, actor, timestamps and repository/PR identities. Import and
+publication refresh it. Collection skips indirect-accepted sources, and more
+than 16 hints is a limitation, not an empty result. Missing, ambiguous or
+changed evidence cannot assign the copied work; complete edits, author
+retention and unique original attribution remain required. A different or
+unlinked primary author on either commit is a limitation. Full merge
+references keep their stored evidence and add no request, so the closed PR
+must have a lower GitHub PR number than the accepted PR. A link destination,
+reference definition or `user@SHA` fork owns scope for every GitHub host
+spelling. No acknowledgement text or historical capture is rewritten.
 
 Historical resolution evidence must
 remain source-bound and pass the joint record's freshness and publication gates.
