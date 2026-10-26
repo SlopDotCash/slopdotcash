@@ -30,7 +30,7 @@ mock.module(fileURLToPath(new URL("./projects.mjs", import.meta.url)), () => ({
   findProject: (id: string) => (id === "eliza" ? eliza200 : null),
 }));
 
-const { assertRewardAllocationManifest } = await import("./rewards");
+const { assertRewardAllocationManifest, feeForPrincipal } = await import("./rewards");
 
 function fee200Manifest() {
   return {
@@ -92,4 +92,26 @@ test("a 200-basis-point allocation keeps its fee through validation", () => {
   // The validated manifest must validate again: finalization re-validates
   // the proposal, so a rewritten fee breaks the propose-to-finalize path.
   expect(() => assertRewardAllocationManifest(validated)).not.toThrow();
+});
+
+test("feeForPrincipal rounds the fee up, matching PRD section 6", () => {
+  // PRD section 6: ceil(gross / 50) at 200 basis points. A one-base-unit
+  // award pays one unit in fees and zero to the contributor.
+  expect(feeForPrincipal("0", 200)).toBe("0");
+  expect(feeForPrincipal("1", 200)).toBe("1");
+  expect(feeForPrincipal("49", 200)).toBe("1");
+  expect(feeForPrincipal("50", 200)).toBe("1");
+  expect(feeForPrincipal("51", 200)).toBe("2");
+  expect(feeForPrincipal("100", 200)).toBe("2");
+  expect(feeForPrincipal("349", 200)).toBe("7");
+  expect(feeForPrincipal("51", 100)).toBe("1");
+});
+
+test("feeForPrincipal never lowers the fee when an amount is split", () => {
+  const whole = BigInt(feeForPrincipal("100", 200));
+  let split = 0n;
+  for (let i = 0; i < 100; i += 1) {
+    split += BigInt(feeForPrincipal("1", 200));
+  }
+  expect(split).toBeGreaterThanOrEqual(whole);
 });

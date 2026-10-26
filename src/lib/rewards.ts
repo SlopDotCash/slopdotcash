@@ -257,7 +257,15 @@ export function feeForPrincipal(
       "basis points must be an integer from 0 through 10,000",
     );
   }
-  return ((BigInt(principalMinor) * BigInt(basisPoints)) / 10_000n).toString();
+  const numerator = BigInt(principalMinor) * BigInt(basisPoints);
+  if (numerator === 0n) {
+    return "0";
+  }
+  // PRD section 6: the fee is rounded up, so splitting an amount never
+  // lowers it. BigInt division truncates, so add the divisor minus one
+  // first to get ceil division. This matches the contract payoutFee
+  // (gross / 50, rounded up) for the 200-basis-point case.
+  return ((numerator + 9_999n) / 10_000n).toString();
 }
 
 function assertActor(
