@@ -27,10 +27,23 @@ export interface AccountPayment extends PaymentAsset {
   feeBase: string;
   state: "reserved" | "paid";
   /** PRD section 6 payment states of a reserved award. */
-  deliveryState: "needs_wallet" | "ready" | "submitted" | "held" | "paid";
+  deliveryState: (typeof PAYMENT_DELIVERY_STATES)[number];
   submittedTransactionId: string | null;
   transactionId: string | null;
 }
+export const PAYMENT_DELIVERY_STATES = [
+  "needs_wallet",
+  "ready",
+  "submitted",
+  "held",
+  "paid",
+] as const;
+/** The states of an approved award before its vault reservation. */
+export const UNRESERVED_AWARD_STATES = [
+  "underfunded",
+  "awaiting-reservation",
+  "conflict",
+] as const satisfies readonly MonthlyAwardState[];
 /**
  * A monthly award's state before and after its vault reservation. Owners and
  * contributors read the same value; a reserved or paid state comes only from
@@ -56,10 +69,7 @@ export interface AccountMonthlyAward extends PaymentAsset {
   grossBase: string;
   feeBase: string;
   netBase: string;
-  state: Extract<
-    MonthlyAwardState,
-    "underfunded" | "awaiting-reservation" | "conflict"
-  >;
+  state: (typeof UNRESERVED_AWARD_STATES)[number];
 }
 export interface PaymentsAccount {
   githubUserId: string;

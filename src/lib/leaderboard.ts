@@ -45,6 +45,16 @@ import type {
   WorkItemModelStatus,
   WorkItemSelection,
 } from "./leaderboard-types";
+import {
+  COVERAGE_STATUSES,
+  EVIDENCE_CATEGORIES,
+  GITHUB_ACTOR_KINDS,
+  SCORE_CATEGORIES,
+  WORK_ITEM_ACTIONABILITIES,
+  WORK_ITEM_CANDIDATE_EXCLUSIONS,
+  WORK_ITEM_CLAIM_SOURCES,
+  WORK_ITEM_PRIORITIES,
+} from "./leaderboard-types";
 import { isRecord } from "./record-validation.mjs";
 import { penaltyDeductions } from "./score-penalties";
 import {
@@ -658,14 +668,6 @@ export function isNearMaterialTestChange(
     churn >= Math.ceil(MATERIAL_TEST_CHURN / 2)
   );
 }
-
-const EVIDENCE_CATEGORIES: readonly EvidenceCategory[] = [
-  "screenshot",
-  "video",
-  "logs",
-  "trajectory",
-  "domain-artifact",
-];
 
 interface EvidenceClaim {
   category: EvidenceCategory;
@@ -5103,11 +5105,7 @@ function assertActorValue(value: unknown, path: string): void {
       `${path}.url must match the actor's canonical GitHub profile`,
     );
   }
-  assertEnum(
-    actor.kind,
-    ["Bot", "Mannequin", "Organization", "User", "Unknown"],
-    `${path}.kind`,
-  );
+  assertEnum(actor.kind, GITHUB_ACTOR_KINDS, `${path}.kind`);
 }
 
 function assertNullableActor(
@@ -5154,14 +5152,7 @@ function assertMethodologyValue(value: unknown, path: string): void {
   ) {
     throw new Error(`${path}.scoringRules must contain all six scoring rules`);
   }
-  const expectedRuleIds: ScoreCategory[] = [
-    "merged-pull-request",
-    "resolved-issue",
-    "material-test-change",
-    "evidence",
-    "substantive-review",
-    "evaluated-contribution",
-  ];
+  const expectedRuleIds = SCORE_CATEGORIES;
   const seenRuleIds = new Set<string>();
   methodology.scoringRules.forEach((ruleValue, index) => {
     const rulePath = `${path}.scoringRules[${index}]`;
@@ -5652,11 +5643,7 @@ function assertCoverageCounts(
     humanOnlySourceCount,
     `${path}.humanOnlySourceCount`,
   );
-  assertEnum(
-    value.status,
-    ["complete", "partial", "missing", "invalid"],
-    `${path}.status`,
-  );
+  assertEnum(value.status, COVERAGE_STATUSES, `${path}.status`);
   if (
     validSourceCount > eligibleSourceCount ||
     invalidSourceCount > eligibleSourceCount ||
@@ -5707,14 +5694,10 @@ function assertWorkItemValue(
   assertIsoTimestamp(item.createdAt, `${path}.createdAt`);
   assertIsoTimestamp(item.updatedAt, `${path}.updatedAt`);
   const labels = assertStringArray(item.labels, `${path}.labels`);
-  assertEnum(
-    item.priority,
-    ["urgent", "high", "normal", "low"],
-    `${path}.priority`,
-  );
+  assertEnum(item.priority, WORK_ITEM_PRIORITIES, `${path}.priority`);
   assertEnum(
     item.actionability,
-    ["actionable", "blocked", "draft"],
+    WORK_ITEM_ACTIONABILITIES,
     `${path}.actionability`,
   );
   const labelRecords = labels.map((name) => ({ id: name, name, color: "" }));
@@ -5770,11 +5753,7 @@ function assertWorkItemValue(
 
   const claim = assertObject(item.claim, `${path}.claim`);
   assertEnum(claim.status, ["claimed", "unclaimed"], `${path}.claim.status`);
-  assertEnum(
-    claim.source,
-    ["assignee", "label", "claim-comment", "pull-request", "none"],
-    `${path}.claim.source`,
-  );
+  assertEnum(claim.source, WORK_ITEM_CLAIM_SOURCES, `${path}.claim.source`);
   if (claim.kind !== null) {
     assertEnum(claim.kind, ["implementation", "review"], `${path}.claim.kind`);
   }
@@ -5824,18 +5803,7 @@ function assertWorkItemValue(
   selectionReasons.forEach((reason, index) => {
     assertEnum(
       reason,
-      [
-        "active-review-request",
-        "already-approved",
-        "blocked",
-        "bot-authored",
-        "changes-requested",
-        "claimed",
-        "draft",
-        "security-sensitive",
-        "untriaged",
-        "unknown-author",
-      ],
+      WORK_ITEM_CANDIDATE_EXCLUSIONS,
       `${path}.selection.reasons[${index}]`,
     );
   });
@@ -5887,7 +5855,7 @@ function assertWorkItemValue(
   categories.forEach((category, index) => {
     assertEnum(
       category,
-      ["screenshot", "video", "logs", "trajectory", "domain-artifact"],
+      EVIDENCE_CATEGORIES,
       `${path}.evidence.categories[${index}]`,
     );
   });
@@ -5906,11 +5874,7 @@ function assertWorkItemValue(
   }
 
   const model = assertObject(item.model, `${path}.model`);
-  assertEnum(
-    model.status,
-    ["complete", "partial", "missing", "invalid"],
-    `${path}.model.status`,
-  );
+  assertEnum(model.status, COVERAGE_STATUSES, `${path}.model.status`);
   const identifiers = assertStringArray(
     model.identifiers,
     `${path}.model.identifiers`,
@@ -5962,18 +5926,7 @@ function assertLedgerValue(
   const event = assertObject(value, path);
   assertString(event.id, `${path}.id`);
   assertActorValue(event.actor, `${path}.actor`);
-  assertEnum(
-    event.category,
-    [
-      "merged-pull-request",
-      "resolved-issue",
-      "material-test-change",
-      "evidence",
-      "substantive-review",
-      "evaluated-contribution",
-    ],
-    `${path}.category`,
-  );
+  assertEnum(event.category, SCORE_CATEGORIES, `${path}.category`);
   assertNonNegativeNumber(event.points, `${path}.points`);
   const eventPoints = Number(event.points);
   const isV2 =
@@ -6282,18 +6235,7 @@ function assertOpportunityValue(
     ],
     `${path}.kind`,
   );
-  assertEnum(
-    opportunity.category,
-    [
-      "merged-pull-request",
-      "resolved-issue",
-      "material-test-change",
-      "evidence",
-      "substantive-review",
-      "evaluated-contribution",
-    ],
-    `${path}.category`,
-  );
+  assertEnum(opportunity.category, SCORE_CATEGORIES, `${path}.category`);
   const kind = opportunity.kind as ScoreOpportunityKind;
   const category = opportunity.category as ScoreCategory;
   let potentialPoints: number | null = null;
