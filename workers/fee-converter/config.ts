@@ -94,7 +94,7 @@ export interface FeeConverterEnv {
   FEE_CONVERTER_RUN_CAP_MICRO?: string;
   FEE_CONVERTER_DAILY_CAP_MICRO?: string;
   FEE_CONVERTER_SOLANA_FEE_MICRO?: string;
-  /** Per-network exact wei limits; no defaults and no inherited keeper caps. */
+  /** Exact native base units: wei on EVM, lamports on Solana. No inherited caps. */
   FEE_CONVERTER_NATIVE_BUDGETS?: string;
   FEE_WALLET_BASE?: string;
   FEE_WALLET_ETHEREUM?: string;
@@ -265,7 +265,6 @@ export function parseConfig(env: FeeConverterEnv): FeeConverterConfig {
   for (const network of networks as NetworkConfig[])
     if (
       mode === "live" &&
-      network.definition.family === "evm" &&
       network.definition.usdc !== null &&
       !network.nativeBudget
     )

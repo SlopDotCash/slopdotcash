@@ -92,6 +92,8 @@ Native gas limits are separate from token-value caps. The fee signer stays off u
 
 Owner decision, 26 October 2026: the latest approved fee-service ceilings are 0.0001 ETH per transaction and 0.001 ETH per UTC day on Base, 0.001 ETH and 0.01 ETH on Ethereum, and 0.0002 ETH and 0.002 ETH on Robinhood. Base includes a 0.00005 ETH data/operator reserve inside its transaction ceiling. These values supersede the earlier fee-service limits. Existing conversion safeguards remain, Robinhood retains received assets, and these ceilings authorize no funding or additional project-payment activation.
 
+Owner decision, 26 October 2026, issue #905: Solana fee-service ceilings are 0.005 SOL per transaction and 0.02 SOL per UTC day, including account creation and priority fees. These supersede the earlier 0.001 SOL / 0.01 SOL proposal. Enforce the dedicated native budget and durable uncertain-send accounting before enabling Solana. Gas funding is a separately reviewed exact-amount step.
+
 Slop owners authorize sweeps to separate owner-controlled software wallets. A human or owner-authorized agent executes them outside the Worker. Sweep keys stay in the owner's local `.env`, never in the Worker. These are software wallets, not cold storage.
 
 ## 7. Points, discovery, and clear pages
