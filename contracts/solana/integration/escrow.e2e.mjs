@@ -2448,7 +2448,7 @@ const monthlyAdmission = (stranger, period, n) =>
       .accountsStrict({ owner: payer.publicKey, project })
       .rpc();
     const { root, total } = tree;
-    await program.methods
+    const signature = await program.methods
       .commitMonthly(n, [...Buffer.from(root, "hex")], bn(total), bn(frozenAt))
       .accountsStrict({
         payer: stranger.publicKey,
@@ -2514,7 +2514,7 @@ const monthlyAdmission = (stranger, period, n) =>
         .signers([stranger])
         .rpc();
     };
-    return { total, leaf };
+    return { total, leaf, signature };
   };
 
 // An admitted month blocks the owner's direct commits while any of its gross is
@@ -3010,10 +3010,12 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
     bindingDelaySeconds: String(DELAY),
     rotationDelaySeconds: String(ROTATION_DELAY),
   });
-  const finalized = async () => {
-    const slot = await provider.connection.getSlot("confirmed");
-    while ((await provider.connection.getSlot("finalized")) < slot)
-      await sleep(250);
+  const finalized = async (signature) => {
+    const receipt = await provider.connection.confirmTransaction(
+      signature,
+      "finalized",
+    );
+    assert.equal(receipt.value.err, null);
   };
   const accounts = async () =>
     (
@@ -3064,7 +3066,7 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
     741,
   );
   const healthyMonth = await admit(healthy, await chainTime());
-  await finalized();
+  await finalized(healthyMonth.signature);
   let settings = await config();
   const beforeHealthy = await accounts();
   assert.deepEqual(await inspect(settings, { entries: healthy }), {
@@ -3084,7 +3086,7 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
     proof: (index) => solanaAllocationProof(entries, index),
   };
   const wrong = await admit(entries, await chainTime(), tree);
-  await finalized();
+  await finalized(wrong.signature);
   settings = await config();
   const beforeWrong = await accounts();
   assert.deepEqual(await inspect(settings, null), {
@@ -3185,7 +3187,7 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
   await commit("inspection-smaller", 761, 19_999_999);
   await commit("inspection-other", 999, 10_000_000);
   const heldMonth = await admit(held, frozen);
-  await finalized();
+  await finalized(heldMonth.signature);
   settings = await config();
   const beforeHeld = await accounts();
   assert.deepEqual(await inspect(settings, { entries: held }), {
