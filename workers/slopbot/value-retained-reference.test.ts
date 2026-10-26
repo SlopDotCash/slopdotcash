@@ -435,3 +435,14 @@ test("complete copied edits and unique original authorship remain required", asy
     "PR_1: retained primary author identity differs between commits",
   );
 });
+
+for (const reference of [
+  `other/repo@${merge}`,
+  `[${merge}](https://github.com/other/repo/pull/123/commits/${merge})`,
+])
+  test(`foreign full reference ${reference} stays held`, async () => {
+    const f = fixture();
+    f.state.comments[0].body = `Replacement merged as ${reference}.`;
+    const bindings = await retainedCopyBindings(await f.collect());
+    expect(bindings.bindings.size).toBe(0);
+  });

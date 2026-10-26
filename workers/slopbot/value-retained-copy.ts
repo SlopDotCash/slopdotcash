@@ -1,6 +1,8 @@
 /** Private GitHub evidence for copied contributions. A closure comment is a
  * discovery hint, never sufficient evidence for assigning implementation credit.
  */
+
+import { sameRepositoryCommitHints } from "./value-commit-hints";
 import type { FileChange, ValueEvidence } from "./value-evidence";
 import { retainedManifestIdentity } from "./value-manifest-identity";
 import {
@@ -140,8 +142,8 @@ export async function retainedCopySources(
         Date.parse(comment.created_at) >=
           Date.parse(accepted.merged_at as string) &&
         /\b(?:merged?|integrat(?:ed|ion))\b/iu.test(comment.body) &&
-        ([...comment.body.matchAll(/\b[a-f0-9]{40}\b/gu)].some(
-          ([sha]) => sha === accepted.merge_commit_sha,
+        (sameRepositoryCommitHints(evidence.repository, comment.body).some(
+          (sha) => sha.length === 40 && sha === accepted.merge_commit_sha,
         ) ||
           (await hasRetainedMergeReference(evidence, comment, integration)))
       )
