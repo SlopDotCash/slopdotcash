@@ -13,6 +13,7 @@ import {
   isSameOriginJsonWrite,
   json as jsonResponse,
 } from "../http";
+import { consumeIdentityAssertion } from "../identity-assertion";
 import { handleX, type XConfiguration } from "./x";
 
 export interface PointsDependencies {
@@ -161,37 +162,21 @@ export async function handlePointsApi(
         typeof value.public !== "boolean"
       )
         return json(400, { error: "invalid_request" });
-      const response = await deps.identity.fetch(
-        new Request("https://identity.internal/v1/assertions/consume", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${value.assertion}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({ audience: "slop-points-web" }),
-        }),
+      const identity = await consumeIdentityAssertion(
+        deps.identity,
+        value.assertion,
+        "slop-points-web",
       );
-      if (!response.ok) return json(401, { error: "identity_expired" });
-      const identity = (await readBoundedJson(
-        response,
-        16384,
-        "identity",
-      )) as Record<string, unknown>;
-      const {
-        githubActorId: id,
-        githubNodeId: node,
-        githubLogin: login,
-      } = identity;
+      if (identity === "expired")
+        return json(401, { error: "identity_expired" });
+      const node = identity === "invalid" ? null : identity.githubNodeId;
       if (
-        identity.audience !== "slop-points-web" ||
-        typeof id !== "string" ||
-        !/^\d+$/.test(id) ||
+        identity === "invalid" ||
         typeof node !== "string" ||
-        !/^[A-Za-z0-9_=-]{4,256}$/.test(node) ||
-        typeof login !== "string" ||
-        !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(login)
+        !/^[A-Za-z0-9_=-]{4,256}$/.test(node)
       )
         return json(401, { error: "invalid_identity" });
+      const { githubId: id, githubLogin: login } = identity;
       // A closed account opens again only when this sign-in asks to reopen
       // it, so closing is never undone by an ordinary sign-in.
       const closed = await deps.db

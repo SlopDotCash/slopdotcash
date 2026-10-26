@@ -17,11 +17,14 @@ import type {
 } from "../../src/lib/project-contracts";
 import {
   parseRepositoryIdentity,
+  type RepositoryIdentity,
   SLOPBOT_INSTALL_URL,
 } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
+import type { RepositoryControl } from "./contracts";
 import type { ProjectRestriction } from "./enforcement";
+import { type GithubFetch, githubJson } from "./github-lookup";
 
 /**
  * Reads the Slopbot installation and the account's repository permission
@@ -364,4 +367,125 @@ export function projectSetupStatus(input: {
     activatedRevision: input.activatedRevision,
     checkedAt: input.checkedAt,
   };
+}
+
+/** GitHub repository facts as GitHub reports them; nothing is validated yet. */
+export type RepositoryFacts = {
+  id?: unknown;
+  node_id?: unknown;
+  full_name?: unknown;
+  private?: unknown;
+  owner?: {
+    id?: unknown;
+    node_id?: unknown;
+    login?: unknown;
+    type?: unknown;
+  } | null;
+};
+
+/**
+ * The manifest names this public repository, and its steward is the account
+ * GitHub reports as the owner: the same numeric id, node id, account type and
+ * login (case-insensitive). Pages show the steward by login and attribute the
+ * project to its node id.
+ */
+export function manifestMatchesRepository(
+  manifest: ProjectDefinition,
+  facts: RepositoryFacts,
+): boolean {
+  const steward = manifest.steward.github;
+  return (
+    String(facts.id) === manifest.authority.repositoryId &&
+    facts.node_id === manifest.authority.repositoryNodeId &&
+    String(facts.full_name).toLowerCase() ===
+      manifest.repositories[0].id.toLowerCase() &&
+    facts.private === false &&
+    String(facts.owner?.id) === steward.actorId &&
+    facts.owner?.node_id === steward.nodeId &&
+    facts.owner?.type === steward.type &&
+    String(facts.owner?.login).toLowerCase() === steward.login.toLowerCase()
+  );
+}
+
+/**
+ * Repositories and aliases one application may name, so a submission makes a
+ * bounded number of GitHub reads. Listed projects name one repository and at
+ * most one alias, and `/projects/new` sends one repository.
+ */
+const MAX_APPLICATION_GITHUB_NAMES = 5;
+
+/**
+ * Checks the manifest against public GitHub facts: the repository and steward
+ * identities must match GitHub exactly, and every other repository and alias
+ * must be a public GitHub repository, each alias a name of the repository it
+ * follows. These facts never grant authority; the Slopbot installation read
+ * does (owner decision D11).
+ */
+export async function repositoryControl(
+  manifest: ProjectDefinition,
+  github: { fetch: GithubFetch; token: string | undefined; apiOrigin: string },
+  facts?: RepositoryIdentity,
+): Promise<RepositoryControl> {
+  const repository = manifest.repositories[0];
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository.id))
+    return { state: "mismatch", reason: "Repository must be owner/name" };
+  const names = manifest.repositories.flatMap((entry) => [
+    entry.id,
+    ...(entry.aliases ?? []),
+  ]);
+  if (names.length > MAX_APPLICATION_GITHUB_NAMES)
+    return {
+      state: "mismatch",
+      reason: `An application may name at most ${MAX_APPLICATION_GITHUB_NAMES} repositories and aliases`,
+    };
+  if (!facts)
+    throw new Error("Slopbot did not return the current repository identity");
+  if (!manifestMatchesRepository(manifest, facts))
+    return {
+      state: "mismatch",
+      reason: "Repository or steward facts do not match GitHub",
+    };
+  // The other names are independent reads, so they run together.
+  const read = new Map<string, RepositoryFacts | null>(
+    await Promise.all(
+      names
+        .slice(1)
+        .map(
+          async (path) =>
+            [
+              path,
+              await githubJson(
+                github.fetch,
+                github.token,
+                `/repos/${path}`,
+                github.apiOrigin,
+              ),
+            ] as const,
+        ),
+    ),
+  );
+  read.set(repository.id, facts);
+  const missing = (path: string): RepositoryControl => ({
+    state: "mismatch",
+    reason: `GitHub has no public repository named ${path}`,
+  });
+  for (const entry of manifest.repositories) {
+    const named = read.get(entry.id);
+    if (named?.private !== false) return missing(entry.id);
+    if (String(named.full_name).toLowerCase() !== entry.id.toLowerCase())
+      return {
+        state: "mismatch",
+        reason: `GitHub names ${entry.id} ${String(named.full_name)}`,
+      };
+    for (const alias of entry.aliases ?? []) {
+      const aliased = read.get(alias);
+      if (aliased?.private !== false) return missing(alias);
+      if (String(aliased.id) !== String(named.id))
+        return {
+          state: "mismatch",
+          reason: `Alias ${alias} is not a name of ${entry.id} on GitHub`,
+        };
+    }
+  }
+  return { state: "matched" };
 }

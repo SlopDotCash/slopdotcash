@@ -3,6 +3,7 @@ import type { GithubActor } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { fail } from "../http";
 import {
+  manifestMatchesRepository,
   type RepositoryAccessReader,
   readRepositoryAccess,
   setupAuthority,
@@ -30,21 +31,10 @@ export async function repositoryReportingAuthority(
       "github_unavailable",
       "Slopbot did not return the repository identity. Try again.",
     );
-  const steward = manifest.steward.github;
-  if (
-    String(facts.id) !== manifest.authority.repositoryId ||
-    facts.node_id !== manifest.authority.repositoryNodeId ||
-    facts.full_name.toLowerCase() !==
-      manifest.repositories[0].id.toLowerCase() ||
-    facts.private ||
-    String(facts.owner.id) !== steward.actorId ||
-    facts.owner.node_id !== steward.nodeId ||
-    facts.owner.type !== steward.type ||
-    facts.owner.login.toLowerCase() !== steward.login.toLowerCase()
-  )
-    return false;
+  if (!manifestMatchesRepository(manifest, facts)) return false;
   return (
-    actor.githubId === steward.actorId || checked.access.permission === "admin"
+    actor.githubId === manifest.steward.github.actorId ||
+    checked.access.permission === "admin"
   );
 }
 

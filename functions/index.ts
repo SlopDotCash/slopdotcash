@@ -1,8 +1,9 @@
+import type { PagesMiddlewareContext } from "../backend/pages";
 import { readBoundedText } from "../src/lib/browser-json";
 
 const CASH_DOMAIN = "slop.cash";
 const TECH_DOMAIN = "slop.tech";
-export const MAX_TRANSFORMED_HTML_BYTES = 1024 * 1024;
+const MAX_TRANSFORMED_HTML_BYTES = 1024 * 1024;
 
 type PublicDomain = typeof CASH_DOMAIN | typeof TECH_DOMAIN;
 
@@ -14,12 +15,7 @@ type SocialMetadata = {
     | "https://slop.tech/og-slop-tech.png";
 };
 
-type PagesContext = {
-  request: Request;
-  next(): Promise<Response>;
-};
-
-export function publicSocialMetadata(hostname: string): SocialMetadata {
+function publicSocialMetadata(hostname: string): SocialMetadata {
   const normalized = hostname.toLowerCase().replace(/\.$/u, "");
   const domain: PublicDomain =
     normalized === TECH_DOMAIN || normalized === `www.${TECH_DOMAIN}`
@@ -51,10 +47,7 @@ function replaceExactCount(
   return contents.replaceAll(source, replacement);
 }
 
-export function renderSocialMetadata(
-  contents: string,
-  hostname: string,
-): string {
+function renderSocialMetadata(contents: string, hostname: string): string {
   const metadata = publicSocialMetadata(hostname);
   if (metadata.domain === CASH_DOMAIN) return contents;
 
@@ -76,7 +69,9 @@ export function renderSocialMetadata(
   );
 }
 
-export async function onRequest(context: PagesContext): Promise<Response> {
+export async function onRequest(
+  context: Pick<PagesMiddlewareContext<unknown>, "request" | "next">,
+): Promise<Response> {
   if (context.request.method !== "GET") return context.next();
 
   const hostname = new URL(context.request.url).hostname;

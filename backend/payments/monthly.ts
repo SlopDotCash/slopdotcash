@@ -54,6 +54,10 @@ import {
   hasParticipationBan,
   PARTICIPATION_BAN_QUERY,
 } from "../projects/account-bans";
+import {
+  manifestMatchesRepository,
+  type RepositoryFacts,
+} from "../projects/setup";
 import { chainAwards, holdsAward } from "./chain-awards";
 import type {
   MonthlyReleaseCheck,
@@ -107,20 +111,8 @@ export async function verifyProjectAuthority(
   const identity = (await github(
     `repos/${target}`,
     "Project repository identity",
-  )) as {
-    id?: number;
-    node_id?: string;
-    owner?: { id?: number; node_id?: string; login?: string; type?: string };
-  };
-  const steward = project.steward.github;
-  if (
-    String(identity.id) !== project.authority.repositoryId ||
-    identity.node_id !== project.authority.repositoryNodeId ||
-    String(identity.owner?.id) !== steward.actorId ||
-    identity.owner?.node_id !== steward.nodeId ||
-    identity.owner?.type !== steward.type ||
-    identity.owner?.login?.toLowerCase() !== steward.login.toLowerCase()
-  )
+  )) as RepositoryFacts;
+  if (!manifestMatchesRepository(project, identity))
     throw new MonthlyPaymentError(
       409,
       "repository_changed",
