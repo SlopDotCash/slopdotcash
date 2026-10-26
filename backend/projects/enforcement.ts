@@ -418,20 +418,15 @@ export function planEnforcement(input: {
       };
     }
     case "request_reinstatement": {
-      if (
-        restriction.state === "clear" &&
-        restriction.bannedMaintainers.length === 0
-      )
-        refuse("not_restricted", "The project has no restriction to appeal");
       const isBannedActor = restriction.bannedMaintainers.some(
         (account) => account.githubId === actor.githubId,
       );
+      if (restriction.state === "clear" && !isBannedActor)
+        refuse("not_restricted", "The project has no restriction to appeal");
       if (
         isBannedActor
           ? accountAppealState(restriction, actor.githubId) === "requested"
-          : restriction.state === "clear"
-            ? restriction.appeal === "requested"
-            : projectAppealState(restriction) === "requested"
+          : projectAppealState(restriction) === "requested"
       )
         refuse("appeal_open", "A reinstatement request is already open");
       return {

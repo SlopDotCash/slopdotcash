@@ -50,7 +50,11 @@ export async function completeDelivery(db: D1Database, deliveryId: string) {
 
 export async function releaseDelivery(db: D1Database, deliveryId: string) {
   await db
-    .prepare("DELETE FROM slopbot_deliveries WHERE delivery_id = ?")
+    // A queue send may have succeeded before its response was lost. Preserve
+    // the original reopen source across redelivery and reject changed payloads.
+    .prepare(
+      "DELETE FROM slopbot_deliveries WHERE delivery_id = ? AND reopen_source IS NULL",
+    )
     .bind(deliveryId)
     .run();
 }

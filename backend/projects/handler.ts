@@ -68,6 +68,7 @@ import {
   enforcementRevisionReason,
   type ProjectRestriction,
   planEnforcement,
+  projectAppealState,
   projectRestriction,
   publicRestrictionOf,
   repositoryIdentity,
@@ -2188,23 +2189,25 @@ async function requestReinstatement(
     expectedRevision: null,
     expectedSequence: null,
     actor: { githubId: session.githubId, githubLogin: session.githubLogin },
-    actorRole: async (project) => {
-      if (String(project.manifest.steward.github.actorId) === session.githubId)
-        return "project-steward";
-      // The applicant of an older application, or the account that created
-      // the project through self-service setup.
-      const creator = await deps.persistence.projectCreator(project.id);
-      if (creator?.githubId === session.githubId) return "project-applicant";
-      const restriction = projectRestriction(
-        project.id,
-        await deps.persistence.listEnforcements(),
+    actorRole: async (project, restriction) => {
+      const isBannedAccount = restriction.bannedMaintainers.some(
+        (account) => account.githubId === session.githubId,
       );
+      const ownerRole =
+        String(project.manifest.steward.github.actorId) === session.githubId
+          ? "project-steward"
+          : (await deps.persistence.projectCreator(project.id))?.githubId ===
+              session.githubId
+            ? "project-applicant"
+            : null;
       if (
-        restriction.bannedMaintainers.some(
-          (account) => account.githubId === session.githubId,
-        )
+        isBannedAccount &&
+        (restriction.state === "clear" ||
+          projectAppealState(restriction) === "requested")
       )
         return "banned-account";
+      if (ownerRole !== null) return ownerRole;
+      if (isBannedAccount) return "banned-account";
       return fail(
         403,
         "forbidden",
@@ -2230,6 +2233,7 @@ async function recordEnforcement(
     actor: GithubActor;
     actorRole: (
       project: ProjectRecord,
+      restriction: ProjectRestriction,
     ) => EnforcementActorRole | Promise<EnforcementActorRole>;
     decisionSource: ProjectEnforcement["decisionSource"];
     mode: "preview" | "apply";
@@ -2247,11 +2251,13 @@ async function recordEnforcement(
   } = input;
   const project = await deps.persistence.getProject(projectId);
   if (project === null) fail(404, "not_found", "Project not found");
-  const actorRole = await input.actorRole(project);
   const restriction = projectRestriction(
     projectId,
     await deps.persistence.listEnforcements(),
   );
+  // Role, plan, recipients and append sequence share one restriction snapshot.
+  // A concurrent decision then fails the existing append conflict check.
+  const actorRole = await input.actorRole(project, restriction);
   if (
     (expectedRevision !== null && project.revision !== expectedRevision) ||
     (expectedSequence !== null && restriction.nextSequence !== expectedSequence)
@@ -2425,13 +2431,18 @@ async function recordEnforcement(
           actor,
           at,
         },
-    // Only a moderator who did not place the restriction may decide it.
+    // Only a moderator who did not place the restriction or account ban may decide it.
     action === "request_reinstatement"
-      ? [...deps.moderatorGithubIds].filter(
-          (githubId) =>
-            !restriction.restrictedBy.some(
-              (placed) => placed.githubId === githubId,
-            ),
+      ? [...deps.moderatorGithubIds].filter((githubId) =>
+          actorRole === "banned-account"
+            ? !activeAccountBans(restriction.records).some(
+                ({ account, record: ban }) =>
+                  account.githubId === actor.githubId &&
+                  ban.actor?.githubId === githubId,
+              )
+            : !restriction.restrictedBy.some(
+                (placed) => placed.githubId === githubId,
+              ),
         )
       : [],
   );
