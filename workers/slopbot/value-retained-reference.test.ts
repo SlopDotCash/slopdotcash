@@ -122,6 +122,11 @@ function fixture({
         result = state.resolution;
       } else if (url.pathname === `${root}/commits/${merge}/pulls`)
         result = [{ number: 2, merged_at: mergedAt, merge_commit_sha: merge }];
+      // GitHub lists no PR for a commit that no PR carries.
+      else if (
+        /^\/repos\/[^/]+\/[^/]+\/commits\/\w+\/pulls$/u.test(url.pathname)
+      )
+        result = [];
       else if (url.pathname.startsWith(`${root}/commits/`)) {
         const sha = url.pathname.split("/").at(-1);
         if (![originalSha, copiedSha, merge].includes(sha ?? ""))
@@ -486,32 +491,37 @@ for (const reference of [
     expect(bindings.bindings.size).toBe(0);
   });
 
-for (const reference of [short, merge])
-  test(`a later duplicate cannot take accepted credit through ${reference.length === 40 ? "a full" : "a short"} merge reference`, async () => {
-    // PR_2 merged first. PR_1 opened afterwards with the same edits and was
-    // closed as a duplicate of the accepted merge.
-    const f = fixture({
-      originalNumber: 3,
-      originalCreatedAt: "2026-09-05T10:00:00Z",
-      originalUser: actor("U_late"),
+for (const [opened, originalCreatedAt] of [
+  // PR_2 was opened at 2026-09-04T00:00Z and merged at 03:28Z the next day.
+  ["during review of", "2026-09-04T12:00:00Z"],
+  ["after the merge of", "2026-09-05T10:00:00Z"],
+] as const)
+  for (const reference of [short, merge])
+    test(`a duplicate opened ${opened} the accepted PR cannot take its credit through ${reference.length === 40 ? "a full" : "a short"} merge reference`, async () => {
+      // PR_1 opened after PR_2 with the same edits and was closed as a
+      // duplicate of the accepted merge.
+      const f = fixture({
+        originalNumber: 3,
+        originalCreatedAt,
+        originalUser: actor("U_late"),
+      });
+      f.state.comments[0].body = `Already merged in ${reference}.`;
+      const sources = await f.collect();
+      expect(sources[0].evidence.retainedMergeReferences).toBeUndefined();
+      const prepared = await prepareWorkUnitEvidence(sources, [repository]);
+      expect(prepared.claims).toEqual([
+        expect.objectContaining({
+          commitSha: copiedSha,
+          creditPullRequestId: "PR_2",
+          implementationActorNodeIds: [maintainer.node_id, author.node_id],
+        }),
+      ]);
+      expect(prepared.claims[0].retainedCopy).toBeUndefined();
+      // The linked exact duplicate still holds for review; it is never dropped.
+      expect(prepared.limitations).toContain(
+        "PR_1: matching copied edits require authenticated retention acknowledgement",
+      );
     });
-    f.state.comments[0].body = `Already merged in ${reference}.`;
-    const sources = await f.collect();
-    expect(sources[0].evidence.retainedMergeReferences).toBeUndefined();
-    const prepared = await prepareWorkUnitEvidence(sources, [repository]);
-    expect(prepared.claims).toEqual([
-      expect.objectContaining({
-        commitSha: copiedSha,
-        creditPullRequestId: "PR_2",
-        implementationActorNodeIds: [maintainer.node_id, author.node_id],
-      }),
-    ]);
-    expect(prepared.claims[0].retainedCopy).toBeUndefined();
-    // The linked exact duplicate still holds for review; it is never dropped.
-    expect(prepared.limitations).toContain(
-      "PR_1: matching copied edits require authenticated retention acknowledgement",
-    );
-  });
 
 for (const [name, originalCommitAuthor] of [
   ["unlinked", null],
