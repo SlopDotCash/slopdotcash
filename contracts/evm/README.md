@@ -301,7 +301,7 @@ and the recipient receives `gross - fee`. A 100-USDC award costs the project
 100 USDC and sends 98 USDC to the contributor plus 2 USDC of fees. The 2% is
 paid in the vault token. Each unused-fund withdrawal pays the same 2%:
 `withdrawalFee(gross) = payoutFee(gross) = ceil(gross / 50)`, rounded up once
-per withdrawal (PRD section 18). Withdrawing 850 USDC of free funds pays 17 USDC
+per withdrawal (PRD section 6). Withdrawing 850 USDC of free funds pays 17 USDC
 and sends 833 USDC to the owner. Every award or withdrawal of at least one base
 unit pays at least one unit of fee, so splitting never lowers the fee (owner
 decision of 24 October 2026; rounding down let a split into pieces under 50

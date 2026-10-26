@@ -356,24 +356,28 @@ an audited access. Private binding requests use the separate
 `SECURITY_SOLANA_IDENTITY_ATTESTER` service binding; they never fall back to
 the ordinary attester. Missing service configuration fails closed.
 
-## Remaining hosted acceptance
+## Hosted services
 
-- Email: the restricted verified-destination pilot is implemented in
-  `workers/notify/security.ts`; deployment and inbox delivery remain launch
-  gates. See `workers/notify/README.md`. Every case inbox insert also queues
-  one private outbox row in the same transaction. Only current case roles
-  with operator-verified destinations receive generic notices. An email
-  never contains a case identifier, amount, project or advisory. The inbox
-  action **Acknowledge** records the recipient's authenticated response;
-  **Mark read** is a separate state and never acknowledges a notice.
+- Email: the restricted verified-destination pilot is in
+  `workers/notify/security.ts`; see `workers/notify/README.md`. Every case
+  inbox insert also queues one private outbox row in the same transaction.
+  Only current case roles with operator-verified destinations receive generic
+  notices. An email never contains a case identifier, amount, project or
+  advisory. The inbox action **Acknowledge** records the recipient's
+  authenticated response; **Mark read** is a separate state and never
+  acknowledges a notice.
 - Automatic intake reads only the reporter's own advisory with the
   reporter's token; imports and retries read with the slopdotcash App
-  installation token. Slop keeps only digests. This GitHub behaviour (user
-  tokens on `/reports`, installation tokens on advisory lists, error shapes)
-  is not yet qualified on a real repository, and the App permission must be
+  installation token. Slop keeps only digests. The App permission must be
   accepted on each installation.
 - Private analysis needs `SURPLUS_API_KEY`; a zero-data-retention
-  agreement is not required. The live provider is not yet exercised.
+  agreement is not required.
+
+Owner decision, 26 October 2026 (PRD section 11, #910): the remaining
+private-reporting live checks are accepted without proof. They are non-admin
+delivery, automatic analysis, maintainer notices, interrupted-submission
+recovery and funded private-bounty settlement. Record them as waived, not
+passed.
 
 A moderator account ban prevents an account from proposing or approving a new
 bounty award, or receiving a new bounty reservation. The database checks both

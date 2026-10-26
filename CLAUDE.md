@@ -67,7 +67,8 @@ alias only.
     24 October 2026). `workers/fee-converter/wrangler.toml` sets production to
     `live` mode on Base, Ethereum and Robinhood Chain; Solana is not enabled.
     The Worker deploys only when the `SLOP_FEE_CONVERTER_RELEASE` repository
-    variable is `enabled`.
+    variable is `enabled`. Fee handling starts only after the fee wallets are
+    funded and the limits and readiness are verified (PRD section 11, #1285).
   - The referral root-posting key (PRD section 11, "Referral program", owner
     decision of 25 October 2026). It posts cumulative Merkle roots to the
     ReferralDistributor and is separate from the contract owner key. It does

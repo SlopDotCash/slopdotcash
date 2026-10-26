@@ -155,15 +155,14 @@ Historical `slop-vetting-result-v1` results keep their secure-VM rules in
 `result.ts`: eleven telemetry channels, two model reviews and a complete
 canonical assembly. No recorded incomplete result is reinterpreted as clean.
 
-## Remaining service implementation and operation
+## Scanner service dependency
 
-The intake, automatic queue, flags, scan composition and the scan service
-pass (`workers/vetting/run.ts`) are source. Deploying the scanner service, its
-Ed25519 key, the public key in `VETTING_RESULT_PUBLIC_KEYS`, the Surplus key,
-the pinned primary and specialist profiles, the evidence store policy, an
-accepted isolated runner for risky artifacts and staging acceptance remain
-operational work. Until then no community project
-can be cleared, so no project skill is served. The earlier secure-VM
+The scan service pass is `workers/vetting/run.ts`. A community project is
+cleared only by that deployed service with its Ed25519 key, the public key in
+`VETTING_RESULT_PUBLIC_KEYS`, the Surplus key, the pinned primary and
+specialist profiles, the evidence store policy and an accepted isolated runner
+for risky artifacts. Without them, no community project can be cleared, so no
+project skill is served for it. The earlier secure-VM
 components stay available for advanced detonation; they are no longer a
 prerequisite for an ordinary clean result.
 

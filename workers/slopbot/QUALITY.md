@@ -122,19 +122,20 @@ writes. GitHub offers no atomic conditional close across all these resources;
 a concurrent maintainer change after the last check remains a race and is
 covered by the appeal/reopen path, not an exactly-once claim.
 
-Do not enable either production setting as part of this PR. Quality closure
-records always have `penaltyEligible: false`; this amendment grants no penalty.
+Do not enable either production setting without that separate reviewed
+activation. Quality closure records always have `penaltyEligible: false`; this
+amendment grants no penalty.
 
-## Acceptance status
+## Tests
 
 `bun run test:slopbot` checks receipt authentication, source/artifact bytes,
 all three predicate branches, independent-defect agreement, and counterexamples.
 These deterministic tests use test signatures and fabricated collector metadata;
 they are trust-boundary regression tests, not VM, provider or hosted acceptance.
 
-Before merge readiness is claimed, run the full GitHub → verifier → two real
-provider calls → shadow record → comment flow with an approved isolated service
-and staging App/provider credentials. Include useful counterexamples, changed
+Hosted qualification runs the full GitHub → verifier → two real provider calls
+→ shadow record → comment flow with an approved isolated service and staging
+App/provider credentials. Include useful counterexamples, changed
 head/body/policy, expired evidence, provider failure, unavailable verification,
 exemptions, appeals and reopen. Retain private evidence and publish only safe
-exact-head results. No current local test substitutes for that acceptance.
+exact-head results. No local test substitutes for that qualification.
