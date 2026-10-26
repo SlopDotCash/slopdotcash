@@ -11,17 +11,13 @@ import {
   verifyPreparedSolanaBinding,
   verifySignedSolanaBinding,
 } from "./lib/payout-consent";
+import { apiRequest } from "./lib/project-api";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 
 async function request(path: string, body: unknown) {
-  const response = await fetch(`/api/v1/payments/wallets/${path}`, {
-    method: "POST",
-    credentials: "same-origin",
-    redirect: "error",
-    cache: "no-store",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(45_000),
+  const response = await apiRequest(`payments/wallets/${path}`, {
+    body,
+    timeoutMs: 45_000,
   });
   if (!response.ok)
     throw new Error(

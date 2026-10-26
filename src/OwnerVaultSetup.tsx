@@ -5,6 +5,7 @@ import type { EscrowDeployment } from "./lib/escrow-policy.mjs";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, type PayoutPolicy } from "./lib/payments/contracts";
+import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { sendSolanaWalletTransaction } from "./lib/solana-vault-actions";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
@@ -31,16 +32,7 @@ type WalletClaim = {
   authorized: boolean;
 };
 async function request(path: string, body?: unknown) {
-  const response = await fetch(`/api/v1/${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    credentials: "same-origin",
-    cache: "no-store",
-    redirect: "error",
-    headers:
-      body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(45_000),
-  });
+  const response = await apiRequest(path, { body, timeoutMs: 45_000 });
   const result = (await readBoundedJson(
     response,
     1_048_576,

@@ -20,6 +20,7 @@ import {
   type PaymentsAccount,
   transactionUrl,
 } from "./lib/payments/contracts";
+import { apiRequest } from "./lib/project-api";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { PayoutConsent } from "./PayoutConsent";
@@ -42,17 +43,10 @@ function usdcAmount(value: string): string {
 class SignedOutError extends Error {}
 
 async function request(path: string, body?: unknown, signal?: AbortSignal) {
-  const response = await fetch(`/api/v1/payments/${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    credentials: "same-origin",
-    redirect: "error",
-    cache: "no-store",
-    headers:
-      body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-      : AbortSignal.timeout(30_000),
+  const response = await apiRequest(`payments/${path}`, {
+    body,
+    signal,
+    timeoutMs: 30_000,
   });
   if (response.status === 401) throw new SignedOutError();
   if (!response.ok) {

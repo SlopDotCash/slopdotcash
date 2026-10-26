@@ -3,6 +3,7 @@
  * `setMonthlyCommitment(cap, enabled)` and Solana `set_monthly_commitment`.
  * The owner's wallet signs; Slop holds no key and never broadcasts.
  */
+
 import {
   buildSetMonthlyCommitmentCalldata,
   EVM_ESCROW_EVENT_TOPICS,
@@ -25,6 +26,7 @@ import {
   walletVaultConfig,
 } from "./evm-vault-actions";
 import { isAssetDecimals } from "./payments/contracts";
+import { apiRequest } from "./project-api";
 import type { ProjectDefinition } from "./projects.mjs";
 import { sendSolanaWalletTransaction } from "./solana-vault-actions";
 
@@ -273,17 +275,11 @@ async function solanaRequest(
   deployment: EscrowDeployment,
   body: Record<string, unknown>,
 ) {
-  const response = await fetch(
-    `/api/v1/payments/projects/${encodeURIComponent(projectId)}/solana-monthly-commitment`,
+  const response = await apiRequest(
+    `payments/projects/${encodeURIComponent(projectId)}/solana-monthly-commitment`,
     {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        network: deployment.network,
-        vault: deployment.vault,
-        ...body,
-      }),
-      signal: AbortSignal.timeout(90000),
+      body: { network: deployment.network, vault: deployment.vault, ...body },
+      timeoutMs: 90_000,
     },
   );
   const value = (await readBoundedJson(

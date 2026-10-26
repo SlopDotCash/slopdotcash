@@ -4,6 +4,7 @@ import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { formatBaseUnits } from "./lib/payments/contracts";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
+import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
 import OwnerReserveRelease from "./OwnerReserveRelease";
@@ -69,7 +70,7 @@ export default function OwnerAwards({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [signedOut, setSignedOut] = useState(false);
-  const base = `/api/v1/payments/projects/${encodeURIComponent(project.id)}`;
+  const base = `payments/projects/${encodeURIComponent(project.id)}`;
   const decimals = view?.asset?.assetDecimals ?? null;
   const symbol = view?.asset?.symbol ?? null;
   const amount = (value: string) =>
@@ -89,14 +90,10 @@ export default function OwnerAwards({
     setView(body);
     setDrafts({});
   }
-  async function call(
-    path: string,
-    init: RequestInit | undefined,
-    label: string,
-  ) {
-    const response = await fetch(`${base}${path}`, {
-      ...init,
-      signal: AbortSignal.timeout(120000),
+  async function call(path: string, request: unknown, label: string) {
+    const response = await apiRequest(`${base}${path}`, {
+      body: request,
+      timeoutMs: 120_000,
     });
     const body = (await readBoundedJson(
       response,
@@ -111,16 +108,6 @@ export default function OwnerAwards({
       throw new Error(body.message ?? "Awards are unavailable. Retry.");
     return body;
   }
-  const post = (path: string, body: unknown, label: string) =>
-    call(
-      path,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      },
-      label,
-    );
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -152,7 +139,7 @@ export default function OwnerAwards({
       if (!view?.proposal) return;
       const draft = drafts[githubUserId];
       if (draft === undefined) return;
-      const body = await post(
+      const body = await call(
         `/monthly/${view.period}/allocations`,
         {
           githubUserId,
@@ -169,7 +156,7 @@ export default function OwnerAwards({
   const finalize = () =>
     run(async () => {
       if (!view?.proposal) return;
-      const body = await post(
+      const body = await call(
         `/monthly/${view.period}/finalize`,
         { expectedSequence: view.proposal.allocationSequence },
         "Monthly finalization",
@@ -182,7 +169,7 @@ export default function OwnerAwards({
   const toggleAutomatic = () =>
     run(async () => {
       if (!view) return;
-      const body = await post(
+      const body = await call(
         "/monthly-settings",
         { automatic: !view.automatic },
         "Monthly payment setting",
