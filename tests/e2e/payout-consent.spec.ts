@@ -400,10 +400,11 @@ test("payout consent remains readable with enlarged text and Escape restores the
     name: "Review payout wallet consent",
   });
   const bounds = await dialog.boundingBox();
-  expect(bounds).not.toBeNull();
   const viewport = page.viewportSize();
-  expect(bounds!.x).toBeGreaterThanOrEqual(0);
-  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width + 1);
+  if (!bounds || !viewport)
+    throw new Error("Consent dialog geometry is unavailable.");
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width + 1);
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
   await expect(action).toBeFocused();
