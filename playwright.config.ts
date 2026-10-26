@@ -173,9 +173,33 @@ export default defineConfig({
   // Every spec runs at the 1440 px desktop and the 320 px mobile viewport; the
   // 1024 px laptop and 768 px tablet viewports run the @layout route checks.
   // The email workflow observed a Chromium no-store stream EOF and ERR_ABORTED
-  // (https://github.com/microsoft/playwright/issues/42742), so it runs in
-  // Firefox, which also repeats the private evidence download.
+  // (https://github.com/microsoft/playwright/issues/42742). Keep the bounded
+  // private reader and strict failure assertions, and run the email workflow
+  // in Firefox at both widths. Firefox also repeats the private evidence
+  // download. The registry lane shards by test order, and each viewport's
+  // registry workflow is one serial group, so Firefox comes first: the
+  // desktop group then starts in the first shard and the mobile group in the
+  // second.
   projects: [
+    {
+      name: "firefox-desktop",
+      testMatch: [
+        "**/evidence-download.spec.ts",
+        "**/email-preferences.spec.ts",
+      ],
+      use: {
+        ...devices["Desktop Firefox"],
+        viewport: { width: 1440, height: 1000 },
+      },
+    },
+    {
+      name: "firefox-mobile",
+      testMatch: "**/email-preferences.spec.ts",
+      use: {
+        ...devices["Desktop Firefox"],
+        viewport: { width: 320, height: 800 },
+      },
+    },
     {
       name: "chromium-desktop",
       testIgnore: "**/email-preferences.spec.ts",
@@ -206,17 +230,6 @@ export default defineConfig({
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 768, height: 1024 },
-      },
-    },
-    {
-      name: "firefox-desktop",
-      testMatch: [
-        "**/evidence-download.spec.ts",
-        "**/email-preferences.spec.ts",
-      ],
-      use: {
-        ...devices["Desktop Firefox"],
-        viewport: { width: 1440, height: 1000 },
       },
     },
   ],
