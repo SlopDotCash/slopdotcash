@@ -69,6 +69,10 @@ Its allocated code region is 691,632 bytes: the artifact followed by zero
 padding, with `codeSha256`
 `38c8d776e9d4d763f16c834d76aa0497ba1c3f2a3b8bbe17a60067268782005d`.
 The ProgramData account includes a separate 45-byte loader header.
+The upgrade record also reports `solana-verify get-program-hash` as
+`b07b13a47e0b3c8fcad84f7c988913a24874b2f9f5e45052684cdf14eaabb03e`.
+This tool-specific program hash differs from the file and padded-region
+SHA-256 values above; compare each command with its corresponding value.
 Upgrade authority remains `EmMRRFhjZmr2SN5RdhV98WPnUhgJxKMoE1itSwUsU8tr`.
 
 Config `9hjoFnUrgF65K4DnWSDbS1WJjoGu4LChuz8XFq73UtaS`: identity authority
