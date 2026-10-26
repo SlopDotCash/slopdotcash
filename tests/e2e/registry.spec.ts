@@ -535,7 +535,8 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     (await (await admin.request.get(`/api/v1/projects/${project.id}`)).json())
       .project.headline,
   ).toBe("Useful accepted outcomes with a clearer project scope");
-  await returningOwner.reload();
+  // The form must finish loading before it is edited and published.
+  await returningOwner.reload({ waitUntil: "networkidle" });
   await expect(consent).toBeChecked();
   await consent.uncheck();
   await returningOwner

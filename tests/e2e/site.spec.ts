@@ -596,7 +596,8 @@ test("renders contributor and cycle records from validated public data", {
 test("makes the public project draft boundary unmistakable", async ({
   page,
 }) => {
-  await page.goto("/projects/eliza/manage");
+  // The form must finish loading before it is edited.
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(
     page.getByRole("link", { name: "View vault funds and automatic payment" }),
   ).toHaveAttribute("href", "/projects/eliza/funding");
@@ -736,7 +737,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     "No manifest field has changed",
   );
   revision = 2;
-  await page.reload();
+  await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toContainText(
     "saved against revision 1",
   );
