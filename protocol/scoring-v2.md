@@ -96,7 +96,8 @@ Each collected formal review excluded from the snapshot appears in the public
 `reviewExclusions` array with immutable pull-request and review node IDs, the
 reviewer's collected GitHub actor when available, its canonical public URL
 and repository, and one closed reason enum. Each contributor profile lists its
-own excluded reviews with their reasons. Earlier snapshots can omit the actor.
+own excluded reviews with their reasons. Earlier snapshots and the
+`paymentReviewBasis` copy omit the actor.
 An exclusion applies to this snapshot; policy and window omissions can retain
 earlier Points. A zero share can mean an assessed zero band or allocation
 rounding. This makes
