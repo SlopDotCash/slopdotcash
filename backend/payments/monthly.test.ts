@@ -2060,3 +2060,103 @@ test("Solana v3 retries preserve the first signed freeze time after a signer out
   expect(messages.length).toBe(2);
   expect(freezeReads).toBe(1);
 });
+
+test("reserve release requires the live monthly owner authority and current policy before requesting any attestation", async () => {
+  const token = "r".repeat(43);
+  sqlite
+    .prepare(
+      "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('release-owner',?,'owner',?,0)",
+    )
+    .run(OWNER, afterCutoff.toISOString());
+  sqlite
+    .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
+    .run(await sha256Hex(token), "release-owner", "2027-01-01T00:00:00.000Z");
+  let authority = true,
+    requested = 0;
+  const service = monthlyOwnerService({
+    db,
+    ...projects(),
+    networks: () => ["base-sepolia"],
+    schedule: () => schedule,
+    now: () => clock,
+    verifyAuthority: async () => {
+      if (!authority)
+        throw new MonthlyPaymentError(
+          403,
+          "not_owner",
+          "Current GitHub authority is required.",
+        );
+    },
+    releaseReserve: async (input) => {
+      expect(input).toEqual({
+        projectId: project.id,
+        period: "2026-11",
+        network: "base-sepolia",
+        manifestSha256: project.manifestSha256,
+      });
+      requested++;
+      return { status: "held", reason: "allocation-unavailable" };
+    },
+  });
+  const body = {
+    network: "base-sepolia",
+    manifestSha256: project.manifestSha256,
+  };
+  const request = (
+    changes: Record<string, unknown> = {},
+    origin = "https://slop.cash",
+    signedIn = true,
+  ) =>
+    handlePaymentsApi(
+      new Request(
+        `https://slop.cash/api/v1/payments/projects/${project.id}/monthly/2026-11/reserve-release`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin,
+            ...(signedIn ? { cookie: `__Host-slop_points=${token}` } : {}),
+          },
+          body: JSON.stringify({ ...body, ...changes }),
+        },
+      ),
+      { db, monthly: service, now: () => afterCutoff },
+    );
+  expect((await request({}, "https://attacker.invalid")).status).toBe(403);
+  expect((await request({}, "https://slop.cash", false)).status).toBe(401);
+  authority = false;
+  expect((await request()).status).toBe(403);
+  authority = true;
+  expect((await request({ manifestSha256: "0".repeat(64) })).status).toBe(409);
+  expect((await request({ amount: "10" })).status).toBe(400);
+  expect(requested).toBe(0);
+  expect((await request()).status).toBe(200);
+  expect(requested).toBe(1);
+});
+
+test("a concurrent project revision change refuses a prepared reserve release", async () => {
+  let revision = 0;
+  const service = monthlyOwnerService({
+    db,
+    ...projects(),
+    getProject: async () => ({
+      ...project,
+      revision: project.revision + revision,
+    }),
+    networks: () => ["base-sepolia"],
+    schedule: () => schedule,
+    now: () => clock,
+    verifyAuthority: async () => {},
+    releaseReserve: async () => {
+      revision++;
+      return { status: "held", reason: "allocation-unavailable" };
+    },
+  });
+  await rejects(
+    service.releaseReserve(project.id, "2026-11", actor, {
+      network: "base-sepolia",
+      manifestSha256: project.manifestSha256,
+    }),
+    "project_changed",
+  );
+});

@@ -118,8 +118,45 @@ noncanonical block refuses the inspection. No existing signer calls it yet.
 A contradictory authenticated sum prevents every valid proof from satisfying
 the stored sum check. This case releases the full still-unsettled total only.
 Other whole-tree and per-leaf faults remain unqualified by this inspection.
-The Solana whole-reserve signing classifier is also unfinished; EVM results
-are not Solana runtime evidence.
+
+The read-only Solana inspection in `contracts/solana/monthly-reserve.ts`,
+`inspectSolanaMonthlyWrongSum`, checks the same narrow fault against the
+program's Merkle sum rule. It reuses the canonical allocation builder and
+requires the root to match an untouched, nonexpired month's stored root while
+the authenticated sum differs from its stored total. Both `committed` and
+`released` must be zero. Solana does not store a separate allocation digest or
+leaf count; the result records the retained entries hash and count without
+claiming separate on-chain checks for them.
+
+The project and month come from one finalized account batch. The reviewed
+program must have been effective before that slot; Config and project roles
+must verify. The inspector checks unchanged project/month bytes and the
+slot's canonical block hash after the reads. Its result binds the current
+identity authority, deployment, period, root, totals and finalized slot.
+Missing data, provider errors, a changed snapshot, a healthy root or a prior
+reserve transition cannot produce positive evidence. It emits no signature
+or transaction and no existing signer calls it.
+
+The unsigned owner builders `prepareEvmMonthlyWrongSumRelease` and
+`prepareSolanaMonthlyWrongSumRelease` rerun these inspections from the complete
+retained allocation. They accept a caller-supplied attestation, never a key,
+claimed fault or chosen release amount. They verify that signature against the
+freshly observed authority and the release message. They release only the full
+untouched wrong-sum reserve. No service obtains authority to issue that signature.
+
+The EVM builder checks the latest reviewed deployment and simulates the exact
+zero-value owner call. The Solana builder reuses the existing unsigned-wallet
+planner for a fresh blockhash, fee, owner balance and finalized simulation. The
+owner-plan CLI exposes it as `release-monthly-wrong-sum`, with `period`,
+`capture.entries` and `attestation` (64-byte Ed25519 signature as hex). Build
+the reviewed module first with `bun build monthly-reserve.ts --target=node
+--outfile=.local/monthly-reserve.mjs` from `contracts/solana`.
+
+The plans contain no owner signature and do not broadcast. A rotation, reserve
+transition or changed deployment refuses a new plan. The contracts repeat the
+authority and exact-remainder checks when the owner transaction executes, so a
+later change can still make a prepared plan revert. There is no time-based
+attestation expiry or readmission of the period.
 
 For any future qualified per-leaf path, settle every settleable leaf first,
 then reread finalized state. Preserve Solana's existing deliberate hold for a
@@ -222,7 +259,7 @@ live project uses the release:
 1. An attester signing route for the release. It must consume a qualified
    section 3.2 result, reread its exact state immediately before signing, and
    keep the evidence. The current read-only EVM inspection adds no signing
-   power. Solana classification remains unfinished.
+   power. Both read-only inspections qualify only the complete wrong-sum case.
 2. An owner transaction builder (EVM calldata; Solana instruction with the
    Ed25519 check), in the existing owner-plan tools.
 3. Scanner and API support for the new event. The API shows the released gross
