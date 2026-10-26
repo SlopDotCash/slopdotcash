@@ -1543,3 +1543,82 @@ test("published account bans remove new merge and review credit but retain earli
     ),
   ).rejects.toBeInstanceOf(ValueFeedUnavailableError);
 });
+
+test("banned formal reviews do not take the SCR-05 review slot or erase pre-ban credit", () => {
+  const bannedAt = "2026-10-12T07:30:00.000Z";
+  const shared = outcome(24, "2026-10-12T10:00:00.000Z");
+  const selfReplaced = outcome(25, "2026-10-12T10:00:00.000Z");
+  const priorCommit = "b".repeat(40);
+  const laterPriorCommit = "c".repeat(40);
+  const result = createLeaderboardSnapshot(
+    input({
+      mergedPullRequestOutcomes: [shared, selfReplaced],
+      reviewedMergedPullRequests: [
+        reviewed(shared, [
+          review(
+            24,
+            1,
+            carol as GitHubActor,
+            "CHANGES_REQUESTED",
+            "2026-10-12T07:00:00.000Z",
+            priorCommit,
+          ),
+          review(
+            24,
+            2,
+            bob as GitHubActor,
+            "CHANGES_REQUESTED",
+            "2026-10-12T08:00:00.000Z",
+            priorCommit,
+          ),
+        ]),
+        reviewed(selfReplaced, [
+          review(
+            25,
+            1,
+            bob as GitHubActor,
+            "CHANGES_REQUESTED",
+            "2026-10-12T07:00:00.000Z",
+            priorCommit,
+          ),
+          review(
+            25,
+            2,
+            bob as GitHubActor,
+            "CHANGES_REQUESTED",
+            "2026-10-12T08:00:00.000Z",
+            laterPriorCommit,
+          ),
+        ]),
+      ],
+      valuePolicy: POLICY,
+      valueDecisions: new Map(),
+      participationBans: new Map([["U_bob", bannedAt]]),
+    }),
+  );
+  const byId = new Map(result.ledger.map((event) => [event.id, event]));
+  expect(byId.get("PR_24:reviewer:U_carol")?.scoreThirds).toBe(1);
+  expect(byId.has("PR_24:reviewer:U_bob")).toBe(false);
+  expect(byId.get("PR_25:reviewer:U_bob")?.source.id).toBe("PRR_25_1");
+  expect(byId.get("PR_25:reviewer:U_bob")?.scoreThirds).toBe(1);
+  expect(byId.get("PR_25:reviewer:U_bob")?.reviewHistory).toBeUndefined();
+  expect(result.paymentReviewBasis?.removedEventIds).toEqual([]);
+  const exclusions = new Map(
+    (result.reviewExclusions ?? []).map((item) => [item.reviewId, item.reason]),
+  );
+  expect(exclusions.get("PRR_24_1")).toBeUndefined();
+  expect(exclusions.get("PRR_24_2")).toBe("review-credit-account-banned");
+  expect(exclusions.get("PRR_25_1")).toBeUndefined();
+  expect(exclusions.get("PRR_25_2")).toBe("review-credit-account-banned");
+  const journal = applyPointsSnapshot(
+    emptyPointsJournal(AT),
+    result,
+    "f".repeat(64),
+    AT,
+  );
+  const totals = new Map(
+    pointMembers(journal).map((member) => [member.actor.id, member.total]),
+  );
+  expect(totals.get("U_carol")).toBe(10);
+  expect(totals.get("U_bob")).toBe(10);
+});
