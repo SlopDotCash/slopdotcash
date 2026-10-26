@@ -114,6 +114,7 @@ async function main() {
     worker: false,
   };
   const uncertainCreations = new Set<string>();
+  let stage = "prepare-resources";
   let workerVersion: string | null = null;
   let consumerId: string | null = null;
   let deployed = false,
@@ -219,7 +220,7 @@ async function main() {
     }
     throw new Error("Qualification result did not complete");
   }
-  async function assertBindings() {
+  async function assertPrivateBindings() {
     const result = await api<{ bindings: Record<string, unknown>[] }>(
       `workers/scripts/${run}/settings`,
     );
@@ -259,6 +260,19 @@ async function main() {
     );
     if (urls.enabled !== false || urls.previews_enabled !== false)
       throw new Error("Qualification Worker has a public URL");
+    for (const bucket of owned.buckets) {
+      const managed = await api<{ enabled: boolean }>(
+        `r2/buckets/${bucket.name}/domains/managed`,
+      );
+      const custom = await api<{ domains: unknown[] }>(
+        `r2/buckets/${bucket.name}/domains/custom`,
+      );
+      if (managed.enabled !== false || custom.domains.length !== 0)
+        throw new Error("Qualification bucket has public access");
+    }
+  }
+  async function assertBindings() {
+    await assertPrivateBindings();
     const queue = await api<
       Queue & {
         consumers: {
@@ -288,16 +302,6 @@ async function main() {
     consumerId = queue.consumers[0].consumer_id;
     if (!/^[a-f0-9]{32}$/.test(consumerId))
       throw new Error("Qualification consumer identity is missing");
-    for (const bucket of owned.buckets) {
-      const managed = await api<{ enabled: boolean }>(
-        `r2/buckets/${bucket.name}/domains/managed`,
-      );
-      const custom = await api<{ domains: unknown[] }>(
-        `r2/buckets/${bucket.name}/domains/custom`,
-      );
-      if (managed.enabled !== false || custom.domains.length !== 0)
-        throw new Error("Qualification bucket has public access");
-    }
     bindingsVerified = true;
   }
   function assertVersion(expected: string | null) {
@@ -324,6 +328,25 @@ async function main() {
       throw new Error("Qualification deployment is not the reviewed source");
     return String(deployment.versions[0].version_id);
   }
+  async function resolveWorkerCreation() {
+    if (!uncertainCreations.has(run)) return;
+    if (
+      (await api(`workers/scripts/${run}/settings`, "GET", undefined, true)) ===
+      null
+    ) {
+      uncertainCreations.delete(run);
+      report.workerRecovery = "confirmed-absent";
+      return;
+    }
+    // Wrangler can upload and deploy before consumer configuration fails. Only
+    // the exact tagged version and complete private binding set establish ownership.
+    workerVersion = assertVersion(null);
+    await assertPrivateBindings();
+    owned.worker = true;
+    deployed = true;
+    uncertainCreations.delete(run);
+    report.workerRecovery = "verified-owned-deployment";
+  }
   async function cleanup() {
     let errors = 0;
     // Empty only the dedicated buckets, through the already verified binding set.
@@ -344,11 +367,17 @@ async function main() {
         if (workerVersion === null)
           throw new Error("Worker creation is unresolved");
         assertVersion(workerVersion);
-        await assertBindings();
-        await api(
-          `queues/${owned.queues[0].queue_id}/consumers/${consumerId}`,
-          "DELETE",
+        await assertPrivateBindings();
+        const queue = await api<{ consumers: unknown[] }>(
+          `queues/${owned.queues[0].queue_id}`,
         );
+        if (queue.consumers.length !== 0) {
+          await assertBindings();
+          await api(
+            `queues/${owned.queues[0].queue_id}/consumers/${consumerId}`,
+            "DELETE",
+          );
+        }
         await api(`workers/scripts/${run}`, "DELETE");
         await requireAbsent(`workers/scripts/${run}/settings`);
         owned.worker = false;
@@ -508,6 +537,7 @@ async function main() {
     };
     const file = join(directory, "wrangler.json");
     await writeFile(file, JSON.stringify(config), { mode: 0o600 });
+    stage = "deploy-worker";
     uncertainCreations.add(run);
     execFileSync(
       join(root, "node_modules/.bin/wrangler"),
@@ -527,11 +557,13 @@ async function main() {
         env: { ...env, WRANGLER_SEND_METRICS: "false" },
       },
     );
+    stage = "verify-worker";
     owned.worker = true;
     deployed = true;
     workerVersion = assertVersion(null);
     uncertainCreations.delete(run);
     await assertBindings();
+    stage = "fixture-commands";
     if (flags) {
       await command("flags");
       report.flags = await waitFor("flags");
@@ -600,6 +632,15 @@ async function main() {
       report.acknowledgedRetentionCommands = 2;
     }
     success = true;
+  } catch (error) {
+    report.failure = { stage, ...safeFailure(error) };
+    try {
+      await resolveWorkerCreation();
+    } catch (recoveryError) {
+      report.workerRecovery = "unresolved";
+      report.workerRecoveryFailure = safeFailure(recoveryError);
+    }
+    throw error;
   } finally {
     try {
       await cleanup();
@@ -617,4 +658,40 @@ async function main() {
   console.log(
     "Hosted harmless qualification passed; safe result recorded. No operational policy is attested.",
   );
+}
+
+/** Diagnostic metadata only: never serialize process arguments, output or error messages. */
+function safeFailure(error: unknown) {
+  const spawnFailure = error as {
+    status?: unknown;
+    signal?: unknown;
+    stderr?: unknown;
+  } | null;
+  const stderr =
+    typeof spawnFailure?.stderr === "string"
+      ? spawnFailure.stderr
+      : spawnFailure?.stderr instanceof Uint8Array
+        ? new TextDecoder().decode(spawnFailure.stderr)
+        : "";
+  return {
+    kind:
+      error instanceof Error &&
+      ["Error", "TypeError", "SyntaxError", "AbortError"].includes(error.name)
+        ? error.name
+        : "Error",
+    exitStatus: Number.isSafeInteger(spawnFailure?.status)
+      ? spawnFailure?.status
+      : null,
+    signal:
+      spawnFailure?.signal === "SIGTERM" || spawnFailure?.signal === "SIGKILL"
+        ? spawnFailure.signal
+        : null,
+    cloudflareCodes: [
+      ...new Set(
+        [...stderr.matchAll(/\[code:\s*(\d{1,8})\]/gu)].map((m) =>
+          Number(m[1]),
+        ),
+      ),
+    ].slice(0, 8),
+  };
 }
