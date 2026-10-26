@@ -740,7 +740,6 @@ export function createSolanaClient(
       new TextEncoder().encode("event:FeesClaimed"),
     ).slice(0, 8);
     const programs: string[] = [];
-    const instructions: ParsedTransaction["instructions"] = [];
     let amount: bigint | null = null;
     for (const log of transaction.meta.logMessages ?? []) {
       const invoked = /^Program (\w+) invoke \[\d+\]$/.exec(log);

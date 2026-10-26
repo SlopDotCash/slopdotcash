@@ -230,6 +230,8 @@ verify those routes. Any of them can replace KyberSwap behind
   quote minimum.
 - `simulateTransaction` credits the fee wallet's USDC associated account with
   at least the signed minimum.
+- The native-cost checks in [Native fee budget](#native-fee-budget) pass, and
+  the full transaction ceiling is reserved before the signature.
 
 ## States
 
@@ -449,6 +451,9 @@ and extends the same durable journal to Solana; legacy `*_wei` SQL fields
 store lamports for Solana. Each signature reserves its full transaction
 ceiling until a canonical finalized receipt reconciles its actual cost.
 A signed but expired or missing transaction retains that reservation.
+No code path releases it. Four such sends hold the whole 20,000,000-lamport
+day budget, so Solana signing stops on every later UTC day until a reviewed
+resolution path exists.
 
 Before signing, Solana prices the exact message with `getFeeForMessage`,
 reserves rent for every classic associated-account creation even if the
@@ -458,8 +463,9 @@ requests legacy routes so every inspected account is in the signed static
 keys; routes requiring address lookup tables remain unavailable. Receipts
 must match the stored signed bytes and finalized block. Costs include
 priority fees, failed transaction fees and new account rent; wrapped-SOL
-principal is excluded from rent. Missing historical native-cost evidence
-prevents new signatures. The value-only `FEE_CONVERTER_SOLANA_FEE_MICRO`
+principal is excluded from rent. A live Solana record with a signature but
+no journal record stops each whole Solana run, including status
+reconciliation. Solana has no import path for such records. The value-only `FEE_CONVERTER_SOLANA_FEE_MICRO`
 estimate supplies no native spending limit. No keeper or referral budget
 supplies a default.
 
