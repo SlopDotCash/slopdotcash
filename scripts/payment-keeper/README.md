@@ -87,11 +87,43 @@ on that observation day. Future days can then proceed. A later exact receipt
 reconciles its actual cost without deleting the earlier conservative record.
 This is budget accounting, not proof that the transaction never landed.
 Retry reads the same journal. Never delete it to retry a payment.
-There is no automatic EVM fee bump. If a signed EVM send stays pending because
-its max fee is below the network fee, keep the journal and signer unchanged:
-each later run broadcasts the same signed bytes until the network fee falls
-below that max fee. A manual same-nonce replacement at a higher fee is an owner
-decision, because the journal must then be reconciled to the replacement.
+
+An EVM send can stay pending because its max fee is below the network fee. The
+keeper then replaces it automatically, in bounded steps (owner decision,
+25 October 2026):
+
+- It waits 10 minutes after it first finds the send unmined, and 10 minutes
+  after each replacement. Before that, it only broadcasts the latest signed bytes.
+- It replaces a send only when the latest block's base fee is more than the
+  send's max fee. A lower effective priority fee alone does not block mining
+  and does not trigger replacement.
+- A replacement uses the same nonce, recipient, value, calldata and gas limit.
+  Each step increases the max fee and the priority fee by 25%. The total
+  limit is three times the original fees and the existing 10-gwei ceiling. Each
+  step must also be at least 10% more than the previous attempt. At the limit,
+  the keeper stops signing and reports
+  `waiting`. It continues to broadcast the last attempt.
+- The keeper reserves the replacement's worst-case cost in the same journal
+  transaction as its signed bytes. The current per-transaction and daily budgets
+  must cover it. If they do not, the keeper does not sign and reports `waiting`.
+  Only one attempt for a nonce can land, so the daily budget counts the largest
+  reservation of the nonce's unresolved attempts one time.
+- The journal keeps the original and every replacement unchanged. Any one of them
+  can land. The finalized receipt for that nonce records the actual cost. The
+  same journal transaction sets the other reservations of that nonce to zero
+  and records which receipt released them. The payment is recorded only from
+  the finalized payment event, so it is recorded one time.
+- A restart continues from the journal. The keeper does not sign a new nonce for
+  the same work while an attempt for the old nonce is unresolved. The fee limit
+  comes from the original signed bytes, so repeated runs cannot go above it.
+- The budget signer accepts a second signature at a reserved nonce only when
+  it names that nonce's journaled original. Any other second signature fails.
+- If the registry gas ceiling falls below the journaled gas limit, or the fee
+  read fails, the keeper signs nothing new. It rebroadcasts the latest verified
+  attempt and reports `waiting` with the reason.
+- A dry run signs nothing.
+
+Hosted executors do not use this replacement.
 
 The keeper uses the existing finalized scanner and exact amount, token, fee and
 destination verifiers. A successful send is `submitted`, not paid. Only a
