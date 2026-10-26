@@ -152,8 +152,6 @@ export async function runEvmExtended(
   const keeperKey: PrivateKeyAccount = process.env.ESCROW_ACCEPTANCE_KEEPER_KEY
     ? privateKeyToAccount(evmKey("ESCROW_ACCEPTANCE_KEEPER_KEY"))
     : keys.relayer;
-  if (keeperKey !== keys.relayer)
-    run.roles.keeper = keeperKey.address.toLowerCase();
   const decimalsOf = async (asset: string) =>
     Number(await chain.read<number>(asset, ERC20, "decimals"));
   const amountsFor = async (asset: string) =>
