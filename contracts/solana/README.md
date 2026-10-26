@@ -9,7 +9,11 @@ October 2026). `initialize` is permissionless: the signing owner pays and owns
 the project. Any classic SPL mint is accepted, with any number of
 decimals. Every transfer passes the mint's own decimals to `transfer_checked`.
 Token-2022 mints are rejected: `Account<Mint>` and `Program<Token>` require the
-classic token program. Classic SPL has no transfer fee and no rebasing, so the
+classic token program. The TypeScript adapter nevertheless admits the approved
+metadata-only Token-2022 subset for finalized reads and payout verification
+(PRD section 6, owner decision 26 October 2026); the program keeps refusing a
+Token-2022 mint at `initialize` until a separately reviewed program upgrade
+lands. Classic SPL has no transfer fee and no rebasing, so the
 vault always receives the exact amount sent. Deployment policy must pin the
 approved mint and network domain. The program cannot determine GitHub authority
 or whether a mint is the asset the project intends. A reviewed project manifest
@@ -401,8 +405,15 @@ Config is missing, or unless the project fee recipient, the Config fee
 recipient and the reviewed `feeRecipient` are equal and the reviewed
 `identityAuthority` is the Config identity authority. It also requires the
 reviewed `rotationAuthority` to equal the separate Config rotation authority. For `pay` it reads the
-mint at finalized commitment (classic SPL layout, decimals at byte 44, owned by
-the Token program) and requires each transfer's decimals to equal the mint's.
+mint at finalized commitment (decimals at byte 44) and requires each transfer's
+decimals and token program to equal the mint's. `contracts/solana/token-extensions.ts`
+admits a classic SPL mint, or the metadata-only Token-2022 subset of PRD section
+6: mint and freeze authorities disabled, mint extensions limited to
+`MetadataPointer` and `TokenMetadata`, and token accounts with only
+`ImmutableOwner` or no extension. It refuses every other or unknown extension, a
+wrong account type, non-zero base padding and a metadata pointer or embedded
+metadata mint that does not name the mint. The vault token account must be owned
+by the same token program as its mint.
 The result fields `grossMicro`, `netMicro` and `feeMicro` keep their names; they
 carry token base units of the project mint as decimal strings. The adapter checks every field
 against finalized state except the identity authority: after activation it
