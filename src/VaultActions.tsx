@@ -315,11 +315,11 @@ export function VaultActions({
         onFinalized();
       }
     });
-  const formatted = (value: string) =>
+  const formatted = (value: string, decimals: number) =>
     formatAssetAmount(value, {
       network: deployment.network,
       assetAddress: deployment.asset,
-      assetDecimals: review?.decimals ?? pending?.decimals ?? 0,
+      assetDecimals: decimals,
     });
   const isOwner =
     wallet !== null && sameWallet(wallet.address, deployment.owner);
@@ -399,7 +399,7 @@ export function VaultActions({
               : "Token approval"}{" "}
             awaiting verification. Do not send it again.
           </p>
-          <p>{formatted(pending.gross)}</p>
+          <p>{formatted(pending.gross, pending.decimals)}</p>
           {link ? (
             <p>
               <a href={link} target="_blank" rel="noreferrer">
@@ -512,7 +512,7 @@ export function VaultActions({
                 <dd>
                   {review.freeBalance === null
                     ? "Unavailable"
-                    : formatted(review.freeBalance)}
+                    : formatted(review.freeBalance, review.decimals)}
                 </dd>
                 {review.solanaPlan && (
                   <>
@@ -524,15 +524,15 @@ export function VaultActions({
                   </>
                 )}
                 <dt>Amount</dt>
-                <dd>{formatted(review.gross)}</dd>
+                <dd>{formatted(review.gross, review.decimals)}</dd>
                 <dt>Fee</dt>
-                <dd>{formatted(review.fee)}</dd>
+                <dd>{formatted(review.fee, review.decimals)}</dd>
                 <dt>
                   {operation === "deposit"
                     ? "Added to free funds"
                     : "Returned to owner"}
                 </dt>
-                <dd>{formatted(review.net)}</dd>
+                <dd>{formatted(review.net, review.decimals)}</dd>
               </dl>
               {operation === "deposit" ? (
                 <p>
