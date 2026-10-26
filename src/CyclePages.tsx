@@ -8,7 +8,11 @@ import {
   monthlyCutoff,
   PRD_MONTHLY_SCHEDULE,
 } from "./lib/payments/monthly-allocation";
-import { createProjectView, type ProjectView } from "./lib/project-view";
+import {
+  createProjectView,
+  type ProjectView,
+  projectCycleHasOpened,
+} from "./lib/project-view";
 import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
 import { resolveRewardCapMinor } from "./lib/reward-cap.mjs";
 import type { CycleIndexState } from "./lib/use-cycle-index";
@@ -62,13 +66,12 @@ export function CyclePage({
     ),
   );
   let view: ProjectView | null = null;
-  if (collected) {
+  // A month outside the snapshot window has no live view.
+  if (collected && projectCycleHasOpened(state.snapshot, project.id, cycleId)) {
     try {
       view = createProjectView(state.snapshot, project.id, cycleId);
     } catch (error) {
-      // Only a month outside the snapshot window has no live view.
-      if (!(error instanceof RangeError))
-        return notice({ status: "error", message: errorMessage(error) });
+      return notice({ status: "error", message: errorMessage(error) });
     }
   }
   if (!view && !record) {
