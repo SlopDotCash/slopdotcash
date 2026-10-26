@@ -1841,8 +1841,11 @@ function HowItWorksPage() {
           <p>
             Not to your points. Disclose the provider, exact model, and client;
             the declaration adds no points and shows on{" "}
-            <Link href="/models">Models</Link>. A valid signed receipt with a
-            finalized private trace adds a fixed 15% to that outcome.
+            <Link href="/models">Models</Link>. From November 2026, monthly and
+            external-prize reward shares use accepted-work Points only. Optional
+            traces add no payment weight. Older calculations and funded awards
+            stay unchanged; unpaid September–October work stays subject to the
+            reviewed historical reconciliation.
           </p>
         </details>
         <details>
