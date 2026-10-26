@@ -4,13 +4,14 @@
 // prompt or model text is stored here.
 
 import { notifySlopbotAppeal } from "../../backend/notifications/events";
+import { githubIdSet } from "../../src/lib/github-ids";
 import { type Category, CLOSE_CONFIDENCE, type Job } from "./contracts";
+import { dispatchDueJobs } from "./maintainer-holds";
 import type { D1Database, D1TransactionalDatabase } from "./persistence";
 
 export const APPEAL_RESOLUTION_DAYS = 7;
 export const ESCALATION_DEBIT_THIRDS = 24;
 export const MODERATOR_LABEL = "slopbot: moderator";
-const REQUEUE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 export type AppealDueJob = Extract<Job, { kind: "appeal_due" }>;
 export type Appeal = {
@@ -191,42 +192,18 @@ export async function resolveAppeal(
  * it opened. A lost queue message is sent again after a day; the one-time
  * escalation prevents a duplicate.
  */
-export async function dispatchDueAppeals(
+export function dispatchDueAppeals(
   db: D1Database,
   queue: { send(job: Job): Promise<void> },
 ): Promise<number> {
-  const at = new Date();
-  const result = await db
-    .prepare(
-      `SELECT json_group_array(json(job_json)) AS items FROM (
-      SELECT job_json FROM slopbot_appeals
-      WHERE resolved_at IS NULL AND escalated_at IS NULL AND due_at <= ?
-        AND (queued_at IS NULL OR queued_at <= ?)
-      ORDER BY due_at, appeal_key LIMIT 100)`,
-    )
-    .bind(
-      at.toISOString(),
-      new Date(at.getTime() - REQUEUE_AFTER_MS).toISOString(),
-    )
-    .first<{ items: string }>();
-  const pending = JSON.parse(result?.items ?? "[]") as AppealDueJob[];
-  for (const job of pending) {
-    await queue.send(job);
-    await db
-      .prepare(
-        "UPDATE slopbot_appeals SET queued_at = ? WHERE appeal_key = ? AND resolved_at IS NULL",
-      )
-      .bind(at.toISOString(), job.appealKey)
-      .run();
-  }
-  return pending.length;
+  return dispatchDueJobs<AppealDueJob>(db, queue, {
+    table: "slopbot_appeals",
+    key: "appeal_key",
+    also: " AND escalated_at IS NULL",
+    keyOf: (job) => job.appealKey,
+  });
 }
 
 export function moderatorIds(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? "")
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => /^[1-9]\d*$/u.test(entry)),
-  );
+  return githubIdSet(value, "PROJECT_MODERATOR_GITHUB_IDS");
 }

@@ -370,10 +370,10 @@ test("claim evidence must cite the actual immutable artifact and contradict its 
 });
 
 test("missing provider credentials never produce a confirmation", async () => {
-  const { runRoute, CONFIRM_ROUTE } = await import("./models");
+  const { runRoute, TRIAGE_ROUTE } = await import("./models");
   const result = await runRoute(
     {},
-    CONFIRM_ROUTE,
+    TRIAGE_ROUTE,
     {
       system: "Classify this harmless acceptance probe.",
       policy: "No policy",

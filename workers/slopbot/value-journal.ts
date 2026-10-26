@@ -10,13 +10,6 @@ import {
   VALUE_RUBRIC_VERSION,
   type ValueAssessment,
 } from "../../src/lib/value-assessment";
-import {
-  type ValueProducer,
-  valueResultProducerIdentity,
-} from "./value-producer";
-
-export { valueProducerIdentity } from "./value-producer";
-
 import type { D1Database } from "./persistence";
 import {
   type ValueContextSelection,
@@ -27,6 +20,10 @@ import {
   type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
+import {
+  type ValueProducer,
+  valueResultProducerIdentity,
+} from "./value-producer";
 import {
   type ValueAssessmentResult,
   validateEvidenceAssessment,

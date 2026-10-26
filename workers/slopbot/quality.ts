@@ -303,7 +303,7 @@ export async function loadQualityEvidence(
       );
       if (direct !== null) comments.push(direct);
     }
-    for (const comment of comments ?? []) {
+    for (const comment of comments) {
       if (!comment?.body?.startsWith(`${QUALITY_MARKER}\n`)) continue;
       const proof = await verifyQualityReceipt(
         comment.body.slice(QUALITY_MARKER.length + 1),
