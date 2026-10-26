@@ -328,6 +328,32 @@ export async function currentReportingProject(
   return { manifest, revision: row.revision };
 }
 
+/**
+ * One bound project ID; also used inside award writes so a quarantine, ban,
+ * or retirement that lands during the request stops a new commitment.
+ */
+const PROGRAM_RESTRICTED_QUERY = `SELECT 1 AS restricted WHERE NOT EXISTS (
+  SELECT 1 FROM projects p
+  WHERE p.id = ?
+    AND COALESCE(json_extract(p.manifest, '$.listingTier'), '') <> 'retired'
+    AND COALESCE(
+      (SELECT e.state_after FROM project_enforcements e WHERE e.project_id = p.id ORDER BY e.sequence DESC LIMIT 1),
+      'clear'
+    ) = 'clear'
+)`;
+
+async function isProgramRestricted(
+  db: SecurityD1Database,
+  projectId: string,
+): Promise<boolean> {
+  return (
+    (await db
+      .prepare(PROGRAM_RESTRICTED_QUERY)
+      .bind(projectId)
+      .first<{ restricted: number }>()) !== null
+  );
+}
+
 /** Reporting needs a registered repository, not financial terms. */
 export type ReportingContext = Pick<
   SecurityBountyTerms,
@@ -341,7 +367,7 @@ export async function reportingContext(
   contacts = false,
 ): Promise<ReportingContext> {
   const project = await currentReportingProject(deps, projectId);
-  if (project === null || project.manifest.listingTier === "retired")
+  if (project === null || (await isProgramRestricted(deps.db, projectId)))
     fail(
       404,
       "project_not_found",
@@ -2654,6 +2680,7 @@ async function planAward(
   }
   if (await reporterIsRelated(deps, row)) {
     await assertNewAwardParticipation(deps, row, actor);
+    await assertUnrestrictedProgram(deps, row.project_id);
     await assertRootCauseFree(
       deps,
       row.project_id,
@@ -2670,8 +2697,8 @@ async function planAward(
         payment_deadline: paymentDeadline,
       },
       relatedReview: true,
-      requireSql: `NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
-      requireValues: [row.reporter_github_id, actor.githubId],
+      requireSql: `NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PROGRAM_RESTRICTED_QUERY})`,
+      requireValues: [row.reporter_github_id, actor.githubId, row.project_id],
       unmet: {
         code: "participation_banned",
         message: "The award participants can no longer start a new Slop award.",
@@ -2740,6 +2767,18 @@ async function assertNewAwardParticipation(
     );
 }
 
+async function assertUnrestrictedProgram(
+  deps: Pick<SecurityApiDependencies, "db">,
+  projectId: string,
+): Promise<void> {
+  if (await isProgramRestricted(deps.db, projectId))
+    fail(
+      409,
+      "program_restricted",
+      "A quarantined, banned, or retired program cannot approve a new award",
+    );
+}
+
 /**
  * Reserves the approved gross amount for the case's root cause in the same
  * batch as the revision-checked case update (PRD section 10, Capacity: only
@@ -2762,13 +2801,7 @@ async function awardReservation(
   // Approved awards stay owed through a quarantine or a ban, but a
   // restricted program starts no new commitment (PRD section 11, Restricted
   // projects).
-  const program = await currentReportingProject(deps, row.project_id);
-  if (program === null || program.manifest.listingTier === "retired")
-    fail(
-      409,
-      "program_restricted",
-      "A quarantined, banned, or retired program cannot approve a new award",
-    );
+  await assertUnrestrictedProgram(deps, row.project_id);
   await assertRootCauseFree(deps, row.project_id, row.id, rootCauseKey);
   const snapshotGuards: { sql: string; values: unknown[] }[] = [];
   const funds = await programFunds(deps, row.project_id, snapshotGuards);
@@ -2793,7 +2826,7 @@ async function awardReservation(
     before: [
       deps.db
         .prepare(
-          `INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) SELECT ?, ?, ?, ?, ?, ?, ? WHERE (SELECT revision FROM security_cases WHERE id = ?) = ? AND (${OUTSTANDING_RESERVATIONS}) + CAST(? AS INTEGER) <= CAST(? AS INTEGER) AND ${snapshotGuards.map((guard) => guard.sql).join(" AND ")} AND NOT EXISTS (${ROOT_CAUSE_PENDING_REVIEW}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+          `INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) SELECT ?, ?, ?, ?, ?, ?, ? WHERE (SELECT revision FROM security_cases WHERE id = ?) = ? AND (${OUTSTANDING_RESERVATIONS}) + CAST(? AS INTEGER) <= CAST(? AS INTEGER) AND ${snapshotGuards.map((guard) => guard.sql).join(" AND ")} AND NOT EXISTS (${ROOT_CAUSE_PENDING_REVIEW}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PROGRAM_RESTRICTED_QUERY})`,
         )
         .bind(
           row.id,
@@ -2816,6 +2849,7 @@ async function awardReservation(
           rootCauseKey,
           row.reporter_github_id,
           actor.githubId,
+          row.project_id,
         ),
     ],
     set: {
@@ -3037,8 +3071,10 @@ async function actOnCase(
   const updateResult = results[(change.before ?? []).length];
   if ((updateResult?.meta?.changes ?? 0) !== 1) {
     const current = await loadCase(deps, row.id);
-    if (change.unmet && current?.revision === row.revision)
+    if (change.unmet && current?.revision === row.revision) {
+      await assertUnrestrictedProgram(deps, row.project_id);
       fail(409, change.unmet.code, change.unmet.message);
+    }
     fail(409, "stale_revision", "The case changed since you loaded it");
   }
   // Slopbot triages every appeal first; a moderator still decides it.
@@ -3066,7 +3102,7 @@ export async function pvrState(
   projectId: string,
 ): Promise<PvrState> {
   const project = await currentReportingProject(deps, projectId);
-  if (project === null || project.manifest.listingTier === "retired")
+  if (project === null || (await isProgramRestricted(deps.db, projectId)))
     return "unavailable";
   const result = await refreshReportingObservation(
     deps.db,
@@ -3114,7 +3150,7 @@ async function intakeReadiness(
   if (!PROJECT_ID.test(projectId))
     fail(404, "program_not_found", "No security program");
   const program = await currentReportingProject(deps, projectId);
-  if (program === null || program.manifest.listingTier === "retired")
+  if (program === null || (await isProgramRestricted(deps.db, projectId)))
     fail(404, "program_not_found", "No security program");
   const terms = program.manifest.securityBounty;
   const context = await reportingContext(deps, projectId);

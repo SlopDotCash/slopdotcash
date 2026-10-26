@@ -12,7 +12,11 @@ import type {
   SecurityAnalyzer,
   SecurityAppealInput,
 } from "./analysis";
-import { handleSecurityApi, type SecurityD1Database } from "./handler";
+import {
+  handleSecurityApi,
+  pvrState,
+  type SecurityD1Database,
+} from "./handler";
 import { seedParticipationBan } from "./participation-ban.fixture";
 
 const migrations = readdirSync("migrations")
@@ -122,8 +126,18 @@ const OPEN_PROGRAM = {
   },
 };
 
-function programManifest(securityBounty: Record<string, unknown>): string {
-  return JSON.stringify({ id: PROJECT, status: "active", securityBounty });
+function programManifest(
+  securityBounty: Record<string, unknown>,
+  listingTier = "community",
+): string {
+  return JSON.stringify({
+    id: PROJECT,
+    status: listingTier === "retired" ? "paused" : "active",
+    listingTier,
+    repositories: [{ id: REPOSITORY }],
+    authority: { repositoryId: "123", repositoryNodeId: "R_kgDO123" },
+    securityBounty,
+  });
 }
 
 let ghsaCount = 0;
@@ -354,8 +368,80 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
       .all() as { case_id: string; gross_minor: string }[];
   const ban = (account: Account) =>
     seedParticipationBan(sqlite, account, DISPUTE, REVISION_AT);
+  let enforcementSequence = 0;
+  const restrictProgram = (action: "quarantine" | "ban" = "quarantine") => {
+    enforcementSequence += 1;
+    sqlite
+      .query(
+        `INSERT INTO project_enforcements (id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
+        VALUES (?,?,?, ?, ?, 'none','Synthetic program restriction','private-fixture','123','["example/bounty"]',?,?,NULL,'project-moderator','admin-panel',1,?,NULL,NULL,'revision_pending',?)`,
+      )
+      .run(
+        `enf_${PROJECT}_${enforcementSequence}`,
+        PROJECT,
+        enforcementSequence,
+        action,
+        action === "ban" ? "banned" : "quarantined",
+        DISPUTE.githubId,
+        DISPUTE.githubLogin,
+        digest,
+        REVISION_AT,
+      );
+  };
+  const reinstateProgram = () => {
+    enforcementSequence += 1;
+    sqlite
+      .query(
+        `INSERT INTO project_enforcements (id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
+        VALUES (?,?,?,'reinstate','clear','granted','Synthetic program reinstatement','private-fixture','123','["example/bounty"]',?,?,NULL,'project-moderator','admin-panel',1,?,NULL,NULL,'no_revision_needed',?)`,
+      )
+      .run(
+        `enf_${PROJECT}_${enforcementSequence}`,
+        PROJECT,
+        enforcementSequence,
+        DISPUTE_2.githubId,
+        DISPUTE_2.githubLogin,
+        digest,
+        REVISION_AT,
+      );
+  };
+  const retireProgram = () => {
+    const retired = programManifest(securityBounty, "retired");
+    const retiredDigest = createHash("sha256").update(retired).digest("hex");
+    sqlite
+      .query(
+        "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 2, ?, ?, 'Retire program', ?)",
+      )
+      .run(PROJECT, retired, retiredDigest, REVISION_AT);
+    sqlite
+      .query(
+        "UPDATE projects SET status = 'paused', revision = 2, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(retired, retiredDigest, REVISION_AT, PROJECT);
+  };
+  const checkPvr = () =>
+    pvrState(
+      {
+        db: wrapped,
+        now: () => new Date(clock),
+        reportingRead: async (target) =>
+          intake === "forbidden"
+            ? { kind: "unavailable" }
+            : {
+                kind: "verified",
+                enabled: intake === "enabled",
+                repositoryId: target.repositoryId ?? "123",
+                repositoryNodeId: target.repositoryNodeId ?? "R_kgDO123",
+              },
+      },
+      PROJECT,
+    );
   return {
     ban,
+    restrictProgram,
+    reinstateProgram,
+    retireProgram,
+    checkPvr,
     sqlite,
     fund,
     call,
@@ -1244,4 +1330,99 @@ test("report analysis and appeal triage keep the scope recorded at receipt", asy
   await env.receive(OTHER, "2026-10-19T08:59:00.000Z");
   expect(env.analyzed[1].scope).toBeNull();
   env.sqlite.close();
+});
+
+describe("restricted programs", () => {
+  test("a pending-revision quarantine or ban blocks intake, reporting readiness, and new awards until reinstated", async () => {
+    const env = open();
+    const unrelated = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    const related = await env.receive(OTHER, "2026-10-19T09:20:00.000Z");
+    await env.decide(unrelated, "unrelated-finding");
+    await env.decide(related, "related-finding", { relatedParty: true });
+    expect((await env.award(related, "800000")).status).toBe(200);
+    expect(await env.checkPvr()).toBe("ready");
+    expect(
+      (await env.call(REPORTER, "GET", `security-programs/${PROJECT}/intake`))
+        .status,
+    ).toBe(200);
+
+    env.restrictProgram("quarantine");
+    expect(await env.checkPvr()).toBe("unavailable");
+    expect(
+      (await env.call(REPORTER, "GET", `security-programs/${PROJECT}/intake`))
+        .status,
+    ).toBe(404);
+    expect(
+      (
+        await env.call(MAINTAINER, "POST", "security-cases", {
+          mode: "import",
+          projectId: PROJECT,
+        })
+      ).status,
+    ).toBe(404);
+
+    const refusedAward = await env.award(unrelated, "1000000");
+    expect(refusedAward.status).toBe(409);
+    expect(refusedAward.body.error).toBe("program_restricted");
+    const refusedReview = await env.act(DISPUTE, related, {
+      action: "decide-related-party",
+      outcome: "approve",
+      reason: "Trying to approve while the program is quarantined.",
+    });
+    expect(refusedReview.status).toBe(409);
+    expect(refusedReview.body.error).toBe("program_restricted");
+    expect(env.reservations()).toEqual([]);
+
+    env.reinstateProgram();
+    expect(await env.checkPvr()).toBe("ready");
+    expect(
+      (await env.call(REPORTER, "GET", `security-programs/${PROJECT}/intake`))
+        .status,
+    ).toBe(200);
+    expect((await env.award(unrelated, "1000000")).status).toBe(200);
+    expect(
+      (
+        await env.act(DISPUTE, related, {
+          action: "decide-related-party",
+          outcome: "approve",
+          reason: "Approved after program reinstatement.",
+        })
+      ).status,
+    ).toBe(200);
+    expect(env.reservations()).toEqual(
+      [
+        { case_id: unrelated, gross_minor: "1000000" },
+        { case_id: related, gross_minor: "800000" },
+      ].sort((a, b) => a.case_id.localeCompare(b.case_id)),
+    );
+    env.sqlite.close();
+  });
+
+  for (const relatedParty of [false, true])
+    for (const racing of [false, true])
+      test(`a restricted or retired program cannot start a new bounty award (race: ${racing}, related: ${relatedParty})`, async () => {
+        const env = open();
+        const pending = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+        await env.decide(pending, "program-restriction-root", { relatedParty });
+        if (racing) env.setBeforeBatch(() => env.restrictProgram("ban"));
+        else if (relatedParty) env.retireProgram();
+        else env.restrictProgram("ban");
+        const result = await env.award(pending, "1000000");
+        expect(result.status).toBe(409);
+        expect(result.body.error).toBe("program_restricted");
+        expect(env.reservations()).toEqual([]);
+        expect(env.inbox(DISPUTE, pending)).toEqual([]);
+        expect(
+          env.sqlite
+            .query(
+              "SELECT award_state, related_party_review, revision FROM security_cases WHERE id = ?",
+            )
+            .get(pending),
+        ).toEqual({
+          award_state: "pending",
+          related_party_review: "not-applicable",
+          revision: 2,
+        });
+        env.sqlite.close();
+      });
 });
