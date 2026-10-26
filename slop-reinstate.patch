@@ -1,0 +1,138 @@
+diff --git a/backend/projects/enforcement.ts b/backend/projects/enforcement.ts
+index bb853f58..3e095424 100644
+--- a/backend/projects/enforcement.ts
++++ b/backend/projects/enforcement.ts
+@@ -482,28 +482,20 @@ export function planEnforcement(input: {
+         bansMaintainer: false,
+       };
+     }
+-    case "reinstate":
+-    case "deny_reinstatement": {
+-      if (restriction.state === "clear" || restriction.appeal !== "requested")
++    case "reinstate": {
++      // A project reinstatement needs the project's own appeal. The merged
++      // flag also reads "requested" for a banned account's appeal alone
++      // (#1297 separated the states everywhere else), and clearing on that
++      // alone would restore a project nobody appealed.
++      if (
++        restriction.state === "clear" ||
++        projectAppealState(restriction) !== "requested"
++      )
+         refuse(
+           "no_open_appeal",
+           "Record a reinstatement request before a decision",
+         );
+       requireIndependentModerator(restriction, actor);
+-      if (action === "deny_reinstatement") {
+-        if (deciding)
+-          refuse(
+-            "malicious_decision_required",
+-            "A confirmed malicious result needs a decision: ban the project and its maintainer, or reinstate it",
+-          );
+-        return {
+-          stateAfter: restriction.state,
+-          appealAfter: "denied",
+-          manifest: null,
+-          pendingReason: null,
+-          bansMaintainer: false,
+-        };
+-      }
+       // A restriction whose paused, retired revision is still pending must
+       // not clear: clearing it would restore the listed or active manifest.
+       if (!enforcedManifest(manifest))
+@@ -526,6 +518,26 @@ export function planEnforcement(input: {
+           : { manifest: null, pendingReason: null }),
+       };
+     }
++    case "deny_reinstatement": {
++      if (restriction.state === "clear" || restriction.appeal !== "requested")
++        refuse(
++          "no_open_appeal",
++          "Record a reinstatement request before a decision",
++        );
++      requireIndependentModerator(restriction, actor);
++      if (deciding)
++        refuse(
++          "malicious_decision_required",
++          "A confirmed malicious result needs a decision: ban the project and its maintainer, or reinstate it",
++        );
++      return {
++        stateAfter: restriction.state,
++        appealAfter: "denied",
++        manifest: null,
++        pendingReason: null,
++        bansMaintainer: false,
++      };
++    }
+   }
+ }
+ 
+diff --git a/scripts/project-registry-api.test.ts b/scripts/project-registry-api.test.ts
+index 651f93ad..7d413752 100644
+--- a/scripts/project-registry-api.test.ts
++++ b/scripts/project-registry-api.test.ts
+@@ -1366,6 +1366,17 @@ describe("project enforcement (ADM-06)", () => {
+       async () => livePin,
+     );
+     expect(bannedClearance.state).toBe("banned");
++    // The confirmed-malicious re-ban supersedes the first appeal, so the
++    // applicant appeals the current restriction before reinstatement is
++    // attempted again; a project appeal from before the re-ban no longer
++    // opens it.
++    const reappealed = await call(
++      "POST",
++      "project-appeals",
++      "applicant",
++      appeal,
++    );
++    expect(reappealed.status).toBe(200);
+     const scannedPin = livePin;
+     livePin = { ...livePin, commitSha: "b".repeat(40) };
+     const staleScan = await enforce("moderator", "reinstate");
+@@ -1429,7 +1440,13 @@ describe("project enforcement (ADM-06)", () => {
+       (await history.json()).projects[0].enforcement.records.map(
+         (record: { action: string }) => record.action,
+       ),
+-    ).toEqual(["quarantine", "ban", "request_reinstatement", "ban"]);
++    ).toEqual([
++      "quarantine",
++      "ban",
++      "request_reinstatement",
++      "ban",
++      "request_reinstatement",
++    ]);
+     // Independently preserve the append-only persistence contract. This is
+     // historical database setup, never HTTP admission or a complete scan.
+     if (!restricted || !latestRecord)
+@@ -1730,6 +1747,31 @@ describe("project enforcement (ADM-06)", () => {
+       appeal: "requested" as const,
+       restrictedBy: [ADMIN],
+       openedAtRevision: 1,
++      // The appeal itself must be the project's own: a banned account's
++      // appeal alone no longer opens project reinstatement.
++      records: [
++        {
++          id: "enf-project-appeal",
++          projectId: "open-registry",
++          sequence: 1,
++          action: "request_reinstatement" as const,
++          stateAfter: "quarantined" as const,
++          appealAfter: "requested" as const,
++          reason: "The release script was removed",
++          evidenceReference: "evidence",
++          repositoryGithubId: "",
++          repositoryKeys: [],
++          actor: APPLICANT,
++          actorRole: "project-applicant" as const,
++          decisionSource: "owner-request" as const,
++          beforeRevision: 1,
++          beforeManifestSha256: "",
++          afterRevision: null,
++          afterManifestSha256: null,
++          result: "no_revision_needed" as const,
++          createdAt: new Date().toISOString(),
++        },
++      ],
+     };
+     let refusal: unknown = null;
+     try {
