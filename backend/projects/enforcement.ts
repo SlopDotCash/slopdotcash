@@ -532,7 +532,8 @@ export function planEnforcement(input: {
               pendingReason: null,
               bansMaintainer: false,
   };
-}
+    }
+  }
 
 /** The public reason text of the revision an action appends. */
 export function enforcementRevisionReason(
