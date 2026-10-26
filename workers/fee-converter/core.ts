@@ -27,8 +27,8 @@ export type ConversionState =
 
 export interface ConversionRow {
   id: string;
-  /** Existing rows are conversions. Claims share the same pending-token guard. */
-  kind?: "conversion" | "claim";
+  /** Existing rows are conversions. All send kinds share the pending-token guard. */
+  kind?: "conversion" | "claim" | "approval";
   runId: string;
   network: Network;
   mode: "dry_run" | "live";
@@ -111,22 +111,15 @@ export type QuoteResult = Quote | { noRoute: string };
 
 /** A signed send, recorded before it is broadcast. */
 export interface PreparedSend {
+  /** EVM approvals are separate immutable sends before a later swap. */
+  kind?: "conversion" | "approval";
   txId: string;
   rawTx: string;
   evmNonce: number | null;
-  expiresAt: number;
+  expiresAt: number | null;
   approvalTxId: string | null;
   /** The minimum output the signed transaction enforces. */
   minAmountOut: bigint;
-}
-
-/**
- * An ERC-20 approval that must be durable before it is broadcast. Only its
- * hash and nonce are kept: `raw_tx` is immutable once set and holds the swap.
- */
-export interface PreparedApproval {
-  txId: string;
-  evmNonce: number;
 }
 
 export type SendStatus =
@@ -147,13 +140,13 @@ export type SendStatus =
 export interface ChainClient {
   balance(token: string): Promise<bigint>;
   quote(token: string, amount: bigint): Promise<QuoteResult>;
-  /** Records and sends any approval, then builds, simulates and signs the swap. */
+  /** Prepare one approval or swap; the caller journals it before broadcast. */
   prepare(
     token: string,
     quote: Quote,
-    recordApproval: (approval: PreparedApproval) => Promise<void>,
     /** EVM: the lowest nonce the send may use (see nonceFloor). */
     nonceFloor?: number,
+    assertLease?: () => Promise<void>,
   ): Promise<PreparedSend>;
   broadcast(rawTx: string): Promise<void>;
   /** `replacements`: the journaled same-nonce replacements of the row. */
@@ -236,7 +229,10 @@ export interface ConversionStore {
   renewLock(network: Network, runId: string, now: Date): Promise<boolean>;
   /** Live rows still waiting on chain: submitted, unknown and abandoned quotes. */
   openRows(network: Network): Promise<ConversionRow[]>;
-  insert(row: ConversionRow): Promise<void>;
+  insert(
+    row: ConversionRow,
+    lease?: { runId: string; now: Date },
+  ): Promise<void>;
   update(
     id: string,
     fields: Partial<Omit<ConversionRow, "id" | "createdAt">>,
@@ -343,6 +339,17 @@ async function reconcile(
   assertLease: () => Promise<void>,
 ): Promise<boolean> {
   const now = deps.now();
+  if (row.approvalTxId !== null && row.rawTx === null && row.txId === null) {
+    // Older versions kept only the approval hash and could mark a timeout
+    // failed. Never invent its bytes or use a higher nonce to bypass it.
+    const status = await client.status({
+      ...row,
+      kind: "approval",
+      txId: row.approvalTxId,
+      expiresAt: null,
+    });
+    return status.kind === "finalized" || status.kind === "failed";
+  }
   if (row.state === "quoted") {
     // A live quote that never reached a signed send is safe to close: no
     // transaction bytes exist for it.
@@ -387,7 +394,9 @@ async function reconcile(
         event:
           row.kind === "claim"
             ? "fee_claim_finalized"
-            : "fee_conversion_finalized",
+            : row.kind === "approval"
+              ? "fee_approval_finalized"
+              : "fee_conversion_finalized",
         network: row.network,
         token: row.token,
         txId: status.txId ?? row.txId,
@@ -530,7 +539,7 @@ async function replaceSend(
 
 /**
  * The lowest EVM nonce a new send may use: one above every open journaled
- * send (`submitted` or `unknown`). A node that dropped a stuck send reports
+ * send (`submitted` or `unknown`), including legacy approval hashes. A node that dropped a stuck send reports
  * its nonce as free; a new send must not take it, or the two would outbid
  * each other through their fee replacements.
  */
@@ -541,7 +550,11 @@ async function nonceFloor(
   let floor = 0;
   for (const row of await store.openRows(network))
     if (
-      (row.state === "submitted" || row.state === "unknown") &&
+      (row.state === "submitted" ||
+        row.state === "unknown" ||
+        (row.approvalTxId !== null &&
+          row.rawTx === null &&
+          row.txId === null)) &&
       row.evmNonce !== null &&
       row.evmNonce >= floor
     )
@@ -686,6 +699,7 @@ export async function runNetwork(
             runValue,
             dayValue,
           },
+          assertLease,
         );
         result.records[outcome.state] += 1;
         if (outcome.committedMicro > 0n) {
@@ -841,6 +855,7 @@ async function convert(
   client: ChainClient,
   deps: RunDependencies,
   budget: Budget,
+  assertLease: () => Promise<void>,
 ): Promise<{ state: ConversionState; committedMicro: bigint }> {
   const { limits } = deps;
   const at = () => deps.now().toISOString();
@@ -985,43 +1000,45 @@ async function convert(
     return { state: "quoted", committedMicro: quote.amountOut };
   }
 
-  await deps.store.insert(row);
   let prepared: PreparedSend;
   try {
-    const recordApproval = async (approval: PreparedApproval) => {
-      await deps.store.update(row.id, {
-        approvalTxId: approval.txId,
-        evmNonce: approval.evmNonce,
-        updatedAt: at(),
-      });
-    };
     const floor = await nonceFloor(config.network, deps.store);
-    prepared = await client.prepare(token, quote, recordApproval, floor);
+    await assertLease();
+    prepared = await client.prepare(token, quote, floor, assertLease);
     // Match migration 0078: at most 128 KiB encoded as hex plus its prefix.
-    // Refuse before persistence and broadcast, with a terminal failed record.
     if (prepared.rawTx.length > 262146)
       throw new Error("signed transaction exceeds the storage limit");
+    await assertLease();
   } catch (error) {
-    await deps.store.update(row.id, {
+    await record({
+      ...row,
       state: "failed",
       reason: `prepare: ${message(error)}`,
       updatedAt: at(),
     });
     return { state: "failed", committedMicro: 0n };
   }
-  // Record the signed bytes before they leave the Worker; the unique open-row
-  // index refuses a second unresolved send for this token.
-  await deps.store.update(row.id, {
-    state: "submitted",
-    txId: prepared.txId,
-    rawTx: prepared.rawTx,
-    evmNonce: prepared.evmNonce,
-    expiresAt: prepared.expiresAt,
-    approvalTxId: prepared.approvalTxId,
-    minAmountOut: prepared.minAmountOut.toString(),
-    submittedAt: at(),
-    updatedAt: at(),
-  });
+  const approval = prepared.kind === "approval";
+  // One row per signed intent; approval bytes are never overwritten by a swap.
+  // The pending-token index prevents a second intent until this one resolves.
+  await deps.store.insert(
+    {
+      ...row,
+      kind: approval ? "approval" : "conversion",
+      state: "submitted",
+      txId: prepared.txId,
+      rawTx: prepared.rawTx,
+      evmNonce: prepared.evmNonce,
+      expiresAt: prepared.expiresAt,
+      approvalTxId: prepared.approvalTxId,
+      minAmountOut: approval ? null : prepared.minAmountOut.toString(),
+      submittedAt: at(),
+      updatedAt: at(),
+    },
+    { runId: budget.runId, now: deps.now() },
+  );
+  await assertLease();
+  const committedMicro = approval ? 0n : quote.amountOut;
   try {
     await client.broadcast(prepared.rawTx);
   } catch (error) {
@@ -1030,15 +1047,15 @@ async function convert(
       reason: `broadcast: ${message(error)}`,
       updatedAt: at(),
     });
-    return { state: "unknown", committedMicro: quote.amountOut };
+    return { state: "unknown", committedMicro };
   }
   deps.log({
-    event: "fee_conversion_submitted",
+    event: approval ? "fee_approval_submitted" : "fee_conversion_submitted",
     network: config.network,
     token,
     txId: prepared.txId,
     amountIn: amount.toString(),
     minAmountOut: prepared.minAmountOut.toString(),
   });
-  return { state: "submitted", committedMicro: quote.amountOut };
+  return { state: "submitted", committedMicro };
 }

@@ -265,7 +265,7 @@ fee replacement, described next.
 
 ### Same-nonce fee replacement (EVM)
 
-Owner decision of 25 October 2026. EVM fee claims and conversion swaps are
+Owner decision of 25 October 2026. EVM fee claims, finite approvals and conversion swaps are
 signed with a fixed maximum fee. If gas stays high, the send can stay unmined.
 The Worker then replaces it with a transaction that has the same nonce and a
 higher fee, in bounded steps.
@@ -278,12 +278,13 @@ A replacement is signed only when all of these are true:
   replaced.
 - The latest attempt (the original or the last replacement) was journaled at
   least 3 minutes ago (`REPLACEMENT_WAIT_MS` in `core.ts`).
-- The latest block base fee plus the current priority fee is above the
-  signed `maxFeePerGas` of the latest attempt.
+- The latest block base fee is above the signed `maxFeePerGas` of the latest
+  attempt. A clipped or lower suggested priority fee alone does not trigger
+  replacement.
 - The new fees fit the step and the cap. Each step raises `maxFeePerGas` and
   `maxPriorityFeePerGas` by 25%, rounded up. Neither field can go above three
   times the original send's value. Each step must raise both fields by at
-  least 10%, the minimum that nodes accept for an EIP-1559 replacement. When
+  least 10%. When
   the cap does not allow this, the cap is reached. With these values, a send
   can have at most five replacements.
 - The worst-case fee (the original gas limit at the new `maxFeePerGas`, plus
@@ -294,6 +295,7 @@ A replacement is signed only when all of these are true:
   change. A claim row records its quoted USDC value for this check. A claim
   recorded before this change has no value, so it is not replaced.
 - A claim: the reviewed deployment is verified again, as for a rebroadcast.
+- An approval: the token, pinned router and finite original amount match.
 - A swap: its router deadline is more than 2 minutes away.
 
 If one of these is false, the send waits. The run logs `fee_send_waiting`
@@ -337,7 +339,7 @@ lands.
 
 **Nonce floor.** A new claim, approval or swap never takes a nonce at or
 below the nonce of an open journaled send (`submitted` or `unknown`) on that
-network. A node, for example one behind a load-balanced RPC, can drop a
+network. A legacy approval hash also reserves its recorded nonce. A node, for example one behind a load-balanced RPC, can drop a
 stuck send and report its nonce as free. Without this floor, a new send for
 another token could take that nonce, and the two sends would outbid each
 other through their replacements. The new send is refused before it is
@@ -354,9 +356,19 @@ error or any other uncertain response keeps the same bytes and the row
 `unknown`. The wait, the step and the cap come from the journal, so repeated
 runs cannot pass the cap.
 
-**Not covered.** The ERC-20 approval before a swap is not journaled with its
-signed bytes, so it is not replaced. If an approval is not mined within one
-minute, the conversion fails before the swap is signed, as before.
+**Approval before swap.** Migration `0088` keeps the exact finite approval as a
+separate immutable send in the same journal. Its bytes are stored before
+broadcast. An uncertain send blocks another intent for that token; a restart
+reuses its bytes. The receipt must be canonical and finalized, and the token,
+router, amount and allowance must match before a later run prepares a fresh
+swap. Approvals share the bounded replacement path but have no swap deadline.
+They count as neither conversions nor fee receipts and do not consume the
+conversion value caps. Those caps still apply to the later swap.
+
+Older rows with only an approval hash keep their original state and history.
+They hold the token and nonce until the exact approval can be verified. Missing
+bytes or uncertain receipts never authorize a new approval or a replacement.
+No raw bytes are fabricated for those rows.
 
 ## Configuration
 
@@ -410,7 +422,7 @@ remote signer may replace it later. Signing stays narrow: only `live` mode on a
 network with a verified USDC target loads a key; the key signs only an exact
 approval to the pinned router, the checked swap, `claimFees()` (no
 arguments, no value) to a vault named in a D1 project manifest, same-nonce fee
-replacements of that swap or claim, and on Solana
+replacements of that swap, approval or claim, and on Solana
 `claim_fees` for a verified manifest vault into the fee wallet's own token
 account; errors and logs never include it.
 

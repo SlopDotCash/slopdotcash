@@ -553,48 +553,129 @@ describe("conversion policy", () => {
 });
 
 describe("idempotent sends", () => {
-  test("an approval is recorded before it can be broadcast", async () => {
+  test("an approval is journaled before an ambiguous broadcast and excludes conversion totals", async () => {
     const h = harness();
-    h.chain.prepare = async (_token, quote, recordApproval) => {
-      await recordApproval({ txId: `0x${"a".repeat(64)}`, evmNonce: 7 });
+    h.chain.prepare = async () => ({
+      kind: "approval",
+      txId: `0x${"a".repeat(64)}`,
+      rawTx: "0xapproval",
+      evmNonce: 7,
+      expiresAt: null,
+      approvalTxId: `0x${"a".repeat(64)}`,
+      minAmountOut: 0n,
+    });
+    h.chain.broadcast = async () => {
       expect(h.rows()[0]).toMatchObject({
-        state: "quoted",
-        approval_tx_id: `0x${"a".repeat(64)}`,
-        raw_tx: null,
+        kind: "approval",
+        state: "submitted",
+        raw_tx: "0xapproval",
         evm_nonce: 7,
       });
-      throw new Error(`approval broadcast failed for ${quote.amountIn}`);
+      throw new Error("approval response lost");
     };
-
     await runNetwork(h.network, h.deps);
-
     expect(h.rows()[0]).toMatchObject({
-      state: "failed",
-      approval_tx_id: `0x${"a".repeat(64)}`,
-      raw_tx: null,
+      kind: "approval",
+      state: "unknown",
+      raw_tx: "0xapproval",
       evm_nonce: 7,
-      reason: "prepare: approval broadcast failed for 20000000",
+      reason: "broadcast: approval response lost",
     });
+    expect(await h.deps.store.liveValueSince("base", "2000")).toBe(0n);
+    expect(await h.deps.store.latest("base", TOKEN)).toBeNull();
+    const { handleFeeConversionsApi } = await import(
+      "../../backend/fee-conversions/handler"
+    );
+    const response = await handleFeeConversionsApi(
+      new Request("https://slop.cash/api/v1/admin/fee-conversions"),
+      {
+        db: h.db,
+        adminGithubIds: new Set(["1"]),
+        sessionActor: async () => ({ githubId: "1" }),
+      },
+    );
+    const body = (await response?.json()) as {
+      recent: unknown[];
+      totals: unknown[];
+    };
+    expect(body.recent).toEqual([]);
+    expect(body.totals).toEqual([]);
+    let prepared = false;
+    h.chain.prepare = async () => {
+      prepared = true;
+      throw new Error("must not prepare");
+    };
+    h.chain.statusFor = () => ({ kind: "rebroadcast" });
+    const delivered: string[] = [];
+    h.chain.broadcast = async (raw) => {
+      delivered.push(raw);
+    };
+    await runNetwork(h.network, h.deps);
+    expect(prepared).toBe(false);
+    expect(delivered).toEqual(["0xapproval"]);
+    expect(h.rows()).toHaveLength(1);
   });
 
-  test("a recorded approval does not block the swap that follows", async () => {
+  test("a canonical approval permits a fresh later swap without counting the approval value", async () => {
     const h = harness();
     const prepareSwap = h.chain.prepare;
-    h.chain.prepare = async (token, quote, recordApproval) => {
-      await recordApproval({ txId: `0x${"a".repeat(64)}`, evmNonce: 6 });
-      const swap = await prepareSwap(token, quote, recordApproval);
-      return { ...swap, approvalTxId: `0x${"a".repeat(64)}` };
-    };
-
-    await runNetwork(h.network, h.deps);
-
-    expect(h.chain.sent).toEqual(["0xraw1"]);
-    expect(h.rows()[0]).toMatchObject({
-      state: "submitted",
-      approval_tx_id: `0x${"a".repeat(64)}`,
-      raw_tx: "0xraw1",
-      evm_nonce: 1,
+    h.chain.prepare = async () => ({
+      kind: "approval",
+      txId: `0x${"a".repeat(64)}`,
+      rawTx: "0xapproval",
+      evmNonce: 6,
+      expiresAt: null,
+      approvalTxId: `0x${"a".repeat(64)}`,
+      minAmountOut: 0n,
     });
+    await runNetwork(h.network, h.deps);
+    expect(h.rows()[0].kind).toBe("approval");
+    h.chain.statusFor = (row) =>
+      row.kind === "approval"
+        ? { kind: "finalized", amountOut: 0n }
+        : { kind: "pending" };
+    h.chain.prepare = prepareSwap;
+    h.clock.now = new Date(h.clock.now.getTime() + 1000);
+    await runNetwork(h.network, h.deps);
+    expect(h.chain.sent).toEqual(["0xapproval", "0xraw1"]);
+    expect(
+      h.rows().map((row) => [row.kind, row.state, row.amount_out]),
+    ).toEqual([
+      ["approval", "finalized", "0"],
+      ["conversion", "submitted", null],
+    ]);
+    expect(await h.deps.store.liveValueSince("base", "2000")).toBe(20_000_000n);
+  });
+
+  test("a legacy failed approval hash stays held without inventing its raw bytes", async () => {
+    const h = harness();
+    h.sqlite.exec(`INSERT INTO fee_conversions
+      (id,run_id,network,mode,fee_wallet,token,target_token,amount_in,approval_tx_id,evm_nonce,state,reason,created_at,updated_at)
+      VALUES('old-approval','old-run-0001','base','live','${WALLET}','${TOKEN}','${USDC}','20000000','0x${"a".repeat(64)}',7,'failed','old approval timeout','before','before')`);
+    const before = h.rows()[0];
+    h.chain.statusFor = (row) => {
+      expect(row.kind).toBe("approval");
+      expect(row.rawTx).toBeNull();
+      expect(row.txId).toBe(`0x${"a".repeat(64)}`);
+      return { kind: "pending", mined: true };
+    };
+    await runNetwork(h.network, h.deps);
+    expect(h.chain.prepared).toBe(0);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.rows()).toEqual([before]);
+
+    // A dropped legacy hash also reserves its nonce against another token.
+    h.deps.projectTokens = async () => [OTHER];
+    h.chain.balances.set(OTHER, 20_000_000n);
+    let floor: number | undefined;
+    h.chain.prepare = async (_token, _quote, nonceFloor) => {
+      floor = nonceFloor;
+      throw new Error("node nonce is below the retained approval");
+    };
+    await runNetwork(h.network, h.deps);
+    expect(floor).toBe(8);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.rows()[0]).toEqual(before);
   });
 
   test("an unknown send blocks a new attempt until it is reconciled", async () => {
@@ -751,10 +832,10 @@ describe("idempotent sends", () => {
     const prepare = h.chain.prepare;
     // The lease this run holds at the moment each chunk starts to sign.
     const leaseAtSign: string[] = [];
-    h.chain.prepare = async (token, quote, recordApproval) => {
+    h.chain.prepare = async (token, quote, nonceFloor) => {
       leaseAtSign.push(h.locks()[0]?.expires_at ?? "none");
       h.clock.now = new Date(h.clock.now.getTime() + 8 * 60 * 1000);
-      return prepare(token, quote, recordApproval);
+      return prepare(token, quote, nonceFloor);
     };
     h.chain.statusFor = () => ({ kind: "finalized", amountOut: 1n });
     const startedAt = h.clock.now.getTime();
@@ -782,19 +863,22 @@ describe("idempotent sends", () => {
     h.chain.balances.set(TOKEN, 20_000_000n);
     h.chain.balances.set(OTHER, 20_000_000n);
     const prepare = h.chain.prepare;
-    h.chain.prepare = async (token, quote, recordApproval) => {
+    h.chain.prepare = async (token, quote, nonceFloor) => {
       // A send waits for receipts; this one outlives the lease and the
       // successor run takes it before the next chunk.
       h.clock.now = new Date(h.clock.now.getTime() + 15 * 60 * 1000);
       await h.deps.store.acquireLock("base", "successor", h.clock.now);
-      return prepare(token, quote, recordApproval);
+      return prepare(token, quote, nonceFloor);
     };
 
     const result = await runNetwork(h.network, h.deps);
 
-    // The first chunk signed; the loop stopped instead of signing a second.
+    // Preparation returned after takeover. Its bytes are not persisted or
+    // broadcast, and the loop stops instead of preparing a second chunk.
     expect(h.chain.prepared).toBe(1);
-    expect(result.records.submitted).toBe(1);
+    expect(result.records.submitted).toBe(0);
+    expect(result.records.failed).toBe(1);
+    expect(h.chain.sent).toEqual([]);
     expect(h.events).toContainEqual(
       expect.objectContaining({ event: "fee_conversion_lock_lost" }),
     );
@@ -1352,7 +1436,7 @@ describe("D1 contract", () => {
        '20', 'kyberswap', '{"route":"settled"}', '0xabc2', '0x0304', 3, 1233, '7',
        'finalized', 'before', 'then', 'before', '8', 'then')`);
     const before = sqlite
-      .query("SELECT * FROM fee_conversions ORDER BY id")
+      .prepare("SELECT * FROM fee_conversions ORDER BY id")
       .all() as Record<string, unknown>[];
     sqlite.exec(
       readFileSync(new URL("0082_fee_claim_journal.sql", dir), "utf8"),
@@ -1377,6 +1461,36 @@ describe("D1 contract", () => {
     expect(
       sqlite.prepare("SELECT * FROM fee_conversions ORDER BY id").all(),
     ).toEqual(after);
+    sqlite.exec(
+      readFileSync(new URL("0087_fee_send_replacements.sql", dir), "utf8"),
+    );
+    sqlite.exec(
+      `INSERT INTO fee_send_replacements VALUES ('replacement-old', 'id-submitted', 'base', 1, 4, '0x${"a".repeat(64)}', '0x0506', '125', '25', 'then')`,
+    );
+    sqlite.exec(`INSERT INTO fee_conversions
+      (id,run_id,network,mode,fee_wallet,token,target_token,amount_in,approval_tx_id,evm_nonce,state,reason,created_at,updated_at)
+      VALUES('old-approval','old-run-0001','base','live','${WALLET}','${TOKEN}','${USDC}','7','0x${"b".repeat(64)}',7,'failed','old approval timeout','before','before')`);
+    const priorRows = sqlite
+      .prepare("SELECT * FROM fee_conversions ORDER BY id")
+      .all();
+    const priorAttempts = sqlite
+      .query("SELECT * FROM fee_send_replacements")
+      .all();
+    sqlite.exec(
+      readFileSync(new URL("0088_fee_approval_journal.sql", dir), "utf8"),
+    );
+    expect(
+      sqlite.prepare("SELECT * FROM fee_conversions ORDER BY id").all(),
+    ).toEqual(priorRows);
+    expect(sqlite.query("SELECT * FROM fee_send_replacements").all()).toEqual(
+      priorAttempts,
+    );
+    expect(() =>
+      sqlite.exec("UPDATE fee_send_replacements SET raw_tx='0x9999'"),
+    ).toThrow(/permanent/);
+    expect(() =>
+      sqlite.exec("DELETE FROM fee_conversions WHERE id='old-approval'"),
+    ).toThrow(/permanent/);
     sqlite.close();
   });
 
