@@ -109,9 +109,8 @@ export interface AccrualStore {
   claimWallet(githubId: string): Promise<string | null>;
   /** Wallets pinned by earlier files: referrer id to wallet. */
   pinnedWallets(): Promise<Map<string, string>>;
-  insertAccruals(rows: AccrualRow[]): Promise<void>;
-  /** Inserts the file and pins the wallets of referrers entering a tree for the first time. */
-  insertFile(file: AccrualFile): Promise<void>;
+  /** Atomically files the rows, exact file and first-use wallet pins under this run's lease. */
+  filePeriod(rows: AccrualRow[], file: AccrualFile, now: Date): Promise<void>;
 }
 
 export interface RunDependencies {
@@ -543,9 +542,8 @@ export async function runAccrual(deps: RunDependencies): Promise<RunResult> {
     for (const period of pendingPeriods(filed, config.firstPeriod, now)) {
       const candidates = await store.candidates(period);
       const rows = await judge(period, runId, candidates, totals, deps);
-      await store.insertAccruals(rows);
       const file = await buildFile(period, epoch, runId, rows, totals, deps);
-      await store.insertFile(file);
+      await store.filePeriod(rows, file, deps.now());
       deps.log({
         event: "referral_accrual_filed",
         period,
