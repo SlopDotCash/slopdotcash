@@ -11,10 +11,7 @@ import {
   handleNotificationsApi,
   type NotificationsDependencies,
 } from "../../../backend/notifications/handler";
-import {
-  handlePaymentsApi,
-  type PaymentsDependencies,
-} from "../../../backend/payments/handler";
+import { handlePaymentsApi } from "../../../backend/payments/handler";
 import {
   MonthlyPaymentError,
   monthlyOwnerService,
@@ -888,14 +885,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       }),
       solanaFundingConfig: (projectId, network, vault) =>
         solanaFundingConfig(projectId, network, vault, "ordinary"),
-      // Cloudflare's per-colo edge cache; absent outside the Workers runtime.
-      edgeCache: (
-        globalThis as {
-          caches?: {
-            default?: NonNullable<PaymentsDependencies["edgeCache"]>;
-          };
-        }
-      ).caches?.default,
+      edgeCache: edgeCache(),
       operatorIds: (context.env.OPERATOR_GITHUB_IDS ?? "")
         .split(",")
         .map((id) => id.trim())

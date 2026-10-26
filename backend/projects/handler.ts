@@ -660,10 +660,6 @@ function withMonthlyAmount(value: unknown, amount: unknown): unknown {
   };
 }
 
-function skillNames(manifest: ProjectDefinition): string[] {
-  return [manifest.skill.id, manifest.reviewSkill.id];
-}
-
 /**
  * A review budget added or newly funded may not shrink the contributor pool
  * or reach back into an open or closed cycle.
@@ -1106,8 +1102,6 @@ async function createProject(
   await purgeProjectCache(
     deps.cache,
     new URL(request.url).origin,
-    manifest.id,
-    skillNames(manifest),
     await deps.persistence.enforcementGeneration(),
   );
   const project = await deps.persistence.getProject(manifest.id);
@@ -1698,8 +1692,6 @@ async function publishPendingApplication(
   await purgeProjectCache(
     deps.cache,
     new URL(request.url).origin,
-    application.projectId,
-    skillNames(application.manifest),
     await deps.persistence.enforcementGeneration(),
   );
   const project = await deps.persistence.getProject(application.projectId);
@@ -1911,8 +1903,6 @@ async function appendRevision(
   await purgeProjectCache(
     deps.cache,
     new URL(request.url).origin,
-    projectId,
-    [...new Set([...skillNames(current.manifest), ...skillNames(manifest)])],
     await deps.persistence.enforcementGeneration(),
   );
   const updated = await deps.persistence.getProject(projectId);

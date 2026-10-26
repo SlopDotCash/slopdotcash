@@ -601,8 +601,6 @@ async function file(
     await purgeProjectCache(
       deps.cache,
       new URL(request.url).origin,
-      project.id,
-      [project.manifest.skill.id, project.manifest.reviewSkill.id],
       await deps.projects.enforcementGeneration(),
     );
     scan = (await deps.queueFreshScan?.(project)) ?? null;

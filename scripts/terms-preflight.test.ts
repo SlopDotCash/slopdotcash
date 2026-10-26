@@ -57,7 +57,6 @@ async function servedTerms(): Promise<Record<string, unknown>> {
     getProject: async (id) => (id === PROJECT_ID ? record : null),
     listProjects: async () => [record],
     listEnforcements: async () => [],
-    enforcementGeneration: async () => 0,
     loadTemplate: unused,
     vettingClearance: unused,
   };

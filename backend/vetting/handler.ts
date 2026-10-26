@@ -454,8 +454,6 @@ async function refreshQueue(
           await purgeProjectCache(
             deps.cache,
             new URL(request.url).origin,
-            project.id,
-            [project.manifest.skill.id, project.manifest.reviewSkill.id],
             await deps.projects.enforcementGeneration(),
           );
           break;
@@ -655,8 +653,6 @@ async function serviceResult(
   await purgeProjectCache(
     deps.cache,
     new URL(request.url).origin,
-    project.id,
-    [project.manifest.skill.id, project.manifest.reviewSkill.id],
     await deps.projects.enforcementGeneration(),
   );
   // Accept the scan even if a separate GitHub readiness check is unavailable.

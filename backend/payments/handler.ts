@@ -33,6 +33,7 @@ import { isWalletAddress, isWalletChain } from "../../src/lib/wallets";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import { cookieValue, isSameOriginJsonWrite } from "../http";
 import { sessionGithubActor } from "../points/handler";
+import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
 import {
   type MonthlyCommitmentInput,
   type MonthlyOwnerService,
@@ -103,10 +104,7 @@ export interface PaymentsDependencies {
     vault: string,
   ) => Promise<SolanaEscrowConfig>;
   /** Edge cache for public vault snapshot reads (caches.default on Pages). */
-  edgeCache?: {
-    match(request: Request): Promise<Response | undefined>;
-    put(request: Request, response: Response): Promise<void>;
-  };
+  edgeCache?: EdgeCache;
 }
 /** The payments cron writes snapshots every 5 minutes; one minute keeps reads near it. */
 const VAULT_EDGE_CACHE_SECONDS = 60;
@@ -333,30 +331,28 @@ export async function handlePaymentsApi(
     // Vault counters cached by the payments worker from finalized reads. A
     // page view never reaches a chain RPC; the edge cache keeps D1 reads low.
     const vaultRoute = /^\/projects\/([a-z0-9][a-z0-9-]*)\/vault$/.exec(path);
-    if (vaultRoute && request.method === "GET") {
-      const key = new Request(url.toString(), { method: "GET" });
-      const cached = await deps.edgeCache?.match(key);
-      if (cached) return cached;
-      const snapshots = await projectVaultSnapshots(deps.db, vaultRoute[1]);
-      const response = new Response(
-        JSON.stringify({
-          projectId: vaultRoute[1],
-          snapshots,
-          staleAfterMs: VAULT_SNAPSHOT_STALE_MS,
-          servedAt: now,
-        }),
-        {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-            "cache-control": `public, max-age=${VAULT_EDGE_CACHE_SECONDS}, s-maxage=${VAULT_EDGE_CACHE_SECONDS}`,
-            "x-content-type-options": "nosniff",
-          },
-        },
+    if (vaultRoute && request.method === "GET")
+      return await cachedPublicResponse(
+        deps.edgeCache,
+        request,
+        async () =>
+          new Response(
+            JSON.stringify({
+              projectId: vaultRoute[1],
+              snapshots: await projectVaultSnapshots(deps.db, vaultRoute[1]),
+              staleAfterMs: VAULT_SNAPSHOT_STALE_MS,
+              servedAt: now,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json",
+                "cache-control": `public, max-age=${VAULT_EDGE_CACHE_SECONDS}, s-maxage=${VAULT_EDGE_CACHE_SECONDS}`,
+                "x-content-type-options": "nosniff",
+              },
+            },
+          ),
       );
-      await deps.edgeCache?.put(key, response.clone());
-      return response;
-    }
     const directRoute =
       /^\/(?:projects\/([a-z0-9][a-z0-9-]*)|actors\/([1-9]\d{0,15}))\/direct-transfers$/.exec(
         path,

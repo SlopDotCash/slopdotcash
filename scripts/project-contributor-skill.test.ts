@@ -69,7 +69,6 @@ async function served(path: string): Promise<Uint8Array> {
     getProject: async (id) => (id === PROJECT_ID ? record : null),
     listProjects: async () => [record],
     listEnforcements: async () => [],
-    enforcementGeneration: async () => 0,
     loadTemplate: async () => ({
       index,
       readFile: async (file) => new Uint8Array(readFileSync(join(ROOT, file))),

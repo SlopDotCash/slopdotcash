@@ -2,7 +2,6 @@ import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
 } from "../backend/projects/cloudflare-persistence";
-import { edgeCache } from "../backend/projects/edge-cache";
 import { githubApiOrigin } from "../backend/projects/github-lookup";
 import {
   assetTemplateSource,
@@ -59,7 +58,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       getProject: (id) => persistence.getProject(id),
       listProjects: () => persistence.listProjects(),
       listEnforcements: () => persistence.listEnforcements(),
-      enforcementGeneration: () => persistence.enforcementGeneration(),
       loadTemplate: assetTemplateSource(
         context.env.ASSETS,
         new URL(context.request.url).origin,
@@ -71,8 +69,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
           project.revision,
           () => readVettingPin(github, project.manifest, templateSha256),
         ),
-      cache: edgeCache(),
-      waitUntil: context.waitUntil?.bind(context),
     });
     if (artifact !== null) return artifact;
   }
