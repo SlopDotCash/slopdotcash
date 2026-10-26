@@ -511,7 +511,9 @@ Before POST, the Worker records that delivery has started. A retry reads the
 complete bounded comment history and accepts only the configured App's exact
 appeal-and-stage marker. It records completion only after a confirmed response
 or reconciliation. An uncertain send with no matching comment stays pending;
-it retries reconciliation without posting again. Copied markers, unavailable
+it retries reconciliation without posting again. Explicit GitHub authorization,
+rate-limit or validation rejections remain retryable after the cause is fixed.
+Copied markers, unavailable
 history and multiple matches cannot establish delivery. Local Worker/SQLite
 checks prove lost-response recovery, concurrent delivery and expired-holder
 fencing. Hosted delivery remains a separate acceptance check.

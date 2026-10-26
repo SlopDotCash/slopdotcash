@@ -63,6 +63,7 @@ type Run = {
   pauseNextReopen: () => { entered: Promise<void>; release: () => void };
   loseNextReopenResponse: () => void;
   loseNextAppealCommentResponse: (accepted?: boolean) => void;
+  rejectNextAppealComment: (status: number) => void;
   pauseNextAppealComment: () => { entered: Promise<void>; release: () => void };
   appealHistory: (
     mode: "normal" | "unavailable" | "copied",
@@ -141,6 +142,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let pauseReopen: (() => Promise<void>) | null = null;
   let loseReopenResponse = false;
   let appealResponse: "accepted" | "unknown" | null = null;
+  let appealRejection: number | null = null;
   let pauseAppeal: (() => Promise<void>) | null = null;
   let appealHistoryMode = "normal";
   let historyPrefix = 0;
@@ -346,6 +348,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       if (path.endsWith("/issues/5/comments")) {
         const body = ((await request.json()) as { body: string }).body;
         if (body.startsWith("<!-- slopbot:appeal:")) {
+          if (appealRejection !== null) {
+            const status = appealRejection;
+            appealRejection = null;
+            return new Response(null, { status });
+          }
           if (pauseAppeal) {
             const pause = pauseAppeal;
             pauseAppeal = null;
@@ -491,6 +498,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       },
       loseNextReopenResponse: () => {
         loseReopenResponse = true;
+      },
+      rejectNextAppealComment: (status) => {
+        appealRejection = status;
       },
       loseNextAppealCommentResponse: (accepted = true) => {
         appealResponse = accepted ? "accepted" : "unknown";
@@ -1455,3 +1465,21 @@ test("unavailable comment history refuses a first POST but remains retryable", a
     ).toHaveLength(1);
   });
 });
+
+for (const status of [401, 403, 404, 410, 422, 429]) {
+  test(`a confirmed GitHub ${status} rejection allows an authorized appeal retry`, async () => {
+    await closedItem(async (run) => {
+      await run.review();
+      const job = run.job("appeal", { senderId: AUTHOR });
+      run.rejectNextAppealComment(status);
+      await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+      expect(
+        run.comments.filter((c) => c.startsWith("<!-- slopbot:appeal:")),
+      ).toHaveLength(0);
+      await run.deliver(job);
+      expect(
+        run.comments.filter((c) => c.startsWith("<!-- slopbot:appeal:")),
+      ).toHaveLength(1);
+    });
+  });
+}

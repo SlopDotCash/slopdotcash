@@ -1,5 +1,10 @@
 // PRD sections 5 and 9: a lost response is not permission to post again.
-import { findReviewComment, type GitHubClient, sha256Hex } from "./github";
+import {
+  findReviewComment,
+  type GitHubClient,
+  GitHubError,
+  sha256Hex,
+} from "./github";
 import {
   type D1TransactionalDatabase,
   hasRecordedAction,
@@ -79,19 +84,38 @@ export async function publishAppealComment(
         .run();
       if (started.meta?.changes !== 1) throw new ReviewLeaseLostError();
       // Persist before POST. Even a terminated consumer must reconcile, not resend.
-      const created = await github.request<{ id: number }>(
-        "POST",
-        `/repos/${input.owner}/${input.repo}/issues/${input.number}/comments`,
-        { body: `${marker}\n${input.body}` },
-      );
-      if (
-        created.status !== 201 ||
-        created.data === null ||
-        !Number.isSafeInteger(created.data?.id) ||
-        (created.data?.id ?? 0) <= 0
-      )
-        throw new Error("GitHub did not confirm the appeal comment");
-      commentId = created.data.id;
+      try {
+        const created = await github.request<{ id: number }>(
+          "POST",
+          `/repos/${input.owner}/${input.repo}/issues/${input.number}/comments`,
+          { body: `${marker}\n${input.body}` },
+        );
+        if (
+          created.status !== 201 ||
+          created.data === null ||
+          !Number.isSafeInteger(created.data.id) ||
+          created.data.id <= 0
+        )
+          throw new GitHubError(
+            created.status,
+            "GitHub did not confirm the appeal comment",
+          );
+        commentId = created.data.id;
+      } catch (error) {
+        // A definite rejection can retry after access/rate/validation recovery.
+        // Transport errors, server errors and malformed success stay uncertain.
+        if (
+          error instanceof GitHubError &&
+          [401, 403, 404, 410, 422, 429].includes(error.status)
+        )
+          await db
+            .prepare(
+              `UPDATE slopbot_appeal_publications SET post_started_at=NULL WHERE ${fence} AND confirmed_comment_id IS NULL`,
+            )
+            .bind(input.key, token, new Date().toISOString())
+            .run();
+        throw error;
+      }
     }
     const confirmedAt = new Date().toISOString();
     const results = await db.batch([
