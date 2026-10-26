@@ -1,7 +1,9 @@
 # Escrow: release of an unsettleable monthly reserve
 
-Status: proposed contract change. It is not deployed. It needs a reviewed
-upgrade and testnet qualification on each network before use.
+Status: contract change in review (PR #1271), bundled into the pending EVM V2
+upgrade. It is not deployed. It needs the reviewed upgrade and testnet
+qualification on each network before use. Section 9 records the owner
+decisions.
 
 Source: owner action list on issue #914, and the owner decision of 25 October
 2026: "Plan a contract fix: design a reviewed contract change that lets the
@@ -227,10 +229,15 @@ Solana: no account changes. The release uses the existing `released` and
 change adds one instruction, one event, and one error code at the end of the
 error list, so existing error codes keep their numbers.
 
-The pending EVM V2 upgrade kit (`contracts/DEPLOY-MAINNET.md` section 4)
-targets source `dd1af34d`. This change makes a different vault implementation,
-so that kit's addresses and code digests do not apply to it. Mainnet EVM
-vaults do not yet run V2, so no mainnet EVM vault can have this fault today.
+Mainnet EVM vaults do not yet run V2, so no mainnet EVM vault can have this
+fault today. The owner decided to bundle this change into the pending V2
+upgrade (section 9). The kit in `contracts/DEPLOY-MAINNET.md` section 4 now
+targets the bundled vault implementation
+`0x90C46e3E5be35B1048cD69403d1402Feed1240D8` (runtime SHA-256
+`155c7ea2fdeeaeccfd6daac64b6105e968c1927092f8761f34090a8b42e15bfc`). The
+factory implementation does not change. The Solana program hash `d29200ec…`
+from source `edf3b341` is superseded; the deterministic Solana build must be
+redone from the final merged source.
 
 ## 6. Alternatives considered
 
@@ -293,3 +300,11 @@ section 11 with this text:
 > after every settleable leaf has settled and the fault is recorded. Committed
 > awards and settleable leaves stay reserved, and the period stays committed.
 > Time alone never releases a reserve.
+
+## 9. Owner decisions (25 October 2026, in chat)
+
+| Question | Decision |
+| --- | --- |
+| Upgrade path | "Bundle into V2." Fold the release into the pending EVM V2 mainnet upgrade before it runs. The kit in `contracts/DEPLOY-MAINNET.md` section 4 is recomputed and rehearsed again for the bundled vault. |
+| Re-admission after a release | "No, manual awards." Keep one commitment per period. The owner pays a corrected month with manual awards after the release. |
+| Expiry | "No expiry." Funded awards and reserves never expire. Only the signed owner release in this document returns unsettleable gross. |
