@@ -1682,7 +1682,11 @@ test("an open account appeal survives later project restrictions and needs an in
   );
   const project = await t.persistence.getProject("clear-denial");
   if (!project) throw new Error("Project missing");
-  const vettingBan = async (sequence: number) => {
+  // The vetting service keeps an open appeal `requested` on its record.
+  const vettingBan = async (
+    sequence: number,
+    appealAfter: "none" | "requested" = "none",
+  ) => {
     const current = await t.persistence.getProject(project.id);
     if (!current) throw new Error("Project missing");
     return t.persistence.appendEnforcement(
@@ -1692,7 +1696,7 @@ test("an open account appeal survives later project restrictions and needs an in
         sequence,
         action: "ban",
         stateAfter: "banned",
-        appealAfter: "none",
+        appealAfter,
         reason: "Synthetic confirmed malicious scan",
         evidenceReference: "private-case-fixture",
         repositoryGithubId: "987654321",
@@ -1807,13 +1811,14 @@ test("an open account appeal survives later project restrictions and needs an in
   expect((await decide("deny_reinstatement", OWNER, 8)).status).toBe(409);
   // A new confirmed malicious result needs a moderator decision. ADMIN cannot
   // close OTHER's new appeal by banning OTHER again. A decision that does not
-  // ban OTHER again keeps OTHER's appeal open, and its record says so.
+  // ban OTHER again closes no appeal, so OWNER can make it although OWNER
+  // placed the restriction. Its record keeps OTHER's appeal open.
   expect(await otherAppeal()).toBe(200);
-  expect(await vettingBan(9)).toBe("recorded");
+  expect(await vettingBan(9, "requested")).toBe("recorded");
   const selfReBan = await decide("ban", ADMIN, 10, [{ githubLogin: "other" }]);
   expect(selfReBan.status).toBe(403);
   expect(selfReBan.body.error).toBe("independent_review_required");
-  const projectOnly = await decide("ban", ADMIN, 10, []);
+  const projectOnly = await decide("ban", OWNER, 10, []);
   expect(projectOnly.status).toBe(200);
   expect(projectOnly.body.record).toMatchObject({
     action: "ban",
@@ -1821,6 +1826,18 @@ test("an open account appeal survives later project restrictions and needs an in
     appealAfter: "requested",
   });
   await expectOtherAppeal("banned", "requested");
+  // A project appeal that a new malicious result kept, with no account
+  // appeal open, needs an independent moderator. The decision denies it.
+  expect((await decide("deny_reinstatement", OWNER, 11)).status).toBe(200);
+  expect((await decide("request_reinstatement", OWNER, 12)).status).toBe(200);
+  expect(await vettingBan(13, "requested")).toBe("recorded");
+  const placerDecision = await decide("ban", OWNER, 14, []);
+  expect(placerDecision.status).toBe(403);
+  expect(placerDecision.body.error).toBe("independent_review_required");
+  const keptAppeal = await decide("ban", ADMIN, 14, []);
+  expect(keptAppeal.status).toBe(200);
+  expect(keptAppeal.body.record).toMatchObject({ appealAfter: "denied" });
+  expect((await decide("deny_reinstatement", ADMIN, 15)).status).toBe(409);
 });
 
 test("account-reinstatement upgrade preserves prior releases and separates future project decisions", async () => {

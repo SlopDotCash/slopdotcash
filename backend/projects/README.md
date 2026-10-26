@@ -335,11 +335,15 @@ rate limit, and caches each answer for five minutes. The browser never calls
   ID again. An empty selection bans only the project. Current stewardship
   and the original application do not select accounts automatically
   (`0066_project_maintainer_bans.sql`). The decision closes an open project
-  appeal as denied. It also closes the open appeal of each account that it
-  bans again. A moderator who placed the restriction, or who banned one of
-  those accounts, cannot decide an open appeal this way. When the decision
-  closes no appeal, its record keeps the appeal `requested`. A plain denial is refused with `malicious_decision_required`
-  until the decision is made. While the account ban holds, a banned
+  appeal as denied. When no account appeal is open, it also closes the
+  appeal that the malicious result kept. A moderator who placed the
+  restriction cannot close those appeals. The decision also closes the open
+  appeal of each account that it bans again. A moderator who banned one of
+  those accounts, or who is one of those accounts, cannot close those
+  appeals. When the decision closes no appeal, its record keeps the open
+  account appeals `requested`. A plain denial is refused with
+  `malicious_decision_required` until the decision is made. While the account
+  ban holds, a banned
   maintainer cannot create a project, publish a stored application or publish
   an owner revision, as the actor or as the named steward
   (`maintainer_banned`). The steward, applicant, and explicitly banned accounts

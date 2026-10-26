@@ -460,26 +460,28 @@ export function planEnforcement(input: {
       if (action === "ban" && restriction.state === "banned" && !deciding)
         refuse("already_restricted", "The project is already banned");
       // Deciding a confirmed malicious result bans the maintainer too. It
-      // closes the open project appeal and the open appeal of each account it
-      // bans again, so the same independence applies to each.
-      const decidesAppeal = deciding && restriction.appeal === "requested";
-      const reBanned = decidesAppeal
+      // closes the open project appeal, or the appeal that the result kept
+      // when no account appeal is open, and the open appeal of each account
+      // it bans again. Each appeal it closes needs its own independence.
+      const closesProjectAppeal =
+        deciding &&
+        restriction.appeal === "requested" &&
+        (projectAppealState(restriction) === "requested" ||
+          openAccountAppeals(restriction, restriction.bannedMaintainers)
+            .size === 0);
+      const reBanned = deciding
         ? openAccountAppeals(restriction, input.responsibleAccounts ?? [])
         : new Set<string>();
-      if (decidesAppeal) {
-        requireIndependentModerator(restriction, actor);
-        requireIndependentAccountModerator(restriction, actor, reBanned);
-      }
+      if (closesProjectAppeal) requireIndependentModerator(restriction, actor);
+      requireIndependentAccountModerator(restriction, actor, reBanned);
       return {
         stateAfter: action === "ban" ? "banned" : "quarantined",
-        // An escalation, or a decision that bans no appealing account again,
-        // keeps an open account appeal open for independent review.
+        // An escalation, or a decision that closes no appeal, keeps the open
+        // account appeals open for independent review.
         appealAfter:
           restriction.appeal !== "requested"
             ? "none"
-            : decidesAppeal &&
-                (projectAppealState(restriction) === "requested" ||
-                  reBanned.size > 0)
+            : closesProjectAppeal || reBanned.size > 0
               ? "denied"
               : "requested",
         bansMaintainer: deciding,
