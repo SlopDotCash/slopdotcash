@@ -17,7 +17,7 @@ Slop's fee-claim and conversion key can claim only accrued fees from reviewed
 vaults to the same fee wallet and convert received fees. It cannot withdraw
 free funds or reserved awards. Slop's identity attester signs wallet bindings
 and bounded monthly allocations. A compromised identity key can redirect
-unpaid awards; owner-held upgrade keys can change the contract logic that
+unpaid awards; upgrade keys held by Slop's owner can change the contract logic that
 governs vault funds. The [canonical PRD, sections 6 and 11](../docs/slop-product-requirements.md#6-funds-and-payments)
 records these powers, limits and accepted risks. Contract balances do not remove
 these key risks.
