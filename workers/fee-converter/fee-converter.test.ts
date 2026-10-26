@@ -310,7 +310,7 @@ describe("release gates", () => {
       },
     });
     expect(toml).toMatch(
-      /^FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"$/mu,
+      /^FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood,solana"$/mu,
     );
     expect(toml).toMatch(/^FEE_CONVERTER_MIN_VALUE_MICRO = "5000000"$/mu);
     expect(toml).toMatch(/^FEE_CONVERTER_GAS_MULTIPLE = "10"$/mu);
@@ -1746,21 +1746,6 @@ describe("D1 contract", () => {
     ]);
     expect(await projectRewardTokens(db, "solana", ["solana-mainnet"])).toEqual(
       [],
-    );
-  });
-
-  test("live Solana signing stays blocked outside the local harness", async () => {
-    const { chainClient } = await import("./index");
-    const env = {
-      FEE_CONVERTER_MODE: "live",
-      FEE_CONVERTER_NETWORKS: "solana",
-      FEE_WALLET_SOLANA: "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
-      FEE_WALLET_KEY_SOLANA: JSON.stringify(new Array(64).fill(1)),
-      ...LIMITS,
-    };
-    const parsed = parseConfig(env);
-    expect(() => chainClient(env, parsed, parsed.networks[0])).toThrow(
-      /live Solana conversion is blocked/,
     );
   });
 
