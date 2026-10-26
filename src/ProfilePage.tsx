@@ -57,7 +57,7 @@ const REVIEW_EXCLUSION_LABELS: Record<ReviewExclusionReason, string> = {
   "unchanged-outcome": "Did not change what merged",
   "pull-request-review-awarded": "Another review on this pull request counted",
   "review-credit-reviewer-limit": "After the first five reviewers",
-  "review-credit-zero-share": "Share rounded to zero",
+  "review-credit-zero-share": "No review share",
   "review-credit-outside-window": "Submitted outside the scoring window",
   "review-credit-before-policy": "Submitted before the current scoring rules",
   "review-credit-account-banned": "Submitted after an account ban",
@@ -142,13 +142,10 @@ export function ProfilePage({
       .map((opportunity) => ({ opportunity, project: view.project })),
   );
   const reviewExclusions = (state.snapshot.reviewExclusions ?? []).filter(
-    (exclusion) => exclusion.reviewerId === actor.id,
+    (exclusion) => exclusion.reviewer?.id === actor.id,
   );
   const unscoredReviews = (
-    <ProfileReviewExclusions
-      exclusions={reviewExclusions}
-      windowDays={state.snapshot.window.days}
-    />
+    <ProfileReviewExclusions exclusions={reviewExclusions} />
   );
   if (
     matches.length === 0 &&
@@ -362,13 +359,11 @@ export function ProfilePage({
   );
 }
 
-/** A reviewer's own unscored reviews, each with its published reason. */
+/** Reviews excluded from this snapshot, not a revocation of earlier credit. */
 function ProfileReviewExclusions({
   exclusions,
-  windowDays,
 }: {
   exclusions: readonly ReviewExclusion[];
-  windowDays: number;
 }) {
   if (exclusions.length === 0) return null;
   const counts = new Map<ReviewExclusionReason, number>();
@@ -388,13 +383,13 @@ function ProfileReviewExclusions({
       aria-labelledby="profile-review-exclusions"
     >
       <div className="profile-section-heading">
-        <h2 id="profile-review-exclusions">Reviews that did not score</h2>
+        <h2 id="profile-review-exclusions">Review credit exclusions</h2>
         <span>
-          {exclusions.length.toLocaleString()} in the last {windowDays} days
+          {exclusions.length.toLocaleString()} recorded in this snapshot
         </span>
       </div>
       <p>
-        Each review is listed with the rule that left it out.{" "}
+        These reviews add no credit in this snapshot. Earlier Points can remain.{" "}
         <Link href="/how-it-works#points">How reviews score</Link>
       </p>
       <p className="profile-review-reasons">
@@ -454,6 +449,9 @@ function currentProfileActor(
   const actors: Array<{ id: string; login: string; avatarUrl?: string }> = [
     ...(membership.signedInActor ? [membership.signedInActor] : []),
     ...state.snapshot.leaders.map((leader) => leader.actor),
+    ...(state.snapshot.reviewExclusions ?? []).flatMap((exclusion) =>
+      exclusion.reviewer?.kind === "User" ? [exclusion.reviewer] : [],
+    ),
     ...state.views.flatMap((view) => [
       ...view.leaders.map((leader) => leader.actor),
       ...view.opportunities.map((opportunity) => opportunity.actor),

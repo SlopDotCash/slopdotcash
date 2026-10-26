@@ -2968,7 +2968,7 @@ function createSnapshotWithReviewCutoff(
       repository: repositoryIdFromUrl(pullRequest.url),
       url: review.url,
       reason,
-      ...(review.author ? { reviewerId: review.author.id } : {}),
+      ...(review.author ? { reviewer: review.author } : {}),
     });
   };
   const scoredAttributionSources = new Map<string, GitHubTextSource>();
@@ -5245,15 +5245,15 @@ function assertReviewExclusionValue(
     "reviewId",
     "url",
   ];
-  // `reviewerId` is additive; earlier snapshots omit it.
+  // `reviewer` is additive; earlier snapshots omit it.
   const keys = Object.keys(exclusion)
-    .filter((key) => key !== "reviewerId")
+    .filter((key) => key !== "reviewer")
     .sort();
   if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
     throw new Error(`${path} must contain exactly the review exclusion fields`);
   }
-  if ("reviewerId" in exclusion)
-    assertString(exclusion.reviewerId, `${path}.reviewerId`);
+  if ("reviewer" in exclusion)
+    assertActorValue(exclusion.reviewer, `${path}.reviewer`);
   assertString(exclusion.id, `${path}.id`);
   assertString(exclusion.pullRequestId, `${path}.pullRequestId`);
   assertPositiveInteger(
@@ -7194,6 +7194,9 @@ export function assertLeaderboardSnapshot(
   assertActorCoherence([
     ...validatedLeaders.map((entry) => entry.actor),
     ...validatedLedger.map((event) => event.actor),
+    ...((reviewExclusions as ReviewExclusion[] | undefined)?.flatMap(
+      (exclusion) => (exclusion.reviewer ? [exclusion.reviewer] : []),
+    ) ?? []),
     ...validatedAttributions.flatMap((attribution) =>
       attribution.actor ? [attribution.actor] : [],
     ),

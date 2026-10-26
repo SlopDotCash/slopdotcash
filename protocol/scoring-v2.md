@@ -92,11 +92,14 @@ census immediately before assembly. It aborts without a snapshot if any
 requested node, count, timestamp, review page, or inline-comment page is missing
 or inconsistent. Review-only hydration never enables author-detail bonuses.
 
-Each collected formal review that does not score appears in the public
+Each collected formal review excluded from the snapshot appears in the public
 `reviewExclusions` array with immutable pull-request and review node IDs, the
-reviewer's immutable node ID when GitHub returned one, its canonical public URL
+reviewer's collected GitHub actor when available, its canonical public URL
 and repository, and one closed reason enum. Each contributor profile lists its
-own excluded reviews with their reasons. This makes
+own excluded reviews with their reasons. Earlier snapshots can omit the actor.
+An exclusion applies to this snapshot; policy and window omissions can retain
+earlier Points. A zero share can mean an assessed zero band or allocation
+rounding. This makes
 self-review, bot, post-merge, duplicate-reviewer, non-decision, insufficient-
 substance, pre-existing evaluated-contribution awards, external-prize-policy,
 reviewer-cycle-cap, unchanged-outcome, and pull-request-review-awarded
