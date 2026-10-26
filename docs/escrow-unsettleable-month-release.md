@@ -260,12 +260,13 @@ Base's factory received the previous V2 implementation from `208fbf5b` /
 `dd1af34d` at finalized block `53093023`, as recorded in the
 [owner's deployment update](https://github.com/SlopDotCash/slopdotcash/issues/904#issuecomment-6405728213).
 That template does not include this release. The owner decided to bundle this
-change into V2 (section 9); its new bytes still need their own reviewed upgrade.
-The kit in `contracts/DEPLOY-MAINNET.md` section 4 now
-targets the bundled vault implementation
+change into V2 (section 9). On 26 October 2026 the reviewed kit in
+`contracts/DEPLOY-MAINNET.md` section 4 installed the bundled vault
+implementation on Base, Ethereum and Robinhood (finalized record in that file,
+"Bundled monthly reserve V2 upgrade"): the vault implementation
 `0x90C46e3E5be35B1048cD69403d1402Feed1240D8` (runtime SHA-256
-`155c7ea2fdeeaeccfd6daac64b6105e968c1927092f8761f34090a8b42e15bfc`). The
-factory implementation does not change. The Solana program hash `d29200ec…`
+`155c7ea2fdeeaeccfd6daac64b6105e968c1927092f8761f34090a8b42e15bfc`). On Base
+the factory implementation did not change. The Solana program hash `d29200ec…`
 from source `edf3b341` is superseded; the deterministic Solana build must be
 redone from the final merged source.
 
