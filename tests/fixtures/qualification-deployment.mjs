@@ -61,6 +61,19 @@ mock.module("node:child_process", () => ({
         stderr: Buffer.from("PRIVATE_PROCESS_OUTPUT_CANARY [code: 10021]"),
       });
     }
+    if (
+      args[0] === "deployments" &&
+      process.env.QUALIFICATION_FIXTURE_CASE === "verification-child-failure"
+    )
+      return execute(
+        process.execPath,
+        [
+          "--no-env-file",
+          "-e",
+          'process.stderr.write("PRIVATE_PROCESS_OUTPUT_CANARY [code: 10000]"); process.exit(7);',
+        ],
+        options,
+      );
     if (args[0] === "deployments")
       return JSON.stringify({
         versions: [{ version_id: version, percentage: 100 }],

@@ -105,3 +105,16 @@ test("an uploaded Worker with a different source remains unresolved and is never
   expect(state.actions).not.toContain("delete-worker");
   expect(state.queues).toHaveLength(1);
 });
+
+test("a real verification child failure keeps stderr private and leaves ownership unresolved", async () => {
+  const { report, state } = await qualify("verification-child-failure");
+  expect(report.success).toBe(false);
+  expect(report.workerRecovery).toBe("unresolved");
+  expect(report.workerRecoveryFailure).toMatchObject({
+    exitStatus: 7,
+    cloudflareCodes: [10000],
+  });
+  expect(report.cleanup.complete).toBe(false);
+  expect(state.worker).toBe(true);
+  expect(state.actions).not.toContain("delete-worker");
+});

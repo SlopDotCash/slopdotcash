@@ -310,6 +310,7 @@ async function main() {
         execFileSync(join(root, "node_modules/.bin/wrangler"), args, {
           cwd: directory,
           encoding: "utf8",
+          stdio: "pipe",
           env: { ...env, WRANGLER_SEND_METRICS: "false" },
         }),
       );
