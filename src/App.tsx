@@ -2401,19 +2401,22 @@ function ReceiptsPage({
   const receipts =
     state.status === "ready"
       ? state.snapshot.attributions
-          .filter((entry) => entry.run !== null)
+          .filter(
+            (
+              entry,
+            ): entry is typeof entry & { run: NonNullable<typeof entry.run> } =>
+              entry.run !== null,
+          )
           .sort((left, right) =>
-            (right.run?.completedAt ?? "").localeCompare(
-              left.run?.completedAt ?? "",
-            ),
+            right.run.completedAt.localeCompare(left.run.completedAt),
           )
       : [];
   const matching = receipts.filter((entry) =>
     [
       entry.actor?.login,
       entry.sourceUrl,
-      entry.run?.runId,
-      entry.run?.repositoryId,
+      entry.run.runId,
+      entry.run.repositoryId,
       entry.identifier,
       modelIdentityKey(entry.provider, entry.model).key,
       entry.client,
@@ -2467,7 +2470,6 @@ function ReceiptsPage({
       <div className="receipt-list">
         {matching.map((entry) => {
           const run = entry.run;
-          if (!run) return null;
           const workLabel = new URL(entry.sourceUrl).pathname
             .slice(1)
             .replace(/\/(?:pull|issues)\//u, " #");

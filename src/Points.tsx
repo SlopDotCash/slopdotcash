@@ -90,21 +90,21 @@ type State =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; journal: PointsJournal; members: PointsMember[] };
-const Context = createContext<{
+type PointsContext = {
   state: State;
   me: Membership | null;
   session: "loading" | "ready" | "error";
   refresh: () => void;
   requestPoints: () => void;
   setMe: (m: Membership | null) => void;
-}>({
-  state: { status: "loading" },
-  me: null,
-  session: "loading",
-  refresh: () => {},
-  requestPoints: () => {},
-  setMe: () => {},
-});
+};
+const Context = createContext<PointsContext | null>(null);
+/** The points state of the enclosing PointsProvider; there is no default. */
+function usePoints(): PointsContext {
+  const value = useContext(Context);
+  if (!value) throw new Error("PointsProvider is missing");
+  return value;
+}
 /** A refused points request with the server's stable error code, if any. */
 class PointsRequestError extends Error {
   constructor(
@@ -262,8 +262,7 @@ const currentPath = () =>
   `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
 export function PointsNav() {
-  const { state, me, session, setMe, requestPoints, refresh } =
-    useContext(Context);
+  const { state, me, session, setMe, requestPoints, refresh } = usePoints();
   const [open, setOpen] = useState(false);
   const [failedImage, setFailedImage] = useState("");
   const { busy, error, run } = useAction();
@@ -432,7 +431,7 @@ export function PointsNav() {
 }
 
 function Notice() {
-  const { state, refresh } = useContext(Context);
+  const { state, refresh } = usePoints();
   if (state.status === "loading") return <p role="status">Loading points…</p>;
   if (state.status === "error")
     return (
@@ -447,7 +446,7 @@ function Notice() {
 }
 /** Current membership identity, shared with the profile's history and wallet lookup. */
 export function useProfileMembership(login: string, enabled = true) {
-  const { me, session } = useContext(Context);
+  const { me, session } = usePoints();
   const normalizedLogin = login.toLowerCase();
   const [lookup, setLookup] = useState<{
     login: string;
@@ -518,7 +517,7 @@ export function ProfilePoints({
   profileCensus?: ReturnType<typeof useProfiles>;
   profileMembership?: ReturnType<typeof useProfileMembership>;
 }) {
-  const { state } = useContext(Context);
+  const { state } = usePoints();
   const localCensus = useProfiles(!profileCensus);
   const census = profileCensus ?? localCensus;
   const censusMatches =
@@ -644,7 +643,7 @@ export function ProfilePoints({
   );
 }
 function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
-  const { me, setMe, session } = useContext(Context);
+  const { me, setMe, session } = usePoints();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [authorization, setAuthorization] = useState<string | null>(null);
@@ -857,7 +856,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
   );
 }
 export function LoginPage() {
-  const { me } = useContext(Context);
+  const { me } = usePoints();
   useEffect(() => {
     if (me)
       window.location.replace(
@@ -877,7 +876,7 @@ export function LoginPage() {
 }
 export function AccountPage() {
   const accountSession = useProjectSession();
-  const { me, session } = useContext(Context);
+  const { me, session } = usePoints();
   const [closedNotice, setClosedNotice] = useState("");
   useEffect(() => {
     if (me) setClosedNotice("");
@@ -945,7 +944,7 @@ function AccountClosure({
   login: string;
   onClosed: (notice: string) => void;
 }) {
-  const { setMe } = useContext(Context);
+  const { setMe } = usePoints();
   const [confirmation, setConfirmation] = useState("");
   const { busy, error, run } = useAction();
   const inputId = useId();
@@ -1241,7 +1240,7 @@ export function ContributorStandings({
     }
     window.history.replaceState(window.history.state, "", url);
   }, [sort, period, query, project, page, projectId]);
-  const { state } = useContext(Context);
+  const { state } = usePoints();
   const members = useMemo(() => {
     if (state.status !== "ready") return [];
     return pointMembers(
@@ -1546,7 +1545,7 @@ export function PublicXLink({ actorId }: { actorId: string }) {
   ) : null;
 }
 function SocialConnections() {
-  const { me, setMe } = useContext(Context);
+  const { me, setMe } = usePoints();
   const [data, setData] = useState<{
     configured: boolean;
     account: (XAccount & { public: number }) | null;
@@ -1742,7 +1741,7 @@ const PEOPLE_PAGE_SIZE = 24;
  * People without score stay discoverable without receiving a rank.
  */
 function People() {
-  const { state, me } = useContext(Context);
+  const { state, me } = usePoints();
   const census = useProfiles();
   const [members, setMembers] = useState<MemberState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);

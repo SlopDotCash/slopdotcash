@@ -178,10 +178,6 @@ export default function OwnerAwards({
     view?.automatic === true &&
     view.cutoffAt !== null &&
     Date.now() >= Date.parse(view.cutoffAt);
-  const total = view?.proposal?.allocations.reduce(
-    (sum, row) => sum + BigInt(row.grossBase),
-    0n,
-  );
   const reservable =
     view?.run && view.deployment?.network === view.run.network
       ? view.deployment.network
@@ -263,9 +259,14 @@ export default function OwnerAwards({
                 evidence, never the changes.
               </p>
               <p>
-                Allocated {amount(String(total ?? 0n))} of{" "}
-                {amount(view.proposal.capBase)}. Unallocated funds stay in the
-                vault and never raise a later month.
+                Allocated{" "}
+                {amount(
+                  view.proposal.allocations
+                    .reduce((sum, row) => sum + BigInt(row.grossBase), 0n)
+                    .toString(),
+                )}{" "}
+                of {amount(view.proposal.capBase)}. Unallocated funds stay in
+                the vault and never raise a later month.
               </p>
               {view.proposal.allocations.length === 0 ? (
                 <p>No one has an allocation this month.</p>
