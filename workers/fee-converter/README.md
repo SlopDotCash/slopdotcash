@@ -466,11 +466,11 @@ are both reconciled, including older rows that hold both.
 Same-nonce replacements reserve their largest maximum once. Unknown sends
 carry that liability across UTC midnight. Canonical finalized success and
 revert receipts settle the exact execution cost plus Base data/operator fees;
-missing cost evidence keeps the reserve. When a finalized block shows that
-another transaction consumed the nonce and no journaled attempt at it has a
-receipt, no attempt can land. Their cost settles at zero, bound to that
-finalized block hash. Actual costs are charged on the UTC
-day finality is observed. A late receipt therefore does not erase today's
+missing cost evidence keeps the reserve. An advanced finalized nonce does
+not identify the winning transaction or prove zero cost. If another send
+consumed it, the reserve remains until a reviewed path can prove that winner;
+no release path is implemented for that case. Actual costs are charged on the
+UTC day finality is observed. A late receipt therefore does not erase today's
 liability. The receipt block hash remains evidence of the chain event.
 
 ## Key custody
