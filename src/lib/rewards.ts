@@ -56,13 +56,17 @@ export function exactUtcMilliseconds(value: string, field: string): number {
  */
 export type SettlementNetwork = WalletChain;
 
-export type AllocationState =
-  | "approved"
-  | "excluded"
-  | "held"
-  | "held-below-minimum"
-  | "proposed"
-  | "unclaimed";
+export const ALLOCATION_STATES = [
+  "approved",
+  "excluded",
+  "held",
+  "held-below-minimum",
+  "proposed",
+  "unclaimed",
+] as const;
+export type AllocationState = (typeof ALLOCATION_STATES)[number];
+const isAllocationState = (value: unknown): value is AllocationState =>
+  ALLOCATION_STATES.includes(value as AllocationState);
 
 /**
  * Why a row is held. `unsafe-destination` is a reviewed wallet-safety hold.
@@ -597,14 +601,7 @@ function assertAllocation(
     path,
   );
   const state = allocation.state;
-  if (
-    state !== "approved" &&
-    state !== "excluded" &&
-    state !== "held" &&
-    state !== "held-below-minimum" &&
-    state !== "proposed" &&
-    state !== "unclaimed"
-  ) {
+  if (!isAllocationState(state)) {
     throw new TypeError(`${path}.state is invalid`);
   }
   const suggestedMinor = minor(

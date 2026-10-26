@@ -1,4 +1,5 @@
 import type { ActorRef } from "./leaderboard-types";
+import { ALLOCATION_STATES } from "./rewards";
 import type { WalletProof as CycleWalletProof } from "./wallet-proof";
 
 export type {
@@ -53,6 +54,13 @@ export type CycleIndexState =
    * every approved row is held with no funded backing (RFC #500 s.10). */
   | "wound-up";
 
+/** Recorded row states: allocation states plus external shares and paid rows. */
+const CYCLE_CONTRIBUTOR_STATES = [
+  ...ALLOCATION_STATES,
+  "external-share",
+  "paid",
+] as const;
+
 export interface CycleIndexEntry {
   projectId: string;
   cycleId: string;
@@ -91,15 +99,7 @@ export interface CycleIndexEntry {
     actor: ActorRef;
     score: number;
     scoreThirds?: number;
-    state:
-      | "approved"
-      | "excluded"
-      | "external-share"
-      | "held"
-      | "held-below-minimum"
-      | "paid"
-      | "proposed"
-      | "unclaimed";
+    state: (typeof CYCLE_CONTRIBUTOR_STATES)[number];
     suggestedMinor: string;
     approvedMinor: string;
     paidMinor: string;
@@ -562,16 +562,6 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   if (!Array.isArray(entry.contributors)) {
     throw new TypeError(`${field}.contributors must be an array`);
   }
-  const contributorStates = new Set([
-    "approved",
-    "excluded",
-    "external-share",
-    "held",
-    "held-below-minimum",
-    "paid",
-    "proposed",
-    "unclaimed",
-  ]);
   const contributors = entry.contributors.map((value, contributorIndex) => {
     const contributorField = `${field}.contributors[${contributorIndex}]`;
     const contributor = readRecord(value, contributorField);
@@ -615,7 +605,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     ) {
       throw new TypeError(`${contributorField}.scoreThirds is invalid`);
     }
-    if (!contributorStates.has(String(contributor.state))) {
+    if (!CYCLE_CONTRIBUTOR_STATES.includes(contributor.state as never)) {
       throw new TypeError(`${contributorField}.state is invalid`);
     }
     const state =

@@ -16,9 +16,11 @@ import {
   formatBaseUnits,
   isAssetDecimals,
   isBaseUnits,
+  PAYMENT_DELIVERY_STATES,
   type PaymentChain,
   type PaymentsAccount,
   transactionUrl,
+  UNRESERVED_AWARD_STATES,
 } from "./lib/payments/contracts";
 import { apiRequest } from "./lib/project-api";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
@@ -100,9 +102,7 @@ function account(value: unknown): PaymentsAccount {
         !isBaseUnits(p.feeBase) ||
         BigInt(p.grossBase) !== BigInt(p.netBase) + BigInt(p.feeBase) ||
         !["reserved", "paid"].includes(p.state) ||
-        !["needs_wallet", "ready", "submitted", "held", "paid"].includes(
-          p.deliveryState,
-        ),
+        !PAYMENT_DELIVERY_STATES.includes(p.deliveryState),
     ) ||
     !Array.isArray(data.monthlyAwards) ||
     data.monthlyAwards.some(
@@ -117,7 +117,7 @@ function account(value: unknown): PaymentsAccount {
         !isBaseUnits(m.netBase) ||
         !isBaseUnits(m.feeBase) ||
         BigInt(m.grossBase) !== BigInt(m.netBase) + BigInt(m.feeBase) ||
-        !["underfunded", "awaiting-reservation", "conflict"].includes(m.state),
+        !UNRESERVED_AWARD_STATES.includes(m.state),
     ) ||
     data.balances.some(
       (b) =>
