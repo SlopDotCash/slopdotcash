@@ -11,6 +11,7 @@ import {
   isHistoricalRepositoryId,
 } from "./projects.mjs";
 import { findRegisteredRepositoryById } from "./repositories.mjs";
+import { VALUE_SCORING_APPROVED_HISTORY_FROM } from "./scoring-policy";
 import { sha256Hex } from "./sha256";
 
 export const POINTS_RULE = "slop-points-v1";
@@ -426,18 +427,45 @@ export function applyPointsSnapshot(
       .map((a) => `${a.projectId}\0${a.sourceId}`),
   );
   const repositoryIds = new Set(snapshot.repositories.map((r) => r.id));
-  // A review is judged with its merged pull request, so the census can rule
-  // on a review submitted before the window. An exclusion is that ruling.
-  const excludedReviews = new Set(
-    (snapshot.reviewExclusions ?? []).map(
-      (x) =>
-        `${findHistoricalRepository(x.repository)?.projectId}\0${x.reviewId}`,
-    ),
-  );
+  // An adverse ruling can correct a review before the rolling window. A
+  // policy or window omission does not revoke its previously earned credit.
+  const excludedReviews = new Set<string>();
+  const omittedReviews = new Map<string, string>();
+  for (const exclusion of snapshot.reviewExclusions ?? []) {
+    const key = `${findHistoricalRepository(exclusion.repository)?.projectId}\0${exclusion.reviewId}`;
+    const omitted =
+      exclusion.reason === "review-credit-before-policy" ||
+      exclusion.reason === "review-credit-outside-window";
+    if (omitted) omittedReviews.set(key, exclusion.reason);
+    else excludedReviews.add(key);
+  }
   // A complete newer census can correct a formerly accepted source. Never infer
   // deletion from missing pages or a shortened rolling window.
   for (const previous of latestPoints(journal).values()) {
     const a = previous.award;
+    const omission =
+      a.category === "substantive-review"
+        ? omittedReviews.get(`${a.projectId}\0${a.sourceId}`)
+        : undefined;
+    if (omission) {
+      const beforePolicy =
+        iso(snapshot.valuePolicyEffectiveAt) &&
+        snapshot.valuePolicyEffectiveAt >=
+          VALUE_SCORING_APPROVED_HISTORY_FROM &&
+        a.occurredAt < snapshot.valuePolicyEffectiveAt;
+      const outsideWindow =
+        a.occurredAt < snapshot.window.from ||
+        a.occurredAt >= snapshot.window.to;
+      if (
+        !(omission === "review-credit-before-policy"
+          ? beforePolicy
+          : outsideWindow)
+      )
+        throw new Error(
+          "Review omission contradicts its recorded occurrence or policy boundary",
+        );
+      continue;
+    }
     const project = findHistoricalProject(a.projectId);
     const sourceUrl = new URL(a.sourceUrl);
     const match =

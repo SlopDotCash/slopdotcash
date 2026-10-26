@@ -9,8 +9,12 @@ a permissionless claim sends them to the configured fee recipient. EVM uses
 of the vault mint that the fee recipient owns.
 This Worker claims those fees on both families (issue #905) and sells the
 tokens soon after they arrive, inside the same wallet. USDC is the only
-target: a network without a verified Circle USDC address converts nothing, and
-no other stablecoin or token named "USDC" stands in for it.
+conversion target on Base, Ethereum and Solana; an unverified asset never
+stands in for it. The owner decision of 25 October 2026 exempts Robinhood
+from conversion: keep received assets unchanged in the fee wallet and show
+"not converted". USDG stays USDG. Do not convert project-token fees to USDG
+or bridge them. The Worker and private admin report return `not_converted`.
+This does not activate claims, conversion or replacement transactions.
 
 It is a narrow exception to "Slop holds no keys" (PRD TOK-07, PAY-04,
 MVP-07c). It holds one hot key per
@@ -69,9 +73,12 @@ For each enabled network:
    row for `acquireLock` to reclaim, so a late run never disturbs a successor.
 2. Reconcile every unresolved live send (`submitted`, `unknown`) before
    anything new. See [Idempotency](#idempotency).
-3. A network without a verified USDC target stops here with status
-   `route_pending` and logs `fee_conversion_route_pending`. It quotes and
-   signs nothing and loads no key; its fees stay in the wallet.
+3. A network configured without a conversion target stops here with status
+   `not_converted` and logs `fee_conversion_not_converted`. Robinhood retains
+   each received asset unchanged: USDG stays USDG and project tokens stay in
+   their original token. It requests no quote, starts no new claim or send,
+   and loads no key. The private admin report shows the same state. Existing
+   uncertain sends still reconcile in step 2; their history is not rewritten.
 4. Recovery scans only: claim vault fees. For each ordinary
    `escrow.deployments[].vault` and bounty
    `securityBounty.settlement.deployments[].vault` on the network's escrow
@@ -170,7 +177,7 @@ rejects so the cron failure remains visible; it does not publish a successful
 | --- | --- | --- | --- |
 | Base (8453) | Circle USDC `0x8335…2913` | KyberSwap Aggregator API | No API key, one integration for all three EVM chains, the router is the same audited `MetaAggregationRouterV2` (`0x6131…37b5`) on each. Its calldata carries the receiver, the input amount and the minimum output, so the Worker can check them before signing. |
 | Ethereum (1) | Circle USDC `0xa0b8…eb48` | KyberSwap Aggregator API | Same router address and code on chain. AGENTS.md requires verifying this address from Circle's primary source before activation. |
-| Robinhood Chain (4663) | **Pending.** No verified Circle USDC. | KyberSwap Aggregator API once a target exists | The PRD supersedes the earlier USDG target. On 18 October 2026 there was no Circle USDC on 4663, and the tokens named "USDC" in KyberSwap's list were unrelated clones flagged as honeypots. The network runs as `route_pending` until a reviewed change sets `usdc` in `config.ts` to an address verified from Circle's primary source and a route to it is proven. |
+| Robinhood Chain (4663) | No conversion target | None | The owner chose unconverted retention on 25 October 2026. Keep each received asset unchanged; USDG stays USDG. No swap or bridge. The Worker and private admin report return `not_converted`. A USDC route is no longer a release requirement for this network. |
 | Solana | Circle USDC `EPjF…Dt1v` | Jupiter Swap API v1 | Uses `api.jup.ag` with or without `JUPITER_API_KEY`. An explicit `JUPITER_API_URL` overrides this default. |
 
 Jupiter's [migration guide](https://developers.jup.ag/docs/portal/migration)
@@ -399,7 +406,7 @@ the Worker no sweep power.
 `GET /api/v1/admin/fee-conversions` (admin GitHub session) returns the 100 most
 recent records, exact per-token totals of finalized live conversions as
 decimal base-unit strings, state counts for the last 24 hours, and each
-network's USDC target with status `usdc` or `pending`. It never
+network's target with status `usdc` or `not_converted`. It never
 returns signed transaction bytes. There is no public page.
 
 ## Tests

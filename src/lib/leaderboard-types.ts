@@ -590,6 +590,8 @@ export interface LeaderboardSnapshot {
   source: LeaderboardSourceMetadata;
   leaders: LeaderboardEntry[];
   ledger: ScoreEvent[];
+  /** Selected value-policy boundary; absent from older snapshots. */
+  valuePolicyEffectiveAt?: string;
   valueAssessmentCoverage?: {
     pullRequestId: string;
     repository: RepositoryId;
