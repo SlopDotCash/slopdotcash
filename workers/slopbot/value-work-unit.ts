@@ -353,23 +353,26 @@ export async function prepareWorkUnitEvidence(
       if (origin.pull.user.type !== "Bot") actors.add(origin.pull.user.node_id);
       // A retained copy is accepted by the integration carrier, even when
       // the original historical branch has since been renamed. Preserve a
-      // linked primary author only when both immutable commits agree.
+      // linked primary author only when both immutable commits agree. An
+      // unlinked or ineligible original author cannot hide a different one.
+      const acceptedAuthor = copied.integration.evidence.commits.find(
+        (commit) => commit.sha === copied.acceptedCommitSha,
+      )?.author;
       if (
+        (acceptedAuthor?.node_id ?? null) !==
+        (originCommit.author?.node_id ?? null)
+      )
+        limitations.add(
+          `${origin.pull.node_id}: retained primary author identity differs between commits`,
+        );
+      else if (
         originCommit.author &&
         isCreditEligibleCommitAuthor({
           id: originCommit.author.node_id,
           kind: originCommit.author.type,
         })
-      ) {
-        const acceptedAuthor = copied.integration.evidence.commits.find(
-          (commit) => commit.sha === copied.acceptedCommitSha,
-        )?.author;
-        if (acceptedAuthor?.node_id !== originCommit.author.node_id)
-          limitations.add(
-            `${origin.pull.node_id}: retained primary author identity differs between commits`,
-          );
-        else actors.add(originCommit.author.node_id);
-      }
+      )
+        actors.add(originCommit.author.node_id);
       prepared.push({
         id: await sha256Hex(
           JSON.stringify([
