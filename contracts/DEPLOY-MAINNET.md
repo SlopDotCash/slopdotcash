@@ -944,10 +944,21 @@ Commit identities change on rebase, so the kit pins the contract file itself:
 `contracts/evm/src/ProjectEscrow.sol` has git blob
 `ecccaa8ba4ada0100aa643278b45d03c22c0c5b1` and SHA-256
 `21378ff6e3ac1c9b5868c7b4672d78d757fc3a6b259507cb445775abebb4856e`. Check both
-at `SOURCE_COMMIT` before use; any other contract file needs a new kit. The existing mainnet review is still
-`bce5b0df`, as listed above. Recheck that review before use. Rehearse this kit
-on a local fork before mainnet execution. The owner may authorize an agent to
-use the upgrade authority key for the reviewed plan. Follow the approved launch
+at `SOURCE_COMMIT` before use; any other contract file needs a new kit.
+
+Base already received the previous V2 kit from `main` `208fbf5b` (contract
+source `dd1af34d`): [owner record](https://github.com/SlopDotCash/slopdotcash/issues/904#issuecomment-6405728213).
+The zero-value factory upgrade `0x4cc82cf7f353dae6b473c8ea4844f10c4a597f69875968a3c8139d2f9cd00dd8`
+finalized in block `53093023`. Its factory implementation is `0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f`
+and its vault template is `0x6A79B8970E980159c362d11F37dC8BFFbF2da027`, with
+runtime SHA-256 `112ea2575a1d699cb128105bf5ba7ec78a0e22f8b83051bc2114d60567a5b1e3`.
+This does **not** install the bundled release target `0x90C46e3E…` below.
+The rehearsal uses that recorded Base starting review; other networks retain
+the `bce5b0df` starting review. It refuses any different runtime or role.
+
+Recheck the exact starting review before use. Rehearse this kit on a local
+fork before mainnet execution. Humans keep the upgrade key and execute the
+reviewed mainnet plan. Follow the approved launch
 order and acceptance checks in section 0.
 
 ### 4.1 What changes
@@ -1094,15 +1105,18 @@ Every write goes to the loopback Anvil fork. The script generates local test
 actors and impersonates the public authority there; it uses no live key.
 `LOGS_RPC` is an optional read-only provider for the complete vault inventory.
 
-The rehearsal checks old runtime pins and roles, authority-only upgrades,
-initializer refusal, unchanged legacy storage and awards, rounded-down
-historic fees, rounded-up new fees, atomic monthly creation and exact
+The rehearsal checks recorded starting runtime pins and roles, authority-only
+upgrades, initializer refusal, unchanged storage and awards, original
+historic fees (already rounded up on Base V2), rounded-up new fees, atomic monthly creation and exact
 pre-/post-upgrade receipt verification. It then reserves V2 funds on the
-upgraded legacy vault, keeps an old funded award unchanged, turns monthly
+upgraded vault, keeps an old funded award unchanged, turns monthly
 payment off, closes the admission window and completes both leaves and a
 payment. The totals adapter must include the pending reserve and prove that
-leaf creation does not debit free funds twice. Next it admits a signed reserve
-whose root no leaf opens, confirms that a manual award waits, checks the
+leaf creation does not debit free funds twice. Next it admits a canonical
+two-leaf tree with a stored total that contradicts its authenticated sum.
+The read-only finalized inspection must positively classify that exact fault,
+and both genuine proofs must fail. Missing tree data never qualifies release.
+The fixture confirms that a manual award waits, checks the
 `MonthlyRelease` digest against an independent EIP-712 hash, refuses a
 non-owner sender, another signing key and a replay, and releases the reserve
 with the owner's call and the authority's signature. The released gross must
@@ -1115,12 +1129,14 @@ mainnet finality, actual fees, provider availability or the first live payout.
 Use the result for this exact contract source; earlier `dd1af34d`, `239d0235`, `e55a804a` and `2a4e80b3` results do
 not qualify this revision.
 
-Recorded local rehearsal for this kit: Base fork block `53092393` (hash
+Earlier primitive-only local rehearsal for this kit: Base fork block `53092393` (hash
 `0xcf8d9ccde2e77b0fe78b8f0202269dcbde5c42b765f7b3510e3cea7cf68b2773`),
 result "all checks passed". It upgraded one local vault, reserved and completed
 a V2 month, released a faulty month and found no existing
-mainnet vault in the factory inventory at that block. Repeat it at a current
-block before signing. Retain any failed provider attempt with the successful retry.
+mainnet vault in the factory inventory at that block. That arbitrary-root
+fixture did not establish the release classifier. Repeat the corrected
+canonical-tree rehearsal from the current recorded V2 start at a current block
+before signing. Retain failed attempts, including starting-review refusals.
 
 ### 4.7 Choose `supersededAtBlock`
 

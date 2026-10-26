@@ -256,9 +256,12 @@ Solana: no account changes. The release uses the existing `released` and
 change adds one instruction, one event, and one error code at the end of the
 error list, so existing error codes keep their numbers.
 
-Mainnet EVM vaults do not yet run V2, so no mainnet EVM vault can have this
-fault today. The owner decided to bundle this change into the pending V2
-upgrade (section 9). The kit in `contracts/DEPLOY-MAINNET.md` section 4 now
+Base's factory received the previous V2 implementation from `208fbf5b` /
+`dd1af34d` at finalized block `53093023`, as recorded in the
+[owner's deployment update](https://github.com/SlopDotCash/slopdotcash/issues/904#issuecomment-6405728213).
+That template does not include this release. The owner decided to bundle this
+change into V2 (section 9); its new bytes still need their own reviewed upgrade.
+The kit in `contracts/DEPLOY-MAINNET.md` section 4 now
 targets the bundled vault implementation
 `0x90C46e3E5be35B1048cD69403d1402Feed1240D8` (runtime SHA-256
 `155c7ea2fdeeaeccfd6daac64b6105e968c1927092f8761f34090a8b42e15bfc`). The

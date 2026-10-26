@@ -79,7 +79,7 @@ const FACTORY_PROXY_SHA256 =
 const UPGRADE_AUTHORITY = "0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D";
 const REGISTRAR = "0xd64F35aC87D9a1FB8eBD44e745c24436B606cF60";
 const FEE_RECIPIENT = "0x8f77C37D8650776bFe73c9b12B15209eE15D9b86";
-const OLD_REVIEW: EvmImplementationReview = {
+const LEGACY_REVIEW: EvmImplementationReview = {
   authority: UPGRADE_AUTHORITY,
   vaultImplementation: "0xe137dE4fbAc6438007703065C905a58b03322Fc8",
   vaultImplementationCodeSha256:
@@ -87,6 +87,18 @@ const OLD_REVIEW: EvmImplementationReview = {
   factoryImplementation: "0xc831Fc745a63161Df6Fae612bDFE77B969b329fE",
   factoryImplementationCodeSha256:
     "62a3bf4a741b8084a63152835047bb71e8396b153a112225910d1dffecd64275",
+};
+// Recorded Base upgrade from main 208fbf5b / contract source dd1af34d, finalized at
+// block 53093023 (tx 0x4cc82cf7f353dae6b473c8ea4844f10c4a597f69875968a3c8139d2f9cd00dd8).
+// These are independently reviewed pins, not values adopted from the fork's current state.
+const BASE_V2_REVIEW: EvmImplementationReview = {
+  authority: UPGRADE_AUTHORITY,
+  vaultImplementation: "0x6A79B8970E980159c362d11F37dC8BFFbF2da027",
+  vaultImplementationCodeSha256:
+    "112ea2575a1d699cb128105bf5ba7ec78a0e22f8b83051bc2114d60567a5b1e3",
+  factoryImplementation: "0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f",
+  factoryImplementationCodeSha256:
+    "976208154ce5e58f59d826e58273d917adc226109bf95ab4894b9cf144e4a1dd",
 };
 /** The block of each factory proxy's deployment transaction, checked as its first code block. */
 const FACTORY_DEPLOYMENT_BLOCK: Record<string, bigint> = {
@@ -331,6 +343,8 @@ try {
     `Unsupported chain ${chainId}`,
   );
   const forkBlock = BigInt(String(await rpc("eth_blockNumber", [])));
+  const startingV2 = chainId === 8453n;
+  const OLD_REVIEW = startingV2 ? BASE_V2_REVIEW : LEGACY_REVIEW;
   assert.equal(chainId, BigInt(upstreamChainId), "Fork chain identity");
   assert.equal(forkBlock, finalizedBlockNumber, "Fork finalized block");
   vaultHistoryStart = FACTORY_DEPLOYMENT_BLOCK[chainId.toString()];
@@ -347,6 +361,8 @@ try {
     chainId: chainId.toString(),
     forkBlock: forkBlock.toString(),
     forkBlockHash: finalized.hash,
+    startingReview: OLD_REVIEW,
+    startingContractSource: startingV2 ? "dd1af34d" : "bce5b0df",
   };
 
   // 1. The live deployment matches the recorded review.
@@ -387,7 +403,7 @@ try {
   const factoryInitializedBefore = await word(FACTORY, INITIALIZABLE_SLOT);
 
   // 2. Pre-upgrade history on the live logic: a fresh owner's vault with a paid award, an unpaid
-  // award, a monthly policy and a fee-free small withdrawal (fees still round down).
+  // award, a monthly policy and a small withdrawal under the recorded starting fee rule.
   const owner = await actor();
   const authority = await actor();
   const wallet = await actor();
@@ -428,23 +444,32 @@ try {
     ),
   ).deployedTo as string;
   const projectId = keccak256(toBytes(`rehearsal-${chainId}`));
-  await reverts(
-    owner.address,
-    FACTORY,
-    calldata(
-      "createWithMonthlyCommitment(bytes32,address,uint128,bool)",
-      projectId,
-      token,
-      "1",
-      "true",
-    ),
-    "the live factory has no atomic monthly setup",
-  );
+  if (!startingV2)
+    await reverts(
+      owner.address,
+      FACTORY,
+      calldata(
+        "createWithMonthlyCommitment(bytes32,address,uint128,bool)",
+        projectId,
+        token,
+        "1",
+        "true",
+      ),
+      "the legacy factory has no atomic monthly setup",
+    );
   await sendOk(
     owner.address,
     FACTORY,
-    calldata("create(bytes32,address,uint8)", projectId, token, "0"),
-    "legacy vault creation",
+    startingV2
+      ? calldata(
+          "createWithMonthlyCommitment(bytes32,address,uint128,bool)",
+          projectId,
+          token,
+          "5000000000",
+          "true",
+        )
+      : calldata("create(bytes32,address,uint8)", projectId, token, "0"),
+    "vault creation on the recorded starting implementation",
   );
   const vault = read(
     FACTORY,
@@ -508,8 +533,8 @@ try {
   const reserveBefore = await commit(monthlyBefore);
   assert.equal(
     read(vault, "payoutFee(uint128)(uint128)", "1000049"),
-    "20000",
-    "live fee rounds down",
+    startingV2 ? "20001" : "20000",
+    "live fee matches the recorded starting implementation",
   );
   await sendOk(
     owner.address,
@@ -550,11 +575,14 @@ try {
   );
   assert.equal(
     withdrawalFee(withdrawBefore.receipt),
-    0n,
-    "pre-upgrade 49-unit withdrawal pays no fee",
+    startingV2 ? 1n : 0n,
+    "pre-upgrade 49-unit withdrawal follows the recorded fee rule",
   );
   const proxyCodeSha256 = await codeSha256(vault);
   const rehearsalVaultBefore = await vaultState(vault);
+  const sourceSequenceBefore = startingV2
+    ? BigInt(read(vault, "ordinarySourceSequence()(uint256)"))
+    : 0n;
   const awardGetter =
     "awards(bytes32)(uint64,uint128,uint128,bytes32,uint64,bool)";
   const awardsBefore = [paidBefore, monthlyBefore].map((a) =>
@@ -681,8 +709,8 @@ try {
     vaultUpgradeBlocks[target] = sent.block.toString();
     gas[`vault ${target}`] = BigInt(sent.receipt.gasUsed).toString();
   }
-  // Illustration of the history bound only: an award committed while the vault runs new logic
-  // and the factory still runs old logic. The real runbook sends nothing between upgrades.
+  // Illustration of the history bound only: an award committed after the vault upgrade and
+  // before the factory call. The real runbook sends nothing between upgrades.
   const reserveBetween = await commit(between);
 
   // 5. Runbook steps 3 and 4: upgrade the factory, then select the new vault logic.
@@ -700,8 +728,15 @@ try {
     "select vault logic",
   );
   gas.setVaultImplementation = BigInt(selection.receipt.gasUsed).toString();
-  // supersededAtBlock: the last proxy upgrade that left the old review (here the factory upgrade).
-  const supersededAtBlock = factoryUpgrade.block;
+  // The current Base factory already runs the target logic. Its no-op upgrade cannot extend the
+  // historical vault review; only a changed factory implementation needs the later bound.
+  const factoryChanged = !same(
+    OLD_REVIEW.factoryImplementation,
+    NEW_REVIEW.factoryImplementation,
+  );
+  const supersededAtBlock = factoryChanged
+    ? factoryUpgrade.block
+    : BigInt(vaultUpgradeBlocks[vault]);
   report.upgradeBlocks = {
     vaults: vaultUpgradeBlocks,
     factory: factoryUpgrade.block.toString(),
@@ -759,8 +794,11 @@ try {
     );
   const rehearsalVaultAfter = await vaultState(vault);
   assert.equal(read(vault, "pendingMonthlyGross()(uint128)"), "0");
-  assert.equal(read(vault, "ordinarySourceSequence()(uint256)"), "1");
-  // Only the post-upgrade `between` award advanced the new sequence. Old source maps remain intact.
+  assert.equal(
+    read(vault, "ordinarySourceSequence()(uint256)"),
+    (sourceSequenceBefore + 1n).toString(),
+  );
+  // Only the post-upgrade `between` award advanced the preserved sequence. Source maps remain intact.
   // The award committed between upgrades changed the balances and award maps on purpose; every
   // other declared slot and the initializer version are unchanged.
   for (const slot of [0, 1, 2, 3, 4, 7, 8, 9, 10, 18])
@@ -839,7 +877,7 @@ try {
     "factory initialize cannot rerun",
   );
 
-  // 7. Fees round up after the upgrade.
+  // 7. Fees round up after the upgrade (already true on the deployed Base V2 start).
   assert.equal(
     read(vault, "payoutFee(uint128)(uint128)", "1000049"),
     "20001",
@@ -857,11 +895,11 @@ try {
     "a 49-unit withdrawal now pays 1",
   );
 
-  // 8. commitMonthly counts the pre-upgrade floor-fee award once and adds the new one.
+  // 8. commitMonthly counts the pre-upgrade award once and adds the new one.
   assert.equal(
     readAll(vault, awardGetter, monthlyBefore.id).split("\n")[2].split(" ")[0],
-    "40000",
-    "pre-upgrade award holds the floor fee",
+    startingV2 ? "40001" : "40000",
+    "pre-upgrade award keeps its original fee",
   );
   const now = BigInt(
     String(
@@ -1007,8 +1045,8 @@ try {
   );
   assert.equal(
     before.feeMicro,
-    "20000",
-    "pre-upgrade floor fee verifies through history",
+    startingV2 ? "20001" : "20000",
+    "pre-upgrade fee verifies through history",
   );
   assert.equal(
     (
@@ -1019,7 +1057,7 @@ try {
         monthlyBefore.id,
       )
     ).feeMicro,
-    "40000",
+    startingV2 ? "40001" : "40000",
   );
   assert.equal(
     (
@@ -1056,7 +1094,7 @@ try {
     "post-upgrade ceil fee verifies through the new review",
   );
   await verifyEvmDeployment(upgraded, "finalized");
-  // V2 must also work on the upgraded, funded legacy vault. Preserve a pre-upgrade floor-fee
+  // V2 must also work on the upgraded, funded vault. Preserve a pre-upgrade
   // obligation, then finish the newly reserved leaves after the owner opts out and the window closes.
   const nextDate = new Date(
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1),
@@ -1205,7 +1243,8 @@ try {
   report.monthlyV2 = {
     period: nextPeriod,
     pendingGross: reservation.remainingGross,
-    existingFloorAwardPreserved: true,
+    existingAwardPreserved: true,
+    existingAwardFee: startingV2 ? "40001" : "40000",
     optOutAndWindowCompletion: true,
     reserveGas: BigInt(admitted.receipt.gasUsed).toString(),
     leafGas: leafReceipts.map((sent) =>
@@ -1452,24 +1491,26 @@ try {
     /implementation does not match/,
     "the old review alone rejects a post-upgrade event",
   );
-  await assert.rejects(
-    verifyReserve(
-      {
-        ...base,
-        evmUpgrade: {
-          ...NEW_REVIEW,
-          history: [
-            { ...OLD_REVIEW, supersededAtBlock: vaultUpgradeBlocks[vault] },
-          ],
+  if (factoryChanged)
+    await assert.rejects(
+      verifyReserve(
+        {
+          ...base,
+          evmUpgrade: {
+            ...NEW_REVIEW,
+            history: [
+              { ...OLD_REVIEW, supersededAtBlock: vaultUpgradeBlocks[vault] },
+            ],
+          },
         },
-      },
-      reserveBetween.hash,
-      reserveEvent(reserveBetween),
-      between.id,
-    ),
-    /implementation does not match/,
-    "a bound at the first upgrade strands events before the last upgrade",
-  );
+        reserveBetween.hash,
+        reserveEvent(reserveBetween),
+        between.id,
+      ),
+      /implementation does not match/,
+      "a bound at the first upgrade strands events before a changed factory upgrade",
+    );
+  report.factoryImplementationChanged = factoryChanged;
   await assert.rejects(
     verifyEvmDeployment({ ...base, evmUpgrade: OLD_REVIEW }, "finalized"),
     /implementation does not match/,
