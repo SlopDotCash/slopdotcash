@@ -320,7 +320,10 @@ rate limit, and caches each answer for five minutes. The browser never calls
   the project was listed when the restriction began; it never restores
   featuring, activation or money. A denial keeps the restriction. It decides
   the open project appeal first. When no project appeal is open, it decides
-  the open account appeals.
+  the open account appeals. Then a moderator who banned one of those
+  accounts, or who is one of those accounts, cannot deny them. An open
+  account appeal stays open after a later quarantine, and after a later ban
+  that does not select that account.
 - A signed confirmed malicious Ban waits for a moderator decision (PRD
   sections 2 and 8). `/admin` lists the project first with "Moderator
   decision needed", with or without an owner appeal. The moderator either
@@ -331,16 +334,23 @@ rate limit, and caches each answer for five minutes. The browser never calls
   GitHub login to an immutable account ID; confirmation checks the previewed
   ID again. An empty selection bans only the project. Current stewardship
   and the original application do not select accounts automatically
-  (`0066_project_maintainer_bans.sql`), and it closes an open appeal as
-  denied. A moderator who placed the restriction cannot decide an open appeal
-  this way. A plain denial is refused with `malicious_decision_required`
-  until the decision is made. While the account ban holds, a banned
+  (`0066_project_maintainer_bans.sql`). The decision closes an open project
+  appeal as denied. When no account appeal is open, it also closes the
+  appeal that the malicious result kept. A moderator who placed the
+  restriction cannot close those appeals. The decision also closes the open
+  appeal of each account that it bans again. A moderator who banned one of
+  those accounts, or who is one of those accounts, cannot close those
+  appeals. When the decision closes no appeal, its record keeps the open
+  account appeals `requested`. A plain denial is refused with
+  `malicious_decision_required` until the decision is made. While the account
+  ban holds, a banned
   maintainer cannot create a project, publish a stored application or publish
   an owner revision, as the actor or as the named steward
   (`maintainer_banned`). The steward, applicant, and explicitly banned accounts
   can appeal, including after ownership changes. A project reinstatement no
-  longer lifts account bans. An independent moderator uses `reinstate_accounts`
-  to select accounts cleared by the evidence. The decision leaves the project
+  longer lifts account bans. A moderator who did not ban an account, and who
+  is not that account, uses `reinstate_accounts` to select accounts cleared
+  by the evidence. The decision leaves the project
   restriction and other accounts unchanged. Each release references its exact
   ban in `project_account_reinstatements`; the existing enforcement journal
   records its reason and evidence. Migration 0072 preserves releases already
@@ -369,8 +379,9 @@ rate limit, and caches each answer for five minutes. The browser never calls
   confirmed malicious result.
 - Each enforcement record adds, in the same D1 batch, one `/inbox` row for the
   account that listed the project and one for its GitHub steward (PRD
-  NOT-01). A reinstatement request also adds a row for each moderator who
-  did not place the restriction. No row carries the reason or the evidence
+  NOT-01). A project appeal also adds a row for each moderator who did not
+  place the restriction. An account appeal adds a row for each moderator who
+  did not ban that account. No row carries the reason or the evidence
   reference.
 - Every revision must pass `assertProjectPolicyTransition` and the registry
   uniqueness checks; an admin revision also passes the review-budget rule.
