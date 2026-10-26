@@ -1118,7 +1118,7 @@ not qualify this revision.
 Recorded local rehearsal for this kit: Base fork block `53092393` (hash
 `0xcf8d9ccde2e77b0fe78b8f0202269dcbde5c42b765f7b3510e3cea7cf68b2773`),
 result "all checks passed". It upgraded one local vault, reserved and completed
-a V2 month, released a faulty month (88,717 gas) and found no existing
+a V2 month, released a faulty month and found no existing
 mainnet vault in the factory inventory at that block. Repeat it at a current
 block before signing. Retain any failed provider attempt with the successful retry.
 
