@@ -79,8 +79,14 @@ contract FeeConverterRouter {
 }
 
 contract FeeConverterL1Oracle {
-    function getL1FeeUpperBound(uint256) external pure returns (uint256) { return 0; }
-    function getOperatorFee(uint256) external pure returns (uint256) { return 0; }
+    function getL1FeeUpperBound(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function getOperatorFee(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
     function getL1Fee(bytes calldata) external pure returns (uint256) {
         return 0;
     }
