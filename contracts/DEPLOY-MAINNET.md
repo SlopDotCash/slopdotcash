@@ -17,22 +17,19 @@
 > bound set at the first of several upgrades would reject events from proxies
 > not yet upgraded.
 >
-> Pending upgrades: the Ethereum and Robinhood mainnet EVM contracts and the
-> Solana program were deployed from `bce5b0df`. Source on `development` rounds the 2%
-> fee up (#1189) and, on Solana, releases a monthly award whose source already
-> holds the identical award (#1175). The payment executor already relies on that
-> Solana release rule. Upgrade the Solana program and record its new
-> `codeSha256` before any Solana project turns on automatic monthly payment;
-> until the upgrade, reconciliation accepts either fee rounding. The EVM
-> upgrade kit (deploy script, calldata, fork rehearsal and registry revision)
-> is in section 4. Base's authorized monthly reserve V2 upgrade is finalized
-> (see the current Base review below); Ethereum, Robinhood and Solana upgrades
-> remain pending.
+> Pending upgrade: the Solana program was deployed from `bce5b0df`. Source on
+> `development` rounds the 2% fee up (#1189) and, on Solana, releases a monthly
+> award whose source already holds the identical award (#1175). The payment
+> executor already relies on that Solana release rule. Upgrade the Solana
+> program and record its new `codeSha256` before any Solana project turns on
+> automatic monthly payment; until the upgrade, reconciliation accepts either
+> fee rounding. The EVM monthly reserve V2 upgrade finalized on Base, Ethereum
+> and Robinhood on 26 October 2026 ("Bundled monthly reserve V2 upgrade"
+> below; kit in section 4).
 >
 > Owner decision (25 October 2026): bundle the owner's signed release of an
 > unsettleable monthly reserve (`docs/escrow-unsettleable-month-release.md`)
-> into the pending upgrades. The section 4 kit now targets the bundled vault;
-> on Base it is a further upgrade after the finalized V2 below.
+> into the pending upgrades. The EVM part is executed (section 4).
 > The Solana program also changes: the expected post-upgrade program hash
 > `d29200ec…` from source `edf3b341` (#914) is superseded. Redo the section 2
 > deterministic Solana build from the final merged source and record its new

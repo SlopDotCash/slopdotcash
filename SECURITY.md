@@ -11,4 +11,5 @@ or another person's private data.
 
 Maintainers will assess the report and coordinate remediation and disclosure
 through the private advisory. A report does not establish reward eligibility or
-payment approval. Ordinary bugs and feature requests belong in public GitHub issues.
+payment approval. Only owners and maintainers open issues. For an ordinary bug,
+open a pull request that fixes and proves the defect.

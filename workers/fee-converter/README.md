@@ -35,7 +35,9 @@ verifies receipt before conversion. Local fork and validator evidence must
 identify the exact source and reviewed program. Local proof does not activate
 production signing.
 
-The Worker is off by default.
+The checked-in configuration sets `live` mode on Base, Ethereum and
+Robinhood. The Worker deploys only when the `SLOP_FEE_CONVERTER_RELEASE`
+repository variable is `enabled`.
 
 **Solana signs only against the separated program layout.** The deployed
 Solana program pins an independent rotation-confirmation authority, separate
@@ -401,8 +403,8 @@ run. `off` reads none of them.
 
 | Var                                  | Checked-in value                            | Meaning                                                                                                          |
 | ------------------------------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `FEE_CONVERTER_MODE`                 | `off`                                       | `off`, `dry_run` or `live`.                                                                                      |
-| `FEE_CONVERTER_NETWORKS`             | `base,ethereum,robinhood`                   | Candidate networks; mode remains off.                                                                            |
+| `FEE_CONVERTER_MODE`                 | `live`                                      | `off`, `dry_run` or `live`.                                                                                      |
+| `FEE_CONVERTER_NETWORKS`             | `base,ethereum,robinhood`                   | Enabled networks. Robinhood retains received fees without conversion.                                            |
 | `FEE_CONVERTER_ALLOWLIST`            | empty                                       | JSON object of extra tokens per network.                                                                         |
 | `FEE_CONVERTER_MIN_VALUE_MICRO`      | `5000000` (owner decision, 24 October 2026) | Minimum quoted USDC output. `0` converts every fee.                                                              |
 | `FEE_CONVERTER_GAS_MULTIPLE`         | `10` (owner decision, 24 October 2026)      | Output must be at least this many times the fee estimate. `0` disables the check.                                |
@@ -411,7 +413,7 @@ run. `off` reads none of them.
 | `FEE_CONVERTER_RUN_CAP_MICRO`        | `1000000000`                                | Per-run, per-network value cap (1,000 USDC).                                                                     |
 | `FEE_CONVERTER_DAILY_CAP_MICRO`      | `5000000000`                                | Rolling 24-hour live value cap per network (5,000 USDC).                                                         |
 | `FEE_CONVERTER_SOLANA_FEE_MICRO`     | `2000`                                      | Solana fee estimate used for the gas multiple; an estimate, not policy.                                          |
-| `FEE_CONVERTER_NATIVE_BUDGETS`       | unset                                       | Per-network JSON with exact decimal wei strings `perTransaction`, `perDay`, `additionalFeeReserve`. No defaults. |
+| `FEE_CONVERTER_NATIVE_BUDGETS`       | Base, Ethereum and Robinhood set            | Per-network JSON with exact decimal wei strings `perTransaction`, `perDay`, `additionalFeeReserve`. No defaults. |
 | `FEE_WALLET_<NETWORK>`               | All four networks set                       | Public fee-wallet address. A network without one is refused.                                                     |
 | `KYBERSWAP_CLIENT_ID`                | `slop-fee-converter`                        | Client id header for KyberSwap.                                                                                  |
 

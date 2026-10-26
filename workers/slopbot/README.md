@@ -296,16 +296,11 @@ one notice key. The action and email dispatcher recheck moderator access and
 appeal status; a resolved appeal no longer asks for a decision. Verify actual
 provider delivery separately from local queue acceptance.
 
-## Not yet implemented
+## Value assessment evidence
 
-- Maintainer dashboard and Automation row (LDR-04).
-
-## Value assessment work in progress
-
-The owner approved automatic **provisional** value scores under PRD SCR-06.
-Payout approval stays human. See
-[`slop-value-scoring-plan.md`](../../docs/slop-value-scoring-plan.md) for the
-separate delivery checklist. This does not activate the closure switch.
+The owner approved automatic **provisional** value scores (PRD section 5 and
+[`protocol/scoring-v2.md`](../../protocol/scoring-v2.md)). Payout approval
+stays human. This does not activate the closure switch.
 
 `value-evidence.ts` collects paginated submitted changes, reported merge changes,
 commit identities and discussion evidence. It reports missing patches, source
@@ -352,41 +347,13 @@ must pass before this route can be activated. The September/October review uses
 the owner's existing ChatGPT or Claude subscription; it does not authorize paid API calls.
 A hosted service still requires its own supported runtime credentials.
 
-Local evidence checks used real GitHub sources: Eliza #34772 has matching full
-submitted and squash diffs; Delta Star #218 correctly requires ancestry review;
-Delta Star #215 reports an omitted original-file patch instead of claiming full
-coverage. These checks do not prove model execution or score publication.
-
-Installation was verified on 10 October 2026: the owner installed the registered
-App on elizaOS (installation `169856061`) with all repositories selected. This
-proves App access, not worker deployment, model connectivity or score delivery.
-
-## Runtime verification (10 October 2026)
-
-The owner-supplied Surplus key passed live structured calls for
-`claude-opus-5.5` and `gpt-6.1-sol` through the Anthropic endpoint above.
-An unavailable primary model also exercised the live Sol fallback. These
-checks used the same `runStructuredRoute` function as the worker. The endpoint
-reports the served model; that report is not independent model attestation.
-
-The marketplace response did not follow the requested schema when it was
-provided only in `output_config`. The route now includes the exact schema in
-the trusted prompt and still rejects every response that fails local validation.
-Provider error bodies are not persisted. A model identity mismatch also fails.
-
-A fresh read of Eliza #34772 resolved co-authors through GitHub's pinned commit
-mapping, collected complete diff and discussion evidence, and produced a valid
-Opus value assessment covering all three formal reviews. Email addresses used
-to join co-author identities are omitted from the evidence export. This was a
-local, read-only runtime test. A first schema-valid result double-credited the
-same review finding. The rubric now requires explicit `duplicateOf` references
-to earlier review identities; a duplicate cannot receive positive credit. A
-subsequent live result identified the repeated finding correctly. Validation of
-superseded heads still needs evidence of distinct retained value. Schema validity
-alone is not semantic calibration. The test did not publish a score, run the hosted queue,
-activate billing, or approve a payout. Hosted delivery and historical calibration
-remain on the value-scoring acceptance checklist.
-
+The model route includes the exact schema in the trusted prompt and rejects
+every response that fails local validation. Provider error bodies are not
+persisted. A model identity mismatch fails. The endpoint reports the served
+model; that report is not independent model attestation. The rubric requires
+explicit `duplicateOf` references to earlier review identities; a duplicate
+cannot receive positive credit. Schema validity alone is not semantic
+calibration.
 
 ## Provisional assessment journal
 

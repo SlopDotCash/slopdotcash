@@ -44,10 +44,10 @@ the contract is
   it low, for example `600`, and records that it did.
 - `ROBINHOOD_TESTNET_RPC_URL`. The public RPC
   `https://rpc.testnet.chain.robinhood.com` is rate-limited and does not keep
-  account state at the `finalized` tag (`docs/testnet-funding.md`). It is
-  acceptable for the broadcast. State read-backs below use `latest` or `safe`.
-  Finality uses the finalized block header and exact canonical receipts and
-  events. A latest-state observation alone does not prove finality.
+  account state at the `finalized` tag (`docs/escrow-acceptance-runbook.md`,
+  "Check test gas"). It is acceptable for the broadcast. State read-backs
+  below use `latest` or `safe`. Finality uses the finalized block header and
+  exact canonical receipts and events. A latest-state observation alone does not prove finality.
 
 Do not put a private key in a command line, an environment dump, a source
 file or the evidence.
