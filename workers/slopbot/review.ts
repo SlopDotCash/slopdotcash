@@ -1681,15 +1681,17 @@ async function isMaintainer(
   const sender = await session.github.get<{ login: string; id: number }>(
     `/user/${senderId}`,
   );
-  return (
-    sender !== null &&
-    (await authorExemption(
-      session.github,
-      session.repo.owner,
-      job.repo,
-      sender,
-    )) === "exempt"
+  if (sender === null) return false;
+  const exemption = await authorExemption(
+    session.github,
+    session.repo.owner,
+    job.repo,
+    sender,
   );
+  // A GitHub failure must not turn a maintainer decision into no decision.
+  if (exemption === "unknown")
+    throw new Error("maintainer status is unknown; the command is retried");
+  return exemption === "exempt";
 }
 
 /** The newest Slopbot finding on the item, or null when there is none. */
