@@ -24,6 +24,7 @@ import { CONTACT_MAILTO } from "./lib/contact";
 import { contributorStandings } from "./lib/contributor-standings";
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
+import { errorMessage } from "./lib/errors";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
@@ -206,11 +207,11 @@ export function PointsProvider({
           members: pointMembers(value, new Date().toISOString().slice(0, 7)),
         });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!controller.signal.aborted)
           setState({
             status: "error",
-            message: "Points could not load. Retry.",
+            message: `Points could not load: ${errorMessage(error)}`,
           });
       });
     return () => controller.abort();

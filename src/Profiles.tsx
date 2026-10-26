@@ -18,7 +18,10 @@ import {
 } from "./lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "./lib/repositories.mjs";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
-import { usePublicResource } from "./lib/use-public-resource";
+import {
+  type PublicResourceState,
+  usePublicResource,
+} from "./lib/use-public-resource";
 import {
   ContributorIdentity,
   ExternalLinkAnchor,
@@ -38,12 +41,8 @@ async function loadProfiles(signal: AbortSignal) {
   assertProfiles(index);
   return { index };
 }
-type State =
-  | { status: "loading" }
-  | { status: "error" }
-  | { status: "ready"; index: ProfileIndex };
 export function useProfiles(enabled = true): {
-  state: State;
+  state: PublicResourceState<{ index: ProfileIndex }>;
   retry: () => void;
 } {
   const [state, retry] = usePublicResource(
@@ -175,7 +174,7 @@ export function ProfileActivity({
       ) : null}
       {state.status === "error" ? (
         <p role="status">
-          PR counts are unavailable.{" "}
+          PR counts are unavailable: {state.message}.{" "}
           <button type="button" onClick={retry}>
             Retry profile
           </button>

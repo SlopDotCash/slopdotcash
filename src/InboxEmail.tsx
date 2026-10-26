@@ -1,6 +1,7 @@
 /** Explicit opt-in to the signed-in account's verified email destination (NOT-01). */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import { loginHref } from "./Points";
 
 type Preference =
@@ -12,7 +13,8 @@ type Preference =
     }
   | { enabled: boolean; availability: "unverified" | "unavailable" };
 type State =
-  | { status: "loading" | "error" | "signed-out" }
+  | { status: "loading" | "signed-out" }
+  | { status: "error"; message: string }
   | { status: "ready"; value: Preference };
 const PATH = "/api/v1/notifications/email";
 
@@ -64,9 +66,9 @@ export function InboxEmail() {
         );
         if (generation.current === current)
           setState({ status: "ready", value });
-      } catch {
+      } catch (caught) {
         if (!controller.signal.aborted && generation.current === current)
-          setState({ status: "error" });
+          setState({ status: "error", message: errorMessage(caught) });
       }
     })();
     return () => controller.abort();
@@ -150,7 +152,9 @@ export function InboxEmail() {
         </p>
       ) : null}
       {state.status === "error" ? (
-        <p role="alert">Email preferences could not be loaded.</p>
+        <p role="alert">
+          Email preferences could not be loaded: {state.message}
+        </p>
       ) : null}
       {state.status === "ready" ? (
         <>
