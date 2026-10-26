@@ -174,6 +174,28 @@ function projectAppealOpen(records: ProjectEnforcement[]): boolean {
   return request !== undefined;
 }
 
+/**
+ * True when the undecided confirmed malicious Ban kept a project appeal that
+ * was open before it. The Ban starts a new project-appeal boundary, so the
+ * moderator decision that follows closes that kept appeal.
+ */
+function keptProjectAppeal(restriction: ProjectRestriction): boolean {
+  const scan = [...restriction.records]
+    .reverse()
+    .find(
+      (record) => record.action === "quarantine" || record.action === "ban",
+    );
+  return (
+    scan !== undefined &&
+    scan.action === "ban" &&
+    scan.actorRole === "vetting-service" &&
+    scan.appealAfter === "requested" &&
+    projectAppealOpen(
+      restriction.records.filter((record) => record.sequence < scan.sequence),
+    )
+  );
+}
+
 /** A shared project appeal must not claim that another account filed evidence. */
 export function accountAppealState(
   restriction: ProjectRestriction,
@@ -467,6 +489,7 @@ export function planEnforcement(input: {
         deciding &&
         restriction.appeal === "requested" &&
         (projectAppealState(restriction) === "requested" ||
+          keptProjectAppeal(restriction) ||
           openAccountAppeals(restriction, restriction.bannedMaintainers)
             .size === 0);
       const reBanned = deciding
