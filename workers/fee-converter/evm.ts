@@ -1039,7 +1039,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         return "noRoute" in priced ? null : priced.amountOut;
       },
 
-      async claim(entry, recordClaim, nonceFloor = 0) {
+      async claim(entry, recordClaim, nonceFloor = 0, assertLease) {
         const verified = await verifiedVault(entry);
         if (!verified) throw new Error("Vault pays another fee recipient");
         if (verified.amount === 0n) throw new Error("No accrued fees to claim");
@@ -1057,7 +1057,12 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           throw new Error("Fee claim requires a durable send record");
         const held = nonceHeld(latest, nonceFloor);
         if (held) throw held;
-        const sent = await signAndSend(vault as Address, CLAIM_FEES, latest);
+        const sent = await signAndSend(
+          vault as Address,
+          CLAIM_FEES,
+          latest,
+          assertLease,
+        );
         await recordClaim({
           txId: sent.hash,
           rawTx: sent.raw,
@@ -1065,6 +1070,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           expiresAt: null,
           amount,
         });
+        await assertLease?.();
         await sendRaw(sent.raw);
         const receipt = await waitForReceipt(sent.hash);
         if (!receipt) throw new Error(`claim ${sent.hash} not mined in time`);

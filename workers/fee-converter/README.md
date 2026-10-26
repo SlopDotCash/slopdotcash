@@ -316,8 +316,9 @@ reverts and the row closes as `failed`. If the node drops it after the
 deadline, the row also closes as `failed`. A later run quotes and signs a new swap for
 the token. The token balance stays in the fee wallet during the wait.
 
-**Lease.** Reconciliation checks the current network lease before signing a
-replacement and before broadcast. The append also requires that same live
+**Lease.** Claims, approvals, swaps and replacements recheck the current
+network lease before EVM signing and broadcast. Their durable insert requires
+the same live lease. Reconciliation also checks the lease before rebroadcast. The append also requires that same live
 lease, the still-open original and the next attempt number. A lost lease
 stops the run. Bytes already journaled remain available to its successor.
 
@@ -567,6 +568,14 @@ case runs on a fresh
 fork and records one claim with the transaction that landed. To run only these
 cases, use `SLOP_TEST_CLAIM_FAULTS=bump-replaced,bump-original,bump-cap,bump-restart,bump-nonce bun run test:fee-converter:fork --fee-claim-only`. `SLOP_TEST_FEE_PORT` selects another local port. To run only this
 claim flow, use `bun run test:fee-converter:fork --fee-claim-only`.
+`SLOP_TEST_CLAIM_FAULTS=before,lease bun run test:fee-converter:fork --local`
+runs the same client, core, migrated SQLite and admin report against a private
+Anvil chain with generated test keys. Harmless ERC-20/router fixtures and fixed
+quote replies replace public assets and liquidity only. It proves actual
+approval signatures, persisted bytes, database reopen, finality before a fresh
+swap, matching token proceeds, lost-send recovery and refusal after a claim
+loses its network lease. It is not live Kyber, Circle or production evidence.
+
 The Solana check uses a local
 `solana-test-validator` (port 28899) that clones the mainnet Jupiter and
 Whirlpool programs and one JUP/USDC route. The Solana harness lifts the

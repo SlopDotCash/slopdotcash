@@ -212,6 +212,8 @@ export interface VaultFeeClient {
     }) => Promise<void>,
     /** EVM: the lowest nonce the claim may use (see nonceFloor). */
     nonceFloor?: number,
+    /** Recheck the existing network lease before signing and broadcast. */
+    assertLease?: () => Promise<void>,
   ): Promise<{ txId: string }>;
 }
 
@@ -663,6 +665,7 @@ export async function runNetwork(
         leased,
         blocked,
         runId,
+        assertLease,
       );
 
     const since = new Date(
@@ -739,6 +742,7 @@ async function claimVaultFees(
   leased: () => Promise<boolean>,
   blocked: Set<string>,
   runId: string,
+  assertLease: () => Promise<void>,
 ): Promise<number> {
   const { limits } = deps;
   let claimed = 0;
@@ -821,11 +825,13 @@ async function claimVaultFees(
           submittedAt: at,
           finalizedAt: null,
         };
-        await deps.store.insert(claimRow);
+        await assertLease();
+        await deps.store.insert(claimRow, { runId, now: deps.now() });
         claimId = claimRow.id;
         blocked.add(accrued.asset);
       };
-      const { txId } = await fees.claim(vault, recordClaim, floor);
+      await assertLease();
+      const { txId } = await fees.claim(vault, recordClaim, floor, assertLease);
       claimed += 1;
       report("fee_claim_included", { amount, txId });
     } catch (error) {
