@@ -25,8 +25,8 @@ FEE_CONVERTER_MODE = "live"
 # Comma-separated subset of base,ethereum,robinhood,solana.
 # Conditional owner activation requires verified funding and limits. Native
 # operating limits below are owner-approved. Solana's separate rotation
-# authority was verified on the deployed Config on 26 October 2026.
-FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood,solana"
+# authority is verified; native gas limits and accounting still gate signing.
+FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"
 # Optional operator allowlist, e.g. {"base":["0x..."]}. Project reward assets
 # from D1 are always candidates; arbitrary airdropped tokens never are.
 FEE_CONVERTER_ALLOWLIST = ""
