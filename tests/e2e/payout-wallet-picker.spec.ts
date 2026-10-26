@@ -2,6 +2,8 @@
 import type { Page } from "@playwright/test";
 import { expect, expectAccessible, test } from "./fixtures";
 
+test.beforeEach(({ diagnostics }) => diagnostics.allowPreviewApiMisses());
+
 const evmAddress = "0x1111111111111111111111111111111111111111";
 const solanaAddress = "11111111111111111111111111111111";
 

@@ -86,6 +86,7 @@ test("an unavailable registry with no last good copy shows an error, never an em
   diagnostics,
   page,
 }) => {
+  diagnostics.allowPreviewApiMisses();
   diagnostics.allow(
     /^console Failed to load resource: the server responded with a status of (?:503|404) .*\/data\/(?:fixture-)?project-registry\.json$/u,
     /^(?:503 GET http:\/\/[^ ]+\/data\/fixture-project-registry|404 GET http:\/\/[^ ]+\/data\/project-registry)\.json$/u,
@@ -124,6 +125,7 @@ test("a failed registry read keeps the last good projects with a stale label", a
   diagnostics,
   page,
 }) => {
+  diagnostics.allowPreviewApiMisses();
   diagnostics.allow(
     /^console Failed to load resource: the server responded with a status of 503 .*\/data\/fixture-project-registry\.json$/u,
     /^503 GET http:\/\/[^ ]+\/data\/fixture-project-registry\.json$/u,
@@ -215,9 +217,13 @@ test("a failed snapshot refresh keeps the last good scores with a stale label", 
   diagnostics,
   page,
 }) => {
+  diagnostics.allowPreviewApiMisses();
+  // The refused snapshot reads below; each cancels its paired cycle index
+  // read.
   diagnostics.allow(
     /^console Failed to load resource: the server responded with a status of 503 .*\/data\/leaderboard\.json\?\S*$/u,
     /^503 GET http:\/\/[^ ]+\/data\/leaderboard\.json\?\S*$/u,
+    /^net::ERR_ABORTED GET http:\/\/[^ ]+\/data\/cycles\/index\.json\?\S*$/u,
   );
   const project = homeProjects().find(
     (candidate) => candidate.listingTier === "featured",

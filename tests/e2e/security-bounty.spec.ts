@@ -14,7 +14,13 @@ import {
   fixtureRepository,
 } from "../github-api-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
-import { expect, expectAccessible, projectSuffix, test } from "./fixtures";
+import {
+  CANCELED,
+  expect,
+  expectAccessible,
+  projectSuffix,
+  test,
+} from "./fixtures";
 
 type Role = keyof typeof E2E_SECURITY_ACCOUNTS;
 const TOKENS = JSON.parse(
@@ -33,6 +39,7 @@ test.beforeEach(({ diagnostics }) => {
   diagnostics.allow(
     /^(?:console .* at |403 GET )http:\/\/[^ ]+\/api\/v1\/(?:points|payments)\//u,
   );
+  diagnostics.allowCanceledBackgroundReads();
 });
 
 function account(role: Role) {
@@ -686,6 +693,7 @@ test("owners publish and control bounty programs with verified funding @registry
 
 test("private security bounty programs keep cases restricted from intake to award @registry", async ({
   browser,
+  diagnostics,
   request,
 }) => {
   test.setTimeout(300_000);
@@ -1676,6 +1684,8 @@ test("private security bounty programs keep cases restricted from intake to awar
       viewport: test.info().project.use.viewport,
       recordVideo: { dir: test.info().outputPath("disclosure-video") },
     });
+    // The disclosure step cancels no request.
+    const canceled = diagnostics.count(CANCELED);
     const page = await context.newPage();
     await signIn(page, TOKENS.security);
     await page.goto("/security", { waitUntil: "networkidle" });
@@ -1723,6 +1733,7 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("disclosure-zoom.png"),
       fullPage: true,
     });
+    expect(diagnostics.count(CANCELED)).toBe(canceled);
     await context.close();
     expect(
       (

@@ -1583,7 +1583,9 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   page,
 }, testInfo) => {
   await page.goto("/sponsors", { waitUntil: "networkidle" });
-  await page.reload();
+  // The page's records must finish loading before keyboard navigation
+  // leaves it, or the move cancels the read.
+  await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByText("$4,900", { exact: true })).toBeVisible();
   const audience = page
     .locator("summary")

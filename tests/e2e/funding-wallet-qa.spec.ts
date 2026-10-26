@@ -6,6 +6,7 @@ import { expect, test } from "./fixtures";
 test("legacy wallet links open Account Wallets on direct navigation and reload", {
   tag: ["@pages"],
 }, async ({ diagnostics, page }) => {
+  diagnostics.allowPreviewApiMisses();
   diagnostics.allow(
     /^console Failed to load resource: the server responded with a status of 401 .* at http:\/\/[^ ]+\/api\/v1\/payments\/me$/u,
     /^401 GET http:\/\/[^ ]+\/api\/v1\/payments\/me$/u,

@@ -17,7 +17,13 @@ import {
   VETTING_TRACE_SHA,
   vettingResult,
 } from "../vetting-fixtures";
-import { expect, expectAccessible, projectSuffix, test } from "./fixtures";
+import {
+  CANCELED,
+  expect,
+  expectAccessible,
+  projectSuffix,
+  test,
+} from "./fixtures";
 
 const APPLICANT_TOKEN = process.env.SLOP_E2E_APPLICANT_TOKEN ?? "";
 const ADMIN_TOKEN = process.env.SLOP_E2E_ADMIN_TOKEN ?? "";
@@ -181,6 +187,7 @@ test.beforeEach(({ diagnostics }) => {
   diagnostics.allow(
     /^(?:console .* at |403 GET )http:\/\/[^ ]+\/api\/v1\/(?:points|payments)\//u,
   );
+  diagnostics.allowCanceledBackgroundReads();
 });
 
 /**
@@ -580,11 +587,13 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   diagnostics,
   request,
 }) => {
-  // The two refused activations below.
-  diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 422 \(Unprocessable Entity\) at |422 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
-  );
   const project = fixtureProjects().queued;
+  // The two refused activations below.
+  const refused = diagnostics.allowResponse(
+    422,
+    "PUT",
+    `/api/v1/admin/projects/${project.id}/manifest`,
+  );
   const adminContext = await browser.newContext(walkthroughOptions());
   const admin = await adminContext.newPage();
   await signIn(admin, ADMIN_TOKEN);
@@ -641,6 +650,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   await expect(refusedCard.getByRole("alert")).toContainText(
     "Security vetting is quarantined",
   );
+  expect(diagnostics.count(refused)).toBe(1);
 
   // A signed clean claim still lacks canonical runtime closure.
   await queueScan(admin, project.id, "Rescan after the gap");
@@ -680,6 +690,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   await expect(card.getByRole("alert")).toContainText(
     "Security vetting is quarantined",
   );
+  expect(diagnostics.count(refused)).toBe(2);
   await postVettingResult(
     request,
     project.id,
@@ -805,11 +816,13 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   diagnostics,
   request,
 }) => {
-  // The refused reinstatement preview below.
-  diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 409 \(Conflict\) at |409 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
-  );
   const project = fixtureProjects().queued;
+  // The refused reinstatement preview below.
+  const refused = diagnostics.allowResponse(
+    409,
+    "POST",
+    `/api/v1/admin/projects/${project.id}/enforcement-preview`,
+  );
   const evidence = `https://github.com/${project.repository}/security/advisories/GHSA-e2e`;
   const adminContext = await browser.newContext(walkthroughOptions());
   const admin = await adminContext.newPage();
@@ -1044,6 +1057,7 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   await expect(moderatorPanel.getByRole("alert")).toContainText(
     "fresh clean scan",
   );
+  expect(diagnostics.count(refused)).toBe(1);
   await expect(
     moderatorPanel.getByRole("button", {
       name: "Confirm: Reinstate after review",
@@ -1138,9 +1152,7 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   request,
 }) => {
   // The banned maintainer's refused creation below.
-  diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 403 \(Forbidden\) at |403 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
-  );
+  const refused = diagnostics.allowResponse(403, "POST", "/api/v1/projects");
   const suffix = projectSuffix();
   const login = `e2e-maintainer-${suffix}`;
   const token = MAINTAINER_TOKENS[`maintainer-${suffix}`] ?? "";
@@ -1267,6 +1279,7 @@ test("a moderator decides a confirmed malicious result and bans the project and 
     "A moderator banned this maintainer",
   );
   expect(await listedProject(returning, next.id)).toBeUndefined();
+  expect(diagnostics.count(refused)).toBe(1);
   await expectAccessible(returning);
   await returning.screenshot({
     path: test.info().outputPath("banned-maintainer-refused.png"),
@@ -1356,13 +1369,19 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   diagnostics,
   request,
 }) => {
+  const project = fixtureProjects().setup;
   // The refused creation before install and the refused publish after access
   // is lost.
-  diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 409 \(Conflict\) at |409 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
-    /^(?:console Failed to load resource: the server responded with a status of 403 \(Forbidden\) at |403 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
+  const refusedCreation = diagnostics.allowResponse(
+    409,
+    "POST",
+    "/api/v1/projects",
   );
-  const project = fixtureProjects().setup;
+  const refusedPublish = diagnostics.allowResponse(
+    403,
+    "PUT",
+    `/api/v1/projects/${project.id}`,
+  );
   const context = await browser.newContext(walkthroughOptions());
   const page = await context.newPage();
   await signIn(page, OWNER_TOKEN);
@@ -1475,6 +1494,9 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await expect(
     page.getByRole("status").filter({ hasText: "Published revision 2" }),
   ).toBeVisible();
+  // The only refusal so far is the creation before install.
+  expect(diagnostics.count(refusedCreation)).toBe(1);
+  expect(diagnostics.count(refusedPublish)).toBe(0);
 
   // A policy with no deployed or funded vault must not lock the asset.
   await expect(
@@ -1526,6 +1548,8 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await expect(page.locator("form").getByRole("alert")).toContainText(
     "Write, maintain or admin access is required",
   );
+  expect(diagnostics.count(refusedCreation)).toBe(1);
+  expect(diagnostics.count(refusedPublish)).toBe(1);
   const history = await (
     await page.request.get("/api/v1/project-revisions")
   ).json();
@@ -1546,11 +1570,6 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
   browser,
   diagnostics,
 }) => {
-  // The rate-limited lookup and the refused stale publish below.
-  diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at |503 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
-    /^(?:console Failed to load resource: the server responded with a status of 409 \(Conflict\) at |409 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
-  );
   const suffix = projectSuffix();
   const project = {
     id: `app-facts-${suffix}`,
@@ -1558,6 +1577,17 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
     name: `App facts ${suffix}`,
     network: "solana",
   };
+  // The publish during the App outage and the refused stale publish below.
+  const unavailable = diagnostics.allowResponse(
+    503,
+    "PUT",
+    `/api/v1/projects/${project.id}`,
+  );
+  const stale = diagnostics.allowResponse(
+    409,
+    "PUT",
+    `/api/v1/projects/${project.id}`,
+  );
   const context = await browser.newContext(walkthroughOptions());
   const page = await context.newPage();
   await signIn(page, OWNER_TOKEN);
@@ -1627,6 +1657,7 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
   await publish.click();
   const alert = page.locator("form").getByRole("alert");
   await expect(alert).toContainText("GitHub or Slopbot did not answer");
+  expect(diagnostics.count(unavailable)).toBe(1);
   const reload = page.getByRole("button", {
     name: "Load the current revision",
     exact: true,
@@ -1674,6 +1705,7 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
   await publish.click();
   await expect(alert).toContainText("The project changed since you loaded it");
   await expect(reload).toBeVisible();
+  expect(diagnostics.count(stale)).toBe(1);
   await page.screenshot({
     path: test.info().outputPath("real-stale-revision.png"),
     fullPage: true,
@@ -2004,6 +2036,7 @@ test("an applicant publishes an application stored before self-service setup wit
 
 test.describe("private evidence console", () => {
   test("a designated operator inspects retained vetting bytes with reasoned access @registry", async ({
+    diagnostics,
     page,
   }) => {
     await signIn(page, ADMIN_TOKEN);
@@ -2110,6 +2143,8 @@ test.describe("private evidence console", () => {
       path: test.info().outputPath("private-evidence.png"),
       fullPage: true,
     });
+    // The private evidence reads cancel no request.
+    expect(diagnostics.count(CANCELED)).toBe(0);
     const video = page.video();
     await page.close();
     if (video)

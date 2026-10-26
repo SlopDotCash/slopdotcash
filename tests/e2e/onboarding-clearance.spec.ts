@@ -6,6 +6,7 @@ test("project agent setup falls back to the general prompt until cleared", async
   context,
   diagnostics,
 }, info) => {
+  diagnostics.allowPreviewApiMisses();
   // The unavailable clearance list below.
   diagnostics.allow(
     /^(?:console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at |503 GET )http:\/\/[^ ]+\/\.well-known\/slop\/projects\.json$/u,

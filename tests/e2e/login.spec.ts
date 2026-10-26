@@ -59,6 +59,7 @@ for (const [next, expected] of [
     page,
     baseURL,
   }) => {
+    diagnostics.allowPreviewApiMisses();
     // The signed-out membership read before sign-in.
     diagnostics.allow(
       /^console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at https:\/\/[^ ]+\/api\/v1\/points\/me$/u,

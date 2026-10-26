@@ -212,10 +212,10 @@ test("a late previous payment request cannot overwrite a retried project", async
   diagnostics,
   page,
 }, info) => {
-  // The synthetic outage below.
-  diagnostics.allow(
-    /^console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at https:\/\/[^ ]+\/api\/v1\/payments\/projects\/[^/ ]+\/direct-transfers$/u,
-  );
+  // The synthetic outage below is the only failure the browser reports.
+  const outageReport =
+    /^console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at https:\/\/[^ ]+\/api\/v1\/payments\/projects\/[^/ ]+\/direct-transfers$/u;
+  diagnostics.allow(outageReport);
   await fixtures(page);
   const previousResponse = gate();
   const previousFulfilled = gate();
@@ -308,6 +308,7 @@ test("a late previous payment request cannot overwrite a retried project", async
     expect(observed.leaks).toEqual([]);
     expect(previousRequests).toBeGreaterThan(0);
     expect(nextRequests).toBeGreaterThanOrEqual(3);
+    expect(diagnostics.count(outageReport)).toBeGreaterThan(0);
   } finally {
     previousResponse.release();
   }

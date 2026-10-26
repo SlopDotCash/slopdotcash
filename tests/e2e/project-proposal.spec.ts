@@ -453,6 +453,10 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
   diagnostics.allow(
     /^(?:console Failed to load resource: .* at |\d{3} GET )http:\/\/[^ ]+\/api\/v1\/project-github\//u,
   );
+  // A changed or cleared draft cancels its pending lookup below.
+  diagnostics.allow(
+    /^net::ERR_ABORTED GET http:\/\/[^ ]+\/api\/v1\/project-github\/repositories\/example\/open-protein$/u,
+  );
   await routeGitHub(page, { repository: 404 });
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page

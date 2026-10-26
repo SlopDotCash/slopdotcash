@@ -1,5 +1,11 @@
 import { expect, test } from "./fixtures";
 
+// The fake clock passes the data loaders' request deadlines, so they cancel
+// their reads. The hero does not depend on that data.
+test.beforeEach(({ diagnostics }) =>
+  diagnostics.allow(/^net::ERR_ABORTED GET http:\/\/[^ ]+\/data\//u),
+);
+
 test("hero types, deletes and cycles all original campaign phrases without moving the layout", async ({
   page,
 }) => {

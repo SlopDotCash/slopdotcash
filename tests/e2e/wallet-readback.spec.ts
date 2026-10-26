@@ -1,6 +1,8 @@
 /** The canonical authenticated payout response restores every network together. */
 import { expect, expectAccessible, test } from "./fixtures";
 
+test.beforeEach(({ diagnostics }) => diagnostics.allowPreviewApiMisses());
+
 const wallets = [
   ["solana", "Solana", "11111111111111111111111111111111"],
   ["base", "Base", "0x1111111111111111111111111111111111111111"],

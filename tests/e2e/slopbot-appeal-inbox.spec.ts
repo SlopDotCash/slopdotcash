@@ -5,8 +5,10 @@ import { expect, expectAccessible, test } from "./fixtures";
 // The worker workflow test covers the actual escalation and mail dispatch.
 // This browser check uses its writer against the real local Pages/D1 fixture.
 test("an escalated contribution appeal opens from the moderator Inbox and shows resolution @registry", async ({
+  diagnostics,
   page,
 }) => {
+  diagnostics.allowCanceledBackgroundReads();
   const persist = process.env.SLOP_E2E_PERSIST_TO;
   const token = process.env.SLOP_E2E_MODERATOR_TOKEN;
   if (!persist || !token) throw new Error("Missing isolated registry fixture");
