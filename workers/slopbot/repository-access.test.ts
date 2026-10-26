@@ -193,14 +193,47 @@ test("reads one repository resource only through its own installation", async ()
   };
   const calls: string[] = [];
   const fetcher = github(installed, calls);
-  const facts = await readPath("/repos/example/open-registry", fetcher);
+  const publicRepository = {
+    ...installed,
+    [API]: Response.json(repositoryIdentity),
+    [`${API}/branches/main`]: Response.json({
+      commit: { sha: "a".repeat(40) },
+    }),
+  };
+  const facts = await readPath(
+    "/repos/example/open-registry",
+    github(publicRepository, calls),
+  );
   expect(facts.status).toBe(200);
   expect(facts.headers.get("x-slopbot-repository-read")).toBe("github");
-  expect(await facts.json()).toEqual({ id: 123456789 });
+  expect(await facts.json()).toEqual(repositoryIdentity);
+  const branch = await readPath(
+    "/repos/example/open-registry/branches/main",
+    github(publicRepository),
+  );
+  expect(branch.status).toBe(200);
+  expect(await branch.json()).toEqual({ commit: { sha: "a".repeat(40) } });
+  // A private repository answers like an uninstalled one.
+  for (const path of [
+    "/repos/example/open-registry",
+    "/repos/example/open-registry/branches/main",
+  ]) {
+    const hidden = await readPath(
+      path,
+      github({
+        ...publicRepository,
+        [API]: Response.json({ ...repositoryIdentity, private: true }),
+      }),
+    );
+    expect(hidden.status).toBe(404);
+    expect(hidden.headers.get("x-slopbot-repository-read")).toBeNull();
+  }
   // Encoded dot segments and other resources are refused before any call.
   calls.length = 0;
   for (const path of [
     "/repos/example/open-registry/branches/%2e%2e",
+    "/repos/example/open-registry/branches/a%2F..%2F..%2Fother",
+    "/repos/example/open-registry/branches/%E0%A4%A",
     "/repos/example/open-registry/collaborators/owner/permission",
   ])
     expect((await readPath(path, fetcher)).status).toBe(400);

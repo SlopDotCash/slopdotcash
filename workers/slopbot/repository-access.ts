@@ -215,8 +215,10 @@ export async function handleRepositoryAccess(
  * Reads one public repository resource with that repository's own Slopbot
  * installation, so setup does not depend on the anonymous rate limit of a
  * shared Pages address. Without an installation the answer is 404 without
- * the read header, and the caller makes its ordinary read. Only GitHub's
- * 200 and 404 answers pass through; the token never leaves the Worker.
+ * the read header, and the caller makes its ordinary read; a private or
+ * missing repository answers the same way. Only GitHub's 200 and 404
+ * answers for a public repository pass through; the token never leaves the
+ * Worker.
  */
 export async function handleRepositoryRead(
   request: Request,
@@ -227,8 +229,20 @@ export async function handleRepositoryRead(
   const match = REPOSITORY_READ_PATH.exec(path);
   const headers = { "cache-control": "no-store" };
   // Dot segments, including encoded ones, would name a different resource.
+  // Git branch names never contain "..", so a decoded one is also refused.
   const target = new URL(`https://api.github.com${path}`);
-  if (match === null || `${target.pathname}${target.search}` !== path)
+  let decoded = "";
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    // error-policy:J3 a malformed escape is an invalid request below.
+  }
+  if (
+    match === null ||
+    `${target.pathname}${target.search}` !== path ||
+    decoded === "" ||
+    /\/branches\/.*\.\./u.test(decoded)
+  )
     return Response.json(
       { error: "invalid_request" },
       { status: 400, headers },
@@ -245,7 +259,31 @@ export async function handleRepositoryRead(
         { installation: installation.state },
         { status: 404, headers },
       );
-    const answer = await installation.read(path);
+    // The installation token can read private repositories. Only a public
+    // repository passes through; any other answers like an uninstalled one,
+    // so the caller's ordinary anonymous read decides, as before.
+    const factsPath = `/repos/${match[1]}/${match[2]}`;
+    const facts = await installation.read(factsPath);
+    if (facts.status !== 200 && facts.status !== 404)
+      throw new Error(`GitHub repository read returned ${facts.status}`);
+    const repository =
+      facts.status === 200
+        ? ((await facts.json()) as { private?: unknown; visibility?: unknown })
+        : null;
+    if (
+      repository === null ||
+      repository.private !== false ||
+      (repository.visibility !== undefined &&
+        repository.visibility !== "public")
+    )
+      return Response.json(
+        { installation: "unavailable" },
+        { status: 404, headers },
+      );
+    const answer =
+      path === factsPath
+        ? Response.json(repository)
+        : await installation.read(path);
     if (answer.status !== 200 && answer.status !== 404)
       throw new Error(`GitHub repository read returned ${answer.status}`);
     return new Response(answer.body, {

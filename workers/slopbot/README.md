@@ -919,7 +919,8 @@ Setup lookups and the vetting branch-head pin read one repository's public
 facts, one branch or its LICENSE at one commit with that repository's own
 installation token, so they do not depend on the anonymous GitHub rate limit
 of the shared Pages address. Any other path, or a path that URL normalization
-changes, is HTTP 400. Without an active installation the answer is HTTP 404
+changes, is HTTP 400. Without an active installation, or for a repository
+that is not public, the answer is HTTP 404
 without the `x-slopbot-repository-read` header, and the site makes its
 ordinary read. GitHub's 200 and 404 answers pass through with that header;
 any other answer is HTTP 503. It returns no token.
