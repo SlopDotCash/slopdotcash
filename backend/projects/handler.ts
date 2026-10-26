@@ -2275,6 +2275,7 @@ async function recordEnforcement(
     project,
     restriction,
     listedBefore,
+    responsibleAccounts: input.responsibleAccounts,
   });
   let vettingReview: ProjectEnforcement["vettingReview"];
   if (action === "reinstate") {
