@@ -129,12 +129,11 @@ export function readTokenMint(
   if (bytes.length < MINT_SIZE) throw new Error("Truncated mint account");
   // Byte 45 is `is_initialized` in both layouts; byte 44 is the decimals.
   if (bytes[45] !== 1) throw new Error("Mint is not initialized");
-  // A base mint carries no account-type byte and no extension under either program,
-  // and the subset admits a mint whose extensions are limited to the two it names.
-  if (bytes.length === MINT_SIZE)
+  if (program === TOKEN_PROGRAM) {
+    if (bytes.length !== MINT_SIZE)
+      throw new Error("Classic mint layout mismatch");
     return { program, raw: bytes, decimals: bytes[44], extensions: [] };
-  if (program === TOKEN_PROGRAM)
-    throw new Error("Classic mint layout mismatch");
+  }
   // COption tags at 0 (mint authority) and 46 (freeze authority) must be absent.
   for (const [offset, message] of [
     [0, "Token-2022 mint authority is not disabled"],
@@ -148,6 +147,9 @@ export function readTokenMint(
       bytes.subarray(offset + 4, offset + 36).some((byte) => byte !== 0)
     )
       throw new Error(message);
+  // A base Token-2022 mint has no extension, but the same authority rule applies.
+  if (bytes.length === MINT_SIZE)
+    return { program, raw: bytes, decimals: bytes[44], extensions: [] };
   // The base is padded to the account size before the account-type byte.
   if (bytes.subarray(MINT_SIZE, ACCOUNT_TYPE_OFFSET).some((byte) => byte !== 0))
     throw new Error("Unexpected Token-2022 base padding");
