@@ -264,11 +264,14 @@ describe("release gates", () => {
     ).toBe("off");
   });
 
-  test("the checked-in configuration carries the owner's recorded dust threshold and stays off", async () => {
+  test("the checked-in configuration carries the owner's recorded dust threshold and live networks without Solana", async () => {
     const toml = await Bun.file(
       new URL("./wrangler.toml", import.meta.url),
     ).text();
-    expect(toml).toMatch(/^FEE_CONVERTER_MODE = "off"$/mu);
+    expect(toml).toMatch(/^FEE_CONVERTER_MODE = "live"$/mu);
+    expect(toml).toMatch(
+      /^FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"$/mu,
+    );
     expect(toml).toMatch(/^FEE_CONVERTER_MIN_VALUE_MICRO = "5000000"$/mu);
     expect(toml).toMatch(/^FEE_CONVERTER_GAS_MULTIPLE = "10"$/mu);
   });

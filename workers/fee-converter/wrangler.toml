@@ -21,9 +21,11 @@ migrations_dir = "../../migrations"
 
 [vars]
 # off | dry_run | live. dry_run quotes and records but never loads a key.
-FEE_CONVERTER_MODE = "off"
+FEE_CONVERTER_MODE = "live"
 # Comma-separated subset of base,ethereum,robinhood,solana.
-FEE_CONVERTER_NETWORKS = ""
+# Owner activation of 26 October 2026. Solana stays off until its separate
+# attester role is in place (PRD section 11).
+FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"
 # Optional operator allowlist, e.g. {"base":["0x..."]}. Project reward assets
 # from D1 are always candidates; arbitrary airdropped tokens never are.
 FEE_CONVERTER_ALLOWLIST = ""
