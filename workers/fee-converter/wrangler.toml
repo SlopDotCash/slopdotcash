@@ -21,10 +21,10 @@ migrations_dir = "../../migrations"
 
 [vars]
 # off | dry_run | live. dry_run quotes and records but never loads a key.
-FEE_CONVERTER_MODE = "live"
+FEE_CONVERTER_MODE = "off"
 # Comma-separated subset of base,ethereum,robinhood,solana.
-# Owner activation of 26 October 2026. Solana stays off until its separate
-# attester role is in place (PRD section 11).
+# Conditional owner activation requires verified funding and limits. Native
+# operating limits remain unset until the owner selects them. Solana stays off.
 FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"
 # Optional operator allowlist, e.g. {"base":["0x..."]}. Project reward assets
 # from D1 are always candidates; arbitrary airdropped tokens never are.
@@ -41,6 +41,9 @@ FEE_CONVERTER_MAX_PRICE_IMPACT_BPS = "200"
 FEE_CONVERTER_RUN_CAP_MICRO = "1000000000"
 FEE_CONVERTER_DAILY_CAP_MICRO = "5000000000"
 FEE_CONVERTER_SOLANA_FEE_MICRO = "2000"
+# FEE_CONVERTER_NATIVE_BUDGETS: JSON keyed by network, with decimal wei strings
+# perTransaction, perDay and additionalFeeReserve. No production values yet.
+# Base requires a positive data/operator allowance; Ethereum uses "0".
 # Robinhood fees are not_converted: retain each received asset unchanged.
 # No conversion target, quote, signing key load, swap or bridge is needed.
 # Published network fee wallets (docs/slop-product-requirements.md TOK-06). Robinhood

@@ -1,3 +1,11 @@
+import {
+  type Hex,
+  keccak256,
+  parseTransaction,
+  recoverTransactionAddress,
+  serializeTransaction,
+  type TransactionSerializedEIP1559,
+} from "viem";
 import type { Network } from "./config";
 import type {
   ConversionRow,
@@ -55,6 +63,7 @@ const COLUMNS: [keyof ConversionRow, string][] = [
   ["submittedAt", "submitted_at"],
   ["finalizedAt", "finalized_at"],
   ["landedTxId", "landed_tx_id"],
+  ["nativeGasId", "native_gas_id"],
 ];
 const COLUMN = new Map(COLUMNS);
 const SELECT = COLUMNS.map(([, column]) => column).join(", ");
@@ -67,6 +76,37 @@ function fromRow(row: Record<string, D1Value>): ConversionRow {
 
 export class D1ConversionStore implements ConversionStore {
   constructor(private readonly db: FeeD1Database) {}
+
+  private async validateNativeSend(
+    id: string | null | undefined,
+    rawTx: string | null,
+    txId: string | null,
+  ) {
+    if (!id) return;
+    if (!rawTx || keccak256(rawTx as Hex) !== txId)
+      throw new Error("Native signed attempt hash differs");
+    const {
+      r: _r,
+      s: _s,
+      v: _v,
+      yParity: _y,
+      ...unsigned
+    } = parseTransaction(rawTx as Hex);
+    const reserved = await this.db
+      .prepare("SELECT intent_hash,fee_wallet FROM fee_native_gas WHERE id=?")
+      .bind(id)
+      .first<{ intent_hash: string; fee_wallet: string }>();
+    if (
+      !reserved ||
+      keccak256(serializeTransaction(unsigned)) !== reserved.intent_hash ||
+      (
+        await recoverTransactionAddress({
+          serializedTransaction: rawTx as TransactionSerializedEIP1559,
+        })
+      ).toLowerCase() !== reserved.fee_wallet
+    )
+      throw new Error("Native signature differs from its reserved intent");
+  }
 
   async acquireLock(network: Network, runId: string, now: Date) {
     const expires = new Date(now.getTime() + LOCK_MS).toISOString();
@@ -131,6 +171,7 @@ export class D1ConversionStore implements ConversionStore {
   }
 
   async insert(row: ConversionRow, lease?: { runId: string; now: Date }) {
+    await this.validateNativeSend(row.nativeGasId, row.rawTx, row.txId);
     const result = await this.db
       .prepare(
         `INSERT INTO fee_conversions (${SELECT}) SELECT ${COLUMNS.map(() => "?").join(", ")}${lease ? " WHERE EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ? AND run_id = ? AND expires_at >= ?)" : ""}`,
@@ -145,7 +186,7 @@ export class D1ConversionStore implements ConversionStore {
         ...(lease ? [row.network, lease.runId, lease.now.toISOString()] : []),
       )
       .run();
-    if ((result.meta?.changes ?? 0) !== 1)
+    if ((result.meta?.changes ?? 0) < 1)
       throw new Error("Fee send lost its lease before journaling");
   }
 
@@ -174,7 +215,7 @@ export class D1ConversionStore implements ConversionStore {
     const { results } = await this.db
       .prepare(
         `SELECT id, conversion_id, network, attempt, evm_nonce, tx_id, raw_tx,
-                max_fee_per_gas, max_priority_fee_per_gas, created_at
+                max_fee_per_gas, max_priority_fee_per_gas, created_at, native_gas_id
            FROM fee_send_replacements WHERE conversion_id = ?
           ORDER BY attempt`,
       )
@@ -192,6 +233,7 @@ export class D1ConversionStore implements ConversionStore {
         maxFeePerGas: row.max_fee_per_gas as string,
         maxPriorityFeePerGas: row.max_priority_fee_per_gas as string,
         createdAt: row.created_at as string,
+        nativeGasId: row.native_gas_id as string | null,
       }),
     );
   }
@@ -201,12 +243,17 @@ export class D1ConversionStore implements ConversionStore {
     runId: string,
     now: Date,
   ) {
+    await this.validateNativeSend(
+      replacement.nativeGasId,
+      replacement.rawTx,
+      replacement.txId,
+    );
     const result = await this.db
       .prepare(
         `INSERT INTO fee_send_replacements (id, conversion_id, network, attempt,
            evm_nonce, tx_id, raw_tx, max_fee_per_gas, max_priority_fee_per_gas,
-           created_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           created_at, native_gas_id)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
           WHERE EXISTS (
             SELECT 1 FROM fee_converter_locks
              WHERE network = ? AND run_id = ? AND expires_at >= ?
@@ -230,6 +277,7 @@ export class D1ConversionStore implements ConversionStore {
         replacement.maxFeePerGas,
         replacement.maxPriorityFeePerGas,
         replacement.createdAt,
+        replacement.nativeGasId ?? null,
         replacement.network,
         runId,
         now.toISOString(),
@@ -240,7 +288,7 @@ export class D1ConversionStore implements ConversionStore {
         replacement.conversionId,
       )
       .run();
-    return (result.meta?.changes ?? 0) === 1;
+    return (result.meta?.changes ?? 0) >= 1;
   }
 
   async liveValueSince(network: Network, since: string) {

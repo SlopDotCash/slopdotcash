@@ -88,6 +88,8 @@ On Base, Ethereum and Solana, automatically sell received project-token fees int
 
 Each network uses one dedicated fee-claim and conversion key, held as a Worker secret with per-run and daily caps. It may claim only accrued fees from reviewed vaults to that same fee wallet. It holds no vault role and cannot touch free funds, contributor principal, reserved awards or payments. Verify the deployment and fee recipient before a claim; stop on unknown or mismatched state. Reconcile uncertain sends before retrying and verify receipt before conversion. Use approved routes and bounded slippage. On networks that require conversion, an unavailable route, liquidity or signer leaves the token pending or failed.
 
+Native gas limits are separate from token-value caps. The fee signer stays off until its dedicated transaction and daily gas limits are set and verified. No keeper or referral budget supplies a default. Count approval, claim, conversion and replacement gas; keep uncertain sends reserved until finalized cost evidence resolves them.
+
 Slop owners authorize sweeps to separate owner-controlled software wallets. A human or owner-authorized agent executes them outside the Worker. Sweep keys stay in the owner's local `.env`, never in the Worker. These are software wallets, not cold storage.
 
 ## 7. Points, discovery, and clear pages
