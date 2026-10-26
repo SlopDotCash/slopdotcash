@@ -8,6 +8,11 @@ Source: owner action list on issue #914, and the owner decision of 25 October
 owner release an unsettleable month's reserve (needs a new upgrade and testnet
 qualification)."
 
+The [owner decision of 26 October 2026](https://github.com/SlopDotCash/slopdotcash/issues/914#issuecomment-6405648518)
+selects inclusion in V2, no readmission of a period, and no signature expiry.
+A changed reserve or authority still invalidates the signature. The pending
+upgrade kit must be rebuilt and rehearsed for these new bytes.
+
 ## 1. The problem
 
 A monthly allocation moves through two steps:
@@ -31,7 +36,8 @@ An **attester fault** is a signed admission that can never settle completely.
 Examples:
 
 - The signed total does not equal the sum of the leaves in the tree.
-- The attester lost the tree, or signed a root that no leaf set opens.
+- A complete retained tree reproduces the committed root, but its authenticated
+  sum contradicts the stored total. Missing tree data is not proof of a fault.
 - The tree repeats a source. Only one copy can settle.
 - A leaf has an invalid field (for example, actor 0 on EVM) or a source that a
   different month already consumed.
@@ -73,8 +79,9 @@ The owner alone cannot release, because the owner could then take back gross
 that a recipient can still settle. The attester alone cannot release, because
 the owner decision gives the release to the owner. The attester already has a
 larger power over unpaid awards: it can bind a wallet that it controls (PRD
-section 11, "Accepted attester-compromise risk"). The release does not add a
-new power to the attester.
+section 11, "Accepted attester-compromise risk"). This accepted compromise risk does not prove a reserve is unsettleable. The
+new release still depends on a correct fault classification and the owner
+transaction; the contract does not independently prove that classification.
 
 If the attester key is lost, the existing rotation path installs a new
 identity authority. The new authority signs the release. A signature from a
@@ -82,26 +89,41 @@ rotated-out authority does not verify.
 
 ### 3.2 What the attester must prove before it signs
 
-The contract cannot prove that a leaf can never settle. The attester proves
-it off-chain, in the same way that it checks sources before admission (EVM
-README, "The trusted attester rejects duplicate sources before signing"). The
-attester signs only when all of these are true at one finalized block:
+The contract enforces the owner, current identity authority, exact reserve and
+amount. It does not prove the fault. Missing local tree data never authorizes
+release: another keeper or contributor may still hold a valid proof. Provider
+failure, a failed supplied proof, and a generic simulation error also prove
+nothing about permanent eligibility.
 
-1. The month has a reserve, and its unsettled gross equals the value it signs.
-2. Every leaf that can settle has settled. The keeper or the attester sends
-   each such leaf first. Leaf settlement is permissionless.
-3. For each remaining leaf, a dry run of the settle call fails for a reason
-   that a retry cannot fix, or the leaf data cannot exist (the root total and
-   the signed total differ, or the tree is lost).
-4. The released amount is exactly the gross that items 2 and 3 show can never
-   settle. If the tree is lost or the totals disagree, that is all of the
-   unsettled gross.
-5. The cause is an attester fault. The attester does not sign for gross that
-   the Solana rules keep reserved on purpose: a source that the owner consumed
-   after the freeze with a smaller award, or with an award to another actor.
-   A release there would refund the gap to the owner.
+The read-only EVM inspection in `contracts/evm/monthly-reserve.ts`,
+`inspectEvmMonthlyWrongSum`, qualifies only this conservative case:
 
-The attester records the evidence for items 1 to 5 before it signs.
+1. The complete retained ordered tree passes the existing canonical builder.
+2. Its allocation digest, root and count match the recorded month exactly.
+3. Its authenticated sum differs from the immutable stored total.
+4. The entire original total remains unsettled; no prior reserve transition
+   needs separate reconciliation.
+5. The reviewed deployment and current authority verify at one finalized
+   block. The block hash remains canonical after all reads.
+
+The result binds the complete entries hash, allocation digest, root, count,
+computed and stored totals, remaining amount, deployment and finalized block.
+It is evidence only. It does not produce a signature or release transaction.
+A healthy tree, missing capture, mismatched root/count/digest, or already
+changed reserve stays held. Malformed input, an unavailable provider, or a
+noncanonical block refuses the inspection. No existing signer calls it yet.
+
+A contradictory authenticated sum prevents every valid proof from satisfying
+the stored sum check. This case releases the full still-unsettled total only.
+Other whole-tree and per-leaf faults remain unqualified by this inspection.
+The Solana whole-reserve signing classifier is also unfinished; EVM results
+are not Solana runtime evidence.
+
+For any future qualified per-leaf path, settle every settleable leaf first,
+then reread finalized state. Preserve Solana's existing deliberate hold for a
+source consumed after the freeze with a smaller award or another actor.
+Never treat that hold as a refundable attester fault. Such a path needs its
+own positive predicate and retained evidence before signing is enabled.
 
 ### 3.3 The signed message
 
@@ -142,9 +164,12 @@ verifies as a release.
 | Vault counters | `pendingMonthlyGross -= releasedGross`; `freeBalance += releasedGross` | `reserved -= released`; `monthly_outstanding -= released` (not for a legacy expired month) |
 | Fee | None. The fee applies only at payout or at a later free withdrawal. | None |
 
-The release can be partial. The attester can release only the faulty gross
-and leave settleable leaves reserved. After a partial release, a leaf still
-settles while its gross fits the unsettled remainder.
+The contract primitive accepts partial amounts. This is not a qualified
+partial-release policy. The read-only wrong-sum inspection above permits only
+the full untouched remainder. Other release cases stay held until their
+classifier proves the exact faulty gross and all settleable leaves have
+already settled. The existing partial-amount contract tests prove accounting
+mechanics only; they do not authorize release before healthy leaves settle.
 
 ### 3.5 What stays reserved
 
@@ -192,8 +217,10 @@ Monthly executors:
 Off-chain work that this change does **not** include. It must merge before a
 live project uses the release:
 
-1. An attester signing route for the release. It must apply section 3.2 at one
-   finalized block and keep the evidence.
+1. An attester signing route for the release. It must consume a qualified
+   section 3.2 result, reread its exact state immediately before signing, and
+   keep the evidence. The current read-only EVM inspection adds no signing
+   power. Solana classification remains unfinished.
 2. An owner transaction builder (EVM calldata; Solana instruction with the
    Ed25519 check), in the existing owner-plan tools.
 3. Scanner and API support for the new event. The API shows the released gross
@@ -237,10 +264,10 @@ vaults do not yet run V2, so no mainnet EVM vault can have this fault today.
 | Alternative | Why it was rejected |
 | --- | --- |
 | Release after a waiting period, by the owner alone | Time alone would release a reserve. This breaks the PRD rule that funded awards never expire. |
-| On-chain proof only (extend the Solana per-leaf release to EVM) | It cannot cover whole-tree faults: a lost tree, or a signed total that differs from the tree. Those faults block the owner just the same. The existing Solana per-leaf release stays. |
+| On-chain fault proof | A bound sum proof could establish the demonstrated wrong-total fault, but needs a different contract proof interface. The current primitive instead trusts a qualified off-chain classifier and both authorities. Neither design can infer a fault from a lost local tree. The existing Solana per-leaf release stays. |
 | The attester alone, or anyone with the attester's signature | The owner decision gives the release to the owner. Two parties are safer than one. |
 | The owner with the registrar or rotation authority | That key does not know the allocation tree and cannot check section 3.2. The rotation path already lets the registrar install a new attester that can sign. |
-| Release the whole remainder only | A month can have both settleable and faulty leaves. A partial release lets the faulty part go and keeps the rest protected. |
+| Release the whole remainder only | This is the only amount qualified by the current wrong-sum inspection. The contract supports partial amounts, but a mixed-leaf classifier and its ordering remain unqualified. |
 | Let the period admit again after a release | One commitment per period is a required rule. Manual awards cover the corrected month. |
 | Remove the manual-award block | The block protects the sources of funded leaves. Removing it lets the owner take a leaf's source by hand. |
 
@@ -252,25 +279,36 @@ reviewed source. Do not use mainnet.
 1. Build the exact source. Record the EVM implementation code digests and the
    Solana program `codeSha256`.
 2. Deploy the current reviewed implementation and create a funded vault or
-   project. Admit a month with a deliberately faulty tree (a repeated source,
-   and a signed total that differs from the tree). Settle every settleable
-   leaf. Confirm that the owner's manual award fails.
+   project. Retain a complete canonical tree. Admit its exact root and count
+   with a stored total that differs from its authenticated sum. Confirm all
+   actual proofs fail the sum check and the owner's manual award fails.
+   Separately prove a healthy allocation is held by the classifier and its
+   leaves still settle. Missing and mismatched captures must never authorize
+   a release. The Solana classifier must be implemented and qualified first.
 3. Upgrade to the new implementation. Confirm that all counters, awards,
    bindings, and the stuck reserve are unchanged.
 4. Confirm each failure: a non-owner sender, a signature from another key, a
    rotated-out authority, a stale unsettled value, a zero amount, an amount
    above the unsettled gross, and a replay.
-5. Do a partial release. Settle the remaining settleable leaves. Do a final
-   release if gross remains. Confirm that the manual award now succeeds.
+5. Apply the full release of the positively classified wrong-sum reserve.
+   Confirm that the manual award now succeeds. Other fault classes and partial
+   releases need separate qualification; do not use this result for them.
 6. Read `totals()` (EVM) or the project counters (Solana) at a finalized block.
    Confirm the conservation identities and that the event matches the state.
-7. Pay one settled leaf. Confirm the exact net payment and the 2% fee.
+7. Pay a separately committed award retained before the release. Confirm its
+   unchanged principal, exact net payment and 2% fee.
 8. Rotate the identity authority. Confirm that only the new authority's
    release signature verifies.
 9. Attach the transaction identities, code digests, and the read results to
    the release issue.
 
-Local evidence for this revision:
+Local evidence for this revision (contract primitives and classifier results
+are separate):
+
+- `contracts/evm/monthly-reserve.integration.ts` calls the actual read-only
+  inspection against local Anvil admissions. It checks a healthy tree, an
+  exact-root wrong-sum admission, missing/mismatched captures, wrong count,
+  wrong code, and a noncanonical block. Reads cannot change the reserve.
 
 - `contracts/evm/test/MonthlyReserveV2.t.sol` tests the full release, the
   partial release with later leaf settlement and payment, stale and replayed
