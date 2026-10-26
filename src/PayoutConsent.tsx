@@ -13,6 +13,7 @@ import {
 } from "./lib/payout-consent";
 import { apiRequest } from "./lib/project-api";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { sameWalletAddress } from "./lib/wallets";
 
 async function request(path: string, body: unknown) {
   const response = await apiRequest(`payments/wallets/${path}`, {
@@ -79,11 +80,7 @@ export function PayoutConsent({
     setNotice("");
     try {
       const wallet = await provider.connect();
-      const same = (a: string, b: string) =>
-        network.family === "evm"
-          ? a.toLowerCase() === b.toLowerCase()
-          : a === b;
-      if (!same(wallet.address, claim.address))
+      if (!sameWalletAddress(network.family, wallet.address, claim.address))
         throw new Error(
           "Connect your confirmed payout address. To change it, use Account wallets first.",
         );
@@ -120,7 +117,7 @@ export function PayoutConsent({
         if (
           !Array.isArray(accounts) ||
           typeof accounts[0] !== "string" ||
-          !same(accounts[0], claim.address)
+          !sameWalletAddress(network.family, accounts[0], claim.address)
         )
           throw new Error(
             "The wallet account changed. Connect and review again.",

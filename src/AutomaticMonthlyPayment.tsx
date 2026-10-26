@@ -23,7 +23,7 @@ import {
 } from "./lib/payments/contracts";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
-import { isWalletAddress } from "./lib/wallets";
+import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
 
 type Pending = {
   version: 1;
@@ -74,9 +74,9 @@ export function AutomaticMonthlyPayment({
   deployment: EscrowDeployment;
   onFinalized: () => void;
 }) {
-  const solana = ESCROW_NETWORKS[deployment.network].family === "solana";
-  const sameWallet = (a: string, b: string) =>
-    solana ? a === b : a.toLowerCase() === b.toLowerCase();
+  const family = ESCROW_NETWORKS[deployment.network].family;
+  const solana = family === "solana";
+  const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
   const key = `slop:vault-monthly:v1:${deployment.network}:${deployment.vault}`;
   const [saved] = useState(() => {
     try {

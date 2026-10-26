@@ -16,6 +16,7 @@ import {
   type VaultSetupInput,
   type VaultSetupReview,
 } from "./lib/vault-setup";
+import { sameWalletAddress } from "./lib/wallets";
 import { loginHref } from "./Points";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
@@ -114,7 +115,7 @@ export function OwnerVaultSetup({
     ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]?.family ===
     "solana";
   const sameWallet = (a: string, b: string) =>
-    solana ? a === b : a.toLowerCase() === b.toLowerCase();
+    sameWalletAddress(solana ? "solana" : "evm", a, b);
   const wallets = usePayoutWallets().filter((w) =>
     solana ? w.family === "solana" && w.solanaFunding : w.family === "evm",
   );

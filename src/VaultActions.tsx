@@ -27,7 +27,7 @@ import {
   sendSolanaVaultAction,
 } from "./lib/solana-vault-actions";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
-import { isWalletAddress } from "./lib/wallets";
+import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
 
 type Step = "approve" | "reset" | "send";
 type Pending = {
@@ -86,9 +86,9 @@ export function VaultActions({
   canDeposit?: boolean;
   onFinalized: () => void;
 }) {
-  const solana = ESCROW_NETWORKS[deployment.network].family === "solana";
-  const sameWallet = (a: string, b: string) =>
-    solana ? a === b : a.toLowerCase() === b.toLowerCase();
+  const family = ESCROW_NETWORKS[deployment.network].family;
+  const solana = family === "solana";
+  const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
   const key = `slop:vault-action:v1:${deployment.network}:${deployment.vault}:${deployment.asset}`;
   const [saved] = useState(() => {
     try {
