@@ -318,7 +318,9 @@ rate limit, and caches each answer for five minutes. The browser never calls
   It is refused with `revision_pending` while the
   paused, `retired` revision of the restriction is still pending. It appends a paused `community` revision only if
   the project was listed when the restriction began; it never restores
-  featuring, activation or money. A denial keeps the restriction.
+  featuring, activation or money. A denial keeps the restriction. It decides
+  the open project appeal first. When no project appeal is open, it decides
+  the open account appeals.
 - A signed confirmed malicious Ban waits for a moderator decision (PRD
   sections 2 and 8). `/admin` lists the project first with "Moderator
   decision needed", with or without an owner appeal. The moderator either
