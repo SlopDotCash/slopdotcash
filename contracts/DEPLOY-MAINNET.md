@@ -419,13 +419,16 @@ If it differs, stop: the program changed outside the runbook.
 
 Before you write the buffer in step 4, compare the size of `$SO` with the
 `Data Length`. If `$SO` is larger, extend the program account by at least the
-difference. Do this before you write the buffer: an upgrade into a program
+difference. The loader refuses an extension below 10,240 bytes, unless it extends
+the account to its maximum size, so extend by the larger of the difference and 10,240.
+Do this before you write the buffer: an upgrade into a program
 account that is too small fails after the buffer is paid for.
 
 ```bash
 DATA_LENGTH=<Data Length from solana program show>
 ADDITIONAL_BYTES=$(( $(wc -c < "$SO") - DATA_LENGTH ))
 echo "$ADDITIONAL_BYTES"   # extend only if this is greater than 0
+[ "$ADDITIONAL_BYTES" -lt 10240 ] && ADDITIONAL_BYTES=10240   # loader minimum
 solana program extend "$PROGRAM" "$ADDITIONAL_BYTES" -u "$RPC" --keypair "$PAYER"
 solana program show "$PROGRAM" -u "$RPC"   # Data Length must now be >= the size of $SO
 ```
@@ -433,9 +436,10 @@ solana program show "$PROGRAM" -u "$RPC"   # Data Length must now be >= the size
 Example: the first-operator verifiable build for the next upgrade (#901,
 source `edf3b341`) was 672,560 bytes. That build and its hash are superseded by
 the bundled monthly-reserve release; rebuild from the final merged source and
-repeat this size check. The mainnet program has a 681,392-byte
-`Data Length`. `ADDITIONAL_BYTES` is negative, so do not extend the program
-account for this upgrade.
+repeat this size check. The bundled build at `83827c04` is 685,664 bytes,
+4,272 bytes more than the mainnet program's 681,392-byte `Data Length`, so this
+upgrade extends the account by the 10,240-byte minimum. The same extension and
+upgrade passed on devnet on 25 October 2026 (devnet slot 515,170,272).
 
 ### 4. Write and check the buffer
 
