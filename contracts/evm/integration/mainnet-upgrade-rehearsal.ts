@@ -45,6 +45,7 @@ import {
   type EvmMonthlyReservation,
   evmMonthlyReserveDigest,
   evmMonthlySumTree,
+  inspectEvmMonthlyWrongSum,
   prepareEvmMonthlyReservation,
   readEvmMonthlyReserve,
 } from "../monthly-reserve";
@@ -1227,13 +1228,29 @@ try {
     calldata("setMonthlyCommitment(uint128,bool)", "5000000000", "true"),
     "monthly policy for the faulty month",
   );
+  // Retain the complete canonical tree. Its authenticated sum, not a missing local capture,
+  // proves the immutable admission cannot settle any genuine leaf.
+  const faultyEntries: MonthlyAllocationEntry[] = [
+    {
+      githubUserId: "107",
+      grossMicro: "1000000",
+      sourceDigest: keccak256(toBytes(`rehearsal-fault-first-${chainId}`)),
+    },
+    {
+      githubUserId: "108",
+      grossMicro: "1999999",
+      sourceDigest: keccak256(toBytes(`rehearsal-fault-second-${chainId}`)),
+    },
+  ];
+  const faultyTree = evmMonthlySumTree(faultyEntries);
+  assert.equal(faultyTree.total, 2999999n);
   const faulty: EvmMonthlyReservation = {
     version: 2,
     allocationDigest: keccak256(toBytes(`rehearsal-fault-${chainId}`)),
-    allocationRoot: keccak256(toBytes(`rehearsal-lost-root-${chainId}`)),
+    allocationRoot: faultyTree.hash,
     wholeGross: "3000000",
     remainingGross: "3000000",
-    count: 1,
+    count: faultyEntries.length,
     sourceSequence: read(vault, "ordinarySourceSequence()(uint256)"),
   };
   const freeBeforeFault = read(vault, "freeBalance()(uint128)");
@@ -1250,6 +1267,35 @@ try {
     ),
     "attester-fault reserve",
   );
+  await rpc("anvil_mine", ["0x41"]);
+  const faultInspection = await inspectEvmMonthlyWrongSum(
+    upgraded,
+    releasePeriod,
+    { allocationDigest: faulty.allocationDigest, entries: faultyEntries },
+  );
+  assert.equal(faultInspection.status, "provably-unsettleable");
+  assert.equal(faultInspection.fault, "authenticated-sum-mismatch");
+  assert.equal(faultInspection.computedTotal, "2999999");
+  assert.equal(faultInspection.storedTotal, faulty.wholeGross);
+  assert.equal(faultInspection.expectedRemaining, faulty.remainingGross);
+  assert.equal(faultInspection.releasedGross, "3000000");
+  assert.equal(
+    faultInspection.identityAuthority,
+    authority.address.toLowerCase(),
+  );
+  for (const [index, entry] of faultyEntries.entries()) {
+    await reverts(
+      relayer.address,
+      vault,
+      buildCommitMonthlyLeafCalldata(
+        releasePeriod,
+        entry,
+        index,
+        faultyTree.proofs[index],
+      ),
+      "a genuine leaf cannot satisfy the contradictory admitted sum",
+    );
+  }
   const blocked = award("blocked-by-fault", "106", "1000049");
   const blockedCalldata = buildCommitAwardCalldata({
     obligationId: blocked.id,
@@ -1367,6 +1413,7 @@ try {
   );
   report.monthlyRelease = {
     period: releasePeriod,
+    faultInspection,
     releasedGross: "3000000",
     releaseGas: BigInt(releasedTx.receipt.gasUsed).toString(),
     manualAwardUnblocked: true,
