@@ -97,6 +97,11 @@ deletion, D1 recovery or production access controls.
 
 ### Protected hosted recovery qualification
 
+The same protected workflow also offers the isolated `flags` scope described
+in [two-flag pause qualification](../vetting-flags/README.md). Its separate
+entry and database use the full application migrations; this recovery scope
+keeps its existing evidence-only schema and cases.
+
 PRD sections 8 and 11 require restoration evidence before scanner activation.
 `vetting-recovery-qualification.yml` is a manual `development` workflow in
 the existing `slop-staging` environment. Its default `plan` mode makes no
