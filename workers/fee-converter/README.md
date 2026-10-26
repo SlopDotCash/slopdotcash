@@ -441,11 +441,27 @@ October 2026: Base 0.0001 ETH per transaction and 0.001 ETH per UTC day, with a
 supersedes the earlier values. They are set in `FEE_CONVERTER_NATIVE_BUDGETS`.
 Base needs a positive allowance for data and operator fees; Ethereum uses
 zero additional allowance. Robinhood remains retain-only and loads no key.
-Solana's separate rotation authority is verified, but live signing and release
-remain blocked until its approved native transaction/day limits and durable
-cost accounting are implemented. `FEE_CONVERTER_SOLANA_FEE_MICRO` is a value
-estimate for the gas multiple, not a native spending limit. No EVM, keeper or
-referral budget supplies a Solana default.
+Solana has separate approved ceilings of 0.005 SOL per transaction and 0.02
+SOL per UTC day, including account creation and priority fees (owner decision,
+26 October 2026, #905). Its configuration uses 5,000,000 and 20,000,000
+lamports. Migration `0094_fee_solana_native_gas.sql` preserves all EVM records
+and extends the same durable journal to Solana; legacy `*_wei` SQL fields
+store lamports for Solana. Each signature reserves its full transaction
+ceiling until a canonical finalized receipt reconciles its actual cost.
+A signed but expired or missing transaction retains that reservation.
+
+Before signing, Solana prices the exact message with `getFeeForMessage`,
+reserves rent for every classic associated-account creation even if the
+account exists, checks a simulation for unexplained wallet debit, and
+rechecks the 10-times-value rule using a current wSOL/USDC quote. Jupiter
+requests legacy routes so every inspected account is in the signed static
+keys; routes requiring address lookup tables remain unavailable. Receipts
+must match the stored signed bytes and finalized block. Costs include
+priority fees, failed transaction fees and new account rent; wrapped-SOL
+principal is excluded from rent. Missing historical native-cost evidence
+prevents new signatures. The value-only `FEE_CONVERTER_SOLANA_FEE_MICRO`
+estimate supplies no native spending limit. No keeper or referral budget
+supplies a default.
 
 Before each approval, swap, fee claim or replacement, price the final gas
 limit and fee fields, include Base's additional allowance, and recheck the
@@ -559,8 +575,8 @@ the Worker no sweep power.
 6. Fund each fee wallet with a small gas balance.
 7. Land a pull request with `FEE_CONVERTER_MODE = "live"`. That reviewed
    pull request is the activation record MVP-07c requires. The release step
-   refuses live mode when an enabled network lacks its key, or enables Solana
-   before its native transaction/day limits and durable accounting are ready.
+   refuses live mode when an enabled network lacks its key or its dedicated
+   native transaction/day limits. Solana uses the same atomic signing journal.
 8. Check the first `finalized` rows against the explorer: input debit, USDC
    credit to the fee wallet, no other transfer.
 9. To stop at once, land `FEE_CONVERTER_MODE = "off"`, or set the repository
@@ -641,8 +657,8 @@ loses its network lease. It is not live Kyber, Circle or production evidence.
 
 The Solana check uses a local
 `solana-test-validator` (port 28899) that clones the mainnet Jupiter and
-Whirlpool programs and one JUP/USDC route. Its local-only override exercises
-the signing path without enabling the hosted Worker.
+Whirlpool programs and one JUP/USDC route. It uses the normal native-budget
+and signing-journal path with a generated local wallet.
 They need `anvil` and `solana-test-validator` on `PATH` and never touch a real
 chain.
 

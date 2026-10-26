@@ -1,3 +1,8 @@
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { solanaBase58 } from "../../contracts/solana/adapter";
+import { decodeBase58Bytes } from "../../src/lib/base58";
+import { parseTransaction as parseSolanaTransaction } from "./solana";
 import {
   type Hex,
   keccak256,
@@ -83,7 +88,40 @@ export class D1ConversionStore implements ConversionStore {
     txId: string | null,
   ) {
     if (!id) return;
-    if (!rawTx || keccak256(rawTx as Hex) !== txId)
+    const reserved = await this.db
+      .prepare(
+        "SELECT intent_hash,fee_wallet,network FROM fee_native_gas WHERE id=?",
+      )
+      .bind(id)
+      .first<{ intent_hash: string; fee_wallet: string; network: string }>();
+    if (!reserved || !rawTx)
+      throw new Error("Native reservation lacks its signed intent");
+    if (reserved.network === "solana") {
+      const raw = Uint8Array.from(atob(rawTx), (c) => c.charCodeAt(0));
+      const parsed = parseSolanaTransaction(raw);
+      const message = raw.slice(parsed.messageOffset);
+      const signature = raw.slice(
+        parsed.messageOffset - 64,
+        parsed.messageOffset,
+      );
+      if (
+        parsed.signatureCount !== 1 ||
+        parsed.requiredSignatures !== 1 ||
+        parsed.staticKeys[0] !== reserved.fee_wallet ||
+        solanaBase58(signature) !== txId ||
+        solanaBase58(sha256(message)) !== reserved.intent_hash ||
+        !ed25519.verify(
+          signature,
+          message,
+          decodeBase58Bytes(reserved.fee_wallet),
+        )
+      )
+        throw new Error(
+          "Native signature differs from its reserved Solana intent",
+        );
+      return;
+    }
+    if (keccak256(rawTx as Hex) !== txId)
       throw new Error("Native signed attempt hash differs");
     const {
       r: _r,
@@ -92,10 +130,6 @@ export class D1ConversionStore implements ConversionStore {
       yParity: _y,
       ...unsigned
     } = parseTransaction(rawTx as Hex);
-    const reserved = await this.db
-      .prepare("SELECT intent_hash,fee_wallet FROM fee_native_gas WHERE id=?")
-      .bind(id)
-      .first<{ intent_hash: string; fee_wallet: string }>();
     if (
       !reserved ||
       keccak256(serializeTransaction(unsigned)) !== reserved.intent_hash ||

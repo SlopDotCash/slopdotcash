@@ -1,3 +1,10 @@
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { solanaBase58 } from "../../contracts/solana/adapter";
+import {
+  concat,
+  message as solanaMessage,
+} from "../../contracts/solana/transactions";
 import { expect, test } from "bun:test";
 import {
   type Hex,
@@ -704,3 +711,78 @@ test.each([
     }
   },
 );
+
+test("Solana signed costs share the atomic journal while unknown sends retain their whole ceiling", async () => {
+  const f = await fixture();
+  const seed = new Uint8Array(32).fill(7);
+  const wallet = solanaBase58(ed25519.getPublicKey(seed));
+  await f.store.acquireLock("solana", f.run, f.now());
+  const journal = new NativeGasJournal(
+    f.db,
+    "solana",
+    wallet,
+    f.run,
+    {
+      perTransaction: "5000000",
+      perDay: "10000000",
+      additionalFeeReserve: "0",
+    },
+    f.now,
+  );
+  const dummy = await f.account.signTransaction(f.tx());
+  const commit = async (n: number) => {
+    const body = solanaMessage(
+      wallet,
+      solanaBase58(new Uint8Array(32).fill(n)),
+      [],
+    );
+    const id = await journal.reserveSolana(solanaBase58(sha256(body)));
+    const signature = ed25519.sign(body, seed);
+    const raw = concat(Uint8Array.of(1), signature, body);
+    const row = {
+      ...f.row(`sol-native-${n}`, dummy, id),
+      network: "solana" as const,
+      feeWallet: wallet,
+      token: wallet,
+      targetToken: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      route: "jupiter" as const,
+      rawTx: btoa(String.fromCharCode(...raw)),
+      txId: solanaBase58(signature),
+      evmNonce: null,
+    };
+    await f.store.insert(row, { runId: f.run, now: f.now() });
+    await f.store.update(row.id, {
+      state: "failed",
+      reason: "business failure keeps native liability",
+      updatedAt: f.now().toISOString(),
+    });
+    return row;
+  };
+  const first = await commit(1);
+  const second = await commit(2);
+  await expect(commit(3)).rejects.toThrow("daily budget");
+  const sends = await journal.unsettled();
+  expect(sends).toHaveLength(2);
+  await journal.settle(sends.find((s) => s.txId === first.txId)!, {
+    txId: first.txId!,
+    actualWei: "1500000",
+    blockHash: "block-1",
+  });
+  await expect(commit(3)).rejects.toThrow("daily budget");
+  await journal.settle(sends.find((s) => s.txId === second.txId)!, {
+    txId: second.txId!,
+    actualWei: "1500000",
+    blockHash: "block-2",
+  });
+  await commit(3);
+  f.clock.now = new Date("2026-10-27T00:01:00Z");
+  await commit(4);
+  await expect(commit(5)).rejects.toThrow("daily budget");
+  const rows = await journal.rows();
+  expect(rows.map((r) => r.nonce)).toEqual([0, 1, 2, 3]);
+  expect(rows.filter((r) => r.actual_wei === null)).toHaveLength(2);
+  const corrupt = { ...second, id: "changed-intent", txId: first.txId };
+  await expect(
+    f.store.insert(corrupt, { runId: f.run, now: f.now() }),
+  ).rejects.toThrow("reserved Solana intent");
+});

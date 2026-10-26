@@ -308,9 +308,14 @@ describe("release gates", () => {
         perDay: "2000000000000000",
         additionalFeeReserve: "0",
       },
+      solana: {
+        perTransaction: "5000000",
+        perDay: "20000000",
+        additionalFeeReserve: "0",
+      },
     });
     expect(toml).toMatch(
-      /^FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"$/mu,
+      /^FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood,solana"$/mu,
     );
     expect(toml).toMatch(/^FEE_CONVERTER_MIN_VALUE_MICRO = "5000000"$/mu);
     expect(toml).toMatch(/^FEE_CONVERTER_GAS_MULTIPLE = "10"$/mu);
@@ -1764,9 +1769,20 @@ describe("D1 contract", () => {
       },
       ...LIMITS,
     };
-    const parsed = parseConfig(env);
+    expect(() => parseConfig(env)).toThrow("Native gas limits");
+    const parsed = parseConfig(
+      Object.assign(Object.create(env), {
+        FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({
+          solana: {
+            perTransaction: "5000000",
+            perDay: "20000000",
+            additionalFeeReserve: "0",
+          },
+        }),
+      }),
+    );
     expect(() => chainClient(env, parsed, parsed.networks[0])).toThrow(
-      "native transaction/day limits and durable accounting",
+      "durable budget journal",
     );
     expect(keyReads).toBe(0);
   });
@@ -1858,7 +1874,27 @@ describe("Solana vault fee claims", () => {
 
   /** A Solana RPC that knows one project with accrued fees in USDC. */
   function solanaChain() {
+    const budgets = {
+      perTransaction: "5000000",
+      perDay: "20000000",
+      additionalFeeReserve: "0",
+    };
+    const native = sqliteD1();
+    native.sqlite.exec(
+      `INSERT INTO fee_converter_locks(network,run_id,expires_at) VALUES('solana','native-fixture','2099-01-01T00:00:00.000Z')`,
+    );
+    const nativeJournal = new NativeGasJournal(
+      native.db,
+      "solana",
+      wallet,
+      "native-fixture",
+      budgets,
+      () => new Date("2026-10-24T12:00:00Z"),
+    );
     const state = {
+      nativeFee: 5000,
+      rent: 1488440,
+      walletDebit: 1493440,
       finalizedAccrued: 10_000_000n,
       confirmedAccrued: 10_000_000n,
       unfinalized: false,
@@ -1868,6 +1904,22 @@ describe("Solana vault fee claims", () => {
       verified: [] as SolanaEscrowConfig[],
     };
     const rpcFetch = (async (_url: string, init?: RequestInit) => {
+      if (_url.startsWith("https://jupiter.invalid/quote?")) {
+        const p = new URL(_url).searchParams;
+        const amount = p.get("amount")!;
+        const out = (BigInt(amount) * 100000000n) / 1000000000n;
+        return Response.json({
+          inputMint: p.get("inputMint"),
+          outputMint: p.get("outputMint"),
+          inAmount: amount,
+          outAmount: out.toString(),
+          otherAmountThreshold: out.toString(),
+          swapMode: "ExactIn",
+          slippageBps: 100,
+          priceImpactPct: "0",
+          platformFee: null,
+        });
+      }
       const { method, params } = JSON.parse(String(init?.body)) as {
         method: string;
         params: unknown[];
@@ -1875,6 +1927,19 @@ describe("Solana vault fee claims", () => {
       const reply = (result: unknown) =>
         Response.json({ jsonrpc: "2.0", id: 1, result });
       switch (method) {
+        case "getBalance":
+          return reply({ value: 100000000 });
+        case "getFeeForMessage":
+          return reply({ value: state.nativeFee });
+        case "getMinimumBalanceForRentExemption":
+          return reply(state.rent);
+        case "getBlock":
+          return reply({
+            blockhash: "finalized-native-block",
+            signatures: state.sent.map((raw) =>
+              solanaBase58(unb64(raw).slice(1, 65)),
+            ),
+          });
         case "getAccountInfo":
           return reply({
             value: {
@@ -1900,6 +1965,16 @@ describe("Solana vault fee claims", () => {
             error: { message: "Invalid param: could not find account" },
           });
         case "simulateTransaction":
+          if (
+            (params[1] as { accounts?: { addresses?: string[] } })?.accounts
+              ?.addresses?.[0] === wallet
+          )
+            return reply({
+              value: {
+                err: null,
+                accounts: [{ lamports: 100000000 - state.walletDebit }],
+              },
+            });
           return reply({
             value: {
               err: null,
@@ -1920,6 +1995,32 @@ describe("Solana vault fee claims", () => {
             value: [{ err: null, confirmationStatus: "confirmed" }],
           });
         case "getTransaction": {
+          if ((params[1] as { encoding?: string })?.encoding === "base64") {
+            const raw = state.sent.find(
+              (raw) => solanaBase58(unb64(raw).slice(1, 65)) === params[0],
+            );
+            if (!raw) return reply(null);
+            const parsed = parseTransaction(unb64(raw));
+            const pre = parsed.staticKeys.map(() => 0);
+            pre[0] = 100000000;
+            const post = [...pre];
+            post[0] -= 1493440;
+            const ataIndex = parsed.staticKeys.indexOf(
+              ata(SOLANA_USDC, wallet),
+            );
+            post[ataIndex] = 1488440;
+            return reply({
+              slot: 100,
+              transaction: [raw, "base64"],
+              meta: {
+                fee: 5000,
+                preBalances: pre,
+                postBalances: post,
+                preTokenBalances: [],
+                postTokenBalances: [],
+              },
+            });
+          }
           const event = new Uint8Array(80);
           event.set(
             sha256(new TextEncoder().encode("event:FeesClaimed")).slice(0, 8),
@@ -1975,14 +2076,16 @@ describe("Solana vault fee claims", () => {
       FEE_CONVERTER_NETWORKS: "solana",
       FEE_WALLET_SOLANA: wallet,
       ...LIMITS,
+      FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({ solana: budgets }),
     });
-    const client = (signing: boolean) =>
+    const client = (signing: boolean, journal = nativeJournal) =>
       createSolanaClient({
         config: network.networks[0],
         limits: network.limits,
         jupiterApiUrl: "https://jupiter.invalid",
         jupiterApiKey: null,
         keypair: signing ? keypair : undefined,
+        nativeGas: journal,
         fetch: rpcFetch,
         sleep: async () => {},
         verifyDeployment: async (escrow) => {
@@ -1990,7 +2093,7 @@ describe("Solana vault fee claims", () => {
           return projectBytes(state.finalizedAccrued);
         },
       });
-    return { state, client, network };
+    return { state, client, network, nativeJournal };
   }
 
   function solanaRun(mode: "dry_run" | "live") {
@@ -2007,7 +2110,18 @@ describe("Solana vault fee claims", () => {
       randomId: () => `id-${String(++id).padStart(6, "0")}`,
       projectTokens: async () => [],
       projectVaults: async () => [vault()],
-      client: () => chain.client(mode === "live"),
+      client: (_network, runId) =>
+        chain.client(
+          mode === "live",
+          new NativeGasJournal(
+            db,
+            "solana",
+            wallet,
+            runId,
+            chain.network.networks[0].nativeBudget!,
+            () => new Date("2026-10-24T12:00:00Z"),
+          ),
+        ),
       log: (event) => events.push(event),
     };
     return { ...chain, deps, events, config: chain.network.networks[0] };
@@ -2112,6 +2226,36 @@ describe("Solana vault fee claims", () => {
     await expect(
       client(true).vaultFees?.claim(vault(), async () => {}),
     ).rejects.toThrow(/receipt does not match the vault fee/);
+  });
+
+  test("Solana priority fees and account creation must fit before a claim is signed", async () => {
+    const run = solanaChain();
+    run.state.nativeFee = 5_000_000;
+    let recorded = false;
+    await expect(
+      run.client(true).vaultFees!.claim(vault(), async () => {
+        recorded = true;
+      }),
+    ).rejects.toThrow("transaction budget");
+    expect(recorded).toBe(false);
+    expect(run.state.sent).toEqual([]);
+    expect(await run.nativeJournal.rows()).toEqual([]);
+  });
+
+  test("unexplained native debit and an unpriced final gas multiple refuse before signing", async () => {
+    const run = solanaChain();
+    run.state.walletDebit = 2_000_000;
+    await expect(
+      run.client(true).vaultFees!.claim(vault(), async () => {}),
+    ).rejects.toThrow("unbounded native wallet debit");
+    run.state.walletDebit = 1493440;
+    await expect(
+      run
+        .client(true)
+        .vaultFees!.claim(vault(), async () => {}, undefined, undefined, 1n),
+    ).rejects.toThrow("gas-cost multiple");
+    expect(run.state.sent).toEqual([]);
+    expect(await run.nativeJournal.rows()).toEqual([]);
   });
 
   test("a dry run reports the claim and signs nothing", async () => {

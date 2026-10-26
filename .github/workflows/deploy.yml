@@ -1457,7 +1457,7 @@ jobs:
           converter_secrets="$RUNNER_TEMP/slop-fee-converter-secrets.json"
           ./node_modules/.bin/wrangler secret list \
             --config workers/fee-converter/wrangler.toml > "$converter_secrets"
-          node - "$converter_secrets" workers/fee-converter/wrangler.toml <<'NODE'
+          bun - "$converter_secrets" workers/fee-converter/wrangler.toml <<'NODE'
           const { readFileSync } = require("node:fs");
           const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
           if (!Array.isArray(value)) throw new TypeError("fee-converter secret inventory must be an array");
@@ -1480,9 +1480,10 @@ jobs:
           const mode = read("FEE_CONVERTER_MODE");
           if (!["off", "dry_run", "live"].includes(mode)) throw new TypeError("invalid FEE_CONVERTER_MODE");
           const enabled = read("FEE_CONVERTER_NETWORKS").split(",").map((n) => n.trim()).filter(Boolean);
-          if (mode === "live" && enabled.includes("solana")) {
-            throw new TypeError("Live Solana fee signing needs native transaction/day limits and durable accounting");
-          }
+          // Use the Worker's actual parser: live signing on every converting
+          // network requires that network's own approved native limits.
+          const { parseConfig } = require("./workers/fee-converter/config.ts");
+          parseConfig(Bun.TOML.parse(toml).vars);
           if (mode === "live") {
             const missing = enabled.filter((n) => !names.includes(`FEE_WALLET_KEY_${n.toUpperCase()}`));
             if (missing.length > 0) throw new TypeError(`live fee conversion lacks keys for: ${missing.join(", ")}`);

@@ -29,7 +29,7 @@ const BUILTIN = new Set([
   "Sysvar1nstructions1111111111111111111111111",
   "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
 ]);
-const JUPITER_API = "https://lite-api.jup.ag/swap/v1";
+const JUPITER_API = "https://api.jup.ag/swap/v1";
 const PORT = 28899;
 const RPC = `http://127.0.0.1:${PORT}`;
 const AMOUNT = 30_000_000n; // 30 JUP
@@ -42,8 +42,12 @@ const pinnedRoute: typeof fetch = (async (
   init?: RequestInit,
 ) => {
   const url = String(input);
-  if (url.startsWith(`${JUPITER_API}/quote?`))
-    return fetch(url + routeParams, init);
+  if (url.startsWith(`${JUPITER_API}/quote?`)) {
+    const pinned = new URL(url);
+    for (const [key, value] of new URLSearchParams(routeParams.slice(1)))
+      pinned.searchParams.set(key, value);
+    return fetch(pinned.toString(), init);
+  }
   if (url === `${JUPITER_API}/swap` && typeof init?.body === "string") {
     const body = JSON.parse(init.body);
     return fetch(url, {
@@ -203,6 +207,14 @@ try {
     FEE_CONVERTER_NETWORKS: "solana",
     FEE_WALLET_SOLANA: wallet,
     FEE_WALLET_KEY_SOLANA: keypair,
+    FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({
+      solana: {
+        perTransaction: "5000000",
+        perDay: "20000000",
+        additionalFeeReserve: "0",
+      },
+    }),
+    JUPITER_API_URL: JUPITER_API,
     RPC_URL_SOLANA: RPC,
     // Harness limits for a local chain only; production limits come from
     // the reviewed wrangler.toml.
@@ -217,7 +229,6 @@ try {
   const overrides = {
     fetch: pinnedRoute,
     localBlockhash: true,
-    allowSolanaLive: true,
   };
   const state = () =>
     sqlite

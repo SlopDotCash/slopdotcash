@@ -60,31 +60,15 @@ export function chainClient(
     fetch?: typeof fetch;
     chainIdOverride?: number;
     localBlockhash?: boolean;
-    /** Local validator harness only; the hosted Worker never sets it. */
-    allowSolanaLive?: boolean;
     nativeGas?: NativeGasJournal;
     now?: () => Date;
   } = {},
 ): ChainClient {
-  // Role separation is verified, but Solana still lacks approved native
-  // transaction/day ceilings and durable cost accounting (PRD section 6).
-  if (
-    config.mode === "live" &&
-    network.network === "solana" &&
-    !overrides.allowSolanaLive
-  )
-    throw new Error(
-      "Live Solana fee signing needs native transaction/day limits and durable accounting",
-    );
   // dry_run never loads a key, so it cannot sign even when one is present.
   // A network without a verified USDC target never signs either: it only
   // reconciles recorded sends, which needs no key.
   const signs = config.mode === "live" && network.definition.usdc !== null;
-  if (
-    signs &&
-    network.definition.family === "evm" &&
-    (!network.nativeBudget || !overrides.nativeGas)
-  )
+  if (signs && (!network.nativeBudget || !overrides.nativeGas))
     throw new Error(
       "Live fee signing needs native limits and the durable budget journal",
     );
@@ -112,6 +96,7 @@ export function chainClient(
         keypair: secret,
         fetch: overrides.fetch,
         localBlockhash: overrides.localBlockhash,
+        nativeGas: overrides.nativeGas,
       });
 }
 
@@ -160,17 +145,16 @@ export async function runOnce(
             chainClient(env, config, n, {
               ...overrides,
               now,
-              nativeGas:
-                n.nativeBudget && n.definition.family === "evm"
-                  ? new NativeGasJournal(
-                      env.FEE_DB,
-                      n.network,
-                      n.feeWallet,
-                      runId,
-                      n.nativeBudget,
-                      now,
-                    )
-                  : undefined,
+              nativeGas: n.nativeBudget
+                ? new NativeGasJournal(
+                    env.FEE_DB,
+                    n.network,
+                    n.feeWallet,
+                    runId,
+                    n.nativeBudget,
+                    now,
+                  )
+                : undefined,
             }),
           log: (event) => console.log(JSON.stringify(event)),
         }),

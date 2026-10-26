@@ -33,6 +33,7 @@ import {
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import type { Limits, NetworkConfig } from "./config";
+import type { NativeGasJournal } from "./native-gas";
 import type {
   AccruedFees,
   ChainClient,
@@ -69,6 +70,7 @@ export interface SolanaClientOptions {
   jupiterApiKey: string | null;
   /** Solana CLI keypair JSON (64 numbers). Absent in dry_run. */
   keypair?: string;
+  nativeGas?: NativeGasJournal;
   fetch?: Fetch;
   /**
    * Local validator tests only: re-stamp the Jupiter message with the local
@@ -152,6 +154,8 @@ export interface ParsedTransaction {
   staticKeys: string[];
   blockhashOffset: number;
   programs: string[];
+  legacy: boolean;
+  instructions: { program: string; accounts: number[]; data: Uint8Array }[];
 }
 
 /** Parses a legacy or v0 wire transaction far enough to check its signers and programs. */
@@ -159,7 +163,8 @@ export function parseTransaction(raw: Uint8Array): ParsedTransaction {
   const [signatureCount, afterCount] = compactLength(raw, 0);
   const messageOffset = afterCount + signatureCount * 64;
   let offset = messageOffset;
-  if ((raw[offset] & 0x80) !== 0) {
+  const legacy = (raw[offset] & 0x80) === 0;
+  if (!legacy) {
     if ((raw[offset] & 0x7f) !== 0)
       throw new Error("unsupported message version");
     offset += 1;
@@ -178,6 +183,7 @@ export function parseTransaction(raw: Uint8Array): ParsedTransaction {
   const [instructionCount, afterInstructions] = compactLength(raw, offset);
   offset = afterInstructions;
   const programs: string[] = [];
+  const instructions: ParsedTransaction["instructions"] = [];
   for (let i = 0; i < instructionCount; i++) {
     const programIndex = raw[offset];
     offset += 1;
@@ -186,8 +192,16 @@ export function parseTransaction(raw: Uint8Array): ParsedTransaction {
       throw new Error("program id outside the static keys");
     programs.push(staticKeys[programIndex]);
     const [accounts, afterAccounts] = compactLength(raw, offset);
+    const accountIndexes = [
+      ...raw.slice(afterAccounts, afterAccounts + accounts),
+    ];
     offset = afterAccounts + accounts;
     const [dataLength, afterData] = compactLength(raw, offset);
+    instructions.push({
+      program: staticKeys[programIndex],
+      accounts: accountIndexes,
+      data: raw.slice(afterData, afterData + dataLength),
+    });
     offset = afterData + dataLength;
   }
   if (offset > raw.length) throw new Error("truncated transaction");
@@ -198,6 +212,8 @@ export function parseTransaction(raw: Uint8Array): ParsedTransaction {
     staticKeys,
     blockhashOffset,
     programs,
+    legacy,
+    instructions,
   };
 }
 
@@ -350,6 +366,220 @@ export function createSolanaClient(
     return body as T;
   }
 
+  function nativeInteger(value: unknown): bigint {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+      throw new Error(
+        "Solana native cost evidence must be an exact safe integer",
+      );
+    return BigInt(value);
+  }
+
+  /** Only classic, owner-owned ATAs have an admitted native creation cost.
+   * Legacy messages keep every inspected account in the signed static keys.
+   * Routes requiring address lookups remain unavailable rather than bypassing
+   * the native-cost proof.
+   */
+  function rentAccounts(parsed: ParsedTransaction) {
+    if (!parsed.legacy)
+      throw new Error("Native-budget proof requires a legacy Solana route");
+    if (
+      parsed.signatureCount !== 1 ||
+      parsed.requiredSignatures !== 1 ||
+      parsed.staticKeys[0] !== wallet
+    )
+      throw new Error("Native fee payer must be the sole reviewed signer");
+    const accounts = new Set<number>();
+    for (const ix of parsed.instructions) {
+      if (ix.program !== ASSOCIATED_TOKEN) continue;
+      const keys = ix.accounts.map((i) => parsed.staticKeys[i]);
+      if (
+        keys.length < 6 ||
+        keys.length > 7 ||
+        keys[0] !== wallet ||
+        keys[2] !== wallet ||
+        keys[4] !== "11111111111111111111111111111111" ||
+        keys[5] !== TOKEN_PROGRAM ||
+        !(ix.data.length === 0 || (ix.data.length === 1 && ix.data[0] <= 1)) ||
+        keys[1] !== associatedTokenAccount(wallet, keys[3])
+      )
+        throw new Error("Unbounded or unsupported associated-account creation");
+      accounts.add(ix.accounts[1]);
+    }
+    return [...accounts];
+  }
+
+  async function reserveNative(
+    raw: Uint8Array,
+    valueMicro: bigint,
+    assertLease?: () => Promise<void>,
+  ) {
+    const journal = options.nativeGas;
+    if (!journal || !config.nativeBudget)
+      throw new Error(
+        "Solana signing needs native limits and the durable budget journal",
+      );
+    const parsed = parseTransaction(raw);
+    const accounts = rentAccounts(parsed);
+    const message = raw.slice(parsed.messageOffset);
+    const fee = await rpc<{ value: number | null }>("getFeeForMessage", [
+      toBase64(message),
+      { commitment: "confirmed" },
+    ]);
+    const networkFee = nativeInteger(fee.value);
+    const rent = accounts.length
+      ? nativeInteger(
+          await rpc<number>("getMinimumBalanceForRentExemption", [
+            165,
+            { commitment: "confirmed" },
+          ]),
+        )
+      : 0n;
+    // Reserve creation even when the ATA exists: it could be closed before inclusion.
+    const maximum = networkFee + rent * BigInt(accounts.length);
+    if (networkFee === 0n)
+      throw new Error("Solana signature fee evidence is missing");
+    const before = nativeInteger(
+      (
+        await rpc<{ value: number }>("getBalance", [
+          wallet,
+          { commitment: "confirmed" },
+        ])
+      ).value,
+    );
+    const simulated = await rpc<{
+      value: { err: unknown; accounts: ({ lamports: number } | null)[] | null };
+    }>("simulateTransaction", [
+      toBase64(raw),
+      {
+        encoding: "base64",
+        sigVerify: false,
+        replaceRecentBlockhash: false,
+        commitment: "confirmed",
+        accounts: { encoding: "base64", addresses: [wallet] },
+      },
+    ]);
+    if (
+      simulated.value.err !== null ||
+      !simulated.value.accounts?.[0] ||
+      before - nativeInteger(simulated.value.accounts[0].lamports) > maximum
+    )
+      throw new Error("Solana simulation has unbounded native wallet debit");
+    if (maximum > BigInt(config.nativeBudget.perTransaction))
+      throw new Error(
+        "Solana native fee and account creation exceed the transaction budget",
+      );
+    const priced = await fetchQuote(
+      "So11111111111111111111111111111111111111112",
+      maximum,
+      limits.maxSlippageBps,
+    );
+    if (BigInt(priced.outAmount) * limits.gasMultiple > valueMicro)
+      throw new Error("Final Solana native cost exceeds the gas-cost multiple");
+    await assertLease?.();
+    const id = await journal.reserveSolana(solanaBase58(sha256(message)));
+    await assertLease?.();
+    return id;
+  }
+
+  async function reconcileNative() {
+    const journal = options.nativeGas;
+    if (!journal) return;
+    await journal.recoverUnsigned();
+    if ((await journal.unaccounted()).length)
+      throw new Error(
+        "Historical Solana sends need verified native-cost reconciliation before signing",
+      );
+    for (const send of await journal.unsettled()) {
+      if (!send.rawTx || send.feeWallet !== wallet)
+        throw new Error(
+          "Solana native journal lacks its reviewed signed bytes",
+        );
+      const raw = fromBase64(send.rawTx);
+      const parsed = parseTransaction(raw);
+      const message = raw.slice(parsed.messageOffset);
+      const signature = raw.slice(
+        parsed.messageOffset - 64,
+        parsed.messageOffset,
+      );
+      if (
+        solanaBase58(signature) !== send.txId ||
+        !ed25519.verify(signature, message, decodeBase58Bytes(wallet))
+      )
+        throw new Error("Solana native journal signature mismatch");
+      const accounts = rentAccounts(parsed);
+      const tx = await rpc<{
+        slot: number;
+        transaction: [string, string];
+        meta: {
+          fee: number;
+          preBalances: number[];
+          postBalances: number[];
+          preTokenBalances: TokenBalance[];
+          postTokenBalances: TokenBalance[];
+        };
+      } | null>("getTransaction", [
+        send.txId,
+        {
+          commitment: "finalized",
+          encoding: "base64",
+          maxSupportedTransactionVersion: 0,
+        },
+      ]);
+      if (!tx) continue; // Expiry/absence never proves that a historical send spent nothing.
+      if (tx.transaction?.[1] !== "base64" || tx.transaction[0] !== send.rawTx)
+        throw new Error(
+          "Finalized Solana native receipt does not match signed bytes",
+        );
+      const block = await rpc<{
+        blockhash: string;
+        signatures: string[];
+      } | null>("getBlock", [
+        tx.slot,
+        {
+          commitment: "finalized",
+          transactionDetails: "signatures",
+          rewards: false,
+          maxSupportedTransactionVersion: 0,
+        },
+      ]);
+      if (
+        !block?.signatures?.includes(send.txId) ||
+        typeof block.blockhash !== "string"
+      )
+        throw new Error(
+          "Solana native receipt lacks canonical finalized block evidence",
+        );
+      let actual = nativeInteger(tx.meta.fee);
+      const nativeToken = "So11111111111111111111111111111111111111112";
+      const tokenNative = (balances: TokenBalance[], index: number) => {
+        const b = balances.find(
+          (b) => b.accountIndex === index && b.mint === nativeToken,
+        );
+        return b ? BigInt(b.uiTokenAmount.amount) : 0n;
+      };
+      for (const index of accounts) {
+        const before =
+          nativeInteger(tx.meta.preBalances[index]) -
+          tokenNative(tx.meta.preTokenBalances, index);
+        const after =
+          nativeInteger(tx.meta.postBalances[index]) -
+          tokenNative(tx.meta.postTokenBalances, index);
+        if (before < 0n || after < 0n)
+          throw new Error("Solana native rent receipt is inconsistent");
+        if (after > before) actual += after - before;
+      }
+      const walletDebit =
+        nativeInteger(tx.meta.preBalances[0]) -
+        nativeInteger(tx.meta.postBalances[0]);
+      if (walletDebit > actual) actual = walletDebit;
+      await journal.settle(send, {
+        txId: send.txId,
+        actualWei: actual.toString(),
+        blockHash: block.blockhash,
+      });
+    }
+  }
+
   async function fetchQuote(
     token: string,
     amount: bigint,
@@ -363,6 +593,7 @@ export function createSolanaClient(
         slippageBps: String(slippageBps),
         swapMode: "ExactIn",
         restrictIntermediateTokens: "true",
+        asLegacyTransaction: "true",
       })}`,
     );
     if (
@@ -493,6 +724,7 @@ export function createSolanaClient(
       new TextEncoder().encode("event:FeesClaimed"),
     ).slice(0, 8);
     const programs: string[] = [];
+    const instructions: ParsedTransaction["instructions"] = [];
     let amount: bigint | null = null;
     for (const log of transaction.meta.logMessages ?? []) {
       const invoked = /^Program (\w+) invoke \[\d+\]$/.exec(log);
@@ -544,7 +776,7 @@ export function createSolanaClient(
       return limits.solanaFeeMicro;
     },
 
-    async claim(entry, recordClaim) {
+    async claim(entry, recordClaim, _nonceFloor, assertLease, valueMicro) {
       if (!seed)
         throw new Error("Signing is disabled without a fee-wallet key");
       const verified = await verifiedVault(entry);
@@ -621,10 +853,17 @@ export function createSolanaClient(
 
       if (!recordClaim)
         throw new Error("Fee claim requires a durable send record");
+      const unsigned = concat(Uint8Array.of(1), new Uint8Array(64), body);
+      const nativeGasId = await reserveNative(
+        unsigned,
+        valueMicro ?? (escrow.mint === usdc ? amount : 0n),
+        assertLease,
+      );
       const signature = ed25519.sign(body, seed);
       const txId = solanaBase58(signature);
       const rawTx = toBase64(concat(Uint8Array.of(1), signature, body));
       await recordClaim({
+        nativeGasId,
         txId,
         rawTx,
         evmNonce: null,
@@ -688,6 +927,7 @@ export function createSolanaClient(
     address: () => (seed ? wallet : null),
     vaultFees,
 
+    reconcileNativeGas: reconcileNative,
     async balance(token) {
       const result = await rpc<{
         value: {
@@ -738,7 +978,12 @@ export function createSolanaClient(
       };
     },
 
-    async prepare(token, quote: Quote): Promise<PreparedSend> {
+    async prepare(
+      token,
+      quote: Quote,
+      _nonceFloor,
+      assertLease,
+    ): Promise<PreparedSend> {
       if (!seed)
         throw new Error("Signing is disabled without a fee-wallet key");
       const fresh = await fetchQuote(
@@ -758,6 +1003,7 @@ export function createSolanaClient(
           quoteResponse: fresh,
           userPublicKey: wallet,
           wrapAndUnwrapSol: false,
+          asLegacyTransaction: true,
           dynamicComputeUnitLimit: true,
           prioritizationFeeLamports: {
             priorityLevelWithMaxLamports: {
@@ -836,10 +1082,16 @@ export function createSolanaClient(
           "swap simulation returned less than the signed minimum",
         );
 
+      const nativeGasId = await reserveNative(
+        raw,
+        quote.amountOut,
+        assertLease,
+      );
       const message = raw.slice(parsed.messageOffset);
       const signature = ed25519.sign(message, seed);
       raw.set(signature, parsed.messageOffset - 64);
       return {
+        nativeGasId,
         txId: solanaBase58(signature),
         rawTx: toBase64(raw),
         evmNonce: null,
@@ -920,6 +1172,7 @@ export function createSolanaClient(
 }
 
 interface TokenBalance {
+  accountIndex?: number;
   owner?: string;
   mint: string;
   uiTokenAmount: { amount: string };
