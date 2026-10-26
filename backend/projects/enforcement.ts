@@ -477,20 +477,33 @@ export function planEnforcement(input: {
         bansMaintainer: false,
       };
     }
-    case "reinstate": {
-    // A project reinstatement needs the project's own appeal. The merged
-      // flag also reads "requested" for a banned account's appeal alone
-      // (#1297 separated the states everywhere else), and clearing on that
-      // alone would restore a project nobody appealed.
-      if (
-        restriction.state === "clear" ||
-        projectAppealState(restriction) !== "requested"
-    )
+    case "reinstate":
+    case "deny_reinstatement": {
+      // An account-only appeal cannot authorize project reinstatement.
+      const appeal =
+        action === "reinstate"
+          ? projectAppealState(restriction)
+          : restriction.appeal;
+      if (restriction.state === "clear" || appeal !== "requested")
         refuse(
           "no_open_appeal",
           "Record a reinstatement request before a decision",
         );
       requireIndependentModerator(restriction, actor);
+      if (action === "deny_reinstatement") {
+        if (deciding)
+          refuse(
+            "malicious_decision_required",
+            "A confirmed malicious result needs a decision: ban the project and its maintainer, or reinstate it",
+          );
+        return {
+          stateAfter: restriction.state,
+          appealAfter: "denied",
+          manifest: null,
+          pendingReason: null,
+          bansMaintainer: false,
+        };
+      }
       // A restriction whose paused, retired revision is still pending must
       // not clear: clearing it would restore the listed or active manifest.
       if (!enforcedManifest(manifest))
@@ -513,29 +526,9 @@ export function planEnforcement(input: {
           : { manifest: null, pendingReason: null }),
       };
     }
-    case "deny_reinstatement": {
-      if (restriction.state === "clear" || restriction.appeal !== "requested")
-        refuse(
-          "no_open_appeal",
-          "Record a reinstatement request before a decision",
-                  );
-            requireIndependentModerator(restriction, actor);
-            if (deciding)
-              refuse(
-                "malicious_decision_required",
-                "A confirmed malicious result needs a decision: ban the project and its maintainer, or reinstate it",
-                        );
-            return {
-              stateAfter: restriction.state,
-              appealAfter: "denied",
-              manifest: null,
-              pendingReason: null,
-              bansMaintainer: false,
-  };
-    }
   }
-
 }
+
 /** The public reason text of the revision an action appends. */
 export function enforcementRevisionReason(
   action: EnforcementAction,
