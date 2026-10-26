@@ -6,6 +6,7 @@ import {
   deploymentOrigins,
 } from "../../src/lib/deployment";
 import { chainFamily } from "../../src/lib/escrow-policy.mjs";
+import type { GithubActor } from "../../src/lib/project-contracts";
 import {
   assertWalletPossessionChallenge,
   isSignableSolanaAddress,
@@ -69,16 +70,12 @@ export type TraceApiDependencies = {
   authSecret: string;
   operatorGithubIds: ReadonlySet<string>;
   /** Existing site session; used only for the explicit same-origin operator routes. */
-  operatorSession?: (
-    request: Request,
-  ) => Promise<{ githubId: string; githubLogin: string } | null>;
+  operatorSession?: (request: Request) => Promise<GithubActor | null>;
   /** Named observation-only service binding, never the default signing entrypoint. */
   bindingRecovery?: { fetch(request: Request): Promise<Response> };
   now: () => Date;
   randomId: () => string;
-  verifyIdentityAssertion: (
-    assertion: string,
-  ) => Promise<{ githubId: string; githubLogin: string } | null>;
+  verifyIdentityAssertion: (assertion: string) => Promise<GithubActor | null>;
   privateIntakeStatus: () => Promise<PrivateIntakeStatus>;
 };
 

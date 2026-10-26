@@ -86,6 +86,7 @@ import { readBoundedJson } from "../../../src/lib/browser-json";
 import { deploymentTier } from "../../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
+import type { GithubActor } from "../../../src/lib/project-contracts";
 import type { MonthlyReleaseResult } from "../../../workers/payment-executor/monthly-release";
 import {
   loadRegistryPaymentDeployments,
@@ -189,7 +190,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const apiOrigin = githubApiOrigin(env.SLOP_GITHUB_API_ORIGIN);
   const repositoryAccess = (
     repository: { path: string; githubId: string },
-    actor: { githubId: string; githubLogin: string },
+    actor: GithubActor,
   ) => slopbotRepositoryAccess(env.SLOPBOT, repository, actor);
   // Trusted staging origins only; never request input.
   const stagingOrigins = [

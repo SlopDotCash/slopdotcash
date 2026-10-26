@@ -1,4 +1,5 @@
 import {
+  type GithubActor,
   type OwnedRepository,
   type RepositoryLookup,
   validRepositoryPath,
@@ -90,7 +91,7 @@ export async function lookupGitHubActor(
   token: string | undefined,
   login: string,
   apiOrigin = GITHUB_API,
-): Promise<{ githubId: string; githubLogin: string } | null> {
+): Promise<GithubActor | null> {
   if (!validGithubLogin(login)) return null;
   const user = await githubJson(fetcher, token, `/users/${login}`, apiOrigin);
   if (!user) return null;

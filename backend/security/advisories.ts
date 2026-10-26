@@ -1,4 +1,5 @@
 import { readBoundedJson } from "../../src/lib/browser-json";
+import type { GithubActor } from "../../src/lib/project-contracts";
 import { GHSA, GITHUB_LOGIN, githubHeaders, nextLink } from "../github";
 
 /**
@@ -19,7 +20,7 @@ export type GithubPrivateReport = {
   /** GitHub's own creation time of the report: the receipt time. */
   createdAt: string;
   state: string;
-  author: { githubId: string; githubLogin: string };
+  author: GithubActor;
   summary: string;
   description: string;
   severity: string | null;

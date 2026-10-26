@@ -5,6 +5,7 @@ import {
   deploymentOrigins,
 } from "../../src/lib/deployment";
 import { POINTS_RULE } from "../../src/lib/points";
+import type { GithubActor } from "../../src/lib/project-contracts";
 import { randomToken } from "../../workers/identity/crypto";
 import { consumeExactRateLimit } from "../../workers/identity/rate-limit";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
@@ -42,7 +43,7 @@ export async function sessionGithubActor(
   request: Request,
   db: D1Database,
   now: string,
-): Promise<{ githubId: string; githubLogin: string } | null> {
+): Promise<GithubActor | null> {
   const token = cookieValue(request, SESSION_COOKIE);
   if (!token || !/^[A-Za-z0-9_-]{40,128}$/.test(token)) return null;
   const member = await db
