@@ -52,7 +52,15 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
     mint,
     owner.publicKey,
   );
-  await mintTo(provider.connection, owner, mint, source.address, owner, 30n);
+  const minted = await mintTo(
+    provider.connection,
+    owner,
+    mint,
+    source.address,
+    owner,
+    30n,
+  );
+  await provider.connection.confirmTransaction(minted, "finalized");
   const genesisHash = await provider.connection.getGenesisHash();
   const projectId = "edge-owner-project";
   const projectDigest = hash(`slop-project:${projectId}`);
