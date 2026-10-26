@@ -1,8 +1,8 @@
 // Deterministic trust-boundary tests. These are NOT provider or approved-VM
 // acceptance evidence, and do not qualify production closure.
 import { expect, test } from "bun:test";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { parseRepositoryConfig, type Verdict } from "./contracts";
-import { sha256Hex } from "./github";
 import {
   QUALITY_MARKER,
   type QualitySubject,

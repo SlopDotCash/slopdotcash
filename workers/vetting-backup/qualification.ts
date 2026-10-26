@@ -1,7 +1,6 @@
 /** Queue-only, disposable hosted qualification. Never bind application stores. */
 
 import type { ProjectD1Database } from "../../backend/projects/cloudflare-persistence";
-import { sha256Hex } from "../../backend/trace/validation";
 import {
   chunkKey,
   EVIDENCE_CHUNK_BYTES,
@@ -9,6 +8,7 @@ import {
   verifiedPart,
   verifyParts,
 } from "../../backend/vetting/evidence-chunks";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import backup, {
   type ArchiveBucket,
   type BackupEnvironment,

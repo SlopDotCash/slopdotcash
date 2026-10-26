@@ -1,10 +1,7 @@
 /** Private service binding only. The Pages bridge authenticates the scanner. */
 import { getSandbox, Sandbox } from "@cloudflare/sandbox";
-import {
-  isRecord,
-  readLimitedBody,
-  sha256Hex,
-} from "../../backend/trace/validation";
+import { isRecord, readLimitedBody } from "../../backend/trace/validation";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 
 export { MergeVerifier } from "./merge";
 

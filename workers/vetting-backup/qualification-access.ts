@@ -1,5 +1,5 @@
 /** Fixed harmless Pages requests inside the queue-only qualification Worker. */
-import { sha256Hex } from "../../backend/trace/validation";
+
 import {
   EVIDENCE_OPERATOR_GITHUB_IDS,
   EVIDENCE_POLICY,
@@ -12,6 +12,7 @@ import {
   verifiedPart,
 } from "../../backend/vetting/evidence-chunks";
 import { onRequest } from "../../functions/api/v1/[[path]]";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { BackupEnvironment } from "./core";
 
 const origin = "https://qualification.invalid";

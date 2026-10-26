@@ -2,9 +2,10 @@
  * Commit/path claims are shared across PR carriers before they are valued.
  * This is evidence preparation, not journal publication or payout approval.
  */
+
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { isCreditEligibleCommitAuthor } from "../../src/lib/commit-credit";
 import type { TargetRepository } from "../../src/lib/repositories.mjs";
-import { sha256Hex } from "./github";
 import { matchesHistoricalIntegrationBranch } from "./value-branch-policy";
 import {
   findRepository,

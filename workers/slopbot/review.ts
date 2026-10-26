@@ -2,6 +2,7 @@
 // The model only classifies. Every GitHub action is decided here, in code,
 // after independent state checks.
 import { notifySlopbotScamReview } from "../../backend/notifications/events";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { publishAppealComment } from "./appeal-publication";
 import {
   APPEAL_RESOLUTION_DAYS,
@@ -44,7 +45,6 @@ import {
   findReviewComment,
   GitHubClient,
   GitHubError,
-  sha256Hex,
 } from "./github";
 import {
   MAINTAINER_HOLD_DAYS,

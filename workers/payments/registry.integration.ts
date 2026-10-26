@@ -35,9 +35,9 @@ import {
   payoutReadiness,
   probeRpc,
 } from "../../scripts/check-payout-readiness";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
-import { sha256Hex } from "../identity/crypto";
 import {
   type PaymentStackInput,
   paymentStack,
