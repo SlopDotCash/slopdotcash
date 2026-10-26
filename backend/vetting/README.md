@@ -161,10 +161,10 @@ The scan service pass is `workers/vetting/run.ts`. A community project is
 cleared only by that deployed service with its Ed25519 key, the public key in
 `VETTING_RESULT_PUBLIC_KEYS`, the Surplus key, the pinned primary and
 specialist profiles, the evidence store policy and an accepted isolated runner
-for risky artifacts. Without them, no community project can be cleared, so no
-project skill is served for it. The earlier secure-VM
-components stay available for advanced detonation; they are no longer a
-prerequisite for an ordinary clean result.
+for risky artifacts, after staging acceptance. Without them, no community
+project can be cleared, so no project skill is served for it. The earlier
+secure-VM components stay available for advanced detonation; they are no
+longer a prerequisite for an ordinary clean result.
 
 ## Two-contributor flags
 
