@@ -146,6 +146,12 @@ export async function runEvmExtended(
         `${actorKey}${Buffer.from(`slop-acceptance-wallet:${label}`).toString("hex")}`,
       ),
     );
+  // The project-operated keeper's gas wallet. It must hold no vault or factory
+  // role; where the relayer test key is also the upgrade authority, supply a
+  // dedicated key.
+  const keeperKey: PrivateKeyAccount = process.env.ESCROW_ACCEPTANCE_KEEPER_KEY
+    ? privateKeyToAccount(evmKey("ESCROW_ACCEPTANCE_KEEPER_KEY"))
+    : keys.relayer;
   const decimalsOf = async (asset: string) =>
     Number(await chain.read<number>(asset, ERC20, "decimals"));
   const amountsFor = async (asset: string) =>
@@ -606,7 +612,7 @@ export async function runEvmExtended(
       apiOrigin: origin,
       network: network as KeeperConfiguration["network"],
       projectIds: [projectId],
-      signer: keys.relayer.address,
+      signer: keeperKey.address,
       rpcUrl: ctx.rpcUrl,
       perRun: 16,
       monthlySchedule,
@@ -618,12 +624,12 @@ export async function runEvmExtended(
     };
     let signatures = 0;
     const signer = {
-      address: keys.relayer.address,
+      address: keeperKey.address,
       async signTransaction(
-        input: Parameters<typeof keys.relayer.signTransaction>[0],
+        input: Parameters<typeof keeperKey.signTransaction>[0],
       ) {
         signatures += 1;
-        return keys.relayer.signTransaction(input);
+        return keeperKey.signTransaction(input);
       },
     };
     const route = (real: typeof fetch) =>
@@ -1203,7 +1209,7 @@ export async function runEvmExtended(
         receipts[label] = receipt;
         entry.steps[label] = {
           transactionId: receipt.transactionHash,
-          from: keys.relayer.address.toLowerCase(),
+          from: keeperKey.address.toLowerCase(),
           status: "success",
           block: text(BigInt(receipt.blockNumber)),
           note: "Submitted by the project-operated keeper (scripts/payment-keeper, submitEvmMonthly V2)",
@@ -1322,7 +1328,7 @@ export async function runEvmExtended(
         expectEqual(
           `monthly award ${n} payer`,
           sender.from.toLowerCase(),
-          keys.relayer.address.toLowerCase(),
+          keeperKey.address.toLowerCase(),
         );
         const event = log(receipt, vault, "Paid");
         expectEqual(`monthly award ${n} net`, event.net, items[n].net);
@@ -1339,7 +1345,7 @@ export async function runEvmExtended(
         );
         entry.steps[`monthly:pay-${n}`] = {
           transactionId: receipt.transactionHash,
-          from: keys.relayer.address.toLowerCase(),
+          from: keeperKey.address.toLowerCase(),
           status: "success",
           block: text(BigInt(receipt.blockNumber)),
           note: "Paid by the project-operated keeper (submitPermissionlessEvmPayment)",
