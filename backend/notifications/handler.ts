@@ -13,18 +13,12 @@ import {
   type NotificationsResponse,
   notificationCursor,
 } from "../../src/lib/notifications";
+import type { D1Database, D1QueryStatement } from "../d1";
 import { isSameOriginJsonWrite, JSON_HEADERS, json } from "../http";
 import { SCAM_REVIEW_PATH, scamReviewGitHubUrl } from "./events";
 
 export interface NotificationsDependencies {
-  db: {
-    prepare(query: string): {
-      bind(...values: (string | number)[]): {
-        all<T>(): Promise<{ results: T[] }>;
-        run(): Promise<{ meta?: { changes?: number } }>;
-      };
-    };
-  };
+  db: D1Database<D1QueryStatement>;
   sessionActor(request: Request): Promise<{ githubId: string } | null>;
   now(): Date;
   moderatorGithubIds?: ReadonlySet<string>;

@@ -1601,7 +1601,8 @@ for (const fault of ["failed", "missing", "partial"] as const)
         all: async <T>() => {
           const result = await statement.all<T>();
           if (fault === "failed") return { ...result, success: false };
-          if (fault === "missing") return { success: true };
+          // Cloudflare always returns rows; this proves the read still fails closed.
+          if (fault === "missing") return { success: true } as typeof result;
           // Omitting the older row would otherwise leave a valid clear state.
           return { ...result, results: result.results?.slice(-1) };
         },
