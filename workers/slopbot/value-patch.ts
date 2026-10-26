@@ -97,7 +97,7 @@ export function addedValuePatchRecovery(
           typeof source.content !== "string" ||
           !Number.isSafeInteger(source.size) ||
           source.size < 0 ||
-          source.size > 512 * 1024 ||
+          source.size > 2 * 1024 * 1024 - totalBytes ||
           !/^[a-f0-9]{40}$/u.test(source.sha)
         )
           continue;
