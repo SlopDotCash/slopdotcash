@@ -66,7 +66,9 @@ function fixture() {
   mkdirSync(bin);
   const historyPath = join(root, "history.json");
   const callsPath = join(root, "calls");
-  const stub = `const fs=require('node:fs');\nif(process.env.FAIL_HISTORY)process.exit(1);\nconst path=process.argv.at(-1);\nif(!/^repos\\/SlopDotCash\\/slopdotcash\\/deployments\\?environment=slop-staging&per_page=100&page=\\d+$/.test(path))process.exit(2);\nfs.appendFileSync(process.env.HISTORY_CALLS,path+'\\n');\nconst pages=JSON.parse(fs.readFileSync(process.env.HISTORY_PATH,'utf8'));\nprocess.stdout.write(JSON.stringify(pages[Number(path.split('page=').pop())-1]??[]));\n`;
+  const creatorsPath = join(root, "creators.json");
+  writeFileSync(creatorsPath, "{}");
+  const stub = `const fs=require('node:fs');\nif(process.env.FAIL_HISTORY)process.exit(1);\nconst path=process.argv.at(-1);\nconst creators=JSON.parse(fs.readFileSync(process.env.CREATORS_PATH,'utf8'));\nconst status=/^repos\\/SlopDotCash\\/slopdotcash\\/deployments\\/(\\d+)\\/statuses\\?per_page=100$/.exec(path);\nif(status){const c=creators[status[1]];if(!c)process.exit(3);process.stdout.write(JSON.stringify([{log_url:'https://github.com/SlopDotCash/slopdotcash/actions/runs/'+status[1]+'/job/1'}]));process.exit(0);}\nconst run=/^repos\\/SlopDotCash\\/slopdotcash\\/actions\\/runs\\/(\\d+)$/.exec(path);\nif(run){const c=creators[run[1]];if(!c)process.exit(3);process.stdout.write(JSON.stringify(c));process.exit(0);}\nif(!/^repos\\/SlopDotCash\\/slopdotcash\\/deployments\\?environment=slop-staging&per_page=100&page=\\d+$/.test(path))process.exit(2);\nfs.appendFileSync(process.env.HISTORY_CALLS,path+'\\n');\nconst pages=JSON.parse(fs.readFileSync(process.env.HISTORY_PATH,'utf8'));\nprocess.stdout.write(JSON.stringify(pages[Number(path.split('page=').pop())-1]??[]));\n`;
   if (process.platform === "win32") {
     // execFileSync needs a native executable on Windows. The pinned test
     // runtime executes the local `api` script for `gh api <path>`.
@@ -76,14 +78,20 @@ function fixture() {
     writeFileSync(join(bin, "gh"), `#!${process.execPath}\n${stub}`);
     chmodSync(join(bin, "gh"), 0o755);
   }
-  const deployment = (sha: string) => ({
+  const deployment = (sha: string, id?: number) => ({
+    ...(id === undefined ? {} : { id }),
     sha,
     environment: "slop-staging",
     ref: "development",
     production_environment: false,
   });
-  const run = (pages: unknown[], extra: Record<string, string> = {}) => {
+  const run = (
+    pages: unknown[],
+    extra: Record<string, string> = {},
+    creators: Record<number, { head_sha: string; path: string }> = {},
+  ) => {
     writeFileSync(historyPath, JSON.stringify(pages));
+    writeFileSync(creatorsPath, JSON.stringify(creators));
     return spawnSync(
       process.execPath,
       [resolve("scripts/check-staging-order.mjs")],
@@ -98,6 +106,7 @@ function fixture() {
           GITHUB_SHA: revisions[1],
           HISTORY_PATH: historyPath,
           HISTORY_CALLS: callsPath,
+          CREATORS_PATH: creatorsPath,
           ...extra,
         },
       },
@@ -133,6 +142,38 @@ test("a newer attempted deployment prevents rollback regardless of success", () 
   const result = f.run([[f.deployment(f.revisions[2])]]);
   expect(result.status).not.toBe(0);
   expect(result.stderr).toContain("Refusing staging rollback");
+});
+
+test("a newer qualification-only deployment does not block an older release", () => {
+  const f = fixture();
+  const qualification = {
+    head_sha: f.revisions[2],
+    path: ".github/workflows/vetting-recovery-qualification.yml",
+  };
+  const result = f.run(
+    [[f.deployment(f.revisions[2], 7), f.deployment(f.revisions[1])]],
+    {},
+    { 7: qualification },
+  );
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain("Ignoring qualification-only");
+  // A release of that same revision still prevents rollback.
+  const release = f.run(
+    [
+      [
+        f.deployment(f.revisions[2], 7),
+        f.deployment(f.revisions[2], 8),
+        f.deployment(f.revisions[1]),
+      ],
+    ],
+    {},
+    {
+      7: qualification,
+      8: { head_sha: f.revisions[2], path: ".github/workflows/deploy.yml" },
+    },
+  );
+  expect(release.status).not.toBe(0);
+  expect(release.stderr).toContain("Refusing staging rollback");
 });
 
 test("a divergent deployment prevents overwriting unknown staging state", () => {
