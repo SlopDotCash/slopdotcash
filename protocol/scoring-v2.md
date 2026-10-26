@@ -184,8 +184,13 @@ published score. Do not rewrite a frozen cycle or change an approved, funded,
 scheduled or paid obligation through this provisional extension. Review
 activity keeps its actual source date; a later merge does not move an August
 review into the September or October activity ledger.
-When a review predates the selected value policy, publish
-`review-credit-before-policy` and preserve its prior Points. This omission
+A review that predates the selected value policy keeps the rules in force
+when it was submitted. On a pull request merged under the value policy it is
+scored by those earlier rules at merge, because a review scores only when its
+pull request merges and so has no earlier award to preserve; recomputing an
+award recorded earlier yields the same record. On closed, unmerged work, which
+earned no review credit before the value policy, publish
+`review-credit-before-policy` and preserve any prior Points. This omission
 and `review-credit-outside-window` are not adverse scoring decisions. A
 source-bound correction within the applicable policy can still revise credit.
 

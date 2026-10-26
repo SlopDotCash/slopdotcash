@@ -1031,12 +1031,16 @@ test("review policy and window omissions preserve earned Points without blocking
   ]) {
     for (const tier of ["none", "standard"] as const) {
       const next = snapshotAt(from as string, to as string, tier);
+      // The August review predates the policy, so it keeps its original
+      // rules and recomputes to the same award; no omission is published.
       expect(
-        next.reviewExclusions?.find((r) => r.reviewId === august.id)?.reason,
-      ).toBe("review-credit-before-policy");
-      expect(next.ledger.some((event) => event.source.id === august.id)).toBe(
-        false,
-      );
+        next.reviewExclusions?.find((r) => r.reviewId === august.id),
+      ).toBeUndefined();
+      expect(
+        next.ledger
+          .filter((event) => event.source.id === august.id)
+          .map((event) => [event.id, event.scoreThirds]),
+      ).toEqual([[`${merged.id}:reviewer:${bob?.id}`, 3]]);
       const updated = applyPointsSnapshot(journal, next, "b".repeat(64), AT);
       expect(latestPoints(updated).get(prior.award.key)).toEqual(prior);
       expect(latestPoints(updated).get(inScope.award.key)?.award.amount).toBe(
@@ -1092,6 +1096,11 @@ test("review policy and window omissions preserve earned Points without blocking
     ).toThrow("Review omission contradicts");
   }
   const missingBoundary = structuredClone(correction);
+  const omitted = missingBoundary.reviewExclusions?.find(
+    (r) => r.reviewId === september.id,
+  );
+  if (!omitted) throw new Error("Missing current review ruling");
+  omitted.reason = "review-credit-before-policy";
   delete missingBoundary.valuePolicyEffectiveAt;
   expect(() => assertLeaderboardSnapshot(missingBoundary)).toThrow(
     "Review policy omissions require",
@@ -1432,6 +1441,41 @@ test("reviews outside the scoring window do not consume review credit", () => {
   expect(exclusions.get("PRR_9_3")).toBeUndefined();
 });
 
+test("a review before the policy keeps its rules when the pull request merges after it", () => {
+  // SCR-05 applied when these reviews were submitted. The merge falls under
+  // the value policy, but neither review had scored yet: a review scores only
+  // at merge. Bob's request for changes on an earlier commit is credited at
+  // triage; Carol's approval of the merged head did not change the outcome.
+  const pull = outcome(12, "2026-10-20T10:00:00.000Z");
+  const reviews = [
+    review(
+      12,
+      1,
+      bob as GitHubActor,
+      "CHANGES_REQUESTED",
+      "2026-10-10T00:00:00.000Z",
+      "b".repeat(40),
+    ),
+    review(12, 2, carol as GitHubActor, "APPROVED", "2026-10-12T00:00:00.000Z"),
+  ];
+  const result = createLeaderboardSnapshot(
+    input({
+      mergedPullRequestOutcomes: [pull],
+      reviewedMergedPullRequests: [reviewed(pull, reviews)],
+      valuePolicy: POLICY,
+      valueDecisions: new Map(),
+    }),
+  );
+  expect(
+    result.ledger
+      .filter((event) => event.category === "substantive-review")
+      .map((event) => [event.actor.id, event.scoreThirds, event.occurredAt]),
+  ).toEqual([[bob?.id, 1, "2026-10-10T00:00:00.000Z"]]);
+  expect(
+    (result.reviewExclusions ?? []).map((item) => [item.reviewId, item.reason]),
+  ).toEqual([["PRR_12_2", "unchanged-outcome"]]);
+});
+
 test("excluding an old joint review does not shrink the pull request size", () => {
   const pull = outcome(10, "2026-10-20T10:00:00.000Z");
   const reviews = [
@@ -1510,7 +1554,12 @@ test("excluding an old joint review does not shrink the pull request size", () =
     result.ledger
       .filter((event) => event.category === "substantive-review")
       .map((event) => [event.actor.id, event.scoreThirds]),
-  ).toEqual([[carol?.id, 3]]);
+  ).toEqual([
+    // Bob's September approval predates the policy and keeps that period's
+    // standard credit even though the pull request merged later.
+    [bob?.id, 3],
+    [carol?.id, 3],
+  ]);
 });
 
 test("an evaluated review award does not shrink the pull request size", () => {

@@ -4300,7 +4300,13 @@ function createSnapshotWithReviewCutoff(
         excludeReview(pullRequest, review, "evaluated-contribution-award");
         continue;
       }
-      if (valueReviews) {
+      // A review submitted before the value policy keeps the rules in force
+      // when it was made, even when its pull request merges later. It never
+      // scored earlier (a review scores only at merge), so an omission here
+      // would leave it with no credit under either policy.
+      const earlierPolicyReview =
+        review.submittedAt !== null && !underValuePolicy(review.submittedAt);
+      if (valueReviews && !earlierPolicyReview) {
         // A ratified outcome credits SCR-04 actors the assessment may not list.
         if (ratification && isCreditActor(review.author?.id)) {
           excludeReview(pullRequest, review, "self-review");
