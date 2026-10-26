@@ -19,6 +19,33 @@ interface Pending {
 function pendingKey(data: ReferralAccount) {
   return `slop:referral-claim:${data.program?.network}:${data.program?.distributor}:${data.wallet}`;
 }
+// Storage can be blocked or hold stale text. The chain rejects a repeated
+// cumulative claim, so an unreadable marker must not hide the verified record.
+function readPending(data: ReferralAccount): Pending | null {
+  try {
+    const stored = localStorage.getItem(pendingKey(data));
+    if (!stored) return null;
+    const p = JSON.parse(stored) as Pending;
+    if (
+      (p.hash !== null &&
+        (typeof p.hash !== "string" || !/^0x[0-9a-f]{64}$/i.test(p.hash))) ||
+      typeof p.cumulative !== "string" ||
+      !/^(0|[1-9][0-9]{0,77})$/.test(p.cumulative)
+    )
+      return null;
+    return p;
+  } catch {
+    return null;
+  }
+}
+function writePending(data: ReferralAccount, p: Pending | null) {
+  try {
+    if (p) localStorage.setItem(pendingKey(data), JSON.stringify(p));
+    else localStorage.removeItem(pendingKey(data));
+  } catch {
+    // The in-page pending state still blocks a second review this session.
+  }
+}
 export function ReferralClaims() {
   const wallets = usePayoutWallets().filter((w) => w.family === "evm");
   const [data, setData] = useState<ReferralResponse | null>(null);
@@ -53,14 +80,13 @@ export function ReferralClaims() {
         setData(value);
         setLoadFailed(false);
         if (value.enabled && value.program && value.wallet) {
-          const stored = localStorage.getItem(pendingKey(value));
-          const p: Pending | null = stored ? JSON.parse(stored) : null;
+          const p = readPending(value);
           if (
             p &&
             value.claimedBase !== null &&
             BigInt(value.claimedBase) >= BigInt(p.cumulative)
           ) {
-            localStorage.removeItem(pendingKey(value));
+            writePending(value, null);
             setPending(null);
             setMessage("Your claim is verified.");
           } else setPending(p);
@@ -129,17 +155,17 @@ export function ReferralClaims() {
           hash: null,
           cumulative: review.data.claim?.cumulativeBase ?? "0",
         };
-        localStorage.setItem(pendingKey(review.data), JSON.stringify(p));
+        writePending(review.data, p);
         setPending(p);
         requested = true;
       });
       const p = { hash, cumulative: review.data.claim?.cumulativeBase ?? "0" };
-      localStorage.setItem(pendingKey(review.data), JSON.stringify(p));
+      writePending(review.data, p);
       setPending(p);
       setMessage("Claim submitted. Wait for the verified record to refresh.");
     } catch (e) {
       if ((e as { code?: unknown })?.code === 4001) {
-        localStorage.removeItem(pendingKey(review.data));
+        writePending(review.data, null);
         setPending(null);
         setMessage("The wallet request was cancelled.");
       } else
@@ -255,7 +281,7 @@ export function ReferralClaims() {
             type="button"
             disabled={busy}
             onClick={() => {
-              localStorage.removeItem(pendingKey(data));
+              writePending(data, null);
               setPending(null);
               setReview(null);
               setError("");
