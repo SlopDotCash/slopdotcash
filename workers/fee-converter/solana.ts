@@ -883,6 +883,7 @@ export function createSolanaClient(
         expiresAt: latest.value.lastValidBlockHeight,
         amount,
       });
+      await assertLease?.();
       await broadcast(rawTx);
       for (let poll = 0; ; poll++) {
         const statuses = await rpc<{
