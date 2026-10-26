@@ -62,6 +62,17 @@ export function isBaseAddress(value: unknown): value is string {
   );
 }
 
+/** EVM accounts compare without case; Solana public keys are case-sensitive. */
+export function sameWalletAddress(
+  family: "evm" | "solana",
+  left: string,
+  right: string,
+): boolean {
+  return family === "evm"
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
 /** Validates an address against the rules of the chain it is claimed on. */
 export function isWalletAddress(chain: WalletChain, value: unknown): boolean {
   return (
