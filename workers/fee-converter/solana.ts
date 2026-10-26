@@ -1,3 +1,8 @@
+import {
+  proveSolanaExpiry,
+  type RecoveryRpc,
+  recoveryOperator,
+} from "./solana-expiry";
 /**
  * Solana fee-wallet client. Routes come from the Jupiter Swap API. Each
  * Jupiter transaction is parsed before signing: the fee wallet is the only
@@ -71,6 +76,7 @@ export interface SolanaClientOptions {
   /** Solana CLI keypair JSON (64 numbers). Absent in dry_run. */
   keypair?: string;
   nativeGas?: NativeGasJournal;
+  recoveryRpcUrl?: string;
   fetch?: Fetch;
   /**
    * Local validator tests only: re-stamp the Jupiter message with the local
@@ -456,10 +462,10 @@ export function createSolanaClient(
     const parsed = parseTransaction(raw);
     const accounts = rentAccounts(parsed);
     const message = raw.slice(parsed.messageOffset);
-    const fee = await rpc<{ value: number | null }>("getFeeForMessage", [
-      toBase64(message),
-      { commitment: "confirmed" },
-    ]);
+    const fee = await rpc<{ context: { slot: number }; value: number | null }>(
+      "getFeeForMessage",
+      [toBase64(message), { commitment: "confirmed" }],
+    );
     const networkFee = nativeInteger(fee.value);
     const rent = accounts.length
       ? nativeInteger(
@@ -513,8 +519,51 @@ export function createSolanaClient(
       throw new Error("Final Solana native cost cannot be priced");
     if (costValue * limits.gasMultiple > valueMicro)
       throw new Error("Final Solana native cost exceeds the gas-cost multiple");
+    // Bind the signed blockhash to an actual retained slot, so a recovery
+    // provider must demonstrate history covering the entire landing window.
+    const contextSlot = Number(nativeInteger(fee.context?.slot));
+    const hash = solanaBase58(
+      raw.slice(parsed.blockhashOffset, parsed.blockhashOffset + 32),
+    );
+    const slots = await rpc<number[]>("getBlocks", [
+      Math.max(0, contextSlot - 512),
+      contextSlot,
+      { commitment: "confirmed" },
+    ]);
+    if (
+      !Array.isArray(slots) ||
+      slots.length > 513 ||
+      slots.some(
+        (slot) =>
+          !Number.isSafeInteger(slot) ||
+          slot < Math.max(0, contextSlot - 512) ||
+          slot > contextSlot,
+      )
+    )
+      throw new Error("Solana blockhash history is unavailable");
+    let blockhashSlot: number | undefined;
+    for (const slot of [...new Set(slots)].sort((a, b) => b - a)) {
+      const block = await rpc<{ blockhash: string } | null>("getBlock", [
+        slot,
+        {
+          commitment: "confirmed",
+          transactionDetails: "none",
+          rewards: false,
+          maxSupportedTransactionVersion: 0,
+        },
+      ]);
+      if (block?.blockhash === hash) {
+        blockhashSlot = slot;
+        break;
+      }
+    }
+    if (blockhashSlot === undefined)
+      throw new Error("Signed Solana blockhash has no retained slot anchor");
     await assertLease?.();
-    const id = await journal.reserveSolana(solanaBase58(sha256(message)));
+    const id = await journal.reserveSolana(
+      solanaBase58(sha256(message)),
+      blockhashSlot,
+    );
     await assertLease?.();
     return id;
   }
@@ -563,7 +612,55 @@ export function createSolanaClient(
           maxSupportedTransactionVersion: 0,
         },
       ]);
-      if (!tx) continue; // Expiry/absence never proves that a historical send spent nothing.
+      if (!tx) {
+        const row = (await journal.rows()).find(
+          (row) => row.tx_id === send.txId,
+        );
+        const secondary =
+          options.recoveryRpcUrl ?? "https://solana-rpc.publicnode.com";
+        const primaryOperator = recoveryOperator(config.rpcUrl),
+          secondaryOperator = recoveryOperator(secondary);
+        // Unknown operators/old rows are held. A mere null response never releases gas.
+        if (
+          row?.solana_blockhash_slot !== null &&
+          row?.solana_blockhash_slot !== undefined &&
+          primaryOperator &&
+          secondaryOperator &&
+          primaryOperator !== secondaryOperator
+        ) {
+          const second: RecoveryRpc = async <T>(
+            method: string,
+            params: unknown[],
+          ) => {
+            const response = await doFetch(secondary, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+              signal: AbortSignal.timeout(15000),
+            });
+            const body = (await response.json()) as {
+              result?: T;
+              error?: unknown;
+            };
+            if (!response.ok || body.error || body.result === undefined)
+              throw new Error("Independent Solana expiry provider unavailable");
+            return body.result;
+          };
+          const proof = await proveSolanaExpiry(
+            send.txId,
+            solanaBase58(
+              raw.slice(parsed.blockhashOffset, parsed.blockhashOffset + 32),
+            ),
+            row.solana_blockhash_slot,
+            [
+              { operator: primaryOperator, rpc },
+              { operator: secondaryOperator, rpc: second },
+            ],
+          );
+          if (proof) await journal.resolveSolanaExpiry(send, proof);
+        }
+        continue;
+      }
       if (tx.transaction?.[1] !== "base64" || tx.transaction[0] !== send.rawTx)
         throw new Error(
           "Finalized Solana native receipt does not match signed bytes",
@@ -1120,6 +1217,12 @@ export function createSolanaClient(
     broadcast,
 
     async status(row: ConversionRow): Promise<SendStatus> {
+      if (row.txId && (await options.nativeGas?.solanaExpiryResolved(row.txId)))
+        return {
+          kind: "failed",
+          reason:
+            "blockhash expired; two independent retained histories prove no inclusion",
+        };
       const statuses = await rpc<{
         value: ({ err: unknown; confirmationStatus: string | null } | null)[];
       }>("getSignatureStatuses", [

@@ -94,6 +94,8 @@ Owner decision, 26 October 2026: the latest approved fee-service ceilings are 0.
 
 Owner decision, 26 October 2026, issue #905: Solana fee-service ceilings are 0.005 SOL per transaction and 0.02 SOL per UTC day, including account creation and priority fees. These supersede the earlier 0.001 SOL / 0.01 SOL proposal. Enforce the dedicated native budget and durable uncertain-send accounting before enabling Solana. Gas funding is a separately reviewed exact-amount step.
 
+Owner decision, 26 October 2026, issue #905: release an expired Solana fee-send native reservation only when two independent RPC providers agree the blockhash is invalid at finalized commitment and neither finds a signature or transaction in full-history lookups. Require retained history covering the signed blockhash's slot. Any disagreement, unavailable or missing history, or provider failure keeps the hold. Retain immutable observations and signed bytes; never turn a missing receipt alone into zero cost.
+
 Slop owners authorize sweeps to separate owner-controlled software wallets. A human or owner-authorized agent executes them outside the Worker. Sweep keys stay in the owner's local `.env`, never in the Worker. These are software wallets, not cold storage.
 
 ## 7. Points, discovery, and clear pages

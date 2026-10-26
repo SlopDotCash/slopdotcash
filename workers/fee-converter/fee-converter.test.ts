@@ -1892,6 +1892,8 @@ describe("Solana vault fee claims", () => {
       () => new Date("2026-10-24T12:00:00Z"),
     );
     const state = {
+      expiredMissing: false,
+      secondaryFailure: false,
       nativeQuoteOut: null as string | null,
       nativeFee: 5000,
       rent: 1488440,
@@ -1930,16 +1932,29 @@ describe("Solana vault fee claims", () => {
       };
       const reply = (result: unknown) =>
         Response.json({ jsonrpc: "2.0", id: 1, result });
+      if (state.secondaryFailure && _url.includes("publicnode.com"))
+        throw new Error("secondary provider offline");
       switch (method) {
+        case "getGenesisHash":
+          return reply(MAINNET_GENESIS);
+        case "getFirstAvailableBlock":
+          return reply(0);
+        case "isBlockhashValid":
+          return reply({
+            context: { slot: 1000 },
+            value: !state.expiredMissing,
+          });
         case "getBalance":
           return reply({ value: 100000000 });
         case "getFeeForMessage":
-          return reply({ value: state.nativeFee });
+          return reply({ context: { slot: 100 }, value: state.nativeFee });
         case "getMinimumBalanceForRentExemption":
           return reply(state.rent);
+        case "getBlocks":
+          return reply([100]);
         case "getBlock":
           return reply({
-            blockhash: "finalized-native-block",
+            blockhash: key(20),
             signatures: state.sent.map((raw) =>
               solanaBase58(unb64(raw).slice(1, 65)),
             ),
@@ -1996,9 +2011,13 @@ describe("Solana vault fee claims", () => {
         }
         case "getSignatureStatuses":
           return reply({
-            value: [{ err: null, confirmationStatus: "confirmed" }],
+            context: { slot: 1001 },
+            value: state.expiredMissing
+              ? [null]
+              : [{ err: null, confirmationStatus: "confirmed" }],
           });
         case "getTransaction": {
+          if (state.expiredMissing) return reply(null);
           if ((params[1] as { encoding?: string })?.encoding === "base64") {
             const raw = state.sent.find(
               (raw) => solanaBase58(unb64(raw).slice(1, 65)) === params[0],
@@ -2079,6 +2098,7 @@ describe("Solana vault fee claims", () => {
       FEE_CONVERTER_MODE: "live",
       FEE_CONVERTER_NETWORKS: "solana",
       FEE_WALLET_SOLANA: wallet,
+      RPC_URL_SOLANA: "https://solana-mainnet.g.alchemy.com/v2/synthetic-only",
       ...LIMITS,
       FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({ solana: budgets }),
     });
@@ -2297,6 +2317,25 @@ describe("Solana vault fee claims", () => {
     run.state.confirmedAccrued = 0n;
     expect((await runNetwork(run.config, run.deps)).claimed).toBe(0);
     expect(run.state.sent).toHaveLength(1);
+  });
+
+  test("a previously signed claim expires through two-provider proof without retrying on missing evidence", async () => {
+    const run = solanaRun("live");
+    expect((await runNetwork(run.config, run.deps)).claimed).toBe(1);
+    run.state.expiredMissing = true;
+    run.state.secondaryFailure = true;
+    await expect(runNetwork(run.config, run.deps)).rejects.toThrow(
+      "secondary provider offline",
+    );
+    expect(run.state.sent).toHaveLength(1);
+    // Keep the accrued balance below dust so this check isolates retirement.
+    run.state.finalizedAccrued = 1n;
+    run.state.confirmedAccrued = 1n;
+    run.state.secondaryFailure = false;
+    const result = await runNetwork(run.config, run.deps);
+    expect(result.reconciled).toBe(1);
+    expect(run.state.sent).toHaveLength(1);
+    expect(await run.deps.store.openRows("solana")).toEqual([]);
   });
 
   test("a fee below the dust threshold keeps accruing in the vault", async () => {

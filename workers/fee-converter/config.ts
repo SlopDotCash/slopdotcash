@@ -104,6 +104,7 @@ export interface FeeConverterEnv {
   RPC_URL_ETHEREUM?: string;
   RPC_URL_ROBINHOOD?: string;
   RPC_URL_SOLANA?: string;
+  SOLANA_RECOVERY_RPC_URL?: string;
   KYBERSWAP_CLIENT_ID?: string;
   JUPITER_API_URL?: string;
   JUPITER_API_KEY?: string;
