@@ -2104,11 +2104,15 @@ async function finishAppeal(
         );
     }
     const finding = await latestFinding(db, issue.node_id);
-    if (finding !== null && hasLabel(issue, categoryLabel(finding))) {
+    for (const label of [
+      ...(finding !== null ? [categoryLabel(finding)] : []),
+      UNCERTAIN_LABEL,
+    ]) {
+      if (!hasLabel(issue, label)) continue;
       await requireScope(db, job, "security");
       const removed = await session.github.request<unknown>(
         "DELETE",
-        `/repos/${job.owner}/${job.repo}/issues/${job.number}/labels/${encodeURIComponent(categoryLabel(finding))}`,
+        `/repos/${job.owner}/${job.repo}/issues/${job.number}/labels/${encodeURIComponent(label)}`,
       );
       if (removed.status !== 200 && removed.status !== 404)
         throw new GitHubError(
@@ -2263,6 +2267,11 @@ export async function applyMaintainerHold(
   if (pull?.draft) return supersede("item is a draft");
   if (pull?.merged || revision !== hold.revision)
     return supersede("item changed after the review");
+  const appeal = await appealByKey(
+    db,
+    `appeal:${hold.item_node_id}:${hold.revision}`,
+  );
+  if (appeal?.resolution === "upheld") return supersede("appeal was upheld");
   const reviewed = await db
     .prepare("SELECT content_digest FROM slopbot_reviews WHERE review_key = ?")
     .bind(job.reviewKey)

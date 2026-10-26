@@ -6,7 +6,7 @@ import { createHash, generateKeyPairSync } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { findProject } from "../../src/lib/projects.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import type { Job } from "./contracts";
+import type { Category, Job } from "./contracts";
 import worker from "./index";
 import type { D1TransactionalDatabase } from "./persistence";
 import { type ReviewEnv, reviewItem } from "./review";
@@ -26,6 +26,8 @@ async function uncertainReview(
     tick: () => Promise<Job[]>;
     deliver: (jobs: Job[]) => Promise<void>;
     setDraft: (v: boolean) => void;
+    setVerdict: (category: Category, nextConfidence: number) => void;
+    job: (kind: string, extra: Record<string, unknown>) => Job;
     writes: string[];
     labels: { name: string }[];
     sql: (q: string) => unknown;
@@ -64,6 +66,8 @@ async function uncertainReview(
   );
   const repositoryId = Number(project.authority.repositoryId);
   let pullDraft = false;
+  let currentCategory: Category = "busywork";
+  let currentConfidence = confidence;
   const writes: string[] = [];
   const labels: { name: string }[] = [];
   let targetSha = "c".repeat(40);
@@ -85,8 +89,8 @@ async function uncertainReview(
             {
               type: "text",
               text: JSON.stringify({
-                category: "busywork",
-                confidence,
+                category: currentCategory,
+                confidence: currentConfidence,
                 rule_refs: [],
                 evidence: [],
                 summary: "This change may be busywork.",
@@ -185,8 +189,17 @@ async function uncertainReview(
         return Response.json({ id: 900 }, { status: 201 });
       if (path.endsWith("/issues/5/labels")) {
         const body = (await request.json()) as { labels: string[] };
-        for (const name of body.labels) labels.push({ name });
+        for (const name of body.labels)
+          if (!labels.some((entry) => entry.name === name))
+            labels.push({ name });
         return Response.json(labels);
+      }
+      const removed = path.match(/\/issues\/5\/labels\/(.+)$/u);
+      if (removed && request.method === "DELETE") {
+        const name = decodeURIComponent(removed[1]);
+        const index = labels.findIndex((entry) => entry.name === name);
+        if (index !== -1) labels.splice(index, 1);
+        return Response.json([]);
       }
       return new Response(null, { status: 404 });
     },
@@ -233,6 +246,17 @@ async function uncertainReview(
       setDraft: (v: boolean) => {
         pullDraft = v;
       },
+      setVerdict: (category: Category, nextConfidence: number) => {
+        currentCategory = category;
+        currentConfidence = nextConfidence;
+      },
+      job: (kind, extra) =>
+        ({
+          ...job,
+          kind,
+          deliveryId: `${kind}-${writes.length}`,
+          ...extra,
+        }) as Job,
       advanceTarget: (changedSource) => {
         targetSha = "d".repeat(40);
         if (changedSource) patch = "+different current target comparison";
@@ -387,3 +411,39 @@ test.each([true, false])(
     });
   },
 );
+
+test("an upheld appeal supersedes an open maintainer hold and removes slopbot:uncertain after the hold window", async () => {
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    expect(await run.review()).toMatch(/^held for maintainer until /);
+    run.setVerdict("none", 0.95);
+    await run.deliver([run.job("appeal", { senderId: 42 })]);
+    await run.deliver([
+      run.job("appeal_command", { command: "accept", senderId: 42 }),
+    ]);
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = await run.tick();
+    expect(due.map((j) => j.kind)).toEqual(["maintainer_hold"]);
+    await run.deliver(due);
+    expect(run.labels).toEqual([{ name: "slopbot: appeal" }]);
+    expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+      { outcome: "superseded" },
+    ]);
+  });
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    expect(await run.review()).toMatch(/^held for maintainer until /);
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    await run.deliver(await run.tick());
+    expect(run.labels).toEqual([{ name: "slopbot:uncertain" }]);
+    run.setVerdict("none", 0.95);
+    await run.deliver([run.job("appeal", { senderId: 42 })]);
+    await run.deliver([
+      run.job("appeal_command", { command: "accept", senderId: 42 }),
+    ]);
+    expect(run.labels.map((l) => l.name)).not.toContain("slopbot:uncertain");
+    expect(run.writes).toContain(
+      "DELETE /repos/SlopDotCash/asi/issues/5/labels/slopbot%3Auncertain",
+    );
+  });
+});
