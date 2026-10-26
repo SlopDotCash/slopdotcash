@@ -1,6 +1,7 @@
 import { decimalBaseUnits, formatBaseUnits } from "./base-units.mjs";
 import {
   assertEscrowPolicy,
+  ESCROW_PAYOUT_FEE_BASIS_POINTS,
   isBaseUnits,
   isEscrowChain,
   maxBaseUnitsForChain,
@@ -111,6 +112,15 @@ const OPTIONAL_PROJECT_KEYS = [
   "slopbot",
 ];
 export const MAX_MONTHLY_CAP_MINOR = 1_000_000_000_000_000n;
+
+/**
+ * The platform fee of a new reward policy: 10% of an external prize share,
+ * the escrow payout fee for a vault project, and 1% for a pool without one.
+ */
+export function expectedRewardFeeBasisPoints(kind, escrow) {
+  if (kind === "external-prize-share") return 1000;
+  return escrow ? ESCROW_PAYOUT_FEE_BASIS_POINTS : 100;
+}
 
 /** Formats cent-precise USDC minor units without floating-point conversion. */
 export function formatMonthlyCapDisplay(value) {
@@ -986,8 +996,10 @@ function validateReward(
   }
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
-  const expectedFeeBasisPoints =
-    reward.kind === "external-prize-share" ? 1000 : escrow ? 200 : 100;
+  const expectedFeeBasisPoints = expectedRewardFeeBasisPoints(
+    reward.kind,
+    Boolean(escrow),
+  );
   const hasLegacyExternalPrizeFee =
     allowLegacyExternalPrizeFee &&
     reward.kind === "external-prize-share" &&

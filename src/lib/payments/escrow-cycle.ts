@@ -1,4 +1,7 @@
-import { MAX_BASE_UNITS } from "../escrow-policy.mjs";
+import {
+  ESCROW_PAYOUT_FEE_BASIS_POINTS,
+  MAX_BASE_UNITS,
+} from "../escrow-policy.mjs";
 import { assertLeaderboardSnapshot } from "../leaderboard";
 import { assertProjectDefinition } from "../project-schema.mjs";
 import {
@@ -156,7 +159,7 @@ export function buildEscrowCycle(
     grossCapMicro: (cap + reviewCap).toString(),
     sharedPoolCapMicro: cap.toString(),
     reviewBudgetCapMicro: reviewCap.toString(),
-    feeBasisPoints: 200,
+    feeBasisPoints: ESCROW_PAYOUT_FEE_BASIS_POINTS,
     feeMode: "deduct-from-gross",
     awards,
   };

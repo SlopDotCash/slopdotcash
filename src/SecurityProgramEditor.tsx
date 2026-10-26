@@ -8,6 +8,7 @@ import { parseAssetAmount } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   assertSecurityBountyTerms,
+  SECURITY_SPLIT,
   type SecurityBountyTerms,
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
@@ -136,7 +137,7 @@ export function SecurityProgramEditor({
               existing?.amount.decimals ?? 6,
             ),
           },
-          split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+          split: { ...SECURITY_SPLIT },
           sponsor: existing?.sponsor ?? {
             name: project.name,
             githubId: actor.githubId,
