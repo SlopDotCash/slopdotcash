@@ -1161,14 +1161,17 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   const applicantErrors = observe(applicant);
   await signIn(applicant, APPLICANT_TOKEN);
   await applicant.goto("/inbox", { waitUntil: "networkidle" });
-  for (const title of [
-    `The ${project.id} project is quarantined.`,
-    `The ${project.id} project is banned.`,
-    `A reinstatement request for ${project.id} is open for independent review.`,
-  ])
+  for (const [title, count] of [
+    [`The ${project.id} project is quarantined.`, 1],
+    [`The ${project.id} project is banned.`, 2],
+    [
+      `A reinstatement request for ${project.id} is open for independent review.`,
+      2,
+    ],
+  ] as const)
     await expect(
       applicant.locator(".inbox-item", { hasText: title }),
-    ).toHaveCount(title === `The ${project.id} project is banned.` ? 2 : 1);
+    ).toHaveCount(count);
   await expect(applicant.locator("main")).not.toContainText("malware");
   await expect(applicant.locator("main")).not.toContainText(evidence);
   // Only moderators are asked to decide the appeal.
