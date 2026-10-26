@@ -63,7 +63,10 @@ import {
   captureUpgrade,
   deployUpgradeableFactory,
 } from "./integration/upgrade";
-import { inspectEvmMonthlyWrongSum } from "./monthly-reserve";
+import {
+  inspectEvmMonthlyWrongSum,
+  prepareEvmMonthlyWrongSumRelease,
+} from "./monthly-reserve";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const legacyRoot = process.env.SLOP_MONTHLY_LEGACY_ROOT;
@@ -100,6 +103,9 @@ const ABI = parseAbi([
   "function freeBalance() view returns (uint128)",
   "function awards(bytes32) view returns (uint64,uint128,uint128,bytes32,uint64,bool)",
   "function balanceOf(address) view returns (uint256)",
+  "function monthlyReleaseDigest(uint32,uint128,uint128) view returns (bytes32)",
+  "function proposeIdentityAuthority(address)",
+  "function executeIdentityAuthorityRotation()",
 ]);
 async function rpc(method: string, params: unknown[]): Promise<unknown> {
   const response = await fetch(rpcUrl, {
@@ -429,6 +435,121 @@ try {
           before,
           "inspection cannot move or release funds",
         );
+        if (fault === "sum") {
+          const releaseDigest = String(
+            await rpc("eth_call", [
+              {
+                to: vault,
+                data: encodeFunctionData({
+                  abi: ABI,
+                  functionName: "monthlyReleaseDigest",
+                  args: [202611, 3001n, 3001n],
+                }),
+              },
+              "finalized",
+            ]),
+          ) as `0x${string}`;
+          const attestation = await authority.sign({ hash: releaseDigest });
+          await assert.rejects(
+            prepareEvmMonthlyWrongSumRelease(
+              readOnly,
+              period,
+              capture,
+              await owner.sign({ hash: releaseDigest }),
+            ),
+            /authority mismatch/,
+          );
+          const plan = await prepareEvmMonthlyWrongSumRelease(
+            readOnly,
+            period,
+            capture,
+            attestation,
+          );
+          assert.equal(plan.transaction.from, owner.address.toLowerCase());
+          assert.equal(plan.transaction.to, vault.toLowerCase());
+          assert.equal(plan.transaction.value, "0x0");
+          assert.equal(plan.evidence.releasedGross, "3001");
+          assert.deepEqual(await readEvmMonthlyReserve(config, period), before);
+          const rotationSnapshot = await rpc("evm_snapshot", []);
+          try {
+            await send(
+              factory,
+              encodeFunctionData({
+                abi: ABI,
+                functionName: "proposeIdentityAuthority",
+                args: [recipient.address],
+              }),
+              registrar.address,
+            );
+            await send(
+              factory,
+              encodeFunctionData({
+                abi: ABI,
+                functionName: "executeIdentityAuthorityRotation",
+              }),
+            );
+            await finalized();
+            await assert.rejects(
+              prepareEvmMonthlyWrongSumRelease(
+                readOnly,
+                period,
+                capture,
+                attestation,
+              ),
+              /authority mismatch/,
+            );
+            await send(vault, plan.transaction.data, owner.address, false);
+          } finally {
+            assert.equal(await rpc("evm_revert", [rotationSnapshot]), true);
+          }
+          const freeBefore = BigInt(await value(vault, "freeBalance()"));
+          let lateRelease = false;
+          await assert.rejects(
+            prepareEvmMonthlyWrongSumRelease(
+              {
+                ...readOnly,
+                request: async (method, params) => {
+                  const call = params[0] as { from?: string; data?: string };
+                  if (
+                    method === "eth_call" &&
+                    params[1] === "latest" &&
+                    call.from === plan.transaction.from &&
+                    call.data === plan.transaction.data &&
+                    !lateRelease
+                  ) {
+                    // The prior owner request actually lands after fresh inspection,
+                    // immediately before the new request's latest-state simulation.
+                    lateRelease = true;
+                    await send(vault, plan.transaction.data);
+                  }
+                  return readOnly.request(method, params);
+                },
+              },
+              period,
+              capture,
+              attestation,
+            ),
+          );
+          assert.equal(lateRelease, true);
+          await finalized();
+          assert.equal(
+            (await readEvmMonthlyReserve(config, period)).remaining,
+            0n,
+          );
+          assert.equal(
+            BigInt(await value(vault, "freeBalance()")),
+            freeBefore + 3001n,
+          );
+          await assert.rejects(
+            prepareEvmMonthlyWrongSumRelease(
+              readOnly,
+              period,
+              capture,
+              attestation,
+            ),
+            /prior-reserve-transition/,
+          );
+        }
       } finally {
         assert.equal(await rpc("evm_revert", [snapshot]), true);
       }

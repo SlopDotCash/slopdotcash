@@ -37,6 +37,7 @@ import {
   submitSolanaMonthly,
 } from "../.local/monthly-executor.mjs";
 import { inspectSolanaMonthlyWrongSum } from "../.local/monthly-reserve.mjs";
+import { ownerPlan } from "../scripts/owner-plan.mjs";
 import {
   configAddress,
   configFees,
@@ -3132,37 +3133,83 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
     commit("wrong-sum-blocked", 999, 1),
     /MonthlyOutstanding/,
   );
-  // The existing owner primitive now consumes positively classified local evidence.
+  // The existing unsigned owner planner consumes fresh evidence and a caller attestation.
   const u64 = (value) => bn(value).toArrayLike(Buffer, "le", 8);
-  const released = await program.methods
-    .releaseMonthlyReserve(
-      n,
-      bn(evidence.expectedUnsettled),
-      bn(evidence.releasedGross),
-    )
-    .accountsStrict({
-      owner: payer.publicKey,
-      project,
-      month: monthAt(n),
-      instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
-    })
-    .preInstructions([
-      Ed25519Program.createInstructionWithPrivateKey({
-        privateKey: authority.secretKey,
-        message: Buffer.concat([
-          Buffer.from("slop-monthly-release-v1"),
-          key(program.programId),
-          key(project),
-          Buffer.from(new Uint32Array([n]).buffer),
-          Buffer.from(evidence.allocationRoot, "hex"),
-          u64(total),
-          u64(evidence.expectedUnsettled),
-          u64(evidence.releasedGross),
-          Buffer.from(network),
-        ]),
-      }),
-    ])
-    .rpc();
+  const releaseMessage = Buffer.concat([
+    Buffer.from("slop-monthly-release-v1"),
+    key(program.programId),
+    key(project),
+    Buffer.from(new Uint32Array([n]).buffer),
+    Buffer.from(evidence.allocationRoot, "hex"),
+    u64(total),
+    u64(evidence.expectedUnsettled),
+    u64(evidence.releasedGross),
+    Buffer.from(network),
+  ]);
+  const attest = async (signer) =>
+    Buffer.from(await nodeSigner(signer).signMessage(releaseMessage)).toString(
+      "hex",
+    );
+  const releaseInput = {
+    deployment: { ...settings, asset: settings.mint },
+    operation: "release-monthly-wrong-sum",
+    period,
+    capture: { entries },
+    attestation: await attest(authority),
+  };
+  const runtime = {
+    rpcUrl: settings.rpcUrl,
+    expectedGenesis: settings.genesisHash,
+  };
+  await assert.rejects(
+    ownerPlan({ ...releaseInput, attestation: await attest(payer) }, runtime),
+    /authority mismatch/,
+  );
+  await assert.rejects(
+    ownerPlan({ ...releaseInput, capture: null }, runtime),
+    /allocation-unavailable/,
+  );
+  const originalPlan = await ownerPlan(releaseInput, runtime);
+  assert.equal(originalPlan.requiredSigner, payer.publicKey.toBase58());
+  assert.equal(originalPlan.evidence.expectedUnsettled, "30000001");
+  assert.deepEqual(
+    await accounts(),
+    beforeWrong,
+    "owner preparation cannot release",
+  );
+  const originalTransaction = Transaction.from(
+    Buffer.from(originalPlan.transactionBase64, "base64"),
+  );
+  assert.equal(originalTransaction.signatures.length, 1);
+  assert.equal(originalTransaction.signatures[0].signature, null);
+  assert.equal(originalTransaction.instructions.length, 2);
+  // An authority change invalidates both the earlier plan and its supplied attestation.
+  await rotation.propose(nextAuthority.publicKey);
+  await rotation.confirm();
+  await sleep((ROTATION_DELAY + 2) * 1000);
+  await finalized(await rotation.execute());
+  await assert.rejects(ownerPlan(releaseInput, runtime), /authority mismatch/);
+  assert.notEqual(
+    (await provider.connection.simulateTransaction(originalTransaction)).value
+      .err,
+    null,
+  );
+  const currentInput = {
+    ...releaseInput,
+    attestation: await attest(nextAuthority),
+  };
+  const plan = await ownerPlan(currentInput, runtime);
+  assert.equal(
+    plan.evidence.identityAuthority,
+    nextAuthority.publicKey.toBase58(),
+  );
+  const transaction = Transaction.from(
+    Buffer.from(plan.transactionBase64, "base64"),
+  );
+  transaction.sign(payer);
+  const released = await provider.connection.sendRawTransaction(
+    transaction.serialize(),
+  );
   await provider.connection.confirmTransaction(released, "finalized");
   const state = await program.account.project.fetch(project, "finalized");
   assert.equal(state.reserved.toString(), "0");
@@ -3177,6 +3224,10 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
     status: "held",
     reason: "prior-reserve-transition",
   });
+  await assert.rejects(
+    ownerPlan(currentInput, runtime),
+    /prior-reserve-transition/,
+  );
   await commit("inspection-manual-after", 999, 1);
 
   // Deliberate post-freeze smaller/different-actor consumption is never a wrong-sum fault.

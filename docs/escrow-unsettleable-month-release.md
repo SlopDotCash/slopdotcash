@@ -137,6 +137,27 @@ Missing data, provider errors, a changed snapshot, a healthy root or a prior
 reserve transition cannot produce positive evidence. It emits no signature
 or transaction and no existing signer calls it.
 
+The unsigned owner builders `prepareEvmMonthlyWrongSumRelease` and
+`prepareSolanaMonthlyWrongSumRelease` rerun these inspections from the complete
+retained allocation. They accept a caller-supplied attestation, never a key,
+claimed fault or chosen release amount. They verify that signature against the
+freshly observed authority and the release message. They release only the full
+untouched wrong-sum reserve. No service obtains authority to issue that signature.
+
+The EVM builder checks the latest reviewed deployment and simulates the exact
+zero-value owner call. The Solana builder reuses the existing unsigned-wallet
+planner for a fresh blockhash, fee, owner balance and finalized simulation. The
+owner-plan CLI exposes it as `release-monthly-wrong-sum`, with `period`,
+`capture.entries` and `attestation` (64-byte Ed25519 signature as hex). Build
+the reviewed module first with `bun build monthly-reserve.ts --target=node
+--outfile=.local/monthly-reserve.mjs` from `contracts/solana`.
+
+The plans contain no owner signature and do not broadcast. A rotation, reserve
+transition or changed deployment refuses a new plan. The contracts repeat the
+authority and exact-remainder checks when the owner transaction executes, so a
+later change can still make a prepared plan revert. There is no time-based
+attestation expiry or readmission of the period.
+
 For any future qualified per-leaf path, settle every settleable leaf first,
 then reread finalized state. Preserve Solana's existing deliberate hold for a
 source consumed after the freeze with a smaller award or another actor.
