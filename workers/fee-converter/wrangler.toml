@@ -24,7 +24,8 @@ migrations_dir = "../../migrations"
 FEE_CONVERTER_MODE = "live"
 # Comma-separated subset of base,ethereum,robinhood,solana.
 # Conditional owner activation requires verified funding and limits. Native
-# operating limits below are owner-approved. Solana stays off.
+# operating limits below are owner-approved. Solana's separate rotation
+# authority is verified; native gas limits and accounting still gate signing.
 FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"
 # Optional operator allowlist, e.g. {"base":["0x..."]}. Project reward assets
 # from D1 are always candidates; arbitrary airdropped tokens never are.

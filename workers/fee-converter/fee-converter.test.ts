@@ -1749,19 +1749,26 @@ describe("D1 contract", () => {
     );
   });
 
-  test("live Solana signing stays blocked outside the local harness", async () => {
+  test("live Solana refuses absent native limits before loading a valid signer", async () => {
     const { chainClient } = await import("./index");
+    const seed = new Uint8Array(32).fill(7);
+    const publicKey = ed25519.getPublicKey(seed);
+    let keyReads = 0;
     const env = {
       FEE_CONVERTER_MODE: "live",
       FEE_CONVERTER_NETWORKS: "solana",
-      FEE_WALLET_SOLANA: "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
-      FEE_WALLET_KEY_SOLANA: JSON.stringify(new Array(64).fill(1)),
+      FEE_WALLET_SOLANA: solanaBase58(publicKey),
+      get FEE_WALLET_KEY_SOLANA() {
+        keyReads += 1;
+        return JSON.stringify([...seed, ...publicKey]);
+      },
       ...LIMITS,
     };
     const parsed = parseConfig(env);
     expect(() => chainClient(env, parsed, parsed.networks[0])).toThrow(
-      /live Solana conversion is blocked/,
+      "native transaction/day limits and durable accounting",
     );
+    expect(keyReads).toBe(0);
   });
 
   test("error text drops URLs and echoed request bodies", () => {

@@ -37,17 +37,14 @@ production signing.
 
 The Worker is off by default.
 
-**Solana signing is blocked until activation is verified.** The revised Solana
-program pins an independent rotation-confirmation authority, separate from the
-fee recipient and identity authority. The rotation key must never be installed
-in this Worker. Earlier program layouts gave the fee recipient that power.
-The current live-mode block remains until the reviewed deployment uses the
-separated layout and the converter verifies that boundary. Key generation
-alone does not establish safe activation. A Solana claim verifies the pinned
-Config, including its independent rotation authority, before it signs, but
-that check does not lift the live-mode block: Solana still runs in `dry_run`
-only (PRD section 11, "Solana live conversion waits for the separate attester
-role").
+**Solana signs only against the separated program layout.** The deployed
+Solana program pins an independent rotation-confirmation authority, separate
+from the fee recipient and identity authority. The rotation key must never be
+installed in this Worker. Earlier program layouts gave the fee recipient that
+power. A finalized read of the mainnet Config on 26 October 2026 showed three
+distinct identity, fee-recipient and rotation keys. A Solana claim verifies
+the pinned Config, including its independent rotation authority, before it
+signs.
 
 ## What one run does
 
@@ -161,8 +158,8 @@ For each enabled network:
    remaining caps.
 9. `dry_run`: record the quote as `quoted` and stop. No key is loaded.
 10. `live`: build, check, simulate and sign the swap. Record the signed bytes
-   as `submitted`, then broadcast. A finalized state is set only by a later
-   reconciliation that reads the finalized chain.
+    as `submitted`, then broadcast. A finalized state is set only by a later
+    reconciliation that reads the finalized chain.
 
 An unchanged `pending` or `skipped` record (same token, amount, reason and
 mode) is recorded once, not
@@ -173,12 +170,12 @@ rejects so the cron failure remains visible; it does not publish a successful
 
 ## Routes per network
 
-| Network | Target | Route | Why |
-| --- | --- | --- | --- |
-| Base (8453) | Circle USDC `0x8335…2913` | KyberSwap Aggregator API | No API key, one integration for all three EVM chains, the router is the same audited `MetaAggregationRouterV2` (`0x6131…37b5`) on each. Its calldata carries the receiver, the input amount and the minimum output, so the Worker can check them before signing. |
-| Ethereum (1) | Circle USDC `0xa0b8…eb48` | KyberSwap Aggregator API | Same router address and code on chain. AGENTS.md requires verifying this address from Circle's primary source before activation. |
-| Robinhood Chain (4663) | No conversion target | None | The owner chose unconverted retention on 25 October 2026. Keep each received asset unchanged; USDG stays USDG. No swap or bridge. The Worker and private admin report return `not_converted`. A USDC route is no longer a release requirement for this network. |
-| Solana | Circle USDC `EPjF…Dt1v` | Jupiter Swap API v1 | Uses `api.jup.ag` with or without `JUPITER_API_KEY`. An explicit `JUPITER_API_URL` overrides this default. |
+| Network                | Target                    | Route                    | Why                                                                                                                                                                                                                                                              |
+| ---------------------- | ------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base (8453)            | Circle USDC `0x8335…2913` | KyberSwap Aggregator API | No API key, one integration for all three EVM chains, the router is the same audited `MetaAggregationRouterV2` (`0x6131…37b5`) on each. Its calldata carries the receiver, the input amount and the minimum output, so the Worker can check them before signing. |
+| Ethereum (1)           | Circle USDC `0xa0b8…eb48` | KyberSwap Aggregator API | Same router address and code on chain. AGENTS.md requires verifying this address from Circle's primary source before activation.                                                                                                                                 |
+| Robinhood Chain (4663) | No conversion target      | None                     | The owner chose unconverted retention on 25 October 2026. Keep each received asset unchanged; USDG stays USDG. No swap or bridge. The Worker and private admin report return `not_converted`. A USDC route is no longer a release requirement for this network.  |
+| Solana                 | Circle USDC `EPjF…Dt1v`   | Jupiter Swap API v1      | Uses `api.jup.ag` with or without `JUPITER_API_KEY`. An explicit `JUPITER_API_URL` overrides this default.                                                                                                                                                       |
 
 Jupiter's [migration guide](https://developers.jup.ag/docs/portal/migration)
 replaces the `lite-api.jup.ag` hostname with `api.jup.ag`; the endpoint paths
@@ -220,16 +217,16 @@ verify those routes. Any of them can replace KyberSwap behind
 
 ## States
 
-| State | Meaning |
-| --- | --- |
-| `quoted` | Dry run: a quote that passed every check. Live: a quote not yet signed; closed as `failed` after one hour if the run ended. |
-| `pending` | Below the dust threshold; the fee stays in the wallet until a later receipt lifts it over. `reason` names the threshold (migration `0076`). Records written before that migration keep `skipped`. |
-| `skipped` | A price, slippage or cap check refused the token; `reason` says which. |
-| `no_route` | The aggregator has no route for this token. |
-| `submitted` | Signed bytes recorded and broadcast; not yet final. |
-| `unknown` | Signed bytes recorded, but the broadcast result is unknown. |
-| `finalized` | Verified in a finalized block. `amount_out` is the received fee for a claim, or USDC proceeds for a conversion. |
-| `failed` | Proven unable to complete: reverted, expired or a prepare check failed. |
+| State       | Meaning                                                                                                                                                                                           |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `quoted`    | Dry run: a quote that passed every check. Live: a quote not yet signed; closed as `failed` after one hour if the run ended.                                                                       |
+| `pending`   | Below the dust threshold; the fee stays in the wallet until a later receipt lifts it over. `reason` names the threshold (migration `0076`). Records written before that migration keep `skipped`. |
+| `skipped`   | A price, slippage or cap check refused the token; `reason` says which.                                                                                                                            |
+| `no_route`  | The aggregator has no route for this token.                                                                                                                                                       |
+| `submitted` | Signed bytes recorded and broadcast; not yet final.                                                                                                                                               |
+| `unknown`   | Signed bytes recorded, but the broadcast result is unknown.                                                                                                                                       |
+| `finalized` | Verified in a finalized block. `amount_out` is the received fee for a claim, or USDC proceeds for a conversion.                                                                                   |
+| `failed`    | Proven unable to complete: reverted, expired or a prepare check failed.                                                                                                                           |
 
 The journal's `kind` is `conversion` or `claim` (migration `0082`). Existing
 rows remain conversions. Claims use the same pending-token and immutable-send
@@ -384,21 +381,21 @@ Vars in `wrangler.toml` (reviewed by pull request). The conversion limits
 have no fallback in code: in `dry_run` and `live` a missing limit refuses the
 run. `off` reads none of them.
 
-| Var | Checked-in value | Meaning |
-| --- | --- | --- |
-| `FEE_CONVERTER_MODE` | `off` | `off`, `dry_run` or `live`. |
-| `FEE_CONVERTER_NETWORKS` | `base,ethereum,robinhood` | Candidate networks; mode remains off. |
-| `FEE_CONVERTER_ALLOWLIST` | empty | JSON object of extra tokens per network. |
-| `FEE_CONVERTER_MIN_VALUE_MICRO` | `5000000` (owner decision, 24 October 2026) | Minimum quoted USDC output. `0` converts every fee. |
-| `FEE_CONVERTER_GAS_MULTIPLE` | `10` (owner decision, 24 October 2026) | Output must be at least this many times the fee estimate. `0` disables the check. |
-| `FEE_CONVERTER_MAX_SLIPPAGE_BPS` | `100` | Quote minimum within 1% of the quote. |
-| `FEE_CONVERTER_MAX_PRICE_IMPACT_BPS` | `200` | Price-impact cap (2%). |
-| `FEE_CONVERTER_RUN_CAP_MICRO` | `1000000000` | Per-run, per-network value cap (1,000 USDC). |
-| `FEE_CONVERTER_DAILY_CAP_MICRO` | `5000000000` | Rolling 24-hour live value cap per network (5,000 USDC). |
-| `FEE_CONVERTER_SOLANA_FEE_MICRO` | `2000` | Solana fee estimate used for the gas multiple; an estimate, not policy. |
-| `FEE_CONVERTER_NATIVE_BUDGETS` | unset | Per-network JSON with exact decimal wei strings `perTransaction`, `perDay`, `additionalFeeReserve`. No defaults. |
-| `FEE_WALLET_<NETWORK>` | All four networks set | Public fee-wallet address. A network without one is refused. |
-| `KYBERSWAP_CLIENT_ID` | `slop-fee-converter` | Client id header for KyberSwap. |
+| Var                                  | Checked-in value                            | Meaning                                                                                                          |
+| ------------------------------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `FEE_CONVERTER_MODE`                 | `off`                                       | `off`, `dry_run` or `live`.                                                                                      |
+| `FEE_CONVERTER_NETWORKS`             | `base,ethereum,robinhood`                   | Candidate networks; mode remains off.                                                                            |
+| `FEE_CONVERTER_ALLOWLIST`            | empty                                       | JSON object of extra tokens per network.                                                                         |
+| `FEE_CONVERTER_MIN_VALUE_MICRO`      | `5000000` (owner decision, 24 October 2026) | Minimum quoted USDC output. `0` converts every fee.                                                              |
+| `FEE_CONVERTER_GAS_MULTIPLE`         | `10` (owner decision, 24 October 2026)      | Output must be at least this many times the fee estimate. `0` disables the check.                                |
+| `FEE_CONVERTER_MAX_SLIPPAGE_BPS`     | `100`                                       | Quote minimum within 1% of the quote.                                                                            |
+| `FEE_CONVERTER_MAX_PRICE_IMPACT_BPS` | `200`                                       | Price-impact cap (2%).                                                                                           |
+| `FEE_CONVERTER_RUN_CAP_MICRO`        | `1000000000`                                | Per-run, per-network value cap (1,000 USDC).                                                                     |
+| `FEE_CONVERTER_DAILY_CAP_MICRO`      | `5000000000`                                | Rolling 24-hour live value cap per network (5,000 USDC).                                                         |
+| `FEE_CONVERTER_SOLANA_FEE_MICRO`     | `2000`                                      | Solana fee estimate used for the gas multiple; an estimate, not policy.                                          |
+| `FEE_CONVERTER_NATIVE_BUDGETS`       | unset                                       | Per-network JSON with exact decimal wei strings `perTransaction`, `perDay`, `additionalFeeReserve`. No defaults. |
+| `FEE_WALLET_<NETWORK>`               | All four networks set                       | Public fee-wallet address. A network without one is refused.                                                     |
+| `KYBERSWAP_CLIENT_ID`                | `slop-fee-converter`                        | Client id header for KyberSwap.                                                                                  |
 
 The owner approved these limits on 24 October 2026. See [PRD section
 11](../../docs/slop-product-requirements.md#11-source-delivery-and-acceptance).
@@ -407,12 +404,12 @@ not enable conversion: mode, network, route and release checks still apply.
 
 Secrets (set only by the key custodian, never in D1, CI or the repository):
 
-| Secret | Format |
-| --- | --- |
-| `FEE_WALLET_KEY_BASE`, `FEE_WALLET_KEY_ETHEREUM`, `FEE_WALLET_KEY_ROBINHOOD` | `0x` + 64 hex characters. |
-| `FEE_WALLET_KEY_SOLANA` | Solana CLI keypair JSON (64 numbers). |
-| `RPC_URL_<NETWORK>` | Optional private RPC URL. Error text strips URLs, so a provider key in the URL never reaches D1 or logs. |
-| `JUPITER_API_KEY` | Optional. |
+| Secret                                                                       | Format                                                                                                   |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `FEE_WALLET_KEY_BASE`, `FEE_WALLET_KEY_ETHEREUM`, `FEE_WALLET_KEY_ROBINHOOD` | `0x` + 64 hex characters.                                                                                |
+| `FEE_WALLET_KEY_SOLANA`                                                      | Solana CLI keypair JSON (64 numbers).                                                                    |
+| `RPC_URL_<NETWORK>`                                                          | Optional private RPC URL. Error text strips URLs, so a provider key in the URL never reaches D1 or logs. |
+| `JUPITER_API_KEY`                                                            | Optional.                                                                                                |
 
 In `live` mode the Worker refuses a network when its key is missing or does
 not derive the configured `FEE_WALLET_<NETWORK>` address. `dry_run` never
@@ -428,7 +425,11 @@ October 2026: Base 0.0001 ETH per transaction and 0.001 ETH per UTC day, with a
 supersedes the earlier values. They are set in `FEE_CONVERTER_NATIVE_BUDGETS`.
 Base needs a positive allowance for data and operator fees; Ethereum uses
 zero additional allowance. Robinhood remains retain-only and loads no key.
-Solana live signing remains blocked by its separate qualification gate.
+Solana's separate rotation authority is verified, but live signing and release
+remain blocked until its approved native transaction/day limits and durable
+cost accounting are implemented. `FEE_CONVERTER_SOLANA_FEE_MICRO` is a value
+estimate for the gas multiple, not a native spending limit. No EVM, keeper or
+referral budget supplies a Solana default.
 
 Before each approval, swap, fee claim or replacement, price the final gas
 limit and fee fields, include Base's additional allowance, and recheck the
@@ -526,9 +527,9 @@ the Worker no sweep power.
    in [#905](https://github.com/SlopDotCash/slopdotcash/issues/905). Keep
    unavailable routes pending. Do not request the recorded choices again.
 2. The key custodian checks installed secret names with `wrangler secret list
-   --config workers/fee-converter/wrangler.toml`. Keep existing valid secrets.
+--config workers/fee-converter/wrangler.toml`. Keep existing valid secrets.
 3. The key custodian installs any missing secret with `wrangler secret put
-   <NAME> --config workers/fee-converter/wrangler.toml`. Enter its value only
+<NAME> --config workers/fee-converter/wrangler.toml`. Enter its value only
    at the private prompt. If the Worker does not exist, accept Wrangler's
    offer to create it. Publish application code only through the checked-in
    release workflow from reviewed `main`, not a local `wrangler deploy`.
@@ -539,8 +540,8 @@ the Worker no sweep power.
 6. Fund each fee wallet with a small gas balance.
 7. Land a pull request with `FEE_CONVERTER_MODE = "live"`. That reviewed
    pull request is the activation record MVP-07c requires. The release step
-   refuses live mode when an enabled network lacks its key, and while Solana
-   is enabled.
+   refuses live mode when an enabled network lacks its key, or enables Solana
+   before its native transaction/day limits and durable accounting are ready.
 8. Check the first `finalized` rows against the explorer: input debit, USDC
    credit to the fee wallet, no other transfer.
 9. To stop at once, land `FEE_CONVERTER_MODE = "off"`, or set the repository
@@ -621,8 +622,8 @@ loses its network lease. It is not live Kyber, Circle or production evidence.
 
 The Solana check uses a local
 `solana-test-validator` (port 28899) that clones the mainnet Jupiter and
-Whirlpool programs and one JUP/USDC route. The Solana harness lifts the
-Solana block with a local-only option that the hosted Worker never sets.
+Whirlpool programs and one JUP/USDC route. Its local-only override exercises
+the signing path without enabling the hosted Worker.
 They need `anvil` and `solana-test-validator` on `PATH` and never touch a real
 chain.
 

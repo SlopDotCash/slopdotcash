@@ -66,16 +66,15 @@ export function chainClient(
     now?: () => Date;
   } = {},
 ): ChainClient {
-  // Older Solana deployments give the fee recipient rotation authority.
-  // Keep live conversion blocked until the separate-role deployment and
-  // converter verification are qualified. Solana runs in dry_run only.
+  // Role separation is verified, but Solana still lacks approved native
+  // transaction/day ceilings and durable cost accounting (PRD section 6).
   if (
     config.mode === "live" &&
     network.network === "solana" &&
     !overrides.allowSolanaLive
   )
     throw new Error(
-      "live Solana conversion is blocked until the separate rotation authority is deployed and verified",
+      "Live Solana fee signing needs native transaction/day limits and durable accounting",
     );
   // dry_run never loads a key, so it cannot sign even when one is present.
   // A network without a verified USDC target never signs either: it only

@@ -31,7 +31,11 @@ import {
 } from "../projects/enforcement";
 import { sha256Hex } from "../trace/validation";
 import type { VettingArtifact } from "./result";
-import { type RecordedVettingResult, resultReviewers } from "./scan-result";
+import {
+  isScanResult,
+  type RecordedVettingResult,
+  resultReviewers,
+} from "./scan-result";
 
 export type {
   AssessmentState,
@@ -281,6 +285,7 @@ export class CloudflareVettingPersistence {
     resultSha256: string;
     signingKeySha256: string;
     operatorGithubIds?: readonly string[];
+    livePin?: VettingPin | null;
     at: string;
   }): Promise<"recorded" | "conflict"> {
     const { result } = input;
@@ -330,36 +335,19 @@ export class CloudflareVettingPersistence {
         createdAt: input.at,
       };
     }
-    if (result.disposition === "clean") {
+    if (
+      result.disposition === "clean" &&
+      !(isScanResult(result) && result.reusedAssessmentId !== null)
+    )
       // A clean fresh scan reinstates a project that flags alone paused
       // (PRD section 8). The record commits with the result or not at all.
-      const projects = new CloudflareProjectPersistence(this.db);
-      const [project, assessment] = await Promise.all([
-        projects.getProject(result.projectId),
-        this.getAssessment(result.assessmentId),
-      ]);
-      if (
-        project &&
-        assessment &&
-        (await this.assessmentCoversActiveFlags(assessment.id))
-      )
-        enforcement = planScanReinstatement({
-          project,
-          restriction: projectRestriction(
-            project.id,
-            await projects.listEnforcements(),
-          ),
-          scan: {
-            assessmentId: assessment.id,
-            requestedAt: assessment.requestedAt,
-            contentSha256: assessment.contentSha256,
-            keySha256: input.signingKeySha256,
-            policyVersion: result.policyVersion,
-          },
-          currentContentSha256: await vettedContentSha256(project.manifest),
-          at: input.at,
-        });
-    }
+      enforcement = await this.planFlagReinstatement(
+        result.assessmentId,
+        input.signingKeySha256,
+        result.policyVersion,
+        input.livePin,
+        input.at,
+      );
     try {
       await this.db.batch([
         this.db
@@ -423,6 +411,98 @@ export class CloudflareVettingPersistence {
         )
       )
         return "conflict";
+      throw error;
+    }
+  }
+
+  /**
+   * Plans the reinstatement of a flag-only pause from one fresh clean scan.
+   * The scan must cover every active flag and, when a live pin is given,
+   * match it; a null pin means the live pin could not be read.
+   */
+  private async planFlagReinstatement(
+    assessmentId: string,
+    keySha256: string,
+    policyVersion: string,
+    livePin: VettingPin | null | undefined,
+    at: string,
+  ): Promise<ProjectEnforcement | null> {
+    const projects = new CloudflareProjectPersistence(this.db);
+    const assessment = await this.getAssessment(assessmentId);
+    const project = assessment
+      ? await projects.getProject(assessment.projectId)
+      : null;
+    if (
+      !project ||
+      !assessment ||
+      livePin === null ||
+      (livePin !== undefined &&
+        (assessment.commitSha !== livePin.commitSha ||
+          assessment.templateSha256 !== livePin.templateSha256)) ||
+      !(await this.assessmentCoversActiveFlags(assessment.id))
+    )
+      return null;
+    return planScanReinstatement({
+      project,
+      restriction: projectRestriction(
+        project.id,
+        await projects.listEnforcements(),
+      ),
+      scan: {
+        assessmentId: assessment.id,
+        requestedAt: assessment.requestedAt,
+        contentSha256: assessment.contentSha256,
+        keySha256,
+        policyVersion,
+      },
+      currentContentSha256: await vettedContentSha256(project.manifest),
+      at,
+    });
+  }
+
+  /**
+   * Completes a flag-only reinstatement that a recorded fresh clean scan
+   * could not write, for example because the live pin was unreadable when
+   * the result landed. The scan must still match the current live pin.
+   * Returns true when it wrote the reinstatement.
+   */
+  async reinstateFromRecordedScan(
+    assessmentId: string,
+    livePin: VettingPin,
+    at: string,
+  ): Promise<boolean> {
+    const assessment = await this.getAssessment(assessmentId);
+    const result = assessment?.result;
+    if (
+      assessment?.state !== "clean" ||
+      !result ||
+      (isScanResult(result) && result.reusedAssessmentId !== null) ||
+      assessment.signingKeySha256 === null ||
+      assessment.policyVersion === null
+    )
+      return false;
+    const enforcement = await this.planFlagReinstatement(
+      assessment.id,
+      assessment.signingKeySha256,
+      assessment.policyVersion,
+      livePin,
+      at,
+    );
+    if (!enforcement) return false;
+    try {
+      await this.db.batch([
+        enforcementStatement(this.db, enforcement),
+        notifyProjectEnforcement(this.db, enforcement.id),
+      ]);
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /enforcement sequence|scan reinstatement needs|UNIQUE constraint/u.test(
+          error.message,
+        )
+      )
+        return false;
       throw error;
     }
   }

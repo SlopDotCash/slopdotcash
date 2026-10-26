@@ -392,9 +392,10 @@ const MAX_AUTOMATIC_SCANS = 25;
  * Queues the scans that changed executable content needs, without an admin
  * (PRD sections 4 and 8): a listed project whose current content or live
  * pin has no scan, and a project that flags alone paused and that has no
- * scan requested since the pause. Banned and moderator-restricted projects
- * wait for a moderator. The signed scanner service calls this before it
- * reads the queue.
+ * scan requested since the pause. A fresh clean scan at the live pin that
+ * could not reinstate when it landed reinstates here. Banned and
+ * moderator-restricted projects wait for a moderator. The signed scanner
+ * service calls this before it reads the queue.
  */
 async function refreshQueue(
   request: Request,
@@ -408,6 +409,7 @@ async function refreshQueue(
     deps.projects.listEnforcements(),
   ]);
   const queued: string[] = [];
+  const reinstated: string[] = [];
   const skipped: { projectId: string; reason: string }[] = [];
   for (const project of projects) {
     if (queued.length >= MAX_AUTOMATIC_SCANS) break;
@@ -428,17 +430,38 @@ async function refreshQueue(
         continue;
       }
       const assessments = await deps.vetting.projectAssessments(project.id);
-      const fresh = await Promise.all(
-        assessments.map(
-          async (assessment) =>
-            assessment.revision === project.revision &&
-            assessment.requestedAt >= since &&
-            assessment.commitSha === live.commitSha &&
-            assessment.templateSha256 === live.templateSha256 &&
-            (await deps.vetting.assessmentCoversActiveFlags(assessment.id)),
-        ),
-      );
-      if (!fresh.some(Boolean))
+      const fresh: VettingAssessment[] = [];
+      for (const assessment of assessments)
+        if (
+          assessment.revision === project.revision &&
+          assessment.requestedAt >= since &&
+          assessment.commitSha === live.commitSha &&
+          assessment.templateSha256 === live.templateSha256 &&
+          (await deps.vetting.assessmentCoversActiveFlags(assessment.id))
+        )
+          fresh.push(assessment);
+      // A fresh clean scan whose reinstatement could not be written when it
+      // landed, such as during a live-pin outage, reinstates now.
+      const clean = fresh.filter((assessment) => assessment.state === "clean");
+      for (const assessment of clean.reverse())
+        if (
+          await deps.vetting.reinstateFromRecordedScan(
+            assessment.id,
+            live,
+            deps.now().toISOString(),
+          )
+        ) {
+          reinstated.push(assessment.id);
+          await purgeProjectCache(
+            deps.cache,
+            new URL(request.url).origin,
+            project.id,
+            [project.manifest.skill.id, project.manifest.reviewSkill.id],
+            await deps.projects.enforcementGeneration(),
+          );
+          break;
+        }
+      if (fresh.length === 0)
         reason =
           "Automatic fresh scan after two contributor flags paused the project";
     } else {
@@ -473,7 +496,7 @@ async function refreshQueue(
       });
     }
   }
-  return json(200, { queued, skipped });
+  return json(200, { queued, reinstated, skipped });
 }
 
 /**
@@ -561,12 +584,20 @@ async function serviceResult(
   if (isScanResult(result) && result.reusedAssessmentId !== null) {
     // A cached clean scan stands in only for byte-identical executable
     // content of the same repository under the same policy and template.
-    const cached = await deps.vetting.getAssessment(result.reusedAssessmentId);
+    // Reinstatement after a contributor-flag pause requires a fresh clean scan
+    // requested on or after the pause (PRD sections 1, 8, 11).
+    const [cached, enforcements] = await Promise.all([
+      deps.vetting.getAssessment(result.reusedAssessmentId),
+      deps.projects.listEnforcements(),
+    ]);
+    const restriction = projectRestriction(project.id, enforcements);
     const prior = cached?.result;
     if (
+      pausedByFlagsOnly(restriction) ||
       result.disposition !== "clean" ||
       cached === null ||
       cached.state !== "clean" ||
+      (restriction.since !== null && cached.requestedAt < restriction.since) ||
       prior == null ||
       !isScanResult(prior) ||
       prior.reusedAssessmentId !== null ||
@@ -596,6 +627,10 @@ async function serviceResult(
         ? "Clean scan results require the exact retained report, inventory, dependency locks and artifacts"
         : "Clean results require a complete authorized canonical assembly and its exact retained evidence",
     );
+  const livePin =
+    result.disposition === "clean"
+      ? await deps.livePin(project.manifest).catch(() => null)
+      : undefined;
   const resultText = JSON.stringify(result);
   const recorded = await deps.vetting.recordResult({
     result,
@@ -603,6 +638,7 @@ async function serviceResult(
     resultSha256: await sha256Hex(new TextEncoder().encode(resultText)),
     signingKeySha256: keySha256,
     operatorGithubIds: deps.operatorGithubIds,
+    livePin,
     at: deps.now().toISOString(),
   });
   if (recorded === "conflict") {
