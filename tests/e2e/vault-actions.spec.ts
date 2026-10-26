@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { encodeFunctionData, parseAbi } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import {
@@ -1258,30 +1258,43 @@ test("owner creates, registers and funds a vault through the real API", async ({
     const errors: string[] = [];
     const failedRequests: string[] = [];
     let expectedRecoveryRejection = false;
-    page.on("pageerror", (e) => errors.push(e.message));
-    page.on("console", (e) => {
-      if (
-        e.type() === "error" &&
-        !(expectedRecoveryRejection && e.text().includes("status of 422"))
-      )
-        errors.push(e.text());
-    });
-    page.on("response", (r) => {
-      if (
-        r.url().startsWith(origin) &&
-        r.status() >= 400 &&
-        !(
-          expectedRecoveryRejection &&
-          r.status() === 422 &&
-          r.url().endsWith(`/project-vaults/${project.id}`)
+    const watch = (candidate: Page) => {
+      candidate.on("pageerror", (e) => errors.push(e.message));
+      candidate.on("console", (e) => {
+        if (
+          e.type() === "error" &&
+          !(expectedRecoveryRejection && e.text().includes("status of 422"))
         )
-      )
-        failedRequests.push(`${r.status()} ${r.url()}`);
-    });
+          errors.push(e.text());
+      });
+      candidate.on("response", (r) => {
+        if (
+          r.url().startsWith(origin) &&
+          r.status() >= 400 &&
+          !(
+            expectedRecoveryRejection &&
+            r.status() === 422 &&
+            r.url().endsWith(`/project-vaults/${project.id}`)
+          )
+        )
+          failedRequests.push(`${r.status()} ${r.url()}`);
+      });
+    };
+    watch(page);
     await page.goto(`${origin}/projects/${project.slug}/funding`, {
       waitUntil: "networkidle",
     });
-    const setup = page.getByRole("region", { name: "Set up project vault" });
+    let setup = page.getByRole("region", { name: "Set up project vault" });
+    await setup
+      .getByRole("button", { name: "Recover existing vault", exact: true })
+      .click();
+    await expect(setup.getByRole("alert")).toContainText(
+      "No existing vault was found",
+    );
+    await expect(
+      setup.getByRole("button", { name: "Create vault in wallet" }),
+    ).toHaveCount(0);
+    expect(sends).toHaveLength(0);
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
     const monthlySetting = setup.getByRole("combobox", {
       name: "Automatic monthly payment",
@@ -1312,6 +1325,66 @@ test("owner creates, registers and funds a vault through the real API", async ({
     );
     expect(sends).toHaveLength(1);
     await page.reload({ waitUntil: "networkidle" });
+    // A fresh tab has the same authenticated owner but no injected wallet and
+    // no saved creation request. Recover the already-sent vault without sending.
+    const recoveryPage = await page.context().newPage();
+    watch(recoveryPage);
+    await recoveryPage.goto(`${origin}/projects/${project.slug}/funding`, {
+      waitUntil: "networkidle",
+    });
+    const recoverySetup = recoveryPage.getByRole("region", {
+      name: "Set up project vault",
+    });
+    await expect(
+      recoverySetup.getByRole("button", { name: "Review vault creation" }),
+    ).toBeDisabled();
+    await expect(
+      recoverySetup.getByRole("button", { name: /^Connect / }),
+    ).toHaveCount(0);
+    await recoverySetup
+      .getByRole("combobox", { name: "Automatic monthly payment", exact: true })
+      .selectOption(automatic ? "on" : "off");
+    const recoverButton = recoverySetup.getByRole("button", {
+      name: "Recover existing vault",
+      exact: true,
+    });
+    await expect(recoverButton).toBeEnabled();
+    expect(
+      (
+        await new AxeBuilder({ page: recoveryPage })
+          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+          .analyze()
+      ).violations,
+    ).toEqual([]);
+    await recoveryPage.screenshot({
+      path: info.outputPath("owner-vault-recovery-ready-no-wallet.png"),
+      fullPage: true,
+    });
+    await recoverButton.focus();
+    await recoveryPage.keyboard.press("Enter");
+    await expect(
+      recoverySetup.getByRole("button", { name: "Create vault in wallet" }),
+    ).toHaveCount(0);
+    await recoverySetup.getByLabel("Creation transaction hash").fill(sends[0]);
+    await recoverySetup
+      .getByRole("button", { name: "Check vault registration" })
+      .click();
+    await expect(recoverySetup.getByRole("status")).toContainText(
+      "not finalized",
+    );
+    await recoveryPage.reload({ waitUntil: "networkidle" });
+    await expect(
+      recoverySetup.getByLabel("Creation transaction hash"),
+    ).toHaveValue(sends[0]);
+    await expect(
+      recoverySetup.getByRole("button", { name: "Create vault in wallet" }),
+    ).toHaveCount(0);
+    expect(sends).toHaveLength(1);
+    await recoveryPage.screenshot({
+      path: info.outputPath("owner-vault-recovered-without-provider.png"),
+      fullPage: true,
+    });
+    setup = recoverySetup;
     // Another tab may change the cap while this tab still shows the original project.
     const beforeEdit = await (
       await page.request.get(`${origin}/__fixture`)
@@ -1356,14 +1429,14 @@ test("owner creates, registers and funds a vault through the real API", async ({
       .click();
     await expect(setup).toHaveCount(0);
     await expect(
-      page
+      recoveryPage
         .getByRole("status")
         .filter({ hasText: "Creation used a monthly cap" }),
     ).toHaveText(
       "Creation used a monthly cap of 1,000 TEST. The project now uses 2,000 TEST. Use the automatic payment controls below to apply the new cap.",
     );
     await expect(
-      page
+      recoveryPage
         .locator(".funding-status-grid")
         .getByText("2,000 TEST", { exact: true }),
     ).toBeVisible();
@@ -1422,6 +1495,17 @@ test("owner creates, registers and funds a vault through the real API", async ({
       (await (await page.request.get(`${origin}/__fixture`)).json()).revisions
         .n,
     ).toBe(3);
+    expect(
+      await recoveryPage.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await recoveryPage.screenshot({
+      path: info.outputPath("owner-vault-registered-without-provider.png"),
+      fullPage: true,
+    });
+    await recoveryPage.close();
+    await page.reload({ waitUntil: "networkidle" });
     unknownSend = false;
     const monthlyControls = page.getByRole("region", {
       name: "Automatic monthly payment · base-sepolia",

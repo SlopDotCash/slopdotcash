@@ -192,23 +192,26 @@ export function OwnerVaultSetup({
       setWallet(connected);
       setReview(null);
     });
-  const claim = claims.find(
+  const ownerClaims = claims.filter(
     (c) =>
       c.authorized &&
       c.chain ===
-        ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]?.chain &&
-      wallet &&
-      sameWallet(c.address, wallet.address),
+        ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]?.chain,
   );
-  const reviewCreation = () =>
+  const claim = wallet
+    ? ownerClaims.find((c) => sameWallet(c.address, wallet.address))
+    : undefined;
+  const recoveryClaim = ownerClaims.length === 1 ? ownerClaims[0] : undefined;
+  const reviewCreation = (existingOnly = false) =>
     run(async () => {
-      if (!info || !claim)
+      const selectedClaim = existingOnly ? recoveryClaim : claim;
+      if (!info || !selectedClaim)
         throw new Error(
           "Confirm this wallet in Earnings, then reload the setup options.",
         );
       const input = {
         network: network as EscrowDeployment["network"],
-        claimId: claim.claimId,
+        claimId: selectedClaim.claimId,
         automatic: bounty ? false : automatic,
         payoutPolicy,
         expectedRevision: info.revision,
@@ -217,17 +220,17 @@ export function OwnerVaultSetup({
         ...input,
         step: "review",
       })) as unknown as { review: VaultSetupReview };
-      setReview({
-        version: 1,
+      const checked = checkedVaultSetupReview(
+        result.review,
+        project,
         input,
-        review: checkedVaultSetupReview(
-          result.review,
-          project,
-          input,
-          claim.address,
-        ),
-        hash: null,
-      });
+        selectedClaim.address,
+      );
+      if (existingOnly && !checked.existingVault)
+        throw new Error(
+          "No existing vault was found for your confirmed wallet. Connect it to create one.",
+        );
+      setReview({ version: 1, input, review: checked, hash: null });
     });
   const create = () =>
     run(async () => {
@@ -485,6 +488,22 @@ export function OwnerVaultSetup({
             >
               Review vault creation
             </button>
+            {!wallet ? (
+              <>
+                <p>
+                  Recover a vault you already created without reconnecting your
+                  confirmed wallet.
+                </p>
+                <button
+                  className="button secondary-button"
+                  type="button"
+                  disabled={busy || !recoveryClaim || Boolean(saved.error)}
+                  onClick={() => void reviewCreation(true)}
+                >
+                  Recover existing vault
+                </button>
+              </>
+            ) : null}
           </>
         )
       ) : null}
