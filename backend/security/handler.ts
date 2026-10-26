@@ -38,7 +38,10 @@ import {
 } from "../projects/account-bans";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
 import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
-import { publicRestrictionOf } from "../projects/enforcement";
+import {
+  projectRestriction,
+  publicRestrictionOf,
+} from "../projects/enforcement";
 import type { RepositoryAccessReader } from "../projects/setup";
 import { readJsonObject } from "../trace/validation";
 import type { AdvisoryReader, GithubPrivateReport } from "./advisories";
@@ -307,6 +310,22 @@ async function currentReportingProject(
   return { manifest, revision: row.revision };
 }
 
+/**
+ * A moderator quarantine or ban applies a paused, retired revision. The
+ * project stays registered, so its existing private cases keep their
+ * automatic checks and appeal triage (PRD section 8). An owner retirement
+ * has no restriction of its own and closes them.
+ */
+async function restrictionRetired(
+  deps: Pick<SecurityApiDependencies, "db">,
+  projectId: string,
+): Promise<boolean> {
+  const records = await new CloudflareProjectPersistence(
+    deps.db,
+  ).listEnforcements();
+  return projectRestriction(projectId, records).state !== "clear";
+}
+
 /** Reporting needs a registered repository, not financial terms. */
 export type ReportingContext = Pick<
   SecurityBountyTerms,
@@ -318,9 +337,14 @@ export async function reportingContext(
   deps: Pick<SecurityApiDependencies, "db" | "repositoryAccess">,
   projectId: string,
   contacts = false,
+  existingCase = false,
 ): Promise<ReportingContext> {
   const project = await currentReportingProject(deps, projectId);
-  if (project === null || project.manifest.listingTier === "retired")
+  if (
+    project === null ||
+    (project.manifest.listingTier === "retired" &&
+      !(existingCase && (await restrictionRetired(deps, projectId))))
+  )
     fail(
       404,
       "project_not_found",
@@ -2876,6 +2900,7 @@ async function automaticAction(
     deps,
     row.project_id,
     action === "check-receipt",
+    true,
   );
   if (action === "check-receipt") {
     requireAction(row, roles, action);

@@ -1445,7 +1445,45 @@ describe("quarantined private cases", () => {
     );
     expect(result.status).toBe(200);
   });
-  test("a failed existing appeal triage can retry after project quarantine", async () => {
+  test.each(["pending", "applied"])(
+    "a failed existing appeal triage can retry after project quarantine: %s revision",
+    async (revision) => {
+      const env = open();
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      await env.decide(id, "appeal-root");
+      expect(
+        (
+          await env.act(MAINTAINER, id, {
+            action: "award",
+            decision: "none",
+            reason: "Owner decision for review",
+          })
+        ).status,
+      ).toBe(200);
+      env.setAnalyzerConfigured(false);
+      expect(
+        (
+          await env.act(REPORTER, id, {
+            action: "appeal",
+            reason:
+              "Review the scope and decision that applied to this private report",
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        env.sqlite
+          .query("SELECT state FROM security_appeal_triages WHERE case_id = ?")
+          .get(id),
+      ).toEqual({ state: "unavailable" });
+      env.setAnalyzerConfigured(true);
+      env.restrictProgram("quarantine");
+      // An applied quarantine appends the paused, retired revision.
+      if (revision === "applied") env.retireProgram();
+      const result = await env.act(DISPUTE, id, { action: "triage-appeal" });
+      expect(result.status).toBe(200);
+    },
+  );
+  test("an owner retirement closes a failed appeal triage retry", async () => {
     const env = open();
     const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
     await env.decide(id, "appeal-root");
@@ -1468,15 +1506,10 @@ describe("quarantined private cases", () => {
         })
       ).status,
     ).toBe(200);
-    expect(
-      env.sqlite
-        .query("SELECT state FROM security_appeal_triages WHERE case_id = ?")
-        .get(id),
-    ).toEqual({ state: "unavailable" });
     env.setAnalyzerConfigured(true);
-    env.restrictProgram("quarantine");
+    env.retireProgram();
     const result = await env.act(DISPUTE, id, { action: "triage-appeal" });
-    expect(result.status).toBe(200);
+    expect(result.status).toBe(404);
   });
   test("a previously funded award remains accessible while quarantined", async () => {
     const env = open();
