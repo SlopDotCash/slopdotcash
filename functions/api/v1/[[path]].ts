@@ -45,6 +45,7 @@ import {
 import { assetTemplateSource } from "../../../backend/projects/skill-publication";
 import { rpcTokenMetadataReader } from "../../../backend/projects/token-metadata";
 import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
+import { handleReferralsApi } from "../../../backend/referrals/handler";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
 import {
@@ -796,6 +797,10 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     cache: edgeCache(),
   });
   if (vettingResponse !== null) return vettingResponse;
+  const referralsResponse = await handleReferralsApi(context.request, {
+    db: context.env.SLOP_DB,
+  });
+  if (referralsResponse !== null) return referralsResponse;
   const feeConversionsResponse = await handleFeeConversionsApi(
     context.request,
     {
