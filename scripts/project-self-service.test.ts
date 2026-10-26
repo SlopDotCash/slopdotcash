@@ -1838,6 +1838,54 @@ test("an open account appeal survives later project restrictions and needs an in
   expect(keptAppeal.status).toBe(200);
   expect(keptAppeal.body.record).toMatchObject({ appealAfter: "denied" });
   expect((await decide("deny_reinstatement", ADMIN, 15)).status).toBe(409);
+  // OTHER appeals its account ban through /admin while the project is clear.
+  // That request stays an account appeal after a later ban and a malicious
+  // result keep it, so releasing OTHER leaves no appeal for the decision.
+  const beforeClear = await t.persistence.getProject(project.id);
+  if (!beforeClear) throw new Error("Project missing");
+  expect(
+    await t.persistence.appendEnforcement(
+      {
+        id: "enf_clear_denial_reinstate_2",
+        projectId: project.id,
+        sequence: 15,
+        action: "reinstate",
+        stateAfter: "clear",
+        appealAfter: "granted",
+        reason: "Clean scan after revert clears the project",
+        evidenceReference: "private-project-review-fixture",
+        repositoryGithubId: "987654321",
+        repositoryKeys: ["example/clear-denial"],
+        actor: { githubId: OWNER, githubLogin: "owner" },
+        actorRole: "project-moderator",
+        decisionSource: "admin-panel",
+        beforeRevision: beforeClear.revision,
+        beforeManifestSha256: beforeClear.manifestSha256,
+        afterRevision: null,
+        afterManifestSha256: null,
+        result: "no_revision_needed",
+        createdAt: NOW,
+      },
+      null,
+      [],
+    ),
+  ).toBe("recorded");
+  const clearAppeal = await decide("request_reinstatement", OTHER, 16);
+  expect(clearAppeal.status).toBe(200);
+  expect(clearAppeal.body.record).toMatchObject({
+    actorRole: "project-moderator",
+    stateAfter: "clear",
+  });
+  expect((await decide("ban", ADMIN, 17, [])).status).toBe(200);
+  expect(await vettingBan(18, "requested")).toBe("recorded");
+  const release = await decide("reinstate_accounts", OWNER, 19, [
+    { githubLogin: "other" },
+  ]);
+  expect(release.status).toBe(200);
+  expect(release.body.record).toMatchObject({ appealAfter: "granted" });
+  const decision = await decide("ban", ADMIN, 20, []);
+  expect(decision.status).toBe(200);
+  expect(decision.body.record).toMatchObject({ appealAfter: "none" });
 });
 
 /**
