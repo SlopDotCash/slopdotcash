@@ -19,10 +19,6 @@ export type ContributionField =
   | "closurePolicy"
   | "maintainerNotes";
 export declare function formatMonthlyCapDisplay(value: string): string;
-export declare function formatAssetAmount(
-  value: string,
-  decimals: number,
-): string;
 export declare function parseAssetAmount(
   value: string,
   decimals: number,

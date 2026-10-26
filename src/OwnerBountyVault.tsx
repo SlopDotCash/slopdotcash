@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
+import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { ProjectApiError, projectApiRequest } from "./lib/project-api";
-import { formatAssetAmount } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { OwnerVaultSetup } from "./OwnerVaultSetup";
 import { formatDateTime } from "./Presentation";
@@ -109,7 +109,7 @@ export function OwnerBountyVault({
               <>
                 <p>
                   Available for new awards:{" "}
-                  {formatAssetAmount(
+                  {formatBaseUnits(
                     state.funds.availableMinor,
                     state.funds.decimals,
                   )}{" "}

@@ -20,11 +20,9 @@ function previousMonth() {
 }
 /** Base units as a plain decimal an owner can edit, without grouping separators. */
 function editableUnits(base: string, decimals: number | null) {
-  if (decimals === null || decimals === 0) return base;
-  const digits = base.padStart(decimals + 1, "0");
-  const whole = digits.slice(0, -decimals);
-  const fraction = digits.slice(-decimals).replace(/0+$/, "");
-  return fraction ? `${whole}.${fraction}` : whole;
+  return decimals === null
+    ? base
+    : formatBaseUnits(base, decimals, { grouping: false });
 }
 function baseUnitsOf(value: string, decimals: number | null) {
   const trimmed = value.trim();

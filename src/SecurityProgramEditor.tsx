@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link } from "./Link";
+import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
 import { publishProjectRevision, type RevisionResult } from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
-import { formatAssetAmount, parseAssetAmount } from "./lib/project-schema.mjs";
+import { parseAssetAmount } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   assertSecurityBountyTerms,
@@ -86,10 +87,9 @@ export function SecurityProgramEditor({
   );
   const [amount, setAmount] = useState(
     existing
-      ? formatAssetAmount(
-          existing.amount.grossMinor,
-          existing.amount.decimals,
-        ).replaceAll(",", "")
+      ? formatBaseUnits(existing.amount.grossMinor, existing.amount.decimals, {
+          grouping: false,
+        })
       : "",
   );
   const [network, setNetwork] = useState<
