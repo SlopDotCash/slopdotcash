@@ -23,7 +23,7 @@ alias only.
 - Slop never infers copyright ownership, legal capacity, assignment, wallet
   control, or payment authority.
 - Slop never holds keys, signs transactions, broadcasts payments, or claims
-  success before public evidence proves it, except for the two narrowly scoped
+  success before public evidence proves it, except for the three narrowly scoped
   kinds of key below. No other application-service exception exists.
   - The escrow identity attester key (PAY-05, approved by the repository owner
     on 14 October 2026). It only attests the authenticated GitHub actor for a
@@ -59,6 +59,16 @@ alias only.
     `.env`, not by the Worker (PRD sections 6 and 11, 24 October 2026).
     The job runs in dry run until a
     reviewed activation record enables signing.
+  - The referral root-posting key (PRD section 11, "Referral program", owner
+    decision of 25 October 2026). It posts cumulative Merkle roots to the
+    ReferralDistributor and is separate from the contract owner key. It does
+    not transfer tokens; referrers claim their own tokens after the void
+    window. The accrual job may run only in off or dry_run until the program
+    token exists, the funding line is agreed, counsel has reviewed the terms,
+    an independent root watcher is operating, and the owner explicitly
+    activates posting. Root
+    posting stays on Robinhood Chain Testnet until that activation. This
+    exception grants no authority over project vaults or contributor payments.
 - The owner may authorize an agent to use necessary existing credentials
   privately and execute reviewed setup, testnet or mainnet plans (owner
   decision, 25 October 2026; PRD section 11). Stay within the authorized
