@@ -106,6 +106,28 @@ describe("reward token metadata", () => {
     });
   });
 
+  test("owner setup refuses active authorities on base Token-2022 mints", async () => {
+    for (const [offset, role] of [
+      [0, "mint"],
+      [46, "freeze"],
+    ] as const) {
+      const mint = classicMint(6);
+      mint[offset] = 1;
+      mint.fill(9, offset + 4, offset + 36);
+      await expect(read(TOKEN_2022, mint).metadata).rejects.toThrow(
+        `Token-2022 ${role} authority is not disabled`,
+      );
+      expect(await read(TOKEN, mint).metadata).toEqual({
+        decimals: 6,
+        symbol: null,
+      });
+    }
+    expect(await read(TOKEN_2022, classicMint(6)).metadata).toEqual({
+      decimals: 6,
+      symbol: null,
+    });
+  });
+
   test("refuses a Token-2022 mint outside the subset", async () => {
     const authorized = token2022Mint(6);
     authorized[46] = 1;
