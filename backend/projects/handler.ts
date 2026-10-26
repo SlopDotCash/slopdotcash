@@ -2113,10 +2113,31 @@ async function enforceProject(
       "expectedSequence",
     ),
     actor: { githubId: session.githubId, githubLogin: session.githubLogin },
-    actorRole: () => "project-moderator",
+    actorRole: (_project, restriction) =>
+      body.action === "request_reinstatement" &&
+      filesAccountAppeal(restriction, session.githubId)
+        ? "banned-account"
+        : "project-moderator",
     decisionSource: "admin-panel",
     mode,
   });
+}
+
+/**
+ * A banned account files its own account appeal while the project is clear
+ * or a project appeal is already open, on the owner route and at /admin.
+ */
+function filesAccountAppeal(
+  restriction: ProjectRestriction,
+  githubId: string,
+): boolean {
+  return (
+    restriction.bannedMaintainers.some(
+      (account) => account.githubId === githubId,
+    ) &&
+    (restriction.state === "clear" ||
+      projectAppealState(restriction) === "requested")
+  );
 }
 
 /**
@@ -2166,9 +2187,8 @@ async function requestReinstatement(
     expectedSequence: null,
     actor: { githubId: session.githubId, githubLogin: session.githubLogin },
     actorRole: async (project, restriction) => {
-      const isBannedAccount = restriction.bannedMaintainers.some(
-        (account) => account.githubId === session.githubId,
-      );
+      if (filesAccountAppeal(restriction, session.githubId))
+        return "banned-account";
       const ownerRole =
         String(project.manifest.steward.github.actorId) === session.githubId
           ? "project-steward"
@@ -2176,14 +2196,13 @@ async function requestReinstatement(
               session.githubId
             ? "project-applicant"
             : null;
+      if (ownerRole !== null) return ownerRole;
       if (
-        isBannedAccount &&
-        (restriction.state === "clear" ||
-          projectAppealState(restriction) === "requested")
+        restriction.bannedMaintainers.some(
+          (account) => account.githubId === session.githubId,
+        )
       )
         return "banned-account";
-      if (ownerRole !== null) return ownerRole;
-      if (isBannedAccount) return "banned-account";
       return fail(
         403,
         "forbidden",

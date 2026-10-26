@@ -1838,9 +1838,10 @@ test("an open account appeal survives later project restrictions and needs an in
   expect(keptAppeal.status).toBe(200);
   expect(keptAppeal.body.record).toMatchObject({ appealAfter: "denied" });
   expect((await decide("deny_reinstatement", ADMIN, 15)).status).toBe(409);
-  // OTHER appeals its account ban through /admin while the project is clear.
-  // That request stays an account appeal after a later ban and a malicious
-  // result keep it, so releasing OTHER leaves no appeal for the decision.
+  // OTHER appeals its account ban at /admin while the project is clear. The
+  // request is an account appeal: only OWNER, who did not ban OTHER, reviews
+  // it, and it cannot authorize project reinstatement. After a later ban and
+  // a malicious result keep it, releasing OTHER leaves no appeal open.
   const beforeClear = await t.persistence.getProject(project.id);
   if (!beforeClear) throw new Error("Project missing");
   expect(
@@ -1873,10 +1874,23 @@ test("an open account appeal survives later project restrictions and needs an in
   const clearAppeal = await decide("request_reinstatement", OTHER, 16);
   expect(clearAppeal.status).toBe(200);
   expect(clearAppeal.body.record).toMatchObject({
-    actorRole: "project-moderator",
+    actorRole: "banned-account",
+    decisionSource: "account-request",
     stateAfter: "clear",
   });
+  expect(
+    t.sqlite
+      .query(
+        "SELECT recipient_github_id FROM notifications WHERE event_key = ?",
+      )
+      .all(
+        `reinstatement-review:${(clearAppeal.body.record as { id: string }).id}`,
+      ),
+  ).toEqual([{ recipient_github_id: OWNER }]);
   expect((await decide("ban", ADMIN, 17, [])).status).toBe(200);
+  const accountOnlyReinstate = await decide("reinstate", OWNER, 18);
+  expect(accountOnlyReinstate.status).toBe(409);
+  expect(accountOnlyReinstate.body.error).toBe("no_open_appeal");
   expect(await vettingBan(18, "requested")).toBe("recorded");
   const release = await decide("reinstate_accounts", OWNER, 19, [
     { githubLogin: "other" },
