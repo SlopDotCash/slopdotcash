@@ -6,11 +6,16 @@ import anchor from "@coral-xyz/anchor";
 import {
   getAccount,
   getAssociatedTokenAddressSync,
-  getOrCreateAssociatedTokenAccount,
+  createAssociatedTokenAccountIdempotentInstruction,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { PublicKey, SystemProgram } from "@solana/web3.js";
+import {
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  sendAndConfirmTransaction,
+} from "@solana/web3.js";
 import { readVaultTotals, solanaAwardId } from "../.local/adapter.mjs";
 import {
   configAddress,
@@ -71,8 +76,13 @@ test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reser
         config: configAddress(program.programId),
       })
       .rpc();
-  await assert.rejects(initialize(TOKEN_PROGRAM_ID), /WrongMint/);
-  await initialize(tokenProgram);
+  await assert.rejects(initialize(TOKEN_PROGRAM_ID), /IncorrectProgramId/);
+  assert.equal(await program.account.project.fetchNullable(project), null);
+  assert.equal(await provider.connection.getAccountInfo(vault), null);
+  await provider.connection.confirmTransaction(
+    await initialize(tokenProgram),
+    "confirmed",
+  );
   const balance = async (address) =>
     (await getAccount(provider.connection, address, "confirmed", tokenProgram))
       .amount;
@@ -91,7 +101,10 @@ test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reser
       })
       .rpc();
   await assert.rejects(deposit(TOKEN_PROGRAM_ID), /WrongMint/);
-  await deposit(tokenProgram);
+  await provider.connection.confirmTransaction(
+    await deposit(tokenProgram),
+    "confirmed",
+  );
   assert.equal(await balance(vault), deposited);
   assert.equal(await balance(source), before - deposited);
   const sourceDigest = digest("metadata-reserved-local-fixture");
@@ -100,7 +113,7 @@ test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reser
     "hex",
   );
   const reserved = 100_000_000n;
-  await program.methods
+  const committed = await program.methods
     .commit([...award], [...sourceDigest], bn(77), bn(reserved))
     .accountsStrict({
       owner: payer.publicKey,
@@ -111,6 +124,7 @@ test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reser
       systemProgram: SystemProgram.programId,
     })
     .rpc();
+  await provider.connection.confirmTransaction(committed, "confirmed");
   const withdraw = (gross) =>
     program.methods
       .withdraw(bn(gross))
@@ -129,22 +143,42 @@ test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reser
   );
   const gross = 400_000_000n,
     fee = 8_000_000n;
-  await withdraw(gross);
+  await provider.connection.confirmTransaction(
+    await withdraw(gross),
+    "confirmed",
+  );
   assert.equal(await balance(source), before - deposited + gross - fee);
   assert.equal(await balance(vault), deposited - gross + fee);
   const accrued = await program.account.project.fetch(project);
   assert.equal(accrued.reserved.toString(), reserved.toString());
   assert.equal(accrued.accruedFees.toString(), fee.toString());
-  const feeAccount = await getOrCreateAssociatedTokenAccount(
-    provider.connection,
-    payer,
+  const feeAddress = getAssociatedTokenAddressSync(
     mint,
     configFees.publicKey,
     false,
-    "confirmed",
-    undefined,
     tokenProgram,
   );
+  await sendAndConfirmTransaction(
+    provider.connection,
+    new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        payer.publicKey,
+        feeAddress,
+        configFees.publicKey,
+        mint,
+        tokenProgram,
+      ),
+    ),
+    [payer],
+    { commitment: "confirmed", preflightCommitment: "confirmed" },
+  );
+  const feeAccount = await getAccount(
+    provider.connection,
+    feeAddress,
+    "confirmed",
+    tokenProgram,
+  );
+
   const claimed = await program.methods
     .claimFees()
     .accountsStrict({

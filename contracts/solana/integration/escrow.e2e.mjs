@@ -1291,13 +1291,25 @@ test("permissionless deposit, 18-, 9- and 0-decimal mints, 2% withdrawal fee, un
     undefined,
     TOKEN_2022_PROGRAM_ID,
   );
-  await assert.rejects(
-    initializeFor(mint2022, "token-2022").send(),
-    /WrongMint/,
+  const wrongProgram = initializeFor(mint2022, "token-2022");
+  await assert.rejects(wrongProgram.send(), /IncorrectProgramId/);
+  assert.equal(
+    await program.account.project.fetchNullable(wrongProgram.address),
+    null,
+  );
+  assert.equal(
+    await provider.connection.getAccountInfo(
+      pda(seed("vault"), key(wrongProgram.address)),
+    ),
+    null,
   );
   await assert.rejects(
     initializeFor(mint2022, "token-2022", TOKEN_2022_PROGRAM_ID).send(),
     /UnsupportedTokenExtension/,
+  );
+  assert.equal(
+    await program.account.project.fetchNullable(wrongProgram.address),
+    null,
   );
 });
 
