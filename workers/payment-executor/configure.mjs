@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { fetchProjectRegistry } from "../../scripts/sync-project-registry.mjs";
 import {
   ESCROW_NETWORKS,
   paymentDeploymentRecord,
@@ -22,6 +23,8 @@ const ROLES = ["attester", "relayer", "dispatcher"];
 // executor, never by Slop, and Slop runs no scheduled job that starts a
 // payment. The PAY-05 identity attester is the only Slop-held payment key.
 const PRODUCTION_ROLES = ["attester"];
+// deploymentOrigins("staging").api in src/lib/deployment.ts.
+const STAGING_REGISTRY_ORIGIN = "https://staging.slop.cash";
 
 /**
  * Builds the Wrangler configurations of one payment stack for one network.
@@ -38,9 +41,19 @@ const PRODUCTION_ROLES = ["attester"];
  * `signer-stacks.mjs`, and it refuses the mainnet until the network's
  * reviewed `MAINNET_EXECUTION` value is `true`. Every deployment must equal
  * its canonical project manifest in `registry`.
+ *
+ * A `staging` test stack serves the staging site instead of an isolated
+ * frontend. Like production, its payment database is the staging registry
+ * database (`SLOP_DB` in wrangler.staging.toml), so the staging account API
+ * and pages read what its signers and dispatcher record, and its pins are
+ * every deployment of the network in the staging registry. Its `keeper`
+ * topology runs as production does: the attester binds on its schedule, the
+ * dispatcher has no schedule, and an independent keeper submits payments.
  */
 export function paymentStack({
   stack = "test",
+  environment = "isolated",
+  topology = "relayer",
   scope = "ordinary",
   network,
   databaseId,
@@ -55,7 +68,36 @@ export function paymentStack({
   const policy = Object.hasOwn(ESCROW_NETWORKS, network ?? "")
     ? ESCROW_NETWORKS[network]
     : undefined;
-  if (stack === "test") {
+  if (!["isolated", "staging"].includes(environment))
+    throw new Error("Unknown test environment");
+  if (!["relayer", "keeper"].includes(topology))
+    throw new Error("Unknown payment topology");
+  const staging = environment === "staging";
+  if ((staging || topology === "keeper") && (stack !== "test" || !staging))
+    throw new Error("Only a staging test stack has a staging topology");
+  const projects = assertProjectRegistry(registry);
+  if (staging) {
+    if (
+      policy?.testnet !== true ||
+      scope !== "ordinary" ||
+      databaseId !== undefined ||
+      databaseName !== undefined ||
+      deployments !== undefined
+    )
+      throw new Error(
+        "A staging stack serves one registry test network from the staging registry; do not name a database or deployments",
+      );
+    // The staging registry database only, never production storage.
+    if (registryDatabase.database_name !== "slop-staging")
+      throw new Error("A staging stack requires the slop-staging database");
+    deployments = projects.flatMap((project) =>
+      (project.escrow?.deployments ?? [])
+        .filter((deployment) => deployment.network === network)
+        .map((deployment) => paymentDeploymentRecord(project.id, deployment)),
+    );
+    if (!deployments.length)
+      throw new Error("The staging registry has no deployment on this network");
+  } else if (stack === "test") {
     if (
       // Test stacks only: every registry test network, never a mainnet.
       policy?.testnet !== true ||
@@ -89,7 +131,6 @@ export function paymentStack({
     (stack !== "production" && !deployments.length)
   )
     throw new Error("Expected reviewed deployment array");
-  const projects = assertProjectRegistry(registry);
   if (
     !deployments.length &&
     projects.some((project) =>
@@ -148,19 +189,20 @@ export function paymentStack({
     );
   const ordinaryPins = production ? scopedDeployments("ordinary") : deployments;
   const privatePins = production ? scopedDeployments("security-bounty") : [];
-  const prefix = `${production ? `slop-payments-${network}` : databaseName}${!production && scope === "security-bounty" ? "-bounty" : ""}`;
+  const prefix = `${production ? `slop-payments-${network}` : staging ? `slop-payments-${network}-staging` : databaseName}${!production && scope === "security-bounty" ? "-bounty" : ""}`;
   const names = Object.fromEntries(
     roles.map((role) => [role, `${prefix}-${role}`]),
   );
-  const paymentsDatabase = production
-    ? // No migrations_dir: the Pages release migrates the registry database.
-      { binding: "PAYMENTS_DB", ...registryDatabase }
-    : {
-        binding: "PAYMENTS_DB",
-        database_name: databaseName,
-        database_id: databaseId,
-        migrations_dir: resolve(repository, "migrations"),
-      };
+  const paymentsDatabase =
+    production || staging
+      ? // No migrations_dir: the Pages release migrates the registry database.
+        { binding: "PAYMENTS_DB", ...registryDatabase }
+      : {
+          binding: "PAYMENTS_DB",
+          database_name: databaseName,
+          database_id: databaseId,
+          migrations_dir: resolve(repository, "migrations"),
+        };
   const common = {
     compatibility_date: "2026-10-06",
     compatibility_flags: ["nodejs_compat"],
@@ -221,6 +263,9 @@ export function paymentStack({
             ...(scheduledAttester && monthlySchedule !== undefined
               ? { MONTHLY_PAYMENT_SCHEDULE: monthlySchedule }
               : {}),
+            ...(role === "attester" && topology === "keeper"
+              ? { SCHEDULED_BINDINGS: "on" }
+              : {}),
           }
         : {
             PAYMENT_NETWORKS: JSON.stringify([network]),
@@ -252,7 +297,10 @@ export function paymentStack({
               { tag: "v1", new_sqlite_classes: ["PaymentSignerJournal"] },
             ],
           }
-        : { triggers: { crons: ["*/5 * * * *"] } }),
+        : {
+            // The keeper topology submits no payment from Slop.
+            triggers: { crons: topology === "keeper" ? [] : ["*/5 * * * *"] },
+          }),
       ...(role === "attester"
         ? {}
         : {
@@ -284,6 +332,8 @@ async function main() {
   const args = {};
   const allowed = new Set([
     "stack",
+    "environment",
+    "topology",
     "scope",
     "network",
     "database-id",
@@ -300,25 +350,34 @@ async function main() {
       !process.argv[index + 1]
     )
       throw new Error(
-        "Use [--stack test] --network NETWORK --database-id ID --database-name NAME --deployments PATH --output DIRECTORY, or --stack production --network MAINNET --deployments PATH --output DIRECTORY",
+        "Use [--stack test] --network NETWORK --database-id ID --database-name NAME --deployments PATH --output DIRECTORY, --environment staging [--topology keeper] --network NETWORK --output DIRECTORY, or --stack production --network MAINNET --deployments PATH --output DIRECTORY",
       );
     args[key] = process.argv[index + 1];
   }
-  if (!args.deployments || !args.output)
+  const staging = args.environment === "staging";
+  if ((!staging && !args.deployments) || !args.output)
     throw new Error("--deployments and --output are required");
   const stack = args.stack ?? "test";
   const network = args.network;
+  const pages = staging ? "wrangler.staging.toml" : "wrangler.toml";
   const { names, configs, secret } = paymentStack({
     stack,
+    environment: args.environment,
+    topology: args.topology,
     scope: args.scope,
     network,
     databaseId: args["database-id"],
     databaseName: args["database-name"],
-    deployments: JSON.parse(await readFile(args.deployments, "utf8")),
-    // The D1 project registry snapshot (`bun run projects:sync`) is the reviewed source.
-    registry: HISTORICAL_PROJECTS,
-    registryDatabase: await readRegistryDatabase(),
-    monthlySchedule: await readMonthlySchedule(),
+    deployments: args.deployments
+      ? JSON.parse(await readFile(args.deployments, "utf8"))
+      : undefined,
+    // The D1 project registry is the reviewed source: the production
+    // snapshot (`bun run projects:sync`), or the live staging registry.
+    registry: staging
+      ? (await fetchProjectRegistry(STAGING_REGISTRY_ORIGIN)).projects
+      : HISTORICAL_PROJECTS,
+    registryDatabase: await readRegistryDatabase(pages),
+    monthlySchedule: await readMonthlySchedule(pages),
   });
   const output = resolve(args.output);
   await mkdir(output, { recursive: true });
@@ -382,7 +441,10 @@ async function main() {
     `cd ${quote(repository)}`,
     ...dryRuns,
     `node ${quote(resolve(root, "assert-fresh-test-stack.mjs"))} ${Object.values(names).map(quote).join(" ")}`,
-    command("dispatcher", "d1 migrations apply PAYMENTS_DB --remote"),
+    // The staging Pages release migrates slop-staging.
+    ...(staging
+      ? []
+      : [command("dispatcher", "d1 migrations apply PAYMENTS_DB --remote")]),
     ...signers,
     `${wrangler} deploy --config ${quote(inactiveDispatcher)}`,
     // Fresh-only admission prevents modifying any existing active stack.
@@ -393,6 +455,8 @@ async function main() {
   await writeFile(resolve(output, "apply-test-backend.sh"), plan.join("\n"), {
     mode: 0o700,
   });
+  // The staging site's bindings live in wrangler.staging.toml.
+  if (staging) return;
   await writeFile(
     resolve(output, "pages-bindings.json"),
     `${JSON.stringify({ network, note: "Merge only into isolated test Pages environment; never production.", d1_databases: [{ binding: "SLOP_DB", database_name: args["database-name"], database_id: args["database-id"] }], services: [{ binding: "SLOP_IDENTITY", service: "slop-identity-test" }], vars: { PAYMENTS_ALLOWED_ORIGIN: "https://slop-staging.pages.dev", PAYMENT_NETWORKS: JSON.stringify([network]) }, requiredSecretNames: ["TRACE_AUTH_SECRET"], optionalOperatorVariable: "OPERATOR_GITHUB_IDS" }, null, 2)}\n`,

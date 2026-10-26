@@ -317,6 +317,18 @@ node workers/payment-executor/configure.mjs \
   --output workers/payment-executor/.generated
 ```
 
+For the staging site, use `--environment staging --network "$TEST_NETWORK"
+--output DIRECTORY` with no database or deployments file. The stack then uses
+`slop-staging` (`SLOP_DB` in `wrangler.staging.toml`) as both payment and
+registry database, as production uses `slop-private`, so the staging account
+API and pages read what it records. It pins every deployment of that network
+in the live staging registry and refuses any other database. Its Workers are
+`slop-payments-NETWORK-staging-ROLE`. The staging Pages release migrates the
+database; the apply script does not. Add `--topology keeper` for the
+production arrangement: the attester binds on its schedule
+(`SCHEDULED_BINDINGS`), the dispatcher has no schedule, and an independent
+[operator keeper](../operator-keeper/README.md) submits payments.
+
 This command does not create resources or deploy. Generated configuration has
 `workers_dev: false`, `preview_urls: false`, no routes, and the SQLite Durable
 Object migration. It emits an attester, relayer, and five-minute scheduled dispatcher
