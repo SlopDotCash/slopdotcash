@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { fetchWithDeadline, readBoundedJson } from "./browser-json";
+import { fetchWithDeadline } from "./browser-json";
 import type {
   PublicProjectApplication as ProjectApplication,
   WebSession as ProjectSession,
@@ -18,9 +18,6 @@ export type {
   EnforcementPreview,
   PublicProjectApplication as ProjectApplication,
 } from "./project-contracts";
-
-/** Above the largest admin and security list the API returns. */
-const MAX_PROJECT_API_BYTES = 16 * 1024 * 1024;
 
 export class ProjectApiError extends Error {
   constructor(
@@ -86,11 +83,7 @@ export async function projectApiRequest<T>(
   }
   let parsed: unknown;
   try {
-    parsed = await readBoundedJson(
-      response,
-      MAX_PROJECT_API_BYTES,
-      "The project API",
-    );
+    parsed = await response.json();
   } catch (error) {
     if (
       error instanceof DOMException &&
