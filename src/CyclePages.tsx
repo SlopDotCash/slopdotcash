@@ -2,6 +2,7 @@ import { CircleAlert, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
+import { errorMessage } from "./lib/errors";
 import { cycleSettlementReminder } from "./lib/funding-reminders";
 import {
   monthlyCutoff,
@@ -19,7 +20,6 @@ import {
   DataNotice,
   EmptyState,
   ExternalLinkAnchor,
-  errorMessage,
   formatCycleMonth,
   formatDate,
   formatDateTime,

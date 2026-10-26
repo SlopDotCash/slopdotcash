@@ -4,7 +4,9 @@
  * distinct members' flags pause the project at once, and a clean fresh scan
  * reinstates it. The member sees only their own flag.
  */
+
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { errorMessage } from "./lib/errors";
 import {
   currentProjectSession,
   ProjectApiError,
@@ -107,10 +109,7 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
         setBusy(false);
         if (caught instanceof ProjectApiError && caught.status === 401)
           setState({ status: "signed-out" });
-        else
-          setError(
-            caught instanceof Error ? caught.message : "The request failed.",
-          );
+        else setError(errorMessage(caught, "The request failed."));
       },
     );
   };

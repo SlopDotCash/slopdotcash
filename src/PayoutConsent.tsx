@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { evmBindingTypedData } from "../contracts/evm/adapter";
 import { readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import type { AccountPayment, PaymentsAccount } from "./lib/payments/contracts";
@@ -200,9 +201,7 @@ export function PayoutConsent({
       setOpen(false);
     } catch (e) {
       setError(
-        e instanceof Error
-          ? e.message
-          : "Payout consent failed. Your award stays reserved.",
+        errorMessage(e, "Payout consent failed. Your award stays reserved."),
       );
     } finally {
       setBusy(false);

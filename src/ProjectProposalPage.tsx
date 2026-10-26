@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
+import { errorMessage } from "./lib/errors";
 import {
   ESCROW_PAYOUT_FEE_BASIS_POINTS,
   ESCROW_WITHDRAWAL_FEE_BASIS_POINTS,
@@ -616,10 +617,10 @@ function RepositoryPicker({
         if (!controller.signal.aborted)
           setList({
             status: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Your repositories could not be loaded.",
+            message: errorMessage(
+              error,
+              "Your repositories could not be loaded.",
+            ),
           });
       },
     );
@@ -1206,10 +1207,7 @@ export default function ProjectProposalPage() {
       (error: unknown) =>
         setSubmission({
           status: "error",
-          message:
-            error instanceof Error
-              ? error.message
-              : "The project was not created.",
+          message: errorMessage(error, "The project was not created."),
           install:
             error instanceof ProjectApiError &&
             error.code === "slopbot_required",
@@ -1318,7 +1316,7 @@ export default function ProjectProposalPage() {
       if (controller.signal.aborted) return;
       setLookup({
         state: "error",
-        message: `${error instanceof Error ? error.message : "GitHub lookup failed."} Nothing was filled in. Enter the facts by hand or try again.`,
+        message: `${errorMessage(error, "GitHub lookup failed.")} Nothing was filled in. Enter the facts by hand or try again.`,
       });
       setFactsOpen(true);
     }
@@ -2030,9 +2028,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       (error) => {
         if (active)
           setLoadError(
-            error instanceof Error
-              ? error.message
-              : "Cannot read the current revision.",
+            errorMessage(error, "Cannot read the current revision."),
           );
       },
     );
@@ -2352,10 +2348,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         state: "error",
         staleRevision:
           error instanceof ProjectApiError && error.code === "stale_revision",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Changes were not published.",
+        message: errorMessage(error, "Changes were not published."),
       });
     }
   }
@@ -2740,10 +2733,7 @@ function OwnerProjects({ refreshKey }: { refreshKey: string }) {
         if (active)
           setState({
             status: "error",
-            message:
-              caught instanceof Error
-                ? caught.message
-                : "Your projects are unavailable.",
+            message: errorMessage(caught, "Your projects are unavailable."),
           });
       },
     );
@@ -2819,10 +2809,10 @@ function OwnerProjects({ refreshKey }: { refreshKey: string }) {
                           setPublishing({
                             id: application.id,
                             state: "error",
-                            message:
-                              caught instanceof Error
-                                ? caught.message
-                                : "The application was not published.",
+                            message: errorMessage(
+                              caught,
+                              "The application was not published.",
+                            ),
                           }),
                       );
                     }}
