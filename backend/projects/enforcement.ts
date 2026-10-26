@@ -153,7 +153,8 @@ export function projectAppealState(
 /**
  * True when records, oldest first, end with an undecided project appeal.
  * With `kept`, an appeal that confirmed malicious Bans kept also counts:
- * the moderator decision on those Bans closes it.
+ * the moderator decision on those Bans closes it. A request recorded while
+ * the project was clear is an account appeal, whatever route recorded it.
  */
 function projectAppealOpen(
   records: ProjectEnforcement[],
@@ -177,6 +178,7 @@ function projectAppealOpen(
     (record) =>
       record.action === "request_reinstatement" &&
       record.actorRole !== "banned-account" &&
+      record.stateAfter !== "clear" &&
       record.sequence > boundary,
   );
   return request !== undefined;
@@ -549,8 +551,7 @@ export function planEnforcement(input: {
       // A release decides only account appeals. The project appeal, open or
       // kept by malicious results, stays open for its own decision.
       const appealStillOpen =
-        (restriction.state !== "clear" &&
-          projectAppealOpen(restriction.records, true)) ||
+        projectAppealOpen(restriction.records, true) ||
         restriction.bannedMaintainers.some(
           (account) =>
             !releasedIds.has(account.githubId) &&
