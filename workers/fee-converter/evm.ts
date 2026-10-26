@@ -612,6 +612,23 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
         accessList: tx.accessList,
       };
+      // A hash-only historical row still binds every signed fee field. Do not
+      // let an inconsistent RPC body shrink its unresolved gas liability.
+      const serialized = serializeTransaction(intent, {
+        r: tx.r,
+        s: tx.s,
+        v: tx.v,
+        yParity: tx.yParity,
+      });
+      if (
+        keccak256(serialized).toLowerCase() !== send.txId.toLowerCase() ||
+        (
+          await recoverTransactionAddress({
+            serializedTransaction: serialized,
+          })
+        ).toLowerCase() !== send.feeWallet
+      )
+        throw new Error("Historical native transaction signature differs");
     }
     if (
       intent.chainId !== chain.id ||

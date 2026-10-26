@@ -321,6 +321,81 @@ test("legacy approval and swap hashes both enter accounting with independently p
   expect(sends.find((s) => s.txId === keccak256(raw))?.nonce).toBe(1);
 });
 
+test.each(["complete", "changed-fee", "missing-signature"])(
+  "legacy hash-only liability requires the original signed transaction: %s",
+  async (evidence) => {
+    const h = await fixture({
+      perTransaction: "3000000",
+      perDay: "3000000",
+      additionalFeeReserve: "0",
+    });
+    const tx = h.tx();
+    const raw = await h.account.signTransaction(tx);
+    const signed = parseTransaction(raw);
+    const row = h.row("legacy-hash-only", raw);
+    await h.store.insert({
+      ...row,
+      txId: null,
+      approvalTxId: row.txId,
+      rawTx: null,
+      evmNonce: null,
+      state: "pending",
+      reason: "legacy approval pending",
+    });
+    const rpcFetch = (async (_url: unknown, init?: RequestInit) => {
+      const q = JSON.parse(String(init?.body));
+      let result: unknown;
+      if (q.method === "eth_getTransactionByHash")
+        result = {
+          hash: row.txId,
+          from: h.wallet,
+          to: token,
+          nonce: "0x0",
+          input: "0x",
+          value: "0x0",
+          gas: "0x5208",
+          chainId: "0x1",
+          maxFeePerGas: evidence === "changed-fee" ? "0x1" : "0x64",
+          maxPriorityFeePerGas: "0x1",
+          type: "0x2",
+          blockHash: null,
+          blockNumber: null,
+          transactionIndex: null,
+          accessList: [],
+          ...(evidence === "missing-signature"
+            ? {}
+            : {
+                r: signed.r,
+                s: signed.s,
+                v: `0x${signed.yParity?.toString(16)}`,
+                yParity: `0x${signed.yParity?.toString(16)}`,
+              }),
+        };
+      else if (q.method === "eth_getTransactionReceipt") result = null;
+      else throw new Error(`Unapproved test request ${q.method}`);
+      return Response.json({ jsonrpc: "2.0", id: q.id, result });
+    }) as typeof fetch;
+    const client = createEvmClient({
+      config: h.config.networks[0],
+      limits: h.config.limits,
+      kyberClientId: "test",
+      nativeGas: h.journal,
+      fetch: rpcFetch,
+    });
+    if (evidence === "complete") {
+      await client.reconcileNativeGas!();
+      const attempts = await h.journal.rows();
+      expect(attempts[0].maximum_wei).toBe("2100000");
+      expect(attempts[0].actual_wei).toBeNull();
+      await expect(h.reserve(h.tx(1))).rejects.toThrow("Native daily budget");
+    } else {
+      await expect(client.reconcileNativeGas!()).rejects.toThrow();
+      expect(await h.journal.rows()).toHaveLength(0);
+      expect(await h.journal.unaccounted()).toHaveLength(1);
+    }
+  },
+);
+
 test.each(["allowed", "transaction", "day", "value", "base-allowance"])(
   "actual signer preparation enforces final fee bounds: %s",
   async (fault) => {
