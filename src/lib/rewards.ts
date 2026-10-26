@@ -1,11 +1,6 @@
 import type { SlopDatabaseWalletProof, WalletProof } from "./wallet-proof";
 
-export type {
-  GithubIssueWalletProof,
-  ProfileReadmeWalletProof,
-  SlopDatabaseWalletProof,
-  WalletProof,
-} from "./wallet-proof";
+export type { ProfileReadmeWalletProof, WalletProof } from "./wallet-proof";
 
 import {
   exactKeys,
@@ -38,7 +33,6 @@ import {
 export const REWARD_PROTOCOL_VERSION = "1" as const;
 export const REVIEW_WINDOW_DAYS = 14;
 export const SHARE_PARTS_TOTAL = 1_000_000;
-export const PLATFORM_FEE_BASIS_POINTS = 100 as const;
 export const MINIMUM_TRANSFER_MINOR = "2000000" as const;
 
 /** Parse the exact UTC form used at reward lifecycle boundaries. */

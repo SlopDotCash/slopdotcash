@@ -2819,7 +2819,7 @@ function CheckReceipt({
 }
 
 /** The signed-in private case inbox. */
-export function SecurityCasesPage() {
+export default function SecurityCasesPage() {
   const session = useProjectSession();
   const [list, reload] = useSecurityData<CaseList>(
     session.status === "signed-in" ? "security-cases" : null,
@@ -3027,5 +3027,3 @@ export function SecurityCasesPage() {
     </main>
   );
 }
-
-export default SecurityCasesPage;

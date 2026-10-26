@@ -4,7 +4,6 @@ import type { DirectTransfer } from "./payments/contracts";
 import type { PointsMember } from "./points";
 import type { DataState } from "./use-snapshot";
 
-export type StandingsSort = "points" | "money";
 export function contributorStandings(
   state: DataState,
   members: readonly PointsMember[] | null,

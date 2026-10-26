@@ -63,7 +63,7 @@ export function ProfileActivity({
   revisions,
   login,
   actorId,
-  showIdentity = false,
+  showIdentity,
   cycles,
   census,
   summary,
@@ -77,7 +77,7 @@ export function ProfileActivity({
   pointsMissing?: string;
   revisions?: readonly PointRevision[];
   actorId?: string;
-  showIdentity?: boolean;
+  showIdentity: boolean;
   cycles?: CycleIndex;
   census: ReturnType<typeof useProfiles>;
   summary?: ReactNode;

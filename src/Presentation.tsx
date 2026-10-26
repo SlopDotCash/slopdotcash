@@ -143,21 +143,13 @@ export function ExternalLinkAnchor({
   children,
   className,
   href,
-  onClick,
 }: {
   children: ReactNode;
   className?: string;
   href: string;
-  onClick?: () => void;
 }) {
   return (
-    <a
-      className={className}
-      href={href}
-      onClick={onClick}
-      rel="noreferrer"
-      target="_blank"
-    >
+    <a className={className} href={href} rel="noreferrer" target="_blank">
       {children}
     </a>
   );
@@ -306,14 +298,6 @@ export function monthlyPoolPointsOnly(
   reward: Pick<ProjectDefinition["reward"], "kind" | "monthlyCapMinor">,
 ): boolean {
   return reward.kind === "monthly-pool" && reward.monthlyCapMinor === "0";
-}
-
-export function formatScore(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 0,
-    useGrouping: true,
-  }).format(value);
 }
 
 /** One identity header for scored, historical and newly registered contributors. */
