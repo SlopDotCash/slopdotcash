@@ -7,12 +7,12 @@ or high-risk result ([worker](README.md)). It shares the transports, limits,
 identity checks and private records described below, and never retries, picks
 a fallback provider, clears or bans.
 
-The historical secure-VM contract (`slop-vetting-result-v1`) required two
-independent reviews of the exact evidence.
-`reviewIndependently` implements the OpenAI Responses and Anthropic Messages
-transports. It makes one call per configured reviewer. It does not choose a
-model, replace a failed provider, retry an uncertain request, or make a project
-clearance or ban decision.
+`reviewScan` implements the OpenAI Responses and Anthropic Messages
+transports. It makes one call for the configured reviewer profile. It does
+not choose a model, replace a failed provider, retry an uncertain request, or
+make a project clearance or ban decision. The historical secure-VM contract
+(`slop-vetting-result-v1`) required two independent reviews; the intake
+still parses stored v1 results.
 
 The operator supplies both profiles: reviewer class, endpoint, model, API key,
 output-token limit and rate card. Owner decision D16 approves exactly two
