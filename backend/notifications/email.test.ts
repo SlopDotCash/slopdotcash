@@ -400,6 +400,14 @@ test("scheduled drains finish activity delivery and report a failed security que
     ).toEqual([{ state: "provider-accepted", attempts: 1 }]);
     await expect(worker.scheduled({}, env)).rejects.toThrow();
     expect(accepted).toBe(1);
+    // A set but malformed pilot secret fails the run; it never sends nothing
+    // while reporting success.
+    await expect(
+      worker.scheduled(
+        {},
+        { ...env, SECURITY_MAIL_PILOT: undefined, ACTIVITY_MAIL_PILOT: "{" },
+      ),
+    ).rejects.toThrow("Mail pilot misconfigured");
   } finally {
     h.sqlite.close();
   }

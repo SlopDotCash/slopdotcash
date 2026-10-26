@@ -3,6 +3,12 @@
  * comma-separated list that operators configure outside the repository.
  */
 export const MAX_ADMIN_RECIPIENTS = 10;
+/** The only sender: a plain local part at slop.cash. */
+export const SENDER_ADDRESS =
+  /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?@slop\.cash$/u;
+/** A plain recipient address; no display name, comment or route. */
+export const EMAIL_ADDRESS =
+  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/u;
 export const NOTIFY_INTERNAL_HOST = "notify.internal";
 export const PROJECT_APPLICATION_NOTICE_PATH = "/v1/project-applications";
 export const MAX_NOTICE_BODY_BYTES = 8 * 1024;

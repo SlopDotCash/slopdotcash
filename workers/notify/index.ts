@@ -6,6 +6,7 @@ import {
 import type { SecurityD1Database } from "../../backend/security/handler";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { deploymentTier } from "../../src/lib/deployment";
+import { githubIdSet } from "../../src/lib/github-ids";
 import {
   type ActivityMailDependencies,
   activityMailEligibility,
@@ -38,56 +39,81 @@ type Env = {
   PROJECT_MODERATOR_GITHUB_IDS?: string;
 };
 
-function securityDependencies(env: Env): SecurityMailDependencies | null {
-  const config = parseSecurityMailConfig(env.SECURITY_MAIL_PILOT);
-  if (!config || !env.SLOP_DB || config.inboxUrl !== env.NOTIFY_INBOX_URL)
-    return null;
-  return {
-    db: env.SLOP_DB,
-    repositoryAccess: (repository, actor) =>
-      slopbotRepositoryAccess(env.SLOPBOT, repository, actor),
-    config,
-    moderatorGithubIds: new Set(
-      (env.PROJECT_MODERATOR_GITHUB_IDS ?? "")
-        .split(",")
-        .map((id) => id.trim())
-        .filter((id) => /^[1-9][0-9]{0,19}$/u.test(id)),
-    ),
-    fromAddress: env.NOTIFY_FROM_ADDRESS,
-    now: () => new Date(),
-    sendEmail: (from, to, rawMime) =>
-      env.ADMIN_EMAIL.send(new EmailMessage(from, to, rawMime)),
-  };
-}
-
-function activityDependencies(env: Env): ActivityMailDependencies | null {
-  const config = parseActivityMailConfig(env.ACTIVITY_MAIL_PILOT);
-  if (!config || !env.SLOP_DB || config.inboxUrl !== env.NOTIFY_INBOX_URL)
-    return null;
+/**
+ * The mail pilot that `raw` configures. A set secret that does not parse, or
+ * that names another inbox, is misconfigured and never silently off.
+ */
+function mailPilot<Config extends { inboxUrl: string }>(
+  env: Env,
+  raw: string | undefined,
+  parse: (raw: string) => Config | null,
+) {
+  if (!raw || !env.SLOP_DB) return "off" as const;
+  const config = parse(raw);
+  if (!config || config.inboxUrl !== env.NOTIFY_INBOX_URL)
+    return "misconfigured" as const;
   return {
     db: env.SLOP_DB,
     config,
-    moderatorGithubIds: new Set(
-      (env.PROJECT_MODERATOR_GITHUB_IDS ?? "")
-        .split(",")
-        .map((id) => id.trim())
-        .filter((id) => /^[1-9][0-9]{0,19}$/u.test(id)),
+    moderatorGithubIds: githubIdSet(
+      env.PROJECT_MODERATOR_GITHUB_IDS,
+      "PROJECT_MODERATOR_GITHUB_IDS",
     ),
     fromAddress: env.NOTIFY_FROM_ADDRESS,
     now: () => new Date(),
-    sendEmail: (from, to, mime) =>
+    sendEmail: (from: string, to: string, mime: string) =>
       env.ADMIN_EMAIL.send(new EmailMessage(from, to, mime)),
   };
 }
 
+function securityPilot(
+  env: Env,
+): SecurityMailDependencies | "off" | "misconfigured" {
+  const pilot = mailPilot(
+    env,
+    env.SECURITY_MAIL_PILOT,
+    parseSecurityMailConfig,
+  );
+  return typeof pilot === "string"
+    ? pilot
+    : {
+        ...pilot,
+        repositoryAccess: (repository, actor) =>
+          slopbotRepositoryAccess(env.SLOPBOT, repository, actor),
+      };
+}
+
+function activityPilot(
+  env: Env,
+): ActivityMailDependencies | "off" | "misconfigured" {
+  return mailPilot(env, env.ACTIVITY_MAIL_PILOT, parseActivityMailConfig);
+}
+
+/** Fixed fields only: never a message, address or case value. */
+function logRouteFailure(route: string, error: unknown) {
+  console.error(
+    JSON.stringify({
+      event: "notify_route_failed",
+      route,
+      kind: error instanceof Error ? error.name : "unknown",
+    }),
+  );
+}
+
 export default {
   async scheduled(_event: unknown, env: Env): Promise<void> {
-    const deps = securityDependencies(env);
-    const activity = activityDependencies(env);
+    const security = securityPilot(env);
+    const activity = activityPilot(env);
     const results = await Promise.allSettled([
-      deps ? dispatchSecurityMail(deps) : Promise.resolve(),
-      activity ? dispatchActivityMail(activity) : Promise.resolve(),
+      typeof security === "string"
+        ? Promise.resolve()
+        : dispatchSecurityMail(security),
+      typeof activity === "string"
+        ? Promise.resolve()
+        : dispatchActivityMail(activity),
     ]);
+    if (security === "misconfigured" || activity === "misconfigured")
+      throw new Error("Mail pilot misconfigured");
     if (results.some((result) => result.status === "rejected"))
       throw new Error("Notification queue dispatch failed");
   },
@@ -107,9 +133,9 @@ export default {
           headers: { "cache-control": "private, no-store" },
         });
       if (request.method !== "POST") return respond(405);
-      const deps = securityDependencies(env);
-      if (!deps) return respond(503);
       try {
+        const deps = securityPilot(env);
+        if (typeof deps === "string") return respond(503);
         const body = await readBoundedJson(request, 8192, "private notice");
         if (typeof body !== "object" || body === null || Array.isArray(body))
           return respond(400);
@@ -122,7 +148,8 @@ export default {
         if (Object.keys(body).length !== 0) return respond(400);
         await dispatchSecurityMail(deps);
         return respond(204);
-      } catch {
+      } catch (error) {
+        logRouteFailure(url.pathname, error);
         return respond(500);
       }
     }
@@ -144,9 +171,9 @@ export default {
           },
         });
       if (request.method !== "POST") return respond(405);
-      const deps = activityDependencies(env);
-      if (!deps) return respond(503);
       try {
+        const deps = activityPilot(env);
+        if (typeof deps === "string") return respond(503);
         const body = await readBoundedJson(request, 8192, "activity notice");
         if (!body || typeof body !== "object" || Array.isArray(body))
           return respond(400);
@@ -174,7 +201,8 @@ export default {
         if (Object.keys(value).length) return respond(400);
         await dispatchActivityMail(deps);
         return respond(204);
-      } catch {
+      } catch (error) {
+        logRouteFailure(url.pathname, error);
         return respond(500);
       }
     }
