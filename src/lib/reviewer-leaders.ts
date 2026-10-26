@@ -11,6 +11,7 @@ import {
   type GitHubActor,
   type ScoreEvent,
 } from "./leaderboard";
+import { eventThirds } from "./score-penalties";
 
 export interface ReviewerLeader {
   rank: number;
@@ -28,12 +29,7 @@ export function selectReviewerLeaders(
   >();
   for (const event of ledger) {
     if (event.category !== "substantive-review") continue;
-    const thirds = event.scoreThirds ?? Math.round(event.points * 3);
-    if (!Number.isSafeInteger(thirds) || thirds < 0) {
-      throw new TypeError(
-        `Review event ${event.id} has a non-integer third count`,
-      );
-    }
+    const thirds = eventThirds(event);
     const current = byActor.get(event.actor.id) ?? {
       actor: event.actor,
       reviewThirds: 0,

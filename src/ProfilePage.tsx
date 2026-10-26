@@ -26,6 +26,7 @@ import {
   formatCycleMonth,
   formatDate,
   formatMicroUsdc,
+  formatPointsFromThirds,
 } from "./Presentation";
 import { useProfiles } from "./Profiles";
 import { RewardValue } from "./ProjectLeaderboard";
@@ -242,7 +243,7 @@ export function ProfilePage({
                         <span className="project-bar-label">
                           <strong>{view.project.name}</strong>
                           <small title="Accepted-work points">
-                            {(leader.scoreThirds * 10).toLocaleString()} points
+                            {formatPointsFromThirds(leader.scoreThirds)} points
                             · <RewardValue leader={leader} view={view} />
                           </small>
                         </span>
@@ -283,10 +284,10 @@ export function ProfilePage({
                   {PENALTY_CATEGORY_LABELS[penalty.category] ??
                     penalty.category}{" "}
                   · {formatCycleMonth(penalty.occurredAt.slice(0, 7))} · −
-                  {(penalty.debitThirds * 10).toLocaleString()} point debit ·{" "}
-                  {(
-                    (appliedPenalties.get(penalty.id) ?? 0) * 10
-                  ).toLocaleString()}{" "}
+                  {formatPointsFromThirds(penalty.debitThirds)} point debit ·{" "}
+                  {formatPointsFromThirds(
+                    appliedPenalties.get(penalty.id) ?? 0,
+                  )}{" "}
                   applied
                 </span>
               </li>
@@ -323,9 +324,9 @@ export function ProfilePage({
                 </span>
                 <span>
                   <strong>
-                    {(
-                      (contributor.scoreThirds ?? contributor.score * 3) * 10
-                    ).toLocaleString()}{" "}
+                    {formatPointsFromThirds(
+                      contributor.scoreThirds ?? contributor.score * 3,
+                    )}{" "}
                     points
                   </strong>
                   <small>
