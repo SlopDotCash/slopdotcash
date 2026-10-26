@@ -29,14 +29,11 @@
 
 ## Slop protocol changes
 
-<!-- Keep only the applicable rows. Projects are added on slop.cash; a skill PR
-     names the registry project it serves. -->
+<!-- Keep only the applicable rows. Projects are added on slop.cash, not by
+     pull request. -->
 
 - Registry project id:
-- Contributor skill (`skills/contribute-to-<id>/`):
-- Isolated reviewer skill (`skills/review-<id>-contributions/`):
 - Evaluated-contribution award (`evaluations/<id>/award-*.json`):
-- Reward-cycle transition (`cycles/<id>/<YYYY-MM>/`):
 
 ## Safety review
 
