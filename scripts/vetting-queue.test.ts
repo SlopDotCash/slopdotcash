@@ -323,9 +323,15 @@ test("changed revision/template bytes and wrong signer leave queue pending and n
   for (const selected of ["manifest", "template", "identity"] as const) {
     mode = selected;
     const before = await readdir(root);
-    await expect(
-      acquireQueuedAssessment(connection, assessmentId, root),
-    ).rejects.toThrow();
+    const failure = await acquireQueuedAssessment(
+      connection,
+      assessmentId,
+      root,
+    ).catch((error: unknown) => error);
+    // The retry reason separates a refused pin from changed bytes.
+    expect((failure as Error).name).toBe(
+      selected === "identity" ? "AcquisitionRefusal" : "Error",
+    );
     expect(await readdir(root)).toEqual(before);
     expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
   }

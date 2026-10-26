@@ -148,8 +148,9 @@ async function signedRequest(
     timeoutMs: 30_000,
   });
 }
-/** A retry for a step that threw. Deterministic refusals and outages differ
- * by error name; the message can carry source or provider text.
+/** A retry for a step that threw. It names the error, never the message,
+ * which can carry source or provider text. An unsupported pin names
+ * AcquisitionRefusal; an outage or changed input keeps its own error name.
  */
 function retry(
   assessmentId: string,
