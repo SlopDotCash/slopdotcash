@@ -1,7 +1,7 @@
 /**
  * slop-referral-accrual: a cron Worker that files the project-referral
  * accruals of each closed UTC month (PRD section 11, "Referral program",
- * proposed). It reads finalized payouts and each project's immutable referrer,
+ * approved). It reads finalized payouts and each project's immutable referrer,
  * appends accrual rows, and publishes one public accrual file per epoch. It
  * has no HTTP route. `off` and `dry_run` load no key and never sign. `live`
  * adds the poster: after filing, it reconciles the distributor against the
@@ -10,6 +10,7 @@
  * distributor, the token and the network are all set.
  */
 
+import { refreshReferralClaims } from "../../backend/referrals/cache";
 import { parseConfig, posterKey, type ReferralAccrualEnv } from "./config";
 import {
   message,
@@ -23,6 +24,8 @@ import { D1AccrualStore, type ReferralD1Database } from "./store";
 
 export interface Env extends ReferralAccrualEnv {
   REFERRAL_DB: ReferralD1Database;
+  REFERRAL_DEPLOYMENT_BLOCK?: string;
+  REFERRAL_DISTRIBUTOR_CODE_HASH?: string;
 }
 
 export interface RunOutcome extends RunResult {
@@ -86,10 +89,16 @@ export async function runOnce(
 
 export default {
   async scheduled(
-    _controller: { scheduledTime: number } | undefined,
+    controller: { scheduledTime: number; cron: string },
     env: Env,
     ctx: { waitUntil(promise: Promise<unknown>): void },
   ) {
+    if (controller.cron === "*/15 * * * *") {
+      ctx.waitUntil(refreshReferralClaims(env));
+      return;
+    }
+    if (controller.cron !== "23 1 * * *")
+      throw new Error("Unknown referral schedule");
     ctx.waitUntil(
       runOnce(env)
         .then((result) =>
@@ -104,7 +113,7 @@ export default {
               error: message(error),
             }),
           );
-          throw error;
+          throw new Error(message(error));
         }),
     );
   },

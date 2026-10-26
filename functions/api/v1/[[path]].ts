@@ -16,6 +16,7 @@ import {
   type PaymentsDependencies,
 } from "../../../backend/payments/handler";
 import {
+  MonthlyPaymentError,
   monthlyOwnerService,
   verifyProjectAuthority,
 } from "../../../backend/payments/monthly";
@@ -36,7 +37,10 @@ import {
   type ProjectApiDependencies,
   refreshProjectSetup,
 } from "../../../backend/projects/handler";
-import { slopbotRepositoryAccess } from "../../../backend/projects/repository-access";
+import {
+  slopbotGithubFetch,
+  slopbotRepositoryAccess,
+} from "../../../backend/projects/repository-access";
 import {
   flaggerAuthority,
   readRepositoryAccess,
@@ -45,6 +49,7 @@ import {
 import { assetTemplateSource } from "../../../backend/projects/skill-publication";
 import { rpcTokenMetadataReader } from "../../../backend/projects/token-metadata";
 import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
+import { handleReferralClaims } from "../../../backend/referrals/claims";
 import { handleReferralsApi } from "../../../backend/referrals/handler";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
@@ -100,6 +105,7 @@ import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
 import type { RepositoryIdentity } from "../../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../../src/lib/projects.mjs";
+import type { MonthlyReleaseResult } from "../../../workers/payment-executor/monthly-release";
 import {
   loadRegistryPaymentDeployments,
   parsePaymentNetworks,
@@ -126,6 +132,10 @@ type Env = {
   };
   /** Named recovery-only entrypoint; it cannot submit a binding or payment. */
   BINDING_RECOVERY?: { fetch(request: Request): Promise<Response> };
+  MONTHLY_RELEASE_BASE?: { fetch(request: Request): Promise<Response> };
+  MONTHLY_RELEASE_ETHEREUM?: { fetch(request: Request): Promise<Response> };
+  MONTHLY_RELEASE_ROBINHOOD?: { fetch(request: Request): Promise<Response> };
+  MONTHLY_RELEASE_SOLANA?: { fetch(request: Request): Promise<Response> };
   /** Private RPC endpoints for explicit wallet funding review/check requests. Never returned to the browser. */
   PAYMENT_RPC_URLS?: string;
   PRIVATE_TRACES: R2Bucket;
@@ -532,10 +542,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     async (assessment) =>
       assessment.result !== null && evidence.retained(assessment.result),
   );
+  const apiOrigin = githubApiOrigin(context.env.SLOP_GITHUB_API_ORIGIN);
   const github = {
-    fetch: (url: string, init: RequestInit) => fetch(url, init),
+    fetch: slopbotGithubFetch(context.env.SLOPBOT, apiOrigin, (url, init) =>
+      fetch(url, init),
+    ),
     token: context.env.SLOP_GITHUB_READ_TOKEN,
-    apiOrigin: githubApiOrigin(context.env.SLOP_GITHUB_API_ORIGIN),
+    apiOrigin,
     cache: vettingBranchCache(context.request),
   };
   const loadTemplate = assetTemplateSource(
@@ -797,6 +810,17 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     cache: edgeCache(),
   });
   if (vettingResponse !== null) return vettingResponse;
+  const referralClaims = await handleReferralClaims(context.request, {
+    db: context.env.SLOP_DB,
+    sessionActor: (request) =>
+      sessionGithubActor(
+        request,
+        context.env.SLOP_DB,
+        new Date().toISOString(),
+      ),
+    now: () => new Date(),
+  });
+  if (referralClaims !== null) return referralClaims;
   const referralsResponse = await handleReferralsApi(context.request, {
     db: context.env.SLOP_DB,
   });
@@ -885,6 +909,42 @@ export async function onRequest(context: PagesContext): Promise<Response> {
           }
         },
         now: () => new Date(),
+        releaseReserve: async (input) => {
+          const chain = ESCROW_NETWORKS[input.network]?.chain;
+          const service =
+            chain === "base"
+              ? context.env.MONTHLY_RELEASE_BASE
+              : chain === "ethereum"
+                ? context.env.MONTHLY_RELEASE_ETHEREUM
+                : chain === "robinhood"
+                  ? context.env.MONTHLY_RELEASE_ROBINHOOD
+                  : chain === "solana"
+                    ? context.env.MONTHLY_RELEASE_SOLANA
+                    : undefined;
+          if (!service)
+            throw new MonthlyPaymentError(
+              503,
+              "release_unavailable",
+              "Reserve checks are unavailable on this network. Retry later.",
+            );
+          const response = await service.fetch(
+            new Request("https://monthly-release/v1/monthly-reserve-release", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(input),
+            }),
+          );
+          if (!response.ok)
+            throw new MonthlyPaymentError(
+              409,
+              "release_held",
+              "The reserve could not be proved safe to release. No funds moved. Retry the check.",
+            );
+          return (await readBoundedJson(
+            response,
+            4 * 1024 * 1024,
+          )) as MonthlyReleaseResult;
+        },
       }),
       solanaFundingConfig: (projectId, network, vault) =>
         solanaFundingConfig(projectId, network, vault, "ordinary"),

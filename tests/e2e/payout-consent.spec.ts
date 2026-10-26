@@ -123,6 +123,9 @@ async function setup(
       json: { authorized: true, expiresAt: binding.expiresAt },
     });
   });
+  await page.route("**/api/v1/referrals/me", (route) =>
+    route.fulfill({ json: { enabled: false } }),
+  );
   await page.goto("/earnings", { waitUntil: "networkidle" });
   return () => authorized;
 }
@@ -374,6 +377,9 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
       json: { transactionId: solanaBase58(prepared.slice(1, 65)) },
     });
   });
+  await page.route("**/api/v1/referrals/me", (route) =>
+    route.fulfill({ json: { enabled: false } }),
+  );
   await page.goto("/earnings", { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Authorize payout wallet" }).click();
   await page

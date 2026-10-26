@@ -7,6 +7,7 @@
  */
 
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
+import { type ReferralGasLimits, validateGasLimits } from "./gas";
 
 export type Mode = "off" | "dry_run" | "live";
 
@@ -54,6 +55,8 @@ export interface ReferralAccrualEnv {
   REFERRAL_TOKEN_ADDRESS?: string;
   /** robinhood-testnet or robinhood-mainnet. */
   REFERRAL_POST_NETWORK?: string;
+  REFERRAL_MAX_NATIVE_PER_TX_WEI?: string;
+  REFERRAL_MAX_NATIVE_PER_DAY_WEI?: string;
   RPC_URL_REFERRAL?: string;
   /** Secret. Never logged, never stored in D1, never set in CI. */
   REFERRAL_POSTER_KEY?: string;
@@ -65,6 +68,7 @@ export interface PosterConfig {
   distributor: string;
   token: string;
   rpcUrl: string;
+  gas: ReferralGasLimits;
 }
 
 export interface ReferralAccrualConfig {
@@ -149,12 +153,24 @@ function parsePoster(env: ReferralAccrualEnv): PosterConfig {
     throw new TypeError(
       "REFERRAL_DISTRIBUTOR_ADDRESS and REFERRAL_TOKEN_ADDRESS must differ",
     );
+  const gas = {
+    perTransactionWei: integer(
+      env.REFERRAL_MAX_NATIVE_PER_TX_WEI,
+      "REFERRAL_MAX_NATIVE_PER_TX_WEI",
+    ).toString(),
+    perDayWei: integer(
+      env.REFERRAL_MAX_NATIVE_PER_DAY_WEI,
+      "REFERRAL_MAX_NATIVE_PER_DAY_WEI",
+    ).toString(),
+  };
+  validateGasLimits(gas);
   return {
     network: network as PostNetwork,
     chainId: Number(definition.chainId),
     distributor,
     token,
     rpcUrl,
+    gas,
   };
 }
 

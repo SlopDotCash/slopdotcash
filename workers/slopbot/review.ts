@@ -2,6 +2,7 @@
 // The model only classifies. Every GitHub action is decided here, in code,
 // after independent state checks.
 import { notifySlopbotScamReview } from "../../backend/notifications/events";
+import { publishAppealComment } from "./appeal-publication";
 import {
   APPEAL_RESOLUTION_DAYS,
   type Appeal,
@@ -761,14 +762,13 @@ async function addLabels(
     );
 }
 
-/** Removes one Slopbot label; an already absent label is success. */
 async function removeLabel(
-  db: store.D1Database,
-  job: AppealJob | Extract<Job, { kind: "maintainer_hold" }>,
+  env: ReviewEnv,
+  job: Job,
   github: GitHubClient,
   label: string,
-): Promise<void> {
-  await requireScope(db, job, "security");
+) {
+  await requireScope(env.SLOPBOT_DB, job, "security");
   const removed = await github.request<unknown>(
     "DELETE",
     `/repos/${job.owner}/${job.repo}/issues/${job.number}/labels/${encodeURIComponent(label)}`,
@@ -1948,27 +1948,22 @@ async function publishAppealState(
 ) {
   const db = env.SLOPBOT_DB;
   const key = `${appeal.appeal_key}:${stage}`;
-  if (!(await store.hasRecordedAction(db, key, "comment"))) {
-    await requireScope(db, job, "security");
-    const created = await session.github.request<{ id: number }>(
-      "POST",
-      `/repos/${job.owner}/${job.repo}/issues/${job.number}/comments`,
-      { body: appealComment(appeal, stage) },
-    );
-    if (created.status !== 201 || !Number.isSafeInteger(created.data?.id))
-      throw new GitHubError(
-        created.status,
-        "GitHub did not confirm the appeal comment",
-      );
-    await store.recordAction(
-      db,
+  await publishAppealComment(
+    db,
+    session.github,
+    {
       key,
-      job.repositoryId,
-      session.issue.node_id,
-      "comment",
+      owner: job.owner,
+      repo: job.repo,
+      number: job.number,
+      repositoryId: job.repositoryId,
+      itemNodeId: session.issue.node_id,
+      appUserId: env.SLOPBOT_APP_USER_ID,
       stage,
-    );
-  }
+      body: appealComment(appeal, stage),
+    },
+    () => requireScope(db, job, "security"),
+  );
   const labelKey = `${appeal.appeal_key}:moderator`;
   if (
     appeal.escalated_at !== null &&
@@ -2036,8 +2031,13 @@ export async function applyAppealCommand(
           : null;
     if (by === null)
       return "only the appellant or a maintainer can answer the draft";
-    if (appeal.escalated_at !== null)
+    if (appeal.escalated_at !== null) {
+      // A rejection may have committed escalation before its comment response
+      // was lost. Reconcile the recorded stage when that command is retried.
+      if (job.command === "reject")
+        await publishAppealState(env, job, session, appeal, "escalation");
       return "a Slop moderator decides this appeal";
+    }
     if (appeal.draft === null) return "no draft to answer yet";
     if (job.command === "reject") {
       await escalateAppeal(
@@ -2123,21 +2123,15 @@ async function finishAppeal(
         );
     }
     const finding = await latestFinding(db, issue.node_id);
-    if (finding !== null && hasLabel(issue, categoryLabel(finding)))
-      await removeLabel(db, job, session.github, categoryLabel(finding));
-    // The issue was read before this decision, so a hold label written since
-    // is not in it. An open or labeled hold for this revision means the label
-    // may be present; the hold rechecks the appeal after its own write.
-    const hold = await db
-      .prepare(
-        `SELECT 1 AS n FROM slopbot_maintainer_holds
-          WHERE 'appeal:' || item_node_id || ':' || revision = ?
-            AND (resolved_at IS NULL OR outcome = 'labeled')`,
-      )
-      .bind(current.appeal_key)
-      .first<{ n: number }>();
-    if (hasLabel(issue, UNCERTAIN_LABEL) || hold !== null)
-      await removeLabel(db, job, session.github, UNCERTAIN_LABEL);
+    for (const label of [
+      ...(finding !== null ? [categoryLabel(finding)] : []),
+      UNCERTAIN_LABEL,
+    ]) {
+      // A due hold can add its label after this appeal's issue snapshot.
+      // DELETE is idempotent; an absent label is also a confirmed removal.
+      if (label !== UNCERTAIN_LABEL && !hasLabel(issue, label)) continue;
+      await removeLabel(env, job, session.github, label);
+    }
     await reversePenalty(db, issue.node_id, "appeal_upheld");
   }
   await publishAppealState(env, job, session, current, "resolution");
@@ -2285,9 +2279,19 @@ export async function applyMaintainerHold(
   if (pull?.draft) return supersede("item is a draft");
   if (pull?.merged || revision !== hold.revision)
     return supersede("item changed after the review");
-  const appealKey = `appeal:${hold.item_node_id}:${hold.revision}`;
-  if ((await appealByKey(db, appealKey))?.resolution === "upheld")
+  const reconcileAppeal = async () => {
+    const appeal = await appealByKey(
+      db,
+      `appeal:${hold.item_node_id}:${hold.revision}`,
+    );
+    if (appeal?.resolution !== "upheld") return null;
+    // A label may have landed during an appeal or before a lost response.
+    // Keep the hold open for retry until GitHub confirms its removal.
+    await removeLabel(env, job, github, UNCERTAIN_LABEL);
     return supersede("appeal was upheld");
+  };
+  const priorAppeal = await reconcileAppeal();
+  if (priorAppeal !== null) return priorAppeal;
   const reviewed = await db
     .prepare("SELECT content_digest FROM slopbot_reviews WHERE review_key = ?")
     .bind(job.reviewKey)
@@ -2301,15 +2305,13 @@ export async function applyMaintainerHold(
     await resolveHold(db, job.reviewKey, "maintainer_acted");
     return "maintainer acted; no label";
   }
+  const beforeLabel = await reconcileAppeal();
+  if (beforeLabel !== null) return beforeLabel;
   // Reconcile a successful write whose response or local record was lost.
   if (!hasLabel(issue, UNCERTAIN_LABEL))
     await addLabels(env, job, github, [UNCERTAIN_LABEL]);
-  // An appeal upheld while the label write was in flight wins. The hold is
-  // still open, so an appeal decided after this read removes the label itself.
-  if ((await appealByKey(db, appealKey))?.resolution === "upheld") {
-    await removeLabel(db, job, github, UNCERTAIN_LABEL);
-    return supersede("appeal was upheld");
-  }
+  const afterLabel = await reconcileAppeal();
+  if (afterLabel !== null) return afterLabel;
   await store.recordAction(
     db,
     job.reviewKey,

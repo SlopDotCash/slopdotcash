@@ -224,6 +224,19 @@ export type RepositoryAccess =
       repository?: RepositoryIdentity;
     };
 
+/** The Slopbot internal route for one repository's public GitHub reads. */
+export const REPOSITORY_READ_URL =
+  "https://slopbot.internal/v1/repository-read";
+/** Marks a response that is GitHub's own answer through the installation. */
+export const REPOSITORY_READ_HEADER = "x-slopbot-repository-read";
+
+/**
+ * The public reads that project setup and security vetting make for one
+ * repository: its facts, one branch, and its LICENSE at one commit.
+ */
+export const REPOSITORY_READ_PATH =
+  /^\/repos\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})(?:\/branches\/[A-Za-z0-9._%-]{1,765}|\/license\?ref=[0-9a-f]{40})?$/u;
+
 /** Public identity fields returned by the authenticated GitHub repository read. */
 export type RepositoryIdentity = {
   id: number;

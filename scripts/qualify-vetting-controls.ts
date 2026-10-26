@@ -9,6 +9,9 @@ import {
   qualificationSchema,
 } from "../workers/vetting-backup/qualification";
 
+import { prepareFlagsEntry } from "../workers/vetting-flags/build";
+import { flagsSchema } from "../workers/vetting-flags/qualification";
+
 type Database = { uuid: string; name: string };
 type Queue = { queue_id: string; queue_name: string };
 type Bucket = { name: string; creation_date: string };
@@ -19,21 +22,35 @@ type Owned = {
   worker: boolean;
 };
 const env = process.env;
-const execute = process.argv.slice(2).join(" ") === "--execute";
-if (process.argv.length > 2 && !execute)
+const args = process.argv.slice(2);
+const flags = args.includes("--flags");
+const execute = args.includes("--execute");
+if (
+  args.some((arg) => !["--flags", "--execute"].includes(arg)) ||
+  new Set(args).size !== args.length
+)
   throw new Error(
-    "Use no arguments for an offline plan, or --execute in the protected workflow",
+    "Use --flags for flag fixtures; add --execute only in the protected workflow",
   );
 const sha = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
-const run = `slop-vet-q-${env.GITHUB_RUN_ID ?? "0"}-${env.GITHUB_RUN_ATTEMPT ?? "0"}`;
-if (!/^slop-vet-q-[0-9]{1,20}-[0-9]{1,5}$/.test(run))
+const run = `slop-vet-${flags ? "flags" : "q"}-${env.GITHUB_RUN_ID ?? "0"}-${env.GITHUB_RUN_ATTEMPT ?? "0"}`;
+if (!/^slop-vet-(?:q|flags)-[0-9]{1,20}-[0-9]{1,5}$/.test(run))
   throw new Error("Invalid qualification run identity");
+const runtimeVars = flags
+  ? { QUALIFICATION_RUN: run }
+  : {
+      QUALIFICATION_RUN: run,
+      EVIDENCE_BACKUP_MODE: "enabled",
+      EVIDENCE_RETENTION_MODE: "off",
+    };
 const names = {
   worker: run,
-  databases: [`${run}-source`, `${run}-restored`],
-  buckets: [`${run}-source`, `${run}-backup`, `${run}-restored`],
+  databases: flags ? [`${run}-source`] : [`${run}-source`, `${run}-restored`],
+  buckets: flags
+    ? [`${run}-source`]
+    : [`${run}-source`, `${run}-backup`, `${run}-restored`],
   queues: [`${run}-work`, `${run}-failed`],
 };
 if (!execute) {
@@ -43,7 +60,13 @@ if (!execute) {
         mode: "plan",
         source: sha,
         names,
-        resources: { d1: 2, r2: 3, queues: 2, worker: 1 },
+        resources: {
+          d1: names.databases.length,
+          r2: names.buckets.length,
+          queues: 2,
+          worker: 1,
+        },
+        fixture: flags ? "two-flag-pause" : "evidence-recovery",
         publicRoutes: false,
         scans: false,
         cleanup: "only exact resources created by this workflow run",
@@ -81,7 +104,7 @@ async function main() {
     directory = await mkdtemp(join(tmpdir(), `${run}-`));
   const reportDirectory = resolve(
     env.RUNNER_TEMP ?? directory,
-    "vetting-recovery-report",
+    flags ? "vetting-flags-report" : "vetting-recovery-report",
   );
   await mkdir(reportDirectory, { recursive: true });
   const owned: Owned = {
@@ -102,6 +125,7 @@ async function main() {
     hosted: true,
     productionTouched: false,
     scans: false,
+    syntheticScanResults: flags,
     policyAttested: false,
   };
   const account = env.CLOUDFLARE_ACCOUNT_ID;
@@ -216,11 +240,11 @@ async function main() {
         name: "EVIDENCE_BACKUP_QUEUE",
         queue_name: names.queues[0],
       },
-      ...Object.entries({
-        QUALIFICATION_RUN: run,
-        EVIDENCE_BACKUP_MODE: "enabled",
-        EVIDENCE_RETENTION_MODE: "off",
-      }).map(([name, text]) => ({ type: "plain_text", name, text })),
+      ...Object.entries(runtimeVars).map(([name, text]) => ({
+        type: "plain_text",
+        name,
+        text,
+      })),
     ];
     if (
       actual.length !== wanted.length ||
@@ -431,8 +455,11 @@ async function main() {
       });
       uncertainCreations.delete(name);
     }
-    const statements = [...splitSqlQuery(qualificationSchema)];
-    for (const migration of qualificationMigrations)
+    const flagBuild = flags ? await prepareFlagsEntry(root, directory) : null;
+    const statements = [
+      ...splitSqlQuery(flags ? flagsSchema : qualificationSchema),
+    ];
+    for (const migration of flagBuild?.migrations ?? qualificationMigrations)
       statements.push(
         ...splitSqlQuery(
           await readFile(join(root, "migrations", migration), "utf8"),
@@ -442,16 +469,15 @@ async function main() {
       for (const sql of statements) await query(db.uuid, sql);
     const config = {
       name: run,
-      main: join(root, "workers/vetting-backup/qualification-entry.ts"),
+      main:
+        flagBuild?.entry ??
+        join(root, "workers/vetting-backup/qualification-entry.ts"),
+      ...(flags ? { compatibility_flags: ["nodejs_compat"] } : {}),
       compatibility_date: "2026-07-30",
       workers_dev: false,
       preview_urls: false,
       account_id: account,
-      vars: {
-        QUALIFICATION_RUN: run,
-        EVIDENCE_BACKUP_MODE: "enabled",
-        EVIDENCE_RETENTION_MODE: "off",
-      },
+      vars: runtimeVars,
       d1_databases: owned.databases.map((d, i) => ({
         binding: i ? "RESTORED_DB" : "EVIDENCE_DATABASE",
         database_name: d.name,
@@ -506,56 +532,73 @@ async function main() {
     workerVersion = assertVersion(null);
     uncertainCreations.delete(run);
     await assertBindings();
-    await command("access");
-    report.access = await waitFor("access");
-    await command("seed");
-    report.seed = await waitFor("seed");
-    const until = Date.now() + 240_000;
-    for (;;) {
+    if (flags) {
+      await command("flags");
+      report.flags = await waitFor("flags");
+      await command("flags");
+      report.replayedFlags = await waitFor("flags");
       const rows = await query(
         owned.databases[0].uuid,
-        "SELECT phase FROM vetting_storage_cycles",
-      );
-      const deliveries = await query(
-        owned.databases[0].uuid,
-        "SELECT count(*) n FROM qualification_deliveries WHERE action='backup-page-0'",
+        "SELECT count(*) n FROM qualification_deliveries WHERE action='flags'",
       );
       if (
-        rows.length === 1 &&
-        rows[0].phase === "complete" &&
-        Number(deliveries[0]?.n) >= 2
-      ) {
-        report.acknowledgedFirstPageDeliveries = Number(deliveries[0].n);
-        break;
+        Number(rows[0]?.n) !== 2 ||
+        JSON.stringify(report.flags) !== JSON.stringify(report.replayedFlags)
+      )
+        throw new Error("Flag fixture replay differs");
+      report.acknowledgedFlagCommands = 2;
+    } else {
+      await command("access");
+      report.access = await waitFor("access");
+      await command("seed");
+      report.seed = await waitFor("seed");
+      const until = Date.now() + 240_000;
+      for (;;) {
+        const rows = await query(
+          owned.databases[0].uuid,
+          "SELECT phase FROM vetting_storage_cycles",
+        );
+        const deliveries = await query(
+          owned.databases[0].uuid,
+          "SELECT count(*) n FROM qualification_deliveries WHERE action='backup-page-0'",
+        );
+        if (
+          rows.length === 1 &&
+          rows[0].phase === "complete" &&
+          Number(deliveries[0]?.n) >= 2
+        ) {
+          report.acknowledgedFirstPageDeliveries = Number(deliveries[0].n);
+          break;
+        }
+        if (Date.now() > until)
+          throw new Error("Hosted queue snapshot did not finish");
+        await new Promise((r) => setTimeout(r, 1000));
       }
-      if (Date.now() > until)
-        throw new Error("Hosted queue snapshot did not finish");
-      await new Promise((r) => setTimeout(r, 1000));
+      await command("verify");
+      report.verify = await waitFor("verify");
+      await command("verify"); // Command replay uses permanent phase results.
+      report.replayedVerify = await waitFor("verify");
+      const verifiedDeliveries = await query(
+        owned.databases[0].uuid,
+        "SELECT count(*) n FROM qualification_deliveries WHERE action='verify'",
+      );
+      if (Number(verifiedDeliveries[0]?.n) !== 2)
+        throw new Error("Repeated verification was not delivered");
+      report.acknowledgedVerifyCommands = 2;
+      await command("corrupt");
+      report.corrupt = await waitFor("corrupt");
+      await command("retention");
+      report.retention = await waitFor("retention");
+      await command("retention");
+      report.replayedRetention = await waitFor("retention");
+      const retentionDeliveries = await query(
+        owned.databases[0].uuid,
+        "SELECT count(*) n FROM qualification_deliveries WHERE action='retention'",
+      );
+      if (Number(retentionDeliveries[0]?.n) !== 2)
+        throw new Error("Repeated retention verification was not delivered");
+      report.acknowledgedRetentionCommands = 2;
     }
-    await command("verify");
-    report.verify = await waitFor("verify");
-    await command("verify"); // Command replay uses permanent phase results.
-    report.replayedVerify = await waitFor("verify");
-    const verifiedDeliveries = await query(
-      owned.databases[0].uuid,
-      "SELECT count(*) n FROM qualification_deliveries WHERE action='verify'",
-    );
-    if (Number(verifiedDeliveries[0]?.n) !== 2)
-      throw new Error("Repeated verification was not delivered");
-    report.acknowledgedVerifyCommands = 2;
-    await command("corrupt");
-    report.corrupt = await waitFor("corrupt");
-    await command("retention");
-    report.retention = await waitFor("retention");
-    await command("retention");
-    report.replayedRetention = await waitFor("retention");
-    const retentionDeliveries = await query(
-      owned.databases[0].uuid,
-      "SELECT count(*) n FROM qualification_deliveries WHERE action='retention'",
-    );
-    if (Number(retentionDeliveries[0]?.n) !== 2)
-      throw new Error("Repeated retention verification was not delivered");
-    report.acknowledgedRetentionCommands = 2;
     success = true;
   } finally {
     try {
@@ -572,6 +615,6 @@ async function main() {
     }
   }
   console.log(
-    "Hosted harmless recovery qualification passed; safe result recorded. No operational policy is attested.",
+    "Hosted harmless qualification passed; safe result recorded. No operational policy is attested.",
   );
 }

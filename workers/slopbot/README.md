@@ -506,6 +506,18 @@ item has no structured appeal. It reads D1 only and prints the job. `--send`
 then queues that one job. The consumer re-reads GitHub, keys the appeal by item
 revision, and posts the canonical draft and notices.
 
+Each appeal stage has one publication record and a 20-minute fenced lease.
+Before POST, the Worker records that delivery has started. A retry reads the
+complete bounded comment history and accepts only the configured App's exact
+appeal-and-stage marker. It records completion only after a confirmed response
+or reconciliation. An uncertain send with no matching comment stays pending;
+it retries reconciliation without posting again. Explicit GitHub authorization,
+rate-limit or validation rejections remain retryable after the cause is fixed.
+Copied markers, unavailable
+history and multiple matches cannot establish delivery. Local Worker/SQLite
+checks prove lost-response recovery, concurrent delivery and expired-holder
+fencing. Hosted delivery remains a separate acceptance check.
+
 ## Supporting code for value assessments
 
 Historical joint-record preparation can receive the independently fetched D1
@@ -926,6 +938,18 @@ or `{ installation: "installed", installationId, permission, roleName }`
 with GitHub's base permission (maintain reads as write). It returns no token.
 Any GitHub failure is HTTP 503; setup shows it as a retry. Installation
 records in D1 alone never answer this check.
+
+The same binding serves
+`GET https://slopbot.internal/v1/repository-read?path=/repos/OWNER/REPO[/branches/BRANCH|/license?ref=SHA]`.
+Setup lookups and the vetting branch-head pin read one repository's public
+facts, one branch or its LICENSE at one commit with that repository's own
+installation token, so they do not depend on the anonymous GitHub rate limit
+of the shared Pages address. Any other path, or a path that URL normalization
+changes, is HTTP 400. Without an active installation, or for a repository
+that is not public, the answer is HTTP 404
+without the `x-slopbot-repository-read` header, and the site makes its
+ordinary read. GitHub's 200 and 404 answers pass through with that header;
+any other answer is HTTP 503. It returns no token.
 
 ## Objective quality verification
 

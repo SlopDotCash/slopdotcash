@@ -5118,3 +5118,28 @@ html:has(.security-page) {
   margin: 0.25rem 0 1rem;
   font-size: 0.875rem;
 }
+
+.referral-claims {
+  margin-block: 2rem;
+}
+.referral-claims dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  max-width: 42rem;
+}
+.referral-claims dd {
+  margin: 0;
+}
+.referral-address {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+.referral-claim-review {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--input-border);
+  border-radius: 12px;
+}

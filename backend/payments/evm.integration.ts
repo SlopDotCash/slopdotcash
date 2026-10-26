@@ -40,6 +40,8 @@ import {
 import { readDeploymentVaultTotals } from "../../workers/payments/index";
 import { scanEvmPayments } from "../../workers/payments/scanner";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
+import { sessionGithubActor } from "../points/handler";
+import { handleReferralClaims } from "../referrals/claims";
 import { dispatchPayment } from "./dispatch";
 import { evmPaymentAdapter } from "./evm-adapter";
 import { handlePaymentsApi, type PaymentDeploymentIdentity } from "./handler";
@@ -2011,6 +2013,24 @@ try {
             vault,
             asset,
           });
+        if (url.pathname === "/api/v1/referrals/me") {
+          const headers = new Headers(incoming.headers);
+          headers.set("cookie", `__Host-slop_points=${browserSession}`);
+          const result = await handleReferralClaims(
+            new Request(`https://slop.cash${url.pathname}`, {
+              method: incoming.method,
+              headers,
+            }),
+            {
+              db,
+              sessionActor: (request) =>
+                sessionGithubActor(request, db, new Date().toISOString()),
+              now: () => new Date(),
+            },
+          );
+          assert(result, "The referral claim route must be handled");
+          return result;
+        }
         if (url.pathname === "/api/v1/points/me")
           return Response.json({
             actor: { id: "browser-node", login: "browser-fixture" },

@@ -12,6 +12,37 @@ import {
   type PriorAccrual,
   periodBounds,
 } from "./core";
+import {
+  gasInteger,
+  ReferralGasBudgetError,
+  type ReferralGasCost,
+  type ReferralGasLimits,
+  validateGasCost,
+  validateGasLimits,
+} from "./gas";
+
+const GAS_AVAILABLE = `? <= ? AND ? + COALESCE((
+  SELECT SUM(CASE WHEN actual_wei IS NULL THEN maximum_wei WHEN settled_day=? THEN actual_wei ELSE 0 END)
+  FROM referral_post_gas WHERE network=?),0) <= ?
+  AND NOT EXISTS(SELECT 1 FROM referral_root_posts p LEFT JOIN referral_post_gas g ON g.post_id=p.id WHERE p.network=? AND g.post_id IS NULL)`;
+function budgetValues(
+  network: string,
+  maximumWei: string,
+  limits: ReferralGasLimits,
+  now: Date,
+) {
+  validateGasLimits(limits);
+  const maximum = gasInteger(maximumWei);
+  return [
+    maximum,
+    gasInteger(limits.perTransactionWei),
+    maximum,
+    now.toISOString().slice(0, 10),
+    network,
+    gasInteger(limits.perDayWei),
+    network,
+  ];
+}
 
 type D1Value = string | number | null;
 interface D1Statement {
@@ -22,7 +53,7 @@ interface D1Statement {
 }
 export interface ReferralD1Database {
   prepare(query: string): D1Statement;
-  batch?(statements: D1Statement[]): Promise<unknown[]>;
+  batch(statements: D1Statement[]): Promise<unknown[]>;
 }
 
 const ACCRUAL_COLUMNS: [keyof AccrualRow, string][] = [
@@ -220,47 +251,54 @@ export class D1AccrualStore implements AccrualStore, PostStore {
     return new Map(results.map((row) => [row.referrer_github_id, row.wallet]));
   }
 
-  async insertAccruals(rows: AccrualRow[]) {
+  async filePeriod(rows: AccrualRow[], file: AccrualFile, now: Date) {
     const columns = ACCRUAL_COLUMNS.map(([, column]) => column).join(", ");
     const placeholders = ACCRUAL_COLUMNS.map(() => "?").join(", ");
-    for (const row of rows)
-      await this.db
+    const statements = rows.map((row) =>
+      this.db
         .prepare(
           `INSERT INTO referral_accruals (${columns}) VALUES (${placeholders})`,
         )
-        .bind(...ACCRUAL_COLUMNS.map(([key]) => row[key] as D1Value))
-        .run();
-  }
-
-  async insertFile(file: AccrualFile) {
-    await this.db
-      .prepare(
-        `INSERT INTO referral_accrual_files
+        .bind(...ACCRUAL_COLUMNS.map(([key]) => row[key] as D1Value)),
+    );
+    // A missing, expired or replaced lease produces NULL for the required
+    // run_id. That constraint fails the whole batch, including earlier rows.
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO referral_accrual_files
            (period, epoch, run_id, mode, body, body_sha256, merkle_root,
             tree_total_base, leaf_count, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        file.period,
-        file.epoch,
-        file.runId,
-        file.mode,
-        file.body,
-        file.bodySha256,
-        file.merkleRoot,
-        file.treeTotalBase,
-        file.leafCount,
-        file.createdAt,
-      )
-      .run();
-    for (const pin of file.pins)
-      await this.db
-        .prepare(
-          `INSERT INTO referral_claim_wallets (referrer_github_id, wallet, pinned_period, created_at)
-           VALUES (?, ?, ?, ?)`,
+         VALUES (?, ?, (SELECT run_id FROM referral_accrual_locks
+           WHERE scope = 'accrual' AND run_id = ? AND expires_at >= ?),
+           ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .bind(pin.githubId, pin.wallet, file.period, file.createdAt)
-        .run();
+        .bind(
+          file.period,
+          file.epoch,
+          file.runId,
+          now.toISOString(),
+          file.mode,
+          file.body,
+          file.bodySha256,
+          file.merkleRoot,
+          file.treeTotalBase,
+          file.leafCount,
+          file.createdAt,
+        ),
+    );
+    for (const pin of file.pins)
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO referral_claim_wallets (referrer_github_id, wallet, pinned_period, created_at)
+           VALUES (?, ?, ?, ?)`,
+          )
+          .bind(pin.githubId, pin.wallet, file.period, file.createdAt),
+      );
+    // D1 rolls back every statement if any insert fails. Never split this
+    // batch: a public cumulative file must not exist without its wallet pins.
+    await this.db.batch(statements);
   }
 
   async openPosts(network: string) {
@@ -302,13 +340,82 @@ export class D1AccrualStore implements AccrualStore, PostStore {
     }));
   }
 
-  async insertPost(row: PostRow) {
-    await this.db
-      .prepare(
-        `INSERT INTO referral_root_posts (${POST_SELECT}) VALUES (${POST_COLUMNS.map(() => "?").join(", ")})`,
+  async unsettledGasPosts(network: string) {
+    const { results } = await this.db
+      .prepare(`SELECT ${POST_COLUMNS.map(([, column]) => `p.${column}`).join(",")}
+      FROM referral_root_posts p LEFT JOIN referral_post_gas g ON g.post_id=p.id
+      WHERE p.network=? AND g.actual_wei IS NULL ORDER BY p.created_at`)
+      .bind(network)
+      .all<Record<string, D1Value>>();
+    return results.map(postFromRow);
+  }
+  async recordGas(row: PostRow, cost: ReferralGasCost) {
+    validateGasCost(cost);
+    const result = await this.db
+      .prepare(`INSERT INTO referral_post_gas(post_id,network,maximum_wei,actual_wei,settled_day)
+      VALUES(?,?,?,?,?) ON CONFLICT(post_id) DO UPDATE SET
+      actual_wei=COALESCE(referral_post_gas.actual_wei,excluded.actual_wei),
+      settled_day=COALESCE(referral_post_gas.settled_day,excluded.settled_day)
+      WHERE referral_post_gas.network=excluded.network AND referral_post_gas.maximum_wei=excluded.maximum_wei
+        AND (excluded.actual_wei IS NULL OR referral_post_gas.actual_wei IS NULL OR
+          (referral_post_gas.actual_wei=excluded.actual_wei AND referral_post_gas.settled_day=excluded.settled_day))`)
+      .bind(
+        row.id,
+        row.network,
+        gasInteger(cost.maximumWei),
+        cost.actualWei === null ? null : gasInteger(cost.actualWei),
+        cost.settledDay,
       )
-      .bind(...POST_COLUMNS.map(([key]) => row[key] as D1Value))
       .run();
+    if (result.meta?.changes !== 1)
+      throw new Error("Referral native fee evidence changed");
+  }
+  async assertGasBudget(
+    network: string,
+    maximumWei: string,
+    limits: ReferralGasLimits,
+    now: Date,
+  ) {
+    const result = await this.db
+      .prepare(`SELECT (${GAS_AVAILABLE}) available`)
+      .bind(...budgetValues(network, maximumWei, limits, now))
+      .first<{ available: number }>();
+    if (result?.available !== 1)
+      throw new ReferralGasBudgetError(
+        "Referral native fee budget reached; unknown sends stay reserved",
+      );
+  }
+  async insertPost(
+    row: PostRow,
+    maximumWei: string,
+    limits: ReferralGasLimits,
+  ) {
+    const maximum = gasInteger(maximumWei);
+    if (maximum <= 0) throw new Error("Referral native fee reserve is missing");
+    const results = (await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO referral_root_posts (${POST_SELECT}) SELECT ${POST_COLUMNS.map(() => "?").join(", ")} WHERE ${GAS_AVAILABLE}`,
+        )
+        .bind(
+          ...POST_COLUMNS.map(([key]) => row[key] as D1Value),
+          ...budgetValues(
+            row.network,
+            maximumWei,
+            limits,
+            new Date(row.createdAt),
+          ),
+        ),
+      this.db
+        .prepare(
+          `INSERT INTO referral_post_gas(post_id,network,maximum_wei) SELECT id,network,? FROM referral_root_posts WHERE id=?`,
+        )
+        .bind(maximum, row.id),
+    ])) as { meta?: { changes?: number } }[];
+    if (results[0]?.meta?.changes !== 1 || results[1]?.meta?.changes !== 1)
+      throw new ReferralGasBudgetError(
+        "Referral native fee budget reached; no transaction was submitted",
+      );
   }
 
   async updatePost(id: string, fields: Partial<PostRow>) {

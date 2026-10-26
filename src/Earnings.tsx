@@ -23,6 +23,7 @@ import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { PayoutConsent } from "./PayoutConsent";
 import { formatCycleMonth, formatDate } from "./Presentation";
+import { ReferralClaims } from "./ReferralClaims";
 
 function chainDefaultNetwork(chain: EscrowChain): string {
   return (
@@ -472,6 +473,7 @@ export function EarningsPage({
       {data && (
         <>
           {error && <p>Showing the last verified account response.</p>}
+          {!walletsOnly && <ReferralClaims />}
           {walletsOnly ? (
             <>
               {walletDetailChains.length < ESCROW_CHAINS.length ? (

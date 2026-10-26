@@ -260,6 +260,7 @@ export async function findReviewComment(
   repo: string,
   number: number,
   appUserId: string,
+  marker = "<!-- slopbot:review -->",
 ): Promise<number | null> {
   let found: number | null = null;
   for (let page = 1; page <= 100; page++) {
@@ -286,7 +287,7 @@ export async function findReviewComment(
         comment.user?.type === "Bot" &&
         String(comment.user.id) === appUserId &&
         typeof comment.body === "string" &&
-        comment.body.startsWith("<!-- slopbot:review -->")
+        (comment.body === marker || comment.body.startsWith(`${marker}\n`))
       ) {
         if (found !== null && found !== comment.id)
           throw new Error(

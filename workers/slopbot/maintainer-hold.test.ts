@@ -26,13 +26,14 @@ async function uncertainReview(
     tick: () => Promise<Job[]>;
     deliver: (jobs: Job[]) => Promise<void>;
     setDraft: (v: boolean) => void;
+    setMaintainerComments: (value: boolean) => void;
     setVerdict: (category: Category, nextConfidence: number) => void;
     job: (kind: string, extra: Record<string, unknown>) => Job;
-    pause: (
-      method: string,
-      path: string,
-      when: "before" | "after",
-    ) => { reached: Promise<void>; release: () => void };
+    interleave: (
+      at: "issue" | "timeline" | "add",
+      callback: () => Promise<void>,
+    ) => void;
+    loseLabelResponse: (method: "POST" | "DELETE") => void;
     writes: string[];
     labels: { name: string }[];
     sql: (q: string) => unknown;
@@ -73,42 +74,20 @@ async function uncertainReview(
   let pullDraft = false;
   let currentCategory: Category = "busywork";
   let currentConfidence = confidence;
+  const interleavings = new Map<string, () => Promise<void>>();
+  const lostResponses = new Set<string>();
+  const interleave = async (at: string) => {
+    const callback = interleavings.get(at);
+    interleavings.delete(at);
+    await callback?.();
+  };
   const writes: string[] = [];
   const labels: { name: string }[] = [];
   let targetSha = "c".repeat(40);
   let patch = "-const a = 1;\n+const b = 1;";
-  // One-shot pauses order concurrent jobs around one GitHub request: "before"
-  // holds the request unapplied, "after" holds an already computed response.
-  const pauses: {
-    method: string;
-    path: string;
-    when: "before" | "after";
-    reach: () => void;
-    released: Promise<void>;
-  }[] = [];
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
-      const index = pauses.findIndex(
-        (entry) =>
-          entry.method === request.method &&
-          new URL(request.url).pathname.endsWith(entry.path),
-      );
-      const pause = index === -1 ? undefined : pauses.splice(index, 1)[0];
-      if (pause?.when === "before") {
-        pause.reach();
-        await pause.released;
-      }
-      const response = await respond(request);
-      if (pause?.when === "after") {
-        pause.reach();
-        await pause.released;
-      }
-      return response;
-    },
-  });
-  async function respond(request: Request): Promise<Response> {
-    {
       const url = new URL(request.url);
       const path = url.pathname;
       if (request.method !== "GET") writes.push(`${request.method} ${path}`);
@@ -144,8 +123,8 @@ async function uncertainReview(
           default_branch: "main",
           owner: { login: owner, id: 77, type: "Organization" },
         });
-      if (path.endsWith("/issues/5") && request.method === "GET")
-        return Response.json({
+      if (path.endsWith("/issues/5") && request.method === "GET") {
+        const issue = {
           node_id: "PR_local",
           number: 5,
           state: "open",
@@ -153,8 +132,11 @@ async function uncertainReview(
           body: "Small rename.",
           user: { login: "author", id: 42, type: "User" },
           assignees: [],
-          labels,
-        });
+          labels: labels.map((entry) => ({ ...entry })),
+        };
+        await interleave("issue");
+        return Response.json(issue);
+      }
       if (path.endsWith("/pulls/5"))
         return Response.json({
           draft: pullDraft,
@@ -195,7 +177,8 @@ async function uncertainReview(
         return Response.json({
           permission: path.includes("/maintainer/") ? "write" : "read",
         });
-      if (path.endsWith("/issues/5/timeline"))
+      if (path.endsWith("/issues/5/timeline")) {
+        await interleave("timeline");
         return Response.json([
           {
             event: "commented",
@@ -217,15 +200,22 @@ async function uncertainReview(
             actor: { login: "slopbot[bot]", id: 999 },
           },
         ]);
+      }
       if (path.endsWith("/issues/5/comments") && request.method === "GET")
         return Response.json([]);
       if (path.endsWith("/issues/5/comments"))
         return Response.json({ id: 900 }, { status: 201 });
       if (path.endsWith("/issues/5/labels")) {
         const body = (await request.json()) as { labels: string[] };
+        if (body.labels.includes("slopbot:uncertain")) await interleave("add");
         for (const name of body.labels)
           if (!labels.some((entry) => entry.name === name))
             labels.push({ name });
+        if (
+          body.labels.includes("slopbot:uncertain") &&
+          lostResponses.delete("POST")
+        )
+          return new Response(null, { status: 503 });
         return Response.json(labels);
       }
       const removed = path.match(/\/issues\/5\/labels\/(.+)$/u);
@@ -233,11 +223,13 @@ async function uncertainReview(
         const name = decodeURIComponent(removed[1]);
         const index = labels.findIndex((entry) => entry.name === name);
         if (index !== -1) labels.splice(index, 1);
-        return Response.json([]);
+        if (name === "slopbot:uncertain" && lostResponses.delete("DELETE"))
+          return new Response(null, { status: 503 });
+        return Response.json([], { status: index === -1 ? 404 : 200 });
       }
       return new Response(null, { status: 404 });
-    }
-  }
+    },
+  });
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = ((
     url: Parameters<typeof fetch>[0],
@@ -277,8 +269,13 @@ async function uncertainReview(
     await cb({
       writes,
       labels,
+      interleave: (at, callback) => interleavings.set(at, callback),
+      loseLabelResponse: (method) => void lostResponses.add(method),
       setDraft: (v: boolean) => {
         pullDraft = v;
+      },
+      setMaintainerComments: (value) => {
+        maintainerComments = value;
       },
       setVerdict: (category: Category, nextConfidence: number) => {
         currentCategory = category;
@@ -291,18 +288,6 @@ async function uncertainReview(
           deliveryId: `${kind}-${writes.length}`,
           ...extra,
         }) as Job,
-      pause: (method, path, when) => {
-        let reach = () => {};
-        let release = () => {};
-        const reached = new Promise<void>((resolve) => {
-          reach = resolve;
-        });
-        const released = new Promise<void>((resolve) => {
-          release = resolve;
-        });
-        pauses.push({ method, path, when, reach, released });
-        return { reached, release };
-      },
       advanceTarget: (changedSource) => {
         targetSha = "d".repeat(40);
         if (changedSource) patch = "+different current target comparison";
@@ -494,41 +479,149 @@ test("an upheld appeal supersedes an open maintainer hold and removes slopbot:un
   });
 });
 
-test.each([
-  "the label write is in flight when the appeal is upheld",
-  "the hold labels after the appeal read the item but before it was upheld",
-])("an upheld appeal leaves no uncertainty label when %s", async (ordering) => {
+test.each(["timeline", "add"] as const)(
+  "an appeal upheld during the hold's %s request leaves no uncertain label",
+  async (at) => {
+    await uncertainReview(false, async (run) => {
+      const start = Date.now();
+      await run.review();
+      run.setVerdict("none", 0.95);
+      await run.deliver([run.job("appeal", { senderId: 42 })]);
+      setSystemTime(new Date(start + 7 * day + 60_000));
+      const due = (await run.tick()).filter(
+        (job) => job.kind === "maintainer_hold",
+      );
+      expect(due).toHaveLength(1);
+      run.interleave(at, () =>
+        run.deliver([
+          run.job("appeal_command", { command: "accept", senderId: 42 }),
+        ]),
+      );
+      await run.deliver(due);
+      expect(run.sql("SELECT resolution FROM slopbot_appeals")).toEqual([
+        { resolution: "upheld" },
+      ]);
+      expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+        { outcome: "superseded" },
+      ]);
+      expect(run.labels.map((entry) => entry.name)).not.toContain(
+        "slopbot:uncertain",
+      );
+    });
+  },
+);
+
+test("an upheld appeal removes a hold label added after its issue snapshot", async () => {
   await uncertainReview(false, async (run) => {
     const start = Date.now();
-    expect(await run.review()).toMatch(/^held for maintainer until /);
+    await run.review();
     run.setVerdict("none", 0.95);
-    setSystemTime(new Date(start + day));
     await run.deliver([run.job("appeal", { senderId: 42 })]);
     setSystemTime(new Date(start + 7 * day + 60_000));
-    const due = await run.tick();
-    expect(due.map((j) => j.kind)).toEqual(["maintainer_hold"]);
-    const accept = [
+    const due = (await run.tick()).filter(
+      (job) => job.kind === "maintainer_hold",
+    );
+    expect(due).toHaveLength(1);
+    run.interleave("issue", () => run.deliver(due));
+    await run.deliver([
       run.job("appeal_command", { command: "accept", senderId: 42 }),
-    ];
-    if (ordering.startsWith("the label write")) {
-      const label = run.pause("POST", "/issues/5/labels", "before");
-      const hold = run.deliver(due);
-      await label.reached;
-      await run.deliver(accept);
-      label.release();
-      await hold;
-    } else {
-      const read = run.pause("GET", "/issues/5", "after");
-      const appeal = run.deliver(accept);
-      await read.reached;
-      await run.deliver(due);
-      expect(run.labels.map((l) => l.name)).toContain("slopbot:uncertain");
-      read.release();
-      await appeal;
-    }
-    expect(run.labels.map((l) => l.name)).not.toContain("slopbot:uncertain");
+    ]);
     expect(run.sql("SELECT resolution FROM slopbot_appeals")).toEqual([
       { resolution: "upheld" },
     ]);
+    expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+      { outcome: "labeled" },
+    ]);
+    expect(run.labels.map((entry) => entry.name)).not.toContain(
+      "slopbot:uncertain",
+    );
+    expect(run.writes).toContain(
+      "DELETE /repos/SlopDotCash/asi/issues/5/labels/slopbot%3Auncertain",
+    );
+  });
+});
+
+test("a hold retries an unknown label write against the stored upheld appeal", async () => {
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    await run.review();
+    run.setVerdict("none", 0.95);
+    await run.deliver([run.job("appeal", { senderId: 42 })]);
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = (await run.tick()).filter(
+      (job) => job.kind === "maintainer_hold",
+    );
+    run.interleave("add", () =>
+      run.deliver([
+        run.job("appeal_command", { command: "accept", senderId: 42 }),
+      ]),
+    );
+    run.loseLabelResponse("POST");
+    await expect(run.deliver(due)).rejects.toThrow("hold job was retried");
+    expect(run.sql("SELECT resolution FROM slopbot_appeals")).toEqual([
+      { resolution: "upheld" },
+    ]);
+    expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+      { outcome: null },
+    ]);
+    expect(run.labels.map((entry) => entry.name)).toContain(
+      "slopbot:uncertain",
+    );
+    const calls = run.writes.filter(
+      (write) => write === "POST /v1/messages",
+    ).length;
+    // New maintainer activity must not skip cleanup of the previous unknown
+    // write once the stored appeal decision has reversed the finding.
+    run.setMaintainerComments(true);
+    await run.deliver(due);
+    expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+      { outcome: "superseded" },
+    ]);
+    expect(run.labels.map((entry) => entry.name)).not.toContain(
+      "slopbot:uncertain",
+    );
+    expect(
+      run.writes.filter((write) => write === "POST /v1/messages"),
+    ).toHaveLength(calls);
+  });
+});
+
+test("an appeal retries an unknown label removal without changing its stored decision", async () => {
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    await run.review();
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    await run.deliver(await run.tick());
+    run.setVerdict("none", 0.95);
+    await run.deliver([run.job("appeal", { senderId: 42 })]);
+    run.loseLabelResponse("DELETE");
+    await expect(
+      run.deliver([
+        run.job("appeal_command", { command: "accept", senderId: 42 }),
+      ]),
+    ).rejects.toThrow("hold job was retried");
+    expect(run.sql("SELECT resolution FROM slopbot_appeals")).toEqual([
+      { resolution: "upheld" },
+    ]);
+    expect(run.labels.map((entry) => entry.name)).not.toContain(
+      "slopbot:uncertain",
+    );
+    const calls = run.writes.filter(
+      (write) => write === "POST /v1/messages",
+    ).length;
+    await run.deliver([
+      run.job("appeal_command", { command: "reject", senderId: 42 }),
+    ]);
+    expect(run.sql("SELECT resolution FROM slopbot_appeals")).toEqual([
+      { resolution: "upheld" },
+    ]);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) n FROM slopbot_actions WHERE review_key LIKE '%:resolution' AND action = 'comment'",
+      ),
+    ).toEqual([{ n: 1 }]);
+    expect(
+      run.writes.filter((write) => write === "POST /v1/messages"),
+    ).toHaveLength(calls);
   });
 });

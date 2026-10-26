@@ -118,17 +118,18 @@ large bytes are not implicitly copied into this 64 MiB capture store. The UI
 states this boundary. The storage run immutably binds the assembly and captured
 VM digests; the current VM format does not independently assert a run ID.
 
-Retention and scan readiness are separate. The current canonical assembler is
-explicitly incomplete and authorizes no provider calls or publication. Verified
-retention never changes those flags or removes visibility gaps. A clean result
-requires an authorized complete canonical runtime contract, matching review-input
-digests, all result-named evidence, and current retained closure. No such complete
-canonical runtime contract exists yet. Thus current incomplete assemblies and
-legacy metadata-only clean claims cannot authorize HTTP clean admission,
-activation, executable skills, discovery or reinstatement. Unknown future
-assembly states are refused rather than inferred as complete. Malicious findings
-and incomplete evidence recording continue to work. Low-level enforcement tests
-are not evidence of HTTP clean admission.
+Retention and scan readiness are separate. The ordinary bounded scan uses
+`slop-vetting-result-v2`. Its retained evidence must include the exact report,
+input inventory, dependency locks and every named artifact. The service rereads
+and verifies their bytes before accepting the result. The
+[bounded scan rules](../../workers/vetting/README.md#bounded-malicious-code-scan)
+also govern coverage, model review and clearance; storage alone cannot pass a scan.
+
+Historical v1 results keep the original assembly rule. That assembler is
+explicitly incomplete and authorizes no provider calls or publication. Retention
+cannot remove its gaps or turn a legacy metadata-only claim into clearance.
+Unknown assembly states are refused. Incomplete evidence and malicious findings
+can still be recorded without permitting activation, skills or reinstatement.
 
 Dynamic skills, discovery and public clearance use no-store, so a prior cache
 entry cannot bypass the gate. Unrelated raw registry lists and revision caches

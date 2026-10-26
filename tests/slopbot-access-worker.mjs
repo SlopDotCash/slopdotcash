@@ -9,10 +9,10 @@ import { githubAppReportingReader } from "../backend/security/github-advisories"
 import { refreshRegisteredReporting } from "../workers/slopbot/reporting-readiness";
 import {
   handleRepositoryAccess,
+  handleRepositoryRead,
   REPOSITORY_ACCESS_URL,
+  REPOSITORY_READ_URL,
 } from "../workers/slopbot/repository-access";
-
-const route = new URL(REPOSITORY_ACCESS_URL);
 
 export default {
   fetch(request, env) {
@@ -34,13 +34,16 @@ export default {
         }),
       ).then((result) => Response.json(result));
     }
-    if (
-      request.method !== "GET" ||
-      url.origin !== route.origin ||
-      url.pathname !== route.pathname
-    )
+    const route = `${url.origin}${url.pathname}`;
+    const handler =
+      route === REPOSITORY_ACCESS_URL
+        ? handleRepositoryAccess
+        : route === REPOSITORY_READ_URL
+          ? handleRepositoryRead
+          : null;
+    if (request.method !== "GET" || handler === null)
       return new Response("not found", { status: 404 });
-    return handleRepositoryAccess(request, env, (input, init) => {
+    return handler(request, env, (input, init) => {
       const target = new URL(String(input));
       if (target.origin !== "https://api.github.com")
         throw new Error("Slopbot fixture reached an unexpected origin");
