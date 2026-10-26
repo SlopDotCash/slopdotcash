@@ -20,7 +20,6 @@ import { onRequest as socialMetadata } from "./index";
 type Env = {
   SLOP_DB?: ProjectD1Database;
   VETTING_EVIDENCE?: R2Bucket;
-  VETTING_EVIDENCE_POLICY?: string;
   ASSETS?: { fetch(request: Request): Promise<Response> };
   /** Local browser tests only: a loopback GitHub API fixture origin. */
   SLOP_GITHUB_API_ORIGIN?: string;
@@ -42,7 +41,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     const evidence = new VettingEvidence({
       db,
       bucket: context.env.VETTING_EVIDENCE,
-      policy: context.env.VETTING_EVIDENCE_POLICY,
       now: () => new Date(),
       randomId: () => crypto.randomUUID(),
     });

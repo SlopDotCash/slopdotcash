@@ -56,25 +56,28 @@ export const EVIDENCE_OPERATOR_GITHUB_IDS: readonly string[] = [
   "18633264",
   "202660855",
 ];
-export type EvidencePolicy = {
-  version: string;
-  policyAuthorityGithubId: string;
-  operatorGithubIds: string[];
-  postClosureRetentionSeconds: number;
-  readGrantDurationSeconds: number;
-  maxObjectBytes: number;
-  maxRunBytes: number;
-  maxObjects: number;
-  accessPolicyReference: string;
-  retentionPolicyReference: string;
-  recoveryPolicyReference: string;
-  externalControls: {
-    evidenceReference: string;
-    attestedByGithubId: string;
-    attestedAt: string;
-    validUntil: string;
-  };
-};
+/**
+ * The approved scanner-evidence terms (#909 owner decisions, PRD section 9).
+ * They are fixed in source: a change needs a reviewed pull request, not
+ * deployment configuration. Each run stores a copy of the terms it used.
+ */
+export const EVIDENCE_POLICY = {
+  version: "slop-scanner-evidence-2026-10-26",
+  policyAuthorityGithubId: EVIDENCE_POLICY_AUTHORITY_GITHUB_ID,
+  operatorGithubIds: [...EVIDENCE_OPERATOR_GITHUB_IDS],
+  postClosureRetentionSeconds: 90 * 86400,
+  readGrantDurationSeconds: 900,
+  maxObjectBytes: MAX_EVIDENCE_OBJECT_BYTES,
+  maxRunBytes: EVIDENCE_RUN_BYTES,
+  maxObjects: 1024,
+  accessPolicyReference:
+    "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6379712530",
+  retentionPolicyReference:
+    "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6379714982",
+  recoveryPolicyReference:
+    "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6380038965",
+} as const;
+export type EvidencePolicy = typeof EVIDENCE_POLICY;
 function exact(value: Record<string, unknown>, keys: string[]) {
   if (Object.keys(value).sort().join() !== keys.sort().join())
     fail(400, "invalid_request", "Unexpected evidence fields");
@@ -84,104 +87,9 @@ function text(value: unknown, max = 500): string {
     fail(400, "invalid_request", "Invalid evidence text");
   return value;
 }
-export function evidencePolicy(
-  raw: string | undefined,
-  now: Date,
-): EvidencePolicy | null {
-  try {
-    const p = JSON.parse(raw ?? "null");
-    if (!isRecord(p)) return null;
-    exact(p, [
-      "version",
-      "policyAuthorityGithubId",
-      "operatorGithubIds",
-      "postClosureRetentionSeconds",
-      "readGrantDurationSeconds",
-      "maxObjectBytes",
-      "maxRunBytes",
-      "maxObjects",
-      "accessPolicyReference",
-      "retentionPolicyReference",
-      "recoveryPolicyReference",
-      "externalControls",
-    ]);
-    text(p.version, 100);
-    if (
-      typeof p.policyAuthorityGithubId !== "string" ||
-      !/^[1-9][0-9]{0,19}$/u.test(p.policyAuthorityGithubId)
-    )
-      return null;
-    for (const key of [
-      "accessPolicyReference",
-      "retentionPolicyReference",
-      "recoveryPolicyReference",
-    ])
-      text(p[key]);
-    // Only the recorded owner and readers (PRD section 9) are accepted; a
-    // policy that names anyone else, or omits either reader, is inactive.
-    if (
-      p.policyAuthorityGithubId !== EVIDENCE_POLICY_AUTHORITY_GITHUB_ID ||
-      !Array.isArray(p.operatorGithubIds) ||
-      p.operatorGithubIds.length !== EVIDENCE_OPERATOR_GITHUB_IDS.length ||
-      p.operatorGithubIds.some((id) => typeof id !== "string") ||
-      [...p.operatorGithubIds].sort().join() !==
-        [...EVIDENCE_OPERATOR_GITHUB_IDS].sort().join()
-    )
-      return null;
-    for (const key of [
-      "postClosureRetentionSeconds",
-      "readGrantDurationSeconds",
-      "maxObjectBytes",
-      "maxRunBytes",
-      "maxObjects",
-    ])
-      if (!Number.isSafeInteger(p[key]) || Number(p[key]) < 1) return null;
-    if (
-      Number(p.postClosureRetentionSeconds) !== 90 * 86400 ||
-      Number(p.readGrantDurationSeconds) > 900 ||
-      Number(p.maxObjectBytes) > MAX_EVIDENCE_OBJECT_BYTES ||
-      Number(p.maxRunBytes) > 64 * 1024 * 1024 ||
-      Number(p.maxObjects) > 1024 ||
-      Number(p.maxRunBytes) < Number(p.maxObjectBytes)
-    )
-      return null;
-    const controls = p.externalControls;
-    if (!isRecord(controls)) return null;
-    exact(controls, [
-      "evidenceReference",
-      "attestedByGithubId",
-      "attestedAt",
-      "validUntil",
-    ]);
-    text(controls.evidenceReference);
-    if (controls.attestedByGithubId !== p.policyAuthorityGithubId) return null;
-    const from = Date.parse(String(controls.attestedAt)),
-      until = Date.parse(String(controls.validUntil));
-    if (
-      !Number.isFinite(from) ||
-      !Number.isFinite(until) ||
-      from > now.getTime() ||
-      until <= now.getTime() ||
-      until <= from
-    )
-      return null;
-    if (
-      !Number.isFinite(
-        new Date(
-          now.getTime() + Number(p.postClosureRetentionSeconds) * 1000,
-        ).getTime(),
-      )
-    )
-      return null;
-    return p as EvidencePolicy;
-  } catch {
-    return null;
-  }
-}
 export type EvidenceDependencies = {
   db: ProjectD1Database;
   bucket: R2Bucket | undefined;
-  policy: string | undefined;
   session?: (request: Request) => Promise<WebSession | null>;
   now: () => Date;
   randomId: () => string;
@@ -233,19 +141,16 @@ export class VettingEvidence {
     return this.deps.signed(request, maximum);
   }
   ready() {
-    return Boolean(
-      this.deps.bucket && evidencePolicy(this.deps.policy, this.deps.now()),
-    );
+    return Boolean(this.deps.bucket);
   }
   configuration() {
-    const policy = evidencePolicy(this.deps.policy, this.deps.now());
-    if (!this.deps.bucket || !policy)
+    if (!this.deps.bucket)
       fail(
         503,
         "evidence_unavailable",
-        "Vetting evidence requires a private bucket, explicit policy and current operator attestation of external retention and recovery controls",
+        "Vetting evidence storage is not bound",
       );
-    return { policy, bucket: this.deps.bucket };
+    return { policy: EVIDENCE_POLICY, bucket: this.deps.bucket };
   }
   async audit(
     actor: string,

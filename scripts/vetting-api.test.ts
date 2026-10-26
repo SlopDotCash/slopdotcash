@@ -10,7 +10,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { handleProjectApi } from "../backend/projects/handler";
-import { evidencePolicy } from "../backend/vetting/evidence";
 import { EVIDENCE_CHUNK_BYTES } from "../backend/vetting/evidence-chunks";
 import {
   handleVettingApi,
@@ -26,7 +25,6 @@ import { sqliteD1 } from "../tests/sqlite-d1";
 import {
   EVIDENCE_OWNER_GITHUB_ID,
   EVIDENCE_READER_GITHUB_ID,
-  localEvidencePolicy,
   localVettingEvidence,
 } from "../tests/vetting-evidence-fixture";
 import {
@@ -546,11 +544,6 @@ describe("community security vetting", () => {
     expect(
       (await retained.evidence.run(id, result.environment.runId)).expires_at,
     ).toBeNull();
-    const casePolicy = JSON.parse(retained.evidence.deps.policy!);
-    casePolicy.externalControls.validUntil = new Date(
-      NOW.getTime() + 100 * 86400_000,
-    ).toISOString();
-    retained.evidence.deps.policy = JSON.stringify(casePolicy);
     expect((await close("900000001"))?.status).toBe(403);
     expect((await close(EVIDENCE_READER_GITHUB_ID))?.status).toBe(403);
     expect(
@@ -855,25 +848,7 @@ test("private retained bytes remain inspectable without granting clean clearance
       await operator(`${base}/body`, undefined, undefined, renewedGrant)
     ).text(),
   ).toBe(VETTING_TRACE_BODY);
-  const policy = retained.evidence.deps.policy!;
-  const revokeGrant = (
-    await (
-      await operator(`${base}/grant`, undefined, {
-        reason: "Inspect before access is revoked",
-      })
-    ).json()
-  ).grant;
-  // A policy that names anyone but the recorded readers is inactive, so an
-  // issued grant stops working.
-  retained.evidence.deps.policy = JSON.stringify({
-    ...JSON.parse(policy),
-    operatorGithubIds: [EVIDENCE_OWNER_GITHUB_ID, "900000099"],
-  });
-  expect(
-    (await operator(`${base}/body`, undefined, undefined, revokeGrant)).status,
-  ).toBe(503);
-  retained.evidence.deps.policy = policy;
-  expect((await postResult(result)).status).toBe(422);
+
   expect((await publicVetting()).state).toBe("queued");
   await retained.bucket.delete(key);
   expect(
@@ -907,18 +882,6 @@ test("private retained bytes remain inspectable without granting clean clearance
   await retained.bucket.delete(key);
   await retained.retain(id, run);
   expect((await publicVetting()).state).toBe("queued");
-  retained.evidence.deps.policy = JSON.stringify({
-    ...JSON.parse(policy),
-    maxObjectBytes: 1,
-  });
-  expect(
-    (
-      await operator(`${base}/grant`, undefined, {
-        reason: "Inspect over-limit collector evidence",
-      })
-    ).status,
-  ).toBe(413);
-  retained.evidence.deps.policy = policy;
   retained.evidence.deps.now = () => new Date(NOW.getTime() + 3600_001);
   expect(
     (
@@ -928,9 +891,6 @@ test("private retained bytes remain inspectable without granting clean clearance
     ).status,
   ).toBe(201);
   expect((await publicVetting()).state).toBe("queued");
-  retained.evidence.deps.now = () => new Date(NOW.getTime() + 7200_001);
-  expect(retained.evidence.ready()).toBe(false);
-  expect((await operator(overview)).status).toBe(503);
 });
 
 test("a clean result cannot omit a referenced retained artifact or replace an immutable inventory", async () => {
@@ -987,7 +947,7 @@ test("historical metadata-only clean results have no retained-evidence exemption
 });
 
 test("missing storage pauses acquisition while harmless queue registration remains available", async () => {
-  retained.evidence.deps.policy = undefined;
+  retained.evidence.deps.bucket = undefined;
   await listPausedProject();
   const id = await queueScan();
   expect((await vetting.getAssessment(id))?.state).toBe("pending");
@@ -1022,9 +982,6 @@ test("large retained evidence uses bounded chunks, immutable completion and acto
       sizeBytes: part.length,
     });
   }
-  const policy = JSON.parse(retained.evidence.deps.policy!);
-  policy.maxObjectBytes = 32 * 1024 * 1024;
-  retained.evidence.deps.policy = JSON.stringify(policy);
   retained.evidence.deps.signed = (request, maximum) =>
     signedVettingRequest(
       request,
@@ -1255,44 +1212,3 @@ test("large retained evidence uses bounded chunks, immutable completion and acto
   );
   expect((await grant()).status).toBe(404);
 }, 60_000);
-
-test("the evidence policy is inactive unless it names exactly the recorded owner and readers", () => {
-  const valid = localEvidencePolicy(NOW);
-  expect(evidencePolicy(JSON.stringify(valid), NOW)).toEqual(valid);
-  expect(
-    evidencePolicy(
-      JSON.stringify({
-        ...valid,
-        operatorGithubIds: [
-          EVIDENCE_READER_GITHUB_ID,
-          EVIDENCE_OWNER_GITHUB_ID,
-        ],
-      }),
-      NOW,
-    ),
-  ).not.toBeNull();
-  for (const changed of [
-    // The other reader cannot own the policy or attest its controls.
-    {
-      policyAuthorityGithubId: EVIDENCE_READER_GITHUB_ID,
-      externalControls: {
-        ...valid.externalControls,
-        attestedByGithubId: EVIDENCE_READER_GITHUB_ID,
-      },
-    },
-    { operatorGithubIds: [EVIDENCE_OWNER_GITHUB_ID] },
-    { operatorGithubIds: [EVIDENCE_OWNER_GITHUB_ID, EVIDENCE_OWNER_GITHUB_ID] },
-    {
-      operatorGithubIds: [
-        EVIDENCE_OWNER_GITHUB_ID,
-        EVIDENCE_READER_GITHUB_ID,
-        "900000099",
-      ],
-    },
-    { operatorGithubIds: [EVIDENCE_OWNER_GITHUB_ID, "900000099"] },
-    { operatorGithubIds: [18633264, 202660855] },
-  ])
-    expect(evidencePolicy(JSON.stringify({ ...valid, ...changed }), NOW)).toBe(
-      null,
-    );
-});

@@ -7,8 +7,8 @@ content at the live pin. The scanner and its model reviews are an external
 service ([worker](../../workers/vetting/README.md)). This module stores their
 signed results, queues scans automatically, records contributor flags and
 enforces the gate. It fails closed when the service is absent. [Private
-evidence storage and inspection](EVIDENCE.md) use a separate R2 binding and an
-explicit operator-attested policy with inactive defaults.
+evidence storage and inspection](EVIDENCE.md) use a separate R2 binding and
+fixed evidence terms in source.
 
 ## Tables
 
