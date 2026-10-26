@@ -120,20 +120,20 @@ export function totalsPerToken(rows: SettledRow[]): FeeConversionTotal[] {
 
 export interface FeeConversionRoute {
   network: string;
-  /** Circle USDC on the network, or null while no address is verified. */
+  /** Circle USDC on the network, or null when received assets stay unconverted. */
   targetToken: string | null;
-  /** `pending`: received fees stay in the fee wallet; nothing converts. */
-  status: "usdc" | "pending";
+  /** `not_converted`: received assets stay unchanged in the fee wallet. */
+  status: "usdc" | "not_converted";
 }
 
-/** The conversion target of every network, so a pending route is visible. */
+/** The conversion target of every network, including explicit unconverted retention. */
 export function conversionRoutes(): FeeConversionRoute[] {
   return NETWORKS.map((network) => {
     const usdc = NETWORK_DEFINITIONS[network].usdc;
     return {
       network,
       targetToken: usdc,
-      status: usdc === null ? "pending" : "usdc",
+      status: usdc === null ? "not_converted" : "usdc",
     };
   });
 }

@@ -3,6 +3,7 @@
 **Status:** internal, AI-assisted review. Not an independent audit.
 **Date:** 12 October 2026
 **Fix status (updated 14 October 2026):** checked against `development` at commit `776681c`, after the fixes in [#673](https://github.com/SlopDotCash/slopdotcash/pull/673) (M-1, M-2, L-1, L-2 in part, L-3 in part, L-4, L-5, I-7) and [#675](https://github.com/SlopDotCash/slopdotcash/pull/675) (H-1) merged. Each finding below has a **Status** line. The repository owner approved publication of this report after those fixes merged. Section 4 describes the behavior of `bbcc87b`; the Status lines describe `development`.
+**Policy status (25 October 2026):** the owner waived the independent smart-contract audit and the signer/attester legal review on 24 October 2026; both are waived, not completed (PRD section 9 "Mainnet" row and section 11 "External reviews" row). The current withdrawal-fee requirement is 2%, `ceil(gross / 50)`, equal to the award fee (PRD section 6). The 10% figure in section 3 describes the contracts reviewed on 12 October. The [deployment guide](../../contracts/DEPLOY-MAINNET.md) records mainnet source `bce5b0df` and pending upgrades, including rounded-up fees; this policy update does not verify those upgrades. Explicit per-network activation remains required. The later [AI red-team review](red-team-2026-10-24.md) is also not an independent audit. Other finding statuses below retain their stated review dates.
 **Commissioned and reconciled by:** Drew Pierson (Operator, Slop Cash S.P.), using Claude Fable 5.1 as lead reviewer. Drew is not independent of the project and is not a security engineer. The contract author (Shaw Walters) did not take part in the review.
 **Code reviewed:** SlopDotCash/slopdotcash `main` at commit `bbcc87b91c3ef952313eb5669112865fc311be4a` (12 Oct 2026 16:56Z)
 
@@ -19,7 +20,9 @@ The findings are design-level and concentrated in one area: the wallet-binding l
 
 - **L-3 (Solana):** the identity authority and the fee recipient of a Solana project are chosen by the owner. Neither the program nor the manifest policy pins them to a canonical Slop key. This report first rated L-3 Low; it is re-rated Medium and is an authority-conformance blocker (see L-3).
 - **Withdrawal fee:** the trust model in section 3 uses the 10% withdrawal fee that the contracts enforce. The PRD records that fee as an unresolved commercial decision that needs owner approval (`docs/slop-product-requirements.md`, section 18 and the section 22 "Withdrawal fee" row). This review does not approve it.
+  **Status: decided.** The owner set the withdrawal fee to 2%, `ceil(gross / 50)`, equal to the award fee (PRD section 6; `docs/payouts-mvp.md`).
 - **Independent audit** of the contracts as changed by #673 and #675 (section 6).
+  **Status: waived.** The owner waived the independent audit on 24 October 2026, not completed (PRD section 11 "External reviews").
 
 | Severity | Count | Summary |
 |---|---|---|
@@ -176,8 +179,11 @@ Each item was examined by at least two reviewers and re-read by the lead.
 
 - **Who holds the identity authority.** `bindDestination` and `bind_wallet` accept any destination from the authority alone; no wallet proof is checked on chain. The payouts MVP describes this as a Slop-run attester. The product requirements (section 22, merged as #557) say no Slop-held key may originate, route or redirect a payment. These conflict. The decision is Shaw's and must be settled before any deployment; until then, public copy should not describe the escrow as non-custodial without qualification, and this review should not be cited as having resolved it.
   **Status: decided.** The repository owner approved the bounded-attester design of #675 on 14 October 2026 (PAY-05, `docs/payouts-mvp.md`). Slop holds the attester key, but the key can only co-sign a binding that the destination wallet signed, and a timelocked rotation replaces it. This review did not examine that design; the independent audit must examine it.
+  **Policy status (25 October 2026):** the current PRD sections 6 and 11 supersede that delay and scope. Wallet bindings and identity-authority rotations have no waiting period. The attester also signs monthly allocation roots within the owner's cap and opt-out. The owner accepts the compromised-attester risk recorded in [the later red-team review](red-team-2026-10-24.md). The independent review was waived, not completed.
 - **Solana upgrade authority.** A retained upgrade key can replace the program and empty every vault. The README and the adapter require `null` on mainnet. That is a launch gate, not a finding, and this review did not verify any deployment.
+  **Status: superseded.** The owner retains the Solana upgrade authority in production without a timelock, and the EVM deployment authority may upgrade factories and vaults without a timelock; both are recorded as accepted risks (PRD section 11 "Solana upgrade authority", "EVM upgrade authority" and "Upgrade key custody"; `red-team-2026-10-24.md`).
 - **Independent audit.** This review was produced by models under the direction of a non-independent operator. It is a pre-audit. An independent review before any mainnet escrow remains the plan.
+  **Status: waived.** On 24 October 2026 the owner waived the independent audit and the signer/attester legal review; they are waived, not completed (PRD section 11). This report and `red-team-2026-10-24.md` are internal reviews. The separate [external finding](external-cancel-cap-rotation-2026-10-20.md) is also not an independent contract audit.
 
 ## 7. Test coverage gaps in the repository's own suites
 
@@ -194,8 +200,8 @@ The EVM integration suite does not exercise the M-1 ordering, repeated cancel, r
 3. Land the small Solana hardening: zero-digest, destination and expiry checks (L-4); `fee_recipient != owner` and delay maximum at `initialize` (L-3); skip the zero fee transfer (L-2). **Done:** #673. **Open:** pinning of the Solana authority and fee recipient (L-3), and a fallback for a frozen fee account on payouts that have a fee (L-2).
 4. Update both READMEs (M-2 wording, no-recovery property, I-5 items) and `docs/payouts-mvp.md:17`. **Partly done:** #673 and #675 changed the M-2 wording and added the recovery runbook; the I-5 items are open.
 5. Adopt the review tests and close the end-to-end gaps in section 7. **Partly done:** the tests are adopted and CI runs them; some Solana end-to-end gaps remain (section 7).
-6. Decide the 10% withdrawal fee (PRD section 18 and the section 22 "Withdrawal fee" row). **Open.**
-7. Independent audit before any mainnet deployment. **Open.**
+6. Decide the 10% withdrawal fee (PRD section 18 and the section 22 "Withdrawal fee" row). **Done:** 2%, `ceil(gross / 50)`, equal to the award fee (PRD section 6).
+7. Independent audit before any mainnet deployment. **Waived:** owner decision of 24 October 2026, not completed (PRD section 11 "External reviews"); mainnet contracts deployed, activation still explicit per network.
 
 ## Appendix: reviewer reports and tests
 
