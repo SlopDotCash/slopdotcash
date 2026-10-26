@@ -6,11 +6,11 @@
  * "malicious" needs concrete confirmation evidence, not a model label.
  */
 
-import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import {
   VETTING_DISPOSITIONS,
   type VettingDisposition,
 } from "../../src/lib/vetting-contracts";
+import { PROJECT_ID } from "../http";
 import { validIsoTimestamp, validSha256 } from "../trace/validation";
 
 const VETTING_RESULT_SCHEMA = "slop-vetting-result-v1";

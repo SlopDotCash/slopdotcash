@@ -25,7 +25,6 @@ import {
   assertProjectDefinition,
   assertProjectRegistry,
   monthlyAmountDisplay,
-  PROJECT_ID,
   PROJECT_SKILL_TEMPLATES,
   parseAssetAmount,
 } from "../../src/lib/project-schema.mjs";
@@ -48,6 +47,7 @@ import {
   fail,
   isSameOriginJsonWrite,
   json as jsonResponse,
+  PROJECT_ID,
   pathParts,
   requireActor,
 } from "../http";

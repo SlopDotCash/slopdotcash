@@ -16,6 +16,13 @@ export function pathParts(request: Request): string[] {
   return path.slice("/api/v1/".length).split("/").filter(Boolean);
 }
 
+/**
+ * A registry project id: at most MAX_PROJECT_ID_LENGTH (43) characters, as in
+ * `src/lib/project-schema.mjs`. That file is a skill template input, so its
+ * pattern is not exported from there.
+ */
+export const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u;
+
 /** Headers of an API JSON response; callers may replace the cache policy. */
 export const JSON_HEADERS = {
   "cache-control": "private, no-store",

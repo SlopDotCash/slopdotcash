@@ -10,12 +10,12 @@ import type {
   ProjectEnforcement,
   ProjectRecord,
 } from "../../src/lib/project-contracts";
-import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import {
   buildProjectPublication,
   PUBLIC_SITE_ORIGIN,
 } from "../../src/lib/project-skill-publication.mjs";
+import { PROJECT_ID } from "../http";
 import type { VettingClearance } from "../vetting/persistence";
 import { publicRestrictionOf } from "./enforcement";
 

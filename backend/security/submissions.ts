@@ -22,10 +22,9 @@
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
-import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import type { D1QueryStatement as D1Statement } from "../d1";
 import { GHSA } from "../github";
-import { exactKeys, fail, requireActor } from "../http";
+import { exactKeys, fail, PROJECT_ID, requireActor } from "../http";
 import { notifySecurityReportReceived } from "../notifications/events";
 import {
   hasParticipationBan,

@@ -21,12 +21,12 @@ import type {
   ProjectRecord,
   SetupAuthority,
 } from "../../src/lib/project-contracts";
-import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import {
   apiErrorResponse,
   fail,
   isSameOriginJsonWrite,
   json as jsonResponse,
+  PROJECT_ID,
   pathParts,
   requireActor,
 } from "../http";

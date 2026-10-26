@@ -10,7 +10,6 @@ import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
  * publicly, or exported to builds, leaderboards, points or cycles.
  */
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
-import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
   type SecurityBountyTerms,
@@ -28,6 +27,7 @@ import {
   fail,
   isSameOriginJsonWrite,
   json as jsonResponse,
+  PROJECT_ID,
   pathParts,
   requireActor,
 } from "../http";

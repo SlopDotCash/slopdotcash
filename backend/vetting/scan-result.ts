@@ -9,11 +9,11 @@
  * rules in `result.ts`; an old incomplete scan is never reread as clean.
  */
 
-import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import {
   VETTING_DISPOSITIONS,
   type VettingDisposition,
 } from "../../src/lib/vetting-contracts";
+import { PROJECT_ID } from "../http";
 import {
   ARTIFACT_ANALYSES,
   ARTIFACT_STATES,
