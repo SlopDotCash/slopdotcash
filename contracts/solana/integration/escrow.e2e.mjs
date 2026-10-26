@@ -36,6 +36,7 @@ import {
   freezeSolanaMonthly,
   submitSolanaMonthly,
 } from "../.local/monthly-executor.mjs";
+import { inspectSolanaMonthlyWrongSum } from "../.local/monthly-reserve.mjs";
 import {
   configAddress,
   configFees,
@@ -2979,7 +2980,227 @@ test("an identical hand commit after the freeze is counted once and the month co
   );
 });
 
-// An attester fault: the signed tree repeats a source, so its second copy can never
+// Complete retained allocation evidence, read through the actual adapter from finalized
+// validator state. The inspector has no signer; only the existing primitive is exercised below.
+test("whole-reserve inspection proves only an authenticated wrong sum", async () => {
+  await ensureConfig(program);
+  mint = await createMint(provider.connection, payer, payer.publicKey, null, 6);
+  source = await createAccount(
+    provider.connection,
+    payer,
+    mint,
+    payer.publicKey,
+  );
+  const { stranger, period, n } = await monthlyPeriod();
+  const admit = monthlyAdmission(stranger, period, n);
+  const config = async () => ({
+    rpcUrl: provider.connection.rpcEndpoint,
+    genesisHash: await provider.connection.getGenesisHash(),
+    programId: program.programId.toBase58(),
+    projectPda: project.toBase58(),
+    projectId: "local-monthly-inspection",
+    network: "solana:localnet",
+    networkDomain: Buffer.from(network).toString("hex"),
+    vault: vault.toBase58(),
+    mint: mint.toBase58(),
+    owner: payer.publicKey.toBase58(),
+    identityAuthority: authority.publicKey.toBase58(),
+    feeRecipient: feeOwner.publicKey.toBase58(),
+    ...expectedDeployment,
+    bindingDelaySeconds: String(DELAY),
+    rotationDelaySeconds: String(ROTATION_DELAY),
+  });
+  const finalized = async () => {
+    const slot = await provider.connection.getSlot("confirmed");
+    while ((await provider.connection.getSlot("finalized")) < slot)
+      await sleep(250);
+  };
+  const accounts = async () =>
+    (
+      await provider.connection.getMultipleAccountsInfo(
+        [project, monthAt(n)],
+        "finalized",
+      )
+    ).map((a) => a.data.toString("hex"));
+  // Every inspector call goes through actual HTTP; controlled negative responses never
+  // replace successful state or relax the classifier. A write method is always refused.
+  const inspect = async (settings, capture, fault = null) => {
+    const original = globalThis.fetch;
+    let blocks = 0;
+    globalThis.fetch = async (url, init) => {
+      const body = JSON.parse(init.body);
+      assert.ok(
+        [
+          "getMultipleAccounts",
+          "getBlock",
+          "getGenesisHash",
+          "getAccountInfo",
+        ].includes(body.method),
+      );
+      if (fault === "provider")
+        throw new Error("controlled provider unavailable");
+      const response = await original(url, init);
+      if (
+        fault === "canonical" &&
+        body.method === "getBlock" &&
+        ++blocks === 2
+      ) {
+        const changed = await response.json();
+        changed.result.blockhash = Keypair.generate().publicKey.toBase58();
+        return Response.json(changed);
+      }
+      return response;
+    };
+    try {
+      return await inspectSolanaMonthlyWrongSum(settings, period, capture);
+    } finally {
+      globalThis.fetch = original;
+    }
+  };
+
+  await freshProject("inspection-healthy", 100_000_000n);
+  const healthy = entriesOf(
+    ["inspection-healthy-a", "inspection-healthy-b"],
+    741,
+  );
+  const healthyMonth = await admit(healthy, await chainTime());
+  await finalized();
+  let settings = await config();
+  const beforeHealthy = await accounts();
+  assert.deepEqual(await inspect(settings, { entries: healthy }), {
+    status: "held",
+    reason: "no-wrong-sum-fault",
+  });
+  assert.deepEqual(await accounts(), beforeHealthy);
+  await healthyMonth.leaf(0, "commit");
+  await healthyMonth.leaf(1, "commit");
+
+  await freshProject("inspection-wrong-sum", 100_000_000n);
+  const entries = entriesOf(["inspection-wrong-a", "inspection-wrong-b"], 751);
+  const total = BigInt(solanaAllocationTotal(entries)) + 1n;
+  const tree = {
+    root: solanaAllocationRoot(entries),
+    total: total.toString(),
+    proof: (index) => solanaAllocationProof(entries, index),
+  };
+  const wrong = await admit(entries, await chainTime(), tree);
+  await finalized();
+  settings = await config();
+  const beforeWrong = await accounts();
+  assert.deepEqual(await inspect(settings, null), {
+    status: "held",
+    reason: "allocation-unavailable",
+  });
+  assert.deepEqual(
+    await inspect(settings, { entries: [...entries].reverse() }),
+    { status: "held", reason: "allocation-mismatch" },
+  );
+  await assert.rejects(
+    inspect(settings, { entries }, "provider"),
+    /provider unavailable/,
+  );
+  await assert.rejects(
+    inspect({ ...settings, codeSha256: "0".repeat(64) }, { entries }),
+    /program bytes/,
+  );
+  await assert.rejects(
+    inspect(settings, { entries }, "canonical"),
+    /evidence changed/,
+  );
+  const evidence = await inspect(settings, { entries });
+  assert.equal(evidence.status, "provably-unsettleable");
+  assert.equal(evidence.fault, "authenticated-sum-mismatch");
+  assert.equal(evidence.computedTotal, "30000000");
+  assert.equal(evidence.storedTotal, "30000001");
+  assert.equal(evidence.expectedUnsettled, evidence.storedTotal);
+  assert.equal(evidence.identityAuthority, authority.publicKey.toBase58());
+  assert.equal(evidence.retainedCount, 2);
+  assert.equal(
+    evidence.entriesSha256,
+    createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
+  );
+  assert.deepEqual(
+    await accounts(),
+    beforeWrong,
+    "all inspections are read-only",
+  );
+  for (const index of [0, 1])
+    await assert.rejects(wrong.leaf(index, "commit"), /InvalidAllocationProof/);
+  await assert.rejects(
+    commit("wrong-sum-blocked", 999, 1),
+    /MonthlyOutstanding/,
+  );
+  // The existing owner primitive now consumes positively classified local evidence.
+  const u64 = (value) => bn(value).toArrayLike(Buffer, "le", 8);
+  const released = await program.methods
+    .releaseMonthlyReserve(
+      n,
+      bn(evidence.expectedUnsettled),
+      bn(evidence.releasedGross),
+    )
+    .accountsStrict({
+      owner: payer.publicKey,
+      project,
+      month: monthAt(n),
+      instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+    })
+    .preInstructions([
+      Ed25519Program.createInstructionWithPrivateKey({
+        privateKey: authority.secretKey,
+        message: Buffer.concat([
+          Buffer.from("slop-monthly-release-v1"),
+          key(program.programId),
+          key(project),
+          Buffer.from(new Uint32Array([n]).buffer),
+          Buffer.from(evidence.allocationRoot, "hex"),
+          u64(total),
+          u64(evidence.expectedUnsettled),
+          u64(evidence.releasedGross),
+          Buffer.from(network),
+        ]),
+      }),
+    ])
+    .rpc();
+  await provider.connection.confirmTransaction(released, "finalized");
+  const state = await program.account.project.fetch(project, "finalized");
+  assert.equal(state.reserved.toString(), "0");
+  assert.equal(state.monthlyOutstanding.toString(), "0");
+  const month = await program.account.monthlyAllocation.fetch(
+    monthAt(n),
+    "finalized",
+  );
+  assert.equal(month.committed.toString(), total.toString());
+  assert.equal(month.released.toString(), total.toString());
+  assert.deepEqual(await inspect(settings, { entries }), {
+    status: "held",
+    reason: "prior-reserve-transition",
+  });
+  await commit("inspection-manual-after", 999, 1);
+
+  // Deliberate post-freeze smaller/different-actor consumption is never a wrong-sum fault.
+  await freshProject("inspection-deliberate-hold", 100_000_000n);
+  const held = entriesOf(["inspection-smaller", "inspection-other"], 761);
+  const frozen = await chainTime();
+  await after(frozen);
+  await commit("inspection-smaller", 761, 19_999_999);
+  await commit("inspection-other", 999, 10_000_000);
+  const heldMonth = await admit(held, frozen);
+  await finalized();
+  settings = await config();
+  const beforeHeld = await accounts();
+  assert.deepEqual(await inspect(settings, { entries: held }), {
+    status: "held",
+    reason: "no-wrong-sum-fault",
+  });
+  for (const index of [0, 1]) {
+    await assert.rejects(heldMonth.leaf(index, "commit"), /already in use/);
+    await assert.rejects(heldMonth.leaf(index, "release"), /AwardCommittable/);
+  }
+  assert.deepEqual(await accounts(), beforeHeld);
+});
+
+// Primitive accounting control only, not a qualified duplicate-source classification:
+// the signed tree repeats a source, so its second copy can never
 // settle or be released per leaf. Only the owner, with a fresh identity-authority
 // signature over the month's exact unsettled gross, returns that part to free balance.
 // The settleable leaves stay reserved and still commit; the period stays recorded.
