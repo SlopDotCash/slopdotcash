@@ -1094,6 +1094,55 @@ try {
     "post-upgrade ceil fee verifies through the new review",
   );
   await verifyEvmDeployment(upgraded, "finalized");
+  // Check the same historical receipts before unrelated later month mining. The pinned local
+  // fork can lose historical bytecode after that mining; an unavailable read is never a refusal.
+  // Negative checks: each review is accepted only where it applies.
+  await assert.rejects(
+    verifyPayment(
+      { ...base, evmUpgrade: NEW_REVIEW },
+      payBefore.hash,
+      paidEvent(payBefore),
+      paidBefore.id,
+    ),
+    /implementation does not match/,
+    "without history the pre-upgrade event is rejected",
+  );
+  await assert.rejects(
+    verifyPayment(
+      { ...base, evmUpgrade: OLD_REVIEW },
+      payAfter.hash,
+      paidEvent(payAfter),
+      paidAfter.id,
+    ),
+    /implementation does not match/,
+    "the old review alone rejects a post-upgrade event",
+  );
+  if (factoryChanged)
+    await assert.rejects(
+      verifyReserve(
+        {
+          ...base,
+          evmUpgrade: {
+            ...NEW_REVIEW,
+            history: [
+              { ...OLD_REVIEW, supersededAtBlock: vaultUpgradeBlocks[vault] },
+            ],
+          },
+        },
+        reserveBetween.hash,
+        reserveEvent(reserveBetween),
+        between.id,
+      ),
+      /implementation does not match/,
+      "a bound at the first upgrade strands events before a changed factory upgrade",
+    );
+  report.factoryImplementationChanged = factoryChanged;
+  await assert.rejects(
+    verifyEvmDeployment({ ...base, evmUpgrade: OLD_REVIEW }, "finalized"),
+    /implementation does not match/,
+    "current state never verifies against the old review",
+  );
+
   // V2 must also work on the upgraded, funded vault. Preserve a pre-upgrade
   // obligation, then finish the newly reserved leaves after the owner opts out and the window closes.
   const nextDate = new Date(
@@ -1469,52 +1518,6 @@ try {
     prepared.existingVault,
     null,
     "the setup route opens on the new review",
-  );
-  // Negative checks: each review is accepted only where it applies.
-  await assert.rejects(
-    verifyPayment(
-      { ...base, evmUpgrade: NEW_REVIEW },
-      payBefore.hash,
-      paidEvent(payBefore),
-      paidBefore.id,
-    ),
-    /implementation does not match/,
-    "without history the pre-upgrade event is rejected",
-  );
-  await assert.rejects(
-    verifyPayment(
-      { ...base, evmUpgrade: OLD_REVIEW },
-      payAfter.hash,
-      paidEvent(payAfter),
-      paidAfter.id,
-    ),
-    /implementation does not match/,
-    "the old review alone rejects a post-upgrade event",
-  );
-  if (factoryChanged)
-    await assert.rejects(
-      verifyReserve(
-        {
-          ...base,
-          evmUpgrade: {
-            ...NEW_REVIEW,
-            history: [
-              { ...OLD_REVIEW, supersededAtBlock: vaultUpgradeBlocks[vault] },
-            ],
-          },
-        },
-        reserveBetween.hash,
-        reserveEvent(reserveBetween),
-        between.id,
-      ),
-      /implementation does not match/,
-      "a bound at the first upgrade strands events before a changed factory upgrade",
-    );
-  report.factoryImplementationChanged = factoryChanged;
-  await assert.rejects(
-    verifyEvmDeployment({ ...base, evmUpgrade: OLD_REVIEW }, "finalized"),
-    /implementation does not match/,
-    "current state never verifies against the old review",
   );
   report.supersededAtBlock = supersededAtBlock.toString();
   report.authorityBalanceWei = {
