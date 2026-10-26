@@ -281,6 +281,10 @@ Historical Points publication is on hold until the complete assessment journal a
 
 Proposed, not approved by the owner (from #1154; do not implement or treat as decided): every new project draft uses 200 bps and vault-custody wording, including drafts without a vault; historical welcome and X-connection awards are removed from displayed totals.
 
+### Release workflow
+
+Owner decision, 25 October 2026: branch protections and rulesets are not release requirements. Do not add or restore them during release work unless the owner asks. Keep the reviewed `development` to `main` pull-request flow, full CI and trusted policy checks, main-only production environment, and checked-in release workflow.
+
 ### Referral program
 
 Owner decision, 25 October 2026: approve the project-referral program proposed by the operator in #1261, #1265 and #1267. Slop Cash S.P. runs it beside the product from its own program-token allocation. It is not a Points, scoring or payout feature.

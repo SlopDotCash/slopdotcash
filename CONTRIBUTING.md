@@ -86,7 +86,7 @@ policy.
    state may have changed.
 
 Pull requests target `development`. Promote accepted changes through a PR to `main`.
-See [release environments](docs/release-environments.md). Do not push directly to the protected branch,
+See [release environments](docs/release-environments.md). Do not push directly to `development` or `main`,
 self-approve, bypass required review, or expose production credentials to
 feature-branch code.
 

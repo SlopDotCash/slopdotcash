@@ -556,7 +556,7 @@ jobs:
     timeout-minutes: 30
     concurrency:
       # Only publication holds this lock. Neither environment requires a
-      # manual reviewer: the protected main merge is the release decision.
+      # manual reviewer: the reviewed main merge is the release decision.
       group: slop-production
       cancel-in-progress: false
     environment:
