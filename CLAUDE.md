@@ -64,10 +64,9 @@ alias only.
     awards or payments. Per-run and daily caps bound it. Owners authorize USDC
     sweeps to separate owner-controlled software wallets, with sweep keys held
     in their local `.env`, not by the Worker (PRD sections 6 and 11,
-    24 October 2026). `workers/fee-converter/wrangler.toml` sets production to
-    `live` mode on Base, Ethereum and Robinhood Chain; Solana is not enabled.
-    The Worker deploys only when the `SLOP_FEE_CONVERTER_RELEASE` repository
-    variable is `enabled`. Fee handling starts only after the fee wallets are
+    24 October 2026). `workers/fee-converter/wrangler.toml` sets the mode of
+    each network. The Worker deploys only when the
+    `SLOP_FEE_CONVERTER_RELEASE` repository variable is `enabled`. Fee handling starts only after the fee wallets are
     funded and the limits and readiness are verified (PRD section 11, #1285).
   - The referral root-posting key (PRD section 11, "Referral program", owner
     decision of 25 October 2026). It posts cumulative Merkle roots to the
@@ -103,8 +102,11 @@ a PR, or implement a feature. The hard rules:
 
 - Scope: work only inside the approved MVP. Cite the PRD section and the
   acceptance result. Existing code, an open issue, a model suggestion, or a
-  PRD entry marked Future does not approve implementation. Do not start later
-  PRD phases before maintainers record MVP completion in the PRD
+  PRD entry marked Future does not approve implementation. A new requirement
+  needs human discussion and an approved PRD update first. Unresolved PRD
+  choices are decision gates, not authority for an agent to choose economic,
+  security, or product policy. Do not start later PRD phases before
+  maintainers record MVP completion in the PRD
   ([MVP scope and phase gate](CONTRIBUTING.md#mvp-scope-and-phase-gate)).
 - Issues: only project owners and maintainers open issues, here and in every
   target project. An agent that works for a contributor never opens, drafts
