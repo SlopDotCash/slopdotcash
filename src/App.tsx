@@ -88,7 +88,6 @@ import {
   UNFUNDED_POOL_HEADLINE,
 } from "./Presentation";
 import { ProfilePage } from "./ProfilePage";
-import { ProjectLeaderboard } from "./ProjectLeaderboard";
 import { ProjectRiskFlag } from "./ProjectRiskFlag";
 
 /**
@@ -131,9 +130,7 @@ const HERO_TYPE_MS = 55;
 const HERO_DELETE_MS = 30;
 const HERO_GAP_MS = 220;
 
-export function publicFooterDomain(
-  hostname: string,
-): "slop.cash" | "slop.tech" {
+function publicFooterDomain(hostname: string): "slop.cash" | "slop.tech" {
   const normalized = hostname.toLowerCase().replace(/\.$/u, "");
   return normalized === "slop.tech" || normalized === "www.slop.tech"
     ? "slop.tech"
@@ -905,7 +902,7 @@ function AgentPromptBox({
   );
 }
 
-export function ProjectParticipation({
+function ProjectParticipation({
   project,
   cycles,
   displayCycleId,
@@ -1168,7 +1165,7 @@ function ProjectPaymentHistory({
  * project). Deposits, withdrawals and full vault totals live on the funding
  * page only.
  */
-export function ProjectFunding({ project }: { project: ProjectDefinition }) {
+function ProjectFunding({ project }: { project: ProjectDefinition }) {
   const totals = useVaultTotals(project);
   if (!project.escrow) return null;
   const href = `/projects/${project.slug}/funding`;
@@ -1520,12 +1517,14 @@ function ProjectPage({
           state={state}
         />
         {view && state.status === "ready" ? (
-          <ProjectLeaderboard
-            state={state}
-            retry={retry}
-            updatedAt={state.snapshot.generatedAt}
-            view={view}
-          />
+          <div id="contributors">
+            <ContributorStandings
+              projectId={project.id}
+              scoreState={state}
+              retryScore={retry}
+              compact
+            />
+          </div>
         ) : null}
         <ProjectRiskFlag key={`flag:${project.id}`} projectId={project.id} />
       </div>

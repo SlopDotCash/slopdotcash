@@ -149,7 +149,7 @@ async function loadPoints(signal: AbortSignal) {
   return assemblePoints(index, parts);
 }
 /** Same-origin path from `next`; anything else falls back to the profile. */
-export function returnPath(search = window.location.search): string | null {
+function returnPath(search = window.location.search): string | null {
   const next = new URLSearchParams(search).get("next");
   if (!next) return null;
   if (next === "earnings") return "/earnings";
@@ -180,10 +180,10 @@ function member(value: unknown): Membership {
 }
 export function PointsProvider({
   children,
-  enabled = true,
+  enabled,
 }: {
   children: ReactNode;
-  enabled?: boolean;
+  enabled: boolean;
 }) {
   const [state, setState] = useState<State>({ status: "loading" });
   const [me, setMe] = useState<Membership | null>(null);
@@ -260,16 +260,7 @@ export function PointsProvider({
 const currentPath = () =>
   `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
-/** The signed-in GitHub login, for pages that only need to know who is here. */
-export function useSignedInLogin(): {
-  login: string | null;
-  session: "loading" | "ready" | "error";
-} {
-  const { me, session } = useContext(Context);
-  return { login: me?.actor.login ?? null, session };
-}
-
-export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
+export function PointsNav() {
   const { state, me, session, setMe, requestPoints, refresh } =
     useContext(Context);
   const [open, setOpen] = useState(false);
@@ -322,10 +313,7 @@ export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
       window.removeEventListener("hashchange", update);
     };
   }, []);
-  const navigate = () => {
-    setOpen(false);
-    onNavigate?.();
-  };
+  const navigate = () => setOpen(false);
   async function signout() {
     setBusy(true);
     setError("");
@@ -374,10 +362,7 @@ export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => {
-          if (!open) {
-            requestPoints();
-            onNavigate?.();
-          }
+          if (!open) requestPoints();
           setOpen(!open);
         }}
       >
@@ -517,7 +502,6 @@ export function useProfileMembership(login: string, enabled = true) {
 export function ProfilePoints({
   work,
   actorId,
-  summary,
   login,
   cycles,
   showIdentity = false,
@@ -531,7 +515,6 @@ export function ProfilePoints({
   work?: readonly ScoreEvent[];
   cycles?: CycleIndex;
   showIdentity?: boolean;
-  summary?: ReactNode;
   actorId?: string;
   /** The caller found no score record, so no points record means no contributor. */
   notFoundWhenUnrecorded?: boolean;
@@ -637,28 +620,25 @@ export function ProfilePoints({
           </>
         }
         summary={
-          <>
-            {summary}
-            <div>
-              <strong>
-                {state.status === "ready" &&
-                (m ||
-                  identity ||
-                  recorded ||
-                  // A known actor with no Points record and no membership has none.
-                  (actorId && joinStatus === "absent"))
-                  ? (
-                      (m?.total ?? 0) +
-                      (identity?.welcome ?? 0) +
-                      (identity?.socialPoints ?? 0)
-                    ).toLocaleString()
-                  : state.status === "loading"
-                    ? "Loading…"
-                    : "Unavailable"}
-              </strong>
-              <span>total points</span>
-            </div>
-          </>
+          <div>
+            <strong>
+              {state.status === "ready" &&
+              (m ||
+                identity ||
+                recorded ||
+                // A known actor with no Points record and no membership has none.
+                (actorId && joinStatus === "absent"))
+                ? (
+                    (m?.total ?? 0) +
+                    (identity?.welcome ?? 0) +
+                    (identity?.socialPoints ?? 0)
+                  ).toLocaleString()
+                : state.status === "loading"
+                  ? "Loading…"
+                  : "Unavailable"}
+            </strong>
+            <span>total points</span>
+          </div>
         }
       >
         {children}

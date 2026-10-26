@@ -19,15 +19,6 @@ export interface ReviewerLeader {
   reviewEventCount: number;
 }
 
-/** Formats an integer third count as a score with at most two decimals. */
-export function formatThirds(thirds: number): string {
-  if (!Number.isSafeInteger(thirds) || thirds < 0) {
-    throw new RangeError(`Invalid third count: ${thirds}`);
-  }
-  if (thirds % 3 === 0) return String(thirds / 3);
-  return (thirds / 3).toFixed(2);
-}
-
 export function selectReviewerLeaders(
   ledger: readonly ScoreEvent[],
 ): ReviewerLeader[] {

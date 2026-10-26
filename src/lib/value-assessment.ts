@@ -5,8 +5,6 @@ export const VALUE_TIERS = { none: 0, ...SCORE_TIERS } as const;
 export type ValueTier = keyof typeof VALUE_TIERS;
 
 export const VALUE_RUBRIC_VERSION = "slop-value-2026-10-09";
-// Verified GitHub App identity. A copied marker from a user is not authority.
-export const VALUE_BOT_NODE_ID = "BOT_kgDOFEmyrw";
 export const REVIEW_VALUE_THIRDS = {
   none: 0,
   triage: 1,

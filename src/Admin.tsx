@@ -952,7 +952,7 @@ function ProjectsSection({
   );
 }
 
-export function AdminPage() {
+export default function AdminPage() {
   const [selectedProject, setSelectedProject] = useState(() =>
     new URLSearchParams(window.location.search).get("project"),
   );
@@ -1019,5 +1019,3 @@ export function AdminPage() {
     </main>
   );
 }
-
-export default AdminPage;

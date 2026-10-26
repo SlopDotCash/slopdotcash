@@ -80,7 +80,7 @@ async function acknowledgeSecurity(
   return "ok";
 }
 
-export function InboxPage() {
+export default function InboxPage() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [previousPages, setPreviousPages] = useState<(string | null)[]>([]);
   const [state, setState] = useState<InboxState>({ status: "loading" });
@@ -325,5 +325,3 @@ function InboxItem({
     </li>
   );
 }
-
-export default InboxPage;

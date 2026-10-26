@@ -112,7 +112,7 @@ function VaultTotals({
   );
 }
 
-export type VaultTotalsState =
+type VaultTotalsState =
   | { status: "none" }
   | { status: "loading" }
   | { status: "error"; message: string }
