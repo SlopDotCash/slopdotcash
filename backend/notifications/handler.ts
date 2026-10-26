@@ -13,7 +13,12 @@ import {
   type NotificationsResponse,
   notificationCursor,
 } from "../../src/lib/notifications";
-import { SCAM_REVIEW_PATH, scamReviewGitHubUrl } from "./events";
+import {
+  SCAM_REVIEW_PATH,
+  type ScamReviewTarget,
+  scamReviewGitHubUrl,
+  scamReviewPath,
+} from "./events";
 
 export interface NotificationsDependencies {
   db: {
@@ -30,8 +35,35 @@ export interface NotificationsDependencies {
 }
 
 export const NOTIFICATIONS_PATH = "/api/v1/notifications";
-const READ_PATH = `${NOTIFICATIONS_PATH}/read`;
+const NOTIFICATIONS_PATH_READ = `${NOTIFICATIONS_PATH}/read`;
+const READ_PATH = NOTIFICATIONS_PATH_READ;
 const LIST_LIMIT = 100;
+
+/**
+ * Moderator-only review notices must be backed by an escalated appeal or
+ * moderator-review scam penalty whose appellant/author is not the recipient.
+ */
+const MODERATOR_NOTICE_ALLOWED = `(
+  notifications.kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review')
+  OR (
+    ? = 1
+    AND (
+      (notifications.kind = 'slopbot_appeal_review' AND EXISTS (
+        SELECT 1 FROM slopbot_appeals a
+         WHERE 'slopbot-' || a.appeal_key = notifications.event_key
+           AND a.escalated_at IS NOT NULL
+           AND a.appellant_github_id <> notifications.recipient_github_id
+      ))
+      OR (notifications.kind = 'slopbot_scam_review' AND EXISTS (
+        SELECT 1 FROM slopbot_penalties p
+         WHERE 'slopbot-scam-review:' || p.item_node_id = notifications.event_key
+           AND p.category = 'scam'
+           AND p.moderator_review = 1
+           AND p.author_github_id <> notifications.recipient_github_id
+      ))
+    )
+  )
+)`;
 
 const headers = {
   "content-type": "application/json; charset=utf-8",
@@ -126,7 +158,8 @@ export async function handleNotificationsApi(
         JOIN slopbot_penalties p
           ON n.event_key = 'slopbot-scam-review:' || p.item_node_id
         WHERE n.recipient_github_id = ? AND n.kind = 'slopbot_scam_review'
-          AND n.action_path = ? AND p.author_github_id <> ?`)
+          AND n.action_path = ? AND p.category = 'scam'
+          AND p.moderator_review = 1 AND p.author_github_id <> ?`)
         .bind(actor.githubId, url.pathname, actor.githubId)
         .all<{ found: number }>();
       if (!rows.results[0]) return json(404, { error: "not_found" });
@@ -152,22 +185,14 @@ export async function handleNotificationsApi(
         .bind(key, actor.githubId, actor.githubId)
         .all<{ job_json: string }>();
       if (!rows.results[0]) return json(404, { error: "not_found" });
-      const job = JSON.parse(rows.results[0].job_json);
-      if (
-        typeof job.owner !== "string" ||
-        typeof job.repo !== "string" ||
-        !/^[A-Za-z0-9_.-]+$/u.test(job.owner) ||
-        !/^[A-Za-z0-9_.-]+$/u.test(job.repo) ||
-        !Number.isSafeInteger(job.number) ||
-        job.number < 1 ||
-        !["pull_request", "issue"].includes(job.itemKind)
-      )
-        throw new Error("Invalid stored appeal target");
+      const job = JSON.parse(rows.results[0].job_json) as ScamReviewTarget;
+      const target = scamReviewGitHubUrl(scamReviewPath(job));
+      if (target === null) throw new Error("Invalid stored appeal target");
       return new Response(null, {
         status: 302,
         headers: {
           ...headers,
-          location: `https://github.com/${job.owner}/${job.repo}/${job.itemKind === "pull_request" ? "pull" : "issues"}/${job.number}`,
+          location: target,
         },
       });
     }
@@ -204,7 +229,7 @@ export async function handleNotificationsApi(
                         WHERE a.event_key = notifications.event_key AND a.recipient_github_id = notifications.recipient_github_id
                           AND a.template_version = 'activity-inbox-v1')) AS delivery_state
                FROM notifications WHERE recipient_github_id = ?
-                AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1)
+                AND ${MODERATOR_NOTICE_ALLOWED}
                 ${cursor ? "AND (source_at < ? OR (source_at = ? AND event_key > ?))" : ""}
               ORDER BY source_at DESC, event_key LIMIT ?`,
           )
@@ -219,7 +244,7 @@ export async function handleNotificationsApi(
           .prepare(
             `SELECT COUNT(*) AS count FROM notifications
               WHERE recipient_github_id = ? AND read_at IS NULL
-                AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1)`,
+                AND ${MODERATOR_NOTICE_ALLOWED}`,
           )
           .bind(actor.githubId, moderator ? 1 : 0)
           .all<{ count: number }>(),
@@ -278,7 +303,7 @@ export async function handleNotificationsApi(
       .prepare(
         `UPDATE notifications SET read_at = ?
           WHERE recipient_github_id = ? AND read_at IS NULL
-            AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1)
+            AND ${MODERATOR_NOTICE_ALLOWED}
             AND event_key IN (${keys.map(() => "?").join(", ")})`,
       )
       .bind(

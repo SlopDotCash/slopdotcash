@@ -508,8 +508,8 @@ export function notifySlopbotAppeal<S>(
 
 /** The same-site route that rechecks moderator access, then opens the item. */
 export const SCAM_REVIEW_PATH = "/api/v1/notifications/scam-reviews/";
-const GITHUB_OWNER = /^[A-Za-z0-9_.-]{1,39}$/u;
-const GITHUB_REPO = /^[A-Za-z0-9_.-]{1,100}$/u;
+const GITHUB_OWNER = /^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,39}$/u;
+const GITHUB_REPO = /^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/u;
 const GITHUB_LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u;
 
 export type ScamReviewTarget = {
@@ -523,11 +523,14 @@ export type ScamReviewTarget = {
  * is not a canonical GitHub owner, repository, item kind and number. */
 export function scamReviewPath(target: ScamReviewTarget): string {
   if (
+    typeof target?.owner !== "string" ||
+    typeof target?.repo !== "string" ||
     !GITHUB_OWNER.test(target.owner) ||
     !GITHUB_REPO.test(target.repo) ||
     (target.itemKind !== "pull_request" && target.itemKind !== "issue") ||
     !Number.isSafeInteger(target.number) ||
-    target.number < 1
+    target.number < 1 ||
+    target.number > 999999999999999
   )
     throw new Error("Invalid scam review target");
   const kind = target.itemKind === "pull_request" ? "pull" : "issues";

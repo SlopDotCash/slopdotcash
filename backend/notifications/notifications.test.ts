@@ -17,7 +17,11 @@ import { registerPaymentWallet } from "../payments/wallet-registration";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
 import type { ProjectEnforcement } from "../projects/contracts";
 import { CloudflareTracePersistence } from "../trace/cloudflare-persistence";
-import { notifySlopbotAppeal, notifySlopbotScamReview } from "./events";
+import {
+  notifySlopbotAppeal,
+  notifySlopbotScamReview,
+  scamReviewGitHubUrl,
+} from "./events";
 import { handleNotificationsApi } from "./handler";
 
 const migrations = readdirSync("migrations")
@@ -746,7 +750,11 @@ describe("slopbot scam review notices", () => {
     };
     for (const bad of [
       { owner: "../evil" },
+      { owner: "." },
+      { owner: ".." },
       { repo: "alpha/../../x" },
+      { repo: "." },
+      { repo: ".." },
       { number: 0 },
       { authorLogin: "a b" },
     ])
@@ -822,5 +830,140 @@ describe("slopbot scam review notices", () => {
       "/api/v1/notifications/scam-reviews/example/alpha/pull/7/extra",
     ])
       expect((await call(MODERATOR, [MODERATOR], forged)).status).toBe(404);
+    for (const dotPath of [
+      "/api/v1/notifications/scam-reviews/./alpha/pull/7",
+      "/api/v1/notifications/scam-reviews/../alpha/pull/7",
+      "/api/v1/notifications/scam-reviews/example/./pull/7",
+      "/api/v1/notifications/scam-reviews/example/../pull/7",
+    ])
+      expect(scamReviewGitHubUrl(dotPath)).toBeNull();
+  });
+
+  test("self-authored or non-scam moderator notices cannot be listed, marked read or opened", async () => {
+    const { sqlite, call, rows } = scam();
+    const selfScamPath =
+      "/api/v1/notifications/scam-reviews/example/alpha/pull/9";
+    const nonScamPath =
+      "/api/v1/notifications/scam-reviews/example/alpha/pull/10";
+    const selfAppealKey = "appeal:PR_self:rev1";
+    const badAppealKey = "appeal:PR_bad:rev1";
+    sqlite
+      .prepare(
+        `INSERT INTO slopbot_penalties (item_node_id,repository_id,project_id,author_github_id,category,
+          table_version,debit_thirds,period,moderator_review,review_key,recorded_at)
+         VALUES ('PR_self',1,'alpha',?,'scam','slopbot-penalties-v1',24,'2026-10',1,'review-self',?),
+                ('PR_spam',1,'alpha',?,'spam','slopbot-penalties-v1',12,'2026-10',0,'review-spam',?)`,
+      )
+      .run(MODERATOR, T, AUTHOR, T);
+    sqlite
+      .prepare(
+        `INSERT INTO slopbot_appeals (appeal_key,repository_id,item_node_id,appellant_github_id,job_json,opened_at,due_at,escalated_at,escalation)
+         VALUES (?,1,'PR_self',?,?,?,?,'2026-10-19T10:15:00.000Z','scam'),
+                (?,1,'PR_alpha',?,?,?,?,'2026-10-19T10:15:00.000Z','scam')`,
+      )
+      .run(
+        selfAppealKey,
+        MODERATOR,
+        JSON.stringify({ ...target, number: 9 }),
+        EARLY,
+        T,
+        badAppealKey,
+        AUTHOR,
+        JSON.stringify({ ...target, repo: ".." }),
+        EARLY,
+        T,
+      );
+    const insertNotice = sqlite.prepare(
+      "INSERT INTO notifications (event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES (?,?,?,?,?,?,?)",
+    );
+    insertNotice.run(
+      "slopbot-scam-review:PR_self",
+      MODERATOR,
+      "slopbot_scam_review",
+      "alpha",
+      selfScamPath,
+      T,
+      R,
+    );
+    insertNotice.run(
+      "slopbot-scam-review:PR_spam",
+      MODERATOR,
+      "slopbot_scam_review",
+      "alpha",
+      nonScamPath,
+      T,
+      R,
+    );
+    insertNotice.run(
+      `slopbot-${selfAppealKey}`,
+      MODERATOR,
+      "slopbot_appeal_review",
+      "PR_self",
+      `/api/v1/notifications/appeals/${encodeURIComponent(selfAppealKey)}`,
+      T,
+      R,
+    );
+    insertNotice.run(
+      `slopbot-${badAppealKey}`,
+      MODERATOR,
+      "slopbot_appeal_review",
+      "PR_alpha",
+      `/api/v1/notifications/appeals/${encodeURIComponent(badAppealKey)}`,
+      T,
+      R,
+    );
+
+    const listed = parseNotificationsResponse(
+      await (
+        await call(MODERATOR, [MODERATOR], "/api/v1/notifications")
+      ).json(),
+    );
+    expect(listed.notifications.map((n) => n.eventKey)).toEqual([
+      `slopbot-${badAppealKey}`,
+    ]);
+    expect(listed.unread).toBe(1);
+
+    const marked = await call(
+      MODERATOR,
+      [MODERATOR],
+      "/api/v1/notifications/read",
+      {
+        method: "POST",
+        headers: {
+          origin: "https://slop.cash",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          eventKeys: [
+            "slopbot-scam-review:PR_self",
+            "slopbot-scam-review:PR_spam",
+            `slopbot-${selfAppealKey}`,
+          ],
+        }),
+      },
+    );
+    expect(await marked.json()).toEqual({ marked: 0 });
+    expect(rows(MODERATOR).every((row) => row.read_at === null)).toBe(true);
+
+    expect((await call(MODERATOR, [MODERATOR], selfScamPath)).status).toBe(404);
+    expect((await call(MODERATOR, [MODERATOR], nonScamPath)).status).toBe(404);
+    expect(
+      (
+        await call(
+          MODERATOR,
+          [MODERATOR],
+          `/api/v1/notifications/appeals/${encodeURIComponent(selfAppealKey)}`,
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await call(
+          MODERATOR,
+          [MODERATOR],
+          `/api/v1/notifications/appeals/${encodeURIComponent(badAppealKey)}`,
+        )
+      ).status,
+    ).toBe(500);
   });
 });
