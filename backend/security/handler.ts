@@ -313,17 +313,53 @@ async function currentReportingProject(
 /**
  * A moderator quarantine or ban applies a paused, retired revision. The
  * project stays registered, so its existing private cases keep their
- * automatic checks and appeal triage (PRD section 8). An owner retirement
- * has no restriction of its own and closes them.
+ * automatic checks and appeal triage (PRD section 8). The retained before
+ * and after revisions must prove that enforcement caused retirement; an
+ * owner's earlier retirement or an unapplied restriction cannot grant it.
  */
 async function restrictionRetired(
   deps: Pick<SecurityApiDependencies, "db">,
   projectId: string,
 ): Promise<boolean> {
-  const records = await new CloudflareProjectPersistence(
-    deps.db,
-  ).listEnforcements();
-  return projectRestriction(projectId, records).state !== "clear";
+  const persistence = new CloudflareProjectPersistence(deps.db);
+  const restriction = projectRestriction(
+    projectId,
+    await persistence.listEnforcements(),
+  );
+  if (restriction.state === "clear") return false;
+  for (const record of [...restriction.records].reverse()) {
+    if (record.stateAfter === "clear") break;
+    if (
+      (record.action !== "quarantine" && record.action !== "ban") ||
+      record.result !== "revision_appended" ||
+      record.afterRevision === null
+    )
+      continue;
+    const [before, after] = await Promise.all([
+      persistence.getRevisionText(projectId, record.beforeRevision),
+      persistence.getRevisionText(projectId, record.afterRevision),
+    ]);
+    if (
+      before === null ||
+      after === null ||
+      before.manifestSha256 !== record.beforeManifestSha256 ||
+      after.manifestSha256 !== record.afterManifestSha256
+    )
+      fail(
+        500,
+        "internal_error",
+        "The restriction revision evidence is missing",
+      );
+    const previous = JSON.parse(before.manifestText) as ProjectDefinition;
+    const applied = JSON.parse(after.manifestText) as ProjectDefinition;
+    if (
+      previous.listingTier !== "retired" &&
+      applied.status === "paused" &&
+      applied.listingTier === "retired"
+    )
+      return true;
+  }
+  return false;
 }
 
 /** Reporting needs a registered repository, not financial terms. */

@@ -371,12 +371,35 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
   const ban = (account: Account) =>
     seedParticipationBan(sqlite, account, DISPUTE, REVISION_AT);
   let enforcementSequence = 0;
-  const restrictProgram = (action: "quarantine" | "ban" = "quarantine") => {
+  const restrictProgram = (
+    action: "quarantine" | "ban" = "quarantine",
+    applied = false,
+  ) => {
     enforcementSequence += 1;
+    const before = sqlite
+      .query(
+        "SELECT revision, manifest_sha256, manifest FROM projects WHERE id = ?",
+      )
+      .get(PROJECT) as {
+      revision: number;
+      manifest_sha256: string;
+      manifest: string;
+    };
+    if (applied) retireProgram();
+    const after = applied
+      ? (sqlite
+          .query("SELECT revision, manifest_sha256 FROM projects WHERE id = ?")
+          .get(PROJECT) as { revision: number; manifest_sha256: string })
+      : null;
+    const result = applied
+      ? "revision_appended"
+      : JSON.parse(before.manifest).listingTier === "retired"
+        ? "no_revision_needed"
+        : "revision_pending";
     sqlite
       .query(
         `INSERT INTO project_enforcements (id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
-        VALUES (?,?,?, ?, ?, 'none','Synthetic program restriction','private-fixture','123','["example/bounty"]',?,?,NULL,'project-moderator','admin-panel',1,?,NULL,NULL,'revision_pending',?)`,
+        VALUES (?,?,?, ?, ?, 'none','Synthetic program restriction','private-fixture','123','["example/bounty"]',?,?,NULL,'project-moderator','admin-panel',?,?,?,?,?,?)`,
       )
       .run(
         `enf_${PROJECT}_${enforcementSequence}`,
@@ -386,7 +409,11 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
         action === "ban" ? "banned" : "quarantined",
         DISPUTE.githubId,
         DISPUTE.githubLogin,
-        digest,
+        before.revision,
+        before.manifest_sha256,
+        after?.revision ?? null,
+        after?.manifest_sha256 ?? null,
+        result,
         REVISION_AT,
       );
   };
@@ -1445,8 +1472,8 @@ describe("quarantined private cases", () => {
     );
     expect(result.status).toBe(200);
   });
-  test.each(["pending", "applied"])(
-    "a failed existing appeal triage can retry after project quarantine: %s revision",
+  test.each(["pending", "applied", "unproved"])(
+    "existing appeal triage follows quarantine revision evidence: %s",
     async (revision) => {
       const env = open();
       const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
@@ -1476,41 +1503,45 @@ describe("quarantined private cases", () => {
           .get(id),
       ).toEqual({ state: "unavailable" });
       env.setAnalyzerConfigured(true);
-      env.restrictProgram("quarantine");
-      // An applied quarantine appends the paused, retired revision.
-      if (revision === "applied") env.retireProgram();
+      // An applied quarantine retains its exact before/after revision evidence.
+      env.restrictProgram("quarantine", revision === "applied");
+      if (revision === "unproved") env.retireProgram();
       const result = await env.act(DISPUTE, id, { action: "triage-appeal" });
-      expect(result.status).toBe(200);
+      expect(result.status).toBe(revision === "unproved" ? 404 : 200);
     },
   );
-  test("an owner retirement closes a failed appeal triage retry", async () => {
-    const env = open();
-    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
-    await env.decide(id, "appeal-root");
-    expect(
-      (
-        await env.act(MAINTAINER, id, {
-          action: "award",
-          decision: "none",
-          reason: "Owner decision for review",
-        })
-      ).status,
-    ).toBe(200);
-    env.setAnalyzerConfigured(false);
-    expect(
-      (
-        await env.act(REPORTER, id, {
-          action: "appeal",
-          reason:
-            "Review the scope and decision that applied to this private report",
-        })
-      ).status,
-    ).toBe(200);
-    env.setAnalyzerConfigured(true);
-    env.retireProgram();
-    const result = await env.act(DISPUTE, id, { action: "triage-appeal" });
-    expect(result.status).toBe(404);
-  });
+  test.each(["none", "quarantine", "ban"] as const)(
+    "an owner retirement closes a failed appeal triage retry after %s",
+    async (restriction) => {
+      const env = open();
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      await env.decide(id, "appeal-root");
+      expect(
+        (
+          await env.act(MAINTAINER, id, {
+            action: "award",
+            decision: "none",
+            reason: "Owner decision for review",
+          })
+        ).status,
+      ).toBe(200);
+      env.setAnalyzerConfigured(false);
+      expect(
+        (
+          await env.act(REPORTER, id, {
+            action: "appeal",
+            reason:
+              "Review the scope and decision that applied to this private report",
+          })
+        ).status,
+      ).toBe(200);
+      env.setAnalyzerConfigured(true);
+      env.retireProgram();
+      if (restriction !== "none") env.restrictProgram(restriction);
+      const result = await env.act(DISPUTE, id, { action: "triage-appeal" });
+      expect(result.status).toBe(404);
+    },
+  );
   test("a previously funded award remains accessible while quarantined", async () => {
     const env = open();
     const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
