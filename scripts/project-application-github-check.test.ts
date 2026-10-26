@@ -1,6 +1,6 @@
-// The GitHub check of project setup through the production Pages Function:
-// the primary identity comes from the authenticated Slopbot read; every
-// additional repository and alias is checked too. Identity facts alone never
+// The GitHub and steward checks of project setup through the production Pages
+// Function: the primary identity comes from the authenticated Slopbot read;
+// every additional repository and alias is checked too. Identity facts alone never
 // grant authority; the installation permission does (owner decision D11).
 import { afterEach, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
@@ -411,16 +411,59 @@ test.each(["unchanged", "changed", "unavailable"])(
     }
   },
 );
+// The steward must be the account GitHub reports as the repository owner, by
+// login and node id, not only by numeric id.
+function stewardManifest(github: Record<string, unknown>) {
+  const manifest = manifestWith({});
+  return {
+    ...manifest,
+    steward: {
+      ...manifest.steward,
+      kind: "individual",
+      github: { ...manifest.steward.github, ...github },
+    },
+  };
+}
+
+const STEWARD_MISMATCH = {
+  error: "invalid_manifest",
+  message: "Repository or steward facts do not match GitHub",
+};
+
+test("the repository owner is accepted as steward in any login case, from the App response alone", async () => {
+  // GitHub logins are case-insensitive.
+  const { status } = await submit(
+    stewardManifest({
+      login: "Example",
+      profileUrl: "https://github.com/Example",
+    }),
+  );
+  expect(status).toBe(201);
+  expect(lookups).toEqual([]);
+});
+
+test.each([
+  ["login", { login: "microsoft", profileUrl: "https://github.com/microsoft" }],
+  ["node id", { nodeId: "MDEyOk9yZ2FuaXphdGlvbjY4OTg0Mzc=" }],
+] as const)(
+  "another account's %s with the owner's id is refused",
+  async (_name, github) => {
+    const { status, body, sqlite } = await submit(stewardManifest(github));
+    expect(status).toBe(422);
+    expect(body).toMatchObject(STEWARD_MISMATCH);
+    expect(
+      sqlite.prepare("SELECT COUNT(*) AS count FROM projects").get(),
+    ).toEqual({ count: 0 });
+  },
+);
+
 test("a project cannot claim a different GitHub owner account type", async () => {
   const manifest = manifestWith({});
   manifest.steward.github.type = "Organization";
   const { status, body } = await submit(manifest);
   expect(lookups).not.toContain(`${API}/repos/example/open-registry`);
   expect(status).toBe(422);
-  expect(body).toMatchObject({
-    error: "invalid_manifest",
-    message: "Repository or steward facts do not match GitHub",
-  });
+  expect(body).toMatchObject(STEWARD_MISMATCH);
 });
 
 // A service response is parsed independently of the caller's manifest. The
