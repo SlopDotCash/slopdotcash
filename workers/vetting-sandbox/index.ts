@@ -18,7 +18,7 @@ interface Env {
 }
 
 const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024;
-const INTERPRETERS = new Set(["shell", "python", "node", "binary"]);
+const INTERPRETERS = new Set(["python", "node", "binary"]);
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

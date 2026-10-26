@@ -7,6 +7,33 @@ export type VettingServiceSigner = {
   privateKey: CryptoKey;
   publicKey: CryptoKey;
 };
+/** The private vetting service and the key that signs every request to it. */
+export type VettingConnection = VettingServiceSigner & {
+  origin: string;
+  fetch?: typeof fetch;
+  now?: () => Date;
+};
+
+/**
+ * The exact HTTPS service origin. Plain HTTP is accepted only on 127.0.0.1,
+ * and only where the local sandbox runner is allowed.
+ */
+export function serviceOrigin(value: string, allowLoopback = false): string {
+  const url = new URL(value);
+  if (
+    url.origin !== value ||
+    url.username ||
+    url.password ||
+    (url.protocol !== "https:" &&
+      !(
+        allowLoopback &&
+        url.protocol === "http:" &&
+        url.hostname === "127.0.0.1"
+      ))
+  )
+    throw new Error("An exact HTTPS service origin is required");
+  return value;
+}
 
 /** Import only in trusted service/CI memory; callers never log the raw JWK. */
 export async function vettingServiceSigner(
@@ -44,6 +71,36 @@ export async function vettingServiceSigner(
   } catch {
     throw new Error("The scanner signing key is invalid");
   }
+}
+
+/** One signed request to the service. The caller reads or cancels the body. */
+export async function signedVettingFetch(
+  connection: VettingConnection,
+  request: {
+    method: "GET" | "POST" | "PUT";
+    path: string;
+    body?: Uint8Array;
+    contentType?: string;
+    timeoutMs: number;
+  },
+): Promise<Response> {
+  const body = request.body ?? new Uint8Array();
+  return (connection.fetch ?? fetch)(`${connection.origin}${request.path}`, {
+    method: request.method,
+    redirect: "error",
+    signal: AbortSignal.timeout(request.timeoutMs),
+    headers: {
+      ...(request.contentType ? { "content-type": request.contentType } : {}),
+      ...(await signedServiceHeaders({
+        signer: connection,
+        method: request.method,
+        pathAndQuery: request.path,
+        body,
+        at: connection.now?.(),
+      })),
+    },
+    ...(request.method === "GET" ? {} : { body: new Uint8Array(body) }),
+  });
 }
 
 export async function signedServiceHeaders(input: {

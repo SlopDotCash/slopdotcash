@@ -569,8 +569,11 @@ export default {
           .bind(`command:${command.delivery}`, command.action)
           .run();
         message.ack();
-      } catch {
-        await record(env, `failed-${command.action}`, { failed: true });
+      } catch (error) {
+        await record(env, `failed-${command.action}`, {
+          failed: true,
+          category: error instanceof Error ? error.message : "fixture-failed",
+        });
         message.ack();
       }
     }

@@ -3,8 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { VettingScanResult } from "../../backend/vetting/scan-result";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
-  MAX_INVENTORY_BYTES,
-  MAX_INVENTORY_ITEMS,
+  executionInventory,
   type RepositoryInspection,
   type ScanInputFile,
 } from "./bounded-scan";
@@ -23,12 +22,7 @@ export async function inspectIsolatedArtifacts(input: {
   const files = new Map<string, Uint8Array>();
   for (const file of input.files)
     files.set(await sha256Hex(file.bytes), file.bytes);
-  const inventory = JSON.parse(
-    new TextDecoder().decode(inspection.inventory),
-  ) as {
-    items: { id: string; text: string; sha256: string }[];
-    visibilityGaps: string[];
-  };
+  const inventory = executionInventory(inspection);
   // The reviewer bounds visibility-gap entries. Keep repeated execution gaps
   // grouped by reason; the result retains every exact artifact record.
   const gaps = new Map<string, number>();
@@ -96,27 +90,16 @@ export async function inspectIsolatedArtifacts(input: {
       gap("Isolated output was not UTF-8");
       continue;
     }
-    const text = JSON.stringify({ ...evidence, stdout, stderr });
-    const item = {
-      id: `execution:${evidence.runId}`,
-      text,
-      sha256: await sha256Hex(new TextEncoder().encode(text)),
-    };
-    const candidate = { ...inventory, items: [...inventory.items, item] };
     if (
-      candidate.items.length > MAX_INVENTORY_ITEMS ||
-      new TextEncoder().encode(JSON.stringify(candidate)).length >
-        MAX_INVENTORY_BYTES
-    ) {
+      !inventory.add(
+        `execution:${evidence.runId}`,
+        JSON.stringify({ ...evidence, stdout, stderr }),
+      )
+    )
       gap("Execution evidence exceeds the review inventory limit");
-    } else inventory.items.push(item);
   }
-  for (const [reason, count] of gaps) {
-    const message = `${reason}: ${count} artifact records`;
-    inspection.visibilityGaps.push(message);
-    inventory.visibilityGaps.push(message);
-  }
-  inspection.inventory = new TextEncoder().encode(JSON.stringify(inventory));
-  inspection.inventorySha256 = await sha256Hex(inspection.inventory);
+  inventory.finish(
+    [...gaps].map(([reason, count]) => `${reason}: ${count} artifact records`),
+  );
   return { execution, reports };
 }
