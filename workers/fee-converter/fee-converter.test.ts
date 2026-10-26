@@ -315,7 +315,7 @@ describe("release gates", () => {
       },
     });
     expect(toml).toMatch(
-      /^FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood,solana"$/mu,
+      /^FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"$/mu,
     );
     expect(toml).toMatch(/^FEE_CONVERTER_MIN_VALUE_MICRO = "5000000"$/mu);
     expect(toml).toMatch(/^FEE_CONVERTER_GAS_MULTIPLE = "10"$/mu);

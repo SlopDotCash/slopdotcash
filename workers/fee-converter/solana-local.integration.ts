@@ -10,6 +10,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { solanaBase58 } from "../../contracts/solana/adapter";
+import {
+  concat,
+  createAta,
+  le,
+  message,
+  TOKEN,
+} from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { runOnce } from "./index";
 import { associatedTokenAccount, parseTransaction } from "./solana";
@@ -82,6 +89,9 @@ const seed = crypto.getRandomValues(new Uint8Array(32));
 const publicKey = ed25519.getPublicKey(seed);
 const wallet = solanaBase58(publicKey);
 const keypair = JSON.stringify([...seed, ...publicKey]);
+const fundingSeed = crypto.getRandomValues(new Uint8Array(32));
+const fundingWallet = solanaBase58(ed25519.getPublicKey(fundingSeed));
+const fundingAccount = associatedTokenAccount(fundingWallet, JUP);
 console.log(`throwaway fee wallet ${wallet}`);
 
 // Learn the route's accounts from an unsigned Jupiter transaction for this wallet.
@@ -122,10 +132,10 @@ const accountFile = join(dir, "jup-account.json");
 writeFileSync(
   accountFile,
   JSON.stringify({
-    pubkey: jupAccount,
+    pubkey: fundingAccount,
     account: {
       lamports: 2_039_280,
-      data: [tokenAccount(JUP, wallet, AMOUNT), "base64"],
+      data: [tokenAccount(JUP, fundingWallet, AMOUNT), "base64"],
       owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
       executable: false,
       rentEpoch: 0,
@@ -166,7 +176,7 @@ const validator = Bun.spawn(
     USDC,
     ...clones.flatMap((key) => ["--maybe-clone", key]),
     "--account",
-    jupAccount,
+    fundingAccount,
     accountFile,
   ],
   { stdout: "ignore", stderr: "inherit" },
@@ -200,6 +210,75 @@ try {
     );
     if (!info.value) throw new Error(`mint ${mint} was not cloned`);
   }
+  // A real local SPL transfer creates the receipt. Only the funder's initial
+  // token account is seeded; the fee wallet starts without a JUP account.
+  const funded = await rpc<string>("requestAirdrop", [
+    fundingWallet,
+    100000000,
+  ]);
+  async function finalized(signature: string) {
+    for (let i = 0; i < 120; i++) {
+      const state = await rpc<{
+        value: ({ err: unknown; confirmationStatus: string } | null)[];
+      }>("getSignatureStatuses", [
+        [signature],
+        { searchTransactionHistory: true },
+      ]);
+      if (state.value[0]?.confirmationStatus === "finalized") {
+        if (state.value[0].err !== null)
+          throw new Error("local receipt transaction failed");
+        return;
+      }
+      await Bun.sleep(500);
+    }
+    throw new Error("local receipt transaction did not finalize");
+  }
+  await finalized(funded);
+  const latest = await rpc<{ value: { blockhash: string } }>(
+    "getLatestBlockhash",
+    [{ commitment: "confirmed" }],
+  );
+  const incoming = message(fundingWallet, latest.value.blockhash, [
+    createAta(fundingWallet, JUP, wallet),
+    {
+      program: TOKEN,
+      accounts: [
+        { key: fundingAccount, write: true },
+        { key: jupAccount, write: true },
+        { key: fundingWallet, write: false },
+      ],
+      data: concat(Uint8Array.of(3), le(AMOUNT)),
+    },
+  ]);
+  const receiptSignature = await rpc<string>("sendTransaction", [
+    btoa(
+      String.fromCharCode(
+        ...concat(
+          Uint8Array.of(1),
+          ed25519.sign(incoming, fundingSeed),
+          incoming,
+        ),
+      ),
+    ),
+    { encoding: "base64", preflightCommitment: "confirmed" },
+  ]);
+  await finalized(receiptSignature);
+  const received = await rpc<{ value: { amount: string } }>(
+    "getTokenAccountBalance",
+    [jupAccount],
+  );
+  if (received.value.amount !== AMOUNT.toString())
+    throw new Error(
+      "local fee wallet did not receive the intended SPL receipt",
+    );
+  console.log(
+    JSON.stringify({
+      check: "actual local SPL receipt",
+      receiptSignature,
+      amount: received.value.amount,
+      mainnet: false,
+    }),
+  );
   const { db, sqlite } = sqliteD1();
   const env = {
     FEE_DB: db,
@@ -240,8 +319,8 @@ try {
       reason: string | null;
     };
   console.log(
-    "run 1:",
-    JSON.stringify(await runOnce(env, undefined, overrides)),
+    "run 1 (receipt trigger):",
+    JSON.stringify(await runOnce(env, undefined, overrides, "receipts")),
     state(),
   );
   if (state().state !== "submitted") throw new Error("send was not submitted");
