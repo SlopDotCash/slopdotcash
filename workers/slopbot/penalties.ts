@@ -81,7 +81,13 @@ export async function recordPenalty(
       `INSERT OR IGNORE INTO slopbot_penalties
        (item_node_id, repository_id, project_id, author_github_id, category,
         table_version, debit_thirds, period, moderator_review, review_key, recorded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM slopbot_deliveries d JOIN slopbot_reviews r ON r.review_key = ?
+         WHERE d.reopen_confirmed_at IS NOT NULL
+           AND json_extract(d.reopen_source, '$.itemNodeId') = r.item_node_id
+           AND json_extract(d.reopen_source, '$.revision') = r.revision
+       )`,
     )
     .bind(
       input.itemNodeId,
@@ -96,6 +102,8 @@ export async function recordPenalty(
       input.reviewKey,
       // The close time, so the recorded debit and its month always agree.
       input.closedAt.toISOString(),
+      // Atomic with the insert: a reopen can confirm after the close guard.
+      input.reviewKey,
     )
     .run();
   return activePenalty(db, input.itemNodeId);

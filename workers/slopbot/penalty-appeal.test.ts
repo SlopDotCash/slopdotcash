@@ -21,6 +21,7 @@ import {
   PENALIZED_AUTHOR,
   penaltyScoreInput,
 } from "../../tests/penalty-score-fixture";
+import { enqueueReopen } from "../../tests/slopbot-reopen-fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   activityMailEligibility,
@@ -61,6 +62,18 @@ type Run = {
   policyResponse: (status: number, body?: unknown) => void;
   closureEnabled: (value: boolean) => void;
   pauseNextReopen: () => { entered: Promise<void>; release: () => void };
+  pauseNextClose: (options?: {
+    loseResponse?: boolean;
+    afterWrite?: () => void;
+  }) => { entered: Promise<void>; release: () => void };
+  beforePenaltyInsert: (callback: () => Promise<void>) => void;
+  currentState: () => string;
+  closerEvidence: (available: boolean) => void;
+  merged: (value: boolean) => void;
+  pauseNextFindingLabel: (loseResponse?: boolean) => {
+    entered: Promise<void>;
+    release: () => void;
+  };
   loseNextReopenResponse: () => void;
   loseNextAppealCommentResponse: (accepted?: boolean) => void;
   rejectNextAppealComment: (status: number) => void;
@@ -70,6 +83,10 @@ type Run = {
     prefix?: number,
   ) => void;
   closeByMaintainer: () => void;
+  reopen: (senderId?: number, occurredAt?: string) => Promise<Job>;
+  head: (sha: string) => void;
+  loseNextLabelDelete: () => void;
+  maintainerPermission: (value: boolean) => void;
   writes: string[];
   comments: string[];
   labels: string[];
@@ -85,6 +102,24 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       .filter((p) => p.endsWith(".sql"))
       .sort(),
   );
+  let beforePenaltyInsert: (() => Promise<void>) | null = null;
+  const prepare = db.prepare.bind(db);
+  db.prepare = (sql) => {
+    const statement = prepare(sql);
+    if (!sql.startsWith("INSERT OR IGNORE INTO slopbot_penalties"))
+      return statement;
+    const wrap = (inner: typeof statement): typeof statement => ({
+      ...inner,
+      bind: (...values) => wrap(inner.bind(...values)),
+      run: async () => {
+        const callback = beforePenaltyInsert;
+        beforePenaltyInsert = null;
+        await callback?.();
+        return inner.run();
+      },
+    });
+    return wrap(statement);
+  };
   const project = findProject("asi");
   if (!project) throw new Error("fixture project missing");
   const manifest = JSON.stringify({
@@ -139,7 +174,17 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   const comments: string[] = [];
   const labels: string[] = [];
   let state = "open";
+  let closedBy: number | null = null;
+  let closerEvidence = true;
+  let merged = false;
+  let pauseClose: (() => Promise<void>) | null = null;
+  let closeOptions: { loseResponse?: boolean; afterWrite?: () => void } = {};
+  let head = "b".repeat(40);
+  let loseLabelDelete = false;
+  let maintainerPermission = true;
   let pauseReopen: (() => Promise<void>) | null = null;
+  let pauseFindingLabel: (() => Promise<void>) | null = null;
+  let loseFindingLabelResponse = false;
   let loseReopenResponse = false;
   let appealResponse: "accepted" | "unknown" | null = null;
   let appealRejection: number | null = null;
@@ -253,6 +298,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           node_id: "PR_local",
           number: 5,
           state,
+          closed_by:
+            closerEvidence && closedBy !== null ? { id: closedBy } : null,
           title: "Followers",
           body: BODY,
           user: { login: "author", id: AUTHOR, type: "User" },
@@ -267,7 +314,19 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           pauseReopen = null;
           await pause();
         }
+        if (next === "closed" && pauseClose) {
+          const pause = pauseClose;
+          pauseClose = null;
+          await pause();
+        }
         state = next;
+        closedBy = next === "closed" ? 999 : null;
+        if (next === "closed") {
+          const options = closeOptions;
+          closeOptions = {};
+          options.afterWrite?.();
+          if (options.loseResponse) return new Response(null, { status: 503 });
+        }
         if (next === "open" && loseReopenResponse) {
           loseReopenResponse = false;
           return Response.json(
@@ -280,8 +339,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       if (path.endsWith("/pulls/5"))
         return Response.json({
           draft: false,
-          merged: false,
-          head: { sha: "b".repeat(40) },
+          merged,
+          head: { sha: head },
           base: {
             sha: "c".repeat(40),
             ref: "main",
@@ -317,7 +376,10 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         });
       if (path.endsWith("/permission"))
         return Response.json({
-          permission: path.includes("/maintainer/") ? "write" : "read",
+          permission:
+            path.includes("/maintainer/") && maintainerPermission
+              ? "write"
+              : "read",
         });
       if (path.endsWith("/issues/5/comments") && request.method === "GET") {
         if (appealHistoryMode === "unavailable")
@@ -376,15 +438,29 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       }
       if (path.endsWith("/issues/5/labels")) {
         const body = (await request.json()) as { labels: string[] };
+        if (pauseFindingLabel) {
+          const pause = pauseFindingLabel;
+          pauseFindingLabel = null;
+          await pause();
+        }
         for (const name of body.labels)
           if (!labels.includes(name)) labels.push(name);
+        if (loseFindingLabelResponse) {
+          loseFindingLabelResponse = false;
+          return new Response(null, { status: 503 });
+        }
         return Response.json(labels.map((name) => ({ name })));
       }
       const removed = path.match(/\/issues\/5\/labels\/(.+)$/u);
       if (removed && request.method === "DELETE") {
         const name = decodeURIComponent(removed[1]);
-        labels.splice(labels.indexOf(name), 1);
-        return Response.json([]);
+        const index = labels.indexOf(name);
+        if (index !== -1) labels.splice(index, 1);
+        if (loseLabelDelete) {
+          loseLabelDelete = false;
+          return new Response(null, { status: 503 });
+        }
+        return Response.json([], { status: index === -1 ? 404 : 200 });
       }
       return new Response(null, { status: 404 });
     },
@@ -403,6 +479,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   const sent: Job[] = [];
   const env = {
     SLOPBOT_DB: db as unknown as D1TransactionalDatabase,
+    SLOPBOT_WEBHOOK_SECRET: "local-synthetic-secret",
     SLOPBOT_APP_ID: "1",
     SLOPBOT_APP_PRIVATE_KEY: privateKey,
     SLOPBOT_APP_USER_ID: "999",
@@ -493,8 +570,64 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         });
         return sent;
       },
+      currentState: () => state,
+      closerEvidence: (available) => {
+        closerEvidence = available;
+      },
+      merged: (value) => {
+        merged = value;
+      },
+      beforePenaltyInsert: (callback) => {
+        beforePenaltyInsert = callback;
+      },
+      pauseNextClose: (options = {}) => {
+        let entered!: () => void;
+        let release!: () => void;
+        const arrival = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const resumed = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        pauseClose = async () => {
+          entered();
+          await resumed;
+        };
+        closeOptions = options;
+        return { entered: arrival, release };
+      },
+      head: (sha) => {
+        head = sha;
+      },
+      loseNextLabelDelete: () => {
+        loseLabelDelete = true;
+      },
+      maintainerPermission: (value) => {
+        maintainerPermission = value;
+      },
+      reopen: async (
+        senderId = MAINTAINER,
+        occurredAt = new Date().toISOString(),
+      ) => {
+        state = "open";
+        closedBy = null;
+        const body = {
+          kind: "human_reopen" as const,
+          deliveryId: `webhook-reopen-${crypto.randomUUID()}`,
+          ...base,
+          senderId,
+        };
+        const response = await enqueueReopen(env as never, body, {
+          node_id: "PR_local",
+          updated_at: occurredAt,
+          head: { sha: head },
+        });
+        expect(await response.text()).toBe("queued");
+        return body;
+      },
       closeByMaintainer: () => {
         state = "closed";
+        closedBy = MAINTAINER;
       },
       loseNextReopenResponse: () => {
         loseReopenResponse = true;
@@ -522,6 +655,22 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           entered();
           await resumed;
         };
+        return { entered: arrival, release };
+      },
+      pauseNextFindingLabel: (loseResponse = false) => {
+        let entered!: () => void;
+        let release!: () => void;
+        const arrival = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const resumed = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        pauseFindingLabel = async () => {
+          entered();
+          await resumed;
+        };
+        loseFindingLabelResponse = loseResponse;
         return { entered: arrival, release };
       },
       pauseNextReopen: () => {
@@ -766,9 +915,7 @@ test("a spam close debits 3 thirds once; an accepted uphold draft reopens the it
         run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
       ),
     ).toBe("appeal already resolved");
-    expect(
-      await run.deliver(run.job("human_reopen", { senderId: MAINTAINER })),
-    ).toBe("human_reopen");
+    expect(await run.deliver(await run.reopen())).toBe("human_reopen");
     // A maintainer closes the item again. A later command from anyone does
     // not resume the completed decision or reopen the item.
     run.closeByMaintainer();
@@ -837,10 +984,9 @@ test("a scam close escalates to a moderator; only a moderator decides, and a den
         reversal: null,
       },
     ]);
-    // A maintainer reopen still wins and reverses the debit once.
-    expect(
-      await run.deliver(run.job("human_reopen", { senderId: MAINTAINER })),
-    ).toBe("human_reopen");
+    // A maintainer reopen still wins, removes the finding label, and reverses the debit once.
+    expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+    expect(run.labels).not.toContain("slopbot: scam");
     expect(run.sql(PENALTY)).toEqual([
       {
         category: "scam",
@@ -849,6 +995,60 @@ test("a scam close escalates to a moderator; only a moderator decides, and a den
         reversal: "maintainer_reopen",
       },
     ]);
+  });
+});
+
+test("a maintainer reopen upholds an open appeal and removes the finding label, but does not post an upheld comment after a maintainer-denied appeal", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.labels).toContain("slopbot: spam");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+    expect(run.labels).not.toContain("slopbot: spam");
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: "deny",
+        escalated: 0,
+        resolution: "upheld",
+        resolved_by: "maintainer",
+      },
+    ]);
+    expect(run.comments.at(-1)).toContain(
+      "**Appeal upheld** (decided by the maintainer).",
+    );
+  });
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: MAINTAINER }),
+      ),
+    ).toBe("appeal denied by the maintainer");
+    const commentsBeforeReopen = run.comments.length;
+    expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+    expect(run.labels).not.toContain("slopbot: spam");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "maintainer_reopen",
+      },
+    ]);
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: "deny",
+        escalated: 0,
+        resolution: "denied",
+        resolved_by: "maintainer",
+      },
+    ]);
+    expect(run.comments).toHaveLength(commentsBeforeReopen);
   });
 });
 
@@ -1280,9 +1480,7 @@ test("a reversed scam penalty suppresses the pending account-review mail", async
     await run.enableMail();
     run.model("scam", 0.97);
     expect(await run.review()).toBe("closed (scam)");
-    expect(
-      await run.deliver(run.job("human_reopen", { senderId: MAINTAINER })),
-    ).toBe("human_reopen");
+    expect(await run.deliver(await run.reopen())).toBe("human_reopen");
     expect(await run.mail()).toEqual([]);
     // The Inbox history is permanent; the notice is not deleted or rewritten.
     expect(run.sql(SCAM_NOTICES)).toHaveLength(1);
@@ -1483,3 +1681,269 @@ for (const status of [401, 403, 404, 410, 422, 429]) {
     });
   });
 }
+
+test("replaying an old reopen cannot remove a newer head finding", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    const reopened = await run.reopen();
+    expect(await run.deliver(reopened)).toBe("human_reopen");
+    run.head("d".repeat(40));
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 2000));
+    expect(await run.review()).toBe("labeled (spam)");
+    const before = run.writes.length;
+    expect(await run.deliver(reopened)).toBe(
+      "reopen source changed; no decision",
+    );
+    expect(run.labels).toContain("slopbot: spam");
+    expect(run.writes).toHaveLength(before);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'human_reopen'",
+      ),
+    ).toEqual([{ n: 1 }]);
+  });
+});
+
+test("a delayed bound reopen clears the same-head finding that raced before its marker", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    // Admission has source evidence but the queue has not processed it yet.
+    const reopened = await run.reopen();
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 2000));
+    run.closureEnabled(false);
+    expect(await run.review()).toBe("labeled (spam)");
+    expect(await run.deliver(reopened)).toBe("human_reopen");
+    expect(run.labels).not.toContain("slopbot: spam");
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'human_reopen'",
+      ),
+    ).toEqual([{ n: 1 }]);
+  });
+});
+
+test("a genuine fresh same-second reopen clears the finding and reverses once", async () => {
+  const second = Date.parse(CLOSED_AT);
+  setSystemTime(new Date(second + 100));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // GitHub truncates updated_at; persistent protection binds the revision,
+    // so precision cannot create a new wait or require another human action.
+    setSystemTime(new Date(second + 500));
+    const reopened = await run.reopen(MAINTAINER, CLOSED_AT);
+    expect(await run.deliver(reopened)).toBe("human_reopen");
+    expect(run.labels).not.toContain("slopbot: spam");
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: "maintainer_reopen" }]);
+    const first = run.sql("SELECT reversed_at FROM slopbot_penalties");
+    expect(await run.deliver(reopened)).toBe("human_reopen");
+    expect(run.sql("SELECT reversed_at FROM slopbot_penalties")).toEqual(first);
+  });
+});
+
+test("unknown label DELETE retries preserve one reversal and current maintainer authority", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    const reopened = await run.reopen();
+    run.loseNextLabelDelete();
+    await expect(run.deliver(reopened)).rejects.toThrow(
+      "appeal job was retried",
+    );
+    expect(run.labels).not.toContain("slopbot: spam");
+    expect(await run.deliver(reopened)).toBe("human_reopen");
+    const before = run.sql(
+      "SELECT reversed_at, reversal FROM slopbot_penalties",
+    );
+    expect(await run.deliver(reopened)).toBe("human_reopen");
+    expect(
+      run.sql("SELECT reversed_at, reversal FROM slopbot_penalties"),
+    ).toEqual(before);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'human_reopen'",
+      ),
+    ).toEqual([{ n: 1 }]);
+    run.maintainerPermission(false);
+    expect(await run.deliver(reopened)).toBe(
+      "reopen by a non-maintainer recorded as no decision",
+    );
+  });
+});
+
+test("unsupported legacy reopen and a subsequently closed item make no decision", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(
+      await run.deliver(run.job("human_reopen", { senderId: MAINTAINER })),
+    ).toBe("reopen source unavailable; no decision");
+    const reopened = await run.reopen();
+    run.closeByMaintainer();
+    const before = run.writes.length;
+    expect(await run.deliver(reopened)).toBe(
+      "reopen source changed; no decision",
+    );
+    expect(run.labels).toContain("slopbot: spam");
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    expect(run.writes).toHaveLength(before);
+  });
+});
+
+for (const loseResponse of [false, true]) {
+  test(`a same-revision reopen wins a concurrent category label (lost response: ${loseResponse})`, async () => {
+    setSystemTime(new Date(CLOSED_AT));
+    await closedItem(async (run) => {
+      const paused = run.pauseNextFindingLabel(loseResponse);
+      const pending = run.review().then(
+        (outcome) => ({ outcome }),
+        (error) => ({ error }),
+      );
+      try {
+        await paused.entered;
+        expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+      } finally {
+        paused.release();
+      }
+      const result = await pending;
+      if (loseResponse) {
+        expect(result).toHaveProperty("error");
+        expect(await run.review()).toContain("maintainer decision stands");
+      } else expect(result).toHaveProperty("outcome");
+      expect(run.labels).not.toContain("slopbot: spam");
+      expect(
+        run.writes.filter((w) => w === "PATCH /repos/SlopDotCash/asi/pulls/5"),
+      ).toHaveLength(0);
+      expect(run.sql(PENALTY)).toEqual([]);
+    });
+  });
+}
+
+test("the first delivery of an old-head reopen preserves a newer finding", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const reopened = await run.reopen();
+    run.head("d".repeat(40));
+    run.closureEnabled(false);
+    expect(await run.review()).toBe("labeled (spam)");
+    const before = run.writes.length;
+    expect(await run.deliver(reopened)).toBe(
+      "reopen source changed; no decision",
+    );
+    expect(run.labels).toContain("slopbot: spam");
+    expect(run.writes).toHaveLength(before);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'human_reopen'",
+      ),
+    ).toEqual([{ n: 0 }]);
+  });
+});
+
+for (const failure of [
+  "none",
+  "close response",
+  "reopen response",
+  "closer evidence",
+] as const) {
+  test(`a confirmed same-revision reopen recovers a close already in flight: ${failure}`, async () => {
+    setSystemTime(new Date(CLOSED_AT));
+    await closedItem(async (run) => {
+      const paused = run.pauseNextClose({
+        loseResponse: failure === "close response",
+      });
+      const pending = run.review().then(
+        (outcome) => ({ outcome }),
+        (error) => ({ error }),
+      );
+      try {
+        await paused.entered;
+        run.closeByMaintainer();
+        expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+        if (failure === "reopen response") run.loseNextReopenResponse();
+        if (failure === "closer evidence") run.closerEvidence(false);
+      } finally {
+        paused.release();
+      }
+      const result = await pending;
+      if (failure !== "none") {
+        expect(result).toHaveProperty("error");
+        expect(run.sql(PENALTY)).toEqual([]);
+        if (failure === "closer evidence") {
+          expect(run.currentState()).toBe("closed");
+          const before = run.writes.length;
+          await expect(run.review()).rejects.toThrow("Closer is unavailable");
+          expect(run.writes).toHaveLength(before);
+          run.closerEvidence(true);
+        }
+        await run.review();
+      }
+      expect(run.currentState()).toBe("open");
+      expect(run.labels).not.toContain("slopbot: spam");
+      expect(run.sql(PENALTY)).toEqual([]);
+      expect(
+        run.writes.filter((w) => w === "PATCH /repos/SlopDotCash/asi/pulls/5"),
+      ).toHaveLength(2);
+    });
+  });
+}
+
+for (const later of ["human close", "new head", "merged"] as const) {
+  test(`late-close recovery preserves a subsequent ${later}`, async () => {
+    setSystemTime(new Date(CLOSED_AT));
+    await closedItem(async (run) => {
+      const paused = run.pauseNextClose({
+        afterWrite: () => {
+          if (later === "human close") run.closeByMaintainer();
+          if (later === "new head") run.head("d".repeat(40));
+          if (later === "merged") run.merged(true);
+        },
+      });
+      const pending = run.review();
+      try {
+        await paused.entered;
+        run.closeByMaintainer();
+        expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+      } finally {
+        paused.release();
+      }
+      await pending;
+      expect(run.currentState()).toBe("closed");
+      expect(run.sql(PENALTY)).toEqual([]);
+      expect(
+        run.writes.filter((w) => w === "PATCH /repos/SlopDotCash/asi/pulls/5"),
+      ).toHaveLength(1);
+    });
+  });
+}
+
+test("a reopen that confirms at the first penalty INSERT atomically prevents a new debit", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.beforePenaltyInsert(async () => {
+      expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+    });
+    await run.review();
+    expect(run.currentState()).toBe("open");
+    expect(run.sql(PENALTY)).toEqual([]);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_deliveries WHERE reopen_confirmed_at IS NOT NULL",
+      ),
+    ).toEqual([{ n: 1 }]);
+  });
+});
+
+test("a delayed genuine reopen reverses the bot close that raced before queue delivery", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const reopened = await run.reopen();
+    expect(await run.review()).toBe("closed (spam)");
+    expect(await run.deliver(reopened)).toBe("human_reopen");
+    expect(run.currentState()).toBe("open");
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: "maintainer_reopen" }]);
+    const first = run.sql("SELECT reversed_at FROM slopbot_penalties");
+    expect(await run.deliver(reopened)).toBe("human_reopen");
+    expect(run.sql("SELECT reversed_at FROM slopbot_penalties")).toEqual(first);
+  });
+});
