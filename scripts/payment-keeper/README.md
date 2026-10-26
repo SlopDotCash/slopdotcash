@@ -26,6 +26,7 @@ Create a private JSON configuration with these fields:
 | `gas.perTransaction` | Operator-approved native reservation per transaction. |
 | `gas.perDay` | Operator-approved native base units per UTC day, including unknown sends. |
 | `gas.additionalFeeReserve` | Base L1-data and operator-fee allowance per transaction; zero on other supported rails. |
+| `monthlySchedule` | Optional. The deployment's `MONTHLY_PAYMENT_SCHEDULE` object. Omitted, the keeper serves the PRD schedule from 2026-11. |
 
 There is no default spending budget. EVM execution keeps the existing reviewed
 network gas ceiling and 10-gwei fee-price ceiling. Base also reserves the
