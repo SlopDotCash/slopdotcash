@@ -6,7 +6,7 @@ import { createHash, generateKeyPairSync } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { findProject } from "../../src/lib/projects.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import type { Job } from "./contracts";
+import type { Category, Job } from "./contracts";
 import worker from "./index";
 import type { D1TransactionalDatabase } from "./persistence";
 import { type ReviewEnv, reviewItem } from "./review";
@@ -26,6 +26,13 @@ async function uncertainReview(
     tick: () => Promise<Job[]>;
     deliver: (jobs: Job[]) => Promise<void>;
     setDraft: (v: boolean) => void;
+    setVerdict: (category: Category, nextConfidence: number) => void;
+    job: (kind: string, extra: Record<string, unknown>) => Job;
+    pause: (
+      method: string,
+      path: string,
+      when: "before" | "after",
+    ) => { reached: Promise<void>; release: () => void };
     writes: string[];
     labels: { name: string }[];
     sql: (q: string) => unknown;
@@ -64,13 +71,44 @@ async function uncertainReview(
   );
   const repositoryId = Number(project.authority.repositoryId);
   let pullDraft = false;
+  let currentCategory: Category = "busywork";
+  let currentConfidence = confidence;
   const writes: string[] = [];
   const labels: { name: string }[] = [];
   let targetSha = "c".repeat(40);
   let patch = "-const a = 1;\n+const b = 1;";
+  // One-shot pauses order concurrent jobs around one GitHub request: "before"
+  // holds the request unapplied, "after" holds an already computed response.
+  const pauses: {
+    method: string;
+    path: string;
+    when: "before" | "after";
+    reach: () => void;
+    released: Promise<void>;
+  }[] = [];
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
+      const index = pauses.findIndex(
+        (entry) =>
+          entry.method === request.method &&
+          new URL(request.url).pathname.endsWith(entry.path),
+      );
+      const pause = index === -1 ? undefined : pauses.splice(index, 1)[0];
+      if (pause?.when === "before") {
+        pause.reach();
+        await pause.released;
+      }
+      const response = await respond(request);
+      if (pause?.when === "after") {
+        pause.reach();
+        await pause.released;
+      }
+      return response;
+    },
+  });
+  async function respond(request: Request): Promise<Response> {
+    {
       const url = new URL(request.url);
       const path = url.pathname;
       if (request.method !== "GET") writes.push(`${request.method} ${path}`);
@@ -85,8 +123,8 @@ async function uncertainReview(
             {
               type: "text",
               text: JSON.stringify({
-                category: "busywork",
-                confidence,
+                category: currentCategory,
+                confidence: currentConfidence,
                 rule_refs: [],
                 evidence: [],
                 summary: "This change may be busywork.",
@@ -185,12 +223,21 @@ async function uncertainReview(
         return Response.json({ id: 900 }, { status: 201 });
       if (path.endsWith("/issues/5/labels")) {
         const body = (await request.json()) as { labels: string[] };
-        for (const name of body.labels) labels.push({ name });
+        for (const name of body.labels)
+          if (!labels.some((entry) => entry.name === name))
+            labels.push({ name });
         return Response.json(labels);
       }
+      const removed = path.match(/\/issues\/5\/labels\/(.+)$/u);
+      if (removed && request.method === "DELETE") {
+        const name = decodeURIComponent(removed[1]);
+        const index = labels.findIndex((entry) => entry.name === name);
+        if (index !== -1) labels.splice(index, 1);
+        return Response.json([]);
+      }
       return new Response(null, { status: 404 });
-    },
-  });
+    }
+  }
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = ((
     url: Parameters<typeof fetch>[0],
@@ -232,6 +279,29 @@ async function uncertainReview(
       labels,
       setDraft: (v: boolean) => {
         pullDraft = v;
+      },
+      setVerdict: (category: Category, nextConfidence: number) => {
+        currentCategory = category;
+        currentConfidence = nextConfidence;
+      },
+      job: (kind, extra) =>
+        ({
+          ...job,
+          kind,
+          deliveryId: `${kind}-${writes.length}`,
+          ...extra,
+        }) as Job,
+      pause: (method, path, when) => {
+        let reach = () => {};
+        let release = () => {};
+        const reached = new Promise<void>((resolve) => {
+          reach = resolve;
+        });
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        pauses.push({ method, path, when, reach, released });
+        return { reached, release };
       },
       advanceTarget: (changedSource) => {
         targetSha = "d".repeat(40);
@@ -387,3 +457,78 @@ test.each([true, false])(
     });
   },
 );
+
+test("an upheld appeal supersedes an open maintainer hold and removes slopbot:uncertain after the hold window", async () => {
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    expect(await run.review()).toMatch(/^held for maintainer until /);
+    run.setVerdict("none", 0.95);
+    await run.deliver([run.job("appeal", { senderId: 42 })]);
+    await run.deliver([
+      run.job("appeal_command", { command: "accept", senderId: 42 }),
+    ]);
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = await run.tick();
+    expect(due.map((j) => j.kind)).toEqual(["maintainer_hold"]);
+    await run.deliver(due);
+    expect(run.labels).toEqual([{ name: "slopbot: appeal" }]);
+    expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+      { outcome: "superseded" },
+    ]);
+  });
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    expect(await run.review()).toMatch(/^held for maintainer until /);
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    await run.deliver(await run.tick());
+    expect(run.labels).toEqual([{ name: "slopbot:uncertain" }]);
+    run.setVerdict("none", 0.95);
+    await run.deliver([run.job("appeal", { senderId: 42 })]);
+    await run.deliver([
+      run.job("appeal_command", { command: "accept", senderId: 42 }),
+    ]);
+    expect(run.labels.map((l) => l.name)).not.toContain("slopbot:uncertain");
+    expect(run.writes).toContain(
+      "DELETE /repos/SlopDotCash/asi/issues/5/labels/slopbot%3Auncertain",
+    );
+  });
+});
+
+test.each([
+  "the label write is in flight when the appeal is upheld",
+  "the hold labels after the appeal read the item but before it was upheld",
+])("an upheld appeal leaves no uncertainty label when %s", async (ordering) => {
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    expect(await run.review()).toMatch(/^held for maintainer until /);
+    run.setVerdict("none", 0.95);
+    setSystemTime(new Date(start + day));
+    await run.deliver([run.job("appeal", { senderId: 42 })]);
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = await run.tick();
+    expect(due.map((j) => j.kind)).toEqual(["maintainer_hold"]);
+    const accept = [
+      run.job("appeal_command", { command: "accept", senderId: 42 }),
+    ];
+    if (ordering.startsWith("the label write")) {
+      const label = run.pause("POST", "/issues/5/labels", "before");
+      const hold = run.deliver(due);
+      await label.reached;
+      await run.deliver(accept);
+      label.release();
+      await hold;
+    } else {
+      const read = run.pause("GET", "/issues/5", "after");
+      const appeal = run.deliver(accept);
+      await read.reached;
+      await run.deliver(due);
+      expect(run.labels.map((l) => l.name)).toContain("slopbot:uncertain");
+      read.release();
+      await appeal;
+    }
+    expect(run.labels.map((l) => l.name)).not.toContain("slopbot:uncertain");
+    expect(run.sql("SELECT resolution FROM slopbot_appeals")).toEqual([
+      { resolution: "upheld" },
+    ]);
+  });
+});

@@ -492,6 +492,20 @@ Invalid JSON returned 400, and an invalid signature returned 401, without
 creating receipts. This check did not exercise the hosted Cloudflare queue or
 GitHub App credentials.
 
+### Appeal received before structured appeals
+
+An author appeal that Slopbot completed before structured appeals were
+deployed has a completed receipt, so GitHub redelivery is dropped as a
+duplicate. Only with the owner's approval for that one appeal, an operator runs
+`bun scripts/recover-slopbot-appeal.ts --delivery <guid>`. The script reads the
+delivery from GitHub's App delivery record (GitHub keeps it for a limited
+time) and maps it with the webhook's own `jobFor`, with the original delivery
+ID. It refuses unless the delivery is an author `/slopbot appeal`, the item is
+open, the author and comment are unchanged, the receipt is completed, and the
+item has no structured appeal. It reads D1 only and prints the job. `--send`
+then queues that one job. The consumer re-reads GitHub, keys the appeal by item
+revision, and posts the canonical draft and notices.
+
 ## Supporting code for value assessments
 
 Historical joint-record preparation can receive the independently fetched D1

@@ -761,6 +761,25 @@ async function addLabels(
     );
 }
 
+/** Removes one Slopbot label; an already absent label is success. */
+async function removeLabel(
+  db: store.D1Database,
+  job: AppealJob | Extract<Job, { kind: "maintainer_hold" }>,
+  github: GitHubClient,
+  label: string,
+): Promise<void> {
+  await requireScope(db, job, "security");
+  const removed = await github.request<unknown>(
+    "DELETE",
+    `/repos/${job.owner}/${job.repo}/issues/${job.number}/labels/${encodeURIComponent(label)}`,
+  );
+  if (removed.status !== 200 && removed.status !== 404)
+    throw new GitHubError(
+      removed.status,
+      "GitHub did not confirm the label removal",
+    );
+}
+
 /** Owner decision D12: on a paused, flagged or quarantined project, Slopbot
  * may comment and add the scam label only. Every other label needs a project
  * that is open to contributor work.
@@ -2104,18 +2123,21 @@ async function finishAppeal(
         );
     }
     const finding = await latestFinding(db, issue.node_id);
-    if (finding !== null && hasLabel(issue, categoryLabel(finding))) {
-      await requireScope(db, job, "security");
-      const removed = await session.github.request<unknown>(
-        "DELETE",
-        `/repos/${job.owner}/${job.repo}/issues/${job.number}/labels/${encodeURIComponent(categoryLabel(finding))}`,
-      );
-      if (removed.status !== 200 && removed.status !== 404)
-        throw new GitHubError(
-          removed.status,
-          "GitHub did not confirm the label removal",
-        );
-    }
+    if (finding !== null && hasLabel(issue, categoryLabel(finding)))
+      await removeLabel(db, job, session.github, categoryLabel(finding));
+    // The issue was read before this decision, so a hold label written since
+    // is not in it. An open or labeled hold for this revision means the label
+    // may be present; the hold rechecks the appeal after its own write.
+    const hold = await db
+      .prepare(
+        `SELECT 1 AS n FROM slopbot_maintainer_holds
+          WHERE 'appeal:' || item_node_id || ':' || revision = ?
+            AND (resolved_at IS NULL OR outcome = 'labeled')`,
+      )
+      .bind(current.appeal_key)
+      .first<{ n: number }>();
+    if (hasLabel(issue, UNCERTAIN_LABEL) || hold !== null)
+      await removeLabel(db, job, session.github, UNCERTAIN_LABEL);
     await reversePenalty(db, issue.node_id, "appeal_upheld");
   }
   await publishAppealState(env, job, session, current, "resolution");
@@ -2263,6 +2285,9 @@ export async function applyMaintainerHold(
   if (pull?.draft) return supersede("item is a draft");
   if (pull?.merged || revision !== hold.revision)
     return supersede("item changed after the review");
+  const appealKey = `appeal:${hold.item_node_id}:${hold.revision}`;
+  if ((await appealByKey(db, appealKey))?.resolution === "upheld")
+    return supersede("appeal was upheld");
   const reviewed = await db
     .prepare("SELECT content_digest FROM slopbot_reviews WHERE review_key = ?")
     .bind(job.reviewKey)
@@ -2279,6 +2304,12 @@ export async function applyMaintainerHold(
   // Reconcile a successful write whose response or local record was lost.
   if (!hasLabel(issue, UNCERTAIN_LABEL))
     await addLabels(env, job, github, [UNCERTAIN_LABEL]);
+  // An appeal upheld while the label write was in flight wins. The hold is
+  // still open, so an appeal decided after this read removes the label itself.
+  if ((await appealByKey(db, appealKey))?.resolution === "upheld") {
+    await removeLabel(db, job, github, UNCERTAIN_LABEL);
+    return supersede("appeal was upheld");
+  }
   await store.recordAction(
     db,
     job.reviewKey,
