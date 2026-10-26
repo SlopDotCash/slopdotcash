@@ -217,7 +217,6 @@ try {
   const overrides = {
     fetch: pinnedRoute,
     localBlockhash: true,
-    allowSolanaLive: true,
   };
   const state = () =>
     sqlite
