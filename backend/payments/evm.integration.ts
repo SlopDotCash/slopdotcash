@@ -23,6 +23,7 @@ import {
   evmBindingDigest,
   type evmBindingTypedData,
   evmVaultKey,
+  readEvmBindingVersion,
   verifyBinding,
 } from "../../contracts/evm/adapter";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
@@ -579,6 +580,32 @@ try {
   );
   // The binding acceptance is checked against the current claim: a stranger's
   // signature and a signature over another version are both refused.
+  // Browser consent discovers the finalized version without a contributor RPC or console.
+  const discovered = await handlePaymentsApi(
+    request("/wallets/bind-challenge", {
+      claimId: "claim",
+      network: "anvil",
+      vault,
+    }),
+    {
+      db,
+      paymentDeployments,
+      bindingVersion: async (network, address, actor) => {
+        assert.equal(network, "anvil");
+        assert.equal(address, vault.toLowerCase());
+        return readEvmBindingVersion(config, actor);
+      },
+    },
+  );
+  assert.equal(discovered.status, 200);
+  assert.equal(
+    (
+      (await discovered.json()) as {
+        typedData: ReturnType<typeof evmBindingTypedData>;
+      }
+    ).typedData.message.expectedVersion,
+    "0",
+  );
   const bindChallenge = (await (
     await handlePaymentsApi(
       request("/wallets/bind-challenge", {

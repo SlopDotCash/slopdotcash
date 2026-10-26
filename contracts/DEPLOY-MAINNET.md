@@ -17,19 +17,22 @@
 > bound set at the first of several upgrades would reject events from proxies
 > not yet upgraded.
 >
-> Pending upgrades (24 October 2026): the mainnet EVM vaults and the Solana
-> program were deployed from `bce5b0df`. Source on `development` rounds the 2%
+> Pending upgrades: the Ethereum and Robinhood mainnet EVM contracts and the
+> Solana program were deployed from `bce5b0df`. Source on `development` rounds the 2%
 > fee up (#1189) and, on Solana, releases a monthly award whose source already
 > holds the identical award (#1175). The payment executor already relies on that
 > Solana release rule. Upgrade the Solana program and record its new
 > `codeSha256` before any Solana project turns on automatic monthly payment;
 > until the upgrade, reconciliation accepts either fee rounding. The EVM
 > upgrade kit (deploy script, calldata, fork rehearsal and registry revision)
-> is in section 4; it is prepared and unsigned.
+> is in section 4. Base's authorized monthly reserve V2 upgrade is finalized
+> (see the current Base review below); Ethereum, Robinhood and Solana upgrades
+> remain pending.
 >
 > Owner decision (25 October 2026): bundle the owner's signed release of an
 > unsettleable monthly reserve (`docs/escrow-unsettleable-month-release.md`)
-> into this pending upgrade. The section 4 kit now targets the bundled vault.
+> into the pending upgrades. The section 4 kit now targets the bundled vault;
+> on Base it is a further upgrade after the finalized V2 below.
 > The Solana program also changes: the expected post-upgrade program hash
 > `d29200ec…` from source `edf3b341` (#914) is superseded. Redo the section 2
 > deterministic Solana build from the final merged source and record its new
@@ -40,11 +43,13 @@
 ## Current mainnet deployments
 
 The owner approved activation on every network on 24 October 2026. These are
-deployments, not project activations. The source is `main` at `bce5b0df`.
+deployments, not project activations. The initial source is `main` at `bce5b0df`;
+Base's subsequent upgrade uses `208fbf5b`, as recorded below.
 The independent reviews were waived (#903), not completed.
 
-EVM (Base 8453, Ethereum 1, Robinhood Chain 4663) uses the same addresses and
-runtime code on each chain:
+The initial EVM deployments (Base 8453, Ethereum 1, Robinhood Chain 4663)
+used the same addresses and runtime code. Ethereum and Robinhood still use
+this review; Base retains the proxy but now selects the implementations below.
 
 | Role                   | Address                                      | Runtime SHA-256                                                    |
 | ---------------------- | -------------------------------------------- | ------------------------------------------------------------------ |
@@ -56,7 +61,8 @@ Registrar `0xd64F35aC87D9a1FB8eBD44e745c24436B606cF60`, identity authority
 `0x31B87d13f9091bC3b8A5cb6F45C8b3cB99Ed6d70`, fee recipient
 `0x8f77C37D8650776bFe73c9b12B15209eE15D9b86`, upgrade authority and deployer
 `0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D`, binding delay 0. Sourcify has a
-full match for all three contracts on each chain.
+full match for all three initial contracts on each chain. That verification
+does not cover the replacement Base implementations.
 
 Solana program `7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ`: upgrade
 authority `EmMRRFhjZmr2SN5RdhV98WPnUhgJxKMoE1itSwUsU8tr`, 681,392 bytes,
@@ -69,6 +75,49 @@ Config `9hjoFnUrgF65K4DnWSDbS1WJjoGu4LChuz8XFq73UtaS`: identity authority
 build and exact-artifact qualification are still open for Solana. The owner
 waived a second operator and a different build machine on 25 October 2026;
 that check was not completed (PRD section 11).
+
+### Base monthly reserve V2 upgrade
+
+The owner authorized the reviewed Base sequence on 25 October 2026 with a
+0.001 ETH total gas ceiling for its upgrade, first vault, selected deposit and
+test payment. The upgrade finalized on 26 October. Source
+`208fbf5ba2896d7db6452fa8df83a2e0e7fc1f52` uses the same EVM contract and
+compiler configuration as the accepted public-testnet upgrade at `71545524`
+and recovery at `5ae2d5c6`. The fresh Base fork rehearsal and the exact ordered
+three-transaction simulation passed before signing.
+
+| Step                                                | Finalized transaction                                                                                  | Block    |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | -------- |
+| Deploy vault implementation                         | [9f8128f8](https://basescan.org/tx/0x9f8128f841b4f24ee1af8a06d0b98a3c4eb34cfa218b1a11a9970682cf60410f) | 53088824 |
+| Deploy factory implementation                       | [0f5d3967](https://basescan.org/tx/0x0f5d3967d76d6d7cd7df39cfb3bc6b479ea9ecd049ba01f9630946f85e36e62f) | 53088858 |
+| Atomic factory upgrade and vault-template selection | [4cc82cf7](https://basescan.org/tx/0x4cc82cf7f353dae6b473c8ea4844f10c4a597f69875968a3c8139d2f9cd00dd8) | 53093023 |
+
+At finalized block `53093153`, hash
+`0x9702c52d424543aa55a7505185060a9390dbd45bf9f18216aaf5a12ba4dd0498`,
+the independent read-only verifier checked all three canonical successful
+receipts, sender, nonce, zero native value and exact calldata. The factory's
+ERC-1967 slot selects `0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f`; its
+vault template is `0x6A79B8970E980159c362d11F37dC8BFFbF2da027`. Both runtime
+SHA-256 values match section 4.3. The proxy runtime remains
+`afb62459ccdd87d344b8bfa367c8dc49586323316bb8a51f1dfbe753336c0509`.
+
+Registrar, identity authority, fee recipient and upgrade authority remain the
+approved addresses above. Binding and authority-rotation delays are zero,
+with no pending authority changes. The complete factory creation-log inventory
+through that finalized block contains no vaults. Actual upgrade fees,
+including Base's L1 component, total `38263652561604` wei
+(`0.000038263652561604 ETH`).
+
+This is finalized infrastructure evidence. Project vaults, funding, binding,
+payments, hosted attester acceptance and future monthly execution remain
+separate. New vaults register through the normal owner flow in D1; the public
+factory review contains no project or owner inventory. The normal protected
+release must publish the review before the website offers this factory.
+External explorer verification of the replacement implementations is not
+claimed; exact runtime and source checks are the independent proof here. The
+[sanitized finalized proof and checksum](https://github.com/SlopDotCash/slopdotcash/releases/tag/pr-evidence-base-upgrade-208fbf5b)
+include the independent readback, exact source mapping and local rehearsal;
+private signing journals and credentials are excluded.
 
 These steps deploy replacement UUPS EVM factories and vault implementations,
 and deploy or upgrade the Solana program with owner-controlled upgrades.
@@ -221,14 +270,15 @@ KEY=$(cast call "$FACTORY" 'vaultKey(address,bytes32,address,uint8)(bytes32)' \
 VAULT=$(cast call "$FACTORY" 'vaults(bytes32)(address)' "$KEY" --rpc-url "$RPC")
 ```
 
-> **Required upgrade step, not performed.** Owner vault setup on the website
-> calls `createWithMonthlyCommitment`. The current mainnet factories listed
-> above do not have this method. Before setup can work on a network, an
+> **Required upgrade step.** Owner vault setup on the website calls
+> `createWithMonthlyCommitment`. Base's finalized upgrade above supports this
+> method; its reviewed infrastructure must still reach the protected release.
+> Ethereum and Robinhood retain the older implementations. Before setup can
+> work on either of those networks, an
 > operator must deploy and verify new factory and vault implementations, and
 > the upgrade authority (the owner wallet) must sign the factory upgrade below.
-> Until then, the setup route refuses creation on that network. No one has
-> deployed, signed or submitted this upgrade. Section 4 holds the prepared,
-> unsigned upgrade kit.
+> Until then, the setup route refuses creation on that network. Section 4 holds
+> the reviewed upgrade kit. A source merge does not perform an upgrade.
 
 For a new ordinary vault under PRD decision D1, use the reviewed factory and
 vault implementation that support atomic monthly setup. The older deployments
@@ -556,7 +606,8 @@ payments.
 ### First EVM vault: reviewed factory infrastructure
 
 `contracts/evm/factories.ts` holds only public network infrastructure reviews.
-It is empty until real finalized deployment or upgrade evidence is reviewed.
+Its Base review derives from the finalized upgrade above; other networks
+remain unavailable until their own finalized evidence is reviewed.
 An unsigned kit, a planned address or a local fork must not become a live pin.
 Reuse the network definitions in `ESCROW_NETWORKS`; do not add a project,
 owner, asset or vault as a bootstrap placeholder.
@@ -851,39 +902,19 @@ PROJECT_ID=$(cast format-bytes32-string "$PROJECT")
    After the block is finalized (about 15 minutes on Base), the next
    attester run records the award as reserved.
 
-7. The contributor signs the binding. The site has no button for this step
-   yet. Signed in on `https://slop.cash`:
-   1. On `/earnings`, connect and confirm the Base wallet (a
-      `personal_sign` message).
-   2. Switch the wallet to Base. In the browser console of the same page,
-      run:
-
-      ```js
-      const call = async (path, body) => {
-        const response = await fetch(`/api/v1/payments/wallets/${path}`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!response.ok) throw new Error(`${path}: ${response.status} ${await response.text()}`);
-        return response.json();
-      };
-      const me = await (await fetch("/api/v1/payments/me", { credentials: "same-origin" })).json();
-      const claimId = me.wallets.find((w) => w.chain === "base").claimId;
-      const consent = { claimId, network: "base-mainnet", vault: "<VAULT>", expectedVersion: "0" };
-      const { typedData } = await call("bind-challenge", consent);
-      const [address] = await ethereum.request({ method: "eth_requestAccounts" });
-      const signature = await ethereum.request({
-        method: "eth_signTypedData_v4",
-        params: [address, JSON.stringify(typedData)],
-      });
-      await call("bind-authorize", { ...consent, expiresAt: typedData.message.expiresAt, signature });
-      ```
-
-      `expectedVersion` is `"0"` for the first binding. For a later one, use
-      the version from `cast call "$VAULT" 'bindings(uint64)(address,uint64,bytes32,uint64,bool)' "$ACTOR" --rpc-url "$RPC"`.
-      The signature is valid for 90 days.
+7. The contributor authorizes the vault destination from **Payouts**:
+   1. Confirm the payout address in **Account → Wallets**. This is an
+      account-wallet proof, separate from vault consent.
+   2. On `/earnings`, find the reserved award and select **Authorize payout
+      wallet**. Review its exact network, vault and confirmed address.
+   3. Select the wallet and sign. For EVM, switch to the named network first;
+      the challenge reads the current finalized binding version from the
+      reviewed registry vault. The EIP-712 signature is valid for 90 days.
+      For Solana, a Wallet Standard wallet with transaction signing co-signs
+      the attester's exact prepared binding; the attester pays its gas.
+   4. Refresh payments. Saved consent or a submitted binding is not paid.
+      Payment remains unverified until finalized reconciliation. A changed
+      wallet, rejected signature or unavailable attester preserves the award.
 
    Within five minutes the attester submits `bindDestination`. Check it:
 
