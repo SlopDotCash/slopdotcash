@@ -1,20 +1,20 @@
+import { expect, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { expect, test } from "@playwright/test";
-import { verifyRunReceiptSignature } from "../../scripts/run-receipt-crypto";
-import { createLeaderboardSnapshot } from "../../src/lib/leaderboard";
+import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
 import type {
   GitHubActor,
   GitHubTextSource,
   LeaderboardInput,
   PullRequestReview,
-} from "../../src/lib/leaderboard-types";
-import { findProject } from "../../src/lib/projects.mjs";
-import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
+} from "../src/lib/leaderboard-types";
+import { findProject } from "../src/lib/projects.mjs";
+import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import {
   type ProjectRunReceipt,
   runReceiptMarker,
   runReceiptSigningPayload,
-} from "../../src/lib/run-receipts";
+} from "../src/lib/run-receipts";
+import { verifyRunReceiptSignature } from "./run-receipt-crypto";
 
 // SCR-04: one merged pull request into develop with two linked commit authors.
 // Both are credit actors, so no review of the pull request by either may score.
