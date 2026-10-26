@@ -255,6 +255,35 @@ try {
   assert.equal(receipt.status, "0x1");
   assert.equal(BigInt(receipt.blockNumber).toString(), post.block_number);
 
+  // Exercise owner-void finality on an isolated local branch, then restore both
+  // fixture snapshots so the original claim workflow remains independently covered.
+  const snapshot = await rpc("evm_snapshot", []);
+  sqlite.exec("SAVEPOINT owner_void_control");
+  await send(distributor, "voidRoot(uint256)", ["0"], owner);
+  const pendingVoid = await runOnce(env, at("2026-12-02T02:10:00.000Z"));
+  assert.equal(pendingVoid?.post?.status, "in_flight");
+  assert.equal(
+    (
+      sqlite.query("SELECT state FROM referral_root_posts").get() as {
+        state: string;
+      }
+    ).state,
+    "finalized",
+  );
+  await rpc("anvil_mine", ["0x41"]);
+  const finalVoid = await runOnce(env, at("2026-12-02T02:20:00.000Z"));
+  assert.equal(finalVoid?.post?.status, "halted_after_void");
+  assert.equal(
+    (
+      sqlite.query("SELECT state FROM referral_root_posts").get() as {
+        state: string;
+      }
+    ).state,
+    "voided",
+  );
+  sqlite.exec("ROLLBACK TO owner_void_control; RELEASE owner_void_control");
+  assert.equal(await rpc("evm_revert", [snapshot]), true);
+
   // Seven days later the referrer claims its cumulative with the file's proof.
   await rpc("evm_increaseTime", [7 * 24 * 3600]);
   await rpc("anvil_mine", ["0x1"]);
@@ -309,6 +338,9 @@ try {
       root: file.merkle_root,
       post: post.tx_id,
       claimed: CUMULATIVE.toString(),
+      nonfinalVoidHeld: true,
+      canonicalFinalVoidRecorded: true,
+      voidFixtureRolledBackBeforeClaim: true,
     }),
   );
 } finally {

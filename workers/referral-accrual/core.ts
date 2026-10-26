@@ -132,14 +132,11 @@ export const LOCK_MS = 10 * 60 * 1000;
 
 /** Bounded, single-line error text for logs. */
 export function message(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return (
-    text
-      .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/giu, "<url>")
-      .replace(/\s+/gu, " ")
-      .trim()
-      .slice(0, 400) || "unknown error"
-  );
+  // Provider errors can embed signed transaction bytes in message/details/cause.
+  // Do not copy that text to logs or public-facing diagnostic fields.
+  return error instanceof TypeError
+    ? "referral_invalid_input"
+    : "referral_operation_failed";
 }
 
 export function periodBounds(period: string): { start: string; end: string } {
@@ -687,9 +684,12 @@ export interface PostResult {
   reason?: string;
 }
 
-async function reconcilePosts(deps: PostDependencies): Promise<number> {
+async function reconcilePosts(
+  deps: PostDependencies,
+): Promise<{ reconciled: number; pending: boolean }> {
   const { store, client } = deps;
   let reconciled = 0;
+  let pending = false;
   for (const row of await store.openPosts(deps.config.network)) {
     const status = await client.status(row);
     const at = deps.now().toISOString();
@@ -748,11 +748,15 @@ async function reconcilePosts(deps: PostDependencies): Promise<number> {
         break;
     }
   }
-  // A finalized root the owner voided afterwards: mark it so the halt applies.
+  // Recheck finalized posts through the same canonical receipt/event boundary.
   for (const row of await store.acceptedPosts(deps.config.network)) {
     if (row.state !== "finalized") continue;
-    const epoch = await client.epochAt(row.epoch);
-    if (!epoch.voided) continue;
+    const status = await client.status(row);
+    if (status.kind !== "finalized") {
+      pending = true;
+      continue;
+    }
+    if (!status.voided) continue;
     const at = deps.now().toISOString();
     await store.updatePost(row.id, { state: "voided", updatedAt: at });
     deps.log({
@@ -763,7 +767,7 @@ async function reconcilePosts(deps: PostDependencies): Promise<number> {
     });
     reconciled += 1;
   }
-  return reconciled;
+  return { reconciled, pending };
 }
 
 /**
@@ -778,7 +782,21 @@ export async function postNextRoot(
   deps: PostDependencies,
 ): Promise<PostResult> {
   const { store, client, config } = deps;
-  const reconciled = await reconcilePosts(deps);
+  // An existing journal must never be sent or reconciled against replacement configuration.
+  const recorded = await store.acceptedPosts(config.network);
+  if (
+    recorded.some(
+      (row) =>
+        row.distributor !== config.distributor || row.token !== config.token,
+    )
+  )
+    return {
+      status: "chain_mismatch",
+      reconciled: 0,
+      reason: "journal deployment differs",
+    };
+  const { reconciled, pending } = await reconcilePosts(deps);
+  if (pending) return { status: "in_flight", reconciled };
   const open = await store.openPosts(config.network);
   if (open.length > 0) return { status: "in_flight", reconciled };
   const accepted = await store.acceptedPosts(config.network);
