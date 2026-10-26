@@ -11,7 +11,11 @@
  * proposal and the digest of the advisory text it read.
  */
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import type { D1Database, D1QueryStatement } from "../d1";
+import {
+  type D1Database,
+  type D1QueryStatement,
+  isConstraintFailure,
+} from "../d1";
 import { loopbackOrigin } from "../github";
 import type { AdvisoryReader } from "./advisories";
 
@@ -446,7 +450,10 @@ export async function runCaseAnalysis(
       )
       .run();
     if ((claimed.meta?.changes ?? 0) !== 1) return;
-  } catch {
+  } catch (error) {
+    // Another attempt holds the claim; any other failure stays retryable.
+    if (!isConstraintFailure(error))
+      console.error("security case analysis claim failed");
     return;
   }
   const finish = (
@@ -706,7 +713,10 @@ export async function runAppealTriage(
       )
       .run();
     if ((claimed.meta?.changes ?? 0) !== 1) return;
-  } catch {
+  } catch (error) {
+    // Another attempt holds the claim; any other failure stays retryable.
+    if (!isConstraintFailure(error))
+      console.error("security appeal triage claim failed");
     return;
   }
   const finish = (state: "failed" | "unavailable") =>

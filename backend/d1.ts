@@ -23,6 +23,11 @@ export interface D1Database<S extends D1Statement = D1Statement> {
   prepare(query: string): S;
 }
 
+/** A SQLite constraint refused the write: an expected race, not an outage. */
+export function isConstraintFailure(error: unknown): boolean {
+  return error instanceof Error && /constraint failed/u.test(error.message);
+}
+
 export interface D1TransactionalDatabase<S extends D1Statement = D1Statement>
   extends D1Database<S> {
   batch(statements: S[]): Promise<D1Result[]>;

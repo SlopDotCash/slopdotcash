@@ -1,6 +1,10 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedBytes } from "../../src/lib/browser-json";
-import type { D1TransactionalDatabase as D1Database, D1Result } from "../d1";
+import {
+  type D1TransactionalDatabase as D1Database,
+  type D1Result,
+  isConstraintFailure,
+} from "../d1";
 import { notifyWalletChanged } from "../notifications/events";
 import {
   hasParticipationBan,
@@ -433,7 +437,8 @@ export class CloudflareTracePersistence implements TracePersistence {
           input.githubId,
         )
         .run();
-    } catch {
+    } catch (error) {
+      if (!isConstraintFailure(error)) throw error;
       const raced = await this.db
         .prepare(
           "SELECT * FROM trace_runs WHERE github_user_id = ? AND create_idempotency_key = ?",
@@ -756,7 +761,8 @@ export class CloudflareTracePersistence implements TracePersistence {
       if ((inserted.meta?.changes ?? 0) !== 1) {
         return { status: "conflict" };
       }
-    } catch {
+    } catch (error) {
+      if (!isConstraintFailure(error)) throw error;
       return { status: "conflict" };
     }
     return { status: "created", value: event };
@@ -850,7 +856,8 @@ export class CloudflareTracePersistence implements TracePersistence {
           intent.githubId,
         )
         .run();
-    } catch {
+    } catch (error) {
+      if (!isConstraintFailure(error)) throw error;
       return { status: "conflict" };
     }
     if (!inserted.success) {
