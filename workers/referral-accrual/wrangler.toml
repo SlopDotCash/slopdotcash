@@ -51,7 +51,9 @@ PROJECT_MODERATOR_GITHUB_IDS = "18633264,202660855"
 REFERRAL_PROGRAM_ENABLED = "false"
 REFERRAL_DISTRIBUTOR_ADDRESS = ""
 REFERRAL_TOKEN_ADDRESS = ""
-REFERRAL_POST_NETWORK = "robinhood-mainnet"
+# Root posting stays on testnet until the owner activates the program (PRD
+# section 11, "Referral program").
+REFERRAL_POST_NETWORK = "robinhood-testnet"
 
 # Secret, set only with `wrangler secret put` by the key custodian, and only
 # for live mode: REFERRAL_POSTER_KEY. Optional RPC_URL_REFERRAL.
