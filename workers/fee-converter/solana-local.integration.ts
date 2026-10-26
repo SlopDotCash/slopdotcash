@@ -280,6 +280,45 @@ try {
     .query("SELECT COUNT(*) AS n FROM fee_conversions")
     .get() as { n: number };
   if (count.n !== 1) throw new Error("a repeat run added a record");
+  const native = sqlite
+    .query(
+      "SELECT tx_id,maximum_wei,actual_wei FROM fee_native_gas WHERE state='signed'",
+    )
+    .all() as {
+    tx_id: string;
+    maximum_wei: string;
+    actual_wei: string | null;
+  }[];
+  if (native.length !== 1 || native[0].actual_wei === null)
+    throw new Error("Solana native cost did not reconcile through its journal");
+  const receipt = await rpc<{
+    meta: { preBalances: number[]; postBalances: number[]; fee: number };
+  }>("getTransaction", [
+    native[0].tx_id,
+    {
+      commitment: "finalized",
+      encoding: "json",
+      maxSupportedTransactionVersion: 0,
+    },
+  ]);
+  const debit =
+    BigInt(receipt.meta.preBalances[0]) - BigInt(receipt.meta.postBalances[0]);
+  if (
+    BigInt(native[0].actual_wei) !== debit ||
+    debit < BigInt(receipt.meta.fee) ||
+    debit > BigInt(native[0].maximum_wei)
+  )
+    throw new Error(
+      "Solana native cost differs from the canonical fee-payer debit",
+    );
+  console.log(
+    JSON.stringify({
+      check: "Solana native budget finalized cost",
+      reservedLamports: native[0].maximum_wei,
+      actualLamports: native[0].actual_wei,
+      networkFeeLamports: receipt.meta.fee,
+    }),
+  );
   console.log("PASS: Solana local live cycle");
 } finally {
   validator.kill();

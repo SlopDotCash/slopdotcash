@@ -33,7 +33,6 @@ import {
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import type { Limits, NetworkConfig } from "./config";
-import type { NativeGasJournal } from "./native-gas";
 import type {
   AccruedFees,
   ChainClient,
@@ -45,6 +44,7 @@ import type {
   SendStatus,
   VaultFeeClient,
 } from "./core";
+import type { NativeGasJournal } from "./native-gas";
 
 export const JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111";
@@ -281,6 +281,49 @@ interface JupiterQuote {
   routePlan?: { swapInfo?: { label?: string } }[];
 }
 
+function nativeInteger(value: unknown): bigint {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    throw new Error(
+      "Solana native cost evidence must be an exact safe integer",
+    );
+  return BigInt(value);
+}
+
+export function solanaNativeCost(
+  meta: {
+    fee: number;
+    preBalances: number[];
+    postBalances: number[];
+    preTokenBalances: TokenBalance[];
+    postTokenBalances: TokenBalance[];
+  },
+  accounts: readonly number[],
+): bigint {
+  let actual = nativeInteger(meta.fee);
+  const nativeToken = "So11111111111111111111111111111111111111112";
+  const tokenNative = (balances: TokenBalance[], index: number) => {
+    const b = balances.find(
+      (b) => b.accountIndex === index && b.mint === nativeToken,
+    );
+    return b ? BigInt(b.uiTokenAmount.amount) : 0n;
+  };
+  for (const index of accounts) {
+    const before =
+      nativeInteger(meta.preBalances[index]) -
+      tokenNative(meta.preTokenBalances, index);
+    const after =
+      nativeInteger(meta.postBalances[index]) -
+      tokenNative(meta.postTokenBalances, index);
+    if (before < 0n || after < 0n)
+      throw new Error("Solana native rent receipt is inconsistent");
+    if (after > before) actual += after - before;
+  }
+  const walletDebit =
+    nativeInteger(meta.preBalances[0]) - nativeInteger(meta.postBalances[0]);
+  if (walletDebit > actual) actual = walletDebit;
+  return actual;
+}
+
 export function createSolanaClient(
   options: SolanaClientOptions,
 ): ChainClient & {
@@ -364,14 +407,6 @@ export function createSolanaClient(
       throw error;
     }
     return body as T;
-  }
-
-  function nativeInteger(value: unknown): bigint {
-    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
-      throw new Error(
-        "Solana native cost evidence must be an exact safe integer",
-      );
-    return BigInt(value);
   }
 
   /** Only classic, owner-owned ATAs have an admitted native creation cost.
@@ -549,29 +584,7 @@ export function createSolanaClient(
         throw new Error(
           "Solana native receipt lacks canonical finalized block evidence",
         );
-      let actual = nativeInteger(tx.meta.fee);
-      const nativeToken = "So11111111111111111111111111111111111111112";
-      const tokenNative = (balances: TokenBalance[], index: number) => {
-        const b = balances.find(
-          (b) => b.accountIndex === index && b.mint === nativeToken,
-        );
-        return b ? BigInt(b.uiTokenAmount.amount) : 0n;
-      };
-      for (const index of accounts) {
-        const before =
-          nativeInteger(tx.meta.preBalances[index]) -
-          tokenNative(tx.meta.preTokenBalances, index);
-        const after =
-          nativeInteger(tx.meta.postBalances[index]) -
-          tokenNative(tx.meta.postTokenBalances, index);
-        if (before < 0n || after < 0n)
-          throw new Error("Solana native rent receipt is inconsistent");
-        if (after > before) actual += after - before;
-      }
-      const walletDebit =
-        nativeInteger(tx.meta.preBalances[0]) -
-        nativeInteger(tx.meta.postBalances[0]);
-      if (walletDebit > actual) actual = walletDebit;
+      const actual = solanaNativeCost(tx.meta, accounts);
       await journal.settle(send, {
         txId: send.txId,
         actualWei: actual.toString(),

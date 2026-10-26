@@ -1,11 +1,7 @@
+import { expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { solanaBase58 } from "../../contracts/solana/adapter";
-import {
-  concat,
-  message as solanaMessage,
-} from "../../contracts/solana/transactions";
-import { expect, test } from "bun:test";
 import {
   type Hex,
   keccak256,
@@ -14,11 +10,17 @@ import {
   type TransactionSerializableEIP1559,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { solanaBase58 } from "../../contracts/solana/adapter";
+import {
+  concat,
+  message as solanaMessage,
+} from "../../contracts/solana/transactions";
 import { parseConfig } from "./config";
 import type { ConversionRow } from "./core";
 import { createEvmClient } from "./evm";
 import { runOnce } from "./index";
 import { NativeGasJournal, type NativeGasLimits } from "./native-gas";
+import { solanaNativeCost } from "./solana";
 import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore, LOCK_MS } from "./store";
 
@@ -785,4 +787,67 @@ test("Solana signed costs share the atomic journal while unknown sends retain th
   await expect(
     f.store.insert(corrupt, { runId: f.run, now: f.now() }),
   ).rejects.toThrow("reserved Solana intent");
+});
+
+test("wrapped SOL fee principal is excluded from account-creation operating cost", () => {
+  const wrapped = "So11111111111111111111111111111111111111112";
+  const cost = solanaNativeCost(
+    {
+      fee: 5000,
+      preBalances: [100000000, 0],
+      postBalances: [98506560, 201488440],
+      preTokenBalances: [],
+      postTokenBalances: [
+        {
+          accountIndex: 1,
+          mint: wrapped,
+          uiTokenAmount: { amount: "200000000" },
+        },
+      ],
+    },
+    [1],
+  );
+  expect(cost).toBe(1493440n);
+  // A failed transaction rolls back account creation, but still burns its fee.
+  expect(
+    solanaNativeCost(
+      {
+        fee: 5000,
+        preBalances: [100000000, 0],
+        postBalances: [99995000, 0],
+        preTokenBalances: [],
+        postTokenBalances: [],
+      },
+      [1],
+    ),
+  ).toBe(5000n);
+});
+
+test("Solana migration preserves existing EVM liabilities and immutable receipt evidence", () => {
+  const { sqlite } = sqliteD1(":memory:", false);
+  const dir = new URL("../../migrations/", import.meta.url);
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+  for (const f of files.filter((f) => f < "0094_"))
+    sqlite.exec(readFileSync(new URL(f, dir), "utf8"));
+  sqlite.exec(`INSERT INTO fee_converter_locks(network,run_id,expires_at) VALUES('base','migration-held','2099-01-01');
+    INSERT INTO fee_native_gas(id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,per_day_wei,state,tx_id,conversion_id,created_at,actual_wei,settled_day,receipt_block_hash)
+    VALUES('prior-finalized','base','0x1111111111111111111111111111111111111111',0,'prior-intent','migration-held','100','100','200','signed','prior-hash','prior-conversion','2026-10-26','50','2026-10-26','prior-block'),
+          ('prior-unknown','base','0x1111111111111111111111111111111111111111',1,'unknown-intent','migration-held','100','100','200','signed','unknown-hash','unknown-conversion','2026-10-26',NULL,NULL,NULL);`);
+  const before = sqlite.query("SELECT * FROM fee_native_gas ORDER BY id").all();
+  sqlite.exec(
+    readFileSync(new URL("0094_fee_solana_native_gas.sql", dir), "utf8"),
+  );
+  expect(
+    sqlite.query("SELECT * FROM fee_native_gas ORDER BY id").all(),
+  ).toEqual(before);
+  expect(() =>
+    sqlite.exec(
+      "UPDATE fee_native_gas SET maximum_wei='0' WHERE id='prior-unknown'",
+    ),
+  ).toThrow("immutable");
+  expect(() =>
+    sqlite.exec("DELETE FROM fee_native_gas WHERE id='prior-finalized'"),
+  ).toThrow("permanent");
 });

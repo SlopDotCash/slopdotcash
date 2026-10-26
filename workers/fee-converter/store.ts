@@ -1,8 +1,5 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { solanaBase58 } from "../../contracts/solana/adapter";
-import { decodeBase58Bytes } from "../../src/lib/base58";
-import { parseTransaction as parseSolanaTransaction } from "./solana";
 import {
   type Hex,
   keccak256,
@@ -11,6 +8,8 @@ import {
   serializeTransaction,
   type TransactionSerializedEIP1559,
 } from "viem";
+import { solanaBase58 } from "../../contracts/solana/adapter";
+import { decodeBase58Bytes } from "../../src/lib/base58";
 import type { Network } from "./config";
 import type {
   ConversionRow,
@@ -18,6 +17,7 @@ import type {
   FeeVault,
   SendReplacement,
 } from "./core";
+import { parseTransaction as parseSolanaTransaction } from "./solana";
 
 type D1Value = string | number | null;
 interface D1Statement {
