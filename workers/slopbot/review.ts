@@ -1711,6 +1711,20 @@ async function latestFinding(
   return category === "none" ? null : category;
 }
 
+/** Whether the current close of this item is Slopbot's. GET issue supplies
+ * GitHub's immutable closer ID for issues and PRs. Missing closer evidence
+ * stays pending.
+ */
+function closedBySlopbotApp(env: ReviewEnv, issue: Issue): boolean {
+  if (
+    !issue.closed_by ||
+    !Number.isSafeInteger(issue.closed_by.id) ||
+    issue.closed_by.id <= 0
+  )
+    throw new Error("Closer is unavailable; reopen recovery is pending");
+  return String(issue.closed_by.id) === env.SLOPBOT_APP_USER_ID;
+}
+
 /** A confirmed reopen protects the exact revision, including reviews that
  * passed routing before its marker was recorded. The comment action stores
  * the category before label POST, so a lost POST response is also recoverable.
@@ -1731,15 +1745,8 @@ async function reconcileConfirmedReopen(
   const current = await itemRevision(github, job, issue);
   if (current.revision !== revision || current.pull?.merged) return false;
   if (issue.state === "closed") {
-    // GET issue supplies GitHub's immutable closer ID for issues and PRs.
     // Undo only our own late close, never a later human decision.
-    if (
-      !issue.closed_by ||
-      !Number.isSafeInteger(issue.closed_by.id) ||
-      issue.closed_by.id <= 0
-    )
-      throw new Error("Closer is unavailable; reopen recovery is pending");
-    if (String(issue.closed_by.id) !== env.SLOPBOT_APP_USER_ID) return false;
+    if (!closedBySlopbotApp(env, issue)) return false;
     await requireScope(db, job, "security");
     const reopened = await github.request<{ state: string }>(
       "PATCH",
@@ -2212,8 +2219,9 @@ export async function applyAppealCommand(
   );
 }
 
-/** Applies a resolution once. An upheld appeal reopens an item that Slopbot
- * closed, removes Slopbot's finding label and reverses the penalty once.
+/** Applies a resolution once. An upheld appeal reopens an item while
+ * Slopbot's close is current, removes Slopbot's finding label and reverses
+ * the penalty once. A later human close stays.
  */
 async function finishAppeal(
   env: ReviewEnv,
@@ -2244,7 +2252,12 @@ async function finishAppeal(
       "SELECT COUNT(*) AS n FROM slopbot_actions WHERE item_node_id = ? AND action = 'close'",
       issue.node_id,
     );
-    if (issue.state === "closed" && closedBySlopbot > 0) {
+    // Reopen only Slopbot's own close, never a later human decision.
+    if (
+      issue.state === "closed" &&
+      closedBySlopbot > 0 &&
+      closedBySlopbotApp(env, issue)
+    ) {
       await requireScope(db, job, "security");
       const reopened = await session.github.request<{ state: string }>(
         "PATCH",
