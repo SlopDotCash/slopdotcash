@@ -1427,6 +1427,11 @@ jobs:
             node scripts/release-vetting-backup.mjs production
           fi
 
+          # The approved referral service follows the same checked main release.
+          # Its reviewed mode starts Off; deployment does not activate posting.
+          # No additional rollout flag or manual Worker shell is required.
+          bun scripts/release-referral.ts
+
           # Fee-wallet converter (workers/fee-converter, PRD MVP-07c). The owner
           # creates the Worker shell and its secrets once, then sets the
           # SLOP_FEE_CONVERTER_RELEASE repository variable to "enabled". The

@@ -2,10 +2,12 @@
 
 This runbook rehearses `ReferralDistributor` on Robinhood Chain Testnet
 (chain id 46630) with a mock token. It is a preparation document: nothing in
-it has been run, no address below is a deployment, and the program it serves
-(PRD section 11, "Referral program") is a proposal the owner has not approved.
+it has been run and no address below is a deployment. The owner approved the
+program and its initial parameters in PRD section 11, "Referral program", and
+requested full integration and activation on 25 October 2026. The program token
+is not deployed yet. Complete and record this rehearsal before live activation.
 A human or owner-authorized agent may run the reviewed steps under PRD
-section 11 once the owner decides the parameters. Keep credentials private.
+section 11. Keep credentials private.
 Never run this script on chain id 4663 and never use a production key.
 
 The contract is described in
@@ -32,8 +34,10 @@ the contract is
   S.P. operator key or a multisig with no execution delay, not a decision
   market. Who holds them is the owner's decision.
 - `REFERRAL_EPOCH_CAP` in base units: the most the declared total may exceed
-  the highest total ever posted. For a rehearsal use the per-project cap
-  proposal, `250000000000000000000000` (250,000 tokens at 18 decimals).
+  the highest total ever posted. For a rehearsal use
+  `250000000000000000000000` (250,000 tokens at 18 decimals). This contract
+  limit applies to a whole posted root; it is separate from the approved
+  250,000-token lifetime cap per referred project.
 - `REFERRAL_POST_SPACING` in seconds: the least time between two live posts.
   The script defaults to 27 days (one post per calendar month with room for
   a late run). A rehearsal that wants to post two epochs in one session sets
@@ -41,10 +45,9 @@ the contract is
 - `ROBINHOOD_TESTNET_RPC_URL`. The public RPC
   `https://rpc.testnet.chain.robinhood.com` is rate-limited and does not keep
   account state at the `finalized` tag (`docs/testnet-funding.md`). It is
-  acceptable for the broadcast. Read-backs below use `latest` or `safe`; do
-  not read `finalized` state from the public RPC. A poster that reconciles
-  on chain state before posting needs an archive provider for finalized
-  reads.
+  acceptable for the broadcast. State read-backs below use `latest` or `safe`.
+  Finality uses the finalized block header and exact canonical receipts and
+  events. A latest-state observation alone does not prove finality.
 
 Do not put a private key in a command line, an environment dump, a source
 file or the evidence.
@@ -75,7 +78,7 @@ forge test --match-contract ReferralDistributorTest -vv
 
 Record the `ReferralDistributor` creation-code hash from
 `forge inspect ReferralDistributor bytecode | shasum -a 256` beside the source
-SHA. All 19 tests must pass.
+SHA. All contract tests must pass.
 
 ## 4. Simulate, then broadcast
 
@@ -102,6 +105,9 @@ the transaction artifacts in the ignored `broadcast/` directory and record:
 - owner, poster, epoch cap and post spacing as read back below. The
   script's `ReferralDistributorDeployed` event is emitted by the script
   contract and never lands on chain, so it is not evidence.
+- the finalized deployment block and Keccak-256 of the verified runtime code.
+  These become `REFERRAL_DEPLOYMENT_BLOCK` and
+  `REFERRAL_DISTRIBUTOR_CODE_HASH` for the independent watcher.
 
 ## 5. Read back the deployment
 
@@ -170,7 +176,9 @@ not committed; publish only reviewed safe deployment evidence.
   (three independent model reviews reconciled against 41 proof tests; every
   High and Medium finding fixed before the pull request opened).
 - It does not activate the program. Activation needs the token to exist, the
-  funding line agreed, counsel's review of the terms, the owner's parameter
-  decisions, a real deployment on chain id 4663 with the program token, and
-  the live poster (a separate change) configured with the deployed addresses
-  and the program flag turned on by the owner.
+  funding line agreed, counsel's review of the terms, an operating independent
+  root watcher, a verified deployment on chain id 4663 with the program token,
+  and the live poster configured with its separate key and deployed addresses.
+  Record any remaining gas and contract-limit choices before funding or signing.
+  The normal checked `main` release installs the Worker in its reviewed mode;
+  the current mode is Off. No manual Worker shell or extra release flag is needed.

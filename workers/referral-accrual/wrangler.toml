@@ -1,7 +1,7 @@
 # Project-referral accrual job (workers/referral-accrual; PRD section 11,
-# "Referral program", proposed by the operator). Off by default. It has no
-# release step in deploy.yml yet: nothing deploys it until the owner approves
-# the program and adds a gated release in the shape of the fee converter's.
+# "Referral program", approved by the owner). The checked main release installs
+# this private Worker. Off by default until the program token, funded distributor
+# and required operating controls are verified. Deployment does not activate it.
 # See README.md before changing any value here.
 name = "slop-referral-accrual"
 main = "index.ts"
@@ -28,8 +28,8 @@ REFERRAL_ACCRUAL_MODE = "off"
 # First UTC month the job may file. Paid events before it are never accrued.
 REFERRAL_FIRST_PERIOD = "2026-11"
 # Program token base units per one stablecoin micro-unit. With an 18-decimal
-# token, 3 tokens per 1 USDC = 3 x 10^18 / 10^6 = 3 x 10^12. Operator proposal;
-# the rate, pool and caps are the owner's decision before anything posts.
+# token, 3 tokens per 1 USDC = 3 x 10^18 / 10^6 = 3 x 10^12. The owner approved
+# these amounts. Verify the actual program token decimals before activation.
 REFERRAL_RATE_BASE_PER_MICRO = "3000000000000"
 REFERRAL_TOKEN_DECIMALS = "18"
 # Lifetime pool: 2,000,000 tokens. Lifetime cap per referred project: 250,000.
@@ -51,12 +51,16 @@ PROJECT_MODERATOR_GITHUB_IDS = "18633264,202660855"
 REFERRAL_PROGRAM_ENABLED = "false"
 REFERRAL_DISTRIBUTOR_ADDRESS = ""
 REFERRAL_TOKEN_ADDRESS = ""
+# Public deployment evidence for the independent root watcher. Fill these from
+# the finalized deployment receipt and verified runtime before activation.
+REFERRAL_DEPLOYMENT_BLOCK = ""
+REFERRAL_DISTRIBUTOR_CODE_HASH = ""
 # Root posting stays on testnet until the owner activates the program (PRD
 # section 11, "Referral program").
 REFERRAL_POST_NETWORK = "robinhood-testnet"
 
-# Secret, set only with `wrangler secret put` by the key custodian, and only
-# for live mode: REFERRAL_POSTER_KEY. Optional RPC_URL_REFERRAL.
+# Secret for live mode: REFERRAL_POSTER_KEY. Install privately on the Worker;
+# never pass its value to CI. Optional RPC_URL_REFERRAL.
 
 [observability]
 enabled = true
