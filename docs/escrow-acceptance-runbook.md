@@ -188,9 +188,14 @@ logic that the factory creates (`monthlyReserveVersion()` of
   key is the keeper's gas signer; it has no vault role. The manual award stays
   out of the reserve. A keeper rerun signs nothing, and a second
   `reserveMonthly`, `commitMonthly` or leaf is refused. The keeper serves the
-  PRD schedule only, from period 2026-11. On a public test network the
-  scenario therefore waits, with no transaction, until the 2026-11 window
-  opens at 2026-12-04T00:00Z. The keeper's gas budget is the network's
+  PRD schedule, from period 2026-11, unless
+  `ESCROW_ACCEPTANCE_MONTHLY_SCHEDULE` names the deployment's
+  `MONTHLY_PAYMENT_SCHEDULE` with an earlier first period. Without it, a
+  public test network run waits, with no transaction, until the 2026-11
+  window opens at 2026-12-04T00:00Z. With it, the run commits the period
+  whose contract window is open now and records a deviation: that is
+  prelaunch automation qualification, not the 2026-12-04 calendar
+  observation. The keeper's gas budget is the network's
   reviewed gas ceiling at 10 gwei per transaction and 40 such transactions
   per day.
 - `executor-v1`: the factory has no V2 reserve (the factories now on the
@@ -216,6 +221,7 @@ Additional environment for the extended suite:
 | `ESCROW_ACCEPTANCE_RECOVERY_IDENTITY_KEY` | EVM | `key-recovery`: the replacement identity authority. A separate test key with gas; it signs the new binding. |
 | `ESCROW_ACCEPTANCE_ROTATION_AUTHORITY_KEY` | Solana | `key-recovery`: the Config rotation authority (64-character hex seed). The run derives the replacement identity key in memory; the relayer pays its fees. |
 | `ESCROW_ACCEPTANCE_KEEPER_ADDITIONAL_FEE_RESERVE` | Base Sepolia, `keeper-v2` | Base L1 and operator fee reserve per keeper transaction, in wei. Required on Base Sepolia; `0` elsewhere. |
+| `ESCROW_ACCEPTANCE_MONTHLY_SCHEDULE` | EVM, `keeper-v2`, optional | The `MONTHLY_PAYMENT_SCHEDULE` JSON the keeper serves. Omitted: the PRD schedule. |
 
 The owner key needs 500 units of the scenario asset for the monthly scenario,
 100 for each lifecycle vault, 50 for the interrupted send and 150 for key
@@ -374,7 +380,8 @@ bun scripts/escrow-acceptance/evm-upgrade.ts plan    base-sepolia evidence/escro
 bun scripts/escrow-acceptance/evm-upgrade.ts execute base-sepolia evidence/escrow-upgrade/base-sepolia
 bun scripts/escrow-acceptance/evm-upgrade.ts verify  base-sepolia evidence/escrow-upgrade/base-sepolia
 # 4. EVM only: extended suite on the upgraded factory, in a new directory (monthly takes keeper-v2;
-#    it waits until the 2026-11 window opens at 2026-12-04T00:00Z).
+#    it waits until 2026-12-04T00:00Z unless ESCROW_ACCEPTANCE_MONTHLY_SCHEDULE names an earlier first
+#    period, for example {"firstPeriod":"2026-09","cutoffSecondsAfterPeriodEnd":259200}).
 bun run escrow:acceptance base-sepolia evidence/escrow-acceptance-extended-v2/base-sepolia --suite extended
 ```
 
