@@ -2007,3 +2007,38 @@ test("a banned reporter can reconcile a report GitHub already received", async (
   expect(t.github.counts.posts).toBe(1);
   expect(t.cases()).toHaveLength(1);
 });
+
+function quarantineProject(t: ReturnType<typeof setup>) {
+  const digest = (
+    t.sqlite
+      .query("SELECT manifest_sha256 FROM projects WHERE id = ?")
+      .get(PROJECT) as { manifest_sha256: string }
+  ).manifest_sha256;
+  t.sqlite
+    .query(`INSERT INTO project_enforcements (id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
+    VALUES ('enf_peer_quarantine',?,1,'quarantine','quarantined','none','Synthetic restriction','private-fixture','700000001','["example/bounty"]',?,?,NULL,'project-moderator','admin-panel',1,?,NULL,NULL,'revision_pending',?)`)
+    .run(PROJECT, ADMIN.githubId, ADMIN.githubLogin, digest, START);
+}
+
+test("an accepted private report still reconciles after quarantine", async () => {
+  const t = setup();
+  const draft = await t.ready();
+  t.github.faults.create = "timeout-after-create";
+  const sent = await t.send(draft.id, draft.revision);
+  expect(sent.status).toBe(202);
+  expect(t.github.counts.posts).toBe(1);
+  quarantineProject(t);
+  if (!sent.body.submission) throw new Error("Missing submission after send");
+  const result = await t.reconcile(draft.id, sent.body.submission.revision);
+  expect(result.status).toBe(200);
+  expect(result.body.submission?.state).toBe("receipt-verified");
+  expect(t.github.counts.posts).toBe(1);
+  expect(t.cases()).toHaveLength(1);
+});
+
+test("registered researcher can start a private report on a quarantined project", async () => {
+  const t = setup();
+  quarantineProject(t);
+  const result = await t.create();
+  expect(result.status).toBe(201);
+});

@@ -6,6 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
+import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
+import { publicRestrictionOf } from "../projects/enforcement";
 import type { AdvisoryReader, GithubPrivateReport } from "./advisories";
 import type {
   SecurityAnalysisInput,
@@ -437,6 +439,7 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
       PROJECT,
     );
   return {
+    db,
     ban,
     restrictProgram,
     reinstateProgram,
@@ -1333,7 +1336,7 @@ test("report analysis and appeal triage keep the scope recorded at receipt", asy
 });
 
 describe("restricted programs", () => {
-  test("a pending-revision quarantine or ban blocks intake, reporting readiness, and new awards until reinstated", async () => {
+  test("a pending-revision quarantine blocks new awards but preserves reporting until reinstated", async () => {
     const env = open();
     const unrelated = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
     const related = await env.receive(OTHER, "2026-10-19T09:20:00.000Z");
@@ -1347,11 +1350,11 @@ describe("restricted programs", () => {
     ).toBe(200);
 
     env.restrictProgram("quarantine");
-    expect(await env.checkPvr()).toBe("unavailable");
+    expect(await env.checkPvr()).toBe("ready");
     expect(
       (await env.call(REPORTER, "GET", `security-programs/${PROJECT}/intake`))
         .status,
-    ).toBe(404);
+    ).toBe(200);
     expect(
       (
         await env.call(MAINTAINER, "POST", "security-cases", {
@@ -1359,7 +1362,7 @@ describe("restricted programs", () => {
           projectId: PROJECT,
         })
       ).status,
-    ).toBe(404);
+    ).toBe(200);
 
     const refusedAward = await env.award(unrelated, "1000000");
     expect(refusedAward.status).toBe(409);
@@ -1426,3 +1429,192 @@ describe("restricted programs", () => {
         env.sqlite.close();
       });
 });
+
+describe("quarantined private cases", () => {
+  test("private reporting remains available for a registered quarantined project", async () => {
+    const env = open();
+    expect(
+      (await env.call(REPORTER, "GET", `security-programs/${PROJECT}/intake`))
+        .status,
+    ).toBe(200);
+    env.restrictProgram("quarantine");
+    const result = await env.call(
+      REPORTER,
+      "GET",
+      `security-programs/${PROJECT}/intake`,
+    );
+    expect(result.status).toBe(200);
+  });
+  test("a failed existing appeal triage can retry after project quarantine", async () => {
+    const env = open();
+    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    await env.decide(id, "appeal-root");
+    expect(
+      (
+        await env.act(MAINTAINER, id, {
+          action: "award",
+          decision: "none",
+          reason: "Owner decision for review",
+        })
+      ).status,
+    ).toBe(200);
+    env.setAnalyzerConfigured(false);
+    expect(
+      (
+        await env.act(REPORTER, id, {
+          action: "appeal",
+          reason:
+            "Review the scope and decision that applied to this private report",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      env.sqlite
+        .query("SELECT state FROM security_appeal_triages WHERE case_id = ?")
+        .get(id),
+    ).toEqual({ state: "unavailable" });
+    env.setAnalyzerConfigured(true);
+    env.restrictProgram("quarantine");
+    const result = await env.act(DISPUTE, id, { action: "triage-appeal" });
+    expect(result.status).toBe(200);
+  });
+  test("a previously funded award remains accessible while quarantined", async () => {
+    const env = open();
+    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    await env.decide(id, "funded-root");
+    expect((await env.award(id, "1000000")).status).toBe(200);
+    env.restrictProgram("quarantine");
+    const result = await env.call(REPORTER, "GET", `security-cases/${id}`);
+    expect(result.status).toBe(200);
+    expect(result.body.case.awardState).toBe("approved");
+    expect(env.reservations()).toEqual([
+      { case_id: id, gross_minor: "1000000" },
+    ]);
+  });
+});
+
+for (const identity of ["id", "path"] as const)
+  for (const racing of [false, true])
+    for (const relatedParty of [false, true])
+      test(`repository-bound ${identity} restriction blocks a new award (race: ${racing}, related: ${relatedParty})`, async () => {
+        const env = open();
+        const pending = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+        await env.decide(pending, "shared-repository-root", { relatedParty });
+        const other = "other-bounty";
+        // One control matches the permanent ID after a rename; the other
+        // matches a historical path despite a different permanent ID.
+        const repositoryId = identity === "id" ? "123" : "456";
+        const repository = identity === "id" ? "renamed/bounty" : REPOSITORY;
+        const manifest = JSON.stringify({
+          ...JSON.parse(programManifest(OPEN_PROGRAM)),
+          id: other,
+          repositories: [{ id: repository }],
+          authority: { repositoryId, repositoryNodeId: `R_${repositoryId}` },
+        });
+        const digest = createHash("sha256").update(manifest).digest("hex");
+        env.sqlite
+          .query(
+            "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,'fixture',?)",
+          )
+          .run(other, manifest, digest, REVISION_AT);
+        env.sqlite
+          .query(
+            "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)",
+          )
+          .run(other, manifest, digest, REVISION_AT, REVISION_AT);
+        const restrict = () =>
+          env.sqlite
+            .query(`INSERT INTO project_enforcements (id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
+        VALUES ('enf_shared_bounty',?,1,'quarantine','quarantined','none','Synthetic restriction','private-fixture',?,?,?, ?,NULL,'project-moderator','admin-panel',1,?,NULL,NULL,'revision_pending',?)`)
+            .run(
+              other,
+              repositoryId,
+              JSON.stringify([repository]),
+              DISPUTE.githubId,
+              DISPUTE.githubLogin,
+              digest,
+              REVISION_AT,
+            );
+        if (racing) env.setBeforeBatch(restrict);
+        else restrict();
+        const result = await env.award(pending, "1000000");
+        expect(result.status).toBe(409);
+        expect(result.body.error).toBe("program_restricted");
+        expect(env.reservations()).toEqual([]);
+        const persistence = new CloudflareProjectPersistence(env.db);
+        const project = await persistence.getProject(PROJECT);
+        if (project === null) throw new Error("Missing fixture project");
+        const restriction = publicRestrictionOf(
+          project,
+          await persistence.listEnforcements(),
+        );
+        expect(restriction.state).toBe("quarantined");
+        expect(restriction.sourceProjectId).toBe(other);
+        // The actual journal's explicit reinstatement permits a fresh attempt.
+        env.sqlite
+          .query(`INSERT INTO project_enforcements (id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
+        VALUES ('enf_shared_reinstate',?,2,'reinstate','clear','granted','Synthetic reinstatement','private-fixture',?,?,?, ?,NULL,'project-moderator','admin-panel',1,?,NULL,NULL,'no_revision_needed',?)`)
+          .run(
+            other,
+            repositoryId,
+            JSON.stringify([repository]),
+            DISPUTE_2.githubId,
+            DISPUTE_2.githubLogin,
+            digest,
+            REVISION_AT,
+          );
+        expect((await env.award(pending, "1000000")).status).toBe(200);
+        if (relatedParty) {
+          expect(env.reservations()).toEqual([]);
+          expect(
+            (
+              await env.act(DISPUTE, pending, {
+                action: "decide-related-party",
+                outcome: "approve",
+                reason: "Independent approval after repository reinstatement.",
+              })
+            ).status,
+          ).toBe(200);
+        }
+        expect(env.reservations()).toEqual([
+          { case_id: pending, gross_minor: "1000000" },
+        ]);
+        env.sqlite.close();
+      });
+
+for (const fault of ["failed", "missing", "partial"] as const)
+  test(`an ${fault} enforcement read cannot approve an award and can retry`, async () => {
+    const env = open();
+    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    await env.decide(id, "read-failure-root");
+    env.restrictProgram();
+    env.reinstateProgram();
+    const prepare = env.db.prepare;
+    env.db.prepare = (sql) => {
+      const statement = prepare(sql);
+      if (
+        !sql.startsWith("SELECT id, project_id, sequence, action, state_after")
+      )
+        return statement;
+      return {
+        ...statement,
+        all: async <T>() => {
+          const result = await statement.all<T>();
+          if (fault === "failed") return { ...result, success: false };
+          if (fault === "missing") return { success: true };
+          // Omitting the older row would otherwise leave a valid clear state.
+          return { ...result, results: result.results?.slice(-1) };
+        },
+      };
+    };
+    const result = await env.award(id, "1000000");
+    expect(result.status).toBe(fault === "partial" ? 409 : 500);
+    expect(env.reservations()).toEqual([]);
+    expect(env.inbox(FINANCE, id)).toEqual([]);
+    env.db.prepare = prepare;
+    expect((await env.award(id, "1000000")).status).toBe(200);
+    expect(env.reservations()).toEqual([
+      { case_id: id, gross_minor: "1000000" },
+    ]);
+    env.sqlite.close();
+  });
