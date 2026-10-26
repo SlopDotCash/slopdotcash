@@ -1,7 +1,7 @@
 /**
- * Real local workerd R2 for the connected vetting workflows. The policy names
- * the recorded owner and readers, which the policy parser requires; its
- * references and attestation are fixtures, never a live policy.
+ * Real local workerd R2 for the connected vetting workflows. The evidence
+ * terms are the fixed source policy; the recorded owner and reader IDs are
+ * exported for synthetic sessions.
  */
 import { fileURLToPath } from "node:url";
 import type { ProjectD1Database } from "../backend/projects/cloudflare-persistence";
@@ -9,7 +9,6 @@ import type { R2Bucket } from "../backend/trace/cloudflare-persistence";
 import {
   EVIDENCE_OPERATOR_GITHUB_IDS,
   EVIDENCE_POLICY_AUTHORITY_GITHUB_ID,
-  type EvidencePolicy,
   VettingEvidence,
 } from "../backend/vetting/evidence";
 import { signedVettingRequest } from "../backend/vetting/handler";
@@ -31,31 +30,9 @@ export const EVIDENCE_READER_GITHUB_ID = (() => {
   return others[0];
 })();
 
-export function localEvidencePolicy(now: Date): EvidencePolicy {
-  return {
-    version: "isolated-fixture-only",
-    policyAuthorityGithubId: EVIDENCE_POLICY_AUTHORITY_GITHUB_ID,
-    operatorGithubIds: [...EVIDENCE_OPERATOR_GITHUB_IDS],
-    postClosureRetentionSeconds: 90 * 86400,
-    readGrantDurationSeconds: 900,
-    maxObjectBytes: 8 * 1024 * 1024,
-    maxRunBytes: 64 * 1024 * 1024,
-    maxObjects: 1024,
-    accessPolicyReference: "fixture:restricted-access",
-    retentionPolicyReference: "fixture:external-retention",
-    recoveryPolicyReference: "fixture:external-recovery",
-    externalControls: {
-      evidenceReference: "fixture:authority-attestation",
-      attestedByGithubId: EVIDENCE_POLICY_AUTHORITY_GITHUB_ID,
-      attestedAt: new Date(now.getTime() - 1000).toISOString(),
-      validUntil: new Date(now.getTime() + 7200_000).toISOString(),
-    },
-  };
-}
 export async function localVettingEvidence(
   db: ProjectD1Database,
   now: () => Date,
-  policy: EvidencePolicy = localEvidencePolicy(now()),
 ) {
   const child = Bun.spawn(
     [
@@ -163,7 +140,6 @@ export async function localVettingEvidence(
           : null;
       },
     } as R2Bucket,
-    policy: JSON.stringify(policy),
     now,
     randomId: () => crypto.randomUUID(),
     session: async (request) => {

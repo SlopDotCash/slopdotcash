@@ -139,7 +139,7 @@ environment's `VETTING_CONTROLLER_RELEASE` to `enabled`, then dispatch the
 workflow on that branch for qualification. Set the repository's
 `VETTING_CONTROLLER_SCHEDULE` to `enabled` only after qualification. Scheduled
 dispatch occurs every 15 minutes and skips a branch with an active controller
-run. These settings do not attest evidence retention or recovery controls.
+run.
 
 The workflow and journal source do not establish deployment or provider
 acceptance. Verify the full scan, private evidence, publication and recovery
