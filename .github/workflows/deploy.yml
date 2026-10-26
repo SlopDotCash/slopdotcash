@@ -1457,7 +1457,10 @@ jobs:
           converter_secrets="$RUNNER_TEMP/slop-fee-converter-secrets.json"
           ./node_modules/.bin/wrangler secret list \
             --config workers/fee-converter/wrangler.toml > "$converter_secrets"
-          bun - "$converter_secrets" workers/fee-converter/wrangler.toml <<'NODE'
+          # Bun 1.3.14 exits 0 and prints no error when a CommonJS script read
+          # from stdin throws. Require the final summary line as well, so any
+          # refused check stops the release before the upload.
+          converter_preflight="$(bun - "$converter_secrets" workers/fee-converter/wrangler.toml <<'NODE'
           const { readFileSync } = require("node:fs");
           const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
           if (!Array.isArray(value)) throw new TypeError("fee-converter secret inventory must be an array");
@@ -1491,6 +1494,13 @@ jobs:
           }
           console.log(`fee-converter mode ${mode}; networks ${enabled.join(",") || "none"}`);
           NODE
+          )"
+          printf '%s\n' "$converter_preflight"
+          converter_preflight_complete='^fee-converter mode (off|dry_run|live); networks [a-z,]+$'
+          if ! [[ "$converter_preflight" =~ $converter_preflight_complete ]]; then
+            echo "::error::The fee-converter release preflight did not complete."
+            exit 1
+          fi
 
           converter_upload="$RUNNER_TEMP/slop-fee-converter-upload.log"
           ./node_modules/.bin/wrangler versions upload \
