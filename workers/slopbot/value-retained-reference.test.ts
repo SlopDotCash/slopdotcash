@@ -45,40 +45,50 @@ const file = {
   patch: "@@ -1 +1 @@\n-old();\n+fixed();",
   blob_url: null,
 };
+const mergedAt = "2026-09-05T03:28:03Z";
 
-function fixture() {
+/** PR_1 is the closed original and PR_2 the merged acceptance. GitHub numbers
+ * and timestamps are inputs so a later duplicate can be described exactly. */
+function fixture({
+  originalNumber = 1,
+  originalCreatedAt = "2026-09-01T00:00:00Z",
+  originalUser = author,
+  originalCommitAuthor = author as ReturnType<typeof actor> | null,
+} = {}) {
   const comment = {
     node_id: "IC_ack",
-    html_url: `https://github.com/${repository.id}/pull/1#issuecomment-1`,
+    html_url: `https://github.com/${repository.id}/pull/${originalNumber}#issuecomment-1`,
     user: maintainer,
     body: `Replacement merged as ${short}.`,
     created_at: "2026-09-05T16:27:10Z",
     updated_at: "2026-09-05T16:27:10Z",
   };
-  const pulls = [1, 2].map((number) => ({
-    node_id: `PR_${number}`,
+  const pulls = [originalNumber, 2].map((number, index) => ({
+    node_id: `PR_${index + 1}`,
     number,
     html_url: `https://github.com/${repository.id}/pull/${number}`,
     title: "Retained logger fix",
     body: "",
-    user: number === 1 ? author : maintainer,
-    merged_by: number === 1 ? null : maintainer,
+    user: index === 0 ? originalUser : maintainer,
+    merged_by: index === 0 ? null : maintainer,
     state: "closed",
-    merged_at: number === 1 ? null : "2026-09-05T03:28:03Z",
-    closed_at: number === 1 ? "2026-09-05T16:27:11Z" : "2026-09-05T03:28:03Z",
-    merge_commit_sha: number === 1 ? null : merge,
+    created_at: index === 0 ? originalCreatedAt : "2026-09-04T00:00:00Z",
+    merged_at: index === 0 ? null : mergedAt,
+    closed_at: index === 0 ? "2026-09-05T16:27:11Z" : mergedAt,
+    merge_commit_sha: index === 0 ? null : merge,
     updated_at: "2026-09-05T16:28:00Z",
-    head: { sha: number === 1 ? originalSha : copiedSha },
+    head: { sha: index === 0 ? originalSha : copiedSha },
     base: { sha: base, ref: "main" },
     changed_files: 1,
-    comments: number === 1 ? 1 : 0,
+    comments: index === 0 ? 1 : 0,
     review_comments: 0,
     commits: 1,
   }));
+  const [original] = pulls;
   const commit = (sha: string) => ({
     sha,
     html_url: `https://github.com/${repository.id}/commit/${sha}`,
-    author,
+    author: sha === originalSha ? originalCommitAuthor : author,
     committer: maintainer,
     parents: [{ sha: base }],
     commit: {
@@ -94,33 +104,44 @@ function fixture() {
     resolution: commit(merge) as ReturnType<typeof commit> | null,
     failure: false,
     calls: [] as string[],
+    routes: new Map<string, unknown>(),
   };
+  const root = `/repos/${repository.id}`;
   const client = {
     async get<T>(path: string): Promise<T | null> {
       state.calls.push(path);
       const url = new URL(path, "https://api.github.com");
-      const root = `/repos/${repository.id}`;
       let result: unknown;
-      if (url.pathname === root)
+      if (state.routes.has(url.pathname))
+        result = state.routes.get(url.pathname);
+      else if (url.pathname === root)
         result = { id: 42, node_id: repository.expectedNodeId, private: false };
       else if (url.pathname === `${root}/commits/${short}`) {
         if (state.failure)
           throw new GitHubError(422, "Ambiguous local reference");
         result = state.resolution;
-      } else if (url.pathname.startsWith(`${root}/commits/`)) {
+      } else if (url.pathname === `${root}/commits/${merge}/pulls`)
+        result = [{ number: 2, merged_at: mergedAt, merge_commit_sha: merge }];
+      // GitHub lists no PR for a commit that no PR carries.
+      else if (
+        /^\/repos\/[^/]+\/[^/]+\/commits\/\w+\/pulls$/u.test(url.pathname)
+      )
+        result = [];
+      else if (url.pathname.startsWith(`${root}/commits/`)) {
         const sha = url.pathname.split("/").at(-1);
         if (![originalSha, copiedSha, merge].includes(sha ?? ""))
           throw Error("Unexpected commit");
         result = commit(sha as string);
-      } else if (url.pathname === `${root}/issues/1/comments`)
+      } else if (url.pathname === `${root}/issues/${original.number}/comments`)
         result = state.comments;
       else if (url.pathname === `${root}/issues/2/comments`) result = [];
       else {
         const match = url.pathname.match(
-          /\/pulls\/([12])(?:\/(files|commits|reviews|comments))?$/u,
+          /\/pulls\/(\d+)(?:\/(files|commits|reviews|comments))?$/u,
         );
-        if (!match) throw Error(`Unexpected local route: ${url.pathname}`);
-        const pull = pulls[Number(match[1]) - 1];
+        const pull = pulls.find((entry) => entry.number === Number(match?.[1]));
+        if (!match || !pull)
+          throw Error(`Unexpected local route: ${url.pathname}`);
         result =
           match[2] === "files"
             ? [file]
@@ -130,7 +151,7 @@ function fixture() {
                 ? []
                 : {
                     ...pull,
-                    comments: pull.number === 1 ? state.comments.length : 0,
+                    comments: pull === original ? state.comments.length : 0,
                   };
       }
       return structuredClone(result) as T | null;
@@ -139,20 +160,22 @@ function fixture() {
       _query: string,
       variables: Record<string, unknown>,
     ): Promise<T> {
-      const number = Number(variables.number);
-      const other = 3 - number;
+      const index = pulls.findIndex(
+        (pull) => pull.number === Number(variables.number),
+      );
+      const other = pulls[1 - index];
       return {
         repository: {
           pullRequest: {
-            id: `PR_${number}`,
+            id: pulls[index].node_id,
             timelineItems: {
               nodes: [
                 {
                   source: {
                     __typename: "PullRequest",
-                    id: `PR_${other}`,
-                    number: other,
-                    url: `https://github.com/${repository.id}/pull/${other}`,
+                    id: other.node_id,
+                    number: other.number,
+                    url: other.html_url,
                     repository: {
                       nameWithOwner: repository.id,
                       isPrivate: false,
@@ -181,7 +204,7 @@ function fixture() {
       base,
     );
     return Promise.all(
-      [1, 2].map(async (number) => ({
+      pulls.map(async ({ number }) => ({
         evidence: await collectValueEvidence(
           client,
           repository.id,
@@ -192,7 +215,7 @@ function fixture() {
       })),
     );
   }
-  return { state, client, collect };
+  return { state, client, collect, root };
 }
 
 test("trusted collection resolves the short merge and preserves the original claim", async () => {
@@ -254,15 +277,20 @@ test("a self-consistent submitted resolution cannot replace trusted work-unit re
   ).rejects.toThrow();
 });
 
-test("a same-repository PR-commit destination retains its verified source", async () => {
-  const f = fixture();
-  f.state.comments[0].body = `Replacement merged as [${short}](https://github.com/${repository.id}/pull/2/commits/${short}).`;
-  const prepared = await prepareWorkUnitEvidence(await f.collect(), [
-    repository,
-  ]);
-  expect(prepared.limitations).toEqual([]);
-  expect(prepared.claims[0].creditPullRequestId).toBe("PR_1");
-});
+for (const reference of [
+  `[${short}](https://github.com/${repository.id}/pull/2/commits/${short})`,
+  `${repository.owner}@${short}`,
+  `[${short}](<http://www.github.com/${repository.id}/commit/${short}>)`,
+])
+  test(`same-repository reference ${reference} retains its verified source`, async () => {
+    const f = fixture();
+    f.state.comments[0].body = `Replacement merged as ${reference}.`;
+    const prepared = await prepareWorkUnitEvidence(await f.collect(), [
+      repository,
+    ]);
+    expect(prepared.limitations).toEqual([]);
+    expect(prepared.claims[0].creditPullRequestId).toBe("PR_1");
+  });
 
 test("full merge SHA needs no new resolution and keeps existing behavior", async () => {
   const f = fixture();
@@ -281,21 +309,35 @@ for (const change of [
   "foreign-reference",
   "foreign-link-label",
   "foreign-pr-commit-link",
+  "foreign-fork-reference",
+  "foreign-reference-link",
+  "foreign-angle-link",
+  "foreign-www-link",
+  "foreign-http-link",
   "wrong-actor",
   "before-merge",
 ] as const) {
   test(`fresh ${change} comment cannot authorize retention`, async () => {
     const f = fixture();
-    if (change === "foreign-reference")
-      f.state.comments[0].body = `Replacement merged as other/repo@${short}.`;
-    if (change === "foreign-link-label")
-      f.state.comments[0].body = `Replacement merged as [${short}](https://github.com/other/repo/commit/${short}).`;
-    if (change === "foreign-pr-commit-link")
-      f.state.comments[0].body = `Replacement merged as [${short}](https://github.com/other/repo/pull/123/commits/${short}).`;
+    const reference = {
+      "foreign-reference": `other/repo@${short}`,
+      "foreign-link-label": `[${short}](https://github.com/other/repo/commit/${short})`,
+      "foreign-pr-commit-link": `[${short}](https://github.com/other/repo/pull/123/commits/${short})`,
+      "foreign-fork-reference": `other@${short}`,
+      "foreign-reference-link": `[${short}][1]\n\n[1]: https://github.com/other/repo/commit/${short}`,
+      "foreign-angle-link": `[${short}](<https://github.com/other/repo/commit/${short}>)`,
+      "foreign-www-link": `https://www.github.com/other/repo/commit/${short}`,
+      "foreign-http-link": `[${short}](http://github.com/other/repo/commit/${short})`,
+      "wrong-actor": short,
+      "before-merge": short,
+    }[change];
+    f.state.comments[0].body = `Replacement merged as ${reference}.`;
     if (change === "wrong-actor") f.state.comments[0].user = author;
     if (change === "before-merge")
-      f.state.comments[0].created_at = "2026-09-01T00:00:00Z";
+      f.state.comments[0].created_at = "2026-09-02T00:00:00Z";
     const sources = await f.collect();
+    // A comment that cannot authorize retention adds no source evidence.
+    expect(sources[0].evidence.retainedMergeReferences).toBeUndefined();
     const bindings = await retainedCopyBindings(sources);
     expect(bindings.bindings.size).toBe(0);
     expect(bindings.limitations).toContain(
@@ -439,6 +481,8 @@ test("complete copied edits and unique original authorship remain required", asy
 for (const reference of [
   `other/repo@${merge}`,
   `[${merge}](https://github.com/other/repo/pull/123/commits/${merge})`,
+  `other@${merge}`,
+  `http://github.com/other/repo/commit/${merge}`,
 ])
   test(`foreign full reference ${reference} stays held`, async () => {
     const f = fixture();
@@ -446,3 +490,159 @@ for (const reference of [
     const bindings = await retainedCopyBindings(await f.collect());
     expect(bindings.bindings.size).toBe(0);
   });
+
+for (const [opened, originalCreatedAt] of [
+  // PR_2 was opened at 2026-09-04T00:00Z and merged at 03:28Z the next day.
+  ["during review of", "2026-09-04T12:00:00Z"],
+  ["after the merge of", "2026-09-05T10:00:00Z"],
+] as const)
+  for (const reference of [short, merge])
+    test(`a duplicate opened ${opened} the accepted PR cannot take its credit through ${reference.length === 40 ? "a full" : "a short"} merge reference`, async () => {
+      // PR_1 opened after PR_2 with the same edits and was closed as a
+      // duplicate of the accepted merge.
+      const f = fixture({
+        originalNumber: 3,
+        originalCreatedAt,
+        originalUser: actor("U_late"),
+      });
+      f.state.comments[0].body = `Already merged in ${reference}.`;
+      const sources = await f.collect();
+      expect(sources[0].evidence.retainedMergeReferences).toBeUndefined();
+      const prepared = await prepareWorkUnitEvidence(sources, [repository]);
+      expect(prepared.claims).toEqual([
+        expect.objectContaining({
+          commitSha: copiedSha,
+          creditPullRequestId: "PR_2",
+          implementationActorNodeIds: [maintainer.node_id, author.node_id],
+        }),
+      ]);
+      expect(prepared.claims[0].retainedCopy).toBeUndefined();
+      // The linked exact duplicate still holds for review; it is never dropped.
+      expect(prepared.limitations).toContain(
+        "PR_1: matching copied edits require authenticated retention acknowledgement",
+      );
+    });
+
+for (const [name, originalCommitAuthor] of [
+  ["unlinked", null],
+  ["agent", { node_id: "U_kgDOD-0LXg", login: "codex", type: "User" }],
+] as const)
+  test(`an ${name} original commit author cannot hide a different accepted author`, async () => {
+    const f = fixture({ originalUser: actor("U_other"), originalCommitAuthor });
+    const prepared = await prepareWorkUnitEvidence(await f.collect(), [
+      repository,
+    ]);
+    expect(prepared.limitations).toContain(
+      "PR_1: retained primary author identity differs between commits",
+    );
+  });
+
+test("a hint flood holds the source instead of hiding the acknowledgement", async () => {
+  const f = fixture();
+  f.state.comments.push({
+    ...f.state.comments[0],
+    node_id: "IC_flood",
+    user: actor("U_flood"),
+    body: `merged ${Array.from({ length: 17 }, (_, i) => 1_000_000 + i).join(" ")}`,
+  });
+  const [source] = await f.collect();
+  expect(source.evidence.limitations).toContain(
+    "Retained merge reference: discovery bounds reached; complete reconciliation required",
+  );
+});
+
+test("an indirect-accepted source collects no retained merge reference", async () => {
+  const f = fixture();
+  const { root } = f;
+  const encoder = new TextEncoder();
+  const gitSha = async (type: string, body: Uint8Array) => {
+    const header = encoder.encode(`${type} ${body.length}\0`);
+    const bytes = new Uint8Array(header.length + body.length);
+    bytes.set(header);
+    bytes.set(body, header.length);
+    return [...new Uint8Array(await crypto.subtle.digest("SHA-1", bytes))]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  };
+  const entry = (mode: string, name: string, sha: string) =>
+    new Uint8Array([
+      ...encoder.encode(`${mode} ${name}\0`),
+      ...(sha.match(/../gu) ?? []).map((pair) => Number.parseInt(pair, 16)),
+    ]);
+  const text = "fixed();\n";
+  const blob = await gitSha("blob", encoder.encode(text));
+  const directory = await gitSha("tree", entry("100644", "logger.ts", blob));
+  const tree = await gitSha("tree", entry("40000", "src", directory));
+  // The maintainer merged the closed PR head into main and named that merge.
+  const integration = `c0ffee${"7".repeat(34)}`;
+  const hint = integration.slice(0, 10);
+  const integrationCommit = {
+    sha: integration,
+    html_url: `https://github.com/${repository.id}/commit/${integration}`,
+    parents: [{ sha: base }, { sha: originalSha }],
+    stats: { additions: 1, deletions: 1, total: 2 },
+    files: [file],
+  };
+  const order = [base, originalSha, integration];
+  const routes = f.state.routes;
+  routes.set(`${root}/commits/${hint}`, integrationCommit);
+  routes.set(`${root}/commits/${integration}`, integrationCommit);
+  routes.set(`${root}/branches/main`, {
+    name: "main",
+    commit: { sha: integration },
+  });
+  for (const a of order)
+    for (const b of order)
+      routes.set(
+        `${root}/compare/${a}...${b}`,
+        order.indexOf(a) <= order.indexOf(b)
+          ? {
+              status: a === b ? "identical" : "ahead",
+              merge_base_commit: { sha: a },
+              files: [],
+            }
+          : { status: "behind", merge_base_commit: { sha: b }, files: [] },
+      );
+  routes.set(`${root}/actions/runs`, {
+    total_count: 1,
+    workflow_runs: [
+      {
+        id: 7,
+        html_url: `https://github.com/${repository.id}/actions/runs/7`,
+        event: "push",
+        head_branch: "main",
+        head_sha: integration,
+        created_at: "2026-09-05T16:00:00Z",
+        repository: { node_id: repository.expectedNodeId },
+      },
+    ],
+  });
+  for (const sha of [originalSha, integration])
+    routes.set(`${root}/git/commits/${sha}`, { sha, tree: { sha: tree } });
+  routes.set(`${root}/git/trees/${tree}`, {
+    sha: tree,
+    truncated: false,
+    tree: [
+      { path: "src", mode: "040000", type: "tree", sha: directory },
+      { path: "src/logger.ts", mode: "100644", type: "blob", sha: blob },
+    ],
+  });
+  routes.set(`${root}/contents/src/logger.ts`, {
+    type: "file",
+    encoding: "base64",
+    content: btoa(text),
+    size: text.length,
+    sha: blob,
+  });
+  f.state.comments[0].body = `Integrated in ${hint}.`;
+  const evidence = await collectValueEvidence(
+    f.client,
+    repository.id,
+    1,
+    repository,
+  );
+  expect(evidence.indirectAcceptance?.integrationSha).toBe(integration);
+  expect(evidence.retainedMergeReferences).toBeUndefined();
+  // Only the indirect collector resolves the hint; retained discovery is skipped.
+  expect(f.state.calls).not.toContain(`${root}/commits/${hint}`);
+});
