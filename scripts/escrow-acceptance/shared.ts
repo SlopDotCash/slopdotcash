@@ -257,8 +257,11 @@ export interface Evidence {
 }
 export function sourceCommit(): string {
   const cwd = resolve(import.meta.dir, "..", "..");
+  // Bun.spawnSync otherwise uses the startup environment, not process.env.
+  const env = process.env;
   const unchanged = Bun.spawnSync(["git", "diff", "--quiet", "HEAD", "--"], {
     cwd,
+    env,
   });
   if (unchanged.exitCode !== 0)
     throw new Error(
@@ -266,6 +269,7 @@ export function sourceCommit(): string {
     );
   const result = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
     cwd,
+    env,
   });
   const commit = result.stdout.toString().trim();
   if (result.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(commit))
