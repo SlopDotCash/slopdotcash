@@ -77,8 +77,6 @@ test("organization maintainers reach private monthly awards through their own se
         return Response.json({
           id: Number(project.authority.repositoryId),
           node_id: project.authority.repositoryNodeId,
-          full_name: project.repositories[0].id,
-          private: false,
           owner: {
             id: ownerId,
             node_id: project.steward.github.nodeId,

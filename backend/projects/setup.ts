@@ -384,12 +384,12 @@ export type RepositoryFacts = {
 };
 
 /**
- * The manifest names this public repository, and its steward is the account
+ * GitHub reports the manifest's repository, and its steward is the account
  * GitHub reports as the owner: the same numeric id, node id, account type and
  * login (case-insensitive). Pages show the steward by login and attribute the
  * project to its node id.
  */
-export function manifestMatchesRepository(
+export function repositoryIdentityMatches(
   manifest: ProjectDefinition,
   facts: RepositoryFacts,
 ): boolean {
@@ -397,13 +397,23 @@ export function manifestMatchesRepository(
   return (
     String(facts.id) === manifest.authority.repositoryId &&
     facts.node_id === manifest.authority.repositoryNodeId &&
-    String(facts.full_name).toLowerCase() ===
-      manifest.repositories[0].id.toLowerCase() &&
-    facts.private === false &&
     String(facts.owner?.id) === steward.actorId &&
     facts.owner?.node_id === steward.nodeId &&
     facts.owner?.type === steward.type &&
     String(facts.owner?.login).toLowerCase() === steward.login.toLowerCase()
+  );
+}
+
+/** The identity matches, and the repository is public under the manifest name. */
+export function manifestMatchesRepository(
+  manifest: ProjectDefinition,
+  facts: RepositoryFacts,
+): boolean {
+  return (
+    repositoryIdentityMatches(manifest, facts) &&
+    String(facts.full_name).toLowerCase() ===
+      manifest.repositories[0].id.toLowerCase() &&
+    facts.private === false
   );
 }
 

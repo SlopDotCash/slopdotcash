@@ -55,8 +55,8 @@ import {
   PARTICIPATION_BAN_QUERY,
 } from "../projects/account-bans";
 import {
-  manifestMatchesRepository,
   type RepositoryFacts,
+  repositoryIdentityMatches,
 } from "../projects/setup";
 import { chainAwards, holdsAward } from "./chain-awards";
 import type {
@@ -112,7 +112,7 @@ export async function verifyProjectAuthority(
     `repos/${target}`,
     "Project repository identity",
   )) as RepositoryFacts;
-  if (!manifestMatchesRepository(project, identity))
+  if (!repositoryIdentityMatches(project, identity))
     throw new MonthlyPaymentError(
       409,
       "repository_changed",
