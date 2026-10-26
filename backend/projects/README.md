@@ -424,6 +424,8 @@ until the owner recovers its transaction hash; it never sends again by itself.
 An owner with one current confirmed wallet on the selected network can review
 an existing vault and recover registration without a connected browser wallet.
 This path offers no creation transaction when no existing vault is found.
+Without a saved request, registration checks the creation against the current
+monthly amount and the selected monthly setting; a difference fails closed.
 Monthly payment is On by default at creation, and the owner can choose Off
 before review to opt out (owner decision, 25 Oct 2026). The atomic creation
 builder records that setting and the cap in one transaction.

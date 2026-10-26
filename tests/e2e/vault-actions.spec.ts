@@ -1325,6 +1325,14 @@ test("owner creates, registers and funds a vault through the real API", async ({
     );
     expect(sends).toHaveLength(1);
     await page.reload({ waitUntil: "networkidle" });
+    // The original tab keeps the interrupted request and offers no second send.
+    await expect(setup.getByLabel("Creation transaction hash")).toHaveValue("");
+    await expect(
+      setup.getByText("Wallet confirms nothing was sent"),
+    ).toBeVisible();
+    await expect(
+      setup.getByRole("button", { name: "Create vault in wallet" }),
+    ).toHaveCount(0);
     // A fresh tab has the same authenticated owner but no injected wallet and
     // no saved creation request. Recover the already-sent vault without sending.
     const recoveryPage = await page.context().newPage();
@@ -1365,7 +1373,10 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await expect(
       recoverySetup.getByRole("button", { name: "Create vault in wallet" }),
     ).toHaveCount(0);
-    await recoverySetup.getByLabel("Creation transaction hash").fill(sends[0]);
+    await expect(
+      recoverySetup.getByLabel("Creation transaction hash"),
+    ).toBeFocused();
+    await recoveryPage.keyboard.type(sends[0]);
     await recoverySetup
       .getByRole("button", { name: "Check vault registration" })
       .click();

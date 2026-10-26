@@ -111,6 +111,7 @@ export function OwnerVaultSetup({
   const [wallet, setWallet] = useState<Connection | null>(null);
   const [review, setReview] = useState<Pending | null>(null);
   const createButton = useRef<HTMLButtonElement>(null);
+  const hashInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [failedCreation, setFailedCreation] = useState(false);
   const [notice, setNotice] = useState("");
@@ -124,8 +125,10 @@ export function OwnerVaultSetup({
   const wallets = usePayoutWallets().filter((w) =>
     solana ? w.family === "solana" && w.solanaFunding : w.family === "evm",
   );
+  // An existing vault has no create button; move to its hash field instead.
   useEffect(() => {
-    if (review && !pending && !busy) createButton.current?.focus();
+    if (review && !pending && !busy)
+      (createButton.current ?? hashInput.current)?.focus();
   }, [review, pending, busy]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Reload explicitly repeats these uncached reads.
   useEffect(() => {
@@ -489,20 +492,31 @@ export function OwnerVaultSetup({
               Review vault creation
             </button>
             {!wallet ? (
-              <>
+              recoveryClaim ? (
+                <>
+                  <p>
+                    Recover a vault you already created without reconnecting
+                    your confirmed wallet.
+                    {!bounty
+                      ? " Select the automatic monthly payment setting that you used at creation."
+                      : null}
+                  </p>
+                  <button
+                    className="button secondary-button"
+                    type="button"
+                    disabled={busy || Boolean(saved.error)}
+                    onClick={() => void reviewCreation(true)}
+                  >
+                    Recover existing vault
+                  </button>
+                </>
+              ) : (
                 <p>
-                  Recover a vault you already created without reconnecting your
-                  confirmed wallet.
+                  To recover an existing vault,{" "}
+                  <a href="/earnings">confirm a wallet in Earnings</a> for this
+                  network, then reload the setup options.
                 </p>
-                <button
-                  className="button secondary-button"
-                  type="button"
-                  disabled={busy || !recoveryClaim || Boolean(saved.error)}
-                  onClick={() => void reviewCreation(true)}
-                >
-                  Recover existing vault
-                </button>
-              </>
+              )
             ) : null}
           </>
         )
@@ -557,6 +571,7 @@ export function OwnerVaultSetup({
               <label>
                 Creation transaction {solana ? "signature" : "hash"}{" "}
                 <input
+                  ref={hashInput}
                   value={recoveryHash}
                   disabled={busy}
                   onChange={(e) => setRecoveryHash(e.target.value)}
