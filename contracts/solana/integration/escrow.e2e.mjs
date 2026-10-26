@@ -2979,6 +2979,100 @@ test("an identical hand commit after the freeze is counted once and the month co
   );
 });
 
+// An attester fault: the signed tree repeats a source, so its second copy can never
+// settle or be released per leaf. Only the owner, with a fresh identity-authority
+// signature over the month's exact unsettled gross, returns that part to free balance.
+// The settleable leaves stay reserved and still commit; the period stays recorded.
+test("the owner releases a month's unsettleable gross only with a fresh attestation", async () => {
+  const { stranger, period, n } = await monthlyPeriod();
+  await freshProject("monthly-unsettleable", 100_000_000n);
+  const [a, b] = entriesOf(["unsettle-a", "unsettle-b"], 731);
+  const entries = [
+    a,
+    b,
+    {
+      githubUserId: "733",
+      grossMicro: "5000000",
+      sourceDigest: a.sourceDigest,
+    },
+  ];
+  const tree = allocationTree(
+    entries.map((e) => [e.githubUserId, e.grossMicro, e.sourceDigest]),
+  );
+  const admit = monthlyAdmission(stranger, period, n);
+  const { leaf } = await admit(entries, await chainTime(), tree);
+  const read = () => program.account.project.fetch(project);
+  const month = () => program.account.monthlyAllocation.fetch(monthAt(n));
+  const u64 = (x) => bn(x).toArrayLike(Buffer, "le", 8);
+  const release = (unsettled, released, signer = authority, owner = payer) =>
+    program.methods
+      .releaseMonthlyReserve(n, bn(unsettled), bn(released))
+      .accountsStrict({
+        owner: owner.publicKey,
+        project,
+        month: monthAt(n),
+        instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+      })
+      .preInstructions([
+        Ed25519Program.createInstructionWithPrivateKey({
+          privateKey: signer.secretKey,
+          message: Buffer.concat([
+            Buffer.from("slop-monthly-release-v1"),
+            key(program.programId),
+            key(project),
+            Buffer.from(new Uint32Array([n]).buffer),
+            Buffer.from(tree.root, "hex"),
+            u64(tree.total),
+            u64(unsettled),
+            u64(released),
+            Buffer.from(network),
+          ]),
+        }),
+      ])
+      .signers(owner === payer ? [] : [owner])
+      .rpc();
+  let state = await read();
+  assert.equal(state.monthlyOutstanding.toString(), "35000000");
+  assert.equal(state.reserved.toString(), "35000000");
+  await assert.rejects(commit("blocked", 999, 1), /MonthlyOutstanding/);
+  // Only the owner, only the project's identity authority, only this exact state.
+  await assert.rejects(
+    release(35_000_000, 5_000_000, authority, stranger),
+    /ConstraintHasOne|has one/,
+  );
+  await assert.rejects(
+    release(35_000_000, 5_000_000, nextAuthority),
+    /InvalidAttestation/,
+  );
+  await assert.rejects(release(30_000_000, 5_000_000), /MonthlyReserveChanged/);
+  await assert.rejects(release(35_000_000, 35_000_001), /InvalidAmount/);
+  await assert.rejects(release(35_000_000, 0), /InvalidAmount/);
+  // Release only the repeated copy's gross before any leaf settles.
+  await release(35_000_000, 5_000_000);
+  state = await read();
+  assert.equal(state.monthlyOutstanding.toString(), "30000000");
+  assert.equal(state.reserved.toString(), "30000000");
+  let recorded = await month();
+  assert.equal(recorded.released.toString(), "5000000");
+  assert.equal(recorded.committed.toString(), "5000000");
+  await assert.rejects(release(35_000_000, 5_000_000), /MonthlyReserveChanged/);
+  // The settleable leaves still commit with their original terms.
+  await leaf(0, "commit");
+  await leaf(1, "commit");
+  await assert.rejects(leaf(2, "commit"), /already in use/);
+  state = await read();
+  assert.equal(state.monthlyOutstanding.toString(), "0");
+  assert.equal(state.reserved.toString(), "30000000");
+  recorded = await month();
+  assert.equal(recorded.committed.toString(), recorded.total.toString());
+  const award = await program.account.obligation.fetch(awardAt(a));
+  assert.equal(award.gross.toString(), a.grossMicro);
+  assert.equal(award.actorId.toString(), a.githubUserId);
+  // Nothing is left to release, and direct commits work again.
+  await assert.rejects(release(0, 1), /InvalidAmount/);
+  await commit("after-release", 999, 1);
+});
+
 // The vault totals fail closed when the vault token account holds less than the
 // counters owe. The program never allows that, so test-e2e.sh preloads such a vault.
 test("vault totals refuse a vault holding less than free, reserved and accrued fees", async () => {

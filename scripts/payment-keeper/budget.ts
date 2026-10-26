@@ -44,6 +44,13 @@ export function validateBudget(value: GasBudget) {
       "Daily gas budget must cover one positive transaction budget",
     );
 }
+/** Same-nonce EVM fee replacements share one liability: only one of them can land. */
+const nonceGroup = (id: string) => id.replace(/:r[1-9][0-9]*$/, "");
+// Durable Object SQLite limits LIKE pattern length, so compare the exact prefix.
+const SAME_NONCE = "id=? OR substr(id,1,?)=?";
+const sameNonce = (group: string) =>
+  [group, group.length + 2, `${group}:r`] as [string, number, string];
+
 function reserve(
   store: KeeperStore,
   budget: GasBudget,
@@ -56,6 +63,7 @@ function reserve(
   const rows = store.db
     .query<
       {
+        id: string;
         day: string;
         settled_day: string | null;
         maximum: string;
@@ -63,16 +71,21 @@ function reserve(
         expiry_evidence: string | null;
       },
       []
-    >("SELECT day,settled_day,maximum,actual,expiry_evidence FROM gas")
+    >("SELECT id,day,settled_day,maximum,actual,expiry_evidence FROM gas")
     .all();
   let committed = 0n;
+  // Unresolved same-nonce attempts reserve their largest worst-case charge once.
+  const unresolved = new Map<string, bigint>();
   for (const row of rows) {
     // Unknown sends keep their whole reserve across UTC day boundaries.
     if (row.actual === null) {
       // Finalized expiry cannot prove a zero fee. Charge the full reservation on
       // its observation day, then release only future-day liability.
-      if (row.expiry_evidence === null || row.settled_day === day)
-        committed += BigInt(row.maximum);
+      if (row.expiry_evidence === null) {
+        const group = nonceGroup(row.id);
+        const value = BigInt(row.maximum);
+        if ((unresolved.get(group) ?? 0n) < value) unresolved.set(group, value);
+      } else if (row.settled_day === day) committed += BigInt(row.maximum);
     } else if (row.settled_day === day) committed += BigInt(row.actual);
     if (
       row.actual !== null &&
@@ -83,9 +96,12 @@ function reserve(
         "A native charge exceeded its reserve; the current operator transaction budget must cover that exact charge",
       );
   }
+  const group = nonceGroup(id);
+  if ((unresolved.get(group) ?? 0n) < maximum) unresolved.set(group, maximum);
+  for (const value of unresolved.values()) committed += value;
   if (
     maximum > BigInt(budget.perTransaction) ||
-    committed + maximum > BigInt(budget.perDay)
+    committed > BigInt(budget.perDay)
   )
     throw new Error(
       "Operator gas budget reached; signed unknown transactions remain reserved",
@@ -103,40 +119,67 @@ export function budgetEvmSigner(
   options: { now?: () => Date; baseRpc?: string } = {},
 ): Signer {
   validateBudget(budget);
+  const sign = async (
+    input: Parameters<Signer["signTransaction"]>[0],
+    replaces?: string,
+  ) => {
+    if (options.baseRpc) {
+      const size = (serializeTransaction(input).length - 2) / 2;
+      const block = await rpc(options.baseRpc, "eth_blockNumber", []);
+      if (typeof block !== "string" || !/^0x[0-9a-fA-F]+$/.test(block))
+        throw new Error("Base quote block unavailable");
+      const l1 = await baseOracleFee(
+        options.baseRpc,
+        "0xf1c7a58b",
+        BigInt(size),
+        block,
+      );
+      const operator = await baseOracleFee(
+        options.baseRpc,
+        "0x275aedd2",
+        input.gas,
+        block,
+      );
+      if (l1 + operator > BigInt(budget.additionalFeeReserve))
+        throw new Error("Base additional fees exceed the operator reserve");
+    }
+    const maximum =
+      input.gas * input.maxFeePerGas + BigInt(budget.additionalFeeReserve);
+    // Check before asking the signing provider. The durable insert is repeated with its exact hash.
+    // Only a stated fee replacement of this nonce's journaled original gets
+    // its own row in the nonce's group. Any other second signature is refused.
+    const group = `${input.chainId}:${signer.address.toLowerCase()}:${input.nonce}`;
+    const prior = store.db
+      .query<{ n: number }, [string, number, string]>(
+        `SELECT count(*) n FROM gas WHERE ${SAME_NONCE}`,
+      )
+      .get(...sameNonce(group));
+    if (prior?.n) {
+      const original = store.db
+        .query<{ transaction_id: string }, [string]>(
+          "SELECT transaction_id FROM gas WHERE id=?",
+        )
+        .get(group);
+      if (
+        !replaces ||
+        original?.transaction_id.toLowerCase() !== replaces.toLowerCase()
+      )
+        throw new Error(
+          "Gas reservation conflict: this nonce is already reserved",
+        );
+    }
+    const id = prior?.n ? `${group}:r${prior.n}` : group;
+    reserve(store, budget, id, maximum, "unsigned", options.now?.());
+    const raw = await signer.signTransaction(input);
+    store.db
+      .query("UPDATE gas SET transaction_id=? WHERE id=?")
+      .run(keccak256(raw), id);
+    return raw;
+  };
   return {
     address: signer.address,
-    async signTransaction(input) {
-      if (options.baseRpc) {
-        const size = (serializeTransaction(input).length - 2) / 2;
-        const block = await rpc(options.baseRpc, "eth_blockNumber", []);
-        if (typeof block !== "string" || !/^0x[0-9a-fA-F]+$/.test(block))
-          throw new Error("Base quote block unavailable");
-        const l1 = await baseOracleFee(
-          options.baseRpc,
-          "0xf1c7a58b",
-          BigInt(size),
-          block,
-        );
-        const operator = await baseOracleFee(
-          options.baseRpc,
-          "0x275aedd2",
-          input.gas,
-          block,
-        );
-        if (l1 + operator > BigInt(budget.additionalFeeReserve))
-          throw new Error("Base additional fees exceed the operator reserve");
-      }
-      const maximum =
-        input.gas * input.maxFeePerGas + BigInt(budget.additionalFeeReserve);
-      // Check before asking the signing provider. The durable insert is repeated with its exact hash.
-      const id = `${input.chainId}:${signer.address.toLowerCase()}:${input.nonce}`;
-      reserve(store, budget, id, maximum, "unsigned", options.now?.());
-      const raw = await signer.signTransaction(input);
-      store.db
-        .query("UPDATE gas SET transaction_id=? WHERE id=?")
-        .run(keccak256(raw), id);
-      return raw;
-    },
+    signTransaction: (input) => sign(input),
+    signReplacement: (input, replaces) => sign(input, replaces),
   };
 }
 
@@ -302,15 +345,31 @@ export async function reconcileGas(
     }
     if (!Number.isSafeInteger(settledAt) || settledAt < 0)
       throw new Error("Invalid finalized receipt time");
-    store.db
-      .query(
-        "UPDATE gas SET actual=?,settled_day=? WHERE id=? AND actual IS NULL",
-      )
-      .run(
-        actual.toString(),
-        new Date(settledAt * 1000).toISOString().slice(0, 10),
-        row.id,
-      );
+    const day = new Date(settledAt * 1000).toISOString().slice(0, 10);
+    await store.journal.transaction(async () => {
+      store.db
+        .query(
+          "UPDATE gas SET actual=?,settled_day=? WHERE id=? AND actual IS NULL",
+        )
+        .run(actual.toString(), day, row.id);
+      if (family !== "evm") return;
+      // This finalized receipt used the nonce. No other attempt for it can land.
+      const group = nonceGroup(row.id);
+      store.db
+        .query(
+          `UPDATE gas SET actual='0',settled_day=?,expiry_evidence=? WHERE (${SAME_NONCE}) AND id<>? AND actual IS NULL`,
+        )
+        .run(
+          day,
+          JSON.stringify({
+            kind: "same-nonce-finalized",
+            transactionId: row.transaction_id,
+            day,
+          }),
+          ...sameNonce(group),
+          row.id,
+        );
+    });
   }
 }
 

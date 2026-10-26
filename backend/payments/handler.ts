@@ -76,6 +76,12 @@ export interface PaymentsDependencies {
   paymentDeployments?:
     | readonly PaymentDeploymentIdentity[]
     | (() => Promise<readonly PaymentDeploymentIdentity[]>);
+  /** Explicit consent only; reads the finalized version from the reviewed registry vault. */
+  bindingVersion?: (
+    network: string,
+    vault: string,
+    actor: string,
+  ) => Promise<string>;
   /** Service binding to the Solana identity attester role; never request-supplied. */
   solanaAttester?: { fetch(request: Request): Promise<Response> };
   /** Private bounty ledger and its separately scoped attester. Only the
@@ -103,6 +109,9 @@ export interface PaymentDeploymentIdentity {
   chain: string;
   vault: string;
   chainId?: string;
+  programId?: string | null;
+  projectPda?: string | null;
+  networkDomain?: string | null;
 }
 /** The attester must still have this long to submit a binding authorization. */
 const BINDING_SUBMISSION_WINDOW_SECONDS = 600;
@@ -779,7 +788,9 @@ export async function handlePaymentsApi(
         typeof body.network !== "string" ||
         typeof body.vault !== "string" ||
         !/^0x[0-9a-fA-F]{40}$/.test(body.vault) ||
-        !decimal(body.expectedVersion) ||
+        (!authorize && body.expectedVersion === undefined
+          ? false
+          : !decimal(body.expectedVersion)) ||
         (authorize &&
           (!decimal(body.expiresAt) ||
             typeof body.signature !== "string" ||
@@ -830,6 +841,11 @@ export async function handlePaymentsApi(
         .bind(body.claimId, member.github_id, deployments[0].chain)
         .first<{ id: string; wallet_address: string; record_sha256: string }>();
       if (!wallet) return json(409, { error: "claim_not_current" });
+      const expectedVersion =
+        body.expectedVersion ??
+        (await deps.bindingVersion?.(body.network, vault, member.github_id));
+      if (!decimal(expectedVersion))
+        return json(503, { error: "binding_version_unavailable" });
       const nowSeconds = Math.floor(Date.parse(now) / 1000);
       const expiresAt = authorize
         ? (body.expiresAt as string)
@@ -837,7 +853,7 @@ export async function handlePaymentsApi(
       const binding = {
         githubUserId: member.github_id,
         destination: wallet.wallet_address,
-        expectedVersion: body.expectedVersion,
+        expectedVersion,
         claimDigest: `0x${wallet.record_sha256}`,
         expiresAt,
       };
@@ -872,7 +888,7 @@ export async function handlePaymentsApi(
           body.network,
           vault,
           chainId.toString(),
-          body.expectedVersion,
+          expectedVersion,
           expiresAt,
           signature,
           now,
@@ -890,7 +906,7 @@ export async function handlePaymentsApi(
           body.network,
           vault,
           chainId.toString(),
-          body.expectedVersion,
+          expectedVersion,
           expiresAt,
         )
         .first<{ signature: string }>();
@@ -960,6 +976,36 @@ export async function handlePaymentsApi(
         }
       }
       if (!payment) return json(409, { error: "binding_not_ready" });
+      let bindingContext: Record<string, string> | undefined;
+      if (!complete && deps.paymentDeployments) {
+        const available =
+          typeof deps.paymentDeployments === "function"
+            ? await deps.paymentDeployments()
+            : deps.paymentDeployments;
+        const matches = available.filter(
+          (d) =>
+            d.chain === "solana" &&
+            d.network === payment.network &&
+            d.vault === payment.vault,
+        );
+        const deployment = matches[0];
+        if (
+          matches.length !== 1 ||
+          !deployment.programId ||
+          !deployment.projectPda ||
+          !deployment.networkDomain
+        )
+          return json(503, { error: "binding_deployment_unavailable" });
+        bindingContext = {
+          vault: payment.vault,
+          programId: deployment.programId,
+          projectPda: deployment.projectPda,
+          networkDomain: deployment.networkDomain,
+          githubUserId: member.github_id,
+          destination: payment.destination,
+          claimDigest: payment.claimDigest,
+        };
+      }
       if (!attester)
         return json(503, { error: "identity_attester_unavailable" });
       const response = await attester.fetch(
@@ -996,6 +1042,7 @@ export async function handlePaymentsApi(
         ...(!complete && typeof result.transaction === "string"
           ? { transaction: result.transaction }
           : {}),
+        ...(bindingContext ? { bindingContext } : {}),
       });
     }
     if (path === "/me" && request.method === "GET") {
@@ -1007,7 +1054,7 @@ export async function handlePaymentsApi(
         .first<{ items: string }>();
       const paymentRows = await deps.db
         .prepare(
-          "SELECT json_group_array(json_object('id',o.id,'projectId',project_id,'network',network,'chain',chain,'assetAddress',asset_address,'assetDecimals',asset_decimals,'grossBase',gross_base,'feeBase',fee_base,'state',o.state,'transactionId',paid_transaction,'submittedTransactionId',(SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id=o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),'deliveryState',CASE WHEN o.state='paid' THEN 'paid' WHEN q.state='submitted' THEN 'submitted' WHEN q.state='held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END)) items FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id=o.id WHERE github_user_id=?",
+          "SELECT json_group_array(json_object('id',o.id,'vault',o.vault,'projectId',project_id,'network',network,'chain',chain,'assetAddress',asset_address,'assetDecimals',asset_decimals,'grossBase',gross_base,'feeBase',fee_base,'state',o.state,'transactionId',paid_transaction,'submittedTransactionId',(SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id=o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),'deliveryState',CASE WHEN o.state='paid' THEN 'paid' WHEN q.state='submitted' THEN 'submitted' WHEN q.state='held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END)) items FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id=o.id WHERE github_user_id=?",
         )
         .bind(member.github_id)
         .first<{ items: string }>();

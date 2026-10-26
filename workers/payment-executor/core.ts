@@ -47,19 +47,25 @@ import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
 import type { MonthlyAuthorization } from "./monthly";
 
 type Hex = `0x${string}`;
+type SignerInput = {
+  type: "eip1559";
+  chainId: number;
+  nonce: number;
+  gas: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+  to: Hex;
+  data: Hex;
+  value: bigint;
+};
 export interface Signer {
   address: string;
-  signTransaction(input: {
-    type: "eip1559";
-    chainId: number;
-    nonce: number;
-    gas: bigint;
-    maxFeePerGas: bigint;
-    maxPriorityFeePerGas: bigint;
-    to: Hex;
-    data: Hex;
-    value: bigint;
-  }): Promise<Hex>;
+  signTransaction(input: SignerInput): Promise<Hex>;
+  /**
+   * Payment keeper only: sign a same-nonce fee replacement of the named
+   * journaled original. Without it, no replacement is signed.
+   */
+  signReplacement?(input: SignerInput, replaces: Hex): Promise<Hex>;
 }
 export interface JournalStore {
   get<T>(key: string): Promise<T | undefined>;
@@ -75,6 +81,11 @@ export interface ExecutorEnvironment {
   ATTESTER?: PaymentExecutor;
   /** Only the local integration harness may enable chain 31337. Never set in hosted deployments. */
   ALLOW_LOCAL_TEST_CHAIN?: boolean;
+  /**
+   * Payment keeper only: bounded same-nonce fee replacement of its journaled
+   * sends (owner decision, 25 October 2026). The clock measures the wait.
+   */
+  FEE_BUMP?: { now(): Date };
 }
 export type PublicEvmExecutorEnvironment = Omit<
   ExecutorEnvironment,
@@ -472,12 +483,20 @@ async function retireRevertedAttempt(
   key: string,
   attempt: Attempt,
 ): Promise<boolean> {
-  const proof = await finalizedEvmRevert(
-    config.rpcUrl,
-    config.chainId,
-    attempt.transactionId,
-    config.chain,
-  );
+  // Any same-nonce fee replacement may be the transaction that consumed the nonce.
+  let proof: Awaited<ReturnType<typeof finalizedEvmRevert>> = null;
+  for (const transactionId of await signedTransactionIds(
+    env.JOURNAL,
+    attempt,
+  )) {
+    proof = await finalizedEvmRevert(
+      config.rpcUrl,
+      config.chainId,
+      transactionId,
+      config.chain,
+    );
+    if (proof) break;
+  }
   if (!proof) return false;
   return env.JOURNAL.transaction(async (store) => {
     const current = await store.get<Attempt | null>(key);
@@ -586,30 +605,295 @@ async function signAndSubmit(
     });
   }
   // Stored signed bytes exist before either the first broadcast or a retry.
-  const receipt = (await rpc(config, "eth_getTransactionReceipt", [
-    attempt.transactionId,
-  ])) as { status: string } | null;
-  if (receipt) {
-    if (receipt.status !== "0x1")
-      throw new Error(
-        "Recorded transaction reverted; operator reconciliation required",
-      );
-    return { transactionId: attempt.transactionId };
+  // Any journaled same-nonce attempt can be the one that lands.
+  for (const transactionId of (
+    await signedTransactionIds(env.JOURNAL, attempt)
+  ).reverse()) {
+    const receipt = (await rpc(config, "eth_getTransactionReceipt", [
+      transactionId,
+    ])) as { status: string } | null;
+    if (receipt) {
+      if (receipt.status !== "0x1")
+        throw new Error(
+          "Recorded transaction reverted; operator reconciliation required",
+        );
+      return { transactionId };
+    }
   }
   await beforeBroadcast?.(attempt);
+  if (env.FEE_BUMP)
+    return replaceUnderpricedAttempt(env, env.FEE_BUMP, config, key, attempt);
+  await broadcast(config, attempt);
+  return { transactionId: attempt.transactionId };
+}
+
+/** An uncertain send is accepted only when the node already knows its exact hash. */
+async function broadcast(
+  config: Deployment,
+  signed: { rawTransaction: Hex; transactionId: Hex },
+) {
   try {
     const sent = await rpc(config, "eth_sendRawTransaction", [
-      attempt.rawTransaction,
+      signed.rawTransaction,
     ]);
-    if (sent !== attempt.transactionId)
+    if (sent !== signed.transactionId)
       throw new Error("Transaction hash mismatch");
   } catch (error) {
     const known = await rpc(config, "eth_getTransactionByHash", [
-      attempt.transactionId,
+      signed.transactionId,
     ]);
     if (!known) throw error;
   }
-  return { transactionId: attempt.transactionId };
+}
+
+/**
+ * Bounded automatic fee replacement for the payment keeper (owner decision,
+ * 25 October 2026). Each step raises both fees by 25%, never above three times
+ * the original fees or the existing 10 gwei ceiling, with a 10% minimum step.
+ * Gas, recipient, value and calldata never change.
+ */
+const FEE_BUMP_POLICY = {
+  waitMs: 10 * 60_000,
+  stepPercent: 125n,
+  minimumPercent: 110n,
+  capMultiple: 3n,
+  maxFeePerGas: 10_000_000_000n,
+} as const;
+type FeeReplacement = {
+  rawTransaction: Hex;
+  transactionId: Hex;
+  signedAt: string;
+};
+/** Immutable append-only list of replacements for one original attempt. */
+type FeeReplacements = {
+  original: Hex;
+  observedAt: string;
+  replacements: FeeReplacement[];
+};
+const feeReplacementKey = (attempt: Attempt) =>
+  `fee-bump:${attempt.transactionId.toLowerCase()}`;
+
+/** The original first, then each journaled same-nonce replacement in signing order. */
+async function signedTransactionIds(journal: JournalStore, attempt: Attempt) {
+  const record = await journal.get<FeeReplacements>(feeReplacementKey(attempt));
+  return [
+    attempt.transactionId,
+    ...(record?.replacements ?? []).map((item) => item.transactionId),
+  ];
+}
+
+function nextReplacementFees(
+  original: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+  latest: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+) {
+  const policy = FEE_BUMP_POLICY;
+  const step = (value: bigint, cap: bigint) => {
+    const raised = (value * policy.stepPercent + 99n) / 100n;
+    return raised < cap ? raised : cap;
+  };
+  const feeCap =
+    original.maxFeePerGas * policy.capMultiple < policy.maxFeePerGas
+      ? original.maxFeePerGas * policy.capMultiple
+      : policy.maxFeePerGas;
+  const next = {
+    maxFeePerGas: step(latest.maxFeePerGas, feeCap),
+    maxPriorityFeePerGas: step(
+      latest.maxPriorityFeePerGas,
+      original.maxPriorityFeePerGas * policy.capMultiple,
+    ),
+  };
+  const minimum = (value: bigint) =>
+    (value * policy.minimumPercent + 99n) / 100n;
+  if (
+    next.maxFeePerGas < minimum(latest.maxFeePerGas) ||
+    next.maxPriorityFeePerGas < minimum(latest.maxPriorityFeePerGas) ||
+    next.maxPriorityFeePerGas > next.maxFeePerGas
+  )
+    return null;
+  return next;
+}
+
+/** Recheck every stored replacement against the original before any broadcast. */
+async function verifiedReplacements(
+  env: PublicEvmExecutorEnvironment,
+  config: Deployment,
+  attempt: Attempt,
+  record: FeeReplacements,
+) {
+  const original = parseTransaction(attempt.rawTransaction);
+  if (
+    !attempt.rawTransaction.startsWith("0x02") ||
+    typeof original.nonce !== "number" ||
+    original.maxFeePerGas === undefined ||
+    original.maxPriorityFeePerGas === undefined ||
+    original.gas === undefined ||
+    record.original.toLowerCase() !== attempt.transactionId.toLowerCase()
+  )
+    throw new Error("Journaled transaction cannot take a fee replacement");
+  const fees = {
+    maxFeePerGas: original.maxFeePerGas,
+    maxPriorityFeePerGas: original.maxPriorityFeePerGas,
+  };
+  let latest = {
+    rawTransaction: attempt.rawTransaction,
+    transactionId: attempt.transactionId,
+    signedAt: record.observedAt,
+    ...fees,
+  };
+  for (const item of record.replacements) {
+    const signed = parseTransaction(item.rawTransaction);
+    const expected = nextReplacementFees(fees, latest);
+    if (
+      !item.rawTransaction.startsWith("0x02") ||
+      transactionHash(item.rawTransaction) !== item.transactionId ||
+      !expected ||
+      signed.maxFeePerGas !== expected.maxFeePerGas ||
+      signed.maxPriorityFeePerGas !== expected.maxPriorityFeePerGas ||
+      signed.chainId !== original.chainId ||
+      signed.chainId !== Number(config.chainId) ||
+      signed.nonce !== original.nonce ||
+      signed.gas !== original.gas ||
+      !same(signed.to ?? "", original.to ?? "") ||
+      (signed.value ?? 0n) !== (original.value ?? 0n) ||
+      (signed.data ?? "0x") !== (original.data ?? "0x") ||
+      (signed.accessList?.length ?? 0) !== 0 ||
+      !same(
+        await recoverTransactionAddress({
+          serializedTransaction: item.rawTransaction as `0x02${string}`,
+        }),
+        env.SIGNER.address,
+      )
+    )
+      throw new Error("Stored fee replacement differs from its original");
+    latest = { ...item, ...expected };
+  }
+  return { original, fees, latest };
+}
+
+/**
+ * Rebroadcast the latest journaled attempt. When it stayed unmined past the
+ * wait and the current base fee exceeds its max fee,
+ * first sign one same-nonce replacement. The replacement's worst-case gas is
+ * reserved by the keeper signer inside the same journal transaction.
+ */
+async function replaceUnderpricedAttempt(
+  env: PublicEvmExecutorEnvironment,
+  clock: { now(): Date },
+  config: Deployment,
+  key: string,
+  attempt: Attempt,
+) {
+  const recordKey = feeReplacementKey(attempt);
+  let record = await env.JOURNAL.get<FeeReplacements>(recordKey);
+  if (!record) {
+    // The wait starts when the keeper first finds this attempt unmined.
+    const observed = {
+      original: attempt.transactionId,
+      observedAt: clock.now().toISOString(),
+      replacements: [],
+    };
+    record = await env.JOURNAL.transaction(async (store) => {
+      const retained = await store.get<FeeReplacements>(recordKey);
+      if (retained) return retained;
+      await store.put(recordKey, observed);
+      return observed;
+    });
+  }
+  const {
+    original,
+    fees: originalFees,
+    latest,
+  } = await verifiedReplacements(env, config, attempt, record);
+  // Report a wait after the latest verified bytes were offered again.
+  const waiting = async (reason: string): Promise<never> => {
+    await broadcast(config, latest).catch(() => undefined);
+    throw new Error(reason);
+  };
+  let baseFee: bigint;
+  try {
+    const block = (await rpc(config, "eth_getBlockByNumber", [
+      "latest",
+      false,
+    ])) as { baseFeePerGas: string };
+    baseFee = BigInt(block.baseFeePerGas);
+  } catch {
+    return waiting(
+      "Network fee unavailable; the latest journaled attempt was rebroadcast without a fee replacement",
+    );
+  }
+  const now = clock.now();
+  if (
+    baseFee <= latest.maxFeePerGas ||
+    now.getTime() - Date.parse(latest.signedAt) < FEE_BUMP_POLICY.waitMs
+  ) {
+    await broadcast(config, latest);
+    return { transactionId: latest.transactionId };
+  }
+  const fees = nextReplacementFees(originalFees, latest);
+  if (!fees)
+    return waiting(
+      "Fee replacement cap reached; journaled attempts wait for a lower network fee",
+    );
+  if ((original.gas as bigint) > BigInt(config.gasCeiling))
+    return waiting(
+      "Registry gas ceiling is now below the journaled gas limit; no fee replacement is signed",
+    );
+  const mined = BigInt(
+    (await rpc(config, "eth_getTransactionCount", [
+      env.SIGNER.address,
+      "latest",
+    ])) as string,
+  );
+  if (mined > BigInt(original.nonce as number))
+    throw new Error(
+      "Signer nonce is already used; waiting for the journaled receipt",
+    );
+  const sign = env.SIGNER.signReplacement?.bind(env.SIGNER);
+  if (!sign)
+    return waiting("This signer cannot sign a budgeted fee replacement");
+  const current = record;
+  let replacement: FeeReplacement;
+  try {
+    replacement = await env.JOURNAL.transaction(async (store) => {
+      if (
+        JSON.stringify(await store.get(recordKey)) !==
+          JSON.stringify(current) ||
+        JSON.stringify(await store.get(key)) !== JSON.stringify(attempt)
+      )
+        throw new Error("Journaled attempt changed before fee replacement");
+      const rawTransaction = await sign(
+        {
+          type: "eip1559",
+          chainId: Number(config.chainId),
+          nonce: original.nonce as number,
+          gas: original.gas as bigint,
+          ...fees,
+          to: original.to as Hex,
+          data: (original.data ?? "0x") as Hex,
+          value: original.value ?? 0n,
+        },
+        attempt.transactionId,
+      );
+      const next = {
+        rawTransaction,
+        transactionId: transactionHash(rawTransaction),
+        signedAt: now.toISOString(),
+      };
+      // Never change the original bytes or the shared nonce high-water mark.
+      await store.put(recordKey, {
+        ...current,
+        replacements: [...current.replacements, next],
+      });
+      return next;
+    });
+  } catch (error) {
+    // Without a reservation there is no replacement; keep the latest signed send alive.
+    return waiting(
+      `Fee replacement waits: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  await broadcast(config, replacement);
+  return { transactionId: replacement.transactionId };
 }
 
 /** Permissionless monthly commitment using the executor's gas key, not the attester key.

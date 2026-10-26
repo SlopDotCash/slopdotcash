@@ -6,6 +6,7 @@ import {
   recoverTransactionAddress,
   serializeTransaction,
 } from "viem";
+import { isCanonicalEvmReceipt } from "../../contracts/evm/adapter";
 import {
   type Attempt,
   type ExecutorEnvironment,
@@ -179,14 +180,11 @@ export async function reconcileBindingWinner(
     } | null;
     const index = Number(quantity(receipt.transactionIndex));
     if (
-      !same(receipt.transactionHash, hash) ||
-      !block ||
-      !same(block.hash, receipt.blockHash) ||
-      quantity(block.number) !== number ||
-      !Number.isSafeInteger(index) ||
-      !Array.isArray(block.transactions) ||
-      typeof block.transactions[index] !== "string" ||
-      !same(block.transactions[index], hash) ||
+      !isCanonicalEvmReceipt(
+        hash,
+        { ...receipt, blockNumber: number, transactionIndex: index },
+        block ? { ...block, number: quantity(block.number) } : null,
+      ) ||
       !["0x0", "0x1"].includes(receipt.status)
     )
       throw new Error("Binding receipt identity differs");

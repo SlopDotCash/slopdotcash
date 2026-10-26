@@ -2369,8 +2369,8 @@ function SponsorsPage({
             <li>
               Slop’s identity attester signs payout-wallet bindings and bounded
               monthly allocations. A compromised attester key can redirect
-              unpaid awards. Owner-held upgrade keys can change the contracts.
-              Read the{" "}
+              unpaid awards. Slop’s owner holds upgrade keys that can change the
+              contracts. Read the{" "}
               <ExternalLinkAnchor
                 href={`${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/docs/slop-product-requirements.md#11-source-delivery-and-acceptance`}
               >

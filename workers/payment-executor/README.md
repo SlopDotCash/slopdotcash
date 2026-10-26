@@ -226,9 +226,11 @@ Both original and cancellation bytes are stored before broadcast and survive
 restart. Either transaction may win. Reuse the canonical finalized winner
 verification below before retiring the pending binding. RPC absence is not
 cancellation proof. Never reset the shared nonce or alter an award, wallet
-consent, payment or reserve. Other stuck EVM transactions still require separate
-operator reconciliation. No payment or monthly-commitment cancellation is
-allowed.
+consent, payment or reserve. Other stuck EVM transactions of these hosted
+Workers still require separate operator reconciliation. No payment or
+monthly-commitment cancellation is allowed. The separately operated payment
+keeper has a bounded same-nonce fee replacement with the same calldata; see
+its [README](../../scripts/payment-keeper/README.md).
 
 A designated operator may reconcile one previously authorized external recovery
 transaction through `POST /api/v1/operator/wallet-bindings/reconcile`. The request

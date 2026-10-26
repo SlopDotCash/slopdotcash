@@ -5,12 +5,16 @@ import type { FeeD1Database } from "./store";
 
 const MIGRATIONS = new URL("../../migrations/", import.meta.url);
 
-export function sqliteD1(): { db: FeeD1Database; sqlite: Database } {
-  const sqlite = new Database(":memory:");
-  for (const file of readdirSync(MIGRATIONS)
-    .filter((f) => f.endsWith(".sql"))
-    .sort())
-    sqlite.exec(readFileSync(new URL(file, MIGRATIONS), "utf8"));
+export function sqliteD1(
+  filename = ":memory:",
+  migrate = true,
+): { db: FeeD1Database; sqlite: Database } {
+  const sqlite = new Database(filename);
+  if (migrate)
+    for (const file of readdirSync(MIGRATIONS)
+      .filter((f) => f.endsWith(".sql"))
+      .sort())
+      sqlite.exec(readFileSync(new URL(file, MIGRATIONS), "utf8"));
   const db: FeeD1Database = {
     prepare(sql) {
       const statement = sqlite.prepare(sql);

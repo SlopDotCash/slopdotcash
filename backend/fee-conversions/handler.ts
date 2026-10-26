@@ -48,6 +48,7 @@ interface RecentRow {
   price_impact_bps: number | null;
   approval_tx_id: string | null;
   tx_id: string | null;
+  landed_tx_id: string | null;
   amount_out: string | null;
   token_balance_before: string | null;
   target_balance_before: string | null;
@@ -161,7 +162,7 @@ export async function handleFeeConversionsApi(
       deps.db
         .prepare(
           `SELECT id, network, mode, token, target_token, amount_in, route, quote_amount_out,
-                  min_amount_out, price_impact_bps, approval_tx_id, tx_id, amount_out,
+                  min_amount_out, price_impact_bps, approval_tx_id, tx_id, landed_tx_id, amount_out,
                   token_balance_before, target_balance_before, target_balance_after, state,
                   reason, created_at, submitted_at, finalized_at
              FROM fee_conversions WHERE kind = 'conversion'
@@ -200,6 +201,8 @@ export async function handleFeeConversionsApi(
         priceImpactBps: row.price_impact_bps,
         approvalTxId: row.approval_tx_id,
         txId: row.tx_id,
+        // The original send or the same-nonce replacement that landed.
+        landedTxId: row.landed_tx_id,
         amountOut: row.amount_out,
         tokenBalanceBefore: row.token_balance_before,
         targetBalanceBefore: row.target_balance_before,
