@@ -1,7 +1,7 @@
 # Trusted objective defect evidence
 
-PRD BOT-05, BOT-06, BOT-12; MVP-05a. The owner approved the three criteria in
-[the amendment](../../docs/slopbot-quality-closure-proposal.md).
+PRD section 5. The owner approved the three criteria in the
+[objective quality closure amendment](../../protocol/slopbot-v2.md#objective-quality-closure-amendment).
 
 Production closure stays disabled. This change checks signed evidence and
 records shadow proposals. It does not supply a production verification host.

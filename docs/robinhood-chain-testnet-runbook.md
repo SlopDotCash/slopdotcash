@@ -6,9 +6,8 @@ or owner-authorized agent may run the reviewed steps under PRD section 11.
 Keep credentials private. Never use a production key or a mainnet RPC for
 these steps.
 
-Network facts and their sources are in
-[Robinhood Chain escrow design](robinhood-chain-escrow-design.md). The
-contract and adapter are described in
+Network facts and their sources are under [Network facts](#network-facts).
+The contract and adapter are described in
 [`contracts/evm/README.md`](../contracts/evm/README.md).
 
 ## 1. Prerequisites
@@ -211,3 +210,46 @@ Problems and deviations:
 
 A testnet deployment is not proof of mainnet readiness. Mainnet steps are in
 [`contracts/DEPLOY-MAINNET.md`](../contracts/DEPLOY-MAINNET.md).
+
+## Network facts
+
+The values below come from primary sources. The on-chain rows were first read on 12 October 2026 and read again on 14 October 2026 at the blocks given under "Reproduce the on-chain rows". Re-verify before deployment; never copy an address from a third-party page.
+
+Primary pages: Robinhood Chain docs [Connecting](https://docs.robinhood.com/chain/connecting), [Token Contracts](https://docs.robinhood.com/chain/contracts), [Transaction Finality](https://docs.robinhood.com/chain/transaction-finality), [Differences from Ethereum](https://docs.robinhood.com/chain/differences-from-ethereum) and [Gas and Fees](https://docs.robinhood.com/chain/gas-and-fees); Paxos [USDG testnet guide](https://docs.paxos.com/guides/stablecoin/usdg/testnet).
+
+| Fact | Value | Source |
+|---|---|---|
+| Mainnet chain id | 4663 (`0x1237`) | `eth_chainId` on `https://rpc.mainnet.chain.robinhood.com`; [Connecting](https://docs.robinhood.com/chain/connecting) |
+| Testnet chain id | 46630 (`0xb626`) | `eth_chainId` on `https://rpc.testnet.chain.robinhood.com`; [Connecting](https://docs.robinhood.com/chain/connecting) |
+| Native gas token | ETH | [Connecting](https://docs.robinhood.com/chain/connecting) |
+| Mainnet explorer | `https://robinhoodchain.blockscout.com` | [Connecting](https://docs.robinhood.com/chain/connecting) |
+| Testnet explorer | `https://explorer.testnet.chain.robinhood.com` | [Connecting](https://docs.robinhood.com/chain/connecting) |
+| USDG token (mainnet) | `0x5fc5360d0400a0fd4f2af552add042d716f1d168` | [Token Contracts](https://docs.robinhood.com/chain/contracts); Paxos USDG mainnet guide |
+| USDG metadata (mainnet) | name "Global Dollar", symbol USDG, `decimals() == 6`, `paused()` false | `eth_call` at mainnet block 88282064 |
+| USDG contract shape (mainnet) | ERC-1967 proxy; implementation `0x68184c449e1a8f34fa18d289737129fd27b66f8f`; Paxos freeze interface present (12 October reading) | `eth_getStorageAt` on the ERC-1967 implementation slot at mainnet block 88282064 |
+| USDG on testnet | Paxos test USDG `0x7e955252e15c84f5768b83c41a71f9eba181802f`; ERC-1967 proxy, implementation `0xf0863d7a29a55d0c4263c11bfac754312ff078df`; name "Global Dollar", symbol USDG, `decimals() == 6`, `paused()` false; the mainnet USDG address has no code on 46630. The 12 October reading of "no USDG on testnet" checked only the mainnet address and was wrong. | [USDG testnet guide](https://docs.paxos.com/guides/stablecoin/usdg/testnet); `eth_call`, `eth_getStorageAt` and `eth_getCode` at testnet block 134966126 |
+| Test USDG supply | No primary source states how to obtain test USDG on Robinhood Chain Testnet. The Paxos guide links a general Paxos faucet but does not say that it serves this network. | [USDG testnet guide](https://docs.paxos.com/guides/stablecoin/usdg/testnet) |
+| Finality tags | the RPC serves `safe` and `finalized`; `finalized` was 868 seconds (mainnet) and 1,122 seconds (testnet) behind head on 14 October 2026, and about 18 minutes behind on 12 October | `eth_getBlockByNumber` with `latest` and `finalized` at the blocks below |
+| Finality model | soft confirmation from the sequencer, then posted to Ethereum, then Ethereum finality | [Transaction Finality](https://docs.robinhood.com/chain/transaction-finality) |
+| `block.number` opcode | returns an estimate of the Ethereum block number, not the L2 block | [Differences from Ethereum](https://docs.robinhood.com/chain/differences-from-ethereum) |
+| Gas estimation | `eth_estimateGas` folds the Ethereum data-posting fee into the returned gas units | [Gas and Fees](https://docs.robinhood.com/chain/gas-and-fees) |
+| Base fee recipient `0x8f77c37d8650776bfe73c9b12b15209ee15d9b86` | plain account: no code and transaction count 0 on Base (block 52591539) and on Robinhood Chain (block 88282440) | `eth_getCode` and `eth_getTransactionCount` on `https://mainnet.base.org` and the Robinhood Chain mainnet RPC |
+
+### Reproduce the on-chain rows
+
+Readings of 14 October 2026. Mainnet: `latest` block 88282064 (timestamp 1791972388, 10:06:28 UTC), `finalized` block 88273460 (timestamp 1791971520). Testnet: `latest` block 134966126 (timestamp 1791972388), `finalized` block 134955868 (timestamp 1791971266). Each call below names the block it was read at; replace the block to read the current state.
+
+```bash
+# decimals(): result ends in ...06 on both networks
+curl -s -H 'content-type: application/json' https://rpc.testnet.chain.robinhood.com \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"0x7e955252e15c84f5768b83c41a71f9eba181802f","data":"0x313ce567"},"0x80b6b6e"]}'
+curl -s -H 'content-type: application/json' https://rpc.mainnet.chain.robinhood.com \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"0x5fc5360d0400a0fd4f2af552add042d716f1d168","data":"0x313ce567"},"0x54313d0"]}'
+# ERC-1967 implementation slot: testnet result ends in f0863d7a29a55d0c4263c11bfac754312ff078df
+curl -s -H 'content-type: application/json' https://rpc.testnet.chain.robinhood.com \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_getStorageAt","params":["0x7e955252e15c84f5768b83c41a71f9eba181802f","0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc","0x80b6b6e"]}'
+```
+
+Other selectors used: `symbol()` `0x95d89b41`, `name()` `0x06fdde03`, `paused()` `0x5c975abb`.
+
+The escrow contract reads `block.timestamp` and `block.chainid` only. It never reads `block.number`, so the Arbitrum block-number semantics do not affect award ids, binding delays, or rotation delays. RPC block numbers used by the adapter, scanner and reconciler are L2 block numbers and stay consistent with each other.

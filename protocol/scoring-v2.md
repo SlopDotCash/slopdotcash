@@ -157,9 +157,8 @@ and append-only corrections—not identity documents.
 
 On 9 October 2026 the owner approved automatic provisional value assessments
 for all active projects and a separate September/October reassessment. The
-implementation and acceptance gates are in
-[`slop-value-scoring-plan.md`](../docs/slop-value-scoring-plan.md). This
-extension does not authorize payout, exclusions, penalties or closure powers.
+rubric and publication rules below apply. This extension does not authorize
+payout, exclusions, penalties or closure powers.
 
 An authenticated, complete, exact-revision value assessment replaces the flat
 provisional merge default for its covered work unit. Maintainer ratification
@@ -183,6 +182,66 @@ When a review predates the selected value policy, publish
 `review-credit-before-policy` and preserve its prior Points. This omission
 and `review-credit-outside-window` are not adverse scoring decisions. A
 source-bound correction within the applicable policy can still revise credit.
+
+### Rubric
+
+Assess these dimensions separately, with a concrete evidence reference for each:
+
+| Dimension | Question |
+| --- | --- |
+| Alignment | Which approved project requirement or demonstrated user problem does this address? |
+| Impact | What works better, for whom, and how important is the effect? |
+| Scope and complexity | What independent behavior changes, and what makes the solution difficult? |
+| Evidence | What proves the result? Distinguish reported tests from independently observed tests. |
+| Maintenance | Does the change simplify the system, preserve compatibility, or create avoidable burden? |
+| Originality and overlap | Is this one outcome, a partial delivery, a duplicate, a revert, or a repeated promotion? |
+
+Use the existing integer-third tiers: micro 1, small 3, medium 9, large 24,
+XL 45, exceptional 75. These are relative value bands, not money or time estimates.
+
+- Micro: a useful but very narrow correction, documentation clarification, or
+  necessary mechanical change with little independent product effect.
+- Small: a bounded verified defect repair or required improvement to one path.
+- Medium: a meaningful capability or difficult repair affecting a complete
+  workflow, with evidence of the intended result.
+- Large: a substantial required capability, broad reliability/security repair,
+  or refactor with demonstrated maintenance or performance improvement.
+- XL: an unusually valuable outcome across major workflows or architecture,
+  with strong verification and independent review.
+- Exceptional: a rare project-level advance with direct evidence. Require
+  independent calibration against other top outcomes, not just a large diff.
+
+A one-line security fix can be large. A 10,000-line generated or mechanical
+change can be micro. Missing evidence produces an unresolved assessment, not
+an invented low score. Suspected duplicates, abuse, and unrelated work produce
+a review flag; the bot does not autonomously impose penalties or exclusions.
+
+### Review and maintainer value
+
+Inspect formal reviews, inline findings, responses, subsequent patches, merge
+decisions, and retained fixes from closed/replacement PRs. A different head SHA
+alone does not prove review impact. Identify the finding and the causal response.
+Useful validation can matter without requesting changes; an approval alone is
+not evidence of that work. Do not reward a request-for-changes race.
+
+Use the existing review bands (triage 1, standard 3, deep 9, specialist 24
+thirds) for distinct evidenced review outcomes. Do not reward the same finding
+twice or separately reward a credited implementer's self-review. Maintainer
+integration, reproduction, release work, or resolution deserves consideration
+when it is independently evidenced and not already implementation credit.
+
+### Automatic provisional publication
+
+The bot may update provisional value scores after complete, exact-revision
+assessment. Bot assessments remain distinguishable from human ratifications.
+A valid human ratification takes precedence. Every revision appends a successor
+and explains the change; absence or failure of assessment remains visible and
+does not manufacture a successful assessment at the default tier.
+
+Keep Slop Score, participation Points, allocation weight, approved awards, and
+paid amounts separate. Apply shared-commit attribution once per logical work
+unit. Grouping must reconcile contributors and preserve source credit. Do not
+let split PRs, a promotion, or a repeated cherry-pick multiply one outcome.
 
 ## Current producer: slop-value-v1
 
