@@ -10,7 +10,7 @@ import {
   type EscrowChain,
   EVM_CHAINS,
 } from "./lib/escrow-policy.mjs";
-import { CHAIN_NAMES, networkLabel } from "./lib/network-names";
+import { networkLabel } from "./lib/network-names";
 import {
   formatAssetAmount,
   formatBaseUnits,
@@ -21,6 +21,7 @@ import {
   transactionUrl,
 } from "./lib/payments/contracts";
 import { apiRequest } from "./lib/project-api";
+import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { PayoutConsent } from "./PayoutConsent";
@@ -269,7 +270,7 @@ export function EarningsPage({
     });
     if (mounted.current) {
       setMessage(
-        `${CHAIN_NAMES[chain]} wallet confirmed. Eligible unpaid awards will be sent automatically. A changed wallet is used immediately after any earlier payment is reconciled.`,
+        `${NETWORK_NAMES[chain]} wallet confirmed. Eligible unpaid awards will be sent automatically. A changed wallet is used immediately after any earlier payment is reconciled.`,
       );
       refresh();
     }
@@ -307,7 +308,7 @@ export function EarningsPage({
     returnFocus.current = pendingChange.chain;
     setPendingChange(null);
     setMessage(
-      `Kept your saved ${CHAIN_NAMES[pendingChange.chain]} address. Nothing was registered.`,
+      `Kept your saved ${NETWORK_NAMES[pendingChange.chain]} address. Nothing was registered.`,
     );
   }
 
@@ -356,7 +357,7 @@ export function EarningsPage({
       >
         <div className="wallet-picker-header">
           <h2 id={`${heading}-wallet-picker`}>
-            Connect a {picker ? CHAIN_NAMES[picker] : ""} wallet
+            Connect a {picker ? NETWORK_NAMES[picker] : ""} wallet
           </h2>
           <button
             type="button"
@@ -368,7 +369,8 @@ export function EarningsPage({
           </button>
         </div>
         <p>
-          Choose a wallet for your {picker ? CHAIN_NAMES[picker] : ""} payouts.
+          Choose a wallet for your {picker ? NETWORK_NAMES[picker] : ""}{" "}
+          payouts.
         </p>
         {picker && EVM_CHAINS.includes(picker) ? (
           <p>Wallet confirmation does not require switching networks.</p>
@@ -479,7 +481,7 @@ export function EarningsPage({
                         disabled={busy !== null || pendingChange !== null}
                         onClick={() => setPicker(chain)}
                       >
-                        Connect {CHAIN_NAMES[chain]} wallet
+                        Connect {NETWORK_NAMES[chain]} wallet
                       </button>
                     ))}
                   </div>
@@ -495,7 +497,7 @@ export function EarningsPage({
                   const defaultNetwork = chainDefaultNetwork(chain);
                   return (
                     <article key={chain} className="funding-workbench">
-                      <h2>{CHAIN_NAMES[chain]}</h2>
+                      <h2>{NETWORK_NAMES[chain]}</h2>
                       {unpaid.length === 0 ? (
                         <p>No unpaid awards</p>
                       ) : (
@@ -524,8 +526,8 @@ export function EarningsPage({
                         </p>
                       ) : (
                         <p>
-                          Add a {CHAIN_NAMES[chain]} wallet to receive awards on
-                          this network.
+                          Add a {NETWORK_NAMES[chain]} wallet to receive awards
+                          on this network.
                         </p>
                       )}
                       {!wallet?.authorized &&
@@ -570,7 +572,7 @@ export function EarningsPage({
                       >
                         {busy === chain
                           ? "Confirm in your wallet…"
-                          : `${wallet?.authorized ? "Change" : "Connect"} ${CHAIN_NAMES[chain]} wallet`}
+                          : `${wallet?.authorized ? "Change" : "Connect"} ${NETWORK_NAMES[chain]} wallet`}
                       </button>
                       {pendingChange?.chain === chain && (
                         <section
@@ -583,12 +585,12 @@ export function EarningsPage({
                             ref={changeHeading}
                             tabIndex={-1}
                           >
-                            Register a different {CHAIN_NAMES[chain]} address?
+                            Register a different {NETWORK_NAMES[chain]} address?
                           </h3>
                           <p>
                             Your wallet returned a different account from your
-                            saved {CHAIN_NAMES[chain]} address. Nothing has been
-                            registered yet.
+                            saved {NETWORK_NAMES[chain]} address. Nothing has
+                            been registered yet.
                           </p>
                           <dl>
                             <div>
@@ -728,7 +730,7 @@ export function EarningsPage({
                               {
                                 {
                                   paid: "Paid, verified on chain",
-                                  needs_wallet: `Awaiting wallet: add or confirm your ${CHAIN_NAMES[payment.chain]} wallet`,
+                                  needs_wallet: `Awaiting wallet: add or confirm your ${NETWORK_NAMES[payment.chain]} wallet`,
                                   ready: "Payment queued",
                                   submitted:
                                     "Submitted, waiting for chain verification",

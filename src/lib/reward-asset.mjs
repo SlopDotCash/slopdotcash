@@ -9,8 +9,8 @@
 import { ESCROW_NETWORKS } from "./escrow-policy.mjs";
 import { isFundingAddress } from "./funding-address.mjs";
 
-/** Display names of the four reward networks. */
-const NETWORK_NAMES = Object.freeze({
+/** Display names of the four reward networks, in picker order. */
+export const NETWORK_NAMES = Object.freeze({
   base: "Base",
   ethereum: "Ethereum",
   robinhood: "Robinhood Chain",
