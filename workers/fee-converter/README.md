@@ -56,6 +56,12 @@ live sends for the shared fee wallets; staging must not sign concurrently
 against a separate journal. Staging quotes and skips establish staging
 behavior only; finalized production transactions remain separate acceptance.
 
+Reconciliation reads only `live` rows. In every mode except `off`, it can
+rebroadcast their recorded signed bytes, and a rebroadcast needs no key.
+Staging writes only `dry_run` rows, so its journal has no send to rebroadcast.
+Never copy production `fee_conversions` rows into `slop-staging`, and never
+point a `live` converter at it.
+
 ## What one run does
 
 The Worker has no HTTP route. A cron trigger runs it every minute. Most runs
