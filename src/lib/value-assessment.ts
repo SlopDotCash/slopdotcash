@@ -1,4 +1,5 @@
 /** Source-bound provisional valuation. Never a payout approval or penalty. */
+import { isRecord } from "./record-validation.mjs";
 import { SCORE_TIERS } from "./score-records";
 
 export const VALUE_TIERS = { none: 0, ...SCORE_TIERS } as const;
@@ -100,9 +101,6 @@ export const VALUE_ASSESSMENT_SCHEMA: Record<string, unknown> = {
   },
 };
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 function exact(value: Record<string, unknown>, keys: string[]) {
   return Object.keys(value).sort().join(",") === [...keys].sort().join(",");
 }
@@ -130,7 +128,7 @@ export function validateValueAssessment(
   },
 ): ValueAssessment | null {
   if (
-    !object(value) ||
+    !isRecord(value) ||
     !exact(value, [
       "status",
       "tier",
@@ -151,7 +149,7 @@ export function validateValueAssessment(
     return null;
   if (
     !nonempty(value.rationale) ||
-    !object(value.dimensions) ||
+    !isRecord(value.dimensions) ||
     !exact(value.dimensions, [...VALUE_DIMENSIONS]) ||
     !Object.values(value.dimensions).every(nonempty)
   )
@@ -191,7 +189,7 @@ export function validateValueAssessment(
   const ids = new Set<string>();
   for (const review of value.reviews) {
     if (
-      !object(review) ||
+      !isRecord(review) ||
       !exact(review, [
         "sourceId",
         "duplicateOf",
