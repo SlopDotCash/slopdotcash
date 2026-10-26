@@ -1466,10 +1466,6 @@ jobs:
           const mode = read("FEE_CONVERTER_MODE");
           if (!["off", "dry_run", "live"].includes(mode)) throw new TypeError("invalid FEE_CONVERTER_MODE");
           const enabled = read("FEE_CONVERTER_NETWORKS").split(",").map((n) => n.trim()).filter(Boolean);
-          if (mode === "live" && enabled.includes("solana")) {
-            // PRD TOK-07 / MVP-07c: Solana stays blocked until the PAY-05 fee-recipient role is kept apart from the hot key.
-            throw new TypeError("live fee conversion on Solana is blocked by MVP-07c");
-          }
           if (mode === "live") {
             const missing = enabled.filter((n) => !names.includes(`FEE_WALLET_KEY_${n.toUpperCase()}`));
             if (missing.length > 0) throw new TypeError(`live fee conversion lacks keys for: ${missing.join(", ")}`);

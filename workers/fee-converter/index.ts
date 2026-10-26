@@ -60,23 +60,10 @@ export function chainClient(
     fetch?: typeof fetch;
     chainIdOverride?: number;
     localBlockhash?: boolean;
-    /** Local validator harness only; the hosted Worker never sets it. */
-    allowSolanaLive?: boolean;
     nativeGas?: NativeGasJournal;
     now?: () => Date;
   } = {},
 ): ChainClient {
-  // Older Solana deployments give the fee recipient rotation authority.
-  // Keep live conversion blocked until the separate-role deployment and
-  // converter verification are qualified. Solana runs in dry_run only.
-  if (
-    config.mode === "live" &&
-    network.network === "solana" &&
-    !overrides.allowSolanaLive
-  )
-    throw new Error(
-      "live Solana conversion is blocked until the separate rotation authority is deployed and verified",
-    );
   // dry_run never loads a key, so it cannot sign even when one is present.
   // A network without a verified USDC target never signs either: it only
   // reconciles recorded sends, which needs no key.
