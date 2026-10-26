@@ -118,9 +118,12 @@ describe("reward token metadata", () => {
     await expect(read(TOKEN_2022, extra).metadata).rejects.toThrow(
       "Unsupported Token-2022 extension 1",
     );
-    await expect(read(TOKEN_2022, classicMint(6)).metadata).rejects.toThrow(
-      "Truncated Token-2022 account",
-    );
+    // A base mint carries no extension under either program, so it is inside the subset.
+    const baseOnly = await read(TOKEN_2022, classicMint(6)).metadata;
+    expect(baseOnly.decimals).toBe(6);
+    await expect(
+      read(TOKEN_2022, classicMint(6, 120)).metadata,
+    ).rejects.toThrow("Truncated Token-2022 account");
   });
 
   test("refuses an account that is not a mint or not a token program", async () => {

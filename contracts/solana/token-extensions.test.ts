@@ -98,19 +98,18 @@ describe("readTokenMint", () => {
     expect(() =>
       readTokenMint({
         owner: TOKEN_2022_PROGRAM,
-        data: [Buffer.from(classicMint(6)).toString("base64"), "base64"],
-        executable: false,
-        lamports: 1,
-      }),
-    ).toThrow("Truncated Token-2022 account");
-    expect(() =>
-      readTokenMint({
-        owner: TOKEN_2022_PROGRAM,
-        data: [Buffer.from(bytes(FIXTURE_MINT)).toString("hex"), "hex"],
+        data: [Buffer.from(classicMint(6)).toString("hex"), "hex"],
         executable: false,
         lamports: 1,
       }),
     ).toThrow("Wrong account encoding");
+    // A base mint has no extension under either program, and the subset admits it.
+    expect(
+      readTokenMint(account(TOKEN_2022_PROGRAM, classicMint(6))).extensions,
+    ).toEqual([]);
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, classicMint(6, 40))),
+    ).toThrow("Truncated mint account");
   });
 
   test("refuses an uninitialized mint and a wrong classic layout", () => {
@@ -254,10 +253,15 @@ describe("readTokenAccount", () => {
   });
 
   test("admits a Token-2022 token account with no extension", () => {
-    expect(
-      readTokenAccount(account(TOKEN_2022_PROGRAM, tokenAccount(record())))
-        .extensions,
-    ).toEqual([]);
+    // The real no-extension shape is the 165-byte base with no account-type byte.
+    const base = new Uint8Array(ACCOUNT_SIZE);
+    base.set(MINT_ADDRESS, 0);
+    const reading = readTokenAccount(account(TOKEN_2022_PROGRAM, base));
+    expect(reading.extensions).toEqual([]);
+    expect(reading.raw.length).toBe(ACCOUNT_SIZE);
+    expect(readTokenAccount(account(TOKEN_PROGRAM, base)).extensions).toEqual(
+      [],
+    );
   });
 
   test("keeps classic SPL token accounts", () => {

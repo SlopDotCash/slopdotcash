@@ -129,11 +129,12 @@ export function readTokenMint(
   if (bytes.length < MINT_SIZE) throw new Error("Truncated mint account");
   // Byte 45 is `is_initialized` in both layouts; byte 44 is the decimals.
   if (bytes[45] !== 1) throw new Error("Mint is not initialized");
-  if (program === TOKEN_PROGRAM) {
-    if (bytes.length !== MINT_SIZE)
-      throw new Error("Classic mint layout mismatch");
+  // A base mint carries no account-type byte and no extension under either program,
+  // and the subset admits a mint whose extensions are limited to the two it names.
+  if (bytes.length === MINT_SIZE)
     return { program, raw: bytes, decimals: bytes[44], extensions: [] };
-  }
+  if (program === TOKEN_PROGRAM)
+    throw new Error("Classic mint layout mismatch");
   // COption tags at 0 (mint authority) and 46 (freeze authority) must be absent.
   for (const [offset, message] of [
     [0, "Token-2022 mint authority is not disabled"],
@@ -194,11 +195,12 @@ export function readTokenMint(
 /** Reads a token account, admitting ImmutableOwner or no extension on Token-2022. */
 export function readTokenAccount(value: unknown): TokenAccountReading {
   const { program, bytes } = tokenProgramData(value);
-  if (program === TOKEN_PROGRAM) {
-    if (bytes.length !== ACCOUNT_SIZE)
-      throw new Error("Classic token account layout mismatch");
+  // A base account has no account-type byte and no extension record under either
+  // program, so a 165-byte account is a valid no-extension token account.
+  if (bytes.length === ACCOUNT_SIZE)
     return { program, raw: bytes, extensions: [] };
-  }
+  if (program === TOKEN_PROGRAM)
+    throw new Error("Classic token account layout mismatch");
   const extensions = extensionRecords(bytes, TOKEN_ACCOUNT_TYPE, [
     IMMUTABLE_OWNER,
   ]);
