@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Report a defect with a pull request
+    url: https://github.com/SlopDotCash/slopdotcash/blob/development/CONTRIBUTING.md#issues-owners-and-maintainers-only
+    about: Only owners and maintainers open issues. Fix the defect in a pull request and prove it with evidence.
   - name: Add an open-source project
     url: https://slop.cash/projects/new
-    about: Generate a public project manifest, contributor skill, and reviewer skill, then submit one pull request.
-  - name: Report a platform bug
-    url: https://github.com/SlopDotCash/slopdotcash/issues/new?labels=bug&template=bug-report.md
-    about: Report a reproducible problem in the Slop site, data pipeline, skills, or reward tooling.
+    about: Add a project on the website. Do not open an issue or a pull request for it.
   - name: Report a security or privacy matter privately
     url: https://github.com/SlopDotCash/slopdotcash/security/advisories/new
     about: Use the enabled private intake; do not publish exploit details, credentials, trace contents, or personal data in an issue.
