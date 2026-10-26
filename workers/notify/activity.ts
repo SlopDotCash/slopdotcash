@@ -1,8 +1,11 @@
 /** NOT-01 optional activity delivery; essential wallet notices do not use the activity preference. */
 import type { SecurityD1Database } from "../../backend/security/handler";
-import { encodeQuotedPrintable } from "./handler";
+import { SENDER_ADDRESS } from "./contracts";
 import {
+  claimDueDeliveries,
   destinationDigest,
+  inboxNoticeMime,
+  parseMailPilotConfig,
   recordDelivery,
   retryWithoutProviderCall,
 } from "./security";
@@ -24,54 +27,10 @@ export type ActivityMailDependencies = {
   now(): Date;
   sendEmail(from: string, to: string, mime: string): Promise<void>;
 };
-const EMAIL =
-  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/u;
 export function parseActivityMailConfig(
-  raw: string | undefined,
+  raw: string,
 ): ActivityMailConfig | null {
-  if (!raw) return null;
-  try {
-    const value = JSON.parse(raw) as ActivityMailConfig;
-    if (Object.keys(value).sort().join() !== "inboxUrl,recipients") return null;
-    const url = new URL(value.inboxUrl);
-    if (
-      url.protocol !== "https:" ||
-      url.pathname !== "/inbox" ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash
-    )
-      return null;
-    if (
-      !value.recipients ||
-      typeof value.recipients !== "object" ||
-      Array.isArray(value.recipients)
-    )
-      return null;
-    for (const [id, destination] of Object.entries(value.recipients)) {
-      if (
-        !/^[1-9]\d{0,19}$/u.test(id) ||
-        !destination ||
-        Object.keys(destination).sort().join() !==
-          "email,evidenceReference,verifiedAt"
-      )
-        return null;
-      if (
-        typeof destination.email !== "string" ||
-        !EMAIL.test(destination.email) ||
-        typeof destination.verifiedAt !== "string" ||
-        new Date(destination.verifiedAt).toISOString() !==
-          destination.verifiedAt ||
-        typeof destination.evidenceReference !== "string" ||
-        !destination.evidenceReference.trim()
-      )
-        return null;
-    }
-    return value;
-  } catch {
-    return null;
-  }
+  return parseMailPilotConfig(raw, false) as ActivityMailConfig | null;
 }
 export async function activityMailEligibility(
   config: ActivityMailConfig,
@@ -99,30 +58,14 @@ type Delivery = {
 export async function dispatchActivityMail(
   deps: ActivityMailDependencies,
 ): Promise<void> {
-  if (!/^[a-z0-9][a-z0-9._-]*@slop\.cash$/u.test(deps.fromAddress))
+  if (!SENDER_ADDRESS.test(deps.fromAddress))
     throw new Error("Invalid mail sender");
   const now = deps.now();
-  const at = now.toISOString();
-  await deps.db
-    .prepare(
-      "UPDATE activity_notification_outbox SET state='ambiguous',updated_at=? WHERE state='sending' AND claimed_at < ?",
-    )
-    .bind(at, new Date(now.getTime() - 300_000).toISOString())
-    .run();
-  const pending = await deps.db
-    .prepare(
-      "SELECT * FROM activity_notification_outbox WHERE state IN ('queued','retrying') AND next_attempt_at<=? ORDER BY created_at,id LIMIT 25",
-    )
-    .bind(at)
-    .all<Delivery>();
-  for (const row of pending.results ?? []) {
-    const claim = await deps.db
-      .prepare(
-        "UPDATE activity_notification_outbox SET state='sending',claimed_at=?,updated_at=?,attempts=attempts+1 WHERE id=? AND state IN ('queued','retrying') AND next_attempt_at<=?",
-      )
-      .bind(at, at, row.id, at)
-      .run();
-    if (claim.meta?.changes !== 1) continue;
+  for await (const row of claimDueDeliveries<Delivery>(
+    deps.db,
+    "activity",
+    now,
+  )) {
     if (row.event_key.startsWith("slopbot-appeal:")) {
       const appeal = await deps.db
         .prepare(
@@ -201,20 +144,15 @@ export async function dispatchActivityMail(
     const text = row.essential
       ? "Your Slop account has a security notice."
       : "Your Slop inbox has an activity update.";
-    const mime = [
-      `From: ${deps.fromAddress}`,
-      `To: ${destination.email}`,
-      "Subject: Slop inbox notice",
-      `Date: ${now.toUTCString()}`,
-      `Message-ID: <slop-notice-${row.id}-${row.attempts + 1}@slop.cash>`,
-      "MIME-Version: 1.0",
-      "Content-Type: text/plain; charset=utf-8",
-      "Content-Transfer-Encoding: quoted-printable",
-      "",
-      encodeQuotedPrintable(
-        `${text}\n\nSign in: ${deps.config.inboxUrl}\n\nDo not reply with approvals, evidence or payment details.\n`,
-      ),
-    ].join("\r\n");
+    const mime = inboxNoticeMime({
+      from: deps.fromAddress,
+      to: destination.email,
+      subject: "Slop inbox notice",
+      date: now,
+      deliveryId: row.id,
+      attempt: row.attempts + 1,
+      text: `${text}\n\nSign in: ${deps.config.inboxUrl}\n\nDo not reply with approvals, evidence or payment details.\n`,
+    });
     try {
       await deps.sendEmail(deps.fromAddress, destination.email, mime);
     } catch {

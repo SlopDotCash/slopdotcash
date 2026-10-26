@@ -1,13 +1,16 @@
+import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   type DeploymentTier,
   deploymentOrigins,
 } from "../../src/lib/deployment";
 import {
+  EMAIL_ADDRESS,
   MAX_ADMIN_RECIPIENTS,
   MAX_NOTICE_BODY_BYTES,
   NOTIFY_INTERNAL_HOST,
   PROJECT_APPLICATION_NOTICE_PATH,
   type ProjectApplicationNotice,
+  SENDER_ADDRESS,
   SLOPBOT_FAILURE_NOTICE_PATH,
   SLOPBOT_SPEND_NOTICE_PATH,
   type SlopbotFailureNotice,
@@ -36,11 +39,6 @@ const NOTICE_KEYS = [
   "reviewUrl",
 ] as const satisfies readonly (keyof ProjectApplicationNotice)[];
 
-const SENDER_ADDRESS = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?@slop\.cash$/u;
-const MESSAGE_ID_LOCAL = /^[A-Za-z0-9-]{16,64}$/u;
-const RECIPIENT_ADDRESS =
-  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/u;
-
 /**
  * Parses the operator-configured admin list. Returns null unless every entry
  * is a plain address, entries are unique, and the count is within bounds, so
@@ -52,7 +50,7 @@ export function parseAdminEmails(value: string | undefined): string[] | null {
   if (
     recipients.length < 1 ||
     recipients.length > MAX_ADMIN_RECIPIENTS ||
-    !recipients.every((entry) => RECIPIENT_ADDRESS.test(entry)) ||
+    !recipients.every((entry) => EMAIL_ADDRESS.test(entry)) ||
     new Set(recipients.map((entry) => entry.toLowerCase())).size !==
       recipients.length
   ) {
@@ -79,46 +77,15 @@ function json(
   });
 }
 
-async function readBoundedJson(request: Request): Promise<unknown> {
+async function readNoticeJson(request: Request): Promise<unknown> {
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.split(";")[0]?.trim().toLowerCase() !== "application/json") {
     throw new InvalidRequest("content type must be application/json");
   }
-  const declared = request.headers.get("content-length");
-  if (
-    declared !== null &&
-    (!/^\d+$/u.test(declared) || Number(declared) > MAX_NOTICE_BODY_BYTES)
-  ) {
-    throw new InvalidRequest("request body is too large");
-  }
-  if (request.body === null) throw new InvalidRequest("body is required");
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_NOTICE_BODY_BYTES) {
-        await reader.cancel("request body too large");
-        throw new InvalidRequest("request body is too large");
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return await readBoundedJson(request, MAX_NOTICE_BODY_BYTES, "notice");
   } catch {
-    throw new InvalidRequest("body must be UTF-8 JSON");
+    throw new InvalidRequest("body must be bounded UTF-8 JSON");
   }
 }
 
@@ -385,7 +352,7 @@ export async function handleNotifyRequest(
     | SlopbotSpendNotice
     | SlopbotFailureNotice;
   try {
-    const body = await readBoundedJson(request);
+    const body = await readNoticeJson(request);
     if (url.pathname === SLOPBOT_FAILURE_NOTICE_PATH) {
       if (!validFailureNotice(body))
         throw new InvalidRequest("Invalid failure notice");
@@ -413,11 +380,6 @@ export async function handleNotifyRequest(
   // other, then report the exact delivered count without claiming success.
   for (const recipient of recipients) {
     const messageIdLocal = deps.randomId();
-    if (!MESSAGE_ID_LOCAL.test(messageIdLocal)) {
-      console.error("slop notify message id generator is misconfigured");
-      failed = true;
-      continue;
-    }
     try {
       await deps.sendEmail(
         deps.fromAddress,
