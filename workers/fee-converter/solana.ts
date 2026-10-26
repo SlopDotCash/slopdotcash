@@ -398,9 +398,9 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         keys[0] !== wallet ||
         keys[2] !== wallet ||
         keys[4] !== "11111111111111111111111111111111" ||
-        keys[5] !== TOKEN_PROGRAM ||
+        keys[5] !== TOKEN ||
         !(ix.data.length === 0 || (ix.data.length === 1 && ix.data[0] <= 1)) ||
-        keys[1] !== associatedTokenAccount(wallet, keys[3])
+        keys[1] !== ata(keys[3], wallet)
       )
         throw new Error("Unbounded or unsupported associated-account creation");
       accounts.add(ix.accounts[1]);
@@ -423,7 +423,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     const message = raw.slice(parsed.messageOffset);
     const fee = await rpc<{ context: { slot: number }; value: number | null }>(
       "getFeeForMessage",
-      [toBase64(message), { commitment: "confirmed" }],
+      [solanaBase64(message), { commitment: "confirmed" }],
     );
     const networkFee = nativeInteger(fee.value);
     const rent = accounts.length
@@ -449,7 +449,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     const simulated = await rpc<{
       value: { err: unknown; accounts: ({ lamports: number } | null)[] | null };
     }>("simulateTransaction", [
-      toBase64(raw),
+      solanaBase64(raw),
       {
         encoding: "base64",
         sigVerify: false,
@@ -540,7 +540,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         throw new Error(
           "Solana native journal lacks its reviewed signed bytes",
         );
-      const raw = fromBase64(send.rawTx);
+      const raw = solanaBase64Bytes(send.rawTx);
       const parsed = parseTransaction(raw);
       const message = raw.slice(parsed.messageOffset);
       const signature = raw.slice(
