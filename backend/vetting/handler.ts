@@ -512,7 +512,7 @@ async function serviceQueue(
     fail(
       503,
       "evidence_unavailable",
-      "Private evidence storage, access policy and current external-control attestation are required before acquisition",
+      "Private evidence storage is required before acquisition",
     );
   const origin = new URL(request.url).origin;
   const pending = await deps.vetting.pendingAssessments();
