@@ -335,6 +335,14 @@ publication can reproduce the local collector's empty resolution array so that
 an unchanged source keeps its original digest. Nonempty resolution evidence is
 never copied from the submitted assessment into the fresh source.
 
+For copied work, a maintainer's short merge reference must resolve through
+GitHub in the same repository to the exact accepted merge. Collection binds
+the resolution to the original comment, actor, timestamps and repository/PR
+identities. Import and publication refresh it. Missing, ambiguous or changed
+evidence cannot assign the copied work; complete edits, author retention and
+unique original attribution remain required. Full merge references keep their
+existing checks. No acknowledgement text or historical capture is rewritten.
+
 Historical resolution evidence must
 remain source-bound and pass the joint record's freshness and publication gates.
 Do not strip limitations or substitute a full first-parent merge diff to make
@@ -516,9 +524,10 @@ repository set; callers must keep it consistent across the operation.
 When GitHub omits an added text-file patch, the collector can recover it from
 the full file at the immutable submitted or accepted commit. It verifies the
 Git blob SHA-1, UTF-8 bytes, byte length and exact added-line count before
-constructing the empty-file diff. Recovery is limited to 16 reads, 512 KiB per
-file and 2 MiB total across both ranges. Binary, modified, oversized or invalid
-files keep their missing-diff limitation. Publication uses the same collector
+constructing the empty-file diff. Recovery is limited to 16 reads and 2 MiB
+total across both ranges. Each file must fit the remaining shared budget.
+Decoded bytes consume that budget even when later validation refuses them.
+Binary, modified, oversized or invalid files keep their missing-diff limitation. Publication uses the same collector
 and rechecks the recovered source. The recovered bodies stay in private source
 evidence; journal records contain their source digest, not the patch bodies.
 

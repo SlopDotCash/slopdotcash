@@ -18,9 +18,13 @@
  * - There is no public fallback. A refused or unavailable intake leaves the
  *   report in the reporter's browser.
  */
+
+import { readBoundedJson } from "../../src/lib/browser-json";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
-import { fail } from "../api-error";
 import type { D1QueryStatement as D1Statement } from "../d1";
+import { GHSA } from "../github";
+import { exactKeys, fail, PROJECT_ID, requireActor } from "../http";
 import { notifySecurityReportReceived } from "../notifications/events";
 import {
   hasParticipationBan,
@@ -32,22 +36,17 @@ import {
   markerLine,
   parseReportInput,
   type ReporterGrant,
-  readBoundedJson,
 } from "./github-advisories";
 import {
   automaticIntake,
   caseInsertStatement,
   eventStatement,
-  exactKeys,
-  GHSA,
   IDEMPOTENCY_KEY,
   inboxStatements,
   json,
-  PROJECT_ID,
   pvrState,
   type ReportingContext,
   reportingContext,
-  requireActor,
   type SecurityApiDependencies,
   scheduleAnalysis,
   stringField,
@@ -96,9 +95,9 @@ type SubmissionRow = {
 
 const SUBMISSION_ID = /^ss_[A-Za-z0-9_-]{8,72}$/u;
 /** A `submitting` row older than this is treated as interrupted. */
-export const SUBMITTING_TIMEOUT_MS = 60_000;
+const SUBMITTING_TIMEOUT_MS = 60_000;
 /** A draft or failed submission idle this long is abandoned. */
-export const IDLE_MS = 24 * 60 * 60 * 1000;
+const IDLE_MS = 24 * 60 * 60 * 1000;
 /** How far before the attempt a GitHub listing looks for its copy. */
 const RECONCILE_WINDOW_MS = 10 * 60 * 1000;
 /**
@@ -378,7 +377,7 @@ function expectedRevision(body: Record<string, unknown>): number {
 async function readBody(request: Request): Promise<Record<string, unknown>> {
   let value: unknown;
   try {
-    value = await readBoundedJson(request, MAX_SEND_BYTES);
+    value = await readBoundedJson(request, MAX_SEND_BYTES, "Report request");
   } catch {
     fail(400, "invalid_request", "Request body must be a JSON object");
   }
@@ -528,9 +527,7 @@ async function createSubmission(
     );
   const at = deps.now().toISOString();
   const id = `ss_${deps.randomId().replaceAll("-", "")}`;
-  const marker = [...crypto.getRandomValues(new Uint8Array(16))]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  const marker = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
   try {
     await deps.db.batch([
       deps.db

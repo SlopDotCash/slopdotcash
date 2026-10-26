@@ -32,6 +32,10 @@ import {
   recoverRemovedValueComparisons,
 } from "./value-removed-file";
 import { recoverUnchangedValueRenames } from "./value-rename";
+import {
+  collectRetainedMergeReferences,
+  type RetainedMergeReference,
+} from "./value-retained-reference";
 
 // Shared by the installation worker and the historical reviewer. Missing or
 // moving evidence prevents assessment; pagination limits never imply coverage.
@@ -503,6 +507,7 @@ export interface ValueEvidence {
   historicalBranchPolicy?: ValueBranchPolicy;
   commitAttribution: CommitAttribution[];
   mergeResolutions?: ValueMergeResolution[];
+  retainedMergeReferences?: RetainedMergeReference[];
   relatedPullRequests: RelatedPullRequest[];
   contextFiles?: {
     path: string;
@@ -683,6 +688,13 @@ export async function collectValueEvidence(
   );
   const comments = rawComments.map(comment);
   const reviewComments = rawReviewComments.map(comment);
+  const retainedMergeReferences = await collectRetainedMergeReferences(client, {
+    repository,
+    repositoryNodeId: repositoryIdentity.node_id,
+    repositoryDatabaseId: repositoryIdentity.id,
+    pull,
+    comments,
+  });
   const limitations: string[] = [];
   if (repositoryPolicy === null)
     limitations.push("Registered repository scoring policy is unavailable");
@@ -1000,6 +1012,7 @@ export async function collectValueEvidence(
     reviews,
     comments,
     reviewComments,
+    ...(retainedMergeReferences.length ? { retainedMergeReferences } : {}),
     limitations,
     evidenceUrls,
     eligibleReviewIds,

@@ -304,6 +304,14 @@ reporter's view does not. A failed, unavailable or lost attempt lets a dispute
 reviewer run `triage-appeal` again. A moderator decides the appeal with or
 without a draft.
 
+After a Quarantine or a Ban appends the paused, `retired` project revision, a
+case that already exists keeps `analyze` and `triage-appeal`. New reports,
+`check-receipt` and new awards stay closed, because a receipt check imports
+every new report in the repository. The enforcement record must name the
+revision it appended. An owner retirement before the restriction, or a
+retired revision appended later for a `revision_pending` record, keeps these
+actions closed.
+
 ## Disclosure approval records
 
 A disclosure decision records its private human-approval evidence reference.

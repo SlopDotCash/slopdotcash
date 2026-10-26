@@ -1,4 +1,4 @@
-import { type ApiError, fail } from "../../backend/api-error";
+import { type ApiError, fail } from "../../backend/http";
 import brand from "../../brand/tokens.json" with { type: "json" };
 import {
   type DeploymentTier,

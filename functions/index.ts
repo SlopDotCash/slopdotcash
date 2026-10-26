@@ -1,6 +1,9 @@
+import type { PagesMiddlewareContext } from "../backend/pages";
+import { readBoundedText } from "../src/lib/browser-json";
+
 const CASH_DOMAIN = "slop.cash";
 const TECH_DOMAIN = "slop.tech";
-export const MAX_TRANSFORMED_HTML_BYTES = 1024 * 1024;
+const MAX_TRANSFORMED_HTML_BYTES = 1024 * 1024;
 
 type PublicDomain = typeof CASH_DOMAIN | typeof TECH_DOMAIN;
 
@@ -12,12 +15,7 @@ type SocialMetadata = {
     | "https://slop.tech/og-slop-tech.png";
 };
 
-type PagesContext = {
-  request: Request;
-  next(): Promise<Response>;
-};
-
-export function publicSocialMetadata(hostname: string): SocialMetadata {
+function publicSocialMetadata(hostname: string): SocialMetadata {
   const normalized = hostname.toLowerCase().replace(/\.$/u, "");
   const domain: PublicDomain =
     normalized === TECH_DOMAIN || normalized === `www.${TECH_DOMAIN}`
@@ -49,10 +47,7 @@ function replaceExactCount(
   return contents.replaceAll(source, replacement);
 }
 
-export function renderSocialMetadata(
-  contents: string,
-  hostname: string,
-): string {
+function renderSocialMetadata(contents: string, hostname: string): string {
   const metadata = publicSocialMetadata(hostname);
   if (metadata.domain === CASH_DOMAIN) return contents;
 
@@ -74,42 +69,9 @@ export function renderSocialMetadata(
   );
 }
 
-async function boundedHtml(response: Response): Promise<string> {
-  const declared = response.headers.get("content-length");
-  if (
-    declared !== null &&
-    (!/^\d+$/u.test(declared) || Number(declared) > MAX_TRANSFORMED_HTML_BYTES)
-  ) {
-    throw new RangeError("HTML response exceeded the transform limit");
-  }
-  if (!response.body) throw new TypeError("HTML response has no readable body");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      total += chunk.value.byteLength;
-      if (total > MAX_TRANSFORMED_HTML_BYTES) {
-        await reader.cancel();
-        throw new RangeError("HTML response exceeded the transform limit");
-      }
-      chunks.push(chunk.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-}
-
-export async function onRequest(context: PagesContext): Promise<Response> {
+export async function onRequest(
+  context: Pick<PagesMiddlewareContext<unknown>, "request" | "next">,
+): Promise<Response> {
   if (context.request.method !== "GET") return context.next();
 
   const hostname = new URL(context.request.url).hostname;
@@ -157,7 +119,14 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   }
 
   return new Response(
-    renderSocialMetadata(await boundedHtml(response), hostname),
+    renderSocialMetadata(
+      await readBoundedText(
+        response,
+        MAX_TRANSFORMED_HTML_BYTES,
+        "HTML response",
+      ),
+      hostname,
+    ),
     {
       status: response.status,
       statusText: response.statusText,

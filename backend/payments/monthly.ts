@@ -48,11 +48,16 @@ import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { MonthlyReleaseResult } from "../../workers/payment-executor/monthly-release";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
+import { githubHeaders } from "../github";
 import { notifyMonthlyUnderfunded } from "../notifications/events";
 import {
   hasParticipationBan,
   PARTICIPATION_BAN_QUERY,
 } from "../projects/account-bans";
+import {
+  type RepositoryFacts,
+  repositoryIdentityMatches,
+} from "../projects/setup";
 import { chainAwards, holdsAward } from "./chain-awards";
 import type {
   MonthlyReleaseCheck,
@@ -90,12 +95,7 @@ export async function verifyProjectAuthority(
     );
   async function github(path: string, label: string) {
     const response = await fetch(`https://api.github.com/${path}`, {
-      headers: {
-        accept: "application/vnd.github+json",
-        "x-github-api-version": "2022-11-28",
-        "user-agent": "Slop-monthly-awards",
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-      },
+      headers: githubHeaders(token, "Slop-monthly-awards"),
       redirect: "error",
       signal: AbortSignal.timeout(30000),
     });
@@ -111,20 +111,8 @@ export async function verifyProjectAuthority(
   const identity = (await github(
     `repos/${target}`,
     "Project repository identity",
-  )) as {
-    id?: number;
-    node_id?: string;
-    owner?: { id?: number; node_id?: string; login?: string; type?: string };
-  };
-  const steward = project.steward.github;
-  if (
-    String(identity.id) !== project.authority.repositoryId ||
-    identity.node_id !== project.authority.repositoryNodeId ||
-    String(identity.owner?.id) !== steward.actorId ||
-    identity.owner?.node_id !== steward.nodeId ||
-    identity.owner?.type !== steward.type ||
-    identity.owner?.login?.toLowerCase() !== steward.login.toLowerCase()
-  )
+  )) as RepositoryFacts;
+  if (!repositoryIdentityMatches(project, identity))
     throw new MonthlyPaymentError(
       409,
       "repository_changed",
@@ -302,7 +290,7 @@ async function awardStates(
 }
 
 /** The single served deployment of the project's one vault network, or null. */
-export function servedDeployment(
+function servedDeployment(
   project: ProjectDefinition,
   networks: readonly string[],
 ): EscrowDeployment | null {
@@ -317,7 +305,7 @@ export function servedDeployment(
  * owner's early finalization and the automatic cutoff use this; the primary
  * key makes whichever comes first the only execution snapshot.
  */
-export async function freezeMonthlyPeriod(
+async function freezeMonthlyPeriod(
   db: D1Database,
   input: {
     project: ProjectRecord;
@@ -439,7 +427,7 @@ export async function freezeMonthlyPeriod(
  * reserves its whole total at admission, even for an identical award it later
  * releases, so its eligible awards always need free funds.
  */
-export async function createMonthlyObligations(
+async function createMonthlyObligations(
   db: D1Database,
   projectId: string,
   period: string,

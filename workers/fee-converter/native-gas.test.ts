@@ -21,6 +21,7 @@ import { createEvmClient } from "./evm";
 import { runOnce } from "./index";
 import { NativeGasJournal, type NativeGasLimits } from "./native-gas";
 import { solanaNativeCost } from "./solana";
+import { proveSolanaExpiry, type RecoveryRpc } from "./solana-expiry";
 import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore, LOCK_MS } from "./store";
 
@@ -738,7 +739,7 @@ test("Solana signed costs share the atomic journal while unknown sends retain th
       solanaBase58(new Uint8Array(32).fill(n)),
       [],
     );
-    const id = await journal.reserveSolana(solanaBase58(sha256(body)));
+    const id = await journal.reserveSolana(solanaBase58(sha256(body)), 100);
     const signature = ed25519.sign(body, seed);
     const raw = concat(Uint8Array.of(1), signature, body);
     const row = {
@@ -850,4 +851,160 @@ test("Solana migration preserves existing EVM liabilities and immutable receipt 
   expect(() =>
     sqlite.exec("DELETE FROM fee_native_gas WHERE id='prior-finalized'"),
   ).toThrow("permanent");
+});
+
+test("expiry evidence and zero-cost resolution commit atomically under the current Solana lease", async () => {
+  const f = await fixture();
+  const seed = new Uint8Array(32).fill(7);
+  const wallet = solanaBase58(ed25519.getPublicKey(seed));
+  await f.store.acquireLock("solana", f.run, f.now());
+  const journal = new NativeGasJournal(
+    f.db,
+    "solana",
+    wallet,
+    f.run,
+    { perTransaction: "5000000", perDay: "5000000", additionalFeeReserve: "0" },
+    f.now,
+  );
+  const body = solanaMessage(
+    wallet,
+    solanaBase58(new Uint8Array(32).fill(1)),
+    [],
+  );
+  const id = await journal.reserveSolana(solanaBase58(sha256(body)), 100);
+  const sig = ed25519.sign(body, seed);
+  const raw = concat(Uint8Array.of(1), sig, body);
+  const dummy = await f.account.signTransaction(f.tx());
+  const row = {
+    ...f.row("expiry-signed-send", dummy, id),
+    network: "solana" as const,
+    feeWallet: wallet,
+    token: wallet,
+    targetToken: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    route: "jupiter" as const,
+    rawTx: btoa(String.fromCharCode(...raw)),
+    txId: solanaBase58(sig),
+    evmNonce: null,
+  };
+  await f.store.insert(row, { runId: f.run, now: f.now() });
+  const [send] = await journal.unsettled();
+  const blockhash = solanaBase58(new Uint8Array(32).fill(1));
+  const tipHash = solanaBase58(new Uint8Array(32).fill(2));
+  const rpc: RecoveryRpc = async <T>(method: string, params: unknown[]) => {
+    const values: Record<string, unknown> = {
+      getGenesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+      getFirstAvailableBlock: 0,
+      isBlockhashValid: { context: { slot: 300 }, value: false },
+      getSignatureStatuses: { context: { slot: 301 }, value: [null] },
+      getTransaction: null,
+      getBlock:
+        params[0] === 100
+          ? {
+              blockhash,
+              previousBlockhash: "earlier",
+              parentSlot: 99,
+              signatures: [],
+            }
+          : {
+              blockhash: tipHash,
+              previousBlockhash: blockhash,
+              parentSlot: 100,
+              signatures: [],
+            },
+    };
+    return values[method] as T;
+  };
+  const providers = [
+    { operator: "alchemy", rpc },
+    { operator: "allnodes-publicnode", rpc },
+  ];
+  const missingCoverage = await proveSolanaExpiry(
+    send.txId,
+    blockhash,
+    100,
+    providers,
+  );
+  if (!missingCoverage) throw new Error("Expected fixture proof");
+  await expect(
+    journal.resolveSolanaExpiry(send, missingCoverage),
+  ).rejects.toThrow("positive retained");
+  const proof = await proveSolanaExpiry(
+    send.txId,
+    blockhash,
+    100,
+    providers,
+    journal.expiryCoverageStore(),
+  );
+  if (!proof) throw new Error("Expected retained coverage proof");
+  const firstCoverage = proof.providers[0].coverage;
+  if (!firstCoverage) throw new Error("Expected coverage");
+  await expect(
+    journal.expiryCoverageStore().save(null, firstCoverage, []),
+  ).rejects.toThrow();
+  for (const field of ["tipSlot", "tipHash", "blocks", "digest"] as const) {
+    const previous = proof.providers[1].coverage;
+    if (!previous) throw new Error("Expected second coverage");
+    const changed = { ...previous, revision: previous.revision + 1 };
+    if (field === "tipSlot" || field === "blocks") changed[field]++;
+    else changed[field] = `different-${changed[field]}`;
+    await journal.expiryCoverageStore().save(previous, changed, []);
+    proof.providers[1].coverage = changed;
+    await expect(journal.resolveSolanaExpiry(send, proof)).rejects.toThrow(
+      "histories disagree",
+    );
+    expect(() =>
+      f.sqlite
+        .query(
+          "INSERT INTO fee_solana_expiry_proofs(tx_id,fee_wallet,run_id,proof_json,proof_sha256,observed_at) VALUES(?,?,?,?,?,?)",
+        )
+        .run(
+          send.txId,
+          wallet,
+          f.run,
+          JSON.stringify(proof),
+          "d".repeat(64),
+          f.now().toISOString(),
+        ),
+    ).toThrow("block-history coverage");
+    expect((await journal.rows())[0].actual_wei).toBeNull();
+    expect(await journal.solanaExpiryResolved(send.txId)).toBe(false);
+    await expect(
+      journal.reserveSolana(`disagreement-${field}`, 101),
+    ).rejects.toThrow("daily budget");
+    const restored = { ...previous, revision: changed.revision + 1 };
+    await journal.expiryCoverageStore().save(changed, restored, []);
+    proof.providers[1].coverage = restored;
+  }
+  await expect(journal.reserveSolana("another-intent", 101)).rejects.toThrow(
+    "daily budget",
+  );
+  await expect(
+    journal.resolveSolanaExpiry(send, { ...proof, blockhashSlot: 99 }),
+  ).rejects.toThrow("anchor differs");
+  const wrongLease = new NativeGasJournal(
+    f.db,
+    "solana",
+    wallet,
+    "lost-lease",
+    journal.limits,
+    f.now,
+  );
+  await expect(wrongLease.resolveSolanaExpiry(send, proof)).rejects.toThrow(
+    "lease",
+  );
+  expect(await journal.solanaExpiryResolved(send.txId)).toBe(false);
+  expect((await journal.rows())[0].actual_wei).toBeNull();
+  await journal.resolveSolanaExpiry(send, proof);
+  expect((await journal.rows())[0].actual_wei).toBe("0");
+  expect(await journal.solanaExpiryResolved(send.txId)).toBe(true);
+  await journal.reserveSolana("after-proof", 101);
+  expect(() => f.sqlite.exec("DELETE FROM fee_solana_expiry_proofs")).toThrow(
+    "permanent",
+  );
+  expect(() =>
+    f.sqlite.exec("UPDATE fee_solana_expiry_proofs SET proof_json='{}'"),
+  ).toThrow("immutable");
+  expect(() =>
+    f.sqlite.exec("UPDATE fee_native_gas SET solana_blockhash_slot=99"),
+  ).toThrow("immutable");
 });
