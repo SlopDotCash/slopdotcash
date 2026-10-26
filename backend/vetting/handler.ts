@@ -29,6 +29,7 @@ import type {
 } from "../projects/contracts";
 import { type EdgeCache, purgeProjectCache } from "../projects/edge-cache";
 import { pausedByFlagsOnly, projectRestriction } from "../projects/enforcement";
+import type { ScanRequester } from "../projects/setup";
 import { isRecord, readJsonObject, readLimitedBody } from "../trace/validation";
 import type { VettingEvidence } from "./evidence";
 import type { ProjectFlagStore } from "./flags";
@@ -304,10 +305,12 @@ async function requestAssessment(
  * `pin_unavailable` when the live pin cannot be read.
  */
 export async function queueAssessment(
-  deps: Pick<
-    VettingApiDependencies,
-    "vetting" | "livePin" | "now" | "randomId"
-  >,
+  deps: Pick<VettingApiDependencies, "livePin" | "now" | "randomId"> & {
+    vetting: Pick<
+      CloudflareVettingPersistence,
+      "createAssessment" | "getAssessment"
+    >;
+  },
   project: ProjectRecord,
   requestedBy: GithubActor,
   reason: string,
@@ -332,7 +335,7 @@ export async function queueAssessment(
     templateSha256: pin.templateSha256,
     requestedBy,
     requestedAt: deps.now().toISOString(),
-    requestReason: reason,
+    requestReason: reason.slice(0, 1000),
   };
   if (!/^vet_[a-f0-9]{32}$/u.test(assessment.id))
     fail(500, "internal_error", "Assessment id is invalid");
@@ -382,6 +385,43 @@ export async function queueAutomaticScan(
   } catch {
     return "unavailable";
   }
+}
+
+/**
+ * Queues an owner's setup scan through the same assessment row, live pin and
+ * service-key gate as the operator route.
+ */
+export function vettingScanRequester(input: {
+  vetting: Pick<
+    CloudflareVettingPersistence,
+    "createAssessment" | "getAssessment"
+  >;
+  serviceAvailable: () => Promise<boolean>;
+  livePin: (manifest: ProjectDefinition) => Promise<VettingPin>;
+  now: () => Date;
+  randomId: () => string;
+}): ScanRequester {
+  return async (project, actor, reason) => {
+    if (!(await input.serviceAvailable()))
+      return {
+        state: "unavailable",
+        message:
+          "The security scan service is not available yet, so the scan cannot be queued. Check again later.",
+      };
+    let queued: Awaited<ReturnType<typeof queueAssessment>>;
+    try {
+      queued = await queueAssessment(input, project, actor, reason);
+    } catch (error) {
+      if ((error as Partial<ApiError> | null)?.code !== "pin_unavailable")
+        throw error;
+      return {
+        state: "unavailable",
+        message:
+          "Slop could not read the integration-branch head or the skill template, so the scan cannot be queued. Check again later.",
+      };
+    }
+    return { state: queued === "conflict" ? "already_queued" : "queued" };
+  };
 }
 
 /** Automatic scans one signed refresh may queue. */

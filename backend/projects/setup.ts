@@ -20,14 +20,7 @@ import {
   SLOPBOT_INSTALL_URL,
 } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
-import type {
-  VettingClearance,
-  VettingPin,
-} from "../../src/lib/vetting-contracts";
-import {
-  type CloudflareVettingPersistence,
-  vettedContentSha256,
-} from "../vetting/persistence";
+import type { VettingClearance } from "../../src/lib/vetting-contracts";
 import type { ProjectRestriction } from "./enforcement";
 
 /**
@@ -370,53 +363,5 @@ export function projectSetupStatus(input: {
     funding: setupFunding(manifest),
     activatedRevision: input.activatedRevision,
     checkedAt: input.checkedAt,
-  };
-}
-
-/**
- * Queues scans through the existing vetting queue: the same assessment row,
- * live pin and service-key gate as the operator route in
- * `backend/vetting/handler.ts`, requested by the owner.
- */
-export function vettingScanRequester(input: {
-  vetting: Pick<CloudflareVettingPersistence, "createAssessment">;
-  serviceAvailable: () => Promise<boolean>;
-  livePin: (manifest: ProjectDefinition) => Promise<VettingPin>;
-  now: () => Date;
-  randomId: () => string;
-}): ScanRequester {
-  return async (project, actor, reason) => {
-    if (!(await input.serviceAvailable()))
-      return {
-        state: "unavailable",
-        message:
-          "The security scan service is not available yet, so the scan cannot be queued. Check again later.",
-      };
-    let pin: VettingPin;
-    try {
-      pin = await input.livePin(project.manifest);
-    } catch {
-      return {
-        state: "unavailable",
-        message:
-          "Slop could not read the integration-branch head or the skill template, so the scan cannot be queued. Check again later.",
-      };
-    }
-    const id = `vet_${input.randomId().replaceAll("-", "").toLowerCase()}`;
-    if (!/^vet_[a-f0-9]{32}$/u.test(id))
-      throw new Error("Assessment id is invalid");
-    const created = await input.vetting.createAssessment({
-      id,
-      projectId: project.id,
-      revision: project.revision,
-      manifestSha256: project.manifestSha256,
-      contentSha256: await vettedContentSha256(project.manifest),
-      commitSha: pin.commitSha,
-      templateSha256: pin.templateSha256,
-      requestedBy: actor,
-      requestedAt: input.now().toISOString(),
-      requestReason: reason.slice(0, 1000),
-    });
-    return { state: created === "created" ? "queued" : "already_queued" };
   };
 }

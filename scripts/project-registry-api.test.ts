@@ -25,12 +25,12 @@ import {
   handleProjectApi,
   type ProjectApiDependencies,
 } from "../backend/projects/handler";
-import { vettingScanRequester } from "../backend/projects/setup";
 import type { SkillTemplateIndex } from "../backend/projects/skill-publication";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
 import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { readSecurityProgramFunds } from "../backend/security/program-funds";
+import { vettingScanRequester } from "../backend/vetting/handler";
 import {
   CloudflareVettingPersistence,
   type VettingPin,

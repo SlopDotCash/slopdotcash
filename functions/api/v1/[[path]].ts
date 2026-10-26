@@ -41,7 +41,6 @@ import {
 import {
   flaggerAuthority,
   readRepositoryAccess,
-  vettingScanRequester,
 } from "../../../backend/projects/setup";
 import { assetTemplateSource } from "../../../backend/projects/skill-publication";
 import { rpcTokenMetadataReader } from "../../../backend/projects/token-metadata";
@@ -85,6 +84,7 @@ import {
   handleVettingApi,
   queueAutomaticScan,
   signedVettingRequest,
+  vettingScanRequester,
   vettingServiceAvailable,
 } from "../../../backend/vetting/handler";
 import {
