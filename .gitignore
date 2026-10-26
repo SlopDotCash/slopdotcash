@@ -17,6 +17,7 @@ playwright-report/
 test-results/
 evidence/
 plans/
+public/brand/
 public/downloads/
 public/skill.md
 public/mission.md
