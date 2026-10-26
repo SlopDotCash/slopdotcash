@@ -314,6 +314,11 @@ reverts and the row closes as `failed`. If the node drops it after the
 deadline, the row also closes as `failed`. A later run quotes and signs a new swap for
 the token. The token balance stays in the fee wallet during the wait.
 
+**Lease.** Reconciliation checks the current network lease before signing a
+replacement and before broadcast. The append also requires that same live
+lease, the still-open original and the next attempt number. A lost lease
+stops the run. Bytes already journaled remain available to its successor.
+
 **Journal.** Each replacement is stored in `fee_send_replacements`
 (migration `0087`) before it is broadcast: the row, attempt number, nonce,
 transaction hash, signed bytes and both fee fields. These rows cannot change
@@ -338,11 +343,12 @@ later run tries again.
 **Restart.** A run can stop after it journals a replacement and before the
 node receives it. The next run sees that the latest attempt is not in the
 node. It sends the journaled bytes again; it does not sign another
-replacement. The same applies when a node refuses a replacement, for
-example because its maximum fee is still below the base fee: the row is
-`unknown`, and a later run sends the latest journaled bytes again or signs
-the next step. The wait, the step and the cap come from the journal, so
-repeated runs cannot pass the cap.
+replacement. A restart tries those bytes first even when the three-minute
+wait has elapsed. If the node explicitly refuses them because their maximum
+fee is below its base fee, the run may sign the next bounded step. A transport
+error or any other uncertain response keeps the same bytes and the row
+`unknown`. The wait, the step and the cap come from the journal, so repeated
+runs cannot pass the cap.
 
 **Not covered.** The ERC-20 approval before a swap is not journaled with its
 signed bytes, so it is not replaced. If an approval is not mined within one

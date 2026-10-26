@@ -8,6 +8,7 @@
 
 import {
   type Address,
+  BaseError,
   type Chain,
   createPublicClient,
   decodeFunctionData,
@@ -15,12 +16,14 @@ import {
   defineChain,
   encodeFunctionData,
   erc20Abi,
+  FeeCapTooLowError,
   type Hex,
   http,
   keccak256,
   type PublicClient,
   parseEventLogs,
   parseTransaction,
+  RpcRequestError,
   recoverTransactionAddress,
   TransactionNotFoundError,
   type TransactionReceipt,
@@ -326,6 +329,19 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       });
     } catch (error) {
       if (/already known/iu.test(String((error as Error).message))) return;
+      const rpcError =
+        error instanceof BaseError
+          ? error.walk((cause) => cause instanceof RpcRequestError)
+          : null;
+      // Only an explicit node rejection permits escalation after rebroadcast.
+      // Do not classify HTTP/transport failures or a generic "outdated" error.
+      if (
+        rpcError instanceof RpcRequestError &&
+        /max fee per gas less than block base fee|fee cap less than block base fee/iu.test(
+          rpcError.details ?? "",
+        )
+      )
+        throw new FeeCapTooLowError();
       throw error;
     }
   }
@@ -817,6 +833,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     async replace(
       row: ConversionRow,
       replacements: readonly SendReplacement[],
+      assertLease: () => Promise<void>,
     ): Promise<ReplacementResult> {
       if (!account) return { wait: "signing needs the fee-wallet key" };
       const original = parseTransaction(row.rawTx as Hex);
@@ -887,6 +904,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
       )
         throw new Error("Recorded claim pays another fee wallet");
+      await assertLease();
       const raw = await account.signTransaction({
         chainId: chain.id,
         type: "eip1559",

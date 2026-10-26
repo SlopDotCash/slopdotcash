@@ -10,6 +10,7 @@
  * a failed quote, route or price left behind.
  */
 
+import { FeeCapTooLowError } from "viem";
 import type { Limits, Mode, Network, NetworkConfig } from "./config";
 import { LOCK_MS } from "./store";
 
@@ -167,6 +168,8 @@ export interface ChainClient {
   replace?(
     row: ConversionRow,
     replacements: readonly SendReplacement[],
+    /** Recheck ownership immediately before creating signed bytes. */
+    assertLease: () => Promise<void>,
   ): Promise<ReplacementResult>;
   /**
    * Issue #905: a vault keeps its 2% fees until someone calls the
@@ -243,7 +246,11 @@ export interface ConversionStore {
   latest(network: Network, token: string): Promise<ConversionRow | null>;
   /** Journaled same-nonce replacements of one row, in attempt order. */
   replacements(conversionId: string): Promise<SendReplacement[]>;
-  insertReplacement(replacement: SendReplacement): Promise<void>;
+  insertReplacement(
+    replacement: SendReplacement,
+    runId: string,
+    now: Date,
+  ): Promise<boolean>;
 }
 
 export type RunTrigger = "receipts" | "recovery";
@@ -332,6 +339,8 @@ async function reconcile(
   row: ConversionRow,
   client: ChainClient,
   deps: RunDependencies,
+  runId: string,
+  assertLease: () => Promise<void>,
 ): Promise<boolean> {
   const now = deps.now();
   if (row.state === "quoted") {
@@ -354,7 +363,8 @@ async function reconcile(
   const at = deps.now().toISOString();
   switch (status.kind) {
     case "pending":
-      if (!status.mined) await replaceSend(row, replacements, client, deps);
+      if (!status.mined)
+        await replaceSend(row, replacements, client, deps, runId, assertLease);
       return false;
     case "finalized": {
       const after = await client
@@ -395,7 +405,9 @@ async function reconcile(
       });
       return true;
     case "rebroadcast":
-      if (await replaceSend(row, replacements, client, deps)) return false;
+      // A restart first delivers the exact journaled attempt, even after the
+      // replacement wait elapsed. An unknown response never proves refusal.
+      await assertLease();
       try {
         await client.broadcast(status.rawTx ?? (row.rawTx as string));
         await deps.store.update(row.id, {
@@ -409,6 +421,17 @@ async function reconcile(
           reason: `rebroadcast: ${message(error)}`,
           updatedAt: at,
         });
+        // A definite node fee-cap refusal permits the next bounded step.
+        // Transport failure or any other uncertain result keeps these bytes.
+        if (error instanceof FeeCapTooLowError)
+          await replaceSend(
+            row,
+            replacements,
+            client,
+            deps,
+            runId,
+            assertLease,
+          );
       }
       return false;
   }
@@ -427,6 +450,8 @@ async function replaceSend(
   replacements: readonly SendReplacement[],
   client: ChainClient,
   deps: RunDependencies,
+  runId: string,
+  assertLease: () => Promise<void>,
 ): Promise<boolean> {
   if (
     deps.mode !== "live" ||
@@ -442,7 +467,8 @@ async function replaceSend(
     deps.now().getTime() - Date.parse(last) < REPLACEMENT_WAIT_MS
   )
     return false;
-  const result = await client.replace(row, replacements);
+  await assertLease();
+  const result = await client.replace(row, replacements, assertLease);
   if ("wait" in result) {
     deps.log({
       event: "fee_send_waiting",
@@ -455,6 +481,7 @@ async function replaceSend(
     });
     return false;
   }
+  await assertLease();
   const at = deps.now().toISOString();
   const replacement: SendReplacement = {
     id: deps.randomId(),
@@ -470,7 +497,9 @@ async function replaceSend(
   };
   // Journal before broadcast: after a restart the next run finds this
   // attempt and rebroadcasts its bytes instead of signing another one.
-  await deps.store.insertReplacement(replacement);
+  if (!(await deps.store.insertReplacement(replacement, runId, deps.now())))
+    throw new Error("Replacement lost its lease or pending attempt");
+  await assertLease();
   try {
     await client.broadcast(result.rawTx);
     await deps.store.update(row.id, {
@@ -553,13 +582,34 @@ export async function runNetwork(
     return { ...result, status: "locked" };
   }
   try {
+    // The lease must cover every send this run starts. Renew before a chunk
+    // once the interval has passed; a renewal that fails means the lease
+    // lapsed or another run took it over, so no send may be signed here.
+    const leased = async (force = false) => {
+      const at = deps.now();
+      if (ownsLock && (force || at.getTime() - renewedAt >= RUN_BUDGET_MS)) {
+        ownsLock = await deps.store.renewLock(config.network, runId, at);
+        if (!ownsLock)
+          deps.log({
+            event: "fee_conversion_lock_lost",
+            network: config.network,
+          });
+        else renewedAt = at.getTime();
+      }
+      return ownsLock;
+    };
+
+    const assertLease = async () => {
+      if (!(await leased(true))) throw new Error("Fee conversion lock lost");
+    };
     const client = deps.client(config);
     const blocked = new Set<string>();
-    // Reconciliation is read-only on chain apart from rebroadcasting the
-    // exact recorded bytes, so it also runs in dry_run after a live period.
+    // Reconciliation may rebroadcast exact bytes in dry_run. New replacement
+    // signatures require live mode and a freshly checked network lease.
     for (const row of await deps.store.openRows(config.network)) {
       try {
-        if (await reconcile(row, client, deps)) result.reconciled += 1;
+        if (await reconcile(row, client, deps, runId, assertLease))
+          result.reconciled += 1;
         else blocked.add(row.token);
       } catch (error) {
         blocked.add(row.token);
@@ -586,23 +636,6 @@ export async function runNetwork(
     const candidates = [
       ...new Set([...(await deps.projectTokens(config)), ...config.allowlist]),
     ].filter((token) => token !== usdc);
-
-    // The lease must cover every send this run starts. Renew before a chunk
-    // once the interval has passed; a renewal that fails means the lease
-    // lapsed or another run took it over, so no send may be signed here.
-    const leased = async () => {
-      const at = deps.now();
-      if (ownsLock && at.getTime() - renewedAt >= RUN_BUDGET_MS) {
-        ownsLock = await deps.store.renewLock(config.network, runId, at);
-        if (!ownsLock)
-          deps.log({
-            event: "fee_conversion_lock_lost",
-            network: config.network,
-          });
-        else renewedAt = at.getTime();
-      }
-      return ownsLock;
-    };
 
     // A recovery scan first moves fees accrued in the network's vaults into
     // the fee wallet, so the balance reads below see them as a receipt.

@@ -192,13 +192,28 @@ export class D1ConversionStore implements ConversionStore {
     );
   }
 
-  async insertReplacement(replacement: SendReplacement) {
-    await this.db
+  async insertReplacement(
+    replacement: SendReplacement,
+    runId: string,
+    now: Date,
+  ) {
+    const result = await this.db
       .prepare(
         `INSERT INTO fee_send_replacements (id, conversion_id, network, attempt,
            evm_nonce, tx_id, raw_tx, max_fee_per_gas, max_priority_fee_per_gas,
            created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM fee_converter_locks
+             WHERE network = ? AND run_id = ? AND expires_at >= ?
+          ) AND EXISTS (
+            SELECT 1 FROM fee_conversions
+             WHERE id = ? AND network = ? AND evm_nonce = ?
+               AND mode = 'live' AND state IN ('submitted', 'unknown')
+          ) AND ? = (
+            SELECT COALESCE(MAX(attempt), 0) + 1 FROM fee_send_replacements
+             WHERE conversion_id = ?
+          )`,
       )
       .bind(
         replacement.id,
@@ -211,8 +226,17 @@ export class D1ConversionStore implements ConversionStore {
         replacement.maxFeePerGas,
         replacement.maxPriorityFeePerGas,
         replacement.createdAt,
+        replacement.network,
+        runId,
+        now.toISOString(),
+        replacement.conversionId,
+        replacement.network,
+        replacement.evmNonce,
+        replacement.attempt,
+        replacement.conversionId,
       )
       .run();
+    return (result.meta?.changes ?? 0) === 1;
   }
 
   async liveValueSince(network: Network, since: string) {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { FeeCapTooLowError } from "viem";
 import {
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
@@ -800,7 +801,231 @@ describe("idempotent sends", () => {
   });
 });
 
+describe("replacement lease and restart recovery", () => {
+  async function pending() {
+    const h = harness();
+    await runNetwork(h.network, h.deps);
+    h.chain.sent.length = 0;
+    h.clock.now = new Date(h.clock.now.getTime() + 4 * 60 * 1000);
+    let replacements = 0;
+    h.chain.replace = async (_row, _history, assertLease) => {
+      await assertLease?.();
+      replacements += 1;
+      return {
+        txId: `0x${"b".repeat(64)}`,
+        rawTx: "0xreplacement",
+        maxFeePerGas: 125n,
+        maxPriorityFeePerGas: 25n,
+      };
+    };
+    const takeover = async () => {
+      h.clock.now = new Date(h.clock.now.getTime() + 15 * 60 * 1000);
+      expect(
+        await h.deps.store.acquireLock("base", "successor", h.clock.now),
+      ).toBe(true);
+    };
+    return { ...h, takeover, replacements: () => replacements };
+  }
+
+  test("a slow reconciliation cannot replace after lease takeover", async () => {
+    const h = await pending();
+    h.chain.status = async () => {
+      await h.takeover();
+      return { kind: "pending" };
+    };
+    let entered = false;
+    h.chain.replace = async () => {
+      entered = true;
+      return {
+        txId: `0x${"b".repeat(64)}`,
+        rawTx: "0xreplacement",
+        maxFeePerGas: 125n,
+        maxPriorityFeePerGas: 25n,
+      };
+    };
+    await runNetwork(h.network, h.deps);
+    expect(entered).toBe(false);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(0);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.locks()[0].run_id).toBe("successor");
+  });
+
+  test("replacement work that outlives its lease keeps the original pending", async () => {
+    const h = await pending();
+    h.chain.replace = async () => {
+      await h.takeover();
+      return {
+        txId: `0x${"b".repeat(64)}`,
+        rawTx: "0xreplacement",
+        maxFeePerGas: 125n,
+        maxPriorityFeePerGas: 25n,
+      };
+    };
+    await runNetwork(h.network, h.deps);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(0);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.rows()[0].state).toBe("submitted");
+  });
+
+  test("the replacement append refuses a successor lease taken during the database wait", async () => {
+    const h = await pending();
+    const insert = h.deps.store.insertReplacement.bind(h.deps.store);
+    h.deps.store.insertReplacement = async (...args) => {
+      await h.takeover();
+      return insert(...args);
+    };
+    await runNetwork(h.network, h.deps);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(0);
+    expect(h.chain.sent).toEqual([]);
+  });
+
+  test("an append cannot revive an original settled during the database wait", async () => {
+    const h = await pending();
+    const insert = h.deps.store.insertReplacement.bind(h.deps.store);
+    h.deps.store.insertReplacement = async (...args) => {
+      await h.deps.store.update(String(h.rows()[0].id), {
+        state: "failed",
+        reason: "canonical reverted receipt",
+      });
+      return insert(...args);
+    };
+    await runNetwork(h.network, h.deps);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(0);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.rows()[0].state).toBe("failed");
+  });
+
+  test("lease loss after journaling preserves bytes without broadcasting", async () => {
+    const h = await pending();
+    const insert = h.deps.store.insertReplacement.bind(h.deps.store);
+    h.deps.store.insertReplacement = async (...args) => {
+      const written = await insert(...args);
+      await h.takeover();
+      return written;
+    };
+    await runNetwork(h.network, h.deps);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(1);
+    expect(h.chain.sent).toEqual([]);
+    expect(h.rows()[0].state).toBe("submitted");
+  });
+
+  test("a delayed restart delivers journaled bytes before another fee step", async () => {
+    const h = await pending();
+    await runNetwork(h.network, h.deps);
+    expect(h.replacements()).toBe(1);
+    h.chain.sent.length = 0;
+    h.clock.now = new Date(h.clock.now.getTime() + 4 * 60 * 1000);
+    h.chain.status = async () => ({
+      kind: "rebroadcast",
+      rawTx: "0xreplacement",
+    });
+    await runNetwork(h.network, h.deps);
+    expect(h.replacements()).toBe(1);
+    expect(h.chain.sent).toEqual(["0xreplacement"]);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(1);
+  });
+
+  test("an explicit node fee refusal can escalate after trying the journaled bytes", async () => {
+    const h = await pending();
+    const attempts: string[] = [];
+    h.chain.status = async () => ({ kind: "rebroadcast", rawTx: "0xraw1" });
+    h.chain.broadcast = async (raw) => {
+      attempts.push(raw);
+      if (raw === "0xraw1") throw new FeeCapTooLowError();
+    };
+    await runNetwork(h.network, h.deps);
+    expect(attempts).toEqual(["0xraw1", "0xreplacement"]);
+    expect(h.replacements()).toBe(1);
+    expect(h.rows()[0].state).toBe("submitted");
+  });
+
+  test("an uncertain rebroadcast never skips to a new fee step", async () => {
+    const h = await pending();
+    h.chain.status = async () => ({ kind: "rebroadcast", rawTx: "0xraw1" });
+    h.chain.broadcastError = new Error("response lost");
+    await runNetwork(h.network, h.deps);
+    expect(h.replacements()).toBe(0);
+    expect(
+      await h.deps.store.replacements(String(h.rows()[0].id)),
+    ).toHaveLength(0);
+    expect(h.rows()[0].state).toBe("unknown");
+  });
+});
+
 describe("EVM reconciliation", () => {
+  test.each([
+    ["max fee per gas less than block base fee", true],
+    ["fee cap less than block base fee", true],
+    ["transaction is outdated", false],
+  ])(
+    "only explicit RPC fee refusal permits replacement: %s",
+    async (message, feeRefused) => {
+      const { createEvmClient } = await import("./evm");
+      const h = harness();
+      const calls: string[] = [];
+      const client = createEvmClient({
+        config: h.network,
+        limits: h.deps.limits,
+        kyberClientId: "test",
+        fetch: (async (_url: unknown, init?: RequestInit) => {
+          const request = JSON.parse(String(init?.body));
+          calls.push(request.method);
+          return Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { code: -32000, message },
+          });
+        }) as typeof fetch,
+      });
+      let failure: unknown;
+      try {
+        await client.broadcast("0x01");
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure instanceof FeeCapTooLowError).toBe(feeRefused);
+      expect(failure).toBeInstanceOf(Error);
+      expect(calls.every((method) => method === "eth_sendRawTransaction")).toBe(
+        true,
+      );
+    },
+  );
+
+  test("a transport error mentioning a low fee is still an uncertain send", async () => {
+    const { createEvmClient } = await import("./evm");
+    const h = harness();
+    const client = createEvmClient({
+      config: h.network,
+      limits: h.deps.limits,
+      kyberClientId: "test",
+      fetch: (async () => {
+        throw new Error(
+          "connection lost: max fee per gas less than block base fee",
+        );
+      }) as unknown as typeof fetch,
+    });
+    let failure: unknown;
+    try {
+      await client.broadcast("0x01");
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(FeeCapTooLowError);
+  });
+
   /**
    * A node after the recorded swap (nonce 1) landed in a finalized block: the
    * finalized nonce count is 2. Methods in `failing` answer HTTP 429; the
