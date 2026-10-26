@@ -1859,6 +1859,26 @@ function requireAction(row: CaseRow, roles: Set<Role>, action: string): void {
     );
 }
 
+async function priorCaseDecider(
+  deps: Pick<SecurityApiDependencies, "db">,
+  row: CaseRow,
+  githubId: string,
+): Promise<boolean> {
+  if (
+    row.technical_decider_github_id === githubId ||
+    row.related_party_reviewer_github_id === githubId
+  )
+    return true;
+  return (
+    (await deps.db
+      .prepare(
+        "SELECT 1 AS found FROM security_case_events WHERE case_id = ? AND actor_github_id = ? AND kind IN ('decide', 'award', 'decide-related-party', 'decide-appeal') LIMIT 1",
+      )
+      .bind(row.id, githubId)
+      .first<{ found: number }>()) !== null
+  );
+}
+
 /** Computes one human decision; nothing here is automatic (SEC-10). */
 async function planChange(
   deps: SecurityApiDependencies,
@@ -2150,11 +2170,9 @@ async function planChange(
     case "decide-appeal": {
       exactKeys(body, [...common, "outcome", "reason"]);
       requireAction(row, roles, action);
-      // The independent reviewer never decided the original outcome.
-      if (
-        row.technical_decider_github_id === actor.githubId ||
-        row.related_party_reviewer_github_id === actor.githubId
-      )
+      // The independent reviewer never decided the original outcome or an
+      // earlier appeal or related-party review on this case.
+      if (await priorCaseDecider(deps, row, actor.githubId))
         fail(403, "conflicted", "You decided this case; another reviewer must");
       const outcome = choice(body, "outcome", ["uphold", "return"] as const);
       return {
@@ -2184,18 +2202,9 @@ async function planChange(
       exactKeys(body, [...common, "outcome", "reason"]);
       requireAction(row, roles, action);
       // A later appeal must not erase an earlier reviewer's conflict. The
-      // immutable journal retains every related-party and appeal decision.
-      const priorReview = await deps.db
-        .prepare(
-          "SELECT 1 AS found FROM security_case_events WHERE case_id = ? AND actor_github_id = ? AND kind IN ('decide-related-party', 'decide-appeal') LIMIT 1",
-        )
-        .bind(row.id, actor.githubId)
-        .first<{ found: number }>();
-      if (
-        row.technical_decider_github_id === actor.githubId ||
-        row.related_party_reviewer_github_id === actor.githubId ||
-        priorReview !== null
-      )
+      // immutable journal retains every technical, award, related-party and
+      // appeal decision.
+      if (await priorCaseDecider(deps, row, actor.githubId))
         fail(
           403,
           "conflicted",

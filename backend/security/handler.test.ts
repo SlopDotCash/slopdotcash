@@ -1095,7 +1095,34 @@ describe("related-party awards", () => {
       expect(reused.body.error).toBe("conflicted");
     }
     expect((await refuse(DISPUTE_3)).body.case.awardState).toBe("ineligible");
-    await appealAndReturn(DISPUTE_4);
+    expect(
+      (
+        await act(REPORTER, related, {
+          action: "appeal",
+          reason: "The related-party refusal used the wrong facts.",
+        })
+      ).status,
+    ).toBe(200);
+    // Earlier related-party and appeal reviewers stay conflicted on a later
+    // appeal even after related_party_reviewer_github_id was overwritten.
+    for (const prior of [DISPUTE, DISPUTE_2, DISPUTE_3]) {
+      const reused = await act(prior, related, {
+        action: "decide-appeal",
+        outcome: "uphold",
+        reason: "Trying to decide a later appeal on the same case.",
+      });
+      expect(reused.status).toBe(403);
+      expect(reused.body.error).toBe("conflicted");
+    }
+    expect(
+      (
+        await act(DISPUTE_4, related, {
+          action: "decide-appeal",
+          outcome: "return",
+          reason: "Return for a new decision.",
+        })
+      ).status,
+    ).toBe(200);
     expect((await propose()).body.case.awardState).toBe("pending");
     for (const prior of [DISPUTE, DISPUTE_2, DISPUTE_3, DISPUTE_4]) {
       const reused = await act(prior, related, {
@@ -1112,6 +1139,62 @@ describe("related-party awards", () => {
     });
     expect(approved.status).toBe(200);
     expect(approved.body.case.awardState).toBe("approved");
+  });
+
+  test("a co-maintainer who decides an award or an earlier technical decision cannot review the case as dispute", async () => {
+    const env = open({
+      ...OPEN_PROGRAM,
+      approvers: {
+        ...OPEN_PROGRAM.approvers,
+        technical: [MAINTAINER, DISPUTE],
+      },
+    });
+    const separateAward = await env.receive(
+      REPORTER,
+      "2026-10-19T09:10:00.000Z",
+    );
+    await env.decide(separateAward, "award-decider-conflict", {
+      relatedParty: true,
+    });
+    // DISPUTE proposes the related-party award after MAINTAINER confirmed the
+    // finding, so technical_decider_github_id remains MAINTAINER.
+    expect((await env.award(separateAward, "800000", DISPUTE)).status).toBe(
+      200,
+    );
+    const selfApproved = await env.act(DISPUTE, separateAward, {
+      action: "decide-related-party",
+      outcome: "approve",
+      reason: "Trying to approve my own related-party award proposal.",
+    });
+    expect(selfApproved.status).toBe(403);
+    expect(selfApproved.body.error).toBe("conflicted");
+
+    const withheldAward = await env.receive(OTHER, "2026-10-19T09:20:00.000Z");
+    await env.decide(withheldAward, "withheld-award-conflict");
+    expect(
+      (
+        await env.act(DISPUTE, withheldAward, {
+          action: "award",
+          decision: "none",
+          reason: "Withholding award as a technical approver.",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await env.act(OTHER, withheldAward, {
+          action: "appeal",
+          reason: "Appealing the withheld award decision.",
+        })
+      ).status,
+    ).toBe(200);
+    const selfUpheld = await env.act(DISPUTE, withheldAward, {
+      action: "decide-appeal",
+      outcome: "uphold",
+      reason: "Trying to uphold my own award refusal.",
+    });
+    expect(selfUpheld.status).toBe(403);
+    expect(selfUpheld.body.error).toBe("conflicted");
   });
 });
 
