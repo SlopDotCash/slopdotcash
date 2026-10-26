@@ -254,6 +254,16 @@ test("a self-consistent submitted resolution cannot replace trusted work-unit re
   ).rejects.toThrow();
 });
 
+test("a same-repository PR-commit destination retains its verified source", async () => {
+  const f = fixture();
+  f.state.comments[0].body = `Replacement merged as [${short}](https://github.com/${repository.id}/pull/2/commits/${short}).`;
+  const prepared = await prepareWorkUnitEvidence(await f.collect(), [
+    repository,
+  ]);
+  expect(prepared.limitations).toEqual([]);
+  expect(prepared.claims[0].creditPullRequestId).toBe("PR_1");
+});
+
 test("full merge SHA needs no new resolution and keeps existing behavior", async () => {
   const f = fixture();
   f.state.comments[0].body = `Replacement merged as ${merge}.`;
@@ -270,6 +280,7 @@ test("full merge SHA needs no new resolution and keeps existing behavior", async
 for (const change of [
   "foreign-reference",
   "foreign-link-label",
+  "foreign-pr-commit-link",
   "wrong-actor",
   "before-merge",
 ] as const) {
@@ -279,6 +290,8 @@ for (const change of [
       f.state.comments[0].body = `Replacement merged as other/repo@${short}.`;
     if (change === "foreign-link-label")
       f.state.comments[0].body = `Replacement merged as [${short}](https://github.com/other/repo/commit/${short}).`;
+    if (change === "foreign-pr-commit-link")
+      f.state.comments[0].body = `Replacement merged as [${short}](https://github.com/other/repo/pull/123/commits/${short}).`;
     if (change === "wrong-actor") f.state.comments[0].user = author;
     if (change === "before-merge")
       f.state.comments[0].created_at = "2026-09-01T00:00:00Z";
@@ -288,10 +301,14 @@ for (const change of [
     expect(bindings.limitations).toContain(
       "PR_1: matching copied edits require authenticated retention acknowledgement",
     );
-    if (change === "foreign-reference" || change === "foreign-link-label")
-      expect(f.state.calls).not.toContain(
-        `/repos/${repository.id}/commits/${short}`,
-      );
+    if (change.startsWith("foreign-"))
+      expect(
+        f.state.calls.filter(
+          (path) =>
+            path === `/repos/${repository.id}/commits/${short}` ||
+            path.startsWith(`/repos/${repository.id}/commits/${short}?`),
+        ),
+      ).toEqual([]);
   });
 }
 

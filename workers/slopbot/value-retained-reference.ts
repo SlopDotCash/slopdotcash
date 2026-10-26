@@ -1,4 +1,5 @@
 import { sha256Hex } from "./github";
+import { sameRepositoryCommitHints } from "./value-commit-hints";
 import type { EvidenceClient, ValueEvidence } from "./value-evidence";
 
 type Source = Pick<
@@ -40,32 +41,9 @@ function abbreviations(source: Source, comment: Comment): string[] {
     !/\b(?:merged?|integrat(?:ed|ion))\b/iu.test(comment.body)
   )
     return [];
-  // A link's destination owns its repository scope. Do not reinterpret an
-  // abbreviated label on a foreign link as a reference to this repository.
-  const referencesText = comment.body
-    .replace(
-      /<a\b[^>]*\bhref=(["'])(https:\/\/(?:redirect\.)?github\.com\/[^"']+)\1[^>]*>[\s\S]*?<\/a>/giu,
-      "$2",
-    )
-    .replace(
-      /\[[^\]\n]*\]\((https:\/\/(?:redirect\.)?github\.com\/[^\s)]+)\)/gu,
-      "$1",
-    );
-  return [
-    ...new Set(
-      [
-        ...referencesText.matchAll(
-          /(?:https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:commit|blob|tree)\/|([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)@)?\b([a-f0-9]{7,39})\b/gu,
-        ),
-      ]
-        .filter(
-          (match) =>
-            (match[1] ?? match[2] ?? source.repository).toLowerCase() ===
-            source.repository.toLowerCase(),
-        )
-        .map((match) => match[3]),
-    ),
-  ];
+  return sameRepositoryCommitHints(source.repository, comment.body).filter(
+    (reference) => reference.length < 40,
+  );
 }
 
 /** Resolve short references through the same repository's authenticated
