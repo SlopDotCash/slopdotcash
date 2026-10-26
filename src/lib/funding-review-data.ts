@@ -1,6 +1,8 @@
 /** Public preparation data. These artifacts confer no approval or payment authority. */
+
 import { deriveAllocationFundingBasis } from "./allocation-funding";
 import type { CycleWalletProof } from "./cycle-index";
+import type { ActorRef } from "./leaderboard-types";
 import { findProject } from "./projects.mjs";
 import {
   isWalletAddress,
@@ -9,7 +11,7 @@ import {
 } from "./wallets";
 
 export interface FundingPreparationContributor {
-  actor: { id: string; login: string };
+  actor: ActorRef;
   scoreThirds: string;
   weight: string;
   eventCount: number;
@@ -91,7 +93,7 @@ function date(value: unknown): asserts value is string {
   )
     throw new TypeError("Invalid preparation timestamp");
 }
-function wallet(value: unknown, actor: { id: string; login: string }): void {
+function wallet(value: unknown, actor: ActorRef): void {
   if (value === null) return;
   if (!value || typeof value !== "object")
     throw new TypeError("Invalid wallet proof");

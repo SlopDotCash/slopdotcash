@@ -1,4 +1,5 @@
 import { compareActors } from "./github-actor";
+import type { ActorRef } from "./leaderboard-types";
 /**
  * Builds the cumulative cross-project leaderboard from accepted score events
  * and immutable closed-cycle records. A closed cycle replaces overlapping
@@ -33,7 +34,7 @@ type MutableGlobalLeader = Omit<GlobalLeader, "cycles" | "projects"> & {
   projectIds: Set<string>;
 };
 
-function actorFromCycle(actor: { id: string; login: string }): GitHubActor {
+function actorFromCycle(actor: ActorRef): GitHubActor {
   return {
     ...actor,
     avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(actor.login)}?size=96`,

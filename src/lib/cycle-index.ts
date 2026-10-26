@@ -1,3 +1,4 @@
+import type { ActorRef } from "./leaderboard-types";
 import type { WalletProof as CycleWalletProof } from "./wallet-proof";
 
 export type {
@@ -87,7 +88,7 @@ export interface CycleIndexEntry {
     };
   };
   contributors: Array<{
-    actor: { id: string; login: string };
+    actor: ActorRef;
     score: number;
     scoreThirds?: number;
     state:
