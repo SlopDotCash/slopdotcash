@@ -70,9 +70,9 @@ alias only.
     ReferralDistributor and is separate from the contract owner key. It does
     not transfer tokens; referrers claim their own tokens after the void
     window. The accrual job may run only in off or dry_run until the program
-    token exists, the funding line is agreed, counsel has reviewed the terms,
-    an independent root watcher is operating, and the owner explicitly
-    activates posting. Root
+    token exists, the funding line is agreed, an independent root watcher is
+    operating, and the owner explicitly activates posting. Counsel review is
+    not required (owner decision, 26 October 2026). Root
     posting stays on Robinhood Chain Testnet until that activation. This
     exception grants no authority over project vaults or contributor payments.
     The whole-root growth limit is 2,000,000 program tokens; each project still
