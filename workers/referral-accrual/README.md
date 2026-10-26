@@ -171,10 +171,9 @@ capped root that the owner can void for seven days; it holds no tokens
 order: pause the distributor, rotate the poster, void, unpause.
 
 The signer uses the estimated gas limit plus 30% and quoted EIP-1559 fees.
-There is no configured native-currency transaction or daily gas budget. The
-program-token pool and epoch caps do not limit native gas. Keeper and fee
-converter gas limits do not apply to this separate key. This repair does not
-select a gas budget or activate posting.
+Its separate native fee limits are described below. Program-token pool and
+root caps do not replace those limits. Configuring them does not activate
+posting.
 
 Local proof: `bun run test:referral-accrual:anvil` starts Anvil on chain id
 46630, deploys the compiled contract and mock token with public fixture keys,
