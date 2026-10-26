@@ -1954,10 +1954,12 @@ describe("Solana vault fee claims", () => {
           return reply([100]);
         case "getBlock":
           return reply({
-            blockhash: key(20),
-            signatures: state.sent.map((raw) =>
-              solanaBase58(unb64(raw).slice(1, 65)),
-            ),
+            blockhash: params[0] === 100 ? key(20) : key(21),
+            previousBlockhash: params[0] === 100 ? key(19) : key(20),
+            parentSlot: params[0] === 100 ? 0 : 100,
+            signatures: state.expiredMissing
+              ? []
+              : state.sent.map((raw) => solanaBase58(unb64(raw).slice(1, 65))),
           });
         case "getAccountInfo":
           return reply({

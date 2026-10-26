@@ -656,6 +656,7 @@ export function createSolanaClient(
               { operator: primaryOperator, rpc },
               { operator: secondaryOperator, rpc: second },
             ],
+            journal.expiryCoverageStore(),
           );
           if (proof) await journal.resolveSolanaExpiry(send, proof);
         }

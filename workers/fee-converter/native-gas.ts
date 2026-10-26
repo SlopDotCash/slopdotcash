@@ -1,6 +1,10 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { Network } from "./config";
-import type { ExpiryProof } from "./solana-expiry";
+import type {
+  ExpiryCoverage,
+  ExpiryCoverageStore,
+  ExpiryProof,
+} from "./solana-expiry";
 import type { FeeD1Database } from "./store";
 
 export interface NativeGasLimits {
@@ -264,6 +268,38 @@ export class NativeGasJournal {
     return results;
   }
 
+  expiryCoverageStore(): ExpiryCoverageStore {
+    return {
+      read: async (txId, operator) => {
+        const row = await this.db
+          .prepare(
+            "SELECT scan_json FROM fee_solana_expiry_scans WHERE tx_id=? AND operator=?",
+          )
+          .bind(txId, operator)
+          .first<{ scan_json: string }>();
+        return row ? (JSON.parse(row.scan_json) as ExpiryCoverage) : null;
+      },
+      save: async (previous, next, page) => {
+        await this.db
+          .prepare(
+            "INSERT INTO fee_solana_expiry_scan_steps(tx_id,operator,prior_revision,revision,fee_wallet,run_id,scan_json,page_json,observed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+          )
+          .bind(
+            next.txId,
+            next.operator,
+            previous?.revision ?? 0,
+            next.revision,
+            this.feeWallet,
+            this.runId,
+            JSON.stringify(next),
+            JSON.stringify(page),
+            this.now().toISOString(),
+          )
+          .run();
+      },
+    };
+  }
+
   async resolveSolanaExpiry(send: RecordedNativeSend, proof: ExpiryProof) {
     if (
       this.network !== "solana" ||
@@ -279,6 +315,20 @@ export class NativeGasJournal {
       throw new Error(
         "Solana expiry anchor differs from the signed reservation",
       );
+    for (const provider of proof.providers) {
+      const retained = await this.expiryCoverageStore().read(
+        send.txId,
+        provider.operator,
+      );
+      if (
+        !retained?.complete ||
+        !provider.coverage?.complete ||
+        JSON.stringify(retained) !== JSON.stringify(provider.coverage)
+      )
+        throw new Error(
+          "Solana expiry lacks positive retained block-history coverage",
+        );
+    }
     const json = JSON.stringify(proof);
     const digest = Array.from(sha256(new TextEncoder().encode(json)), (b) =>
       b.toString(16).padStart(2, "0"),

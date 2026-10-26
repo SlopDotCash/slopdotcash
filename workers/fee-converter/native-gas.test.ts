@@ -21,6 +21,7 @@ import { createEvmClient } from "./evm";
 import { runOnce } from "./index";
 import { NativeGasJournal, type NativeGasLimits } from "./native-gas";
 import { solanaNativeCost } from "./solana";
+import { proveSolanaExpiry, type RecoveryRpc } from "./solana-expiry";
 import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore, LOCK_MS } from "./store";
 
@@ -887,25 +888,59 @@ test("expiry evidence and zero-cost resolution commit atomically under the curre
   };
   await f.store.insert(row, { runId: f.run, now: f.now() });
   const [send] = await journal.unsettled();
-  const proof = {
-    txId: send.txId,
-    blockhash: solanaBase58(new Uint8Array(32).fill(1)),
-    blockhashSlot: 100,
-    providers: [
-      {
-        operator: "alchemy",
-        firstAvailableSlot: 0,
-        finalizedContextSlot: 300,
-        signatureContextSlot: 301,
-      },
-      {
-        operator: "allnodes-publicnode",
-        firstAvailableSlot: 90,
-        finalizedContextSlot: 300,
-        signatureContextSlot: 301,
-      },
-    ],
+  const blockhash = solanaBase58(new Uint8Array(32).fill(1));
+  const tipHash = solanaBase58(new Uint8Array(32).fill(2));
+  const rpc: RecoveryRpc = async <T>(method: string, params: unknown[]) => {
+    const values: Record<string, unknown> = {
+      getGenesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+      getFirstAvailableBlock: 0,
+      isBlockhashValid: { context: { slot: 300 }, value: false },
+      getSignatureStatuses: { context: { slot: 301 }, value: [null] },
+      getTransaction: null,
+      getBlock:
+        params[0] === 100
+          ? {
+              blockhash,
+              previousBlockhash: "earlier",
+              parentSlot: 99,
+              signatures: [],
+            }
+          : {
+              blockhash: tipHash,
+              previousBlockhash: blockhash,
+              parentSlot: 100,
+              signatures: [],
+            },
+    };
+    return values[method] as T;
   };
+  const providers = [
+    { operator: "alchemy", rpc },
+    { operator: "allnodes-publicnode", rpc },
+  ];
+  const missingCoverage = await proveSolanaExpiry(
+    send.txId,
+    blockhash,
+    100,
+    providers,
+  );
+  if (!missingCoverage) throw new Error("Expected fixture proof");
+  await expect(
+    journal.resolveSolanaExpiry(send, missingCoverage),
+  ).rejects.toThrow("positive retained");
+  const proof = await proveSolanaExpiry(
+    send.txId,
+    blockhash,
+    100,
+    providers,
+    journal.expiryCoverageStore(),
+  );
+  if (!proof) throw new Error("Expected retained coverage proof");
+  const firstCoverage = proof.providers[0].coverage;
+  if (!firstCoverage) throw new Error("Expected coverage");
+  await expect(
+    journal.expiryCoverageStore().save(null, firstCoverage, []),
+  ).rejects.toThrow();
   await expect(journal.reserveSolana("another-intent", 101)).rejects.toThrow(
     "daily budget",
   );

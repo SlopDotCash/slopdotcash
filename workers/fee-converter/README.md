@@ -458,7 +458,14 @@ both independent providers meet the owner-approved expiry policy (#905,
 Each provider must match mainnet genesis, retain history at least as old as
 that anchor, verify the same finalized anchor blockhash, return false for
 `isBlockhashValid` at finalized commitment, and return no full-history
-signature or finalized transaction. Stale contexts, pruned history, unknown
+signature or finalized transaction. Null indexes alone are insufficient: both
+providers must also return every finalized block and its complete signature list
+from a common expired horizon back to the signed anchor. Each parent slot and
+blockhash must link, and none may contain the signed transaction. The scan
+retains immutable page evidence and a durable cursor under the current lease,
+processing up to 32 blocks per provider per run; restarts resume the fixed
+horizon. Missing blocks or signature lists keep the hold.
+Stale contexts, pruned history, unknown
 or identical provider operators, receipt disagreement and provider failure
 keep the hold. A null receipt alone never releases native gas.
 
