@@ -373,9 +373,10 @@ async function relatedPullRequests(
   for (const text of sourceTexts) {
     // Link destinations own the reference scope. In release notes, a label
     // such as #412 may point to an upstream repository rather than this one.
+    // owner/repo starts only at a name boundary, so each run is read once.
     const referencesText = githubLinkDestinations(text);
     for (const match of referencesText.matchAll(
-      /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu,
+      /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu,
     )) {
       const targetRepository = match[1] ?? match[3] ?? repository;
       const targetNumber = Number(match[2] ?? match[4]);
@@ -593,7 +594,7 @@ export async function collectValueEvidence(
   )
     throw new Error("Repository policy does not match the evidence source");
   const path = `${root}/pulls/${number}`;
-  const rawPull = await client.get<Pull & { created_at: string }>(path);
+  const rawPull = await client.get<Pull>(path);
   if (!rawPull) throw new Error("Pull request unavailable");
   const {
     node_id,
@@ -894,7 +895,6 @@ export async function collectValueEvidence(
           repositoryDatabaseId: repositoryIdentity.id,
           pull,
           comments,
-          createdAt: rawPull.created_at,
         })
       : { references: [], limitations: [] };
   limitations.push(...retained.limitations);

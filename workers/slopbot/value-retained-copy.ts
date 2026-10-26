@@ -142,13 +142,13 @@ export async function retainedCopySources(
         Date.parse(comment.created_at) >=
           Date.parse(accepted.merged_at as string) &&
         /\b(?:merged?|integrat(?:ed|ion))\b/iu.test(comment.body) &&
-        // A full SHA has no collected reference, so it cannot read GitHub's
-        // creation time. GitHub numbers PRs in creation order: a lower number
-        // proves this PR existed before the accepted PR, so before its merge.
-        ((evidence.pull.number < accepted.number &&
-          sameRepositoryCommitHints(evidence.repository, comment.body).some(
-            (sha) => sha.length === 40 && sha === accepted.merge_commit_sha,
-          )) ||
+        // GitHub numbers PRs in creation order. A lower number proves this
+        // PR existed before the accepted PR was opened. A duplicate opened
+        // later, even while the accepted PR was under review, is no original.
+        evidence.pull.number < accepted.number &&
+        (sameRepositoryCommitHints(evidence.repository, comment.body).some(
+          (sha) => sha.length === 40 && sha === accepted.merge_commit_sha,
+        ) ||
           (await hasRetainedMergeReference(evidence, comment, integration)))
       )
         acknowledged = true;

@@ -337,19 +337,28 @@ never copied from the submitted assessment into the fresh source.
 
 For copied work, a maintainer's short merge reference must resolve through
 GitHub in the same repository to the exact accepted merge. GitHub must also
-show that the commenter merged that pull request, that the comment came after
-the merge, and that the closed PR was created before the merge. A later
-duplicate is never the original. Collection binds the resolution to the
-original comment, actor, timestamps and repository/PR identities. Import and
-publication refresh it. Collection skips indirect-accepted sources, and more
-than 16 hints is a limitation, not an empty result. Missing, ambiguous or
-changed evidence cannot assign the copied work; complete edits, author
-retention and unique original attribution remain required. A different or
-unlinked primary author on either commit is a limitation. Full merge
-references keep their stored evidence and add no request, so the closed PR
-must have a lower GitHub PR number than the accepted PR. A link destination,
-reference definition or `user@SHA` fork owns scope for every GitHub host
-spelling. No acknowledgement text or historical capture is rewritten.
+show that the commenter merged that pull request and that the comment came
+after the merge. A GitHub error in these merge-record lookups stops
+collection. Short and full merge references use one order rule: the closed PR
+must have a lower GitHub PR number than the accepted PR. GitHub numbers PRs in
+creation order, so a duplicate opened after the accepted PR, even during its
+review, is never the original. PR numbers do not show when commits entered a
+PR: an earlier PR that later receives the copied commits can still take
+retained credit when the merger acknowledges it. Collection binds the
+resolution to the original comment, actor, timestamps and repository/PR
+identities. Import and publication refresh it. Collection skips
+indirect-accepted sources. More than 16 hints in the merge comments, counted
+for each comment and including all-digit hints, is a limitation, not an empty
+result. Missing, ambiguous or changed evidence cannot assign the copied work;
+complete edits, author retention and unique original attribution remain
+required. A different or unlinked primary author on either commit is a
+limitation. Full merge references add no request. Commit hints drop foreign
+GitHub URLs in any `https://`, `http://` or `www.` spelling, foreign
+`owner/repo@SHA` and `user@SHA` forms, reference-style labels, and the labels
+of plain Markdown links and quoted `<a href>` links to GitHub. Other link
+forms, for example a link with a title, can still give a hint from the label,
+so the GitHub merge record is the authority. No acknowledgement text or
+historical capture is rewritten.
 
 Historical resolution evidence must
 remain source-bound and pass the joint record's freshness and publication gates.
