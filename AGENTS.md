@@ -456,12 +456,12 @@ Production deploys through the checked-in GitHub Actions workflow only. Never
 deploy from a package script, local working tree, PR, feature branch, fork head,
 or tag.
 
-Required protected-environment secrets are `CLOUDFLARE_API_TOKEN` and
+Required environment secrets are `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`; Actions supplies `GITHUB_TOKEN` for ingestion. The
-`eliza-army-production` environment allows only `main` and disallows
-administrator bypass. Successful protected merges deploy automatically. Repository rules
-require a pull request, resolved threads, and non-fast-forward history with no
-bypass actors.
+`eliza-army-production` environment allows only `main`. Merges to `main`
+start the normal release workflow automatically. Branch protections and
+rulesets are not a release requirement (owner decision, 25 October 2026).
+Do not add or restore them during release work unless the owner asks.
 
 Production releases use the main-only `eliza-army-production` environment.
 No separate manual release approval is required. Publication credentials must
