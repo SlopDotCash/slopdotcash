@@ -30,7 +30,9 @@ mock.module(fileURLToPath(new URL("./projects.mjs", import.meta.url)), () => ({
   findProject: (id: string) => (id === "eliza" ? eliza200 : null),
 }));
 
-const { assertRewardAllocationManifest, feeForPrincipal } = await import("./rewards");
+const { assertRewardAllocationManifest, feeForPrincipal } = await import(
+  "./rewards"
+);
 
 function fee200Manifest() {
   return {

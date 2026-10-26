@@ -758,9 +758,11 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
           ? normalizedReward.capMinor
           : project.reward.monthlyCapMinor) ||
     normalizedReward.sharePartsPerMillion !== null ||
+    // The fee rounds up, as feeForPrincipal in rewards.ts (PRD section 6).
     BigInt(normalizedReward.feeMinor) !==
       (BigInt(normalizedReward.approvedMinor) *
-        BigInt(project.reward.feeBasisPoints)) /
+        BigInt(project.reward.feeBasisPoints) +
+        9_999n) /
         10_000n;
   if (
     (isExternal &&
