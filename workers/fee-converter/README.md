@@ -424,8 +424,12 @@ October 2026: Base 0.0001 ETH per transaction and 0.001 ETH per UTC day, with a
 0.001 ETH and 0.01 ETH; Robinhood 0.0002 ETH and 0.002 ETH. This latest approval
 supersedes the earlier values. They are set in `FEE_CONVERTER_NATIVE_BUDGETS`.
 Base needs a positive allowance for data and operator fees; Ethereum uses
-zero additional allowance. Robinhood remains retain-only and loads no key. Solana uses the
-`FEE_CONVERTER_SOLANA_FEE_MICRO` estimate for its gas multiple and has no wei budget.
+zero additional allowance. Robinhood remains retain-only and loads no key.
+Solana's separate rotation authority is verified, but live signing and release
+remain blocked until its approved native transaction/day limits and durable
+cost accounting are implemented. `FEE_CONVERTER_SOLANA_FEE_MICRO` is a value
+estimate for the gas multiple, not a native spending limit. No EVM, keeper or
+referral budget supplies a Solana default.
 
 Before each approval, swap, fee claim or replacement, price the final gas
 limit and fee fields, include Base's additional allowance, and recheck the
@@ -536,7 +540,8 @@ the Worker no sweep power.
 6. Fund each fee wallet with a small gas balance.
 7. Land a pull request with `FEE_CONVERTER_MODE = "live"`. That reviewed
    pull request is the activation record MVP-07c requires. The release step
-   refuses live mode when an enabled network lacks its key.
+   refuses live mode when an enabled network lacks its key, or enables Solana
+   before its native transaction/day limits and durable accounting are ready.
 8. Check the first `finalized` rows against the explorer: input debit, USDC
    credit to the fee wallet, no other transfer.
 9. To stop at once, land `FEE_CONVERTER_MODE = "off"`, or set the repository
@@ -617,7 +622,8 @@ loses its network lease. It is not live Kyber, Circle or production evidence.
 
 The Solana check uses a local
 `solana-test-validator` (port 28899) that clones the mainnet Jupiter and
-Whirlpool programs and one JUP/USDC route.
+Whirlpool programs and one JUP/USDC route. Its local-only override exercises
+the signing path without enabling the hosted Worker.
 They need `anvil` and `solana-test-validator` on `PATH` and never touch a real
 chain.
 
