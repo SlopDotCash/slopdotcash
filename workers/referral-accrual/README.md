@@ -201,3 +201,37 @@ confirmed that the program token is not deployed yet. Keep the reviewed mode
 Off until the actual token, funded distributor and required operating controls
 are verified. The November start and program amounts remain unchanged. A
 deployed Off Worker does not file accruals, sign roots or spend gas.
+
+### Independent root watch
+
+`scripts/check-referral-roots.ts` reads the public accrual API and Robinhood
+RPC without a key. The main-only `referral-root-watch.yml` job runs hourly.
+Its checked configuration names the distributor, token, deployment block and
+runtime-code hash. With Off mode and no deployment, it reports inactive; that
+is not qualification. Any configured deployment requires complete evidence.
+
+The checker verifies exact file hashes, ordered months, accrual arithmetic and
+caps, cumulative totals, wallet pins, tree roots and proofs. It compares the
+ordered nonempty files with canonical `RootPosted` and `RootVoided` receipts,
+checks event coverage against the contract, and distinguishes pending from
+finalized evidence. Unposted files are pending. Event scans use the network's
+bounded block ranges, including the poster's delayed void reconciliation.
+Contract epochs include voided posts; file epochs include
+empty files. The recorded period mapping is derived from the poster's ordered
+file sequence, because the contract does not store periods. Repeated roots
+remain separate ordered records.
+
+A month must appear by 02:00 UTC after it closes; the filing cron runs at
+01:23. Before that deadline a missing new file is pending. Missing, stale,
+changed or unavailable evidence after the deadline fails the job. GitHub
+Actions records the failure and summary. Configure and verify the operator's
+workflow-failure notification before activation; a passing job does not prove
+notification delivery. This watcher verifies the public file-to-root boundary.
+It does not independently re-decide private payout authority, holds or bans.
+
+The existing Anvil workflow exercises the watcher through the real public API
+handler and distributor. It proves good files and receipts, pending/final voids,
+and refusal of changed file bytes, roots, totals, wallets, missing events,
+noncanonical receipts, stale months and provider failure.
+The client fixture rejects ranges above Robinhood's 9,000-block limit and
+reconciles a posted and voided root after that range has elapsed.

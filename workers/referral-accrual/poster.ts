@@ -24,6 +24,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { isCanonicalEvmReceipt } from "../../contracts/evm/adapter";
+import { scanReferralLogs } from "./chain-logs";
 import type { PosterConfig } from "./config";
 import type {
   ChainState,
@@ -386,14 +387,20 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
           throw new Error("Referral epoch differs");
         let voided = false;
         if (epoch.voided) {
-          const logs = await client.getLogs({
-            address: distributor,
-            event: ROOT_VOIDED,
-            args: { epoch: BigInt(row.epoch) },
-            fromBlock: receipt.blockNumber,
-            toBlock: finalized.number,
-            strict: true,
-          });
+          const logs = await scanReferralLogs(
+            config.network,
+            receipt.blockNumber,
+            finalized.number,
+            (fromBlock, toBlock) =>
+              client.getLogs({
+                address: distributor,
+                event: ROOT_VOIDED,
+                args: { epoch: BigInt(row.epoch) },
+                fromBlock,
+                toBlock,
+                strict: true,
+              }),
+          );
           if (logs.length === 0) return { kind: "pending" };
           if (logs.length !== 1)
             throw new Error("Referral void evidence differs");
