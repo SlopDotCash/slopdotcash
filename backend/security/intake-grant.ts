@@ -24,6 +24,7 @@ import {
   pkceChallenge,
   randomToken,
 } from "../../workers/identity/crypto";
+import { cookieValue } from "../http";
 import {
   type IntakeInstallationCheck,
   type PrivateAdvisoryClient,
@@ -117,14 +118,6 @@ async function open(
   } catch {
     return null;
   }
-}
-
-function cookieValue(request: Request, name: string): string | null {
-  const found = (request.headers.get("cookie") ?? "")
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${name}=`));
-  return found === undefined ? null : found.slice(name.length + 1);
 }
 
 /** A hash of the site session cookie; binds the grant to that session. */
