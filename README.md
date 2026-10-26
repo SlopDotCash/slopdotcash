@@ -173,9 +173,10 @@ bun run test:e2e
 ```
 
 `bun run verify` checks the committed source records (brand tokens, projects,
-skills, evaluations, cycles, and protocol identity); audits dependencies; runs
-type, format, and lint checks; and produces the static build. It also runs the
-Slopbot unit suite; browser behavior is covered by `bun run test:e2e`.
+skills, evaluations, disclosures, contribution quality, cycles, and protocol
+identity); audits dependencies; runs type, format, and lint checks; and
+produces the static build. It also runs the Slopbot unit suite; browser
+behavior is covered by `bun run test:e2e`.
 
 ## Trust and deployment
 

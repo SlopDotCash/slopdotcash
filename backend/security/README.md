@@ -377,7 +377,8 @@ Owner decision, 26 October 2026 (PRD section 11, #910): the remaining
 private-reporting live checks are accepted without proof. They are non-admin
 delivery, automatic analysis, maintainer notices, interrupted-submission
 recovery and funded private-bounty settlement. Record them as waived, not
-passed.
+passed. This acceptance grants no signing or spending authority, activates no
+service, and does not establish completion of the whole MVP.
 
 A moderator account ban prevents an account from proposing or approving a new
 bounty award, or receiving a new bounty reservation. The database checks both
