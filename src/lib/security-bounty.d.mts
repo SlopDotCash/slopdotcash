@@ -1,4 +1,4 @@
-import type { SecurityEscrowPolicy } from "./escrow-policy.mjs";
+import type { EscrowChain, SecurityEscrowPolicy } from "./escrow-policy.mjs";
 /** Types for the public terms of a private security bounty program. */
 
 export type SecurityProgramStatus =
@@ -16,7 +16,7 @@ export interface SecurityApprover {
 export interface SecurityBountyAmount {
   readonly currency: "USD" | "USDC";
   readonly decimals: 2 | 6;
-  readonly network: "base" | "ethereum" | "robinhood" | "solana" | null;
+  readonly network: EscrowChain | null;
   readonly grossMinor: string;
 }
 

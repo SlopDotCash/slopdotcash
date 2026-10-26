@@ -1,6 +1,8 @@
 /** Types for the one reward asset a project pays in. */
 
-export type RewardAssetNetwork = "base" | "ethereum" | "robinhood" | "solana";
+import type { EscrowChain } from "./escrow-policy.mjs";
+
+export type RewardAssetNetwork = EscrowChain;
 export type RewardAssetKind = "stablecoin" | "token";
 
 export interface RewardAssetNetworkDefinition {

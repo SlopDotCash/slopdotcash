@@ -1,4 +1,5 @@
-import type { EscrowPolicy } from "./escrow-policy.mjs";
+import type { EscrowChain, EscrowPolicy } from "./escrow-policy.mjs";
+import type { FundingAddressRoute } from "./funding-address.mjs";
 import type { PayoutExclusion } from "./payout-exclusions.mjs";
 import type { ContributionField } from "./project-schema.mjs";
 /** Types for the public project and reward-policy registry. */
@@ -14,13 +15,7 @@ export interface ProjectFundingPolicy {
   readonly mode: "direct-noncustodial";
   readonly disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.";
   readonly recordsPath: string;
-  readonly addresses: readonly {
-    readonly network: "base" | "bitcoin" | "ethereum" | "solana";
-    readonly asset: "BTC" | "USDC";
-    readonly address: string;
-    readonly effectiveAt: string;
-    readonly replacedAt: string | null;
-  }[];
+  readonly addresses: readonly FundingAddressRoute[];
 }
 
 export interface ProjectExternalEvaluationsPolicy {
@@ -46,7 +41,7 @@ export interface ProjectRewardPolicy {
   readonly kind: RewardKind;
   /** The paid symbol: the network stablecoin, or `rewardAsset.symbol`. */
   readonly currency: string | null;
-  readonly chain: "solana" | "base" | "robinhood" | "ethereum" | null;
+  readonly chain: EscrowChain | null;
   readonly rewardStartAt: string;
   readonly cycle: "calendar-month-utc";
   readonly monthlyCapMinor: string;
