@@ -6,6 +6,7 @@ import { formatBaseUnits } from "./lib/payments/contracts";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { useAction } from "./lib/use-action";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
 import OwnerReserveRelease from "./OwnerReserveRelease";
 import { loginHref } from "./Points";
@@ -65,9 +66,8 @@ export default function OwnerAwards({
   const [period, setPeriod] = useState(previousMonth);
   const [view, setView] = useState<MonthlyOwnerView | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const { busy, error, run: act } = useAction();
   const [notice, setNotice] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const base = `payments/projects/${encodeURIComponent(project.id)}`;
@@ -108,18 +108,12 @@ export default function OwnerAwards({
       throw new Error(body.message ?? "Awards are unavailable. Retry.");
     return body;
   }
-  async function run(action: () => Promise<void>) {
-    setBusy(true);
-    setError("");
+  function run(action: () => Promise<void>) {
     setNotice("");
     setSignedOut(false);
-    try {
-      await action();
-    } catch (reason) {
-      setError(errorMessage(reason, "Awards are unavailable."));
-    } finally {
-      setBusy(false);
-    }
+    return act(action, (reason) =>
+      errorMessage(reason, "Awards are unavailable."),
+    );
   }
   function load(event: FormEvent) {
     event.preventDefault();
