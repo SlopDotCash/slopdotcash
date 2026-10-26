@@ -31,6 +31,9 @@ never a private intake.
   reservation records the attempted object even if storage or attachment fails.
   A retry may use the same bytes; choosing different bytes requires a new run.
   A reservation alone does not mark the trace uploaded or permit finalization.
+  A participation ban refuses new intents, reservations, attachments, and
+  finalization. Bytes written under a reservation made before the ban stay
+  unattached.
   Apply migration 0058 before deploying the updated trace handler.
 - There is no trace update, delete, listing, or public-read API.
 - The bucket must have no lifecycle expiration rule. Permanent retention is an

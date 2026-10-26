@@ -968,7 +968,28 @@ test("an explicit moderator ban blocks new contribution intake without blaming t
       }),
       trace,
     );
-  expect((await newRun()).status).toBe(201);
+  const openedBeforeBan = await newRun();
+  expect(openedBeforeBan.status).toBe(201);
+  const preBanRunId = (
+    (await openedBeforeBan.json()) as { serverRunId: string }
+  ).serverRunId;
+  const newIntent = (runId: string) =>
+    handleTraceApi(
+      new Request(`http://localhost/api/v1/runs/${runId}/trace-intents`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "idempotency-key": `ban-workflow-intent-${++run}-0123456789`,
+        },
+        body: JSON.stringify({
+          sha256: "b".repeat(64),
+          sizeBytes: 16,
+          contentType: "text/plain",
+        }),
+      }),
+      trace,
+    );
   const decision = {
     action: "ban",
     reason: "Evidence identifies the selected account, not the applicant",
@@ -1032,6 +1053,9 @@ test("an explicit moderator ban blocks new contribution intake without blaming t
   expect(refused.status).toBe(403);
   expect((await refused.json()).error).toBe("participation_banned");
   expect((await newRun()).status).toBe(403);
+  const refusedIntent = await newIntent(preBanRunId);
+  expect(refusedIntent.status).toBe(403);
+  expect((await refusedIntent.json()).error).toBe("participation_banned");
   expect(
     (
       await t.create(
@@ -1155,6 +1179,7 @@ test("an explicit moderator ban blocks new contribution intake without blaming t
     afterRevision: null,
   });
   expect((await newRun()).status).toBe(201);
+  expect((await newIntent(preBanRunId)).status).toBe(201);
   expect(await hasParticipationBan(t.db, "900000004")).toBe(true);
   expect((await t.call("GET", "project-account-bans", "")).body).toEqual({
     schemaVersion: "slop-account-bans:v1",
