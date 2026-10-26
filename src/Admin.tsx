@@ -38,7 +38,7 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { loginHref } from "./Points";
-import { formatTime } from "./Presentation";
+import { formatDateTime } from "./Presentation";
 
 export function SignInPanel({
   state,
@@ -593,7 +593,7 @@ function ProjectEditor({
         ) : null}
         <p className="admin-status">
           {project.manifest.rewardAsset
-            ? `Stored: ${project.manifest.rewardAsset.symbol}, ${project.manifest.rewardAsset.decimals} decimals, verified ${formatTime(project.manifest.rewardAsset.verifiedAt)} UTC.`
+            ? `Stored: ${project.manifest.rewardAsset.symbol}, ${project.manifest.rewardAsset.decimals} decimals, verified ${formatDateTime(project.manifest.rewardAsset.verifiedAt)}.`
             : "No reward asset is stored yet."}{" "}
           A changed token is read from chain once when you save.
         </p>
@@ -862,7 +862,7 @@ function ProjectsSection({
                     <dt>Revision</dt>
                     <dd>
                       {project.revision} · updated{" "}
-                      {formatTime(project.updatedAt)} UTC
+                      {formatDateTime(project.updatedAt)}
                     </dd>
                   </div>
                   <div>

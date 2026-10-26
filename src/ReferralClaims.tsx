@@ -11,6 +11,7 @@ import {
   sendReferralClaim,
 } from "./lib/referral-claims";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { formatDateTime } from "./Presentation";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
 interface Pending {
@@ -243,12 +244,9 @@ export function ReferralClaims() {
       {data.program && <p>Network: {networkLabel(data.program.network)}.</p>}
       {data.observedAt && (
         <p>
-          Updated {new Date(data.observedAt).toLocaleString()}.{" "}
+          Updated {formatDateTime(data.observedAt)}.{" "}
           {data.finalizedAt && (
-            <>
-              Chain evidence through{" "}
-              {new Date(data.finalizedAt).toLocaleString()}.
-            </>
+            <>Chain evidence through {formatDateTime(data.finalizedAt)}.</>
           )}
         </p>
       )}
@@ -271,9 +269,8 @@ export function ReferralClaims() {
       )}
       {data.pendingUntil && (
         <p>
-          The next root’s wait ends{" "}
-          {new Date(data.pendingUntil).toLocaleString()}. A background check
-          must verify it before claims open.
+          The next root’s wait ends {formatDateTime(data.pendingUntil)}. A
+          background check must verify it before claims open.
         </p>
       )}
       {data.wallet ? (
