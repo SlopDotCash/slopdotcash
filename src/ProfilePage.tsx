@@ -155,6 +155,7 @@ export function ProfilePage({
   ) {
     return (
       <main className="shell route-main">
+        <DataNotice state={state} retry={retry} />
         <ProfilePoints
           key={login.toLowerCase()}
           login={login}

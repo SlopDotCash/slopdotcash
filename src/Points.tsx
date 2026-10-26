@@ -640,7 +640,12 @@ export function ProfilePoints({
             {summary}
             <div>
               <strong>
-                {state.status === "ready" && (m || identity || recorded)
+                {state.status === "ready" &&
+                (m ||
+                  identity ||
+                  recorded ||
+                  // A known actor with no Points record and no membership has none.
+                  (actorId && joinStatus === "absent"))
                   ? (
                       (m?.total ?? 0) +
                       (identity?.welcome ?? 0) +

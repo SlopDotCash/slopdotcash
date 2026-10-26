@@ -5,8 +5,10 @@
  * snapshot comes from the real snapshot builder; the exclusions are added
  * in the published shape and pass the snapshot validator.
  */
+import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
@@ -89,8 +91,9 @@ async function prepareProfile(
   page: Page,
   snapshot: ReturnType<typeof createLeaderboardSnapshot>,
   directory: GitHubActor[] = [],
+  viewedAt = VIEWED_AT,
 ) {
-  await page.clock.setFixedTime(VIEWED_AT);
+  await page.clock.setFixedTime(viewedAt);
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshot }),
   );
@@ -306,6 +309,60 @@ test("a review-only nonmember sees accurate snapshot omissions", async ({
   });
   await explanation.press("Enter");
   await expect(page).toHaveURL(/\/how-it-works#points$/u);
+  expect(errors).toEqual([]);
+});
+
+/** Membership lookup runs only on the product origin, so serve the build there. */
+async function serveProductSite(page: Page) {
+  const { site } = deploymentOrigins(
+    deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
+  );
+  await page.route(`${site}/**`, (route) =>
+    route.fulfill({
+      path: join(
+        process.cwd(),
+        "dist",
+        route.request().resourceType() === "document"
+          ? "index.html"
+          : new URL(route.request().url()).pathname,
+      ),
+    }),
+  );
+  // No session, and the membership lookup finds no member for this login.
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(`${site}/api/v1/payments/actors/*/direct-transfers`, (r) =>
+    r.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+  );
+  return site;
+}
+
+test("a stale review-only profile shows the stale notice and zero points", async ({
+  page,
+}) => {
+  const site = await serveProductSite(page);
+  const errors = await prepareProfile(
+    page,
+    reviewOnlySnapshot(),
+    [],
+    new Date(Date.parse(GENERATED_AT) + 10 * 60 * 60 * 1000),
+  );
+  await page.goto(`${site}/contributors/${REVIEW_ONLY.login}`, {
+    waitUntil: "networkidle",
+  });
+  await expect(page.getByText("Points may be outdated")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Review credit exclusions" }),
+  ).toBeVisible();
+  const points = page.getByRole("region", { name: "Slop Points" });
+  await expect(points).toContainText("No recorded points yet.");
+  await expect(
+    points
+      .getByText("total points", { exact: true })
+      .locator("xpath=preceding-sibling::strong"),
+  ).toHaveText("0");
+  await expect(points).not.toContainText("Unavailable");
   expect(errors).toEqual([]);
 });
 

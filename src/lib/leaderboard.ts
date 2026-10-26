@@ -2804,7 +2804,11 @@ export function createLeaderboardSnapshot(
         payments.attributions,
       ),
       attributionOrder: payments.attributions.map((record) => record.id),
-      reviewExclusions: payments.reviewExclusions ?? [],
+      // Only profiles read the reviewer, from the score copy. This copy omits
+      // it to save bytes under the 25 MiB Pages per-file limit.
+      reviewExclusions: (payments.reviewExclusions ?? []).map(
+        ({ reviewer: _reviewer, ...exclusion }) => exclusion,
+      ),
       attributions: changedPaymentRecords(
         snapshot.attributions,
         payments.attributions,
