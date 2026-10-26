@@ -32,6 +32,7 @@ export interface NativeAttempt {
   conversion_id: string | null;
   actual_wei: string | null;
   settled_day: string | null;
+  receipt_block_hash: string | null;
 }
 export interface RecordedNativeSend {
   txId: string;
