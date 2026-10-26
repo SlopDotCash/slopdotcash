@@ -79,6 +79,7 @@ import {
   formatDate,
   formatDateTime,
   formatMicroUsdc,
+  formatPointsFromThirds,
   monthlyPoolLabel,
   monthlyPoolPointsOnly,
   monthlyPoolUnfunded,
@@ -1532,11 +1533,6 @@ function ProjectPage({
   );
 }
 
-/** Display historical third-based credits in the canonical integer point unit. */
-function thirdsLabel(thirds: number): string {
-  return (thirds * 10).toLocaleString();
-}
-
 function HowItWorksPage() {
   const protocolRoot = `${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/protocol`;
   return (
@@ -1645,13 +1641,14 @@ function HowItWorksPage() {
             </p>
             <p>
               Slopbot debits a closed pull request once, from its published
-              penalty table: spam {thirdsLabel(PENALTY_TABLE.spam.debitThirds)},
-              scam or malicious {thirdsLabel(PENALTY_TABLE.scam.debitThirds)}, a
-              clear violation of a quoted project rule{" "}
-              {thirdsLabel(PENALTY_TABLE.gaming.debitThirds)}. A debit lowers
-              only that project and UTC month, never below zero, and never
-              changes an approved, scheduled or paid award. An upheld appeal or
-              a maintainer reopen removes it.
+              penalty table: spam{" "}
+              {formatPointsFromThirds(PENALTY_TABLE.spam.debitThirds)}, scam or
+              malicious {formatPointsFromThirds(PENALTY_TABLE.scam.debitThirds)}
+              , a clear violation of a quoted project rule{" "}
+              {formatPointsFromThirds(PENALTY_TABLE.gaming.debitThirds)}. A
+              debit lowers only that project and UTC month, never below zero,
+              and never changes an approved, scheduled or paid award. An upheld
+              appeal or a maintainer reopen removes it.
             </p>
             <p>
               Owners, funded employees and related parties can have an explicit

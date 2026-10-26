@@ -35,6 +35,7 @@ import {
   type UnsafeDestinationReport,
   type WalletProof,
 } from "./rewards";
+import { eventThirds } from "./score-penalties";
 
 export type RewardCycleProposal =
   | ExternalContributionShareManifest
@@ -143,8 +144,7 @@ export function additiveReviewBudgetWeights(
     if (event.category !== "substantive-review") continue;
     weights.set(
       event.actor.id,
-      (weights.get(event.actor.id) ?? 0) +
-        (event.scoreThirds ?? Math.round(event.points * 3)),
+      (weights.get(event.actor.id) ?? 0) + eventThirds(event),
     );
   }
   return [...weights].map(([actorId, scoreThirds]) => ({

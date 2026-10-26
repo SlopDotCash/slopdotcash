@@ -16,6 +16,7 @@ import {
   formatDate,
   formatMicroUsdc,
   formatPercent,
+  formatPointsFromThirds,
   monthlyPoolLabel,
   monthlyPoolUnfunded,
   reviewBudgetLabel,
@@ -108,14 +109,14 @@ export function CycleAllocation({
                   </td>
                   <td>
                     <strong>
-                      {(leader.scoreThirds * 10).toLocaleString()}
+                      {formatPointsFromThirds(leader.scoreThirds)}
                     </strong>
                     <ReviewContribution
                       reviewer={reviewers.get(leader.actor.id)}
                     />
                     {leader.penaltyThirds > 0 ? (
                       <small>
-                        After a {(leader.penaltyThirds * 10).toLocaleString()}{" "}
+                        After a {formatPointsFromThirds(leader.penaltyThirds)}{" "}
                         point Slopbot penalty
                       </small>
                     ) : null}
@@ -192,7 +193,7 @@ function ReviewContribution({ reviewer }: { reviewer?: ReviewerLeader }) {
   if (!reviewer) return null;
   return (
     <small className="review-score-detail">
-      Includes {(reviewer.reviewThirds * 10).toLocaleString()} review points ·{" "}
+      Includes {formatPointsFromThirds(reviewer.reviewThirds)} review points ·{" "}
       {reviewer.reviewEventCount} scored review
       {reviewer.reviewEventCount === 1 ? "" : "s"}
     </small>

@@ -12,7 +12,11 @@ import type { CycleIndex } from "./cycle-index";
 import type { GitHubActor, LeaderboardSnapshot } from "./leaderboard";
 import { type ProjectView, requiredProjection } from "./project-view";
 import { findIngestedProjectByRepositoryId } from "./projects.mjs";
-import { type PenaltyDeductions, penaltyDeductions } from "./score-penalties";
+import {
+  eventThirds,
+  type PenaltyDeductions,
+  penaltyDeductions,
+} from "./score-penalties";
 
 export interface GlobalLeader {
   actor: GitHubActor;
@@ -136,7 +140,7 @@ export function createGlobalLeaders(
     const key = cycleKey(project.id, event.occurredAt.slice(0, 7));
     const current = byActor.get(event.actor.id) ?? emptyLeader(event.actor);
     current.actor = event.actor;
-    current.score += event.scoreThirds ?? Math.round(event.points * 3);
+    current.score += eventThirds(event);
     current.cycleKeys.add(key);
     current.projectIds.add(project.id);
     byActor.set(event.actor.id, current);

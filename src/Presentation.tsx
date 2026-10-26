@@ -3,6 +3,7 @@ import { type ReactNode, useState } from "react";
 import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
 import type { GitHubActor, LeaderboardSnapshot } from "./lib/leaderboard";
+import { POINTS_PER_THIRD } from "./lib/points";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 
@@ -280,6 +281,11 @@ export function Avatar({
       {label}
     </span>
   );
+}
+
+/** Integer credit-thirds in the displayed Slop Points unit. */
+export function formatPointsFromThirds(thirds: number): string {
+  return (thirds * POINTS_PER_THIRD).toLocaleString();
 }
 
 export function formatPercent(partsPerMillion: number): string {
