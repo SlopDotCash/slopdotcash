@@ -593,6 +593,8 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           ORDER BY project_id, sequence`,
       )
       .all<EnforcementRow>();
+    if (!result.success || !result.results)
+      throw new Error("Project enforcement records are unavailable");
     const reviews = await this.db
       .prepare(
         "SELECT enforcement_id, assessment_id, malicious_assessment_ids FROM project_vetting_reinstatements",
@@ -602,8 +604,10 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
         assessment_id: string;
         malicious_assessment_ids: string;
       }>();
+    if (!reviews.success || !reviews.results)
+      throw new Error("Project enforcement reviews are unavailable");
     const byEnforcement = new Map(
-      (reviews.results ?? []).map((review) => [
+      reviews.results.map((review) => [
         review.enforcement_id,
         {
           assessmentId: review.assessment_id,
@@ -622,8 +626,10 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
         github_id: string;
         github_login: string;
       }>();
+    if (!bans.success || !bans.results)
+      throw new Error("Project account bans are unavailable");
     const bansByEnforcement = new Map<string, GithubActor[]>();
-    for (const ban of bans.results ?? [])
+    for (const ban of bans.results)
       bansByEnforcement.set(ban.enforcement_id, [
         ...(bansByEnforcement.get(ban.enforcement_id) ?? []),
         { githubId: ban.github_id, githubLogin: ban.github_login },
@@ -638,7 +644,10 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
         github_id: string;
         github_login: string;
       }>();
-    return (result.results ?? []).map((row) => ({
+    if (!releases.success || !releases.results)
+      throw new Error("Project account reinstatements are unavailable");
+    const reinstatements = releases.results;
+    return result.results.map((row) => ({
       ...enforcementFromRow(row),
       ...(byEnforcement.has(row.id)
         ? { vettingReview: byEnforcement.get(row.id) }
@@ -646,7 +655,7 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
       ...(bansByEnforcement.has(row.id)
         ? { maintainerBans: bansByEnforcement.get(row.id) }
         : {}),
-      accountReinstatements: (releases.results ?? [])
+      accountReinstatements: reinstatements
         .filter((release) => release.enforcement_id === row.id)
         .map((release) => ({
           githubId: release.github_id,

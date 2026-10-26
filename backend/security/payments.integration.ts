@@ -147,9 +147,7 @@ const attesterProxy = productionAttester
     })
   : null;
 const owner = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
-const registrar = productionAttester
-  ? "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
-  : owner;
+const registrar = "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc";
 const authority = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
 const fee = "0x0000000000000000000000000000000000000fee";
 const wallet = privateKeyToAccount(`0x${"0".repeat(63)}1`);
@@ -292,14 +290,12 @@ try {
       await Bun.sleep(50);
     }
   }
-  let token = deploy("integration/TestDollar.sol:TestDollar");
-  if (productionAttester) {
-    // Anvil-only TestDollar runtime at the registry stablecoin address. No
-    // real USDC, fork, public RPC or production storage is used.
-    const runtime = await rpc("eth_getCode", [token, "latest"]);
-    token = ESCROW_NETWORKS[network].assets[0].address;
-    await rpc("anvil_setCode", [token, runtime]);
-  }
+  const testDollar = deploy("integration/TestDollar.sol:TestDollar");
+  // Anvil-only TestDollar runtime at the registry stablecoin address. No
+  // real USDC, fork, public RPC or production storage is used.
+  const runtime = await rpc("eth_getCode", [testDollar, "latest"]);
+  const token = ESCROW_NETWORKS[network].assets[0].address;
+  await rpc("anvil_setCode", [token, runtime]);
   const factory = deploy("src/ProjectEscrow.sol:EscrowFactory", [
     registrar,
     fee,
@@ -387,7 +383,6 @@ try {
   }
   const program = {
     status: "open",
-    intake: { repository: "synthetic/private" },
     amount: {
       currency: "USDC",
       decimals: 6,
@@ -420,75 +415,72 @@ try {
   const fixture = JSON.parse(
     readFileSync("tests/fixtures/projects/eliza.json", "utf8"),
   );
-  const projectId = productionAttester ? fixture.id : "synthetic-private";
-  const terms = productionAttester
-    ? {
-        ...program,
-        version: "1",
-        rewardMode: "separate",
-        eligibility: "critical-loss-of-funds",
-        split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
-        intake: {
-          kind: "github-private-vulnerability-reporting",
-          repository: fixture.repositories[0].id,
-        },
-        capacity: {
-          ...program.capacity,
-          exhaustionRule:
-            "Keep additional reports private without promising another award.",
-        },
-        responseTargets: {
-          acknowledgeHours: 24,
-          triageBusinessDays: 3,
-          updateIntervalDays: 7,
-        },
-        scope: {
-          sourceRevisions: [
-            { repository: fixture.repositories[0].id, commit: "a".repeat(40) },
-          ],
-          deployments: [],
-          includedAssets: ["Local test vault"],
-          excludedDependencies: [],
-          testingPermission: "Use only this isolated local test chain.",
-          severityRubric:
-            "Critical means a demonstrated potential loss of covered funds.",
-          lossDefinition: "Unauthorized loss of covered test assets.",
-        },
-        dispute: {
-          authority: "advisory",
-          process:
-            "A moderator decides escalated disputes after private triage.",
-        },
-        disclosure:
-          "Require separate exact-content approval before any disclosure.",
-        safeHarbor:
-          "This local fixture authorizes no activity on a real deployment.",
-      }
-    : program;
-  const manifestObject = productionAttester
-    ? assertProjectDefinition({
-        ...fixture,
-        reward: {
-          ...fixture.reward,
-          chain: "base",
-          ...(ordinaryDeployment ? { feeBasisPoints: 200 } : {}),
-        },
-        ...(ordinaryDeployment
-          ? {
-              escrow: {
-                schemaVersion: "1",
-                effectiveCycle: "2026-11",
-                chain: "base",
-                feeBasisPoints: 200,
-                withdrawalFeeBasisPoints: 200,
-                feeMode: "deduct-from-gross",
-                deployments: [ordinaryDeployment],
-              },
-            }
-          : {}),
-        securityBounty: terms,
-      })
-    : { id: projectId, status: "active", securityBounty: terms };
+  // Both local modes use a complete registered project. Award restrictions
+  // bind its repository identity before inspecting the bounty vault balance.
+  const projectId = fixture.id;
+  const terms = {
+    ...program,
+    version: "1",
+    rewardMode: "separate",
+    eligibility: "critical-loss-of-funds",
+    split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+    intake: {
+      kind: "github-private-vulnerability-reporting",
+      repository: fixture.repositories[0].id,
+    },
+    capacity: {
+      ...program.capacity,
+      exhaustionRule:
+        "Keep additional reports private without promising another award.",
+    },
+    responseTargets: {
+      acknowledgeHours: 24,
+      triageBusinessDays: 3,
+      updateIntervalDays: 7,
+    },
+    scope: {
+      sourceRevisions: [
+        { repository: fixture.repositories[0].id, commit: "a".repeat(40) },
+      ],
+      deployments: [],
+      includedAssets: ["Local test vault"],
+      excludedDependencies: [],
+      testingPermission: "Use only this isolated local test chain.",
+      severityRubric:
+        "Critical means a demonstrated potential loss of covered funds.",
+      lossDefinition: "Unauthorized loss of covered test assets.",
+    },
+    dispute: {
+      authority: "advisory",
+      process: "A moderator decides escalated disputes after private triage.",
+    },
+    disclosure:
+      "Require separate exact-content approval before any disclosure.",
+    safeHarbor:
+      "This local fixture authorizes no activity on a real deployment.",
+  };
+  const manifestObject = assertProjectDefinition({
+    ...fixture,
+    reward: {
+      ...fixture.reward,
+      chain: "base",
+      ...(ordinaryDeployment ? { feeBasisPoints: 200 } : {}),
+    },
+    ...(ordinaryDeployment
+      ? {
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: "2026-11",
+            chain: "base",
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [ordinaryDeployment],
+          },
+        }
+      : {}),
+    securityBounty: terms,
+  });
   const manifest = JSON.stringify(manifestObject);
   sqlite
     .query(
