@@ -392,8 +392,11 @@ overpaid state. Delta Star publishes external-prize shares only and never
 enters the platform payment lifecycle. Never call vault funds “guaranteed.”
 Keep project deployment bindings in the D1 project revision, never in a second
 project inventory. No project activates escrow merely because the new code is
-present. Testnet qualification never uses production credentials or moves
-mainnet funds.
+present. The scoped vault contract, identity attestation, and executor
+services may execute isolated test-chain transactions under the PRD rules.
+This supersedes the legacy unsigned-only model for the vault protocol only.
+Testnet qualification never uses production credentials or moves mainnet
+funds.
 
 New ordinary public-work awards deduct 2% before display or payment.
 Private security bounties use the PRD section 8 split instead: 75% to the
