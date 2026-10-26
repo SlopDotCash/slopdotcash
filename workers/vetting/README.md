@@ -151,10 +151,11 @@ The inventory digest covers executable content and the digests of retained
 binary, archive and quarantined artifacts. Documentation that is not an agent
 instruction file does not change it. A later commit whose
 executable inventory, skill template and scan policy are byte-identical to a
-clean scan reuses that result with `reuseCleanScan`; the intake checks that
-the cited original is a clean, non-reused scan of the same repository,
-inventory, template, policy, run and report. Any change to executable
-content produces a new digest and a new scan.
+clean scan may cite that result; the intake checks that the cited original is
+a clean, non-reused scan of the same repository, inventory, template, policy,
+run and report. The controller does not produce such citations today: each
+queued assessment gets a new scan. Any change to executable content produces
+a new digest and a new scan.
 
 The signed service calls `POST /api/v1/vetting/refresh` before reading the
 queue. Slop then queues, for the project steward, a scan of every listed
