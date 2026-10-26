@@ -30,9 +30,9 @@ import {
 } from "./leaderboard";
 import { findHistoricalProject } from "./projects.mjs";
 
-export const EVALUATOR_AWARD_SCHEMA_VERSION = "1" as const;
-export const MAX_EVALUATOR_AWARD_FILES = 256;
-export const MAX_EVALUATOR_AWARD_FILE_BYTES = 64 * 1024;
+const EVALUATOR_AWARD_SCHEMA_VERSION = "1" as const;
+const MAX_EVALUATOR_AWARD_FILES = 256;
+const MAX_EVALUATOR_AWARD_FILE_BYTES = 64 * 1024;
 
 interface EvaluatorAwardReview {
   decisionUrl: string;
@@ -40,7 +40,7 @@ interface EvaluatorAwardReview {
   reviewer: string;
 }
 
-export interface EvaluatorAwardManifest {
+interface EvaluatorAwardManifest {
   schemaVersion: typeof EVALUATOR_AWARD_SCHEMA_VERSION;
   kind: "evaluated-contribution";
   id: string;
@@ -54,7 +54,7 @@ export interface EvaluatorAwardManifest {
   review: EvaluatorAwardReview;
 }
 
-export interface EvaluatorAwardEvent extends ScoreEvent {
+interface EvaluatorAwardEvent extends ScoreEvent {
   category: "evaluated-contribution";
   evaluation: EvaluatorAwardReview & {
     manifestPath: string;

@@ -37,11 +37,11 @@ import {
 } from "./rewards";
 import { eventThirds } from "./score-penalties";
 
-export type RewardCycleProposal =
+type RewardCycleProposal =
   | ExternalContributionShareManifest
   | RewardAllocationManifest;
 
-export interface CreateRewardCycleProposalInput {
+interface CreateRewardCycleProposalInput {
   cycleId: string;
   generatedAt: string;
   projectId: ProjectId;

@@ -65,7 +65,7 @@ export async function requestMonthlyRelease(
     );
   return value;
 }
-export function solanaReleaseMessage(
+function solanaReleaseMessage(
   plan: Extract<ReadyMonthlyRelease, { family: "solana" }>,
 ) {
   const { deployment, capture, prepared, signatureHex } = plan;

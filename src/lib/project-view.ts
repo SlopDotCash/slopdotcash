@@ -43,7 +43,7 @@ import { resolveRewardCapMinor } from "./reward-cap.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 import { eventThirds, penaltyDeductions } from "./score-penalties";
 
-export const MAX_CREDITED_TOKENS_PER_OUTCOME = 1_000_000;
+const MAX_CREDITED_TOKENS_PER_OUTCOME = 1_000_000;
 const SHARE_PARTS_PER_MILLION = 1_000_000;
 
 export interface ProjectUsageSummary {

@@ -2,12 +2,7 @@ import type { ActorRef } from "./leaderboard-types";
 import { ALLOCATION_STATES } from "./rewards";
 import type { WalletProof as CycleWalletProof } from "./wallet-proof";
 
-export type {
-  GithubIssueWalletProof as CycleGithubIssueWalletProof,
-  ProfileReadmeWalletProof as CycleProfileReadmeWalletProof,
-  SlopDatabaseWalletProof as CycleSlopDatabaseWalletProof,
-  WalletProof as CycleWalletProof,
-} from "./wallet-proof";
+export type { CycleWalletProof };
 
 import {
   boundedText,

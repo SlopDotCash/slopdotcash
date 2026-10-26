@@ -15,7 +15,8 @@ import {
 } from "../reward-cycle";
 import { sha256Hex as digest } from "../sha256";
 import { ordinaryFee } from "./contracts";
-export interface EscrowIdentity {
+
+interface EscrowIdentity {
   nodeId: string;
   githubUserId: string;
   login: string;

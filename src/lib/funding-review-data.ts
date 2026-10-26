@@ -48,13 +48,11 @@ export interface FundingPreparation {
   };
   contributors: FundingPreparationContributor[];
 }
-export interface FundingReviewContributor
-  extends FundingPreparationContributor {
+interface FundingReviewContributor extends FundingPreparationContributor {
   simulatedMinor: string | null;
   externalSharePartsPerMillion: string | null;
 }
-export interface FundingReview
-  extends Omit<FundingPreparation, "contributors"> {
+interface FundingReview extends Omit<FundingPreparation, "contributors"> {
   status: "preparation";
   paymentAuthorized: false;
   proposalPublished: false;
@@ -254,7 +252,7 @@ export function assertFundingPreparation(value: unknown): FundingPreparation {
   return value as FundingPreparation;
 }
 /** Same canonical actor tie break as project-view, using integer arithmetic only. */
-export function allocateFundingReview(
+function allocateFundingReview(
   total: bigint,
   rows: FundingPreparationContributor[],
 ): Map<string, string> {

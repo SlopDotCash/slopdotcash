@@ -37,15 +37,13 @@ export interface ExternalSourceEvidence {
 export const EXTERNAL_SOURCE_NUMBER = 0;
 
 /** The one accepted URL shape per platform, quoted in rejection messages. */
-export const EXTERNAL_SOURCE_CANONICAL_FORMS: Record<
-  ExternalSourcePlatform,
-  string
-> = {
-  x: "https://x.com/<handle>/status/<id>",
-  discord: "https://discord.com/channels/<guild>/<channel>/<message>",
-  youtube: "https://www.youtube.com/watch?v=<video id>",
-  web: "https://<host>/<path> on a host that is not GitHub, X, Discord, YouTube or a mirror of them",
-};
+const EXTERNAL_SOURCE_CANONICAL_FORMS: Record<ExternalSourcePlatform, string> =
+  {
+    x: "https://x.com/<handle>/status/<id>",
+    discord: "https://discord.com/channels/<guild>/<channel>/<message>",
+    youtube: "https://www.youtube.com/watch?v=<video id>",
+    web: "https://<host>/<path> on a host that is not GitHub, X, Discord, YouTube or a mirror of them",
+  };
 
 /**
  * Hosts, with every subdomain, that the `web` kind refuses. GitHub-hosted
@@ -88,7 +86,7 @@ const RESERVED_HOST_SUFFIXES = [
   "piped.video",
 ] as const;
 
-export function isReservedExternalHost(host: string): boolean {
+function isReservedExternalHost(host: string): boolean {
   const lower = host.toLowerCase();
   return RESERVED_HOST_SUFFIXES.some(
     (suffix) => lower === suffix || lower.endsWith(`.${suffix}`),

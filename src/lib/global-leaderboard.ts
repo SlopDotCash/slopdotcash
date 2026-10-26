@@ -19,7 +19,7 @@ import {
   penaltyDeductions,
 } from "./score-penalties";
 
-export interface GlobalLeader {
+interface GlobalLeader {
   actor: GitHubActor;
   score: number;
   tokens: number;

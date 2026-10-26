@@ -11,7 +11,7 @@
 
 import { githubUserIdFromNodeId } from "./github-actor.ts";
 
-export const PAYOUT_EXCLUSION_RELATIONSHIPS = Object.freeze([
+const PAYOUT_EXCLUSION_RELATIONSHIPS = Object.freeze([
   "owner",
   "funded-employee",
   "related-party",
