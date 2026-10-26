@@ -371,12 +371,35 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
   const ban = (account: Account) =>
     seedParticipationBan(sqlite, account, DISPUTE, REVISION_AT);
   let enforcementSequence = 0;
-  const restrictProgram = (action: "quarantine" | "ban" = "quarantine") => {
+  const restrictProgram = (
+    action: "quarantine" | "ban" = "quarantine",
+    applied = false,
+  ) => {
     enforcementSequence += 1;
+    const before = sqlite
+      .query(
+        "SELECT revision, manifest_sha256, manifest FROM projects WHERE id = ?",
+      )
+      .get(PROJECT) as {
+      revision: number;
+      manifest_sha256: string;
+      manifest: string;
+    };
+    if (applied) retireProgram();
+    const after = applied
+      ? (sqlite
+          .query("SELECT revision, manifest_sha256 FROM projects WHERE id = ?")
+          .get(PROJECT) as { revision: number; manifest_sha256: string })
+      : null;
+    const result = applied
+      ? "revision_appended"
+      : JSON.parse(before.manifest).listingTier === "retired"
+        ? "no_revision_needed"
+        : "revision_pending";
     sqlite
       .query(
         `INSERT INTO project_enforcements (id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
-        VALUES (?,?,?, ?, ?, 'none','Synthetic program restriction','private-fixture','123','["example/bounty"]',?,?,NULL,'project-moderator','admin-panel',1,?,NULL,NULL,'revision_pending',?)`,
+        VALUES (?,?,?, ?, ?, 'none','Synthetic program restriction','private-fixture','123','["example/bounty"]',?,?,NULL,'project-moderator','admin-panel',?,?,?,?,?,?)`,
       )
       .run(
         `enf_${PROJECT}_${enforcementSequence}`,
@@ -386,7 +409,11 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
         action === "ban" ? "banned" : "quarantined",
         DISPUTE.githubId,
         DISPUTE.githubLogin,
-        digest,
+        before.revision,
+        before.manifest_sha256,
+        after?.revision ?? null,
+        after?.manifest_sha256 ?? null,
+        result,
         REVISION_AT,
       );
   };
@@ -421,6 +448,22 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
       )
       .run(retired, retiredDigest, REVISION_AT, PROJECT);
   };
+  /** A link from before automatic receipt, as the old claim flow stored it. */
+  const claim = (id: string, ghsa: string, account: Account) =>
+    sqlite
+      .query(
+        "INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'claimed', 'received', 'not-started', 'not-applicable', 'not-applicable', 'embargoed', 'private', 'none', 1, ?, ?)",
+      )
+      .run(
+        id,
+        PROJECT,
+        REPOSITORY,
+        ghsa,
+        account.githubId,
+        account.githubLogin,
+        REVISION_AT,
+        REVISION_AT,
+      );
   const checkPvr = () =>
     pvrState(
       {
@@ -444,6 +487,7 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
     restrictProgram,
     reinstateProgram,
     retireProgram,
+    claim,
     checkPvr,
     sqlite,
     fund,
@@ -487,25 +531,9 @@ describe("automatic private intake", () => {
     const linked = report(REPORTER, "2026-10-19T09:10:00.000Z");
     const wrongAuthor = report(REPORTER, "2026-10-19T09:20:00.000Z");
     const direct = report(OTHER, "2026-10-19T09:30:00.000Z");
-    // Links from before automatic receipt, as the old claim flow stored them.
-    const claim = (id: string, ghsa: string, account: Account) =>
-      env.sqlite
-        .query(
-          "INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'claimed', 'received', 'not-started', 'not-applicable', 'not-applicable', 'embargoed', 'private', 'none', 1, ?, ?)",
-        )
-        .run(
-          id,
-          PROJECT,
-          REPOSITORY,
-          ghsa,
-          account.githubId,
-          account.githubLogin,
-          REVISION_AT,
-          REVISION_AT,
-        );
-    claim("sc_legacyclaim1", linked.ghsa, REPORTER);
-    claim("sc_legacyclaim2", wrongAuthor.ghsa, OTHER);
-    claim("sc_legacyclaim3", "GHSA-9c9f-9g9h-9j9m", REPORTER);
+    env.claim("sc_legacyclaim1", linked.ghsa, REPORTER);
+    env.claim("sc_legacyclaim2", wrongAuthor.ghsa, OTHER);
+    env.claim("sc_legacyclaim3", "GHSA-9c9f-9g9h-9j9m", REPORTER);
     env.reports.push(linked, wrongAuthor, direct);
     const notMaintainer = await env.call(TRIAGER, "POST", "security-cases", {
       mode: "import",
@@ -1445,38 +1473,91 @@ describe("quarantined private cases", () => {
     );
     expect(result.status).toBe(200);
   });
-  test("a failed existing appeal triage can retry after project quarantine", async () => {
+  test.each(["pending", "applied", "unproved"])(
+    "existing appeal triage follows quarantine revision evidence: %s",
+    async (revision) => {
+      const env = open();
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      await env.decide(id, "appeal-root");
+      expect(
+        (
+          await env.act(MAINTAINER, id, {
+            action: "award",
+            decision: "none",
+            reason: "Owner decision for review",
+          })
+        ).status,
+      ).toBe(200);
+      env.setAnalyzerConfigured(false);
+      expect(
+        (
+          await env.act(REPORTER, id, {
+            action: "appeal",
+            reason:
+              "Review the scope and decision that applied to this private report",
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        env.sqlite
+          .query("SELECT state FROM security_appeal_triages WHERE case_id = ?")
+          .get(id),
+      ).toEqual({ state: "unavailable" });
+      env.setAnalyzerConfigured(true);
+      // An applied quarantine retains its exact before/after revision evidence.
+      env.restrictProgram("quarantine", revision === "applied");
+      if (revision === "unproved") env.retireProgram();
+      const result = await env.act(DISPUTE, id, { action: "triage-appeal" });
+      expect(result.status).toBe(revision === "unproved" ? 404 : 200);
+    },
+  );
+  test.each(["none", "quarantine", "ban"] as const)(
+    "an owner retirement closes a failed appeal triage retry after %s",
+    async (restriction) => {
+      const env = open();
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      await env.decide(id, "appeal-root");
+      expect(
+        (
+          await env.act(MAINTAINER, id, {
+            action: "award",
+            decision: "none",
+            reason: "Owner decision for review",
+          })
+        ).status,
+      ).toBe(200);
+      env.setAnalyzerConfigured(false);
+      expect(
+        (
+          await env.act(REPORTER, id, {
+            action: "appeal",
+            reason:
+              "Review the scope and decision that applied to this private report",
+          })
+        ).status,
+      ).toBe(200);
+      env.setAnalyzerConfigured(true);
+      env.retireProgram();
+      if (restriction !== "none") env.restrictProgram(restriction);
+      const result = await env.act(DISPUTE, id, { action: "triage-appeal" });
+      expect(result.status).toBe(404);
+    },
+  );
+  test("a receipt check imports no new report after an applied quarantine", async () => {
     const env = open();
-    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
-    await env.decide(id, "appeal-root");
+    const linked = report(REPORTER, "2026-10-19T09:10:00.000Z");
+    env.claim("sc_legacyclaim1", linked.ghsa, REPORTER);
+    env.restrictProgram("quarantine", true);
+    env.reports.push(linked, report(OTHER, "2026-10-19T09:20:00.000Z"));
+    for (const account of [MAINTAINER, REPORTER])
+      expect(
+        (await env.act(account, "sc_legacyclaim1", { action: "check-receipt" }))
+          .status,
+      ).toBe(404);
     expect(
-      (
-        await env.act(MAINTAINER, id, {
-          action: "award",
-          decision: "none",
-          reason: "Owner decision for review",
-        })
-      ).status,
-    ).toBe(200);
-    env.setAnalyzerConfigured(false);
-    expect(
-      (
-        await env.act(REPORTER, id, {
-          action: "appeal",
-          reason:
-            "Review the scope and decision that applied to this private report",
-        })
-      ).status,
-    ).toBe(200);
-    expect(
-      env.sqlite
-        .query("SELECT state FROM security_appeal_triages WHERE case_id = ?")
-        .get(id),
-    ).toEqual({ state: "unavailable" });
-    env.setAnalyzerConfigured(true);
-    env.restrictProgram("quarantine");
-    const result = await env.act(DISPUTE, id, { action: "triage-appeal" });
-    expect(result.status).toBe(200);
+      env.sqlite.query("SELECT id, submission_state FROM security_cases").all(),
+    ).toEqual([{ id: "sc_legacyclaim1", submission_state: "claimed" }]);
+    expect(env.analyzed).toEqual([]);
   });
   test("a previously funded award remains accessible while quarantined", async () => {
     const env = open();
