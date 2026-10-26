@@ -957,8 +957,7 @@ The rehearsal uses that recorded Base starting review; other networks retain
 the `bce5b0df` starting review. It refuses any different runtime or role.
 
 Recheck the exact starting review before use. Rehearse this kit on a local
-fork before mainnet execution. Humans keep the upgrade key and execute the
-reviewed mainnet plan. Follow the approved launch
+fork before mainnet execution. Follow the approved execution authority, launch
 order and acceptance checks in section 0.
 
 ### 4.1 What changes
