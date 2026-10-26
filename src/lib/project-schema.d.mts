@@ -18,6 +18,10 @@ export type ContributionField =
   | "securityContact"
   | "closurePolicy"
   | "maintainerNotes";
+export declare function expectedRewardFeeBasisPoints(
+  kind: "monthly-pool" | "external-prize-share",
+  escrow: boolean,
+): 100 | 200 | 1000;
 export declare function formatMonthlyCapDisplay(value: string): string;
 export declare function parseAssetAmount(
   value: string,

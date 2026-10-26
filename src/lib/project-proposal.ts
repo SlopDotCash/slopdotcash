@@ -1,12 +1,17 @@
 import { decimalBaseUnits, formatBaseUnits } from "./base-units.mjs";
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
-import { isEscrowChain } from "./escrow-policy.mjs";
+import {
+  ESCROW_PAYOUT_FEE_BASIS_POINTS,
+  ESCROW_WITHDRAWAL_FEE_BASIS_POINTS,
+  isEscrowChain,
+} from "./escrow-policy.mjs";
 import {
   type OwnedRepository,
   type RepositoryLookup,
   validRepositoryPath,
 } from "./project-contracts";
 import {
+  expectedRewardFeeBasisPoints,
   formatMonthlyCapDisplay,
   MAX_MONTHLY_CAP_MINOR,
   MAX_PROJECT_ID_LENGTH,
@@ -151,7 +156,7 @@ export function rewardFields(
         monthlyCapDisplay: formatMonthlyCapDisplay("0"),
         committedMinor: "0",
         paymentMode: "disabled",
-        feeBasisPoints: 100,
+        feeBasisPoints: expectedRewardFeeBasisPoints("monthly-pool", false),
         unusedFunds: "rollover-without-cap-increase",
         fundingState: "pledged",
       },
@@ -186,8 +191,8 @@ export function rewardFields(
             schemaVersion: "1",
             effectiveCycle: now.toISOString().slice(0, 7),
             chain: choice.network,
-            feeBasisPoints: 200,
-            withdrawalFeeBasisPoints: 200,
+            feeBasisPoints: ESCROW_PAYOUT_FEE_BASIS_POINTS,
+            withdrawalFeeBasisPoints: ESCROW_WITHDRAWAL_FEE_BASIS_POINTS,
             feeMode: "deduct-from-gross",
             deployments: [],
           },
@@ -204,7 +209,7 @@ export function rewardFields(
       monthlyCapDisplay: amount.display,
       committedMinor: "0",
       paymentMode: "disabled",
-      feeBasisPoints: escrow ? 200 : 100,
+      feeBasisPoints: expectedRewardFeeBasisPoints("monthly-pool", escrow),
       unusedFunds: "rollover-without-cap-increase",
       fundingState: "pledged",
     },
