@@ -294,7 +294,7 @@ function timestampField(
   return value;
 }
 
-export async function currentReportingProject(
+async function currentReportingProject(
   deps: Pick<SecurityApiDependencies, "db">,
   projectId: string,
 ): Promise<{ manifest: ProjectDefinition; revision: number } | null> {

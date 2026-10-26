@@ -569,7 +569,7 @@ export function enforcementRevisionReason(
 export const FLAG_PAUSE_THRESHOLD = 2;
 
 /** The rule a signed clean scan cites when it lifts a flag-only pause. */
-export const SCAN_REINSTATEMENT_RULE = "clean-fresh-scan-after-flags";
+const SCAN_REINSTATEMENT_RULE = "clean-fresh-scan-after-flags";
 
 /**
  * True when the restriction in force is a quarantine that two contributor

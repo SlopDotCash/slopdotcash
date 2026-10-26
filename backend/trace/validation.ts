@@ -62,7 +62,7 @@ export function validIdempotencyKey(value: unknown): value is string {
   return typeof value === "string" && IDEMPOTENCY_PATTERN.test(value);
 }
 
-export function validContentType(value: string): value is TraceContentType {
+function validContentType(value: string): value is TraceContentType {
   const base = value.split(";", 1)[0].trim().toLowerCase();
   return TRACE_CONTENT_TYPES.some((item) => item === base);
 }

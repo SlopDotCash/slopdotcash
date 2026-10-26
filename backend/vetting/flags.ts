@@ -54,19 +54,19 @@ import type {
 } from "./flagger-standing";
 import { SCAN_THREATS } from "./scan-result";
 
-export const FLAG_CATEGORIES = [...SCAN_THREATS, "other"] as const;
+const FLAG_CATEGORIES = [...SCAN_THREATS, "other"] as const;
 export type FlagCategory = (typeof FLAG_CATEGORIES)[number];
 
 /**
  * How long an unresolved flag keeps counting (owner decision D3: 90 days).
  * Migration 0060 refuses a pause that counts an older flag.
  */
-export const FLAG_ACTIVE_LIFETIME_MS = 7_776_000_000;
+const FLAG_ACTIVE_LIFETIME_MS = 7_776_000_000;
 /** The youngest GitHub account that may flag (owner decision D3: 30 days). */
-export const FLAGGER_MIN_ACCOUNT_AGE_MS = 2_592_000_000;
+const FLAGGER_MIN_ACCOUNT_AGE_MS = 2_592_000_000;
 
 /** Flags filed at or before this instant no longer count. */
-export function flagCutoff(at: Date): string {
+function flagCutoff(at: Date): string {
   return new Date(at.getTime() - FLAG_ACTIVE_LIFETIME_MS).toISOString();
 }
 
@@ -358,7 +358,7 @@ export class ProjectFlagStore {
   }
 }
 
-export type ProjectFlagApiDependencies = {
+type ProjectFlagApiDependencies = {
   flags: ProjectFlagStore;
   projects: Pick<
     CloudflareProjectPersistence,

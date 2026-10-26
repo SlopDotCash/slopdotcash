@@ -263,7 +263,7 @@ function githubId(value: unknown): string | null {
  * digested, then dropped; only `analysisInput` stays in memory for the
  * private analyzer. Returns null for anything malformed.
  */
-export async function advisoryFacts(
+async function advisoryFacts(
   value: unknown,
   marker?: string,
 ): Promise<AdvisoryFacts | null> {

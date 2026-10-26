@@ -96,9 +96,9 @@ type SubmissionRow = {
 
 const SUBMISSION_ID = /^ss_[A-Za-z0-9_-]{8,72}$/u;
 /** A `submitting` row older than this is treated as interrupted. */
-export const SUBMITTING_TIMEOUT_MS = 60_000;
+const SUBMITTING_TIMEOUT_MS = 60_000;
 /** A draft or failed submission idle this long is abandoned. */
-export const IDLE_MS = 24 * 60 * 60 * 1000;
+const IDLE_MS = 24 * 60 * 60 * 1000;
 /** How far before the attempt a GitHub listing looks for its copy. */
 const RECONCILE_WINDOW_MS = 10 * 60 * 1000;
 /**

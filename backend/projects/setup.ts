@@ -180,7 +180,7 @@ export function flaggerAuthority(
 }
 
 /** The funding summary, separate from readiness. */
-export function setupFunding(
+function setupFunding(
   manifest: ProjectDefinition,
 ): ProjectSetupStatus["funding"] {
   const reward = manifest.reward;

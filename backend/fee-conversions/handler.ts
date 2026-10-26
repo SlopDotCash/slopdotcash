@@ -58,7 +58,7 @@ interface SettledRow {
   amount_out: string;
 }
 
-export interface FeeConversionTotal {
+interface FeeConversionTotal {
   network: string;
   token: string;
   targetToken: string;
@@ -69,7 +69,7 @@ export interface FeeConversionTotal {
 }
 
 /** Sums finalized live conversions per network and token in exact integers. */
-export function totalsPerToken(rows: SettledRow[]): FeeConversionTotal[] {
+function totalsPerToken(rows: SettledRow[]): FeeConversionTotal[] {
   const totals = new Map<
     string,
     {
@@ -108,7 +108,7 @@ export function totalsPerToken(rows: SettledRow[]): FeeConversionTotal[] {
     }));
 }
 
-export interface FeeConversionRoute {
+interface FeeConversionRoute {
   network: string;
   /** Circle USDC on the network, or null when received assets stay unconverted. */
   targetToken: string | null;
@@ -117,7 +117,7 @@ export interface FeeConversionRoute {
 }
 
 /** The conversion target of every network, including explicit unconverted retention. */
-export function conversionRoutes(): FeeConversionRoute[] {
+function conversionRoutes(): FeeConversionRoute[] {
   return NETWORKS.map((network) => {
     const usdc = NETWORK_DEFINITIONS[network].usdc;
     return {

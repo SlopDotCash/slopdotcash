@@ -11,7 +11,7 @@ import {
   type RewardAssetNetwork,
 } from "../../src/lib/reward-asset.mjs";
 
-export type TokenMetadata = { decimals: number; symbol: string | null };
+type TokenMetadata = { decimals: number; symbol: string | null };
 
 export type TokenMetadataReader = (
   network: RewardAssetNetwork,
@@ -21,14 +21,13 @@ export type TokenMetadataReader = (
 export class TokenMetadataError extends Error {}
 
 /** Public mainnet RPC endpoints; a Pages variable may replace each one. */
-export const DEFAULT_REWARD_RPC_URLS: Readonly<
-  Record<RewardAssetNetwork, string>
-> = Object.freeze({
-  base: "https://mainnet.base.org",
-  ethereum: "https://ethereum-rpc.publicnode.com",
-  robinhood: "https://rpc.mainnet.chain.robinhood.com",
-  solana: "https://api.mainnet-beta.solana.com",
-});
+const DEFAULT_REWARD_RPC_URLS: Readonly<Record<RewardAssetNetwork, string>> =
+  Object.freeze({
+    base: "https://mainnet.base.org",
+    ethereum: "https://ethereum-rpc.publicnode.com",
+    robinhood: "https://rpc.mainnet.chain.robinhood.com",
+    solana: "https://api.mainnet-beta.solana.com",
+  });
 
 const MAX_RPC_BYTES = 64 * 1024;
 const SYMBOL = /^[A-Za-z0-9$._-]{1,16}$/u;
@@ -73,7 +72,7 @@ function word(hex: string, index: number): bigint {
 }
 
 /** Decodes an ABI `string` or a legacy `bytes32` symbol; null when neither. */
-export function decodeSymbol(result: unknown): string | null {
+function decodeSymbol(result: unknown): string | null {
   if (typeof result !== "string" || !/^0x(?:[0-9a-fA-F]{2})*$/u.test(result))
     return null;
   try {

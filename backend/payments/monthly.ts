@@ -290,7 +290,7 @@ async function awardStates(
 }
 
 /** The single served deployment of the project's one vault network, or null. */
-export function servedDeployment(
+function servedDeployment(
   project: ProjectDefinition,
   networks: readonly string[],
 ): EscrowDeployment | null {
@@ -305,7 +305,7 @@ export function servedDeployment(
  * owner's early finalization and the automatic cutoff use this; the primary
  * key makes whichever comes first the only execution snapshot.
  */
-export async function freezeMonthlyPeriod(
+async function freezeMonthlyPeriod(
   db: D1Database,
   input: {
     project: ProjectRecord;
@@ -427,7 +427,7 @@ export async function freezeMonthlyPeriod(
  * reserves its whole total at admission, even for an identical award it later
  * releases, so its eligible awards always need free funds.
  */
-export async function createMonthlyObligations(
+async function createMonthlyObligations(
   db: D1Database,
   projectId: string,
   period: string,

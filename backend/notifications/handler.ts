@@ -24,7 +24,7 @@ export interface NotificationsDependencies {
   moderatorGithubIds?: ReadonlySet<string>;
 }
 
-export const NOTIFICATIONS_PATH = "/api/v1/notifications";
+const NOTIFICATIONS_PATH = "/api/v1/notifications";
 const READ_PATH = `${NOTIFICATIONS_PATH}/read`;
 const LIST_LIMIT = 100;
 

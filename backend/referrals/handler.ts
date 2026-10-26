@@ -10,7 +10,7 @@
 import { isPeriod } from "../../workers/referral-accrual/config";
 import { apiErrorResponse, JSON_HEADERS, json } from "../http";
 
-export interface ReferralsDependencies {
+interface ReferralsDependencies {
   db: {
     prepare(query: string): {
       bind(...values: (string | number)[]): {

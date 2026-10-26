@@ -13,7 +13,7 @@ import {
 } from "../../src/lib/vetting-contracts";
 import { validIsoTimestamp, validSha256 } from "../trace/validation";
 
-export const VETTING_RESULT_SCHEMA = "slop-vetting-result-v1";
+const VETTING_RESULT_SCHEMA = "slop-vetting-result-v1";
 /** Results carry summaries and digests; the full trace stays with the VM operator. */
 export const MAX_VETTING_RESULT_BYTES = 256 * 1024;
 

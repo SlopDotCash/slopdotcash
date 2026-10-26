@@ -48,7 +48,7 @@ import {
   recordedResultProblems,
 } from "./scan-result";
 
-export const VETTING_SIGNATURE_CONTEXT = "slop-vetting:v1";
+const VETTING_SIGNATURE_CONTEXT = "slop-vetting:v1";
 /** Signed requests older or newer than this are refused. */
 const SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
 
@@ -304,7 +304,7 @@ async function requestAssessment(
  * "conflict" when this revision already has a queued scan. Throws
  * `pin_unavailable` when the live pin cannot be read.
  */
-export async function queueAssessment(
+async function queueAssessment(
   deps: Pick<VettingApiDependencies, "livePin" | "now" | "randomId"> & {
     vetting: Pick<
       CloudflareVettingPersistence,
@@ -351,7 +351,7 @@ export async function queueAssessment(
  * of an automatic scan name the project steward, and its reason says it was
  * automatic; no person pressed a button.
  */
-export function stewardActor(manifest: ProjectDefinition): GithubActor {
+function stewardActor(manifest: ProjectDefinition): GithubActor {
   return {
     githubId: manifest.steward.github.actorId,
     githubLogin: manifest.steward.github.login,

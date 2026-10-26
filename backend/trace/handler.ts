@@ -79,7 +79,7 @@ export type TraceApiDependencies = {
   privateIntakeStatus: () => Promise<PrivateIntakeStatus>;
 };
 
-export const TRACE_API_CONTRACT_VERSION = "private-trace-v1-opaque-hmac-v1";
+const TRACE_API_CONTRACT_VERSION = "private-trace-v1-opaque-hmac-v1";
 const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 function json(status: number, body: Record<string, unknown> | null): Response {

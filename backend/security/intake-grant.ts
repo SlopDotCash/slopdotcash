@@ -55,11 +55,11 @@ export type IntakeConfig = {
   analyzer: PrivateReportAnalyzer;
 };
 
-export const GRANT_COOKIE = "__Secure-slop_intake_grant";
-export const FLOW_COOKIE = "__Secure-slop_intake_flow";
+const GRANT_COOKIE = "__Secure-slop_intake_grant";
+const FLOW_COOKIE = "__Secure-slop_intake_flow";
 /** Cookies reach only the submission routes. `__Host-` would force Path=/. */
 const COOKIE_PATH = "/api/v1/security-submissions";
-export const GRANT_SECONDS = 2 * 60 * 60;
+const GRANT_SECONDS = 2 * 60 * 60;
 const FLOW_SECONDS = 10 * 60;
 const SESSION_COOKIE = "__Host-slop_points";
 
@@ -128,7 +128,7 @@ function cookieValue(request: Request, name: string): string | null {
 }
 
 /** A hash of the site session cookie; binds the grant to that session. */
-export async function sessionBinding(request: Request): Promise<string | null> {
+async function sessionBinding(request: Request): Promise<string | null> {
   const token = cookieValue(request, SESSION_COOKIE);
   if (!token || !/^[A-Za-z0-9_-]{40,128}$/u.test(token)) return null;
   return sha256Hex(`slop-intake-session:v1:${token}`);
@@ -151,7 +151,7 @@ function clearFlowCookie(): string {
   return cookie(FLOW_COOKIE, "", 0, "Lax");
 }
 
-export function callbackUrl(request: Request): string {
+function callbackUrl(request: Request): string {
   return `${new URL(request.url).origin}/api/v1/security-submissions/authorize/callback`;
 }
 

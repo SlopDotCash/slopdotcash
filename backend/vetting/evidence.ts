@@ -41,7 +41,7 @@ import {
 } from "./scan-result";
 
 // Whole objects stay within the run ceiling; each read/upload part stays bounded.
-export const MAX_EVIDENCE_OBJECT_BYTES = EVIDENCE_RUN_BYTES;
+const MAX_EVIDENCE_OBJECT_BYTES = EVIDENCE_RUN_BYTES;
 const HEX = /^[a-f0-9]{64}$/u;
 const ID = /^[a-zA-Z0-9_-]{1,100}$/u;
 const KINDS = new Set([
