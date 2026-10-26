@@ -3,9 +3,8 @@
 // without that transaction (a lost executor response, or a payout made by
 // another pay() call) can no longer pay anything, and the recovery and
 // reconcile steps skip paid awards. It must not hold the rotation forever.
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
 import { privateKeyToAccount } from "viem/accounts";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import { dispatchPayment } from "../../backend/payments/dispatch";
@@ -14,6 +13,7 @@ import {
   indexPaymentEvent,
 } from "../../backend/payments/ledger";
 import { buildPaymentWalletMessage } from "../../backend/payments/possession";
+import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import { authorizeWalletRotation } from "./core";
 
 const registered = "2026-10-01T00:00:00.000Z";
@@ -27,50 +27,12 @@ const laterAward = `0x${"d".repeat(64)}`;
 const paidTransaction = `0x${"77".repeat(32)}`;
 
 function open() {
-  const sql = new Database(":memory:");
-  sql.exec("PRAGMA foreign_keys=ON");
-  for (const file of readdirSync("migrations")
-    .filter((f) => f.endsWith(".sql"))
-    .sort())
-    sql.exec(readFileSync(`migrations/${file}`, "utf8"));
+  const { db, sqlite: sql } = sqliteD1(MIGRATIONS);
   // The ledger takes the award asset from the finalized vault snapshot.
   sql.exec(
     `INSERT INTO vault_snapshots(project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,block_number,block_time,observed_at) VALUES('project-1','base-sepolia','base','${vault}','0x036cbd53842c5426634e7929541ec2318f3dcf7e',6,'0','0','0','0','0','0','1','${registered}','${registered}')`,
   );
-  function statement(
-    query: string,
-    args: unknown[] = [],
-  ): ReturnType<D1Database["prepare"]> {
-    return {
-      bind(...values: unknown[]) {
-        return statement(query, values);
-      },
-      async first<T>() {
-        return (sql.query(query).get(...(args as string[])) ??
-          null) as T | null;
-      },
-      async run() {
-        const result = sql.query(query).run(...(args as string[]));
-        return { success: true, meta: { changes: result.changes } };
-      },
-    };
-  }
-  const db: D1Database = {
-    prepare: statement,
-    async batch(statements) {
-      sql.exec("BEGIN IMMEDIATE");
-      try {
-        const results = [];
-        for (const item of statements) results.push(await item.run());
-        sql.exec("COMMIT");
-        return results;
-      } catch (error) {
-        sql.exec("ROLLBACK");
-        throw error;
-      }
-    },
-  };
-  return { sql, db };
+  return { sql, db: db as unknown as D1Database };
 }
 
 async function registerWallet(

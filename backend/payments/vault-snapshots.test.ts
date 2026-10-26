@@ -1,7 +1,6 @@
 // The vault totals cache: finalized reads stored in D1 and served from it.
-import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import { handlePaymentsApi } from "./handler";
 import {
@@ -11,31 +10,7 @@ import {
   type VaultTotals,
 } from "./vault-snapshots";
 
-function open(): D1Database {
-  const sql = new Database(":memory:");
-  for (const file of readdirSync("migrations")
-    .filter((f) => f.endsWith(".sql"))
-    .sort())
-    sql.exec(readFileSync(`migrations/${file}`, "utf8"));
-  function statement(query: string, args: unknown[] = []) {
-    return {
-      bind: (...values: unknown[]) => statement(query, values),
-      async first<T>() {
-        return (sql.prepare(query).get(...(args as string[])) ?? null) as T;
-      },
-      async run() {
-        const result = sql.prepare(query).run(...(args as string[]));
-        return { success: true, meta: { changes: result.changes } };
-      },
-    };
-  }
-  return {
-    prepare: statement,
-    async batch(items) {
-      return Promise.all(items.map((item) => item.run()));
-    },
-  } as D1Database;
-}
+const open = () => sqliteD1(MIGRATIONS).db as unknown as D1Database;
 
 const deployment: SnapshotDeployment = {
   projectId: "acme",
