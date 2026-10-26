@@ -427,9 +427,12 @@ account that is too small fails after the buffer is paid for.
 ```bash
 DATA_LENGTH=<Data Length from solana program show>
 ADDITIONAL_BYTES=$(( $(wc -c < "$SO") - DATA_LENGTH ))
-echo "$ADDITIONAL_BYTES"   # extend only if this is greater than 0
-[ "$ADDITIONAL_BYTES" -lt 10240 ] && ADDITIONAL_BYTES=10240   # loader minimum
-solana program extend "$PROGRAM" "$ADDITIONAL_BYTES" -u "$RPC" --keypair "$PAYER"
+if [ "$ADDITIONAL_BYTES" -gt 0 ]; then
+  if [ "$ADDITIONAL_BYTES" -lt 10240 ]; then
+    ADDITIONAL_BYTES=10240   # loader minimum
+  fi
+  solana program extend "$PROGRAM" "$ADDITIONAL_BYTES" -u "$RPC" --keypair "$PAYER"
+fi
 solana program show "$PROGRAM" -u "$RPC"   # Data Length must now be >= the size of $SO
 ```
 
