@@ -46,3 +46,34 @@ test("excluded reviews cannot share a scored source ID or URL in their repositor
   ];
   expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
 });
+
+test("a review exclusion may name its reviewer by node ID only", () => {
+  const snapshot = snapshotFixture("2026-07-30T00:00:00.000Z");
+  const review = snapshot.ledger.find(
+    (event) => event.source.kind === "review",
+  );
+  if (!review) throw new Error("Fixture must contain a scored review");
+  const exclusion = {
+    id: "PR_excluded:review-exclusion:REVIEW_unscored",
+    pullRequestId: "PR_excluded",
+    pullRequestNumber: review.source.number,
+    reviewId: "REVIEW_unscored",
+    repository: review.repository,
+    url: `${review.source.url}00`,
+    reason: "unchanged-outcome" as const,
+  };
+  snapshot.reviewExclusions = [{ ...exclusion, reviewerId: "U_reviewer" }];
+  expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+
+  snapshot.reviewExclusions = [
+    { ...exclusion, reviewerId: 7 as unknown as string },
+  ];
+  expect(() => assertLeaderboardSnapshot(snapshot)).toThrow("reviewerId");
+
+  snapshot.reviewExclusions = [
+    { ...exclusion, reviewerLogin: "someone" } as typeof exclusion,
+  ];
+  expect(() => assertLeaderboardSnapshot(snapshot)).toThrow(
+    "must contain exactly the review exclusion fields",
+  );
+});

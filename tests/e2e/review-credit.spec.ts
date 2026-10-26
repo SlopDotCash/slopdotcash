@@ -406,7 +406,9 @@ function reviewCredit(
     merges: credit("merged-pull-request"),
     reviews: credit("substantive-review"),
     exclusions: (snapshot.reviewExclusions ?? []).map(
-      (exclusion) => `${exclusion.reviewId}:${exclusion.reason}`,
+      // The reviewer ID lets the profile list its own unscored reviews.
+      (exclusion) =>
+        `${exclusion.reviewId}:${exclusion.reason}:${exclusion.reviewerId}`,
     ),
   };
 }
@@ -427,7 +429,9 @@ test("a commit co-author's score ratification earns no review credit", () => {
     [changesRequested],
   );
   expect(coAuthorRatifies.merges).toEqual(["commit-coauthor:1", "pr-author:1"]);
-  expect(coAuthorRatifies.exclusions).toEqual(["PRR_coauthor:self-review"]);
+  expect(coAuthorRatifies.exclusions).toEqual([
+    "PRR_coauthor:self-review:U_coauthor",
+  ]);
   expect(coAuthorRatifies.reviews).toEqual([]);
 
   const maintainerRatifies = reviewCredit([
@@ -523,7 +527,7 @@ test("a co-author's ratification and review earn nothing when a later merge owns
   expect(coAuthorRatifies).toEqual({
     merges: [],
     reviews: [],
-    exclusions: ["PRR_coauthor:self-review"],
+    exclusions: ["PRR_coauthor:self-review:U_coauthor"],
   });
 });
 
