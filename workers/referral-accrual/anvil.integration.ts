@@ -10,7 +10,18 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { type Hex, keccak256 } from "viem";
+import {
+  handleReferralsApi,
+  REFERRAL_ACCRUALS_PATH,
+} from "../../backend/referrals/handler";
+import {
+  checkReferralRoots,
+  type ReferralWatchFetch,
+  referralWatchConfig,
+} from "../../scripts/check-referral-roots";
 import { runOnce } from "./index";
+import { buildTree } from "./merkle";
 import { sqliteD1 } from "./sqlite-d1";
 
 const evmRoot = fileURLToPath(new URL("../../contracts/evm/", import.meta.url));
@@ -119,6 +130,7 @@ try {
       "0", // no spacing: the rehearsal posts in one session
     ],
   );
+  const distributorBlock = BigInt(await rpc("eth_blockNumber", []));
   await send(
     token,
     "mint(address,uint256)",
@@ -255,6 +267,237 @@ try {
   assert.equal(receipt.status, "0x1");
   assert.equal(BigInt(receipt.blockNumber).toString(), post.block_number);
 
+  // Independent read-only watcher: the actual public API serves the committed
+  // D1 bytes, while all chain reads reach the actual local distributor.
+  const watchConfig = referralWatchConfig({
+    ...env,
+    REFERRAL_DEPLOYMENT_BLOCK: distributorBlock.toString(),
+    REFERRAL_DISTRIBUTOR_CODE_HASH: keccak256(
+      (await rpc("eth_getCode", [distributor, "latest"])) as Hex,
+    ),
+  });
+  assert.ok(watchConfig);
+  const publicOrigin = "https://referral.fixture.invalid";
+  const scanRanges: bigint[] = [];
+  const boundedRpc = Object.assign(
+    async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init);
+      assert.equal(new URL(request.url).origin, rpcUrl);
+      const body = await request.clone().json();
+      if (body.method === "eth_getLogs") {
+        const range =
+          BigInt(body.params[0].toBlock) -
+          BigInt(body.params[0].fromBlock) +
+          1n;
+        scanRanges.push(range);
+        if (range > 9000n)
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            error: { code: -32005, message: "block range exceeds 9000" },
+          });
+      }
+      return fetch(request);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const readEvidence: ReferralWatchFetch = async (input, init) => {
+    const request = new Request(input, init);
+    if (new URL(request.url).origin === publicOrigin) {
+      const response = await handleReferralsApi(request, { db });
+      assert.ok(response);
+      return response;
+    }
+    return boundedRpc(request);
+  };
+  const watch = (fetcher = readEvidence, now = "2026-12-02T02:00:00.000Z") =>
+    checkReferralRoots({
+      config: watchConfig,
+      origin: publicOrigin,
+      now: new Date(now),
+      fetch: fetcher,
+    });
+  const watched = await watch();
+  assert.equal(watched.status, "verified");
+  assert.deepEqual(watched.mappings, [
+    {
+      epoch: 0,
+      period: "2026-11",
+      transaction: post.tx_id,
+      finalized: true,
+      voided: false,
+    },
+  ]);
+  for (const [override, expected] of [
+    [
+      { codeHash: `0x${"f".repeat(64)}` as Hex },
+      /referral_deployment_code_mismatch/,
+    ],
+    [
+      {
+        poster: {
+          ...watchConfig.poster,
+          token: "0x1111111111111111111111111111111111111111",
+        },
+      },
+      /referral_deployment_token_mismatch/,
+    ],
+  ] as const)
+    await assert.rejects(
+      checkReferralRoots({
+        config: { ...watchConfig, ...override },
+        origin: publicOrigin,
+        now: new Date("2026-12-02T02:00:00.000Z"),
+        fetch: readEvidence,
+      }),
+      expected,
+    );
+  await assert.rejects(
+    watch(readEvidence, "2027-01-02T02:00:00.000Z"),
+    /referral_files_stale/,
+  );
+  await assert.rejects(
+    watch(async (input, init) => {
+      const response = await readEvidence(input, init);
+      if (new URL(new Request(input, init).url).pathname.endsWith("/2026-11"))
+        return new Response(`${await response.text()} `, {
+          headers: response.headers,
+        });
+      return response;
+    }),
+    /referral_file_digest_mismatch/,
+  );
+  await assert.rejects(
+    watch(async (input, init) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).origin === publicOrigin)
+        return new Response("unavailable", { status: 503 });
+      return readEvidence(input, init);
+    }),
+    /referral_public_data_unavailable/,
+  );
+  await assert.rejects(
+    watch(async (input, init) => {
+      const request = new Request(input, init);
+      const response = await readEvidence(input, init);
+      if (new URL(request.url).origin !== rpcUrl) return response;
+      const body = await request.json();
+      const result = await response.json();
+      if (body.method === "eth_getLogs") result.result = [];
+      return Response.json(result);
+    }),
+    /referral_event_coverage_mismatch/,
+  );
+  await assert.rejects(
+    watch(async (input, init) => {
+      const request = new Request(input, init);
+      const response = await readEvidence(input, init);
+      if (new URL(request.url).origin !== rpcUrl) return response;
+      const body = await request.json();
+      const result = await response.json();
+      if (body.method === "eth_getTransactionReceipt" && result.result)
+        result.result.blockHash = `0x${"f".repeat(64)}`;
+      return Response.json(result);
+    }),
+    /referral_event_not_canonical/,
+  );
+  await assert.rejects(
+    watch(async (input, init) => {
+      const request = new Request(input, init);
+      const response = await readEvidence(input, init);
+      if (new URL(request.url).origin !== rpcUrl) return response;
+      const body = await request.json();
+      const result = await response.json();
+      if (body.method === "eth_getTransactionReceipt" && result.result)
+        result.result.logs[0].transactionHash = `0x${"f".repeat(64)}`;
+      return Response.json(result);
+    }),
+    /referral_event_not_canonical/,
+  );
+
+  type MutableFile = {
+    referrers: {
+      githubId: string;
+      wallet: string;
+      cumulativeBase: string;
+      leaf: { hash: string; proof: string[] };
+    }[];
+    totals: { treeTotalBase: string };
+    merkle: { root: string; leafCount: number };
+  };
+  function rewriteFile(
+    period: string,
+    change: (body: MutableFile) => void,
+  ): ReferralWatchFetch {
+    const row = sqlite
+      .query("SELECT body FROM referral_accrual_files WHERE period=?")
+      .get(period) as { body: string };
+    const body = JSON.parse(row.body) as MutableFile;
+    change(body);
+    const text = JSON.stringify(body);
+    return async (input, init) => {
+      const request = new Request(input, init);
+      const response = await readEvidence(input, init);
+      const url = new URL(request.url);
+      if (url.origin !== publicOrigin) return response;
+      if (url.pathname.endsWith(`/${period}`))
+        return new Response(text, {
+          headers: { "x-slop-sha256": sha(text) },
+        });
+      if (url.pathname !== REFERRAL_ACCRUALS_PATH) return response;
+      const index = await response.json();
+      for (const item of index.files) {
+        if (item.period !== period) continue;
+        item.bodySha256 = sha(text);
+        item.merkleRoot = body.merkle.root;
+        item.treeTotalBase = body.totals.treeTotalBase;
+        item.leafCount = body.merkle.leafCount;
+      }
+      return Response.json(index);
+    };
+  }
+  const wrongRoot = rewriteFile("2026-11", (body) => {
+    body.merkle.root = `0x${"a".repeat(64)}`;
+  });
+  await assert.rejects(watch(wrongRoot), /referral_tree_mismatch/);
+  const wrongTotal = rewriteFile("2026-11", (body) => {
+    body.referrers[0].cumulativeBase = (CUMULATIVE + 1n).toString();
+  });
+  await assert.rejects(
+    watch(wrongTotal),
+    /referral_cumulative_account_mismatch/,
+  );
+  const wrongProof = rewriteFile("2026-11", (body) => {
+    body.referrers[0].leaf.proof = [`0x${"f".repeat(64)}`];
+  });
+  await assert.rejects(watch(wrongProof), /referral_proof_mismatch/);
+  sqlite.exec("SAVEPOINT watcher_file_controls");
+  await runOnce(
+    { ...env, REFERRAL_ACCRUAL_MODE: "dry_run" },
+    at("2027-01-02T01:23:00.000Z"),
+  );
+  const later = await watch(readEvidence, "2027-01-02T02:00:00.000Z");
+  assert.equal(later.status, "pending");
+  assert.equal(later.unpostedFiles, 1);
+  const changedWallet = rewriteFile("2026-12", (body) => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const tree = buildTree([{ address: wallet, cumulativeBase: CUMULATIVE }]);
+    assert.ok(tree);
+    body.referrers[0].wallet = wallet;
+    body.referrers[0].leaf = {
+      hash: tree.leaves[0].hash,
+      proof: tree.leaves[0].proof,
+    };
+    body.merkle.root = tree.root;
+  });
+  await assert.rejects(
+    watch(changedWallet, "2027-01-02T02:00:00.000Z"),
+    /referral_wallet_pin_mismatch/,
+  );
+  sqlite.exec(
+    "ROLLBACK TO watcher_file_controls; RELEASE watcher_file_controls",
+  );
+
   // Exercise owner-void finality on an isolated local branch, then restore both
   // fixture snapshots so the original claim workflow remains independently covered.
   const snapshot = await rpc("evm_snapshot", []);
@@ -262,6 +505,7 @@ try {
   await send(distributor, "voidRoot(uint256)", ["0"], owner);
   const pendingVoid = await runOnce(env, at("2026-12-02T02:10:00.000Z"));
   assert.equal(pendingVoid?.post?.status, "in_flight");
+  assert.equal((await watch()).status, "pending");
   assert.equal(
     (
       sqlite.query("SELECT state FROM referral_root_posts").get() as {
@@ -270,9 +514,35 @@ try {
     ).state,
     "finalized",
   );
-  await rpc("anvil_mine", ["0x41"]);
-  const finalVoid = await runOnce(env, at("2026-12-02T02:20:00.000Z"));
+  // Robinhood rejects unbounded history after 9,000 blocks. Both real Viem
+  // clients must still reconcile a long-lived posted root through bounded pages.
+  await rpc("anvil_mine", ["0x2400"]);
+  const tooWide = await boundedRpc(rpcUrl, {
+    method: "POST",
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "eth_getLogs",
+      params: [
+        {
+          address: distributor,
+          fromBlock: `0x${distributorBlock.toString(16)}`,
+          toBlock: await rpc("eth_blockNumber", []),
+        },
+      ],
+    }),
+  });
+  assert.equal((await tooWide.json()).error.code, -32005);
+  scanRanges.length = 0;
+  const finalVoid = await runOnce(env, at("2026-12-02T02:20:00.000Z"), {
+    fetch: boundedRpc,
+  });
   assert.equal(finalVoid?.post?.status, "halted_after_void");
+  const voidWatch = await watch();
+  assert.equal(voidWatch.status, "verified");
+  assert.equal(voidWatch.mappings[0].voided, true);
+  assert.ok(scanRanges.length >= 6);
+  assert.ok(scanRanges.every((range) => range > 0n && range <= 9000n));
   assert.equal(
     (
       sqlite.query("SELECT state FROM referral_root_posts").get() as {
@@ -341,6 +611,9 @@ try {
       nonfinalVoidHeld: true,
       canonicalFinalVoidRecorded: true,
       voidFixtureRolledBackBeforeClaim: true,
+      publicFileRootWatcher: true,
+      watcherCorruptionAndStalenessControls: true,
+      robinhoodRangeLimitReconciled: true,
     }),
   );
 } finally {
