@@ -392,9 +392,10 @@ const MAX_AUTOMATIC_SCANS = 25;
  * Queues the scans that changed executable content needs, without an admin
  * (PRD sections 4 and 8): a listed project whose current content or live
  * pin has no scan, and a project that flags alone paused and that has no
- * scan requested since the pause. Banned and moderator-restricted projects
- * wait for a moderator. The signed scanner service calls this before it
- * reads the queue.
+ * scan requested since the pause. A fresh clean scan at the live pin that
+ * could not reinstate when it landed reinstates here. Banned and
+ * moderator-restricted projects wait for a moderator. The signed scanner
+ * service calls this before it reads the queue.
  */
 async function refreshQueue(
   request: Request,
@@ -408,6 +409,7 @@ async function refreshQueue(
     deps.projects.listEnforcements(),
   ]);
   const queued: string[] = [];
+  const reinstated: string[] = [];
   const skipped: { projectId: string; reason: string }[] = [];
   for (const project of projects) {
     if (queued.length >= MAX_AUTOMATIC_SCANS) break;
@@ -428,17 +430,38 @@ async function refreshQueue(
         continue;
       }
       const assessments = await deps.vetting.projectAssessments(project.id);
-      const fresh = await Promise.all(
-        assessments.map(
-          async (assessment) =>
-            assessment.revision === project.revision &&
-            assessment.requestedAt >= since &&
-            assessment.commitSha === live.commitSha &&
-            assessment.templateSha256 === live.templateSha256 &&
-            (await deps.vetting.assessmentCoversActiveFlags(assessment.id)),
-        ),
-      );
-      if (!fresh.some(Boolean))
+      const fresh: VettingAssessment[] = [];
+      for (const assessment of assessments)
+        if (
+          assessment.revision === project.revision &&
+          assessment.requestedAt >= since &&
+          assessment.commitSha === live.commitSha &&
+          assessment.templateSha256 === live.templateSha256 &&
+          (await deps.vetting.assessmentCoversActiveFlags(assessment.id))
+        )
+          fresh.push(assessment);
+      // A fresh clean scan whose reinstatement could not be written when it
+      // landed, such as during a live-pin outage, reinstates now.
+      const clean = fresh.filter((assessment) => assessment.state === "clean");
+      for (const assessment of clean.reverse())
+        if (
+          await deps.vetting.reinstateFromRecordedScan(
+            assessment.id,
+            live,
+            deps.now().toISOString(),
+          )
+        ) {
+          reinstated.push(assessment.id);
+          await purgeProjectCache(
+            deps.cache,
+            new URL(request.url).origin,
+            project.id,
+            [project.manifest.skill.id, project.manifest.reviewSkill.id],
+            await deps.projects.enforcementGeneration(),
+          );
+          break;
+        }
+      if (fresh.length === 0)
         reason =
           "Automatic fresh scan after two contributor flags paused the project";
     } else {
@@ -473,7 +496,7 @@ async function refreshQueue(
       });
     }
   }
-  return json(200, { queued, skipped });
+  return json(200, { queued, reinstated, skipped });
 }
 
 /**

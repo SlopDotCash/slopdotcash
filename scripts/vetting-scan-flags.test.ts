@@ -134,6 +134,7 @@ let flags: ProjectFlagStore;
 let beforeFlagBatch: (() => void) | null = null;
 let keys: Awaited<ReturnType<typeof vettingKeyPair>>;
 let livePin: VettingPin;
+let pinUp = true;
 let clock: Date;
 let ids = 0;
 let installation: "installed" | "missing" | "suspended" = "installed";
@@ -166,6 +167,7 @@ beforeEach(async () => {
   );
   keys = await vettingKeyPair();
   livePin = { commitSha: HEAD, templateSha256: TEMPLATE };
+  pinUp = true;
 });
 afterEach(async () => {
   await retained?.dispose();
@@ -173,7 +175,10 @@ afterEach(async () => {
 
 const actorOf = (request: Request) =>
   ACTORS[request.headers.get("x-test-actor") ?? ""] ?? null;
-const readLivePin = async () => livePin;
+const readLivePin = async () => {
+  if (!pinUp) throw new Error("GitHub unavailable");
+  return livePin;
+};
 const randomId = () =>
   `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`;
 const vettingDeps = () => ({
@@ -1302,6 +1307,46 @@ test("a completed scan for a superseded commit pin records without lifting a fla
     ).status,
   ).toBe(200);
   expect((await publicProject()).status).toBe(200);
+  expect(
+    (await projects.listEnforcements()).filter(
+      (entry) =>
+        entry.projectId === "open-registry" && entry.action === "reinstate",
+    ),
+  ).toHaveLength(1);
+});
+
+test("a live-pin outage while a fresh clean scan lands defers the flag reinstatement to the next refresh", async () => {
+  await activeProject();
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  expect((await flag("bob")).status).toBe(201);
+  const pending = (await vetting.pendingAssessments()).at(-1);
+  if (!pending) throw new Error("Missing pause scan");
+  const result = await scanFixture(pending.id, "clean", {
+    runId: "scan-run-4",
+  });
+
+  pinUp = false;
+  expect((await postResult(result)).status).toBe(200);
+  expect((await vetting.getAssessment(pending.id))?.state).toBe("clean");
+  expect((await publicProject()).status).toBe(410);
+  // Refresh during the outage changes nothing.
+  expect((await refresh()) as unknown).toMatchObject({
+    queued: [],
+    reinstated: [],
+  });
+  expect((await publicProject()).status).toBe(410);
+
+  pinUp = true;
+  expect((await refresh()) as unknown).toMatchObject({
+    queued: [],
+    reinstated: [pending.id],
+  });
+  expect((await publicProject()).status).toBe(200);
+  expect((await refresh()) as unknown).toMatchObject({
+    queued: [],
+    reinstated: [],
+  });
   expect(
     (await projects.listEnforcements()).filter(
       (entry) =>
