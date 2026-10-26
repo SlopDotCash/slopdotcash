@@ -8,6 +8,9 @@ import { runScanPass, serviceConfigFrom } from "../workers/vetting/run";
 import type { ScannerProfile } from "../workers/vetting/scanners";
 import { signedServiceHeaders } from "../workers/vetting/service";
 
+/** Fixed step names only: the failure report never carries an error message. */
+let stage = "checkout";
+
 async function main() {
   const env = process.env;
   const branch = env.GITHUB_REF;
@@ -22,6 +25,7 @@ async function main() {
     throw new Error(
       "The protected branch's exact workflow checkout is required",
     );
+  stage = "journal";
   const production = branch === "refs/heads/main";
   const origin = production ? "https://slop.cash" : "https://staging.slop.cash";
   const wrangler = Bun.TOML.parse(
@@ -41,6 +45,7 @@ async function main() {
   });
   // Check schema and access before acquiring source or spending model tokens.
   await journal.has("controller-readiness");
+  stage = "rate-cards";
   const rates = JSON.parse(env.VETTING_RATE_CARDS ?? "null") as {
     primary: ScannerProfile["rateCard"];
     specialist: ScannerProfile["rateCard"];
@@ -85,8 +90,10 @@ async function main() {
       }),
       { mode: 0o600 },
     );
+    stage = "scanner-config";
     const config = await serviceConfigFrom(configPath, env);
     config.journal = journal;
+    stage = "bridge";
     const path = "/api/v1/vetting/sandbox";
     const response = await fetch(`${origin}${path}`, {
       redirect: "error",
@@ -104,12 +111,14 @@ async function main() {
       revision?: string;
       imageSha256?: string;
     };
+    stage = "runner-revision";
     if (
       health.ok !== true ||
       health.revision !== env.GITHUB_SHA ||
       !/^[a-f0-9]{64}$/.test(health.imageSha256 ?? "")
     )
       throw new Error("The matching isolated runner has not been deployed");
+    stage = "scan";
     const report = await runScanPass(config);
     console.log(JSON.stringify(report));
     if (
@@ -126,9 +135,10 @@ async function main() {
     await rm(root, { recursive: true, force: true });
   }
 }
-await main().catch(() => {
+await main().catch((error: unknown) => {
+  const kind = error instanceof Error ? error.name : "NonError";
   console.error(
-    "Scanner controller failed; no source, provider response or credentials are logged.",
+    `Scanner controller failed at step ${stage} (${kind}); no source, provider response or credentials are logged.`,
   );
   process.exitCode = 1;
 });
