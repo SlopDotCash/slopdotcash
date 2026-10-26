@@ -5,6 +5,7 @@ import {
   hashTypedData,
   keccak256,
   parseAbi,
+  recoverAddress,
 } from "viem";
 import { sha256Hex } from "../../src/lib/sha256";
 import {
@@ -29,6 +30,7 @@ const ABI = parseAbi([
   "function monthlyReserves(uint32) view returns (bytes32,uint128,uint128,uint32,uint64)",
   "function reserveMonthly(uint32,(bytes32 allocationDigest,bytes32 allocationRoot,uint128 wholeGross,uint128 remainingGross,uint32 count,uint256 sourceSequence),bytes)",
   "function commitMonthlyLeaf(uint32,(uint64 actorId,uint128 gross,bytes32 sourceDigest),uint32,(bytes32 hash,uint128 total)[])",
+  "function releaseMonthlyReserve(uint32,uint128,uint128,bytes)",
 ]);
 const TYPES = {
   MonthlyReserveV2: [
@@ -388,6 +390,82 @@ export async function inspectEvmMonthlyWrongSum(
     expectedRemaining: month.remaining.toString(),
     releasedGross: month.remaining.toString(),
   };
+}
+
+export type EvmWrongSumEvidence = Extract<
+  Awaited<ReturnType<typeof inspectEvmMonthlyWrongSum>>,
+  { status: "provably-unsettleable" }
+>;
+/** One contract domain for the attester, owner review and unsigned builder. */
+export function evmMonthlyReleaseDigest(evidence: EvmWrongSumEvidence) {
+  return hashTypedData({
+    domain: {
+      name: "SlopProjectEscrow",
+      version: EVM_ESCROW_DOMAIN_VERSION,
+      chainId: BigInt(evidence.chainId),
+      verifyingContract: evidence.vault as Hex,
+    },
+    types: {
+      MonthlyRelease: [
+        { name: "period", type: "uint32" },
+        { name: "allocationDigest", type: "bytes32" },
+        { name: "allocationRoot", type: "bytes32" },
+        { name: "remainingGross", type: "uint128" },
+        { name: "releasedGross", type: "uint128" },
+      ],
+    },
+    primaryType: "MonthlyRelease",
+    message: {
+      period: periodNumber(evidence.period),
+      allocationDigest: bytes32(evidence.allocationDigest),
+      allocationRoot: bytes32(evidence.allocationRoot),
+      remainingGross: BigInt(evidence.expectedRemaining),
+      releasedGross: BigInt(evidence.releasedGross),
+    },
+  });
+}
+
+/** Owner-only unsigned plan. Reinspect the complete tree; never accept a caller's claimed
+ * fault or release amount. The caller supplies an attestation, not a signing key. */
+export async function prepareEvmMonthlyWrongSumRelease(
+  config: EvmEscrowConfig,
+  period: string,
+  capture: EvmMonthlyReleaseCapture | null,
+  attestation: string,
+) {
+  const evidence = await inspectEvmMonthlyWrongSum(config, period, capture);
+  if (evidence.status !== "provably-unsettleable")
+    throw new Error(`Monthly release held: ${evidence.reason}`);
+  if (!/^0x[0-9a-f]{130}$/i.test(attestation))
+    throw new Error("Invalid monthly release attestation");
+  const digest = evmMonthlyReleaseDigest(evidence);
+  if (
+    (
+      await recoverAddress({ hash: digest, signature: attestation as Hex })
+    ).toLowerCase() !== evidence.identityAuthority
+  )
+    throw new Error("Monthly release authority mismatch");
+  const transaction = {
+    from: evidence.owner,
+    to: evidence.vault,
+    value: "0x0",
+    data: encodeFunctionData({
+      abi: ABI,
+      functionName: "releaseMonthlyReserve",
+      args: [
+        periodNumber(period),
+        BigInt(evidence.expectedRemaining),
+        BigInt(evidence.releasedGross),
+        attestation as Hex,
+      ],
+    }),
+  };
+  // A later upgrade, rotation or reserve transition must not yield a stale owner request.
+  // The transaction repeats the authority and remaining-reserve checks when mined.
+  await verifyEvmDeployment(config, "latest");
+  if ((await evmRpc(config, "eth_call", [transaction, "latest"])) !== "0x")
+    throw new Error("Monthly release simulation returned unexpected data");
+  return { evidence, chainId: config.chainId.toString(), transaction };
 }
 /** Current-code verification and every source read use the same finalized block. A missing legacy
  * method is the sole fallback; an unavailable provider or mismatched review cannot authorize anything. */

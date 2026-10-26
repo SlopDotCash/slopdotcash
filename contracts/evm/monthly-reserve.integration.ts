@@ -18,6 +18,7 @@ import { CloudflareProjectPersistence } from "../../backend/projects/cloudflare-
 import { onRequest } from "../../functions/api/v1/[[path]]";
 import { runKeeper } from "../../scripts/payment-keeper/keeper";
 import { openKeeperStore } from "../../scripts/payment-keeper/store";
+import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
@@ -31,6 +32,10 @@ import {
   type MonthlyAuthorization,
   signMonthlyAllocation,
 } from "../../workers/payment-executor/monthly";
+import {
+  checkMonthlyReserveRelease,
+  prepareMonthlyReserveRelease,
+} from "../../workers/payment-executor/monthly-release";
 import {
   buildBindCalldata,
   buildCommitAwardCalldata,
@@ -63,7 +68,10 @@ import {
   captureUpgrade,
   deployUpgradeableFactory,
 } from "./integration/upgrade";
-import { inspectEvmMonthlyWrongSum } from "./monthly-reserve";
+import {
+  inspectEvmMonthlyWrongSum,
+  prepareEvmMonthlyWrongSumRelease,
+} from "./monthly-reserve";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const legacyRoot = process.env.SLOP_MONTHLY_LEGACY_ROOT;
@@ -100,6 +108,9 @@ const ABI = parseAbi([
   "function freeBalance() view returns (uint128)",
   "function awards(bytes32) view returns (uint64,uint128,uint128,bytes32,uint64,bool)",
   "function balanceOf(address) view returns (uint256)",
+  "function monthlyReleaseDigest(uint32,uint128,uint128) view returns (bytes32)",
+  "function proposeIdentityAuthority(address)",
+  "function executeIdentityAuthorityRotation()",
 ]);
 async function rpc(method: string, params: unknown[]): Promise<unknown> {
   const response = await fetch(rpcUrl, {
@@ -322,6 +333,164 @@ try {
         );
         await finalized();
         const before = await readEvmMonthlyReserve(config, period);
+        const releaseFixture = await createMonthlyAllocationFixture({
+          deployment: {
+            network: "base-sepolia",
+            vault,
+            asset: token,
+            owner: config.owner,
+            identityAuthority: config.identityAuthority,
+            feeRecipient: config.feeRecipient,
+            codeSha256: config.codeSha256,
+            bindingDelaySeconds: "0",
+            rotationDelaySeconds: null,
+            factory,
+            factoryCodeSha256: config.factoryCodeSha256,
+            registrar: config.registrar,
+            evmUpgrade: config.evmUpgrade,
+            programId: null,
+            upgradeAuthority: null,
+            projectPda: null,
+            networkDomain: null,
+            deploymentTransaction: created.hash,
+            sourceCommit: "8a72098a9e4fd5c5828da4d18d882e1a6cb89bcf",
+          },
+          period,
+        });
+        const releaseDeployment =
+          releaseFixture.project.manifest.escrow?.deployments[0];
+        if (!releaseDeployment)
+          throw new Error("Missing release fixture deployment");
+        const releaseRequest = {
+          projectId,
+          period,
+          network: "base-sepolia" as const,
+          manifestSha256: releaseFixture.project.manifestSha256,
+        };
+        let releaseSigns = 0;
+        const releaseJournal = journal();
+        const releaseDependencies = {
+          db: releaseFixture.db,
+          journal: releaseJournal.store,
+          getProject: releaseFixture.getProject,
+          pinned: [
+            { ...paymentDeploymentRecord(projectId, releaseDeployment) },
+          ],
+          family: "evm" as const,
+          evm: async () => readOnly,
+          solana: async () => {
+            throw new Error("Wrong family");
+          },
+          sign: async (messageHex: string) => {
+            releaseSigns++;
+            return (await authority.sign({ hash: `0x${messageHex}` })).slice(2);
+          },
+        };
+        assert.equal(
+          (
+            await prepareMonthlyReserveRelease(
+              releaseDependencies,
+              releaseRequest,
+            )
+          ).status,
+          "held",
+        );
+        assert.equal(releaseSigns, 0, "missing captures never reach the key");
+        releaseFixture.sqlite
+          .prepare(
+            "INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) VALUES(?,?,'automatic',NULL,0,'{}',?,'base-sepolia',?,?,'2026-12-04T00:00:00Z','2026-12-04T00:00:00Z')",
+          )
+          .run(
+            projectId,
+            period,
+            capture.allocationDigest.slice(2),
+            vault,
+            reservation.wholeGross,
+          );
+        const retainedAuthorization = {
+          plan: {
+            request: {
+              projectId,
+              period,
+              network: "base-sepolia",
+              snapshotSha256: capture.allocationDigest.slice(2),
+            },
+            deployment: releaseDeployment,
+            allocationRoot: tree.hash,
+            messageHex: evmMonthlyReserveDigest(
+              chainId,
+              vault,
+              period,
+              reservation,
+            ).slice(2),
+            family: "evm",
+            totalGrossBase: reservation.wholeGross,
+            evmReservation: reservation,
+            entries: releaseEntries,
+          },
+          signatureHex: signature.slice(2),
+        };
+        releaseFixture.sqlite
+          .prepare(
+            "INSERT INTO monthly_payment_authorizations(project_id,period,network,snapshot_sha256,authorization,published_at) VALUES(?,?,'base-sepolia',?,?,'2026-12-04T00:00:00Z')",
+          )
+          .run(
+            projectId,
+            period,
+            capture.allocationDigest.slice(2),
+            JSON.stringify(retainedAuthorization),
+          );
+        await assert.rejects(
+          prepareMonthlyReserveRelease(releaseDependencies, {
+            ...releaseRequest,
+            manifestSha256: "0".repeat(64),
+          }),
+          /policy changed/,
+        );
+        await assert.rejects(
+          prepareMonthlyReserveRelease(
+            { ...releaseDependencies, pinned: [] },
+            releaseRequest,
+          ),
+          /pinned/,
+        );
+        const serviceRelease = await prepareMonthlyReserveRelease(
+          releaseDependencies,
+          releaseRequest,
+        );
+        assert.equal(serviceRelease.status, fault === "sum" ? "ready" : "held");
+        assert.equal(releaseSigns, fault === "sum" ? 1 : 0);
+        if (serviceRelease.status === "ready") {
+          assert.equal(serviceRelease.family, "evm");
+          assert.equal(
+            (
+              await prepareMonthlyReserveRelease(
+                releaseDependencies,
+                releaseRequest,
+              )
+            ).status,
+            "ready",
+          );
+          assert.equal(
+            releaseSigns,
+            1,
+            "retries reuse the same verified attestation",
+          );
+          assert.equal(
+            (
+              await checkMonthlyReserveRelease(
+                { ...releaseDependencies, evm: async () => config },
+                {
+                  ...releaseRequest,
+                  planId: serviceRelease.planId,
+                  transactionId: `0x${"0".repeat(64)}`,
+                },
+              )
+            ).status,
+            "pending",
+          );
+        }
+
         const result = await inspectEvmMonthlyWrongSum(
           readOnly,
           period,
@@ -429,6 +598,235 @@ try {
           before,
           "inspection cannot move or release funds",
         );
+        if (fault === "sum") {
+          const releaseDigest = String(
+            await rpc("eth_call", [
+              {
+                to: vault,
+                data: encodeFunctionData({
+                  abi: ABI,
+                  functionName: "monthlyReleaseDigest",
+                  args: [202611, 3001n, 3001n],
+                }),
+              },
+              "finalized",
+            ]),
+          ) as `0x${string}`;
+          const attestation = await authority.sign({ hash: releaseDigest });
+          await assert.rejects(
+            prepareEvmMonthlyWrongSumRelease(
+              readOnly,
+              period,
+              capture,
+              await owner.sign({ hash: releaseDigest }),
+            ),
+            /authority mismatch/,
+          );
+          const plan = await prepareEvmMonthlyWrongSumRelease(
+            readOnly,
+            period,
+            capture,
+            attestation,
+          );
+          assert.equal(plan.transaction.from, owner.address.toLowerCase());
+          assert.equal(plan.transaction.to, vault.toLowerCase());
+          assert.equal(plan.transaction.value, "0x0");
+          assert.equal(plan.evidence.releasedGross, "3001");
+          assert.deepEqual(await readEvmMonthlyReserve(config, period), before);
+          const rotationSnapshot = await rpc("evm_snapshot", []);
+          try {
+            await send(
+              factory,
+              encodeFunctionData({
+                abi: ABI,
+                functionName: "proposeIdentityAuthority",
+                args: [recipient.address],
+              }),
+              registrar.address,
+            );
+            await send(
+              factory,
+              encodeFunctionData({
+                abi: ABI,
+                functionName: "executeIdentityAuthorityRotation",
+              }),
+            );
+            await finalized();
+            await assert.rejects(
+              prepareEvmMonthlyWrongSumRelease(
+                readOnly,
+                period,
+                capture,
+                attestation,
+              ),
+              /authority mismatch/,
+            );
+            await send(vault, plan.transaction.data, owner.address, false);
+          } finally {
+            assert.equal(await rpc("evm_revert", [rotationSnapshot]), true);
+          }
+          let actualReleaseHash = "";
+          const freeBefore = BigInt(await value(vault, "freeBalance()"));
+          let lateRelease = false;
+          await assert.rejects(
+            prepareEvmMonthlyWrongSumRelease(
+              {
+                ...readOnly,
+                request: async (method, params) => {
+                  const call = params[0] as { from?: string; data?: string };
+                  if (
+                    method === "eth_call" &&
+                    params[1] === "latest" &&
+                    call.from === plan.transaction.from &&
+                    call.data === plan.transaction.data &&
+                    !lateRelease
+                  ) {
+                    // The prior owner request actually lands after fresh inspection,
+                    // immediately before the new request's latest-state simulation.
+                    lateRelease = true;
+                    actualReleaseHash = (
+                      await send(vault, plan.transaction.data)
+                    ).hash;
+                  }
+                  return readOnly.request(method, params);
+                },
+              },
+              period,
+              capture,
+              attestation,
+            ),
+          );
+          assert.equal(lateRelease, true);
+          await finalized();
+          assert.equal(serviceRelease.status, "ready");
+          if (serviceRelease.status !== "ready")
+            throw new Error("Expected qualified service release");
+          assert.equal(
+            (
+              await checkMonthlyReserveRelease(
+                { ...releaseDependencies, evm: async () => config },
+                {
+                  ...releaseRequest,
+                  planId: serviceRelease.planId,
+                  transactionId: actualReleaseHash,
+                },
+              )
+            ).status,
+            "finalized",
+          );
+          assert.equal(
+            (
+              await prepareMonthlyReserveRelease(
+                releaseDependencies,
+                releaseRequest,
+              )
+            ).status,
+            "held",
+          );
+          assert.equal(releaseSigns, 1, "a released reserve never signs again");
+          for (const fault of [
+            "canonical-membership",
+            "receipt-index",
+            "transaction-block",
+            "receipt-owner",
+          ]) {
+            await assert.rejects(
+              checkMonthlyReserveRelease(
+                {
+                  ...releaseDependencies,
+                  evm: async () => ({
+                    ...config,
+                    rpcUrl: undefined,
+                    request: async (method, params) => {
+                      const actual = await rpc(method, params);
+                      if (
+                        method === "eth_getBlockByNumber" &&
+                        params[0] !== "finalized" &&
+                        fault === "canonical-membership"
+                      )
+                        return { ...(actual as object), transactions: [] };
+                      if (
+                        method === "eth_getTransactionReceipt" &&
+                        fault === "receipt-index"
+                      )
+                        return {
+                          ...(actual as object),
+                          transactionIndex: "0x1",
+                        };
+                      if (
+                        method === "eth_getTransactionByHash" &&
+                        fault === "transaction-block"
+                      )
+                        return {
+                          ...(actual as object),
+                          blockHash: `0x${"0".repeat(64)}`,
+                        };
+                      if (
+                        method === "eth_getTransactionReceipt" &&
+                        fault === "receipt-owner"
+                      )
+                        return {
+                          ...(actual as object),
+                          from: recipient.address,
+                        };
+                      return actual;
+                    },
+                  }),
+                },
+                {
+                  ...releaseRequest,
+                  planId: serviceRelease.planId,
+                  transactionId: actualReleaseHash,
+                },
+              ),
+              /canonical|reviewed release/,
+              fault,
+            );
+          }
+
+          assert.equal(
+            (
+              await checkMonthlyReserveRelease(
+                {
+                  ...releaseDependencies,
+                  evm: async () => config,
+                  getProject: async () => ({
+                    ...releaseFixture.project,
+                    revision: 2,
+                    manifestSha256: "e".repeat(64),
+                  }),
+                },
+                {
+                  ...releaseRequest,
+                  manifestSha256: "e".repeat(64),
+                  planId: serviceRelease.planId,
+                  transactionId: actualReleaseHash,
+                },
+              )
+            ).status,
+            "finalized",
+            "a nonfinancial project edit cannot strand transaction recovery",
+          );
+
+          assert.equal(
+            (await readEvmMonthlyReserve(config, period)).remaining,
+            0n,
+          );
+          assert.equal(
+            BigInt(await value(vault, "freeBalance()")),
+            freeBefore + 3001n,
+          );
+          await assert.rejects(
+            prepareEvmMonthlyWrongSumRelease(
+              readOnly,
+              period,
+              capture,
+              attestation,
+            ),
+            /prior-reserve-transition/,
+          );
+        }
+        releaseFixture.sqlite.close();
       } finally {
         assert.equal(await rpc("evm_revert", [snapshot]), true);
       }
@@ -1383,6 +1781,8 @@ try {
         optedOutAndWindowExpired: "leaves-completed",
         replay: "refused",
         withdrawalOfReservedFunds: "refused",
+        monthlyReleaseService:
+          "retained D1 capture; idempotent authority signature; exact owner release; canonical slot and transaction identity verified",
         monthlyReleaseInspection: legacyRoot
           ? "not-run-on-legacy"
           : "wrong-sum-only; healthy/missing/mismatch/noncanonical held",

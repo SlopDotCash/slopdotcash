@@ -5,6 +5,10 @@ import type { PaymentExecutor } from "../../backend/payments/dispatch";
 import type { MonthlyAttestationRequest } from "../../backend/payments/monthly-attestation";
 import { publishMonthlyAuthorizations } from "../../backend/payments/monthly-publication";
 import {
+  isMonthlyReleaseCheck,
+  isMonthlyReleaseRequest,
+} from "../../backend/payments/monthly-reserve-release";
+import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
 } from "../../backend/projects/cloudflare-persistence";
@@ -43,6 +47,11 @@ import {
 } from "./core";
 import type { MonthlyAuthorization } from "./monthly";
 import { signMonthlyAllocation } from "./monthly";
+import {
+  checkMonthlyReserveRelease,
+  type MonthlyReleaseDependencies,
+  prepareMonthlyReserveRelease,
+} from "./monthly-release";
 import {
   SIGNER_STACKS,
   signerStack,
@@ -170,6 +179,7 @@ export class PaymentSignerJournal {
       ![
         "/v1/pay",
         "/v1/monthly-authorization",
+        "/v1/monthly-reserve-release",
         "/v1/commit-monthly",
         "/v1/complete-bind",
         "/v1/attempt-status",
@@ -307,6 +317,68 @@ export class PaymentSignerJournal {
             new URL(request.url).searchParams.get("admit") !== "false",
             16,
           ),
+        );
+      }
+      if (pathname === "/v1/monthly-reserve-release") {
+        if (
+          this.env.SIGNER_ROLE !== "attester" ||
+          this.env.PAYMENT_SCOPE === "security-bounty" ||
+          !this.env.REGISTRY_DB
+        )
+          return new Response("Not found", { status: 404 });
+        const input = await readBoundedJson(
+          request,
+          2048,
+          "monthly reserve release",
+        );
+        const stack = signerStack(this.env.SIGNER_STACK);
+        if (
+          (!isMonthlyReleaseRequest(input) && !isMonthlyReleaseCheck(input)) ||
+          !stackServesNetwork(stack, input.network)
+        )
+          return Response.json({ error: "invalid_request" }, { status: 400 });
+        const registry = new CloudflareProjectPersistence(this.env.REGISTRY_DB);
+        const dependencies: MonthlyReleaseDependencies = {
+          db: database,
+          journal: this.state.storage,
+          getProject: (id) => registry.getProject(id),
+          pinned: JSON.parse(this.env.PAYMENT_DEPLOYMENTS) as Record<
+            string,
+            unknown
+          >[],
+          family: this.env.CHAIN_FAMILY,
+          evm: async (deployment) => {
+            const config = await preflightEvmDeployment(this.env, deployment);
+            return { ...config, chainId: BigInt(config.chainId) };
+          },
+          solana: (deployment) =>
+            preflightSolanaDeployment(this.env, deployment),
+          sign: async (messageHex) => {
+            const secrets = SIGNER_STACKS[stack];
+            if (this.env.CHAIN_FAMILY === "evm") {
+              const key = this.env[secrets.evmSecret];
+              if (!key) throw new Error("Signer unavailable");
+              return (
+                await privateKeyToAccount(key).sign({ hash: `0x${messageHex}` })
+              ).slice(2);
+            }
+            const seed = this.env[secrets.solanaSecret];
+            if (!seed || !/^[0-9a-f]{64}$/.test(seed))
+              throw new Error("Signer unavailable");
+            const bytes = (value: string) =>
+              Uint8Array.from(value.match(/../g) ?? [], (b) =>
+                Number.parseInt(b, 16),
+              );
+            return Array.from(
+              ed25519.sign(bytes(messageHex), bytes(seed)),
+              (b) => b.toString(16).padStart(2, "0"),
+            ).join("");
+          },
+        };
+        return Response.json(
+          await (isMonthlyReleaseCheck(input)
+            ? checkMonthlyReserveRelease(dependencies, input)
+            : prepareMonthlyReserveRelease(dependencies, input)),
         );
       }
       if (pathname === "/v1/monthly-authorization") {

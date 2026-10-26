@@ -205,3 +205,143 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   );
   expect(errors).toEqual([]);
 });
+
+test("owner reserve repair keeps healthy and unknown states held and restores a submitted transaction after reload", async ({
+  page,
+}, info) => {
+  const project = PROJECTS.find((item) => item.id === "eliza");
+  if (!project) throw new Error("Missing project fixture");
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.clock.setFixedTime(new Date("2026-12-02T12:00:00Z"));
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+  );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route("**/api/v1/points/session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  const deployment = {
+    network: "base-sepolia",
+    vault: `0x${"1".repeat(40)}`,
+    owner: `0x${"2".repeat(40)}`,
+  };
+  await page.route(
+    "**/api/v1/payments/projects/eliza/monthly/2026-11",
+    (route) =>
+      route.fulfill({
+        json: {
+          projectId: "eliza",
+          period: "2026-11",
+          manifestSha256: "a".repeat(64),
+          automatic: false,
+          cutoffAt: null,
+          deployment,
+          asset: null,
+          proposal: null,
+          run: null,
+        },
+      }),
+  );
+  let reason = "no-wrong-sum-fault",
+    finalized = false;
+  const requests: Record<string, unknown>[] = [];
+  await page.route(
+    "**/api/v1/payments/projects/eliza/monthly/2026-11/reserve-release",
+    (route) => {
+      const body = route.request().postDataJSON();
+      requests.push(body);
+      return route.fulfill({
+        json: body.planId
+          ? { status: finalized ? "finalized" : "pending" }
+          : { status: "held", reason },
+      });
+    },
+  );
+  await page.goto("/projects/eliza/awards");
+  await page.getByRole("button", { name: "Load awards", exact: true }).click();
+  const details = page.locator(".owner-reserve-release");
+  await details.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  await details
+    .getByRole("button", { name: "Check reserve", exact: true })
+    .click();
+  await expect(details.getByRole("status")).toHaveText(
+    "The reserve total is correct. No release is needed.",
+  );
+  await expect(
+    details.getByRole("button", { name: "Review and sign release" }),
+  ).toHaveCount(0);
+  reason = "allocation-unavailable";
+  await details
+    .getByRole("button", { name: "Check reserve", exact: true })
+    .click();
+  await expect(details.getByRole("status")).toContainText(
+    "complete original allocation is unavailable",
+  );
+  expect(requests).toEqual(
+    Array.from({ length: 2 }, () => ({
+      network: "base-sepolia",
+      manifestSha256: "a".repeat(64),
+    })),
+  );
+  await page.evaluate(() =>
+    sessionStorage.setItem(
+      "slop:monthly-release:v1:eliza:2026-11:base-sepolia",
+      JSON.stringify({ planId: "b".repeat(64), hash: `0x${"c".repeat(64)}` }),
+    ),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Load awards", exact: true }).click();
+  await details.locator("summary").click();
+  await expect(
+    details.getByRole("button", { name: "Check reserve", exact: true }),
+  ).toHaveCount(0);
+  await expect(details.getByLabel("Transaction hash or signature")).toHaveValue(
+    `0x${"c".repeat(64)}`,
+  );
+  await details
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(details.getByRole("status")).toHaveText(
+    "Waiting for the transaction to finalize.",
+  );
+  await expect(
+    details.getByText("Release verified.", { exact: false }),
+  ).toHaveCount(0);
+  finalized = true;
+  await details
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(details.getByRole("status")).toHaveText(
+    "Release verified. The reserve returned to the vault's free balance.",
+  );
+  expect(
+    await page.evaluate(() =>
+      sessionStorage.getItem(
+        "slop:monthly-release:v1:eliza:2026-11:base-sepolia",
+      ),
+    ),
+  ).toBeNull();
+  await page.screenshot({
+    path: info.outputPath("owner-reserve-release.png"),
+    fullPage: true,
+  });
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(errors).toEqual([]);
+});

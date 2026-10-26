@@ -1584,7 +1584,7 @@ jobs:
           const { readFileSync, writeFileSync } = require("node:fs");
           const path = process.argv[2];
           const config = JSON.parse(readFileSync(path, "utf8"));
-          config.services = config.services.filter((service) => service.binding !== "BINDING_RECOVERY");
+          config.services = config.services.filter((service) => !["BINDING_RECOVERY", "MONTHLY_RELEASE_BASE"].includes(service.binding));
           writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
           NODE
           fi

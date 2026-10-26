@@ -189,7 +189,10 @@ process.exit(1);
         released === "true"
           ? pages.services
           : pages.services.filter(
-              (service) => service.binding !== "BINDING_RECOVERY",
+              (service) =>
+                !["BINDING_RECOVERY", "MONTHLY_RELEASE_BASE"].includes(
+                  service.binding,
+                ),
             ),
     });
     assert.deepEqual(actual.env.preview.services, []);
