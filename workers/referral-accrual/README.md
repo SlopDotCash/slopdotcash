@@ -8,10 +8,13 @@ protocol change and not a contributor referral program: no manifest field, no
 scorer change, no cycle file, no creator transfer, and contributors and
 sponsors see no difference.
 
-The Worker is off by default. The only modes are `off` and `dry_run`. It has
-no HTTP route, holds no key, and never signs, posts or pays. A later change may
-add the poster that publishes a filed root on chain; this Worker does not
-contain it.
+The Worker is off by default. `off` and `dry_run` hold no key and never sign,
+post or pay. `live` adds the poster described under [Live mode](#live-mode):
+after filing, it signs at most one `postRoot` per run from the poster hot key.
+Live mode is refused unless the owner's program flag, the distributor address,
+the token address and the network are all set; the shipped `wrangler.toml`
+keeps the flag `"false"` and the addresses empty, and nothing in the code sets
+them. The Worker has no HTTP route.
 
 ## What a referral is
 
@@ -115,11 +118,63 @@ Rows already filed are unchanged.
 
 ```sh
 bun run test:referral-accrual
+bun run test:referral-accrual:anvil
 bun run referral-accrual:dry-run <fixture.json> [<as-of ISO time>]
 ```
 
 The dry run builds an in-memory D1 from every migration, loads the fixture
 and prints the run result and each filed file. It touches no hosted database.
+
+## Live mode
+
+Live mode runs the accrual step exactly as `dry_run` does (files say
+`"mode": "live"`), then `postNextRoot` in `core.ts`:
+
+1. Reconcile every recorded send in `referral_root_posts` (migration 0087)
+   through the chain: a receipt in a finalized block with the filed root at
+   that epoch is `finalized`; a reverted receipt or a nonce taken by another
+   transaction is `failed` (the next run signs again); a send the node never
+   saw is rebroadcast from the stored bytes, never re-signed. A finalized
+   post the owner later voids on chain becomes `voided`.
+2. Refuse while a send is in flight, and refuse after an owner void until the
+   operator acknowledges it: set `void_acknowledged_at` and
+   `void_acknowledgement` on the voided row with `wrangler d1 execute` after
+   recording the correction (a `referral_holds` row, for example). The next
+   period's file carries the corrected cumulative totals; a voided period is
+   never reposted.
+3. Read the distributor: chain id, `token()`, `poster()`, `paused()`,
+   `nextEpoch()`, `hasPendingRoot()`, `epochCap()`, `activeTotal()`,
+   `totalClaimed()` and the token balance. Stop on any disagreement with the
+   configuration or the journal (wrong chain, wrong token, the key is not the
+   poster, the chain has more epochs than the journal), while paused, or
+   while a root is pending.
+4. Pick the earliest filed file with a root that is later than the last
+   posted period. Files with no leaves are never posted and the contract
+   index counts only posts, so the journal maps `period` to the contract
+   `epoch`; the poster always uses `nextEpoch()`, never a month number.
+5. Precheck what the contract will check (total not below the last finalized
+   total, growth within `epochCap`, balance plus claimed covers the total),
+   simulate the call at the latest block, sign it, record the signed bytes
+   and nonce in the journal, then broadcast. A broadcast error leaves the
+   row `unknown` for the next run to resend unchanged.
+
+Finality is read from the `finalized` block header, which the public
+Robinhood RPCs serve; state reads use `latest`. The poster key can post a
+capped root that the owner can void for seven days; it holds no tokens
+(`docs/security/referral-distributor-ai-review-2026-10-25.md`). Incident
+order: pause the distributor, rotate the poster, void, unpause.
+
+Local proof: `bun run test:referral-accrual:anvil` starts Anvil on chain id
+46630, deploys the compiled contract and mock token with public fixture keys,
+files one epoch from an in-memory D1, posts its root in live mode, reconciles
+the finalized receipt, and claims from the referrer wallet with the file's
+proof. It touches no hosted database and no public chain.
+
+Live configuration (`wrangler.toml` vars, plus the `REFERRAL_POSTER_KEY`
+secret set by the key custodian): `REFERRAL_PROGRAM_ENABLED` (`"true"` is the
+owner's activation), `REFERRAL_DISTRIBUTOR_ADDRESS`, `REFERRAL_TOKEN_ADDRESS`,
+`REFERRAL_POST_NETWORK` (`robinhood-testnet` or `robinhood-mainnet`), and an
+optional `RPC_URL_REFERRAL`.
 
 ## Deployment
 

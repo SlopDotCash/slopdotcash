@@ -7,6 +7,8 @@ import {
   type Candidate,
   type Hold,
   LOCK_MS,
+  type PostRow,
+  type PostStore,
   type PriorAccrual,
   periodBounds,
 } from "./core";
@@ -45,7 +47,7 @@ const ACCRUAL_COLUMNS: [keyof AccrualRow, string][] = [
   ["createdAt", "created_at"],
 ];
 
-export class D1AccrualStore implements AccrualStore {
+export class D1AccrualStore implements AccrualStore, PostStore {
   constructor(private readonly db: ReferralD1Database) {}
 
   async acquireLock(runId: string, now: Date) {
@@ -260,4 +262,103 @@ export class D1AccrualStore implements AccrualStore {
         .bind(pin.githubId, pin.wallet, file.period, file.createdAt)
         .run();
   }
+
+  async openPosts(network: string) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT ${POST_SELECT} FROM referral_root_posts
+          WHERE network = ? AND state IN ('submitted', 'unknown')
+          ORDER BY created_at`,
+      )
+      .bind(network)
+      .all<Record<string, D1Value>>();
+    return results.map(postFromRow);
+  }
+
+  async acceptedPosts(network: string) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT ${POST_SELECT} FROM referral_root_posts
+          WHERE network = ? AND state IN ('submitted', 'unknown', 'finalized', 'voided')
+          ORDER BY epoch`,
+      )
+      .bind(network)
+      .all<Record<string, D1Value>>();
+    return results.map(postFromRow);
+  }
+
+  async postableFiles() {
+    const { results } = await this.db
+      .prepare(
+        `SELECT period, merkle_root, tree_total_base FROM referral_accrual_files
+          WHERE merkle_root IS NOT NULL ORDER BY epoch`,
+      )
+      .bind()
+      .all<{ period: string; merkle_root: string; tree_total_base: string }>();
+    return results.map((row) => ({
+      period: row.period,
+      merkleRoot: row.merkle_root,
+      treeTotalBase: row.tree_total_base,
+    }));
+  }
+
+  async insertPost(row: PostRow) {
+    await this.db
+      .prepare(
+        `INSERT INTO referral_root_posts (${POST_SELECT}) VALUES (${POST_COLUMNS.map(() => "?").join(", ")})`,
+      )
+      .bind(...POST_COLUMNS.map(([key]) => row[key] as D1Value))
+      .run();
+  }
+
+  async updatePost(id: string, fields: Partial<PostRow>) {
+    const entries = Object.entries(fields);
+    if (entries.length === 0) return;
+    const result = await this.db
+      .prepare(
+        `UPDATE referral_root_posts SET ${entries
+          .map(([key]) => {
+            const column = POST_COLUMN.get(key as keyof PostRow);
+            if (!column) throw new TypeError(`Unknown field ${key}`);
+            return `${column} = ?`;
+          })
+          .join(", ")} WHERE id = ?`,
+      )
+      .bind(...entries.map(([, value]) => value as D1Value), id)
+      .run();
+    if ((result.meta?.changes ?? 0) !== 1)
+      throw new Error("Referral root post was not updated");
+  }
+}
+
+const POST_COLUMNS: [keyof PostRow, string][] = [
+  ["id", "id"],
+  ["runId", "run_id"],
+  ["period", "period"],
+  ["epoch", "epoch"],
+  ["network", "network"],
+  ["distributor", "distributor"],
+  ["token", "token"],
+  ["poster", "poster"],
+  ["merkleRoot", "merkle_root"],
+  ["totalBase", "total_base"],
+  ["txId", "tx_id"],
+  ["rawTx", "raw_tx"],
+  ["evmNonce", "evm_nonce"],
+  ["state", "state"],
+  ["reason", "reason"],
+  ["blockNumber", "block_number"],
+  ["voidAcknowledgedAt", "void_acknowledged_at"],
+  ["createdAt", "created_at"],
+  ["updatedAt", "updated_at"],
+  ["submittedAt", "submitted_at"],
+  ["finalizedAt", "finalized_at"],
+];
+const POST_COLUMN = new Map(POST_COLUMNS);
+const POST_SELECT = POST_COLUMNS.map(([, column]) => column).join(", ");
+
+function postFromRow(row: Record<string, D1Value>): PostRow {
+  return Object.fromEntries(
+    POST_COLUMNS.map(([key, column]) => [key, row[column] ?? null]),
+  ) as unknown as PostRow;
 }

@@ -204,10 +204,13 @@ describe("configuration", () => {
     ).toBeNull();
   });
 
-  test("live is not a mode of this Worker", () => {
+  test("live is refused without the owner's program flag and addresses", () => {
     expect(() =>
       parseConfig({ ...VARS, REFERRAL_ACCRUAL_MODE: "live" }),
-    ).toThrow(/off or dry_run/u);
+    ).toThrow(/REFERRAL_PROGRAM_ENABLED/u);
+    expect(() =>
+      parseConfig({ ...VARS, REFERRAL_ACCRUAL_MODE: "paused" }),
+    ).toThrow(/off, dry_run or live/u);
   });
 
   test("every limit is required and a project cap cannot exceed the pool", () => {
