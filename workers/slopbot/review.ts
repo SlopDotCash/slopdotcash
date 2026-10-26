@@ -2,6 +2,7 @@
 // The model only classifies. Every GitHub action is decided here, in code,
 // after independent state checks.
 import { notifySlopbotScamReview } from "../../backend/notifications/events";
+import { publishAppealComment } from "./appeal-publication";
 import {
   APPEAL_RESOLUTION_DAYS,
   type Appeal,
@@ -1947,27 +1948,22 @@ async function publishAppealState(
 ) {
   const db = env.SLOPBOT_DB;
   const key = `${appeal.appeal_key}:${stage}`;
-  if (!(await store.hasRecordedAction(db, key, "comment"))) {
-    await requireScope(db, job, "security");
-    const created = await session.github.request<{ id: number }>(
-      "POST",
-      `/repos/${job.owner}/${job.repo}/issues/${job.number}/comments`,
-      { body: appealComment(appeal, stage) },
-    );
-    if (created.status !== 201 || !Number.isSafeInteger(created.data?.id))
-      throw new GitHubError(
-        created.status,
-        "GitHub did not confirm the appeal comment",
-      );
-    await store.recordAction(
-      db,
+  await publishAppealComment(
+    db,
+    session.github,
+    {
       key,
-      job.repositoryId,
-      session.issue.node_id,
-      "comment",
+      owner: job.owner,
+      repo: job.repo,
+      number: job.number,
+      repositoryId: job.repositoryId,
+      itemNodeId: session.issue.node_id,
+      appUserId: env.SLOPBOT_APP_USER_ID,
       stage,
-    );
-  }
+      body: appealComment(appeal, stage),
+    },
+    () => requireScope(db, job, "security"),
+  );
   const labelKey = `${appeal.appeal_key}:moderator`;
   if (
     appeal.escalated_at !== null &&
@@ -2035,8 +2031,13 @@ export async function applyAppealCommand(
           : null;
     if (by === null)
       return "only the appellant or a maintainer can answer the draft";
-    if (appeal.escalated_at !== null)
+    if (appeal.escalated_at !== null) {
+      // A rejection may have committed escalation before its comment response
+      // was lost. Reconcile the recorded stage when that command is retried.
+      if (job.command === "reject")
+        await publishAppealState(env, job, session, appeal, "escalation");
       return "a Slop moderator decides this appeal";
+    }
     if (appeal.draft === null) return "no draft to answer yet";
     if (job.command === "reject") {
       await escalateAppeal(
