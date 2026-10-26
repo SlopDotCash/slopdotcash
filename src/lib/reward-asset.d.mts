@@ -36,6 +36,9 @@ export interface RewardAssetChoice {
 export declare const REWARD_ASSET_NETWORKS: Readonly<
   Record<RewardAssetNetwork, RewardAssetNetworkDefinition>
 >;
+export declare const NETWORK_NAMES: Readonly<
+  Record<RewardAssetNetwork, string>
+>;
 export declare const REWARD_ASSET_NETWORK_IDS: readonly RewardAssetNetwork[];
 export declare const MAX_REWARD_ASSET_DECIMALS: number;
 export declare function canonicalRewardAssetAddress(

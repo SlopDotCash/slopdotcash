@@ -3,6 +3,11 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
+import {
+  CONTRIBUTION_LABELS,
+  SKILL_RULE_FIELDS,
+  type SkillRuleField,
+} from "./lib/contribution-fields";
 import { errorMessage } from "./lib/errors";
 import {
   ESCROW_PAYOUT_FEE_BASIS_POINTS,
@@ -49,6 +54,7 @@ import {
 } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
+  NETWORK_NAMES,
   REWARD_ASSET_NETWORKS,
   type RewardAssetNetwork,
   rewardAssetChoice,
@@ -58,12 +64,7 @@ import { loginHref } from "./Points";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 import { SecurityProgramEditor } from "./SecurityProgramEditor";
 
-const SETTLEMENT_CHAIN_NAMES: Record<string, string> = Object.fromEntries(
-  Object.entries(REWARD_ASSET_NETWORKS).map(([id, network]) => [
-    id,
-    network.name,
-  ]),
-);
+const SETTLEMENT_CHAIN_NAMES: Record<string, string> = NETWORK_NAMES;
 const PROPOSAL_DRAFT_KEY = "slop:project-proposal:v1";
 const PROPOSAL_STEP_KEY = `${PROPOSAL_DRAFT_KEY}:step`;
 /**
@@ -128,51 +129,6 @@ const EMPTY_PROPOSAL = {
   assignmentSignedAt: "",
 };
 type Proposal = typeof EMPTY_PROPOSAL;
-/** Maintainer-authored rules that, with the scope, generate the skills. */
-const SKILL_RULE_FIELDS = [
-  "contributionGuide",
-  "supportedTasks",
-  "requiredTests",
-  "reviewExpectations",
-  "securityContact",
-  "closurePolicy",
-  "maintainerNotes",
-] as const;
-const SKILL_RULE_LABELS: Record<
-  (typeof SKILL_RULE_FIELDS)[number],
-  { label: string; placeholder: string }
-> = {
-  contributionGuide: {
-    label: "Contribution guide",
-    placeholder:
-      "How should a contributor set up, branch and submit? Leave empty to follow the repository's CONTRIBUTING.md.",
-  },
-  supportedTasks: {
-    label: "Supported tasks",
-    placeholder:
-      "Which kinds of work do you want, for example bug fixes or benchmark runs?",
-  },
-  requiredTests: {
-    label: "Required tests",
-    placeholder: "Which commands or workflows must pass before a pull request?",
-  },
-  reviewExpectations: {
-    label: "Review expectations",
-    placeholder: "What evidence must a pull request show for review?",
-  },
-  securityContact: {
-    label: "Security contact",
-    placeholder: "Where should security reports go privately?",
-  },
-  closurePolicy: {
-    label: "Closure policy",
-    placeholder: "When do maintainers close or decline a pull request?",
-  },
-  maintainerNotes: {
-    label: "Maintainer notes",
-    placeholder: "Anything else contributors should know.",
-  },
-};
 type ProposalField = keyof Proposal;
 type FieldErrors = Partial<Record<ProposalField, string>>;
 
@@ -1149,7 +1105,7 @@ export default function ProjectProposalPage() {
           "Define exact accepted outcomes with the maintainer.",
         ...(Object.fromEntries(
           SKILL_RULE_FIELDS.map((field) => [field, p[field].trim()]),
-        ) as Record<(typeof SKILL_RULE_FIELDS)[number], string>),
+        ) as Record<SkillRuleField, string>),
       },
       ...(p.automaticClosure === "true"
         ? { slopbot: { automaticClosure: true } }
@@ -1633,11 +1589,11 @@ export default function ProjectProposalPage() {
                 <TextField
                   error={shown(field)}
                   key={field}
-                  label={SKILL_RULE_LABELS[field].label}
+                  label={CONTRIBUTION_LABELS[field].label}
                   multiline
                   name={field}
                   onChange={set(field)}
-                  placeholder={SKILL_RULE_LABELS[field].placeholder}
+                  placeholder={CONTRIBUTION_LABELS[field].placeholder}
                   value={p[field]}
                 />
               ))}
@@ -1977,7 +1933,7 @@ type UpdateDraft = {
   tokenAddress: string;
   tokenSymbol: string;
   monthlyAmount: string;
-} & Record<(typeof SKILL_RULE_FIELDS)[number], string>;
+} & Record<SkillRuleField, string>;
 
 const DRAFT_FIELDS = [
   "automaticClosure",
@@ -2070,7 +2026,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         field,
         current.contribution?.[field] ?? "",
       ]),
-    ) as Record<(typeof SKILL_RULE_FIELDS)[number], string>),
+    ) as Record<SkillRuleField, string>),
   };
   const key = `slop:project-update:v2:${project.id}`;
   const [saved] = useState(() => {
@@ -2289,7 +2245,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     },
     ...SKILL_RULE_FIELDS.map((field) => ({
       field,
-      label: SKILL_RULE_LABELS[field].label,
+      label: CONTRIBUTION_LABELS[field].label,
       before: current.contribution?.[field] ?? "",
       after: next.contribution?.[field] ?? "",
     })),
@@ -2433,11 +2389,11 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             <TextField
               error={shown(field)}
               key={field}
-              label={SKILL_RULE_LABELS[field].label}
+              label={CONTRIBUTION_LABELS[field].label}
               multiline
               name={field}
               onChange={set(field)}
-              placeholder={SKILL_RULE_LABELS[field].placeholder}
+              placeholder={CONTRIBUTION_LABELS[field].placeholder}
               value={value[field]}
             />
           ))}
