@@ -201,9 +201,9 @@ second skill copy. `scripts/prepare-site.mjs` builds raw Markdown endpoints
 and downloadable `.skill` archives from the generated output and publishes the
 cycle index.
 
-Generated files under `public/brand/`, `public/downloads/`,
-`public/projects/`, `public/protocol/`, and `public/data/cycles/` are build
-outputs. Never edit them by hand.
+Generated files under `public/downloads/`, `public/projects/`,
+`public/protocol/`, and `public/data/cycles/` are build outputs. Never edit
+them by hand.
 
 Operational guides under `backend/`, `cycles/`, `disclosures/`, `evaluations/`,
 `funding/`, `protocol/`, and `workers/` define subsystem contracts. Keep them focused and

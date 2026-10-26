@@ -145,9 +145,9 @@ scripts/        ingestion, packaging, rewards, settlement, and evidence
 tests/          real-browser end-to-end, accessibility, and installer coverage
 ```
 
-Generated files under `public/brand/`, `public/downloads/`,
-`public/projects/`, `public/protocol/`, and `public/data/cycles/` come from
-`prepare:site`; do not edit them by hand.
+Generated files under `public/downloads/`, `public/projects/`,
+`public/protocol/`, and `public/data/cycles/` come from `prepare:site`; do not
+edit them by hand.
 
 ## Local development
 

@@ -198,14 +198,6 @@ try {
 } catch {
   // error-policy:J3 an absent committed source is an explicit working-tree state.
 }
-run(process.execPath, [
-  join(repositoryRoot, "scripts", "sync-brand-assets.mjs"),
-  publicRoot,
-  "--logos",
-  "--favicons",
-  "--ogembeds",
-]);
-
 const discoveryRoot = join(publicRoot, ".well-known", "agent-skills");
 const discoverySkillRoot = join(discoveryRoot, "slop");
 rmSync(discoveryRoot, { force: true, recursive: true });
