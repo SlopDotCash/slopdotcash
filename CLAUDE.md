@@ -421,8 +421,9 @@ Historical v1 records retain their original fee and authority rules.
 
 Approved assets are the network stablecoin or standard ERC-20 on Base,
 Robinhood Chain (chain id 4663) and Ethereum, or classic SPL and the bounded
-metadata-only Token-2022 subset on Solana (PRD section 6, owner decision of
-26 October 2026, #905). Token-2022 mints may have only MetadataPointer and
+metadata-only Token-2022 subset on Solana, with any decimals (PRD section 6,
+owner decision of 26 October 2026, #1363). The subset is the only test; token
+origin is not checked. Token-2022 mints may have only MetadataPointer and
 TokenMetadata, with disabled mint/freeze authorities; token accounts may have
 only ImmutableOwner, or no extensions. Reject every other extension, including
 unknown extensions. Fee-on-transfer, rebasing and transfer-hook behavior
