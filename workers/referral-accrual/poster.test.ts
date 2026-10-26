@@ -97,10 +97,6 @@ function addFile(
 
 interface FakeChain extends PosterClient {
   state_: ChainState;
-  epochs: Map<
-    number,
-    { root: string; total: bigint; postedAt: number; voided: boolean }
-  >;
   prepared: { epoch: number; root: string; total: bigint }[];
   broadcasts: string[];
   statusFor: (row: PostRow) => PostStatus;
@@ -115,19 +111,15 @@ function fakeChain(overrides: Partial<ChainState> = {}): FakeChain {
     state_: {
       chainId: 46630,
       token: TOKEN,
-      owner: `0x${"1".repeat(40)}`,
       poster: SIGNER,
       paused: false,
       epochCap: 250_000n * ONE,
-      activeTotal: 0n,
       totalClaimed: 0n,
       balance: 2_000_000n * ONE,
       nextEpoch: 0,
       hasPendingRoot: false,
-      latest: null,
       ...overrides,
     },
-    epochs: new Map(),
     prepared: [],
     broadcasts: [],
     statusFor: () => ({ kind: "pending" }),
@@ -135,11 +127,6 @@ function fakeChain(overrides: Partial<ChainState> = {}): FakeChain {
     address: () => chain.signer,
     async state() {
       return chain.state_;
-    },
-    async epochAt(index) {
-      const epoch = chain.epochs.get(index);
-      if (!epoch) throw new Error(`no epoch ${index}`);
-      return epoch;
     },
     async prepare(epoch, root, total, authorize) {
       await authorize?.("1000");
@@ -291,12 +278,6 @@ describe("posting the next root", () => {
       reconciled: 0,
     });
     // Finalized on chain with the same root.
-    chain.epochs.set(0, {
-      root: ROOT_A,
-      total: 3_750n * ONE,
-      postedAt: 1,
-      voided: false,
-    });
     chain.statusFor = () => ({
       kind: "finalized",
       blockNumber: "123",
@@ -403,12 +384,14 @@ describe("posting the next root", () => {
     chain.broadcastError = new Error(
       "connect ECONNREFUSED http://rpc.example/key",
     );
-    const { sqlite, deps, posts } = harness(chain);
+    const { sqlite, deps, logs, posts } = harness(chain);
     addFile(sqlite, "2026-11", 0, ROOT_A, ONE);
+    // An unconfirmed send is in flight, never reported as posted.
     expect(await postNextRoot(deps)).toEqual({
-      status: "posted",
+      status: "in_flight",
       reconciled: 0,
     });
+    expect(logs.at(-1)).toMatchObject({ event: "referral_post_unknown" });
     expect(posts()[0]).toMatchObject({ state: "unknown" });
     expect(posts()[0].reason).not.toContain("rpc.example");
     chain.broadcastError = null;
@@ -438,12 +421,6 @@ describe("posting the next root", () => {
     addFile(sqlite, "2026-11", 0, ROOT_A, ONE);
     addFile(sqlite, "2026-12", 1, ROOT_B, 2n * ONE);
     await postNextRoot(deps);
-    chain.epochs.set(0, {
-      root: ROOT_A,
-      total: ONE,
-      postedAt: 1,
-      voided: false,
-    });
     chain.statusFor = () => ({
       kind: "finalized",
       blockNumber: "7",
@@ -460,12 +437,6 @@ describe("posting the next root", () => {
       voided: true,
     });
     chain.state_ = { ...chain.state_, hasPendingRoot: false };
-    chain.epochs.set(0, {
-      root: ROOT_A,
-      total: ONE,
-      postedAt: 1,
-      voided: true,
-    });
     expect(await postNextRoot(deps)).toMatchObject({
       status: "halted_after_void",
       reconciled: 1,
@@ -874,7 +845,7 @@ describe("durable referral native fee budgets", () => {
     h.deps.config = { ...POSTER, gas: limits };
     addFile(h.sqlite, "2026-11", 0, ROOT_A, ONE);
     chain.broadcastError = new Error("send outcome unknown");
-    expect((await postNextRoot(h.deps)).status).toBe("posted");
+    expect((await postNextRoot(h.deps)).status).toBe("in_flight");
     h.deps.now = () => new Date("2026-12-04T00:00:00.000Z");
     await expect(
       h.deps.store.assertGasBudget(POSTER.network, "600", limits, h.deps.now()),
