@@ -566,8 +566,7 @@ availability. Report each boundary precisely.
 
 ## Escrow payout migration
 
-The canonical PRD defines escrow requirements and delivery. The historical
-`docs/payouts-mvp.md` and `docs/base-solana-payout-plan.md` records provide context.
+The canonical PRD defines escrow requirements and delivery.
 The scoped contract, identity attestation, and
 executor services may execute isolated test-chain transactions under those rules.
 This supersedes the legacy unsigned-only model for that protocol only. Never

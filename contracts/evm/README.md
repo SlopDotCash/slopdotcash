@@ -177,8 +177,8 @@ that binding cannot be cancelled. While a rotation waits out its delay, or after
 the owner cancels it, no caller can pay any earlier wallet: a contributor who
 rotates away from a lost or compromised wallet freezes payment to it at once,
 and payment resumes only to the new binding once it is ready. This is the
-stale-binding rule in `docs/base-solana-payout-plan.md`: a finalized change
-invalidates payment to the earlier destination. A payment names the version it
+stale-binding rule: a finalized change invalidates payment to the earlier
+destination. A payment names the version it
 expects, and a payment naming any other version fails. If payment executes
 first, a later rotation cannot repay the award. Every award ID and source
 digest is consumed permanently. Source

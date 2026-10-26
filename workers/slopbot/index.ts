@@ -1,4 +1,4 @@
-// Slopbot GitHub App service (draft, docs/slopbot-v2-proposal.md).
+// Slopbot GitHub App service (protocol/slopbot-v2.md).
 // fetch: verify and deduplicate webhooks, then enqueue identifiers only.
 // queue: re-read GitHub state and run the review pipeline.
 import { dispatchDueAppeals } from "./appeals";
