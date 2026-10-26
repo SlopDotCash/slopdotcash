@@ -88,6 +88,10 @@ import {
   vettingBranchCache,
 } from "../../../backend/vetting/live-pin";
 import { CloudflareVettingPersistence } from "../../../backend/vetting/persistence";
+import {
+  type EvmEscrowConfig,
+  readEvmBindingVersion,
+} from "../../../contracts/evm/adapter";
 import { REVIEWED_EVM_FACTORIES } from "../../../contracts/evm/factories";
 import type { SolanaEscrowConfig } from "../../../contracts/solana/adapter";
 import { deploymentTier } from "../../../src/lib/deployment";
@@ -904,6 +908,44 @@ export async function onRequest(context: PagesContext): Promise<Response> {
           ),
         ]);
         return [...ordinary.deployments, ...security.deployments];
+      },
+      bindingVersion: async (network, vault, actor) => {
+        const networks = parsePaymentNetworks(context.env.PAYMENT_NETWORKS);
+        const selected = networks.find((name) => name === network);
+        if (!selected || ESCROW_NETWORKS[selected].family !== "evm")
+          throw new Error("Binding network unavailable");
+        const registries = await Promise.all([
+          loadRegistryPaymentDeployments(context.env.SLOP_DB, [selected]),
+          loadRegistryPaymentDeployments(
+            context.env.SLOP_DB,
+            [selected],
+            "security-bounty",
+          ),
+        ]);
+        const matches = registries
+          .flatMap((r) => r.deployments)
+          .filter(
+            (d) =>
+              d.network === network &&
+              d.vault.toLowerCase() === vault.toLowerCase(),
+          );
+        const rpcUrl = JSON.parse(context.env.PAYMENT_RPC_URLS ?? "{}")[
+          network
+        ];
+        if (
+          matches.length !== 1 ||
+          typeof rpcUrl !== "string" ||
+          new URL(rpcUrl).protocol !== "https:"
+        )
+          throw new Error("Binding vault unavailable");
+        return readEvmBindingVersion(
+          {
+            ...matches[0],
+            rpcUrl,
+            chainId: BigInt(ESCROW_NETWORKS[selected].chainId as string),
+          } as EvmEscrowConfig,
+          actor,
+        );
       },
       ...([
         "https://staging.slop.cash",

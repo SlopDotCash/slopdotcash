@@ -1,0 +1,274 @@
+import { useEffect, useRef, useState } from "react";
+import { evmBindingTypedData } from "../contracts/evm/adapter";
+import { readBoundedJson } from "./lib/browser-json";
+import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
+import { networkLabel } from "./lib/network-names";
+import type { AccountPayment, PaymentsAccount } from "./lib/payments/contracts";
+import {
+  type SolanaBindingContext,
+  verifyPreparedSolanaBinding,
+  verifySignedSolanaBinding,
+} from "./lib/payout-consent";
+import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+
+async function request(path: string, body: unknown) {
+  const response = await fetch(`/api/v1/payments/wallets/${path}`, {
+    method: "POST",
+    credentials: "same-origin",
+    redirect: "error",
+    cache: "no-store",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (!response.ok)
+    throw new Error(
+      response.status === 401
+        ? "Sign in again, then review your payout wallet."
+        : response.status === 409
+          ? "The wallet or binding changed, or the attester is still preparing it. Refresh payments and review again."
+          : "Payout consent is unavailable. Your award stays reserved. Retry later.",
+    );
+  return (await readBoundedJson(response, 16_384, "payout consent")) as Record<
+    string,
+    unknown
+  >;
+}
+
+/** Consent authorizes only this vault's destination binding; finalized payment is a separate result. */
+export function PayoutConsent({
+  payment,
+  account,
+}: {
+  payment: AccountPayment;
+  account: PaymentsAccount;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const reviewHeading = useRef<HTMLHeadingElement>(null);
+  const actionButton = useRef<HTMLButtonElement>(null);
+  const result = useRef<HTMLParagraphElement>(null);
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open) reviewHeading.current?.focus();
+    else if (wasOpen.current)
+      (notice ? result.current : actionButton.current)?.focus();
+    wasOpen.current = open;
+  }, [open, notice]);
+  const network =
+    ESCROW_NETWORKS[payment.network as keyof typeof ESCROW_NETWORKS];
+  const claim = account.wallets.find(
+    (w) => w.chain === payment.chain && w.authorized,
+  );
+  const wallets = usePayoutWallets().filter(
+    (w) =>
+      w.family === network?.family &&
+      (w.family !== "solana" || w.solanaBinding),
+  );
+  if (!network || !claim || !payment.vault || payment.state !== "reserved")
+    return null;
+  async function authorize(provider: PayoutWallet) {
+    if (!claim || !network) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const wallet = await provider.connect();
+      const same = (a: string, b: string) =>
+        network.family === "evm"
+          ? a.toLowerCase() === b.toLowerCase()
+          : a === b;
+      if (!same(wallet.address, claim.address))
+        throw new Error(
+          "Connect your confirmed payout address. To change it, use Account wallets first.",
+        );
+      if (network.family === "evm") {
+        const rpc = wallet.evmRequest;
+        if (!rpc) throw new Error("Choose an EVM wallet.");
+        const consent = {
+          claimId: claim.claimId,
+          network: payment.network,
+          vault: payment.vault,
+        };
+        const challenge = await request("bind-challenge", consent);
+        const typed = challenge.typedData as ReturnType<
+          typeof evmBindingTypedData
+        >;
+        if (!typed?.message || challenge.claimId !== claim.claimId)
+          throw new Error("The payout consent could not be verified.");
+        const expected = evmBindingTypedData(
+          BigInt(network.chainId as string),
+          payment.vault,
+          {
+            githubUserId: account.githubUserId,
+            destination: claim.address,
+            expectedVersion: typed.message.expectedVersion,
+            claimDigest: typed.message.claimDigest,
+            expiresAt: typed.message.expiresAt,
+          },
+        );
+        if (JSON.stringify(typed) !== JSON.stringify(expected))
+          throw new Error(
+            "The payout consent names a different account, address, network or vault. Refresh and review again.",
+          );
+        const accounts = await rpc("eth_accounts", []);
+        if (
+          !Array.isArray(accounts) ||
+          typeof accounts[0] !== "string" ||
+          !same(accounts[0], claim.address)
+        )
+          throw new Error(
+            "The wallet account changed. Connect and review again.",
+          );
+        if (
+          BigInt(String(await rpc("eth_chainId", []))) !==
+          BigInt(network.chainId as string)
+        )
+          throw new Error(
+            `Switch your wallet to ${networkLabel(payment.network)}, then review again.`,
+          );
+        const signature = await rpc("eth_signTypedData_v4", [
+          claim.address,
+          JSON.stringify(expected),
+        ]);
+        if (typeof signature !== "string")
+          throw new Error("Your wallet did not return a signature.");
+        const result = await request("bind-authorize", {
+          ...consent,
+          expectedVersion: expected.message.expectedVersion,
+          expiresAt: expected.message.expiresAt,
+          signature,
+        });
+        if (result.authorized !== true)
+          throw new Error(
+            "Payout consent was not stored. Refresh and review again.",
+          );
+        setNotice(
+          "Wallet consent saved. Binding and payment still need finalized chain verification. Refresh payments to check progress.",
+        );
+      } else {
+        if (!wallet.solanaSign)
+          throw new Error(
+            "Choose a wallet that can sign a Solana binding transaction.",
+          );
+        const prepared = await request("solana-bind/prepare", {
+          obligationId: payment.id,
+        });
+        if (typeof prepared.transaction !== "string")
+          throw new Error(
+            "The binding is already pending or unavailable. Refresh payments before trying again.",
+          );
+        const bytes = Uint8Array.from(atob(prepared.transaction), (c) =>
+          c.charCodeAt(0),
+        );
+        const context = prepared.bindingContext as SolanaBindingContext;
+        if (
+          !context ||
+          context.vault !== payment.vault ||
+          context.githubUserId !== account.githubUserId ||
+          context.destination !== claim.address
+        )
+          throw new Error(
+            "The prepared binding names another vault or account. Refresh and review again.",
+          );
+        verifyPreparedSolanaBinding(bytes, context);
+        const chain =
+          `solana:${payment.network === "solana-mainnet" ? "mainnet" : payment.network.slice(7)}` as `solana:${string}`;
+        const signed = await wallet.solanaSign(bytes, chain);
+        // The attester must receive the exact prepared message and its existing signature.
+        verifySignedSolanaBinding(bytes, signed, claim.address);
+        const result = await request("solana-bind/complete", {
+          obligationId: payment.id,
+          transaction: btoa(String.fromCharCode(...signed)),
+        });
+        if (typeof result.transactionId !== "string")
+          throw new Error(
+            "Binding submission could not be verified. Refresh payments before retrying.",
+          );
+        setNotice(
+          "Binding submitted; payment is not yet verified. Refresh payments to check progress.",
+        );
+      }
+      setOpen(false);
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Payout consent failed. Your award stays reserved.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="payout-consent">
+      {!open && !notice && (
+        <button
+          type="button"
+          ref={actionButton}
+          className="button secondary-button"
+          onClick={() => setOpen(true)}
+        >
+          Authorize payout wallet
+        </button>
+      )}
+      {open && (
+        <section aria-label="Review payout wallet consent">
+          <h3 tabIndex={-1} ref={reviewHeading}>
+            Review payout wallet consent
+          </h3>
+          <p>
+            Authorize <span className="wallet-address">{claim.address}</span> to
+            receive your awards from vault{" "}
+            <span className="wallet-address">{payment.vault}</span> on{" "}
+            {networkLabel(payment.network)}.
+          </p>
+          <p>
+            {network.family === "evm"
+              ? "Sign a destination authorization. This does not transfer funds from your wallet."
+              : "Sign the prepared destination-binding transaction. The attester pays its network fee."}{" "}
+            Payment is verified separately after finalization.
+          </p>
+          {wallets.length === 0 && (
+            <p>
+              Open this page in a wallet browser with{" "}
+              {network.family === "evm"
+                ? "an EVM wallet"
+                : "a Solana wallet that supports transaction signing"}
+              .
+            </p>
+          )}
+          {wallets.map((wallet) => (
+            <button
+              key={wallet.id}
+              type="button"
+              className="button secondary-button"
+              disabled={busy}
+              onClick={() => void authorize(wallet)}
+            >
+              {busy ? "Confirm in your wallet…" : `Sign with ${wallet.name}`}
+            </button>
+          ))}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setOpen(false);
+              setError("");
+            }}
+          >
+            Cancel
+          </button>
+        </section>
+      )}
+      {error && <p role="alert">{error}</p>}
+      {notice && (
+        <p role="status" tabIndex={-1} ref={result}>
+          {notice}
+        </p>
+      )}
+    </div>
+  );
+}
