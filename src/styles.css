@@ -153,8 +153,7 @@ textarea:focus-visible {
 }
 
 .project-money-state,
-.project-review-budget,
-.project-freshness {
+.project-review-budget {
   display: block;
   margin-top: 7px;
   color: var(--muted);
