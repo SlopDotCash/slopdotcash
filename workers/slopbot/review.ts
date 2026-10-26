@@ -1702,12 +1702,28 @@ export async function recordHumanSignal(
     String(job.senderId),
   );
   if (kind === "human_reopen") {
+    const finding = await latestFinding(db, issue.node_id);
+    if (finding !== null && hasLabel(issue, categoryLabel(finding)))
+      await removeLabel(env, job, github, categoryLabel(finding));
+    const hold = await db
+      .prepare(
+        `SELECT 1 AS n FROM slopbot_maintainer_holds
+          WHERE item_node_id = ? AND revision = ?
+            AND (resolved_at IS NULL OR outcome = 'labeled')`,
+      )
+      .bind(issue.node_id, revision)
+      .first<{ n: number }>();
+    if (hasLabel(issue, UNCERTAIN_LABEL) || hold !== null)
+      await removeLabel(env, job, github, UNCERTAIN_LABEL);
     await reversePenalty(db, issue.node_id, "maintainer_reopen");
     const appeal = await latestAppealFor(db, issue.node_id);
     if (appeal !== null) {
       await resolveAppeal(db, appeal.appeal_key, "upheld", "maintainer");
       const current = await appealByKey(db, appeal.appeal_key);
-      if (current?.resolved_by === "maintainer")
+      if (
+        current?.resolution === "upheld" &&
+        current.resolved_by === "maintainer"
+      )
         await publishAppealState(env, job, session, current, "resolution");
     }
     return kind;
@@ -2284,11 +2300,20 @@ export async function applyMaintainerHold(
       db,
       `appeal:${hold.item_node_id}:${hold.revision}`,
     );
-    if (appeal?.resolution !== "upheld") return null;
+    const reopened = await store.count(
+      db,
+      "SELECT COUNT(*) AS n FROM slopbot_actions WHERE review_key = ? AND action = 'human_reopen'",
+      `reopen:${hold.item_node_id}:${hold.revision}`,
+    );
+    if (appeal?.resolution !== "upheld" && reopened === 0) return null;
     // A label may have landed during an appeal or before a lost response.
     // Keep the hold open for retry until GitHub confirms its removal.
     await removeLabel(env, job, github, UNCERTAIN_LABEL);
-    return supersede("appeal was upheld");
+    return supersede(
+      appeal?.resolution === "upheld"
+        ? "appeal was upheld"
+        : "maintainer reopened the item",
+    );
   };
   const priorAppeal = await reconcileAppeal();
   if (priorAppeal !== null) return priorAppeal;

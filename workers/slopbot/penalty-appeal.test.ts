@@ -383,8 +383,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       const removed = path.match(/\/issues\/5\/labels\/(.+)$/u);
       if (removed && request.method === "DELETE") {
         const name = decodeURIComponent(removed[1]);
-        labels.splice(labels.indexOf(name), 1);
-        return Response.json([]);
+        const index = labels.indexOf(name);
+        if (index !== -1) labels.splice(index, 1);
+        return Response.json([], { status: index === -1 ? 404 : 200 });
       }
       return new Response(null, { status: 404 });
     },
@@ -837,10 +838,11 @@ test("a scam close escalates to a moderator; only a moderator decides, and a den
         reversal: null,
       },
     ]);
-    // A maintainer reopen still wins and reverses the debit once.
+    // A maintainer reopen still wins, removes the finding label, and reverses the debit once.
     expect(
       await run.deliver(run.job("human_reopen", { senderId: MAINTAINER })),
     ).toBe("human_reopen");
+    expect(run.labels).not.toContain("slopbot: scam");
     expect(run.sql(PENALTY)).toEqual([
       {
         category: "scam",
@@ -849,6 +851,64 @@ test("a scam close escalates to a moderator; only a moderator decides, and a den
         reversal: "maintainer_reopen",
       },
     ]);
+  });
+});
+
+test("a maintainer reopen upholds an open appeal and removes the finding label, but does not post an upheld comment after a maintainer-denied appeal", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.labels).toContain("slopbot: spam");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    expect(
+      await run.deliver(run.job("human_reopen", { senderId: MAINTAINER })),
+    ).toBe("human_reopen");
+    expect(run.labels).not.toContain("slopbot: spam");
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: "deny",
+        escalated: 0,
+        resolution: "upheld",
+        resolved_by: "maintainer",
+      },
+    ]);
+    expect(run.comments.at(-1)).toContain(
+      "**Appeal upheld** (decided by the maintainer).",
+    );
+  });
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: MAINTAINER }),
+      ),
+    ).toBe("appeal denied by the maintainer");
+    const commentsBeforeReopen = run.comments.length;
+    expect(
+      await run.deliver(run.job("human_reopen", { senderId: MAINTAINER })),
+    ).toBe("human_reopen");
+    expect(run.labels).not.toContain("slopbot: spam");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "maintainer_reopen",
+      },
+    ]);
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: "deny",
+        escalated: 0,
+        resolution: "denied",
+        resolved_by: "maintainer",
+      },
+    ]);
+    expect(run.comments).toHaveLength(commentsBeforeReopen);
   });
 });
 

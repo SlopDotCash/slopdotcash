@@ -173,6 +173,8 @@ async function uncertainReview(
                 ]
               : [],
         });
+      if (path === "/user/43")
+        return Response.json({ login: "maintainer", id: 43 });
       if (path.endsWith("/permission"))
         return Response.json({
           permission: path.includes("/maintainer/") ? "write" : "read",
@@ -623,5 +625,47 @@ test("an appeal retries an unknown label removal without changing its stored dec
     expect(
       run.writes.filter((write) => write === "POST /v1/messages"),
     ).toHaveLength(calls);
+  });
+});
+
+test("a maintainer reopen removes the uncertain label and supersedes a due hold without an appeal", async () => {
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    await run.review();
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = (await run.tick()).filter(
+      (job) => job.kind === "maintainer_hold",
+    );
+    expect(due).toHaveLength(1);
+    await run.deliver(due);
+    expect(run.labels.map((entry) => entry.name)).toContain(
+      "slopbot:uncertain",
+    );
+    await run.deliver([run.job("human_reopen", { senderId: 43 })]);
+    expect(run.labels.map((entry) => entry.name)).not.toContain(
+      "slopbot:uncertain",
+    );
+    expect(run.writes).toContain(
+      "DELETE /repos/SlopDotCash/asi/issues/5/labels/slopbot%3Auncertain",
+    );
+  });
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    await run.review();
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = (await run.tick()).filter(
+      (job) => job.kind === "maintainer_hold",
+    );
+    expect(due).toHaveLength(1);
+    run.interleave("add", () =>
+      run.deliver([run.job("human_reopen", { senderId: 43 })]),
+    );
+    await run.deliver(due);
+    expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+      { outcome: "superseded" },
+    ]);
+    expect(run.labels.map((entry) => entry.name)).not.toContain(
+      "slopbot:uncertain",
+    );
   });
 });
