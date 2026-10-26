@@ -263,4 +263,3 @@ and refusal of changed file bytes, roots, totals, wallets, missing events,
 noncanonical receipts, stale months and provider failure.
 The client fixture rejects ranges above Robinhood's 9,000-block limit and
 reconciles a posted and voided root after that range has elapsed.
-
