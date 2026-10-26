@@ -12,6 +12,37 @@ import {
   type PriorAccrual,
   periodBounds,
 } from "./core";
+import {
+  gasInteger,
+  ReferralGasBudgetError,
+  type ReferralGasCost,
+  type ReferralGasLimits,
+  validateGasCost,
+  validateGasLimits,
+} from "./gas";
+
+const GAS_AVAILABLE = `? <= ? AND ? + COALESCE((
+  SELECT SUM(CASE WHEN actual_wei IS NULL THEN maximum_wei WHEN settled_day=? THEN actual_wei ELSE 0 END)
+  FROM referral_post_gas WHERE network=?),0) <= ?
+  AND NOT EXISTS(SELECT 1 FROM referral_root_posts p LEFT JOIN referral_post_gas g ON g.post_id=p.id WHERE p.network=? AND g.post_id IS NULL)`;
+function budgetValues(
+  network: string,
+  maximumWei: string,
+  limits: ReferralGasLimits,
+  now: Date,
+) {
+  validateGasLimits(limits);
+  const maximum = gasInteger(maximumWei);
+  return [
+    maximum,
+    gasInteger(limits.perTransactionWei),
+    maximum,
+    now.toISOString().slice(0, 10),
+    network,
+    gasInteger(limits.perDayWei),
+    network,
+  ];
+}
 
 type D1Value = string | number | null;
 interface D1Statement {
@@ -309,13 +340,82 @@ export class D1AccrualStore implements AccrualStore, PostStore {
     }));
   }
 
-  async insertPost(row: PostRow) {
-    await this.db
-      .prepare(
-        `INSERT INTO referral_root_posts (${POST_SELECT}) VALUES (${POST_COLUMNS.map(() => "?").join(", ")})`,
+  async unsettledGasPosts(network: string) {
+    const { results } = await this.db
+      .prepare(`SELECT ${POST_COLUMNS.map(([, column]) => `p.${column}`).join(",")}
+      FROM referral_root_posts p LEFT JOIN referral_post_gas g ON g.post_id=p.id
+      WHERE p.network=? AND g.actual_wei IS NULL ORDER BY p.created_at`)
+      .bind(network)
+      .all<Record<string, D1Value>>();
+    return results.map(postFromRow);
+  }
+  async recordGas(row: PostRow, cost: ReferralGasCost) {
+    validateGasCost(cost);
+    const result = await this.db
+      .prepare(`INSERT INTO referral_post_gas(post_id,network,maximum_wei,actual_wei,settled_day)
+      VALUES(?,?,?,?,?) ON CONFLICT(post_id) DO UPDATE SET
+      actual_wei=COALESCE(referral_post_gas.actual_wei,excluded.actual_wei),
+      settled_day=COALESCE(referral_post_gas.settled_day,excluded.settled_day)
+      WHERE referral_post_gas.network=excluded.network AND referral_post_gas.maximum_wei=excluded.maximum_wei
+        AND (excluded.actual_wei IS NULL OR referral_post_gas.actual_wei IS NULL OR
+          (referral_post_gas.actual_wei=excluded.actual_wei AND referral_post_gas.settled_day=excluded.settled_day))`)
+      .bind(
+        row.id,
+        row.network,
+        gasInteger(cost.maximumWei),
+        cost.actualWei === null ? null : gasInteger(cost.actualWei),
+        cost.settledDay,
       )
-      .bind(...POST_COLUMNS.map(([key]) => row[key] as D1Value))
       .run();
+    if (result.meta?.changes !== 1)
+      throw new Error("Referral native fee evidence changed");
+  }
+  async assertGasBudget(
+    network: string,
+    maximumWei: string,
+    limits: ReferralGasLimits,
+    now: Date,
+  ) {
+    const result = await this.db
+      .prepare(`SELECT (${GAS_AVAILABLE}) available`)
+      .bind(...budgetValues(network, maximumWei, limits, now))
+      .first<{ available: number }>();
+    if (result?.available !== 1)
+      throw new ReferralGasBudgetError(
+        "Referral native fee budget reached; unknown sends stay reserved",
+      );
+  }
+  async insertPost(
+    row: PostRow,
+    maximumWei: string,
+    limits: ReferralGasLimits,
+  ) {
+    const maximum = gasInteger(maximumWei);
+    if (maximum <= 0) throw new Error("Referral native fee reserve is missing");
+    const results = (await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO referral_root_posts (${POST_SELECT}) SELECT ${POST_COLUMNS.map(() => "?").join(", ")} WHERE ${GAS_AVAILABLE}`,
+        )
+        .bind(
+          ...POST_COLUMNS.map(([key]) => row[key] as D1Value),
+          ...budgetValues(
+            row.network,
+            maximumWei,
+            limits,
+            new Date(row.createdAt),
+          ),
+        ),
+      this.db
+        .prepare(
+          `INSERT INTO referral_post_gas(post_id,network,maximum_wei) SELECT id,network,? FROM referral_root_posts WHERE id=?`,
+        )
+        .bind(maximum, row.id),
+    ])) as { meta?: { changes?: number } }[];
+    if (results[0]?.meta?.changes !== 1 || results[1]?.meta?.changes !== 1)
+      throw new ReferralGasBudgetError(
+        "Referral native fee budget reached; no transaction was submitted",
+      );
   }
 
   async updatePost(id: string, fields: Partial<PostRow>) {

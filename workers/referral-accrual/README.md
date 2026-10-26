@@ -202,6 +202,28 @@ Off until the actual token, funded distributor and required operating controls
 are verified. The November start and program amounts remain unchanged. A
 deployed Off Worker does not file accruals, sign roots or spend gas.
 
+### Poster native fee limits
+
+The approved limits are 0.0002 ETH per transaction and 0.002 ETH per UTC day,
+per configured network. The checked vars store integer wei. A quote above a
+limit pauses posting before signing. An atomic D1 batch rechecks the budget
+and stores the exact signed transaction with its maximum fee before broadcast.
+Only the winning batch may send; overlapping invocations cannot spend the same
+available budget. A lost batch response is recovered from the journal.
+
+Robinhood Nitro includes Ethereum data-posting cost in the estimated gas units.
+The reserve is signed gas limit times maximum fee per gas; no separate Base
+fee allowance is added. Final cost is gas used times effective gas price from
+the canonical finalized receipt, charged on that block's UTC day. Reverts cost
+gas too. Unknown sends retain their full reserve across midnight. Resending the
+same bytes reuses that reserve. Existing journal rows derive their limits from
+verified signed bytes; missing or inconsistent evidence never becomes zero.
+
+The migrated SQLite controls cover overlap, midnight, failed sends, reverts and
+identical retries. Local Anvil proves the actual quote/refusal and receipt-cost
+paths. These checks do not prove live network pricing or authorize funding or
+activation.
+
 ### Independent root watch
 
 `scripts/check-referral-roots.ts` reads the public accrual API and Robinhood

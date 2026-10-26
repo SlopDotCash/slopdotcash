@@ -58,6 +58,9 @@ REFERRAL_DISTRIBUTOR_CODE_HASH = ""
 # Root posting stays on testnet until the owner activates the program (PRD
 # section 11, "Referral program").
 REFERRAL_POST_NETWORK = "robinhood-testnet"
+# Approved poster gas ceilings: 0.0002 ETH per transaction, 0.002 ETH per UTC day.
+REFERRAL_MAX_NATIVE_PER_TX_WEI = "200000000000000"
+REFERRAL_MAX_NATIVE_PER_DAY_WEI = "2000000000000000"
 
 # Secret for live mode: REFERRAL_POSTER_KEY. Install privately on the Worker;
 # never pass its value to CI. Optional RPC_URL_REFERRAL.

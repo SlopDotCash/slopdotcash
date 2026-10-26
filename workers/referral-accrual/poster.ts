@@ -18,7 +18,9 @@ import {
   keccak256,
   type PublicClient,
   parseAbiItem,
+  parseTransaction,
   RpcRequestError,
+  recoverTransactionAddress,
   TransactionNotFoundError,
   TransactionReceiptNotFoundError,
 } from "viem";
@@ -33,6 +35,12 @@ import type {
   PostStatus,
   PreparedPost,
 } from "./core";
+import {
+  gasInteger,
+  ReferralGasBudgetError,
+  validateGasCost,
+  validateGasLimits,
+} from "./gas";
 
 const DISTRIBUTOR_ABI = [
   {
@@ -156,6 +164,7 @@ export interface EvmPosterOptions {
 
 export function createEvmPoster(options: EvmPosterOptions): PosterClient {
   const { config } = options;
+  validateGasLimits(config.gas);
   const chain: Chain = defineChain({
     id: options.chainIdOverride ?? config.chainId,
     name: config.network,
@@ -185,6 +194,22 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
       functionName: functionName as never,
       args: args as never,
     }) as Promise<T>;
+  const canonicalReceipt = async (hash: Hex) => {
+    const receipt = await client
+      .getTransactionReceipt({ hash })
+      .catch((error: unknown) => {
+        if (error instanceof TransactionReceiptNotFoundError) return null;
+        throw error;
+      });
+    if (!receipt) return null;
+    const block = await client.getBlock({ blockNumber: receipt.blockNumber });
+    if (
+      !isCanonicalEvmReceipt(hash, receipt, block) ||
+      !["success", "reverted"].includes(receipt.status)
+    )
+      throw new Error("Referral receipt identity differs");
+    return receipt;
+  };
 
   return {
     address: () => account?.address.toLowerCase() ?? null,
@@ -257,7 +282,7 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
       };
     },
 
-    async prepare(epoch, root, total): Promise<PreparedPost> {
+    async prepare(epoch, root, total, authorize): Promise<PreparedPost> {
       if (!account)
         throw new Error("Signing is disabled without REFERRAL_POSTER_KEY");
       const data = encodeFunctionData({
@@ -276,6 +301,20 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
         client.estimateGas({ account: account.address, to: distributor, data }),
         client.estimateFeesPerGas(),
       ]);
+      // Nitro includes the Ethereum data fee in gas units; adding a Base-style
+      // L1 allowance would double-count it. The signed gas and fee caps bound both.
+      const gasLimit = (gas * 13n + 9n) / 10n;
+      const maximumNativeWei = (gasLimit * fees.maxFeePerGas).toString();
+      gasInteger(maximumNativeWei);
+      if (
+        gasLimit <= 0n ||
+        fees.maxFeePerGas <= 0n ||
+        BigInt(maximumNativeWei) > BigInt(config.gas.perTransactionWei)
+      )
+        throw new ReferralGasBudgetError(
+          "Referral transaction exceeds the native fee limit",
+        );
+      await authorize?.(maximumNativeWei);
       const raw = await account.signTransaction({
         chainId: chain.id,
         type: "eip1559",
@@ -283,11 +322,87 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
         data,
         value: 0n,
         nonce,
-        gas: (gas * 13n) / 10n,
+        gas: gasLimit,
         maxFeePerGas: fees.maxFeePerGas,
         maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
       });
-      return { txId: keccak256(raw), rawTx: raw, evmNonce: nonce };
+      return {
+        txId: keccak256(raw),
+        rawTx: raw,
+        evmNonce: nonce,
+        maximumNativeWei,
+      };
+    },
+
+    async nativeCost(row) {
+      if (
+        row.network !== config.network ||
+        (await client.getChainId()) !== chain.id
+      )
+        throw new Error("Referral native fee network differs");
+      const raw = row.rawTx as Hex;
+      const signed = parseTransaction(raw);
+      if (
+        keccak256(raw) !== row.txId ||
+        signed.type !== "eip1559" ||
+        signed.chainId !== chain.id ||
+        signed.nonce !== row.evmNonce ||
+        signed.to?.toLowerCase() !== row.distributor ||
+        (signed.value ?? 0n) !== 0n ||
+        signed.gas === undefined ||
+        signed.gas <= 0n ||
+        signed.maxFeePerGas === undefined ||
+        signed.maxFeePerGas <= 0n ||
+        (
+          await recoverTransactionAddress({
+            serializedTransaction: raw as `0x02${string}`,
+          })
+        ).toLowerCase() !== row.poster ||
+        signed.data !==
+          encodeFunctionData({
+            abi: DISTRIBUTOR_ABI,
+            functionName: "postRoot",
+            args: [
+              BigInt(row.epoch),
+              row.merkleRoot as Hex,
+              BigInt(row.totalBase),
+            ],
+          })
+      )
+        throw new Error("Referral signed native fee evidence differs");
+      const maximumWei = (signed.gas * signed.maxFeePerGas).toString();
+      const pending = { maximumWei, actualWei: null, settledDay: null };
+      validateGasCost(pending);
+      const receipt = await canonicalReceipt(row.txId as Hex);
+      if (!receipt) return pending;
+      const finalized = await client.getBlock({ blockTag: "finalized" });
+      if (typeof finalized.number !== "bigint" || finalized.number < 0n)
+        throw new Error("Referral native fee finality unavailable");
+      if (receipt.blockNumber > finalized.number) return pending;
+      const block = await client.getBlock({ blockNumber: receipt.blockNumber });
+      if (
+        !isCanonicalEvmReceipt(row.txId, receipt, block) ||
+        receipt.from.toLowerCase() !== row.poster ||
+        receipt.to?.toLowerCase() !== row.distributor ||
+        typeof receipt.gasUsed !== "bigint" ||
+        typeof receipt.effectiveGasPrice !== "bigint" ||
+        receipt.gasUsed < 0n ||
+        receipt.gasUsed > signed.gas ||
+        receipt.effectiveGasPrice < 0n ||
+        receipt.effectiveGasPrice > signed.maxFeePerGas ||
+        typeof block.timestamp !== "bigint"
+      )
+        throw new Error("Referral finalized native fee evidence differs");
+      const timestamp = Number(block.timestamp);
+      if (!Number.isSafeInteger(timestamp) || timestamp < 0)
+        throw new Error("Referral receipt time unavailable");
+      const result = {
+        maximumWei,
+        actualWei: (receipt.gasUsed * receipt.effectiveGasPrice).toString(),
+        settledDay: new Date(timestamp * 1000).toISOString().slice(0, 10),
+      };
+      validateGasCost(result);
+      return result;
     },
 
     async broadcast(rawTx) {
@@ -321,24 +436,6 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
       const finalized = await client.getBlock({ blockTag: "finalized" });
       if (typeof finalized.number !== "bigint" || finalized.number < 0n)
         throw new Error("Referral finality unavailable");
-      const canonicalReceipt = async (hash: Hex) => {
-        const receipt = await client
-          .getTransactionReceipt({ hash })
-          .catch((error: unknown) => {
-            if (error instanceof TransactionReceiptNotFoundError) return null;
-            throw error;
-          });
-        if (!receipt) return null;
-        const block = await client.getBlock({
-          blockNumber: receipt.blockNumber,
-        });
-        if (
-          !isCanonicalEvmReceipt(hash, receipt, block) ||
-          !["success", "reverted"].includes(receipt.status)
-        )
-          throw new Error("Referral receipt identity differs");
-        return receipt;
-      };
       const hash = row.txId as Hex;
       const receipt = await canonicalReceipt(hash);
       if (receipt) {

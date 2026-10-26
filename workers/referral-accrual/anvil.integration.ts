@@ -42,7 +42,17 @@ const CUMULATIVE = GROSS * RATE; // 3,000 tokens
 
 const anvil = spawn(
   "anvil",
-  ["--port", port, "--silent", "--chain-id", "46630"],
+  [
+    "--port",
+    port,
+    "--silent",
+    "--chain-id",
+    "46630",
+    "--base-fee",
+    "0",
+    "--gas-price",
+    "1000000",
+  ],
   {
     stdio: "ignore",
   },
@@ -209,17 +219,46 @@ try {
     REFERRAL_DISTRIBUTOR_ADDRESS: distributor,
     REFERRAL_TOKEN_ADDRESS: token,
     REFERRAL_POST_NETWORK: "robinhood-testnet",
+    REFERRAL_MAX_NATIVE_PER_TX_WEI: "200000000000000",
+    REFERRAL_MAX_NATIVE_PER_DAY_WEI: "2000000000000000",
     RPC_URL_REFERRAL: rpcUrl,
     REFERRAL_POSTER_KEY: posterKey,
   };
   const at = (iso: string) => () => new Date(iso);
 
-  // Run 1 files November and posts its root.
+  // An over-cap quote may file the month but cannot reach signing or broadcast.
+  const held = await runOnce(
+    { ...env, REFERRAL_MAX_NATIVE_PER_TX_WEI: "1" },
+    at("2026-12-02T01:22:00.000Z"),
+  );
+  assert.equal(held?.post?.status, "gas_budget");
+  assert.equal(
+    (
+      sqlite.query("SELECT count(*) n FROM referral_root_posts").get() as {
+        n: number;
+      }
+    ).n,
+    0,
+  );
+  assert.equal(
+    (
+      sqlite.query("SELECT count(*) n FROM referral_post_gas").get() as {
+        n: number;
+      }
+    ).n,
+    0,
+  );
+  assert.equal(
+    BigInt(await rpc("eth_getTransactionCount", [poster, "pending"])),
+    0n,
+  );
+  // The same filed month posts once under the approved limits on this low-fee local chain.
   const first = await runOnce(env, at("2026-12-02T01:23:00.000Z"));
   assert.equal(first?.status, "ran");
-  assert.deepEqual(first?.filed, [
+  assert.deepEqual(held?.filed, [
     { period: "2026-11", epoch: 0, rows: 1, leafCount: 1 },
   ]);
+  assert.deepEqual(first?.filed, []);
   assert.equal(first?.post?.status, "posted");
   const file = sqlite
     .query(
@@ -268,6 +307,27 @@ try {
   const receipt = await rpc("eth_getTransactionReceipt", [post.tx_id]);
   assert.equal(receipt.status, "0x1");
   assert.equal(BigInt(receipt.blockNumber).toString(), post.block_number);
+  const nativeCost = sqlite
+    .query("SELECT maximum_wei,actual_wei,settled_day FROM referral_post_gas")
+    .get() as { maximum_wei: number; actual_wei: number; settled_day: string };
+  const paidBlock = await rpc("eth_getBlockByNumber", [
+    receipt.blockNumber,
+    false,
+  ]);
+  assert.ok(
+    BigInt(nativeCost.maximum_wei) <=
+      BigInt(env.REFERRAL_MAX_NATIVE_PER_TX_WEI),
+  );
+  assert.equal(
+    BigInt(nativeCost.actual_wei),
+    BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice),
+  );
+  assert.equal(
+    nativeCost.settled_day,
+    new Date(Number(BigInt(paidBlock.timestamp)) * 1000)
+      .toISOString()
+      .slice(0, 10),
+  );
 
   // Independent read-only watcher: the actual public API serves the committed
   // D1 bytes, while all chain reads reach the actual local distributor.
@@ -753,6 +813,7 @@ try {
       publicFileRootWatcher: true,
       watcherCorruptionAndStalenessControls: true,
       robinhoodRangeLimitReconciled: true,
+      nativeBudgetAndCanonicalFee: true,
     }),
   );
 } finally {
