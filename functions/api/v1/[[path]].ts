@@ -16,6 +16,7 @@ import {
   type PaymentsDependencies,
 } from "../../../backend/payments/handler";
 import {
+  MonthlyPaymentError,
   monthlyOwnerService,
   verifyProjectAuthority,
 } from "../../../backend/payments/monthly";
@@ -100,6 +101,7 @@ import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
 import type { RepositoryIdentity } from "../../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../../src/lib/projects.mjs";
+import type { MonthlyReleaseResult } from "../../../workers/payment-executor/monthly-release";
 import {
   loadRegistryPaymentDeployments,
   parsePaymentNetworks,
@@ -126,6 +128,10 @@ type Env = {
   };
   /** Named recovery-only entrypoint; it cannot submit a binding or payment. */
   BINDING_RECOVERY?: { fetch(request: Request): Promise<Response> };
+  MONTHLY_RELEASE_BASE?: { fetch(request: Request): Promise<Response> };
+  MONTHLY_RELEASE_ETHEREUM?: { fetch(request: Request): Promise<Response> };
+  MONTHLY_RELEASE_ROBINHOOD?: { fetch(request: Request): Promise<Response> };
+  MONTHLY_RELEASE_SOLANA?: { fetch(request: Request): Promise<Response> };
   /** Private RPC endpoints for explicit wallet funding review/check requests. Never returned to the browser. */
   PAYMENT_RPC_URLS?: string;
   PRIVATE_TRACES: R2Bucket;
@@ -885,6 +891,42 @@ export async function onRequest(context: PagesContext): Promise<Response> {
           }
         },
         now: () => new Date(),
+        releaseReserve: async (input) => {
+          const chain = ESCROW_NETWORKS[input.network]?.chain;
+          const service =
+            chain === "base"
+              ? context.env.MONTHLY_RELEASE_BASE
+              : chain === "ethereum"
+                ? context.env.MONTHLY_RELEASE_ETHEREUM
+                : chain === "robinhood"
+                  ? context.env.MONTHLY_RELEASE_ROBINHOOD
+                  : chain === "solana"
+                    ? context.env.MONTHLY_RELEASE_SOLANA
+                    : undefined;
+          if (!service)
+            throw new MonthlyPaymentError(
+              503,
+              "release_unavailable",
+              "Reserve checks are unavailable on this network. Retry later.",
+            );
+          const response = await service.fetch(
+            new Request("https://monthly-release/v1/monthly-reserve-release", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(input),
+            }),
+          );
+          if (!response.ok)
+            throw new MonthlyPaymentError(
+              409,
+              "release_held",
+              "The reserve could not be proved safe to release. No funds moved. Retry the check.",
+            );
+          return (await readBoundedJson(
+            response,
+            4 * 1024 * 1024,
+          )) as MonthlyReleaseResult;
+        },
       }),
       solanaFundingConfig: (projectId, network, vault) =>
         solanaFundingConfig(projectId, network, vault, "ordinary"),

@@ -163,6 +163,31 @@ uses these same commitment builders and signed journals. It reads public
 authorizations and finalized contract wallet bindings, without private D1
 account access. The hosted production role remains attester-only.
 
+## Wrong-sum reserve repair
+
+PRD sections 6 and 11 permit one owner-requested repair. In Monthly awards,
+open **Repair a stuck monthly reserve** and select **Check reserve**. The
+signed-in maintainer must still have current GitHub authority. The identity
+Worker loads the complete retained allocation and checks fresh finalized
+chain evidence. A missing tree, healthy reserve, changed policy or previous
+settlement cannot authorize a release.
+
+Only a proved wrong total produces an attestation and an unsigned owner
+transaction. The owner reviews and signs once. This returns the untouched
+reserve to the vault's free balance; it does not withdraw or pay funds. The
+same attester journal retains the evidence, signature and exact owner plan.
+A retry rechecks chain state and reuses the attestation. The UI retains a
+submitted or uncertain wallet request until its transaction is checked.
+Only a canonical finalized transaction matching that plan confirms release.
+
+Pages uses the `MonthlyReserveRelease` named service entrypoint, which cannot
+reach binding, payment or monthly-commitment routes. The private-bounty scope
+and relayer role cannot request this repair. No new key or scheduled job is
+needed. The production release binds Base only after verifying that attester's
+new revision. Other networks need their reviewed network release before their
+corresponding Pages binding is installed. A missing binding shows unavailable;
+it never forwards the request to another network.
+
 ## Durability and retries
 
 Base nonce allocation, transaction signing, and persistence of signed bytes,

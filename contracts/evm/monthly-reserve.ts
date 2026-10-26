@@ -392,6 +392,39 @@ export async function inspectEvmMonthlyWrongSum(
   };
 }
 
+export type EvmWrongSumEvidence = Extract<
+  Awaited<ReturnType<typeof inspectEvmMonthlyWrongSum>>,
+  { status: "provably-unsettleable" }
+>;
+/** One contract domain for the attester, owner review and unsigned builder. */
+export function evmMonthlyReleaseDigest(evidence: EvmWrongSumEvidence) {
+  return hashTypedData({
+    domain: {
+      name: "SlopProjectEscrow",
+      version: EVM_ESCROW_DOMAIN_VERSION,
+      chainId: BigInt(evidence.chainId),
+      verifyingContract: evidence.vault as Hex,
+    },
+    types: {
+      MonthlyRelease: [
+        { name: "period", type: "uint32" },
+        { name: "allocationDigest", type: "bytes32" },
+        { name: "allocationRoot", type: "bytes32" },
+        { name: "remainingGross", type: "uint128" },
+        { name: "releasedGross", type: "uint128" },
+      ],
+    },
+    primaryType: "MonthlyRelease",
+    message: {
+      period: periodNumber(evidence.period),
+      allocationDigest: bytes32(evidence.allocationDigest),
+      allocationRoot: bytes32(evidence.allocationRoot),
+      remainingGross: BigInt(evidence.expectedRemaining),
+      releasedGross: BigInt(evidence.releasedGross),
+    },
+  });
+}
+
 /** Owner-only unsigned plan. Reinspect the complete tree; never accept a caller's claimed
  * fault or release amount. The caller supplies an attestation, not a signing key. */
 export async function prepareEvmMonthlyWrongSumRelease(
@@ -405,31 +438,7 @@ export async function prepareEvmMonthlyWrongSumRelease(
     throw new Error(`Monthly release held: ${evidence.reason}`);
   if (!/^0x[0-9a-f]{130}$/i.test(attestation))
     throw new Error("Invalid monthly release attestation");
-  const digest = hashTypedData({
-    domain: {
-      name: "SlopProjectEscrow",
-      version: EVM_ESCROW_DOMAIN_VERSION,
-      chainId: config.chainId,
-      verifyingContract: config.vault as Hex,
-    },
-    types: {
-      MonthlyRelease: [
-        { name: "period", type: "uint32" },
-        { name: "allocationDigest", type: "bytes32" },
-        { name: "allocationRoot", type: "bytes32" },
-        { name: "remainingGross", type: "uint128" },
-        { name: "releasedGross", type: "uint128" },
-      ],
-    },
-    primaryType: "MonthlyRelease",
-    message: {
-      period: periodNumber(period),
-      allocationDigest: bytes32(evidence.allocationDigest),
-      allocationRoot: bytes32(evidence.allocationRoot),
-      remainingGross: BigInt(evidence.expectedRemaining),
-      releasedGross: BigInt(evidence.releasedGross),
-    },
-  });
+  const digest = evmMonthlyReleaseDigest(evidence);
   if (
     (
       await recoverAddress({ hash: digest, signature: attestation as Hex })

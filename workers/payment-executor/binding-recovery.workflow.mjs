@@ -55,6 +55,18 @@ try {
           },
         },
         {
+          name: "monthly-release-caller",
+          ...shared,
+          script:
+            "export default { fetch(request, env) { return env.RELEASE.fetch(request); } };",
+          serviceBindings: {
+            RELEASE: {
+              name: "recovery-attester",
+              entrypoint: "MonthlyReserveRelease",
+            },
+          },
+        },
+        {
           name: "recovery-attester",
           ...shared,
           script: await readFile(bundle, "utf8"),
@@ -126,6 +138,40 @@ try {
     assert.equal(result.status, 404, path);
   }
   assert.equal((await request("/v1/reconcile-binding", "GET")).status, 404);
+  const release = await runtime.getWorker("monthly-release-caller");
+  for (const path of [
+    "/v1/pay",
+    "/v1/commit-monthly",
+    "/v1/monthly-authorization",
+    "/v1/bind-destinations",
+    "/v1/security/monthly-reserve-release",
+    "/v1/reconcile-binding",
+  ])
+    assert.equal(
+      (
+        await release.fetch(`https://release.internal${path}`, {
+          method: "POST",
+          body: "{}",
+        })
+      ).status,
+      404,
+      path,
+    );
+  assert.equal(
+    (await release.fetch("https://release.internal/v1/monthly-reserve-release"))
+      .status,
+    404,
+  );
+  // No registry means no proof; the named route reaches the real DO and refuses before key/RPC use.
+  assert.equal(
+    (
+      await release.fetch(
+        "https://release.internal/v1/monthly-reserve-release",
+        { method: "POST", body: "{}" },
+      )
+    ).status,
+    404,
+  );
   assert.equal(outbound, 0);
   console.log(
     "PASS: compiled BindingRecovery service binding reached native SQLite Durable Object without keys; ordinary/private missing-attempt refusal, malformed-scope refusal, eight non-recovery routes and GET denied, zero external requests. No chain or finalized-winner qualification is claimed.",

@@ -166,39 +166,46 @@ export async function inspectSolanaMonthlyWrongSum(
   };
 }
 
-/** Fresh evidence and an existing authority attestation produce only an unsigned owner plan.
- * No caller-selected amount, private key, signing method or broadcast path is accepted. */
-export async function prepareSolanaMonthlyWrongSumRelease(
-  config: SolanaEscrowConfig,
-  period: string,
-  capture: { entries: readonly SolanaMonthlyEntry[] } | null,
-  attestation: string,
+export type SolanaWrongSumEvidence = Extract<
+  Awaited<ReturnType<typeof inspectSolanaMonthlyWrongSum>>,
+  { status: "provably-unsettleable" }
+>;
+/** One contract domain for the attester and the unsigned owner plan. */
+export function solanaMonthlyReleaseMessage(
+  evidence: SolanaWrongSumEvidence,
+  networkDomain: string,
 ) {
-  const evidence = await inspectSolanaMonthlyWrongSum(config, period, capture);
-  if (evidence.status !== "provably-unsettleable")
-    throw new Error(`Monthly release held: ${evidence.reason}`);
-  if (!/^[0-9a-f]{128}$/i.test(attestation))
-    throw new Error("Invalid monthly release attestation");
-  const signature = Uint8Array.from(attestation.match(/../g) ?? [], (value) =>
-    Number.parseInt(value, 16),
-  );
   const periodBytes = new Uint8Array(4);
   new DataView(periodBytes.buffer).setUint32(
     0,
-    Number(period.replace("-", "")),
+    Number(evidence.period.replace("-", "")),
     true,
   );
-  const signed = concat(
+  return concat(
     encoder.encode("slop-monthly-release-v1"),
-    bytes(config.programId),
-    bytes(config.projectPda),
+    bytes(evidence.programId),
+    bytes(evidence.projectPda),
     periodBytes,
     solanaDigest(evidence.allocationRoot),
     le(BigInt(evidence.storedTotal)),
     le(BigInt(evidence.expectedUnsettled)),
     le(BigInt(evidence.releasedGross)),
-    solanaDigest(config.networkDomain),
+    solanaDigest(networkDomain),
   );
+}
+
+/** Rebuild the exact two instructions locally before asking the owner to sign. */
+export function solanaMonthlyReleaseInstructions(
+  evidence: SolanaWrongSumEvidence,
+  networkDomain: string,
+  attestation: string,
+) {
+  if (!/^[0-9a-f]{128}$/i.test(attestation))
+    throw new Error("Invalid monthly release attestation");
+  const signature = Uint8Array.from(attestation.match(/../g) ?? [], (value) =>
+    Number.parseInt(value, 16),
+  );
+  const signed = solanaMonthlyReleaseMessage(evidence, networkDomain);
   if (
     !ed25519.verify(signature, signed, bytes(evidence.identityAuthority), {
       zip215: false,
@@ -212,7 +219,7 @@ export async function prepareSolanaMonthlyWrongSumRelease(
   [48, 65535, 16, 65535, 112, signed.length, 65535].forEach((value, index) => {
     view.setUint16(2 + index * 2, value, true);
   });
-  const instructions: Instruction[] = [
+  return [
     {
       program: "Ed25519SigVerify111111111111111111111111111",
       accounts: [],
@@ -224,21 +231,39 @@ export async function prepareSolanaMonthlyWrongSumRelease(
       ),
     },
     {
-      program: config.programId,
+      program: evidence.programId,
       accounts: [
         { key: evidence.owner, write: false },
-        { key: config.projectPda, write: true },
+        { key: evidence.projectPda, write: true },
         { key: evidence.monthAddress, write: true },
         { key: "Sysvar1nstructions1111111111111111111111111", write: false },
       ],
       data: instructionData(
         "release_monthly_reserve",
-        periodBytes,
+        le(BigInt(evidence.period.replace("-", ""))).slice(0, 4),
         le(BigInt(evidence.expectedUnsettled)),
         le(BigInt(evidence.releasedGross)),
       ),
     },
-  ];
+  ] satisfies Instruction[];
+}
+
+/** Fresh evidence and an existing authority attestation produce only an unsigned owner plan.
+ * No caller-selected amount, private key, signing method or broadcast path is accepted. */
+export async function prepareSolanaMonthlyWrongSumRelease(
+  config: SolanaEscrowConfig,
+  period: string,
+  capture: { entries: readonly SolanaMonthlyEntry[] } | null,
+  attestation: string,
+) {
+  const evidence = await inspectSolanaMonthlyWrongSum(config, period, capture);
+  if (evidence.status !== "provably-unsettleable")
+    throw new Error(`Monthly release held: ${evidence.reason}`);
+  const instructions = solanaMonthlyReleaseInstructions(
+    evidence,
+    config.networkDomain,
+    attestation,
+  );
   // Existing wallet preparation obtains a fresh lifetime/fee and simulates the exact
   // unsigned message against finalized state. The program rechecks it at execution.
   const plan = await prepareSolanaWalletTransaction(

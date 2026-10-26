@@ -46,6 +46,7 @@ import type {
 } from "../../src/lib/project-contracts";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import type { MonthlyReleaseResult } from "../../workers/payment-executor/monthly-release";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import { notifyMonthlyUnderfunded } from "../notifications/events";
 import {
@@ -53,6 +54,10 @@ import {
   PARTICIPATION_BAN_QUERY,
 } from "../projects/account-bans";
 import { chainAwards, holdsAward } from "./chain-awards";
+import type {
+  MonthlyReleaseCheck,
+  MonthlyReleaseRequest,
+} from "./monthly-reserve-release";
 
 export class MonthlyPaymentError extends Error {
   constructor(
@@ -780,6 +785,11 @@ export function monthlyOwnerService(deps: {
   verifyAuthority(project: ProjectRecord, actor: GithubActor): Promise<void>;
   schedule(): MonthlySchedule | null;
   now(): Date;
+  releaseReserve?(
+    input: MonthlyReleaseRequest | MonthlyReleaseCheck,
+  ): Promise<
+    MonthlyReleaseResult | { status: "pending" | "failed" | "finalized" }
+  >;
 }) {
   async function authorized(projectId: string, actor: GithubActor) {
     const project = await deps.getProject(projectId);
@@ -896,6 +906,52 @@ export function monthlyOwnerService(deps: {
     };
   }
   return {
+    async releaseReserve(
+      projectId: string,
+      period: string,
+      actor: GithubActor,
+      expected: {
+        network: string;
+        manifestSha256: string;
+        planId?: string;
+        transactionId?: string;
+      },
+    ) {
+      const project = await authorized(projectId, actor);
+      assertPeriod(period);
+      const deployment = servedDeployment(project.manifest, deps.networks());
+      if (
+        !deployment ||
+        deployment.network !== expected.network ||
+        project.manifestSha256 !== expected.manifestSha256
+      )
+        throw new MonthlyPaymentError(
+          409,
+          "project_changed",
+          "The project changed. Reload its awards.",
+        );
+      if (!deps.releaseReserve)
+        throw new MonthlyPaymentError(
+          503,
+          "release_unavailable",
+          "Reserve checks are unavailable. Retry later.",
+        );
+      await unchanged(project);
+      const result = await deps.releaseReserve({
+        projectId,
+        period,
+        network: deployment.network,
+        manifestSha256: project.manifestSha256,
+        ...(expected.planId
+          ? {
+              planId: expected.planId,
+              transactionId: expected.transactionId as string,
+            }
+          : {}),
+      });
+      await unchanged(project);
+      return result;
+    },
     async view(projectId: string, period: string, actor: GithubActor) {
       const project = await authorized(projectId, actor);
       const result = await view(project, assertPeriod(period));

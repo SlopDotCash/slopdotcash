@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, createPrivateKey, sign } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import anchor from "@coral-xyz/anchor";
 import {
@@ -36,6 +37,10 @@ import {
   freezeSolanaMonthly,
   submitSolanaMonthly,
 } from "../.local/monthly-executor.mjs";
+import {
+  checkMonthlyReserveRelease,
+  prepareMonthlyReserveRelease,
+} from "../.local/monthly-release-service.mjs";
 import { inspectSolanaMonthlyWrongSum } from "../.local/monthly-reserve.mjs";
 import { ownerPlan } from "../scripts/owner-plan.mjs";
 import {
@@ -3169,6 +3174,104 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
     ownerPlan({ ...releaseInput, capture: null }, runtime),
     /allocation-unavailable/,
   );
+  // Run the private attester service on the same actual finalized validator state.
+  // SQLite stores the retained publication; only this fixture creates the bad historical total.
+  const database = new DatabaseSync(":memory:");
+  database.exec(
+    "CREATE TABLE monthly_payment_runs(project_id TEXT,period TEXT,snapshot_sha256 TEXT,network TEXT,vault TEXT,obligations_created_at TEXT); CREATE TABLE monthly_payment_authorizations(project_id TEXT,period TEXT,network TEXT,authorization TEXT); CREATE TABLE monthly_payment_authorization_attempts(project_id TEXT,period TEXT,network TEXT,authorization TEXT);",
+  );
+  const record = {
+    ...settings,
+    network: "solana-devnet",
+    asset: settings.mint,
+  };
+  delete record.rpcUrl;
+  const request = {
+    projectId: settings.projectId,
+    period,
+    network: "solana-devnet",
+    manifestSha256: "a".repeat(64),
+  };
+  const savedProject = {
+    id: settings.projectId,
+    revision: 1,
+    manifestSha256: request.manifestSha256,
+    manifest: { escrow: { deployments: [record] } },
+  };
+  database
+    .prepare("INSERT INTO monthly_payment_runs VALUES(?,?,?,?,?,?)")
+    .run(
+      settings.projectId,
+      period,
+      "c".repeat(64),
+      request.network,
+      settings.vault,
+      "2026-12-04T00:00:00Z",
+    );
+  const retained = {
+    plan: {
+      request: {
+        projectId: request.projectId,
+        period,
+        network: request.network,
+        snapshotSha256: "c".repeat(64),
+      },
+      deployment: record,
+      family: "solana",
+      entries,
+    },
+    signatureHex: releaseInput.attestation,
+  };
+  database
+    .prepare("INSERT INTO monthly_payment_authorizations VALUES(?,?,?,?)")
+    .run(request.projectId, period, request.network, JSON.stringify(retained));
+  const db = {
+    prepare(sql) {
+      return {
+        bind(...args) {
+          return {
+            first: async () => database.prepare(sql).get(...args) ?? null,
+          };
+        },
+      };
+    },
+  };
+  const memory = new Map();
+  const journal = {
+    get: async (key) => memory.get(key),
+    put: async (key, value) => memory.set(key, value),
+  };
+  let signing = authority,
+    signs = 0;
+  const service = {
+    db,
+    journal,
+    getProject: async () => savedProject,
+    pinned: [{ projectId: request.projectId, ...record, chain: "solana" }],
+    family: "solana",
+    evm: async () => {
+      throw new Error("Wrong family");
+    },
+    solana: async () => settings,
+    sign: async (text) => {
+      signs++;
+      return Buffer.from(
+        await nodeSigner(signing).signMessage(Buffer.from(text, "hex")),
+      ).toString("hex");
+    },
+  };
+  const servicePlan = await prepareMonthlyReserveRelease(service, request);
+  assert.equal(servicePlan.status, "ready");
+  assert.equal(servicePlan.family, "solana");
+  assert.equal(
+    (await prepareMonthlyReserveRelease(service, request)).status,
+    "ready",
+  );
+  assert.equal(
+    signs,
+    1,
+    "retry reuses its attestation after fresh evidence checks",
+  );
   const originalPlan = await ownerPlan(releaseInput, runtime);
   assert.equal(originalPlan.requiredSigner, payer.publicKey.toBase58());
   assert.equal(originalPlan.evidence.expectedUnsettled, "30000001");
@@ -3198,19 +3301,50 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
     ...releaseInput,
     attestation: await attest(nextAuthority),
   };
+  signing = nextAuthority;
+  const currentServicePlan = await prepareMonthlyReserveRelease(
+    service,
+    request,
+  );
+  assert.equal(currentServicePlan.status, "ready");
+  assert.equal(
+    currentServicePlan.prepared.evidence.identityAuthority,
+    nextAuthority.publicKey.toBase58(),
+  );
+  assert.equal(
+    signs,
+    2,
+    "authority rotation needs the current authority attestation",
+  );
   const plan = await ownerPlan(currentInput, runtime);
   assert.equal(
     plan.evidence.identityAuthority,
     nextAuthority.publicKey.toBase58(),
   );
   const transaction = Transaction.from(
-    Buffer.from(plan.transactionBase64, "base64"),
+    Buffer.from(currentServicePlan.prepared.transaction, "base64"),
   );
   transaction.sign(payer);
   const released = await provider.connection.sendRawTransaction(
     transaction.serialize(),
   );
   await provider.connection.confirmTransaction(released, "finalized");
+  assert.equal(
+    (
+      await checkMonthlyReserveRelease(service, {
+        ...request,
+        planId: currentServicePlan.planId,
+        transactionId: released,
+      })
+    ).status,
+    "finalized",
+  );
+  assert.equal(
+    (await prepareMonthlyReserveRelease(service, request)).status,
+    "held",
+  );
+  assert.equal(signs, 2, "a released reserve cannot sign again");
+  database.close();
   const state = await program.account.project.fetch(project, "finalized");
   assert.equal(state.reserved.toString(), "0");
   assert.equal(state.monthlyOutstanding.toString(), "0");
