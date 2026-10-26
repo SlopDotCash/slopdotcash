@@ -104,8 +104,8 @@ inventory deletion. Unknown transport or cleanup failure cannot pass.
 
 Only safe source/image/key digests and assertion results leave the CI process.
 No request signature, run ID, output bytes, model call, scan result or stored
-case evidence is published. This test does not install an evidence policy,
-attest external controls, enable the controller or enable retention deletion.
+case evidence is published. This test does not enable the controller or
+retention deletion.
 No new key entry is required. To inspect its plan locally, run:
 
 ```sh

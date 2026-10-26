@@ -17,26 +17,14 @@
 > bound set at the first of several upgrades would reject events from proxies
 > not yet upgraded.
 >
-> Pending upgrades: the Ethereum and Robinhood mainnet EVM contracts and the
-> Solana program were deployed from `bce5b0df`. Source on `development` rounds the 2%
-> fee up (#1189) and, on Solana, releases a monthly award whose source already
-> holds the identical award (#1175). The payment executor already relies on that
-> Solana release rule. Upgrade the Solana program and record its new
-> `codeSha256` before any Solana project turns on automatic monthly payment;
-> until the upgrade, reconciliation accepts either fee rounding. The EVM
-> upgrade kit (deploy script, calldata, fork rehearsal and registry revision)
-> is in section 4. Base's authorized monthly reserve V2 upgrade is finalized
-> (see the current Base review below); Ethereum, Robinhood and Solana upgrades
-> remain pending.
->
-> Owner decision (25 October 2026): bundle the owner's signed release of an
-> unsettleable monthly reserve (`docs/escrow-unsettleable-month-release.md`)
-> into the pending upgrades. The section 4 kit now targets the bundled vault;
-> on Base it is a further upgrade after the finalized V2 below.
-> The Solana program also changes: the expected post-upgrade program hash
-> `d29200ec…` from source `edf3b341` (#914) is superseded. Redo the section 2
-> deterministic Solana build from the final merged source and record its new
-> hashes before the Solana upgrade. Do not use the old hash.
+> The bundled monthly reserve upgrades finalized on Base, Ethereum, Robinhood
+> Chain and Solana on 26 October 2026. Do not repeat them to complete setup.
+> The EVM records are below; the [Solana upgrade record](https://github.com/SlopDotCash/slopdotcash/issues/901#issuecomment-6406837627)
+> identifies its exact artifact and finalized transaction. This includes the
+> owner's release of a provably unsettleable monthly reserve. The earlier
+> `bce5b0df` deployment and proposed `d29200ec…` hash are superseded.
+> Registry acceptance, network activation and first reconciled payments remain
+> under #904. A deployed program alone does not complete those steps.
 
 # Owner-controlled escrow mainnet deployment
 
@@ -73,17 +61,35 @@ Registrar `0xd64F35aC87D9a1FB8eBD44e745c24436B606cF60`, identity authority
 full match for all three initial contracts on each chain. That verification
 does not cover the replacement implementations.
 
-Solana program `7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ`: upgrade
-authority `EmMRRFhjZmr2SN5RdhV98WPnUhgJxKMoE1itSwUsU8tr`, 681,392 bytes,
-`codeSha256` `86a24ca13ba7ace124cf81fcb0d182f54ad480081e8bb0b847d12ee32c0c0726`.
+Solana program `7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ` was upgraded
+at finalized slot **461,493,344** from reviewed source `83827c04` (#1271).
+The 685,664-byte artifact SHA-256 is
+`bcf35ce6d86e516dd6479fea3cadcfdc83b9e41fe0decba70e04afad95ae568d`.
+Its allocated code region is 691,632 bytes: the artifact followed by zero
+padding, with `codeSha256`
+`38c8d776e9d4d763f16c834d76aa0497ba1c3f2a3b8bbe17a60067268782005d`.
+The ProgramData account includes a separate 45-byte loader header.
+The upgrade record also reports `solana-verify get-program-hash` as
+`b07b13a47e0b3c8fcad84f7c988913a24874b2f9f5e45052684cdf14eaabb03e`.
+This tool-specific program hash differs from the file and padded-region
+SHA-256 values above; compare each command with its corresponding value.
+Upgrade authority remains `EmMRRFhjZmr2SN5RdhV98WPnUhgJxKMoE1itSwUsU8tr`.
+
 Config `9hjoFnUrgF65K4DnWSDbS1WJjoGu4LChuz8XFq73UtaS`: identity authority
 `Eq6tYrPnkhj3hLmSZUL9xUWjkZ3Y5j3naBAJyQyKMYzS`, fee recipient
 `9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY`, rotation authority
-`2tAA47aavW2mqtCAxbn21ZqLb8xZTeq8XvkRR9emduiy`. The release issues (#898,
-#899, #900, #901) hold the transaction identities. The verifiable Docker
-build and exact-artifact qualification are still open for Solana. The owner
+`2tAA47aavW2mqtCAxbn21ZqLb8xZTeq8XvkRR9emduiy`.
+A fresh read on 26 October at 14:41 UTC confirmed the code at finalized
+context slot 461,701,579 and these Config roles at slot 461,701,582.
+
+The [upgrade record](https://github.com/SlopDotCash/slopdotcash/issues/901#issuecomment-6406837627)
+contains the deterministic build and devnet qualification. The
+[independent byte check](https://github.com/SlopDotCash/slopdotcash/issues/901#issuecomment-6407077336)
+confirms the artifact prefix, zero padding and retained authority. The owner
 waived a second operator and a different build machine on 25 October 2026;
-that check was not completed (PRD section 11).
+that check was not completed (PRD section 11). These records do not prove
+project activation, wallet binding or a first payment; continue those under
+#904 without repeating the program upgrade.
 
 ### Base monthly reserve V2 upgrade
 

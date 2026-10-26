@@ -71,11 +71,10 @@ policy.
 
 ## Before you start
 
-1. Star and fork `SlopDotCash/slopdotcash` with your own GitHub account. This
-   step is required: Slop uses it to track project participation (approved by
-   counsel). You can use the GitHub website, computer use, or the GitHub CLI:
-   `gh api -X PUT user/starred/SlopDotCash/slopdotcash` and
-   `gh repo fork SlopDotCash/slopdotcash --clone`. Work from your fork.
+1. Star and fork `SlopDotCash/slopdotcash` on github.com with your own GitHub
+   account, and work from your fork. An agent stars and forks only when it
+   can use computer use or browser use (PRD section 4). Without these tools,
+   it asks before it creates a fork. Stars and forks are never scored or paid.
 2. Read `README.md`, `AGENTS.md`, and the canonical PRD sections that your
    change affects.
 3. Check existing issues and pull requests for overlapping work. Link the relevant
@@ -103,8 +102,8 @@ The PRD is binding. Accepted work, inside approved MVP scope:
 - security defects in authentication, authorization, identity, private traces,
   the installer, or signer and vault boundaries, with a demonstrated reachable
   path;
-- verification and settlement correctness: scoring, cycle proposals, funding
-  evidence, project vault execution tracking, and on-chain reconciliation;
+- verification and settlement correctness: scoring, monthly allocations,
+  project vault execution tracking, and on-chain reconciliation;
 - tests that prove a real product path failed and now works;
 - hill climbing: a measured improvement to a required behavior, with the same
   method run before and after the change.
@@ -227,8 +226,8 @@ Preserve these boundaries:
 - Never expose secrets, raw prompts/responses, private traces, credentials,
   session identifiers, or signing material.
 - Settlement tooling never signs or broadcasts a vault transfer or a payment.
-  The only Slop signers are the PAY-05 identity attester and the TOK-07
-  fee-wallet conversion job, within the limits in `AGENTS.md`.
+  The only Slop signers are the PAY-05 identity attester, the TOK-07 fee-wallet
+  key, and the referral root-posting key, within the limits in `AGENTS.md`.
 - Generated public assets come from `bun run prepare:site`; do not edit them by
   hand.
 

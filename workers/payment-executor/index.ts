@@ -87,6 +87,11 @@ export interface Environment {
   CHAIN_FAMILY: "evm" | "solana";
   /** `test` (or absent) or `production`; selects the signer secret and journal names. */
   SIGNER_STACK?: string;
+  /**
+   * `on` gives a test-stack EVM attester the production scheduled binding
+   * (staging keeper topology). A production EVM attester always has it.
+   */
+  SCHEDULED_BINDINGS?: string;
   /** Dedicated test-only key; each independently deployed role has a different secret. */
   TEST_SIGNER_PRIVATE_KEY?: `0x${string}`;
   TEST_SOLANA_SIGNER_SEED?: string;
@@ -195,11 +200,7 @@ export class PaymentSignerJournal {
         // deployments only, and every candidate passes the hosted
         // attester's checks again.
         const stack = signerStack(this.env.SIGNER_STACK);
-        if (
-          stack !== "production" ||
-          this.env.SIGNER_ROLE !== "attester" ||
-          this.env.CHAIN_FAMILY !== "evm"
-        )
+        if (!scheduledBindings(this.env))
           return new Response("Not found", { status: 404 });
         // The stack, network and preflight checks of every pinned vault pass
         // on every run, before D1 is read and before the secret is read, as
@@ -523,10 +524,10 @@ export class PaymentSignerJournal {
       // a mainnet. A production stack is the PAY-05 identity attester only.
       if (stack === "production" && this.env.SIGNER_ROLE !== "attester")
         return new Response("Not found", { status: 404 });
-      // A production EVM attester binds only through its scheduled run
-      // (/v1/bind-destinations), so one journal key per binding version is
-      // the only path that can sign a binding.
-      if (stack === "production" && this.env.CHAIN_FAMILY === "evm")
+      // A production EVM attester (or a test one with SCHEDULED_BINDINGS)
+      // binds only through its scheduled run (/v1/bind-destinations), so one
+      // journal key per binding version is the only path that can sign one.
+      if (scheduledBindings(this.env))
         return new Response("Not found", { status: 404 });
       if (["/v1/attempt-status", "/v1/cancel-unsubmitted"].includes(pathname)) {
         if (this.env.SIGNER_ROLE !== "relayer")
@@ -756,18 +757,17 @@ export async function runMonthlyAttester(env: Environment) {
  * The production EVM attester binds the stored, wallet-signed destinations
  * of reserved awards (PRD PAY-05). A mainnet has no Slop relayer to request
  * a binding (PAY-04). The payout itself stays permissionless: the project
- * owner or anyone else calls the vault's `pay`. Every other stack has no
- * scheduled binding; a test relayer requests its bindings itself.
+ * owner or anyone else calls the vault's `pay`. A test-stack EVM attester
+ * with `SCHEDULED_BINDINGS=on` runs the same binding for the staging keeper
+ * topology. Every other stack has no scheduled binding; a test relayer
+ * requests its bindings itself.
  */
 export async function runDestinationBindings(env: Environment) {
-  if (
-    signerStack(env.SIGNER_STACK) !== "production" ||
-    env.SIGNER_ROLE !== "attester" ||
-    env.CHAIN_FAMILY !== "evm"
-  )
-    return null;
+  if (!scheduledBindings(env)) return null;
   const response = await env.JOURNAL.get(
-    env.JOURNAL.idFromName(SIGNER_STACKS.production.journal),
+    env.JOURNAL.idFromName(
+      SIGNER_STACKS[signerStack(env.SIGNER_STACK)].journal,
+    ),
   ).fetch(
     new Request(
       `https://attester.internal/v1/${env.PAYMENT_SCOPE === "security-bounty" && env.SIGNER_STACK === "production" ? "security/" : ""}bind-destinations`,
@@ -784,6 +784,23 @@ export async function runDestinationBindings(env: Environment) {
   )) as BindingRunReport;
   if (report.failed !== 0) throw new Error("Destination binding incomplete");
   return report;
+}
+
+/**
+ * True for an EVM attester that binds only through its scheduled run: every
+ * production stack, and a test stack with `SCHEDULED_BINDINGS=on`. Such an
+ * attester refuses requested bindings, so one journal key per binding
+ * version is the only path that can sign a binding.
+ */
+function scheduledBindings(env: Environment) {
+  const stack = signerStack(env.SIGNER_STACK);
+  if (env.SCHEDULED_BINDINGS !== undefined && env.SCHEDULED_BINDINGS !== "on")
+    throw new Error("Unknown SCHEDULED_BINDINGS");
+  return (
+    env.SIGNER_ROLE === "attester" &&
+    env.CHAIN_FAMILY === "evm" &&
+    (stack === "production" || env.SCHEDULED_BINDINGS === "on")
+  );
 }
 
 /** Separate pending attempts and receipts, but atomically share the EVM nonce. */

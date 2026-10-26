@@ -1047,12 +1047,59 @@ try {
   const [daveTo] = words(await read(vault, "payableBinding(uint64)", ["321"]));
   assert.equal(daveTo, 0n, "Dave has no payable destination");
 
-  // The binding run exists only on a production EVM attester.
-  for (const other of [{ SIGNER_STACK: "test" }, { SIGNER_ROLE: "relayer" }])
+  // The binding run exists only on a production EVM attester, or a test
+  // one with SCHEDULED_BINDINGS=on (staging keeper topology).
+  for (const other of [
+    { SIGNER_STACK: "test" },
+    { SIGNER_ROLE: "relayer" },
+    { SIGNER_ROLE: "relayer", SIGNER_STACK: "test", SCHEDULED_BINDINGS: "on" },
+  ])
     assert.equal(
       await runDestinationBindings({ ...env, ...other } as never),
       null,
     );
+  await assert.rejects(
+    runDestinationBindings({ ...env, SCHEDULED_BINDINGS: "yes" } as never),
+    /Unknown SCHEDULED_BINDINGS/,
+  );
+  // A scheduled test attester uses the test journal and the test stack's
+  // network checks: it never signs for this mainnet vault.
+  const testScheduled = {
+    ...env,
+    SIGNER_STACK: "test",
+    SCHEDULED_BINDINGS: "on",
+    JOURNAL: {
+      idFromName(name: string) {
+        journalNames.push(name);
+        return name;
+      },
+      get: () =>
+        new PaymentSignerJournal({ storage: journal }, testScheduled as never),
+    },
+  };
+  const nonceBefore = await nonce(attester);
+  await assert.rejects(
+    runDestinationBindings(testScheduled as never),
+    /Destination binding run rejected/,
+  );
+  assert.equal(journalNames.at(-1), "dedicated-test-signer-v1");
+  assert.equal(await nonce(attester), nonceBefore);
+  // Like production, it refuses requested bindings: the schedule is the
+  // only binding path.
+  assert.equal(
+    (
+      await new PaymentSignerJournal(
+        { storage: journal },
+        testScheduled as never,
+      ).fetch(
+        new Request("https://attester.internal/v1/pay", {
+          method: "POST",
+          body: "{}",
+        }),
+      )
+    ).status,
+    404,
+  );
   console.log(
     `base-mainnet bind trigger: bound ${held[0].transactionId} after two lost broadcasts; paid ${recipient} 9.8 USDC; fee 0.2 USDC claimed; expired and superseded consent stayed held at the existing cancellation fee cap; the delayed original receipt reconciled without another broadcast`,
   );

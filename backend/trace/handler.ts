@@ -181,16 +181,23 @@ function idempotencyKey(request: Request): string {
   return value;
 }
 
-async function assertParticipationAllowed(
-  actor: AuthenticatedActor,
+async function assertParticipationAllowedByGithubId(
+  githubId: string,
   deps: TraceApiDependencies,
 ): Promise<void> {
-  if (await deps.persistence.hasParticipationBan(actor.githubId))
+  if (await deps.persistence.hasParticipationBan(githubId))
     fail(
       403,
       "participation_banned",
       "This account cannot start new Slop contributions. Funded awards and appeals remain available.",
     );
+}
+
+async function assertParticipationAllowed(
+  actor: AuthenticatedActor,
+  deps: TraceApiDependencies,
+): Promise<void> {
+  await assertParticipationAllowedByGithubId(actor.githubId, deps);
 }
 
 function assertWriter(actor: AuthenticatedActor): void {
@@ -904,6 +911,7 @@ async function createTraceIntent(
   runId: string,
 ): Promise<Response> {
   assertWriter(actor);
+  await assertParticipationAllowed(actor, deps);
   const intentIdempotencyKey = idempotencyKey(request);
   const run = await ensureOwner(deps.persistence, actor, runId);
   if (run.state === "finalized") {
@@ -954,6 +962,7 @@ async function createTraceIntent(
     consumedAt: null,
   });
   if (result.status === "conflict") {
+    await assertParticipationAllowed(actor, deps);
     fail(409, "idempotency_conflict", "Idempotency key was reused");
   }
   return json(result.status === "created" ? 201 : 200, {
@@ -987,6 +996,7 @@ async function uploadTraceCapability(
       "Upload capability is used or expired",
     );
   }
+  await assertParticipationAllowedByGithubId(intent.githubId, deps);
   const rawContentType = request.headers.get("content-type") ?? "";
   let contentType: TraceUploadIntent["contentType"];
   try {
@@ -1052,6 +1062,7 @@ async function uploadTraceCapability(
       object,
     }))
   ) {
+    await assertParticipationAllowedByGithubId(intent.githubId, deps);
     fail(409, "trace_conflict", "The run cannot reserve this trace for upload");
   }
   await deps.persistence.putTraceBytes(object, bytes);
@@ -1063,6 +1074,7 @@ async function uploadTraceCapability(
     object,
   });
   if (result.status === "conflict") {
+    await assertParticipationAllowedByGithubId(intent.githubId, deps);
     fail(409, "idempotency_conflict", "Idempotency key or trace was reused");
   }
   return json(result.status === "created" ? 201 : 200, {
@@ -1082,6 +1094,7 @@ async function finalizeRun(
   runId: string,
 ): Promise<Response> {
   assertWriter(actor);
+  await assertParticipationAllowed(actor, deps);
   idempotencyKey(request);
   const run = await ensureOwner(deps.persistence, actor, runId);
   if (run.traceSha256 === null) {
@@ -1096,8 +1109,10 @@ async function finalizeRun(
     actor.githubId,
     deps.now().toISOString(),
   );
-  if (finalized === null)
+  if (finalized === null) {
+    await assertParticipationAllowed(actor, deps);
     fail(409, "finalize_conflict", "Run could not be finalized");
+  }
   return json(200, {
     serverRunId: runId,
     clientRunId: finalized.clientRunId,

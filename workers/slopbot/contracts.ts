@@ -1,4 +1,4 @@
-// Slopbot v2 contracts (draft, docs/slopbot-v2-proposal.md). Everything a model
+// Slopbot v2 contracts (protocol/slopbot-v2.md). Everything a model
 // returns is untrusted until it passes validateVerdict; everything a repository
 // publishes is untrusted until it passes parseRepositoryConfig.
 

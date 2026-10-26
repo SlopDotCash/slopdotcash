@@ -147,7 +147,12 @@ export function projectAppealState(
   restriction: ProjectRestriction,
 ): AppealState {
   if (restriction.state === "clear") return "none";
-  const newestFirst = [...restriction.records].reverse();
+  return projectAppealOpen(restriction.records) ? "requested" : "none";
+}
+
+/** True when records, oldest first, end with an undecided project appeal. */
+function projectAppealOpen(records: ProjectEnforcement[]): boolean {
+  const newestFirst = [...records].reverse();
   const boundary =
     newestFirst.find(
       (record) =>
@@ -166,7 +171,7 @@ export function projectAppealState(
       record.actorRole !== "banned-account" &&
       record.sequence > boundary,
   );
-  return request ? "requested" : "none";
+  return request !== undefined;
 }
 
 /** A shared project appeal must not claim that another account filed evidence. */
@@ -184,7 +189,15 @@ export function accountAppealState(
   const boundary =
     newestFirst.find(
       (record) =>
-        ["ban", "quarantine", "deny_reinstatement"].includes(record.action) ||
+        ["ban", "quarantine"].includes(record.action) ||
+        // A denial decides the open project appeal when there is one, and
+        // the account appeals only when there is not (PRD section 8).
+        (record.action === "deny_reinstatement" &&
+          !projectAppealOpen(
+            restriction.records.filter(
+              (earlier) => earlier.sequence < record.sequence,
+            ),
+          )) ||
         (record.action === "reinstate_accounts" &&
           (record.accountReinstatements ?? []).some(
             (account) => account.githubId === githubId,

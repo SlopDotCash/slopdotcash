@@ -112,8 +112,7 @@ it needs no scanner, provider, wallet or temporary bearer key.
 The queue-only qualification Worker imports this backup core. It uses two
 temporary D1 databases, three private R2 buckets and a work/failure queue pair.
 It does not bind the application databases or evidence buckets. There is no
-HTTP read or control route, cron, model call, scan publication or policy
-attestation. The driver verifies private bindings and one queue consumer
+HTTP read or control route, cron, model call or scan publication. The driver verifies private bindings and one queue consumer
 before sending fixed fixture commands.
 
 The test calls the actual Pages evidence handler internally with real D1 session
@@ -168,9 +167,8 @@ cleanup must be reviewed before dispatch. A passing harmless recovery test
 does not enable retention deletion, the scanner controller or its schedule.
 The report separates actual handler/session/core results from live OAuth and
 operator-browser acceptance, production Pages bindings, elapsed 90-day retention,
-and observed 30-day bucket expiry. Daily deployed scheduling, isolation and the
-responsible owner's factual attestation remain separate acceptance work. This
-controlled proof is not activation of production deletion.
+and observed 30-day bucket expiry. Daily deployed scheduling and isolation
+remain separate acceptance work. This controlled proof is not activation of production deletion.
 
 Incomplete uploads can leave inventory without bytes. Cleanup audits parts absent
 from both source and backup as `retention-missing`; it does not record a complete

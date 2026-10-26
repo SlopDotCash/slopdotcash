@@ -665,6 +665,8 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
             if (e instanceof TransactionReceiptNotFoundError) return null;
             throw e;
           });
+        // An advanced nonce does not identify its winner. Keep the liability
+        // until the journaled send's canonical finalized cost is available.
         if (!receipt) continue;
         const block = await client.getBlock({
           blockNumber: receipt.blockNumber,

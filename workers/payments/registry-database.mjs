@@ -35,10 +35,13 @@ export function parseRegistryDatabase(toml) {
   };
 }
 
-/** The registry database of this repository's Pages configuration. */
-export async function readRegistryDatabase() {
+/**
+ * The registry database of this repository's Pages configuration:
+ * `wrangler.toml` (production) or `wrangler.staging.toml` (staging).
+ */
+export async function readRegistryDatabase(file = "wrangler.toml") {
   return parseRegistryDatabase(
-    await readFile(new URL("../../wrangler.toml", import.meta.url), "utf8"),
+    await readFile(new URL(`../../${file}`, import.meta.url), "utf8"),
   );
 }
 
@@ -66,9 +69,9 @@ export function parseMonthlySchedule(toml) {
   return found[0];
 }
 
-/** The monthly payment schedule of this repository's Pages configuration. */
-export async function readMonthlySchedule() {
+/** The monthly payment schedule of the same Pages configuration. */
+export async function readMonthlySchedule(file = "wrangler.toml") {
   return parseMonthlySchedule(
-    await readFile(new URL("../../wrangler.toml", import.meta.url), "utf8"),
+    await readFile(new URL(`../../${file}`, import.meta.url), "utf8"),
   );
 }

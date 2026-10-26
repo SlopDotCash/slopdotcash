@@ -7,6 +7,7 @@
  */
 import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
+import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { signApiToken } from "../backend/trace/auth";
 import {
   CloudflareTracePersistence,
@@ -153,7 +154,11 @@ function api() {
       },
       { "idempotency-key": `create-key-${++counter}-0123456789` },
     );
-  const intent = async (runId: string, bytes: Uint8Array) =>
+  const intent = async (
+    runId: string,
+    bytes: Uint8Array,
+    idempotencyKey = `intent-key-${++counter}-0123456789`,
+  ) =>
     call(
       "POST",
       `runs/${runId}/trace-intents`,
@@ -162,7 +167,7 @@ function api() {
         sizeBytes: bytes.byteLength,
         contentType: "text/plain",
       },
-      { "idempotency-key": `intent-key-${++counter}-0123456789` },
+      { "idempotency-key": idempotencyKey },
     );
   const upload = async (uploadUrl: string, bytes: Uint8Array) =>
     call(
@@ -179,15 +184,35 @@ function api() {
     call("POST", `runs/${runId}/finalize`, undefined, {
       "idempotency-key": `finalize-key-${++counter}-0123456789`,
     });
+  const claimWallet = () =>
+    call(
+      "POST",
+      "wallet-claims",
+      {
+        address: "0x1111111111111111111111111111111111111111",
+        chain: "ethereum",
+      },
+      { "idempotency-key": `wallet-key-${++counter}-0123456789` },
+    );
+  const ban = () =>
+    seedParticipationBan(
+      sqlite,
+      { githubId: ACTOR, githubLogin: "contributor" },
+      { githubId: "900000001", githubLogin: "admin" },
+      new Date(T0).toISOString(),
+    );
   const retained = async (bytes: Uint8Array) => {
     const digest = await sha256Hex(bytes);
     return store.objects.has(`traces/sha256/${digest.slice(0, 2)}/${digest}`);
   };
   return {
+    deps,
     createRun,
     intent,
     upload,
     finalize,
+    claimWallet,
+    ban,
     retained,
     failNextWrite: store.failNextWrite,
     reservation: (id: string) =>
@@ -307,4 +332,150 @@ test("a failed storage write retains its reservation and permits a same-byte ret
     201,
   );
   expect((await t.finalize(id)).status).toBe(200);
+});
+
+test("an account ban stops trace intents, capability uploads and finalization on existing runs without retaining R2 bytes, while preserving wallet claims", async () => {
+  const t = api();
+  const runUploaded = await runWithTraceA(t);
+  const createdWithIntent = await t.createRun();
+  expect(createdWithIntent.status).toBe(201);
+  const runWithIntent = createdWithIntent.json.serverRunId as string;
+  const intentKey = "intent-before-ban-0123456789";
+  const intentB = await t.intent(runWithIntent, TRACE_B, intentKey);
+  expect(intentB.status).toBe(201);
+  const createdAwaiting = await t.createRun();
+  expect(createdAwaiting.status).toBe(201);
+  const runAwaiting = createdAwaiting.json.serverRunId as string;
+
+  t.ban();
+
+  const refusedIntent = await t.intent(runAwaiting, TRACE_B);
+  expect(refusedIntent.status).toBe(403);
+  expect(refusedIntent.json.error).toBe("participation_banned");
+
+  const refusedReplayIntent = await t.intent(runWithIntent, TRACE_B, intentKey);
+  expect(refusedReplayIntent.status).toBe(403);
+  expect(refusedReplayIntent.json.error).toBe("participation_banned");
+
+  const refusedUpload = await t.upload(
+    intentB.json.uploadUrl as string,
+    TRACE_B,
+  );
+  expect(refusedUpload.status).toBe(403);
+  expect(refusedUpload.json.error).toBe("participation_banned");
+  expect(await t.retained(TRACE_B)).toBe(false);
+  expect(t.reservation(runWithIntent)).toBeNull();
+
+  const refusedFinalize = await t.finalize(runUploaded);
+  expect(refusedFinalize.status).toBe(403);
+  expect(refusedFinalize.json.error).toBe("participation_banned");
+  expect((await t.deps.persistence.getRun(runUploaded))?.state).toBe(
+    "trace_uploaded",
+  );
+
+  // Funded award claims remain available to banned accounts (PRD section 8).
+  const walletClaim = await t.claimWallet();
+  expect(walletClaim.status).toBe(201);
+});
+
+test("a ban landing concurrently with trace intent creation, capability upload or finalization refuses the write", async () => {
+  // 1. Concurrent ban during createTraceIntent
+  {
+    const t = api();
+    const created = await t.createRun();
+    const runId = created.json.serverRunId as string;
+    const readBan = t.deps.persistence.hasParticipationBan.bind(
+      t.deps.persistence,
+    );
+    let pendingBan = true;
+    t.deps.persistence.hasParticipationBan = async (githubId) => {
+      const banned = await readBan(githubId);
+      if (pendingBan) {
+        pendingBan = false;
+        t.ban();
+      }
+      return banned;
+    };
+    const refused = await t.intent(runId, TRACE_B);
+    expect(refused.status).toBe(403);
+    expect(refused.json.error).toBe("participation_banned");
+  }
+
+  // 2. Concurrent ban during uploadTraceCapability before reserveTraceWrite
+  {
+    const t = api();
+    const created = await t.createRun();
+    const runId = created.json.serverRunId as string;
+    const intentB = await t.intent(runId, TRACE_B);
+    expect(intentB.status).toBe(201);
+    const readBan = t.deps.persistence.hasParticipationBan.bind(
+      t.deps.persistence,
+    );
+    let pendingBan = true;
+    t.deps.persistence.hasParticipationBan = async (githubId) => {
+      const banned = await readBan(githubId);
+      if (pendingBan) {
+        pendingBan = false;
+        t.ban();
+      }
+      return banned;
+    };
+    const refused = await t.upload(intentB.json.uploadUrl as string, TRACE_B);
+    expect(refused.status).toBe(403);
+    expect(refused.json.error).toBe("participation_banned");
+    expect(await t.retained(TRACE_B)).toBe(false);
+    expect(t.reservation(runId)).toBeNull();
+  }
+
+  // 3. Concurrent ban during finalizeRun
+  {
+    const t = api();
+    const runId = await runWithTraceA(t);
+    const readBan = t.deps.persistence.hasParticipationBan.bind(
+      t.deps.persistence,
+    );
+    let pendingBan = true;
+    t.deps.persistence.hasParticipationBan = async (githubId) => {
+      const banned = await readBan(githubId);
+      if (pendingBan) {
+        pendingBan = false;
+        t.ban();
+      }
+      return banned;
+    };
+    const refused = await t.finalize(runId);
+    expect(refused.status).toBe(403);
+    expect(refused.json.error).toBe("participation_banned");
+    expect((await t.deps.persistence.getRun(runId))?.state).toBe(
+      "trace_uploaded",
+    );
+  }
+
+  // 4. Ban landing after reserveTraceWrite: the reservation already authorized
+  // one write, so the bytes stay in R2, but the attachment is refused.
+  {
+    const t = api();
+    const created = await t.createRun();
+    const runId = created.json.serverRunId as string;
+    const intentB = await t.intent(runId, TRACE_B);
+    expect(intentB.status).toBe(201);
+    const reserve = t.deps.persistence.reserveTraceWrite.bind(
+      t.deps.persistence,
+    );
+    t.deps.persistence.reserveTraceWrite = async (input) => {
+      const reserved = await reserve(input);
+      t.ban();
+      return reserved;
+    };
+    const refused = await t.upload(intentB.json.uploadUrl as string, TRACE_B);
+    expect(refused.status).toBe(403);
+    expect(refused.json.error).toBe("participation_banned");
+    expect(await t.retained(TRACE_B)).toBe(true);
+    expect(
+      await t.deps.persistence.getTraceObject(await sha256Hex(TRACE_B)),
+    ).toBeNull();
+    expect((await t.deps.persistence.getRun(runId))?.state).toBe(
+      "awaiting_trace",
+    );
+  }
 });

@@ -3,9 +3,16 @@
  */
 import { type CallRecord, TRIAGE_ROUTE } from "./models";
 
+/** Each subscription channel names exactly one provider. */
+const SUBSCRIPTION_CHANNELS = {
+  "chatgpt-subscription": "openai",
+  "claude-subscription": "anthropic",
+} as const;
+type SubscriptionChannel = keyof typeof SUBSCRIPTION_CHANNELS;
+
 export interface SubscriptionProvenance {
-  channel: "chatgpt-subscription";
-  provider: "openai";
+  channel: SubscriptionChannel;
+  provider: (typeof SUBSCRIPTION_CHANNELS)[SubscriptionChannel];
   model: string;
   client: string;
   exactVariant: null;
@@ -35,8 +42,10 @@ export function isSubscriptionProvenance(
     object(value) &&
     Object.keys(value).sort().join() ===
       "apiReceipt,channel,client,exactVariant,identityEvidence,model,provider" &&
-    value.channel === "chatgpt-subscription" &&
-    value.provider === "openai" &&
+    typeof value.channel === "string" &&
+    Object.hasOwn(SUBSCRIPTION_CHANNELS, value.channel) &&
+    value.provider ===
+      SUBSCRIPTION_CHANNELS[value.channel as SubscriptionChannel] &&
     identityLabel(value.model) &&
     identityLabel(value.client) &&
     value.exactVariant === null &&

@@ -2,8 +2,8 @@
 import { sha256Hex } from "../../backend/trace/validation";
 import {
   EVIDENCE_OPERATOR_GITHUB_IDS,
+  EVIDENCE_POLICY,
   EVIDENCE_POLICY_AUTHORITY_GITHUB_ID,
-  type EvidencePolicy,
 } from "../../backend/vetting/evidence";
 import {
   chunkKey,
@@ -23,35 +23,11 @@ const encoder = new TextEncoder();
 function check(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
 }
-function policy(now: number): string {
-  const value: EvidencePolicy = {
-    version: "disposable-hosted-qualification-only",
-    policyAuthorityGithubId: owner,
-    operatorGithubIds: [...EVIDENCE_OPERATOR_GITHUB_IDS],
-    postClosureRetentionSeconds: 90 * 86400,
-    readGrantDurationSeconds: 900,
-    maxObjectBytes: 64 * 1024 * 1024,
-    maxRunBytes: 64 * 1024 * 1024,
-    maxObjects: 1024,
-    accessPolicyReference: "fixture:access-only",
-    retentionPolicyReference: "fixture:retention-only",
-    recoveryPolicyReference: "fixture:recovery-only",
-    externalControls: {
-      evidenceReference: "fixture:not-an-operational-attestation",
-      attestedByGithubId: owner,
-      attestedAt: new Date(now - 1000).toISOString(),
-      validUntil: new Date(now + 3600_000).toISOString(),
-    },
-  };
-  return JSON.stringify(value);
-}
-
 export async function qualifyAccess(env: BackupEnvironment) {
   const db = env.EVIDENCE_DATABASE;
   const source = env.EVIDENCE_SOURCE;
   const now = Date.now();
   const at = new Date(now).toISOString();
-  const configuredPolicy = policy(now);
   const cookies = new Map<string, string>();
   const hashes: string[] = [];
   let objects = 0;
@@ -79,7 +55,6 @@ export async function qualifyAccess(env: BackupEnvironment) {
   const pagesEnv = {
     SLOP_DB: db,
     VETTING_EVIDENCE: source,
-    VETTING_EVIDENCE_POLICY: configuredPolicy,
     ADMIN_GITHUB_IDS: other,
     PROJECT_MODERATOR_GITHUB_IDS: other,
   } as unknown as Parameters<typeof onRequest>[0]["env"];
@@ -118,7 +93,7 @@ export async function qualifyAccess(env: BackupEnvironment) {
           : { body: JSON.stringify(options.body) }),
       }),
       env: options.inactive
-        ? { ...pagesEnv, VETTING_EVIDENCE_POLICY: undefined }
+        ? { ...pagesEnv, VETTING_EVIDENCE: undefined }
         : pagesEnv,
     });
   }
@@ -184,7 +159,7 @@ export async function qualifyAccess(env: BackupEnvironment) {
         sha,
         await sha256Hex(encoder.encode(manifest)),
         manifest,
-        configuredPolicy,
+        JSON.stringify(EVIDENCE_POLICY),
         at,
         new Date(now + 86400_000).toISOString(),
       )

@@ -35,7 +35,9 @@ verifies receipt before conversion. Local fork and validator evidence must
 identify the exact source and reviewed program. Local proof does not activate
 production signing.
 
-The Worker is off by default.
+The checked-in configuration sets `live` mode on Base, Ethereum and
+Robinhood. The Worker deploys only when the `SLOP_FEE_CONVERTER_RELEASE`
+repository variable is `enabled`.
 
 **Solana signs only against the separated program layout.** The deployed
 Solana program pins an independent rotation-confirmation authority, separate
@@ -45,6 +47,22 @@ power. A finalized read of the mainnet Config on 26 October 2026 showed three
 distinct identity, fee-recipient and rotation keys. A Solana claim verifies
 the pinned Config, including its independent rotation authority, before it
 signs.
+
+## Staging
+
+The normal `development` release deploys `slop-fee-converter-staging` with
+`wrangler.staging.toml`. Its minute cron runs receipt and recovery checks on
+all four networks in `dry_run`, with the isolated `slop-staging` D1 journal.
+It uses public read-only RPCs and never loads a signing key. Production owns
+live sends for the shared fee wallets; staging must not sign concurrently
+against a separate journal. Staging quotes and skips establish staging
+behavior only; finalized production transactions remain separate acceptance.
+
+Reconciliation reads only `live` rows. In every mode except `off`, it can
+rebroadcast their recorded signed bytes, and a rebroadcast needs no key.
+Staging writes only `dry_run` rows, so its journal has no send to rebroadcast.
+Never copy production `fee_conversions` rows into `slop-staging`, and never
+point a `live` converter at it.
 
 ## What one run does
 
@@ -214,6 +232,8 @@ verify those routes. Any of them can replace KyberSwap behind
   quote minimum.
 - `simulateTransaction` credits the fee wallet's USDC associated account with
   at least the signed minimum.
+- The native-cost checks in [Native fee budget](#native-fee-budget) pass, and
+  the full transaction ceiling is reserved before the signature.
 
 ## States
 
@@ -383,8 +403,8 @@ run. `off` reads none of them.
 
 | Var                                  | Checked-in value                            | Meaning                                                                                                          |
 | ------------------------------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `FEE_CONVERTER_MODE`                 | `off`                                       | `off`, `dry_run` or `live`.                                                                                      |
-| `FEE_CONVERTER_NETWORKS`             | `base,ethereum,robinhood`                   | Candidate networks; mode remains off.                                                                            |
+| `FEE_CONVERTER_MODE`                 | `live`                                      | `off`, `dry_run` or `live`.                                                                                      |
+| `FEE_CONVERTER_NETWORKS`             | `base,ethereum,robinhood`                   | Enabled networks. Robinhood retains received fees without conversion.                                            |
 | `FEE_CONVERTER_ALLOWLIST`            | empty                                       | JSON object of extra tokens per network.                                                                         |
 | `FEE_CONVERTER_MIN_VALUE_MICRO`      | `5000000` (owner decision, 24 October 2026) | Minimum quoted USDC output. `0` converts every fee.                                                              |
 | `FEE_CONVERTER_GAS_MULTIPLE`         | `10` (owner decision, 24 October 2026)      | Output must be at least this many times the fee estimate. `0` disables the check.                                |
@@ -393,7 +413,7 @@ run. `off` reads none of them.
 | `FEE_CONVERTER_RUN_CAP_MICRO`        | `1000000000`                                | Per-run, per-network value cap (1,000 USDC).                                                                     |
 | `FEE_CONVERTER_DAILY_CAP_MICRO`      | `5000000000`                                | Rolling 24-hour live value cap per network (5,000 USDC).                                                         |
 | `FEE_CONVERTER_SOLANA_FEE_MICRO`     | `2000`                                      | Solana fee estimate used for the gas multiple; an estimate, not policy.                                          |
-| `FEE_CONVERTER_NATIVE_BUDGETS`       | unset                                       | Per-network JSON with exact decimal wei strings `perTransaction`, `perDay`, `additionalFeeReserve`. No defaults. |
+| `FEE_CONVERTER_NATIVE_BUDGETS`       | Base, Ethereum and Robinhood set            | Per-network JSON with exact decimal wei strings `perTransaction`, `perDay`, `additionalFeeReserve`. No defaults. |
 | `FEE_WALLET_<NETWORK>`               | All four networks set                       | Public fee-wallet address. A network without one is refused.                                                     |
 | `KYBERSWAP_CLIENT_ID`                | `slop-fee-converter`                        | Client id header for KyberSwap.                                                                                  |
 
@@ -425,11 +445,31 @@ October 2026: Base 0.0001 ETH per transaction and 0.001 ETH per UTC day, with a
 supersedes the earlier values. They are set in `FEE_CONVERTER_NATIVE_BUDGETS`.
 Base needs a positive allowance for data and operator fees; Ethereum uses
 zero additional allowance. Robinhood remains retain-only and loads no key.
-Solana's separate rotation authority is verified, but live signing and release
-remain blocked until its approved native transaction/day limits and durable
-cost accounting are implemented. `FEE_CONVERTER_SOLANA_FEE_MICRO` is a value
-estimate for the gas multiple, not a native spending limit. No EVM, keeper or
-referral budget supplies a Solana default.
+Solana has separate approved ceilings of 0.005 SOL per transaction and 0.02
+SOL per UTC day, including account creation and priority fees (owner decision,
+26 October 2026, #905). Its configuration uses 5,000,000 and 20,000,000
+lamports. Migration `0094_fee_solana_native_gas.sql` preserves all EVM records
+and extends the same durable journal to Solana; legacy `*_wei` SQL fields
+store lamports for Solana. Each signature reserves its full transaction
+ceiling until a canonical finalized receipt reconciles its actual cost.
+A signed but expired or missing transaction retains that reservation.
+No code path releases it. Four such sends hold the whole 20,000,000-lamport
+day budget, so Solana signing stops on every later UTC day until a reviewed
+resolution path exists.
+
+Before signing, Solana prices the exact message with `getFeeForMessage`,
+reserves rent for every classic associated-account creation even if the
+account exists, checks a simulation for unexplained wallet debit, and
+rechecks the 10-times-value rule using a current wSOL/USDC quote. Jupiter
+requests legacy routes so every inspected account is in the signed static
+keys; routes requiring address lookup tables remain unavailable. Receipts
+must match the stored signed bytes and finalized block. Costs include
+priority fees, failed transaction fees and new account rent; wrapped-SOL
+principal is excluded from rent. A live Solana record with a signature but
+no journal record stops each whole Solana run, including status
+reconciliation. Solana has no import path for such records. The value-only `FEE_CONVERTER_SOLANA_FEE_MICRO`
+estimate supplies no native spending limit. No keeper or referral budget
+supplies a default.
 
 Before each approval, swap, fee claim or replacement, price the final gas
 limit and fee fields, include Base's additional allowance, and recheck the
@@ -450,8 +490,11 @@ are both reconciled, including older rows that hold both.
 Same-nonce replacements reserve their largest maximum once. Unknown sends
 carry that liability across UTC midnight. Canonical finalized success and
 revert receipts settle the exact execution cost plus Base data/operator fees;
-missing cost evidence keeps the reserve. Actual costs are charged on the UTC
-day finality is observed. A late receipt therefore does not erase today's
+missing cost evidence keeps the reserve. An advanced finalized nonce does
+not identify the winning transaction or prove zero cost. If another send
+consumed it, the reserve remains until a reviewed path can prove that winner;
+no release path is implemented for that case. Actual costs are charged on the
+UTC day finality is observed. A late receipt therefore does not erase today's
 liability. The receipt block hash remains evidence of the chain event.
 
 ## Key custody
@@ -540,8 +583,8 @@ the Worker no sweep power.
 6. Fund each fee wallet with a small gas balance.
 7. Land a pull request with `FEE_CONVERTER_MODE = "live"`. That reviewed
    pull request is the activation record MVP-07c requires. The release step
-   refuses live mode when an enabled network lacks its key, or enables Solana
-   before its native transaction/day limits and durable accounting are ready.
+   refuses live mode when an enabled network lacks its key or its dedicated
+   native transaction/day limits. Solana uses the same atomic signing journal.
 8. Check the first `finalized` rows against the explorer: input debit, USDC
    credit to the fee wallet, no other transfer.
 9. To stop at once, land `FEE_CONVERTER_MODE = "off"`, or set the repository
@@ -622,8 +665,8 @@ loses its network lease. It is not live Kyber, Circle or production evidence.
 
 The Solana check uses a local
 `solana-test-validator` (port 28899) that clones the mainnet Jupiter and
-Whirlpool programs and one JUP/USDC route. Its local-only override exercises
-the signing path without enabling the hosted Worker.
+Whirlpool programs and one JUP/USDC route. It uses the normal native-budget
+and signing-journal path with a generated local wallet.
 They need `anvil` and `solana-test-validator` on `PATH` and never touch a real
 chain.
 

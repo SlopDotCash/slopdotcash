@@ -32,6 +32,7 @@ export interface NativeAttempt {
   conversion_id: string | null;
   actual_wei: string | null;
   settled_day: string | null;
+  receipt_block_hash: string | null;
 }
 export interface RecordedNativeSend {
   txId: string;
@@ -81,6 +82,23 @@ export class NativeGasJournal {
       WHERE network=? AND state='reserved' AND run_id!=? AND ${LEASE}`)
       .bind(this.network, this.runId, ...this.lease())
       .run();
+  }
+
+  /** Solana has no account nonce; allocate a journal sequence under the revision fence.
+   * Reserve the whole approved transaction ceiling until a finalized receipt.
+   */
+  async reserveSolana(intentHash: string) {
+    if (this.network !== "solana")
+      throw new Error("Solana reservation needs its own network journal");
+    const rows = await this.rows();
+    const nonce = rows.reduce((n, row) => Math.max(n, row.nonce + 1), 0);
+    if (!Number.isSafeInteger(nonce))
+      throw new Error("Native journal sequence exhausted");
+    return this.reserve({
+      nonce,
+      intentHash,
+      maximumWei: this.limits.perTransaction,
+    });
   }
 
   async reserve(input: {

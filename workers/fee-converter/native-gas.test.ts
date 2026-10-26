@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
   type Hex,
   keccak256,
@@ -7,11 +10,17 @@ import {
   type TransactionSerializableEIP1559,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { solanaBase58 } from "../../contracts/solana/adapter";
+import {
+  concat,
+  message as solanaMessage,
+} from "../../contracts/solana/transactions";
 import { parseConfig } from "./config";
 import type { ConversionRow } from "./core";
 import { createEvmClient } from "./evm";
 import { runOnce } from "./index";
 import { NativeGasJournal, type NativeGasLimits } from "./native-gas";
+import { solanaNativeCost } from "./solana";
 import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore, LOCK_MS } from "./store";
 
@@ -278,6 +287,95 @@ test("same-nonce replacements reserve their maximum once and settle exactly one 
   ).toHaveLength(1);
 });
 
+test("unavailable receipts retain gas until the canonical cost is recovered", async () => {
+  const h = await fixture({
+    perTransaction: "3000000",
+    perDay: "3000000",
+    additionalFeeReserve: "0",
+  });
+  const sent = await h.commit();
+  const signed = parseTransaction(sent.rawTx as Hex);
+  let receiptAvailable = false;
+  const rpcFetch = (async (_url: unknown, init?: RequestInit) => {
+    const q = JSON.parse(String(init?.body));
+    let result: unknown;
+    if (q.method === "eth_getTransactionReceipt")
+      result = receiptAvailable
+        ? {
+            transactionHash: sent.txId,
+            blockHash: hash(16),
+            blockNumber: "0x10",
+            transactionIndex: "0x0",
+            from: h.wallet,
+            to: token,
+            status: "0x1",
+            gasUsed: "0x5208",
+            effectiveGasPrice: "0x64",
+            cumulativeGasUsed: "0x5208",
+            logs: [],
+            logsBloom: `0x${"0".repeat(512)}`,
+            type: "0x2",
+          }
+        : null;
+    else if (q.method === "eth_getBlockByNumber")
+      // The journaled send itself consumed the finalized nonce. Receipt
+      // availability can lag block/count reads; null does not prove a loser.
+      result = {
+        number: "0x10",
+        hash: hash(16),
+        transactions: [sent.txId],
+      };
+    else if (q.method === "eth_getTransactionCount") result = "0x1";
+    else if (q.method === "eth_getTransactionByHash")
+      result = {
+        hash: sent.txId,
+        from: h.wallet,
+        to: token,
+        nonce: "0x0",
+        input: "0x",
+        value: "0x0",
+        gas: "0x5208",
+        chainId: "0x1",
+        maxFeePerGas: "0x64",
+        maxPriorityFeePerGas: "0x1",
+        type: "0x2",
+        blockHash: hash(16),
+        blockNumber: "0x10",
+        transactionIndex: "0x0",
+        accessList: [],
+        r: signed.r,
+        s: signed.s,
+        v: `0x${signed.yParity?.toString(16)}`,
+        yParity: `0x${signed.yParity?.toString(16)}`,
+      };
+    else throw new Error(`Unapproved test request ${q.method}`);
+    return Response.json({ jsonrpc: "2.0", id: q.id, result });
+  }) as typeof fetch;
+  const client = createEvmClient({
+    config: h.config.networks[0],
+    limits: h.config.limits,
+    kyberClientId: "test",
+    nativeGas: h.journal,
+    fetch: rpcFetch,
+    now: h.now,
+  });
+  await client.reconcileNativeGas!();
+  expect((await h.journal.rows())[0].actual_wei).toBeNull();
+  await expect(h.reserve(h.tx(1))).rejects.toThrow("Native daily budget");
+
+  receiptAvailable = true;
+  await client.reconcileNativeGas!();
+  const [settled] = await h.journal.rows();
+  expect(settled.actual_wei).toBe("2100000");
+  expect(settled.receipt_block_hash).toBe(hash(16));
+  expect(settled.settled_day).toBe("2026-10-26");
+  // Only 900,000 wei remain: 840,000 fits, another 63,000 does not.
+  await h.reserve(h.tx(1, 40n));
+  await expect(h.reserve(h.tx(2, 3n))).rejects.toThrow("Native daily budget");
+  await client.reconcileNativeGas!();
+  expect((await h.journal.rows())[0]).toEqual(settled);
+});
+
 test("business failure and router expiry do not release signed gas; overruns hold future signing", async () => {
   const h = await fixture({
     perTransaction: "3000000",
@@ -372,6 +470,13 @@ test.each(["complete", "changed-fee", "missing-signature"])(
               }),
         };
       else if (q.method === "eth_getTransactionReceipt") result = null;
+      // The finalized nonce is still open, so the unlanded send stays a liability.
+      else if (
+        q.method === "eth_getBlockByNumber" &&
+        q.params[0] === "finalized"
+      )
+        result = { number: "0x10", hash: hash(16), transactions: [] };
+      else if (q.method === "eth_getTransactionCount") result = "0x0";
       else throw new Error(`Unapproved test request ${q.method}`);
       return Response.json({ jsonrpc: "2.0", id: q.id, result });
     }) as typeof fetch;
@@ -608,3 +713,141 @@ test.each([
     }
   },
 );
+
+test("Solana signed costs share the atomic journal while unknown sends retain their whole ceiling", async () => {
+  const f = await fixture();
+  const seed = new Uint8Array(32).fill(7);
+  const wallet = solanaBase58(ed25519.getPublicKey(seed));
+  await f.store.acquireLock("solana", f.run, f.now());
+  const journal = new NativeGasJournal(
+    f.db,
+    "solana",
+    wallet,
+    f.run,
+    {
+      perTransaction: "5000000",
+      perDay: "10000000",
+      additionalFeeReserve: "0",
+    },
+    f.now,
+  );
+  const dummy = await f.account.signTransaction(f.tx());
+  const commit = async (n: number) => {
+    const body = solanaMessage(
+      wallet,
+      solanaBase58(new Uint8Array(32).fill(n)),
+      [],
+    );
+    const id = await journal.reserveSolana(solanaBase58(sha256(body)));
+    const signature = ed25519.sign(body, seed);
+    const raw = concat(Uint8Array.of(1), signature, body);
+    const row = {
+      ...f.row(`sol-native-${n}`, dummy, id),
+      network: "solana" as const,
+      feeWallet: wallet,
+      token: wallet,
+      targetToken: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      route: "jupiter" as const,
+      rawTx: btoa(String.fromCharCode(...raw)),
+      txId: solanaBase58(signature),
+      evmNonce: null,
+    };
+    await f.store.insert(row, { runId: f.run, now: f.now() });
+    await f.store.update(row.id, {
+      state: "failed",
+      reason: "business failure keeps native liability",
+      updatedAt: f.now().toISOString(),
+    });
+    return row;
+  };
+  const first = await commit(1);
+  const second = await commit(2);
+  await expect(commit(3)).rejects.toThrow("daily budget");
+  const sends = await journal.unsettled();
+  expect(sends).toHaveLength(2);
+  await journal.settle(sends.find((s) => s.txId === first.txId)!, {
+    txId: first.txId!,
+    actualWei: "1500000",
+    blockHash: "block-1",
+  });
+  await expect(commit(3)).rejects.toThrow("daily budget");
+  await journal.settle(sends.find((s) => s.txId === second.txId)!, {
+    txId: second.txId!,
+    actualWei: "1500000",
+    blockHash: "block-2",
+  });
+  await commit(3);
+  f.clock.now = new Date("2026-10-27T00:01:00Z");
+  await commit(4);
+  await expect(commit(5)).rejects.toThrow("daily budget");
+  const rows = await journal.rows();
+  expect(rows.map((r) => r.nonce)).toEqual([0, 1, 2, 3]);
+  expect(rows.filter((r) => r.actual_wei === null)).toHaveLength(2);
+  const corrupt = { ...second, id: "changed-intent", txId: first.txId };
+  await expect(
+    f.store.insert(corrupt, { runId: f.run, now: f.now() }),
+  ).rejects.toThrow("reserved Solana intent");
+});
+
+test("wrapped SOL fee principal is excluded from account-creation operating cost", () => {
+  const wrapped = "So11111111111111111111111111111111111111112";
+  const cost = solanaNativeCost(
+    {
+      fee: 5000,
+      preBalances: [100000000, 0],
+      postBalances: [98506560, 201488440],
+      preTokenBalances: [],
+      postTokenBalances: [
+        {
+          accountIndex: 1,
+          mint: wrapped,
+          uiTokenAmount: { amount: "200000000" },
+        },
+      ],
+    },
+    [1],
+  );
+  expect(cost).toBe(1493440n);
+  // A failed transaction rolls back account creation, but still burns its fee.
+  expect(
+    solanaNativeCost(
+      {
+        fee: 5000,
+        preBalances: [100000000, 0],
+        postBalances: [99995000, 0],
+        preTokenBalances: [],
+        postTokenBalances: [],
+      },
+      [1],
+    ),
+  ).toBe(5000n);
+});
+
+test("Solana migration preserves existing EVM liabilities and immutable receipt evidence", () => {
+  const { sqlite } = sqliteD1(":memory:", false);
+  const dir = new URL("../../migrations/", import.meta.url);
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+  for (const f of files.filter((f) => f < "0094_"))
+    sqlite.exec(readFileSync(new URL(f, dir), "utf8"));
+  sqlite.exec(`INSERT INTO fee_converter_locks(network,run_id,expires_at) VALUES('base','migration-held','2099-01-01');
+    INSERT INTO fee_native_gas(id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,per_day_wei,state,tx_id,conversion_id,created_at,actual_wei,settled_day,receipt_block_hash)
+    VALUES('prior-finalized','base','0x1111111111111111111111111111111111111111',0,'prior-intent','migration-held','100','100','200','signed','prior-hash','prior-conversion','2026-10-26','50','2026-10-26','prior-block'),
+          ('prior-unknown','base','0x1111111111111111111111111111111111111111',1,'unknown-intent','migration-held','100','100','200','signed','unknown-hash','unknown-conversion','2026-10-26',NULL,NULL,NULL);`);
+  const before = sqlite.query("SELECT * FROM fee_native_gas ORDER BY id").all();
+  sqlite.exec(
+    readFileSync(new URL("0094_fee_solana_native_gas.sql", dir), "utf8"),
+  );
+  expect(
+    sqlite.query("SELECT * FROM fee_native_gas ORDER BY id").all(),
+  ).toEqual(before);
+  expect(() =>
+    sqlite.exec(
+      "UPDATE fee_native_gas SET maximum_wei='0' WHERE id='prior-unknown'",
+    ),
+  ).toThrow("immutable");
+  expect(() =>
+    sqlite.exec("DELETE FROM fee_native_gas WHERE id='prior-finalized'"),
+  ).toThrow("permanent");
+});

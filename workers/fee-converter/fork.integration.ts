@@ -1950,7 +1950,12 @@ try {
       "SELECT tx_id,maximum_wei,actual_wei,state FROM fee_native_gas WHERE state='signed'",
     )
     .all();
-  assert(nativeRows.length > 0, "actual sends must have native gas records");
+  // A claim-only lease takeover proves refusal before signing. It must not
+  // manufacture a canonical receipt merely to satisfy the gas-cost oracle.
+  const refusedBeforeSigning = claimOnly && faults[0] === "lease";
+  if (refusedBeforeSigning) assert.equal(nativeRows.length, 0);
+  else
+    assert(nativeRows.length > 0, "actual sends must have native gas records");
   let verifiedCosts = 0;
   for (const cost of nativeRows) {
     if (cost.actual_wei === null || cost.actual_wei === "0") continue;
@@ -1968,10 +1973,12 @@ try {
     assert(BigInt(cost.actual_wei) <= BigInt(cost.maximum_wei));
     verifiedCosts++;
   }
-  assert(
-    verifiedCosts > 0,
-    "at least one canonical finalized native cost must reconcile",
-  );
+  if (refusedBeforeSigning) assert.equal(verifiedCosts, 0);
+  else
+    assert(
+      verifiedCosts > 0,
+      "at least one canonical finalized native cost must reconcile",
+    );
   console.log(
     JSON.stringify({
       check: "native fee journal reconciles actual local receipts",

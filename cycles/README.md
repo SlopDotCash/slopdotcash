@@ -8,8 +8,11 @@ coordinator" in `backend/payments/README.md`). The public record of a month
 is its final awards and their finalized payment evidence. No review pull
 request, public decision or public adjustment reason exists for new months.
 
-This directory keeps historical cycle records unchanged. A closed cycle lives
-at `cycles/<project-id>/<YYYY-MM>/`.
+This directory holds no cycle records. The historical records were removed
+with the legacy projects on 18 October 2026; Git history keeps them, and
+`tests/fixtures/history/cycles/` keeps test copies. The notes below define
+their format at `cycles/<project-id>/<YYYY-MM>/`, which `bun run cycles:check`
+still validates.
 
 ## Historical escrow cycles
 

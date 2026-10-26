@@ -31,7 +31,10 @@ relayer requests the binding. A mainnet has no Slop relayer (PAY-04), so the
 production EVM attester's own five-minute cron run requests it
 (`/v1/bind-destinations` on its journal, reached only from `scheduled`).
 The production EVM attester refuses `/v1/pay`, so this run is its only
-binding path. Each run first passes the stack, network and preflight
+binding path. A test-stack EVM attester with `SCHEDULED_BINDINGS=on` (the
+staging keeper topology) runs the same binding with its test key and test
+journal, and likewise refuses `/v1/pay`. Without it, a test attester has no
+scheduled binding; any other value stops the run. Each run first passes the stack, network and preflight
 checks of every pinned vault. After the run indexes the finalized vault
 events, it reads from D1 each reserved award on a pinned vault whose
 contributor has a current signed wallet authorization and a stored binding
@@ -313,6 +316,18 @@ node workers/payment-executor/configure.mjs \
   --deployments "$REVIEWED_TEST_DEPLOYMENTS_FILE" \
   --output workers/payment-executor/.generated
 ```
+
+For the staging site, use `--environment staging --network "$TEST_NETWORK"
+--output DIRECTORY` with no database or deployments file. The stack then uses
+`slop-staging` (`SLOP_DB` in `wrangler.staging.toml`) as both payment and
+registry database, as production uses `slop-private`, so the staging account
+API and pages read what it records. It pins every deployment of that network
+in the live staging registry and refuses any other database. Its Workers are
+`slop-payments-NETWORK-staging-ROLE`. The staging Pages release migrates the
+database; the apply script does not. Add `--topology keeper` for the
+production arrangement: the attester binds on its schedule
+(`SCHEDULED_BINDINGS`), the dispatcher has no schedule, and an independent
+[operator keeper](../operator-keeper/README.md) submits payments.
 
 This command does not create resources or deploy. Generated configuration has
 `workers_dev: false`, `preview_urls: false`, no routes, and the SQLite Durable
