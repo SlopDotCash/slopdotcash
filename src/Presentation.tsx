@@ -76,18 +76,9 @@ export function formatDateTime(value: string): string {
   }).format(new Date(value))} UTC`;
 }
 
-export function formatTime(value: string | null): string {
-  if (value === null) return "—";
-  return new Date(value).toLocaleString("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC",
-  });
-}
-
-/** Optional admin timestamps include an explicit UTC suffix. */
+/** An optional timestamp; a missing one shows a dash. */
 export function formatNullableUtc(value: string | null): string {
-  return value === null ? "—" : `${formatTime(value)} UTC`;
+  return value === null ? "—" : formatDateTime(value);
 }
 
 export function formatDate(value: string): string {

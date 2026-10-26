@@ -376,14 +376,14 @@ function PointsRevisionHistory({
                 <dt>Work occurred</dt>
                 <dd>
                   <time dateTime={revision.award.occurredAt}>
-                    {new Date(revision.award.occurredAt).toLocaleString()}
+                    {formatDateTime(revision.award.occurredAt)}
                   </time>
                 </dd>
                 <dt>Decision effective</dt>
                 <dd>
                   {revision.decision ? (
                     <time dateTime={revision.decision.effectiveAt}>
-                      {new Date(revision.decision.effectiveAt).toLocaleString()}
+                      {formatDateTime(revision.decision.effectiveAt)}
                     </time>
                   ) : (
                     "Not recorded in this earlier revision"
@@ -392,7 +392,7 @@ function PointsRevisionHistory({
                 <dt>Recorded</dt>
                 <dd>
                   <time dateTime={revision.recordedAt}>
-                    {new Date(revision.recordedAt).toLocaleString()}
+                    {formatDateTime(revision.recordedAt)}
                   </time>
                 </dd>
                 <dt>Rule</dt>

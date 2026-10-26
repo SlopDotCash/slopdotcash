@@ -5,6 +5,7 @@ import { ProjectApiError, projectApiRequest } from "./lib/project-api";
 import { formatAssetAmount } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { OwnerVaultSetup } from "./OwnerVaultSetup";
+import { formatDateTime } from "./Presentation";
 import { VaultActions } from "./VaultActions";
 
 type PrivateFunds = {
@@ -116,7 +117,7 @@ export function OwnerBountyVault({
                 </p>
                 <p>
                   Finalized balance checked at{" "}
-                  {new Date(state.funds.snapshotAt).toLocaleString()}.
+                  {formatDateTime(state.funds.snapshotAt)}.
                 </p>
               </>
             ) : (

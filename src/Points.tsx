@@ -1058,7 +1058,7 @@ function AccountSessions() {
           {sessions.map((session) => (
             <li key={session.id}>
               {session.current ? "This session" : "Other session"} · expires{" "}
-              {new Date(session.expiresAt).toLocaleString()}{" "}
+              {formatDateTime(session.expiresAt)}{" "}
               <button
                 type="button"
                 onClick={async () => {
