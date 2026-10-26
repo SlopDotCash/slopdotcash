@@ -17,7 +17,6 @@ import type {
   ProjectSetupStatus,
   WebSession,
 } from "../../src/lib/project-contracts";
-import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
   type ApiError,
@@ -25,6 +24,7 @@ import {
   fail,
   isSameOriginJsonWrite,
   json as jsonResponse,
+  PROJECT_ID,
   pathParts,
 } from "../http";
 import type { ProjectPersistence } from "../projects/contracts";
@@ -655,7 +655,15 @@ async function serviceResult(
   }
   if (
     result.disposition === "clean" &&
-    !(await deps.evidence?.retained(result))
+    !(await deps.evidence
+      ?.retained(result)
+      .catch(() =>
+        fail(
+          503,
+          "evidence_unavailable",
+          "Slop could not read the retained evidence. Retry later.",
+        ),
+      ))
   )
     fail(
       422,

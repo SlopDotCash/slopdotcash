@@ -306,9 +306,12 @@ export class VettingEvidence {
     return bucket;
   }
   private layout(row: ObjectRow): EvidenceChunk[] | null {
-    return row.chunks === null
-      ? null
-      : chunkLayout(JSON.parse(row.chunks), row.size_bytes);
+    if (row.chunks === null) return null;
+    try {
+      return chunkLayout(JSON.parse(row.chunks), row.size_bytes);
+    } catch {
+      fail(409, "evidence_corrupt", "Stored evidence chunk layout changed");
+    }
   }
   async bytes(row: ObjectRow, run: Run): Promise<Uint8Array> {
     const bucket = this.readable(row, run);
