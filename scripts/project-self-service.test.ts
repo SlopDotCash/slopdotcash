@@ -1510,6 +1510,97 @@ test("account-ban appeals after project appeal or reinstatement resolve role, re
 test("a concurrent project appeal refuses the stale account request and a fresh retry uses the account role", () =>
   accountAppealFlow(true));
 
+test("denying the project appeal leaves a banned account's appeal for its own decision", async () => {
+  const t = registry();
+  t.deps.moderatorGithubIds = new Set([ADMIN]);
+  t.deps.github.fetch = async () =>
+    Response.json({ id: Number(OTHER), login: "other", type: "User" });
+  expect((await t.create("denial", "example/denial")).status).toBe(201);
+  const project = await t.persistence.getProject("denial");
+  if (!project) throw new Error("Project missing");
+  await t.persistence.appendEnforcement(
+    {
+      id: "enf_denial_scan",
+      projectId: project.id,
+      sequence: 1,
+      action: "ban",
+      stateAfter: "banned",
+      appealAfter: "none",
+      reason: "Synthetic confirmed malicious scan",
+      evidenceReference: "private-case-fixture",
+      repositoryGithubId: "987654321",
+      repositoryKeys: ["example/denial"],
+      actor: null,
+      actorRole: "vetting-service",
+      decisionSource: "standing-rule",
+      systemIssuer: {
+        kind: "vetting-service",
+        keySha256: "a".repeat(64),
+        assessmentId: "vet_fixture",
+        policyVersion: "fixture",
+        rule: "confirmed-malicious",
+      },
+      beforeRevision: project.revision,
+      beforeManifestSha256: project.manifestSha256,
+      afterRevision: null,
+      afterManifestSha256: null,
+      result: "revision_pending",
+      createdAt: NOW,
+    },
+    null,
+    [],
+  );
+  const decide = async (action: string, actor: string, sequence: number) =>
+    t.call("POST", "admin/projects/denial/enforcement", actor, {
+      action,
+      reason: `Moderator decision: ${action}`,
+      evidenceReference: "private-case-fixture",
+      expectedRevision: (await t.persistence.getProject(project.id))?.revision,
+      expectedSequence: sequence,
+      ...(action === "ban"
+        ? { responsibleAccounts: [{ githubLogin: "other" }] }
+        : {}),
+    });
+  expect((await decide("ban", ADMIN, 2)).status).toBe(200);
+  for (const actor of [OTHER, OWNER])
+    expect(
+      (
+        await t.call("POST", "project-appeals", actor, {
+          projectId: "denial",
+          reason: "Review the evidence",
+          evidenceReference: "private-appeal-fixture",
+        })
+      ).status,
+    ).toBe(200);
+  const appeals = async (actor: string) =>
+    (await t.call("GET", "project-appeals", actor)).body;
+  expect(await appeals(OTHER)).toEqual({
+    appeals: [{ projectId: "denial", state: "banned", appeal: "requested" }],
+  });
+  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER]);
+  t.deps.adminGithubIds = new Set([ADMIN, OWNER]);
+  // The first denial decides the project appeal only.
+  const projectDenial = await decide("deny_reinstatement", OWNER, 5);
+  expect(projectDenial.status).toBe(200);
+  expect(projectDenial.body.record).toMatchObject({
+    action: "deny_reinstatement",
+    stateAfter: "banned",
+  });
+  expect(await appeals(OTHER)).toEqual({
+    appeals: [{ projectId: "denial", state: "banned", appeal: "requested" }],
+  });
+  // With no project appeal open, the next denial decides the account appeal.
+  const accountDenial = await decide("deny_reinstatement", OWNER, 6);
+  expect(accountDenial.status).toBe(200);
+  expect(accountDenial.body.record).toMatchObject({
+    appealAfter: "denied",
+  });
+  expect(await appeals(OTHER)).toEqual({
+    appeals: [{ projectId: "denial", state: "banned", appeal: "none" }],
+  });
+  expect((await decide("deny_reinstatement", OWNER, 7)).status).toBe(409);
+});
+
 test("account-reinstatement upgrade preserves prior releases and separates future project decisions", async () => {
   const names = readdirSync(new URL("../migrations/", import.meta.url))
     .filter((name) => name.endsWith(".sql"))
