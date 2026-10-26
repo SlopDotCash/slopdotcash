@@ -887,6 +887,48 @@ try {
       "SELECT value FROM journal WHERE key LIKE 'nonce:%'",
     );
 
+  // A clipped priority fee still allows mining: keep the existing signed fee cap.
+  const clippedAward = await fundAward("fee-bump-clipped-tip");
+  await chain("evm_setAutomine", [false]);
+  const clippedOriginal = outcome(await tick(), clippedAward).transactionId;
+  assert(clippedOriginal);
+  const clippedFees = await signedFees(clippedOriginal);
+  assert(clippedFees.priority > 1n);
+  const clippedBase = clippedFees.maxFeePerGas - clippedFees.priority / 2n;
+  await chain("anvil_dropTransaction", [clippedOriginal]);
+  await nextBaseFee(clippedBase);
+  await chain("anvil_mine", ["0x1"]);
+  const clippedLatest = (await chain("eth_getBlockByNumber", [
+    "latest",
+    false,
+  ])) as { baseFeePerGas: Hex };
+  assert.equal(BigInt(clippedLatest.baseFeePerGas), clippedBase);
+  const beforeClipped = signatures;
+  await later();
+  const clippedOutcome = outcome(await tick(), clippedAward);
+  assert.equal(clippedOutcome.transactionId, clippedOriginal);
+  assert.equal(
+    signatures,
+    beforeClipped,
+    "a clipped tip needs no new signature",
+  );
+  assert.equal((await replacements(clippedOriginal)).length, 0);
+  await nextBaseFee(clippedBase);
+  await finalize();
+  const clippedReceipt = (await chain("eth_getTransactionReceipt", [
+    clippedOriginal,
+  ])) as { status: string; effectiveGasPrice: Hex };
+  assert.equal(clippedReceipt.status, "0x1");
+  assert.equal(
+    BigInt(clippedReceipt.effectiveGasPrice),
+    clippedFees.maxFeePerGas,
+  );
+  const paidBeforeClipped = await paid();
+  await tick();
+  assert.equal(await paid(), (paidBeforeClipped ?? 0) + 1);
+  await assertOneWinner(clippedOriginal, []);
+  await chain("evm_setAutomine", [true]);
+
   // 1. A send stalled by a high base fee is replaced once and the replacement lands.
   const stalledAward = await fundAward("fee-bump-lands");
   await chain("evm_setAutomine", [false]);
@@ -1093,6 +1135,7 @@ try {
         "completed replay",
         "funded award after pause and opt-out",
         "stalled send replaced at +25% after the wait and the replacement lands",
+        "mineable clipped-tip send keeps its original fees and settles once",
         "original lands after its replacement: one payment, other reserve released",
         "fee cap of three times stops signing and reports waiting",
         "restart mid-bump continues from the journal without a new nonce",

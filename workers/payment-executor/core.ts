@@ -649,8 +649,8 @@ async function broadcast(
 /**
  * Bounded automatic fee replacement for the payment keeper (owner decision,
  * 25 October 2026). Each step raises both fees by 25%, never above three times
- * the original fees or the existing 10 gwei ceiling, and at least by the 10%
- * that EIP-1559 replacement requires. Gas, recipient, value and calldata never change.
+ * the original fees or the existing 10 gwei ceiling, with a 10% minimum step.
+ * Gas, recipient, value and calldata never change.
  */
 const FEE_BUMP_POLICY = {
   waitMs: 10 * 60_000,
@@ -772,7 +772,7 @@ async function verifiedReplacements(
 
 /**
  * Rebroadcast the latest journaled attempt. When it stayed unmined past the
- * wait and the current base fee plus its priority fee exceeds its max fee,
+ * wait and the current base fee exceeds its max fee,
  * first sign one same-nonce replacement. The replacement's worst-case gas is
  * reserved by the keeper signer inside the same journal transaction.
  */
@@ -823,7 +823,7 @@ async function replaceUnderpricedAttempt(
   }
   const now = clock.now();
   if (
-    baseFee + latest.maxPriorityFeePerGas <= latest.maxFeePerGas ||
+    baseFee <= latest.maxFeePerGas ||
     now.getTime() - Date.parse(latest.signedAt) < FEE_BUMP_POLICY.waitMs
   ) {
     await broadcast(config, latest);

@@ -94,13 +94,14 @@ keeper then replaces it automatically, in bounded steps (owner decision,
 
 - It waits 10 minutes after it first finds the send unmined, and 10 minutes
   after each replacement. Before that, it only broadcasts the latest signed bytes.
-- It replaces a send only when the latest block's base fee plus the send's
-  priority fee is more than the send's max fee.
+- It replaces a send only when the latest block's base fee is more than the
+  send's max fee. A lower effective priority fee alone does not block mining
+  and does not trigger replacement.
 - A replacement uses the same nonce, recipient, value, calldata and gas limit.
   Each step increases the max fee and the priority fee by 25%. The total
   limit is three times the original fees and the existing 10-gwei ceiling. Each
-  step must also be at least 10% more than the previous attempt, as EIP-1559
-  replacement requires. At the limit, the keeper stops signing and reports
+  step must also be at least 10% more than the previous attempt. At the limit,
+  the keeper stops signing and reports
   `waiting`. It continues to broadcast the last attempt.
 - The keeper reserves the replacement's worst-case cost in the same journal
   transaction as its signed bytes. The current per-transaction and daily budgets
