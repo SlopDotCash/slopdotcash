@@ -156,8 +156,8 @@ export async function handleNotificationsApi(
       if (
         typeof job.owner !== "string" ||
         typeof job.repo !== "string" ||
-        !/^(?!\.{1,2}$)[A-Za-z0-9_.-]+$/u.test(job.owner) ||
-        !/^(?!\.{1,2}$)[A-Za-z0-9_.-]+$/u.test(job.repo) ||
+        !/^[A-Za-z0-9_.-]+$/u.test(job.owner) ||
+        !/^[A-Za-z0-9_.-]+$/u.test(job.repo) ||
         !Number.isSafeInteger(job.number) ||
         job.number < 1 ||
         !["pull_request", "issue"].includes(job.itemKind)

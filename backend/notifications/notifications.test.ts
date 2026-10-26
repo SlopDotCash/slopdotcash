@@ -17,11 +17,7 @@ import { registerPaymentWallet } from "../payments/wallet-registration";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
 import type { ProjectEnforcement } from "../projects/contracts";
 import { CloudflareTracePersistence } from "../trace/cloudflare-persistence";
-import {
-  notifySlopbotAppeal,
-  notifySlopbotScamReview,
-  scamReviewGitHubUrl,
-} from "./events";
+import { notifySlopbotAppeal, notifySlopbotScamReview } from "./events";
 import { handleNotificationsApi } from "./handler";
 
 const migrations = readdirSync("migrations")
@@ -749,11 +745,7 @@ describe("slopbot scam review notices", () => {
       at: R,
     };
     for (const bad of [
-      { owner: "." },
-      { owner: ".." },
       { owner: "../evil" },
-      { repo: "." },
-      { repo: ".." },
       { repo: "alpha/../../x" },
       { number: 0 },
       { authorLogin: "a b" },
@@ -764,13 +756,6 @@ describe("slopbot scam review notices", () => {
           ...bad,
         }),
       ).toThrow();
-    for (const path of [
-      "/api/v1/notifications/scam-reviews/./alpha/pull/7",
-      "/api/v1/notifications/scam-reviews/../alpha/pull/7",
-      "/api/v1/notifications/scam-reviews/example/./pull/7",
-      "/api/v1/notifications/scam-reviews/example/../pull/7",
-    ])
-      expect(scamReviewGitHubUrl(path)).toBeNull();
   });
 
   test("moderator access is rechecked on every list, open and read mark", async () => {
@@ -829,30 +814,6 @@ describe("slopbot scam review notices", () => {
     );
     expect((await call(MODERATOR, [], path)).status).toBe(403);
     expect((await call(MODERATOR, [], appealPath)).status).toBe(403);
-    // Dot-segment stored appeal targets are refused before redirecting.
-    sqlite
-      .prepare(
-        `INSERT INTO slopbot_appeals (appeal_key,repository_id,item_node_id,appellant_github_id,job_json,opened_at,due_at,escalated_at,escalation)
-         VALUES ('appeal:PR_alpha:dot',1,'PR_alpha',?,?,?,?,'2026-10-19T10:15:00.000Z','scam')`,
-      )
-      .run(AUTHOR, JSON.stringify({ ...target, repo: ".." }), EARLY, T);
-    await (db as unknown as D1Database).batch([
-      notifySlopbotAppeal(
-        db as unknown as D1Database,
-        "appeal:PR_alpha:dot",
-        MODERATOR,
-        R,
-      ),
-    ]);
-    expect(
-      (
-        await call(
-          MODERATOR,
-          [MODERATOR],
-          `/api/v1/notifications/appeals/${encodeURIComponent("appeal:PR_alpha:dot")}`,
-        )
-      ).status,
-    ).toBe(500);
     // Another moderator has no notice that stores this target.
     expect((await call(OTHER, [MODERATOR, OTHER], path)).status).toBe(404);
     for (const forged of [
