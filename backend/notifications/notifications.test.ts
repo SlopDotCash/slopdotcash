@@ -17,7 +17,11 @@ import { registerPaymentWallet } from "../payments/wallet-registration";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
 import type { ProjectEnforcement } from "../projects/contracts";
 import { CloudflareTracePersistence } from "../trace/cloudflare-persistence";
-import { notifySlopbotScamReview } from "./events";
+import {
+  notifySlopbotAppeal,
+  notifySlopbotScamReview,
+  scamReviewGitHubUrl,
+} from "./events";
 import { handleNotificationsApi } from "./handler";
 
 const migrations = readdirSync("migrations")
@@ -689,14 +693,19 @@ describe("slopbot scam review notices", () => {
           at: R,
         }),
       ]);
-    const call = (actor: string, moderators: string[], path: string) =>
-      handleNotificationsApi(new Request(`https://slop.cash${path}`), {
+    const call = (
+      actor: string,
+      moderators: string[],
+      path: string,
+      init?: RequestInit,
+    ) =>
+      handleNotificationsApi(new Request(`https://slop.cash${path}`, init), {
         db: db as never,
         sessionActor: async () => ({ githubId: actor }),
         now: () => new Date(R),
         moderatorGithubIds: new Set(moderators),
       }) as Promise<Response>;
-    return { notify, call, rows };
+    return { db, sqlite, notify, call, rows };
   }
 
   test("one notice per moderator from the committed penalty, never to the author", async () => {
@@ -740,7 +749,11 @@ describe("slopbot scam review notices", () => {
       at: R,
     };
     for (const bad of [
+      { owner: "." },
+      { owner: ".." },
       { owner: "../evil" },
+      { repo: "." },
+      { repo: ".." },
       { repo: "alpha/../../x" },
       { number: 0 },
       { authorLogin: "a b" },
@@ -751,26 +764,95 @@ describe("slopbot scam review notices", () => {
           ...bad,
         }),
       ).toThrow();
+    for (const path of [
+      "/api/v1/notifications/scam-reviews/./alpha/pull/7",
+      "/api/v1/notifications/scam-reviews/../alpha/pull/7",
+      "/api/v1/notifications/scam-reviews/example/./pull/7",
+      "/api/v1/notifications/scam-reviews/example/../pull/7",
+    ])
+      expect(scamReviewGitHubUrl(path)).toBeNull();
   });
 
-  test("moderator access is rechecked on every list and open", async () => {
-    const { notify, call } = scam();
+  test("moderator access is rechecked on every list, open and read mark", async () => {
+    const { db, sqlite, notify, call, rows } = scam();
     await notify(MODERATOR);
+    sqlite
+      .prepare(
+        `INSERT INTO slopbot_appeals (appeal_key,repository_id,item_node_id,appellant_github_id,job_json,opened_at,due_at,escalated_at,escalation)
+         VALUES ('appeal:PR_alpha:rev1',1,'PR_alpha',?,?,?,?,'2026-10-19T10:15:00.000Z','scam')`,
+      )
+      .run(AUTHOR, JSON.stringify(target), EARLY, T);
+    await (db as unknown as D1Database).batch([
+      notifySlopbotAppeal(
+        db as unknown as D1Database,
+        "appeal:PR_alpha:rev1",
+        MODERATOR,
+        R,
+      ),
+    ]);
     const path = "/api/v1/notifications/scam-reviews/example/alpha/pull/7";
+    const appealPath = `/api/v1/notifications/appeals/${encodeURIComponent("appeal:PR_alpha:rev1")}`;
     const list = async (moderators: string[]) =>
       parseNotificationsResponse(
         await (
           await call(MODERATOR, moderators, "/api/v1/notifications")
         ).json(),
       );
-    expect((await list([MODERATOR])).notifications).toHaveLength(1);
+    const markRead = (moderators: string[], eventKeys: string[]) =>
+      call(MODERATOR, moderators, "/api/v1/notifications/read", {
+        method: "POST",
+        headers: {
+          origin: "https://slop.cash",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ eventKeys }),
+      });
+    expect((await list([MODERATOR])).notifications).toHaveLength(2);
     expect(await list([])).toMatchObject({ notifications: [], unread: 0 });
+    // A former moderator cannot mark or probe moderator-only notices after role revocation.
+    const revokedRead = await markRead(
+      [],
+      ["slopbot-scam-review:PR_alpha", "slopbot-appeal:PR_alpha:rev1"],
+    );
+    expect(await revokedRead.json()).toEqual({ marked: 0 });
+    expect(rows(MODERATOR).map((row) => row.read_at)).toEqual([null, null]);
+    const activeRead = await markRead(
+      [MODERATOR],
+      ["slopbot-scam-review:PR_alpha", "slopbot-appeal:PR_alpha:rev1"],
+    );
+    expect(await activeRead.json()).toEqual({ marked: 2 });
+    expect(rows(MODERATOR).map((row) => row.read_at)).toEqual([R, R]);
     const opened = await call(MODERATOR, [MODERATOR], path);
     expect(opened.status).toBe(302);
     expect(opened.headers.get("location")).toBe(
       "https://github.com/example/alpha/pull/7",
     );
     expect((await call(MODERATOR, [], path)).status).toBe(403);
+    expect((await call(MODERATOR, [], appealPath)).status).toBe(403);
+    // Dot-segment stored appeal targets are refused before redirecting.
+    sqlite
+      .prepare(
+        `INSERT INTO slopbot_appeals (appeal_key,repository_id,item_node_id,appellant_github_id,job_json,opened_at,due_at,escalated_at,escalation)
+         VALUES ('appeal:PR_alpha:dot',1,'PR_alpha',?,?,?,?,'2026-10-19T10:15:00.000Z','scam')`,
+      )
+      .run(AUTHOR, JSON.stringify({ ...target, repo: ".." }), EARLY, T);
+    await (db as unknown as D1Database).batch([
+      notifySlopbotAppeal(
+        db as unknown as D1Database,
+        "appeal:PR_alpha:dot",
+        MODERATOR,
+        R,
+      ),
+    ]);
+    expect(
+      (
+        await call(
+          MODERATOR,
+          [MODERATOR],
+          `/api/v1/notifications/appeals/${encodeURIComponent("appeal:PR_alpha:dot")}`,
+        )
+      ).status,
+    ).toBe(500);
     // Another moderator has no notice that stores this target.
     expect((await call(OTHER, [MODERATOR, OTHER], path)).status).toBe(404);
     for (const forged of [

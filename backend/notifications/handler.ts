@@ -156,8 +156,8 @@ export async function handleNotificationsApi(
       if (
         typeof job.owner !== "string" ||
         typeof job.repo !== "string" ||
-        !/^[A-Za-z0-9_.-]+$/u.test(job.owner) ||
-        !/^[A-Za-z0-9_.-]+$/u.test(job.repo) ||
+        !/^(?!\.{1,2}$)[A-Za-z0-9_.-]+$/u.test(job.owner) ||
+        !/^(?!\.{1,2}$)[A-Za-z0-9_.-]+$/u.test(job.repo) ||
         !Number.isSafeInteger(job.number) ||
         job.number < 1 ||
         !["pull_request", "issue"].includes(job.itemKind)
@@ -278,9 +278,15 @@ export async function handleNotificationsApi(
       .prepare(
         `UPDATE notifications SET read_at = ?
           WHERE recipient_github_id = ? AND read_at IS NULL
+            AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1)
             AND event_key IN (${keys.map(() => "?").join(", ")})`,
       )
-      .bind(deps.now().toISOString(), actor.githubId, ...keys)
+      .bind(
+        deps.now().toISOString(),
+        actor.githubId,
+        moderator ? 1 : 0,
+        ...keys,
+      )
       .run();
     const marked = result.meta?.changes;
     if (typeof marked !== "number") throw new Error("D1 reported no changes");
