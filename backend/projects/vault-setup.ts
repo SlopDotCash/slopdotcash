@@ -22,6 +22,10 @@ import {
   isBaseUnits,
 } from "../../src/lib/escrow-policy.mjs";
 import type { PayoutPolicy } from "../../src/lib/payments/contracts";
+import type {
+  GithubActor,
+  ProjectRecord,
+} from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type {
   VaultSetupInput,
@@ -30,7 +34,6 @@ import type {
 import { registryProjectDigest } from "../../src/lib/vault-setup";
 import type { D1TransactionalDatabase } from "../d1";
 import { fail } from "../http";
-import type { GithubActor, ProjectRecord } from "./contracts";
 
 export interface OwnerVaultSetup {
   networks(

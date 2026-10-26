@@ -6,6 +6,7 @@ import {
 /** Separate private vetting evidence. Policy and external controls have no defaults. */
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import type { WebSession } from "../../src/lib/project-contracts";
 import {
   assemblyAssessment,
   assemblyRecord,
@@ -21,7 +22,6 @@ import {
   json as jsonResponse,
 } from "../http";
 import type { ProjectD1Database } from "../projects/cloudflare-persistence";
-import type { WebSession } from "../projects/contracts";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
 import { isRecord, readJsonObject } from "../trace/validation";
 import {

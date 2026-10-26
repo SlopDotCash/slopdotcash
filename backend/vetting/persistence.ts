@@ -6,6 +6,10 @@
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { canonicalJson } from "../../src/lib/canonical-json";
+import type {
+  GithubActor,
+  ProjectEnforcement,
+} from "../../src/lib/project-contracts";
 import { executableManifestContent } from "../../src/lib/project-revision-changes";
 import type {
   AssessmentState,
@@ -23,7 +27,6 @@ import {
   enforcementStatement,
   type ProjectD1Database,
 } from "../projects/cloudflare-persistence";
-import type { GithubActor, ProjectEnforcement } from "../projects/contracts";
 import {
   enforcedManifest,
   planScanReinstatement,

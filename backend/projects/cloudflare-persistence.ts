@@ -1,3 +1,14 @@
+import type {
+  AdminNotification,
+  ApplicationStatus,
+  DecisionInput,
+  GithubActor,
+  ProjectApplication,
+  ProjectEnforcement,
+  ProjectRecord,
+  ProjectRevision,
+  ProjectRevisionInput,
+} from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type {
   D1QueryStatement as D1Statement,
@@ -8,19 +19,7 @@ import {
   notifyProjectRevision,
   notifyReinstatementReviewers,
 } from "../notifications/events";
-import type {
-  AdminNotification,
-  ApplicationStatus,
-  DecisionInput,
-  GithubActor,
-  NewProjectInput,
-  ProjectApplication,
-  ProjectEnforcement,
-  ProjectPersistence,
-  ProjectRecord,
-  ProjectRevision,
-  ProjectRevisionInput,
-} from "./contracts";
+import type { NewProjectInput, ProjectPersistence } from "./contracts";
 export type ProjectD1Database = D1TransactionalDatabase<D1Statement>;
 
 type ProjectRow = {

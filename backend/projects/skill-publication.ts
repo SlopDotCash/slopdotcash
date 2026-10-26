@@ -6,6 +6,10 @@
  * head; each skill request also verifies its retained private evidence.
  */
 
+import type {
+  ProjectEnforcement,
+  ProjectRecord,
+} from "../../src/lib/project-contracts";
 import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import {
@@ -13,7 +17,6 @@ import {
   PUBLIC_SITE_ORIGIN,
 } from "../../src/lib/project-skill-publication.mjs";
 import type { VettingClearance } from "../vetting/persistence";
-import type { ProjectEnforcement, ProjectRecord } from "./contracts";
 import { publicRestrictionOf } from "./enforcement";
 
 /** The build's /skill-templates/index.json. */

@@ -3,11 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ProjectRecord } from "../backend/projects/contracts";
 import {
   handleProjectArtifactRequest,
   type SkillPublicationDependencies,
 } from "../backend/projects/skill-publication";
+import type { ProjectRecord } from "../src/lib/project-contracts";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
 

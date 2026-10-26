@@ -16,7 +16,11 @@
  * result. Flag evidence is visible to the reporter and administrators only.
  */
 
-import type { SetupAuthority } from "../../src/lib/project-contracts";
+import type {
+  GithubActor,
+  ProjectRecord,
+  SetupAuthority,
+} from "../../src/lib/project-contracts";
 import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import {
   apiErrorResponse,
@@ -36,7 +40,6 @@ import {
   ENFORCEMENT_COLUMNS,
   type ProjectD1Database,
 } from "../projects/cloudflare-persistence";
-import type { GithubActor, ProjectRecord } from "../projects/contracts";
 import { type EdgeCache, purgeProjectCache } from "../projects/edge-cache";
 import {
   FLAG_PAUSE_THRESHOLD,

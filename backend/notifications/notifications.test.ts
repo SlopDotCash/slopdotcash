@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { parseNotificationsResponse } from "../../src/lib/notifications";
+import type { ProjectEnforcement } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
@@ -15,7 +16,6 @@ import {
 } from "../payments/ledger";
 import { registerPaymentWallet } from "../payments/wallet-registration";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
-import type { ProjectEnforcement } from "../projects/contracts";
 import { CloudflareTracePersistence } from "../trace/cloudflare-persistence";
 import { notifySlopbotAppeal, notifySlopbotScamReview } from "./events";
 import { handleNotificationsApi } from "./handler";

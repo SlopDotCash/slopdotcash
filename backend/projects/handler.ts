@@ -2,11 +2,18 @@ import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { assertPayoutExclusionTransition } from "../../src/lib/payout-exclusions.mjs";
 import type {
+  EnforcementAction,
+  EnforcementActorRole,
   EnforcementPreview,
+  GithubActor,
+  ProjectApplication,
+  ProjectEnforcement,
   ProjectEnforcementState,
+  ProjectRecord,
   ProjectSetupStatus,
   PublicProjectApplication,
   SetupAuthority,
+  WebSession,
 } from "../../src/lib/project-contracts";
 import {
   type RepositoryIdentity,
@@ -49,16 +56,9 @@ import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readJsonObject } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
 import {
-  type EnforcementAction,
-  type EnforcementActorRole,
-  type GithubActor,
   PROJECT_API_CONTRACT_VERSION,
-  type ProjectApplication,
-  type ProjectEnforcement,
   type ProjectPersistence,
-  type ProjectRecord,
   type RepositoryControl,
-  type WebSession,
 } from "./contracts";
 import {
   cachedPublicResponse,

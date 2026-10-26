@@ -11,7 +11,12 @@
  */
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import type { ProjectSetupStatus } from "../../src/lib/project-contracts";
+import type {
+  GithubActor,
+  ProjectRecord,
+  ProjectSetupStatus,
+  WebSession,
+} from "../../src/lib/project-contracts";
 import { PROJECT_ID } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
@@ -22,12 +27,7 @@ import {
   json as jsonResponse,
   pathParts,
 } from "../http";
-import type {
-  GithubActor,
-  ProjectPersistence,
-  ProjectRecord,
-  WebSession,
-} from "../projects/contracts";
+import type { ProjectPersistence } from "../projects/contracts";
 import { type EdgeCache, purgeProjectCache } from "../projects/edge-cache";
 import { pausedByFlagsOnly, projectRestriction } from "../projects/enforcement";
 import type { ScanRequester } from "../projects/setup";

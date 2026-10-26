@@ -14,8 +14,6 @@
  * reinstate it on the owner's appeal after a fresh clean scan.
  */
 
-import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
-import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type {
   AppealState,
   EnforcementAction,
@@ -23,7 +21,9 @@ import type {
   ProjectEnforcement,
   ProjectRecord,
   RestrictionState,
-} from "./contracts";
+} from "../../src/lib/project-contracts";
+import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
+import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 
 export const ENFORCEMENT_ACTIONS: readonly EnforcementAction[] = [
   "quarantine",

@@ -11,10 +11,7 @@ import {
   CloudflareProjectPersistence,
   ENFORCEMENT_COLUMNS,
 } from "../backend/projects/cloudflare-persistence";
-import type {
-  ProjectEnforcement,
-  RepositoryControl,
-} from "../backend/projects/contracts";
+import type { RepositoryControl } from "../backend/projects/contracts";
 import type { EdgeCache } from "../backend/projects/edge-cache";
 import {
   EnforcementRefusal,
@@ -42,7 +39,10 @@ import {
   allocationFundingMinor,
   deriveAllocationFundingBasis,
 } from "../src/lib/allocation-funding";
-import type { RepositoryAccess } from "../src/lib/project-contracts";
+import type {
+  ProjectEnforcement,
+  RepositoryAccess,
+} from "../src/lib/project-contracts";
 import { rewardFields, slugify } from "../src/lib/project-proposal";
 import { PROJECT_SKILL_TEMPLATES } from "../src/lib/project-schema.mjs";
 import {
