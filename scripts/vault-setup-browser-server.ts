@@ -33,6 +33,7 @@ if (
   throw new Error("Local endpoints required");
 const origin = `http://127.0.0.1:${port}`;
 const servedNetwork = (input.factory?.network ??
+  input.program?.network ??
   input.template.escrow.deployments[0].network) as keyof typeof ESCROW_NETWORKS;
 const { sqlite, db } = sqliteD1(
   readdirSync("migrations")
@@ -159,6 +160,7 @@ const deps: ProjectApiDependencies = {
   },
   vaultSetup: ownerVaultSetupService({
     factories: input.factory ? [input.factory] : [],
+    programs: input.program ? [input.program] : [],
     db,
     projects: () => persistence.listProjects(),
     networks: () => (templatesEnabled ? [servedNetwork] : []),

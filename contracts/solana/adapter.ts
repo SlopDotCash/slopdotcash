@@ -38,6 +38,11 @@ export interface SolanaEscrowConfig {
   /** Reviewed notice period, in seconds, before a proposed identity authority takes effect. */
   rotationDelaySeconds: string;
 }
+/** Reviewed network program and Config, independent of any project vault. */
+export type SolanaProgramConfig = Omit<
+  SolanaEscrowConfig,
+  "payoutPolicy" | "projectPda" | "projectId" | "vault" | "mint" | "owner"
+>;
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 /** Project account size: 257 bytes of core state, the pending identity authority, its
  * effective time and confirmation, the i64 rotation delay, then the u8 purpose, the u64
@@ -223,10 +228,9 @@ export async function solanaMintDecimals(
   return mintDecimals(tokenProgramAccount(response.value, MINT_SIZE));
 }
 
-/** Bind the reviewed deployment to finalized executable bytes and all project authorities. */
-export async function verifySolanaDeployment(
-  config: SolanaEscrowConfig,
-  expectedProjectDigest?: string,
+/** Verify finalized program bytes, loader, upgrade authority and singleton Config. */
+export async function verifySolanaProgram(
+  config: SolanaProgramConfig,
 ): Promise<Uint8Array> {
   if (!/^[0-9a-f]{64}$/.test(config.codeSha256))
     throw new Error("Missing reviewed program digest");
@@ -303,6 +307,37 @@ export async function verifySolanaDeployment(
     throw new Error("Unsupported program loader or authority");
   if (hex(sha256(code)) !== config.codeSha256)
     throw new Error("Deployed program bytes differ from reviewed digest");
+  // L-3: the program pins the identity authority and fee recipient of every new project
+  // in its singleton Config. A project whose fee recipient differs (for example one
+  // created before the Config existed) is refused, and so is a deployment without a Config.
+  const configInfo = object(
+    await rpc(config, "getAccountInfo", [
+      solanaConfigAddress(config.programId),
+      { commitment: "finalized", encoding: "base64" },
+    ]),
+  );
+  if (configInfo.value === null) throw new Error("Escrow Config missing");
+  const pinned = account(
+    configInfo.value,
+    config.programId,
+    CONFIG_SIZE,
+    CONFIG_DISCRIMINATOR,
+  );
+  if (
+    pubkey(pinned, 40) !== config.feeRecipient ||
+    pubkey(pinned, 8) !== config.identityAuthority ||
+    pubkey(pinned, 72) !== config.rotationAuthority
+  )
+    throw new Error("Authorities differ from the pinned escrow Config");
+  return pinned;
+}
+
+/** Bind the reviewed deployment to finalized executable bytes and all project authorities. */
+export async function verifySolanaDeployment(
+  config: SolanaEscrowConfig,
+  expectedProjectDigest?: string,
+): Promise<Uint8Array> {
+  await verifySolanaProgram(config);
   const info = object(
     await rpc(config, "getAccountInfo", [
       config.projectPda,
@@ -328,29 +363,6 @@ export async function verifySolanaDeployment(
       config.vault !== solanaVaultAddress(config.programId, config.projectPda))
   )
     throw new Error("The vault belongs to a different registry project.");
-  // L-3: the program pins the identity authority and fee recipient of every new project
-  // in its singleton Config. A project whose fee recipient differs (for example one
-  // created before the Config existed) is refused, and so is a deployment without a Config.
-  const configInfo = object(
-    await rpc(config, "getAccountInfo", [
-      solanaConfigAddress(config.programId),
-      { commitment: "finalized", encoding: "base64" },
-    ]),
-  );
-  if (configInfo.value === null) throw new Error("Escrow Config missing");
-  const pinned = account(
-    configInfo.value,
-    config.programId,
-    CONFIG_SIZE,
-    CONFIG_DISCRIMINATOR,
-  );
-  if (
-    pubkey(pinned, 40) !== config.feeRecipient ||
-    pubkey(project, 136) !== pubkey(pinned, 40) ||
-    pubkey(pinned, 8) !== config.identityAuthority ||
-    pubkey(pinned, 72) !== config.rotationAuthority
-  )
-    throw new Error("Project authorities differ from the pinned escrow Config");
   const view = new DataView(project.buffer, project.byteOffset);
   if (project[306] !== solanaProjectPurpose(config.payoutPolicy))
     throw new Error("Project purpose does not match the payout policy");
