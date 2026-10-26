@@ -7,19 +7,14 @@
  * that verify receipt. All findings and advisories are synthetic. Nothing
  * here reaches GitHub, a model provider, a chain, or an email provider.
  */
-import AxeBuilder from "@axe-core/playwright";
-import {
-  type APIRequestContext,
-  expect,
-  type Page,
-  test,
-} from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
 import {
   E2E_SECURITY_ACCOUNTS,
   fixtureRepository,
 } from "../github-api-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
+import { expect, expectAccessible, projectSuffix, test } from "./fixtures";
 
 type Role = keyof typeof E2E_SECURITY_ACCOUNTS;
 const TOKENS = JSON.parse(
@@ -31,6 +26,14 @@ const GITHUB_FIXTURE = process.env.SLOP_E2E_GITHUB_API_ORIGIN ?? "";
 const COOKIE = "__Host-slop_points";
 
 test.describe.configure({ mode: "serial" });
+
+// The points and payments APIs reject this local origin; only application
+// failures count.
+test.beforeEach(({ diagnostics }) => {
+  diagnostics.allow(
+    /^(?:console .* at |403 GET )http:\/\/[^ ]+\/api\/v1\/(?:points|payments)\//u,
+  );
+});
 
 function account(role: Role) {
   return { githubId: E2E_SECURITY_ACCOUNTS[role], githubLogin: `e2e-${role}` };
@@ -424,19 +427,6 @@ const decision = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-function observe(page: Page) {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (
-      message.type() === "error" &&
-      !/\/api\/v1\/(points|payments)\//u.test(message.location().url)
-    )
-      errors.push(message.text());
-  });
-  return errors;
-}
-
 async function signIn(page: Page, token: string) {
   await page.goto("/how-it-works", { waitUntil: "networkidle" });
   await page.evaluate(
@@ -445,16 +435,6 @@ async function signIn(page: Page, token: string) {
     },
     [COOKIE, token],
   );
-}
-
-async function expectAccessible(page: Page) {
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
 }
 
 async function refreshReporting(request: APIRequestContext) {
@@ -532,7 +512,7 @@ test("owners publish and control bounty programs with verified funding @registry
   request,
 }) => {
   test.setTimeout(180_000);
-  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const suffix = projectSuffix();
   const id = `owner-bounty-${suffix}`;
   const repository = `e2e-security/${id}`;
   await listProject(request, TOKENS.security, repository, id, {});
@@ -541,7 +521,6 @@ test("owners publish and control bounty programs with verified funding @registry
     recordVideo: { dir: test.info().outputPath("owner-bounty-video") },
   });
   const page = await context.newPage();
-  const errors = observe(page);
   try {
     await signIn(page, TOKENS.security);
     await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
@@ -700,7 +679,6 @@ test("owners publish and control bounty programs with verified funding @registry
     expect(
       (await adminProject(request, id)).manifest.securityBounty,
     ).toMatchObject({ status: "closed" });
-    expect(errors).toEqual([]);
   } finally {
     await context.close();
   }
@@ -711,7 +689,7 @@ test("private security bounty programs keep cases restricted from intake to awar
   request,
 }) => {
   test.setTimeout(300_000);
-  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const suffix = projectSuffix();
   const a = {
     id: `bounty-a-${suffix}`,
     repository: `e2e-security/bounty-a-${suffix}`,
@@ -824,14 +802,65 @@ test("private security bounty programs keep cases restricted from intake to awar
   // does not race a previously cached enabled response.
   await setIntake(request, b.repository, "disabled");
 
+  await test.step("intake readiness gates the GitHub handoff", async () => {
+    // Each program page here makes that program's first readiness read, so no
+    // cached edge answer is waited out. The stale and ready transitions of
+    // the reporting observation are covered in
+    // backend/security/submissions.test.ts.
+    const context = await browser.newContext({
+      viewport: test.info().project.use.viewport,
+      recordVideo: { dir: test.info().outputPath("workflow-video") },
+    });
+    const page = await context.newPage();
+    await page.clock.install();
+    // The page checks readiness on open; no click is needed.
+    await page.goto(`/projects/${a.id}/security`);
+    const handoff = page.getByRole("link", {
+      name: /^(Or report directly|Report privately) on GitHub$/u,
+    });
+    await expect(handoff).toHaveAttribute(
+      "href",
+      `https://github.com/${a.repository}/security/advisories/new`,
+    );
+    await expectAccessible(page);
+    await page.screenshot({ path: test.info().outputPath("intake-ready.png") });
+    // An old answer stops the handoff until the check runs again.
+    await page.clock.fastForward(31_000);
+    await expect(page.getByRole("alert")).toContainText("is out of date");
+    await expect(handoff).toHaveCount(0);
+    await page.getByRole("button", { name: "Check again" }).click();
+    await expect(handoff).toBeVisible();
+    await page.goto(`/projects/${b.id}/security`);
+    await expect(page.getByRole("alert")).toContainText(
+      "private vulnerability reporting is turned off",
+    );
+    await expect(
+      page.getByRole("link", { name: "Report privately on GitHub" }),
+    ).toHaveCount(0);
+    await context.close();
+    for (const state of ["forbidden", "unavailable"]) {
+      await setIntake(request, b.repository, state);
+      const checked = await api(
+        request,
+        "GET",
+        `security-programs/${b.id}/intake?state=${state}`,
+        null,
+      );
+      expect(checked.body).toMatchObject({
+        state: "disabled",
+        stale: true,
+        handoffUrl: null,
+      });
+    }
+  });
+
   await test.step("public terms and amounts", async () => {
     const context = await browser.newContext({
       viewport: test.info().project.use.viewport,
       recordVideo: { dir: test.info().outputPath("workflow-video") },
     });
     const page = await context.newPage();
-    const errors = observe(page);
-    await page.goto(`/projects/${a.id}/security`, { waitUntil: "networkidle" });
+    await page.goto(`/projects/${a.id}/security`);
     await expect(page.locator("h1")).toHaveText("Security bounty");
     await expect(page.locator(".security-lead")).toHaveText(
       "Published award: 10,000 USDC gross per finding, 7,500 USDC to the researcher. Funded by Slop.",
@@ -849,11 +878,7 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("program-terms.png"),
       fullPage: true,
     });
-    // The page checks readiness on open, and the edge keeps each answer for
-    // INTAKE_READINESS_TTL_SECONDS. Turn reporting off before the first
-    // check of program B, so the next step never reads a cached "ready".
-    await setIntake(request, b.repository, "disabled");
-    await page.goto(`/projects/${b.id}/security`, { waitUntil: "networkidle" });
+    await page.goto(`/projects/${b.id}/security`);
     await expect(page.locator(".security-lead")).toContainText(
       "100,000 USDC gross per finding, 75,000 USDC to the researcher",
     );
@@ -861,102 +886,11 @@ test("private security bounty programs keep cases restricted from intake to awar
       page.getByRole("region", { name: "Award terms" }),
     ).toContainText("Published gross award per finding100,000 USDC");
     // The project page links the program.
-    await page.goto(`/projects/${a.id}`, { waitUntil: "networkidle" });
+    await page.goto(`/projects/${a.id}`);
     await expect(
       page.getByRole("link", { name: "Security bounty" }),
     ).toHaveAttribute("href", `/projects/${a.id}/security`);
-    expect(errors).toEqual([]);
     await context.close();
-  });
-
-  await test.step("intake readiness gates the GitHub handoff", async () => {
-    // A removed App makes the prior observation stale. Restoring the App and
-    // running the existing background refresh restores the verified handoff.
-    const app = (state: "installed" | "missing") =>
-      request.fetch(
-        `${GITHUB_FIXTURE}/__fixture/intake-app/${a.repository}/${state}`,
-        { method: "PUT" },
-      );
-    expect((await app("missing")).status()).toBe(204);
-    await refreshReporting(request);
-    // The earlier terms page may still have a ready reply in the edge cache.
-    await expect
-      .poll(
-        async () =>
-          (
-            await (
-              await request.get(`/api/v1/security-programs/${a.id}/intake`)
-            ).json()
-          ).stale,
-        { timeout: 35_000 },
-      )
-      .toBe(true);
-    const context = await browser.newContext({
-      viewport: test.info().project.use.viewport,
-      recordVideo: { dir: test.info().outputPath("workflow-video") },
-    });
-    const page = await context.newPage();
-    const errors = observe(page);
-    await page.clock.install();
-    // The page checks readiness on open; no click is needed.
-    await page.goto(`/projects/${a.id}/security`, { waitUntil: "networkidle" });
-    const handoff = page.getByRole("link", {
-      name: /^(Or report directly|Report privately) on GitHub$/u,
-    });
-    await expect(page.getByRole("alert")).toContainText("is out of date");
-    await expect(handoff).toHaveCount(0);
-    expect((await app("installed")).status()).toBe(204);
-    await refreshReporting(request);
-    // Respect the existing edge TTL; a refresh does not rewrite a cached reply.
-    await expect
-      .poll(
-        async () =>
-          (
-            await (
-              await request.get(`/api/v1/security-programs/${a.id}/intake`)
-            ).json()
-          ).stale,
-        { timeout: 35_000 },
-      )
-      .toBe(false);
-    await page.getByRole("button", { name: "Check again" }).click();
-    await expect(handoff).toHaveAttribute(
-      "href",
-      `https://github.com/${a.repository}/security/advisories/new`,
-    );
-    await expectAccessible(page);
-    await page.screenshot({ path: test.info().outputPath("intake-ready.png") });
-    // An old answer stops the handoff until the check runs again.
-    await page.clock.fastForward(31_000);
-    await expect(page.getByRole("alert")).toContainText("is out of date");
-    await expect(handoff).toHaveCount(0);
-    await page.getByRole("button", { name: "Check again" }).click();
-    await expect(handoff).toBeVisible();
-    await page.goto(`/projects/${b.id}/security`, { waitUntil: "networkidle" });
-    await expect(page.getByRole("alert")).toContainText(
-      "private vulnerability reporting is turned off",
-    );
-    await expect(
-      page.getByRole("link", { name: "Report privately on GitHub" }),
-    ).toHaveCount(0);
-    expect(errors).toEqual([]);
-    await context.close();
-    for (const state of ["forbidden", "unavailable"]) {
-      await setIntake(request, b.repository, state);
-      const checked = await api(
-        request,
-        "GET",
-        `security-programs/${b.id}/intake?state=${state}`,
-        null,
-      );
-      expect(checked.body).toMatchObject({
-        state: "disabled",
-        stale: true,
-        handoffUrl: null,
-      });
-    }
-    // The App reads the program's private reports from here on.
-    expect((await app("installed")).status()).toBe(204);
   });
 
   let caseA = "";
@@ -1414,7 +1348,6 @@ test("private security bounty programs keep cases restricted from intake to awar
       recordVideo: { dir: test.info().outputPath("workflow-video") },
     });
     const page = await context.newPage();
-    const errors = observe(page);
     await signIn(page, TOKENS.dispute);
     await page.goto("/security", { waitUntil: "networkidle" });
     await page
@@ -1442,7 +1375,6 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("related-party-review.png"),
       fullPage: true,
     });
-    expect(errors).toEqual([]);
     await context.close();
     expect(
       (await api(request, "GET", `security-cases/${declared}`, TOKENS.finance))
@@ -1557,7 +1489,6 @@ test("private security bounty programs keep cases restricted from intake to awar
       recordVideo: { dir: test.info().outputPath("appeal-triage-video") },
     });
     const page = await context.newPage();
-    const errors = observe(page);
     await signIn(page, TOKENS.dispute);
     await page.goto("/security", { waitUntil: "networkidle" });
     await page
@@ -1584,7 +1515,6 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("appeal-triage.png"),
       fullPage: true,
     });
-    expect(errors).toEqual([]);
     await context.close();
     // The technical decider is not a dispute reviewer.
     expect(
@@ -1666,7 +1596,6 @@ test("private security bounty programs keep cases restricted from intake to awar
       recordVideo: { dir: test.info().outputPath("acknowledgment-video") },
     });
     const page = await context.newPage();
-    const errors = observe(page);
     await signIn(page, TOKENS["reporter-a"]);
     await page.goto("/inbox", { waitUntil: "networkidle" });
     const notice = page
@@ -1693,7 +1622,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(
       page.getByText("Acknowledged", { exact: true }).first(),
     ).toBeVisible();
-    await page.reload({ waitUntil: "networkidle" });
+    await page.reload();
     await expect(
       page.getByText("Acknowledged", { exact: true }).first(),
     ).toBeVisible();
@@ -1713,7 +1642,6 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("security-notice-zoom.png"),
       fullPage: true,
     });
-    expect(errors).toEqual([]);
     await context.close();
   });
 
@@ -1749,13 +1677,7 @@ test("private security bounty programs keep cases restricted from intake to awar
       recordVideo: { dir: test.info().outputPath("disclosure-video") },
     });
     const page = await context.newPage();
-    const errors = observe(page);
     await signIn(page, TOKENS.security);
-    const failures: string[] = [];
-    page.on("requestfailed", (request) => {
-      if (new URL(request.url()).origin === new URL(page.url()).origin)
-        failures.push(new URL(request.url()).pathname);
-    });
     await page.goto("/security", { waitUntil: "networkidle" });
     await page
       .getByRole("button", {
@@ -1801,8 +1723,6 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("disclosure-zoom.png"),
       fullPage: true,
     });
-    expect(errors).toEqual([]);
-    expect(failures).toEqual([]);
     await context.close();
     expect(
       (
@@ -1889,7 +1809,6 @@ test("private security bounty programs keep cases restricted from intake to awar
       recordVideo: { dir: test.info().outputPath("workflow-video") },
     });
     const page = await context.newPage();
-    const errors = observe(page);
     await signIn(page, TOKENS["reporter-a"]);
     await page.goto("/security", { waitUntil: "networkidle" });
     await page
@@ -1915,7 +1834,6 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("reporter-case.png"),
       fullPage: true,
     });
-    expect(errors).toEqual([]);
     await context.close();
   });
 
@@ -1946,7 +1864,7 @@ test("private settlement requires visibility consent and produces an unsigned re
   request,
 }) => {
   test.setTimeout(180_000);
-  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const suffix = projectSuffix();
   const id = `private-pay-${suffix}`;
   const repository = `e2e-security/${id}`;
   const deployment = {
@@ -2024,7 +1942,6 @@ test("private settlement requires visibility consent and produces an unsigned re
   });
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const page = await context.newPage();
-  const errors = observe(page);
   await signIn(page, TOKENS["reporter-a"]);
   await page.goto("/security", { waitUntil: "networkidle" });
   await page.getByRole("button", { name: new RegExp(`^${id} `) }).click();
@@ -2085,7 +2002,7 @@ test("private settlement requires visibility consent and produces an unsigned re
   await expect(
     page.getByRole("status").filter({ hasText: "Request download started." }),
   ).toBeVisible();
-  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("private-settlement.png"),
     fullPage: true,
@@ -2093,7 +2010,7 @@ test("private settlement requires visibility consent and produces an unsigned re
   await page.evaluate(() => {
     document.documentElement.style.zoom = "2";
   });
-  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("private-settlement-zoom.png"),
     fullPage: true,
@@ -2108,7 +2025,6 @@ test("private settlement requires visibility consent and produces an unsigned re
         Math.max(window.innerWidth, 640) + 1,
     ),
   ).toBe(true);
-  expect(errors).toEqual([]);
   await context.close();
 });
 
@@ -2124,7 +2040,7 @@ test("private bounty obligations continue through role loss, approver replacemen
   request,
 }) => {
   test.setTimeout(180_000);
-  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const suffix = projectSuffix();
   const id = `bounty-move-${suffix}`;
   const repository = `e2e-security/${id}`;
   const deployment = bountyDeployment(repository);
@@ -2418,7 +2334,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     "Automatic intake bindings are off in this lane",
   );
   test.setTimeout(240_000);
-  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const suffix = projectSuffix();
   const program = {
     id: `bounty-intake-${suffix}`,
     repository: `e2e-security/bounty-intake-${suffix}`,
@@ -2571,7 +2487,6 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       recordVideo: { dir: test.info().outputPath("report-only-video") },
     });
     const page = await context.newPage();
-    const errors = observe(page);
     try {
       await signIn(page, TOKENS["reporter-a"]);
       await setIntake(request, noProgram.repository, "unavailable");
@@ -2701,7 +2616,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
         `${GITHUB_FIXTURE}/__fixture/slopbot/${noProgram.repository}/unavailable`,
         { method: "PUT" },
       );
-      await page.reload({ waitUntil: "networkidle" });
+      await page.reload();
       await expect(
         page.getByText("Some maintainer access could not be checked.", {
           exact: false,
@@ -2740,7 +2655,6 @@ test("automatic private intake files as the reporter and verifies receipt @regis
           )
         ).status,
       ).toBe(200);
-      expect(errors).toEqual([]);
     } finally {
       await context.close();
     }
@@ -2752,12 +2666,9 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       recordVideo: { dir: test.info().outputPath("workflow-video") },
     });
     const page = await context.newPage();
-    const errors = observe(page);
     await signIn(page, TOKENS["reporter-a"]);
     await page.clock.install();
-    await page.goto(`/projects/${program.id}/security`, {
-      waitUntil: "networkidle",
-    });
+    await page.goto(`/projects/${program.id}/security`);
     await expect(
       page.getByText(
         "The Slop private intake app will file this on GitHub as @e2e-reporter-a",
@@ -2797,7 +2708,6 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     ).toHaveAttribute("href", new RegExp(otherProgram.id));
     await expect(summary).toHaveValue("");
     await expect(description).toHaveValue("");
-    expect(errors).toEqual([]);
     await context.close();
   });
 
@@ -2945,7 +2855,6 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       recordVideo: { dir: test.info().outputPath("private-award-video") },
     });
     const page = await context.newPage();
-    const errors = observe(page);
     await signIn(page, TOKENS.security);
     await page.goto("/security", { waitUntil: "networkidle" });
     const ghsa = (
@@ -2995,7 +2904,6 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     await expect(detail).toContainText(
       "3,000 USDC to the researcher · 1,000 USDC to Slop · 4,000 USDC gross",
     );
-    expect(errors).toEqual([]);
     await context.close();
     // Approval reserved exactly the chosen gross amount.
     expect(await ownerCase(firstCase)).toMatchObject({

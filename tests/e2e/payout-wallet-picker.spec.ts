@@ -1,6 +1,6 @@
 /** Provider/API fixtures exercise the real page; they never register a real wallet. */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const evmAddress = "0x1111111111111111111111111111111111111111";
 const solanaAddress = "11111111111111111111111111111111";
@@ -205,10 +205,7 @@ test("modal routes Base and Robinhood Chain to MetaMask and Solana to Backpack d
   await expect(
     base.getByRole("button", { name: "Backpack Detected" }),
   ).toHaveCount(0);
-  const axe = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-    .analyze();
-  expect(axe.violations).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("wallet-modal.png"),
     fullPage: true,
@@ -565,7 +562,7 @@ for (const scenario of [
 ]) {
   test(`open modal reflows at ${scenario.name}`, async ({ page }, info) => {
     test.skip(
-      info.project.name !== "narrow-mobile-chromium",
+      info.project.name !== "chromium-mobile",
       "Sets its own viewport; runs once",
     );
     await payments(page);
@@ -611,10 +608,7 @@ for (const scenario of [
           };
         }),
       ).toEqual({ dialogScroll: 0, insideViewport: true, escaping: [] });
-      const axe = await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze();
-      expect(axe.violations).toEqual([]);
+      await expectAccessible(page);
       await page.screenshot({
         path: info.outputPath(
           `wallet-modal-${chain.toLowerCase()}-${scenario.width}.png`,
@@ -676,10 +670,7 @@ test("changing a confirmed Base wallet opens the account picker and asks before 
   await expect(
     page.getByRole("button", { name: "Change Base wallet", exact: true }),
   ).toBeDisabled();
-  const axe = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-    .analyze();
-  expect(axe.violations).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("wallet-change-confirmation.png"),
     fullPage: true,
@@ -800,7 +791,7 @@ for (const scenario of [
     page,
   }, info) => {
     test.skip(
-      info.project.name !== "narrow-mobile-chromium",
+      info.project.name !== "chromium-mobile",
       "Sets its own viewport; runs once",
     );
     await payments(page, [savedBase(true)]);
@@ -846,10 +837,7 @@ for (const scenario of [
           .map((child) => child.textContent?.slice(0, 40));
       }),
     ).toEqual([]);
-    const axe = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-      .analyze();
-    expect(axe.violations).toEqual([]);
+    await expectAccessible(page);
     await page.screenshot({
       path: info.outputPath(`wallet-change-${scenario.width}.png`),
       fullPage: true,

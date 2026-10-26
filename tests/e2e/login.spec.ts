@@ -1,7 +1,6 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { expectHeaderRow } from "../header-row";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -11,11 +10,6 @@ test(
   "serves GitHub login on direct navigation and reload",
   { tag: ["@pages"] },
   async ({ page }, info) => {
-    const errors: string[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
-    page.on("console", (message) => {
-      if (message.type() === "error") errors.push(message.text());
-    });
     expect((await page.goto("/login"))?.status()).toBe(200);
     expect((await page.reload())?.status()).toBe(200);
     await expect(page.locator("main h1, main h2")).toHaveCount(1);
@@ -34,13 +28,7 @@ test(
       await page.evaluate(() => document.activeElement !== document.body),
     ).toBe(true);
     await page.evaluate(() => document.fonts.ready);
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-          .analyze()
-      ).violations,
-    ).toEqual([]);
+    await expectAccessible(page);
     await page.screenshot({
       path: info.outputPath("login.png"),
       fullPage: true,
@@ -53,7 +41,6 @@ test(
         () => document.documentElement.scrollWidth <= innerWidth + 1,
       ),
     ).toBe(true);
-    expect(errors).toEqual([]);
   },
 );
 
@@ -68,11 +55,14 @@ for (const [next, expected] of [
   ["earnings", `${deployment.site}/earnings`],
 ]) {
   test(`login returns ${next} to a safe destination`, async ({
+    diagnostics,
     page,
     baseURL,
   }) => {
-    const errors: string[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
+    // The signed-out membership read before sign-in.
+    diagnostics.allow(
+      /^console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at https:\/\/[^ ]+\/api\/v1\/points\/me$/u,
+    );
     const expiresAt = new Date(
       Math.floor(Date.now() / 1000) * 1000 + 240_000,
     ).toISOString();
@@ -171,9 +161,11 @@ for (const [next, expected] of [
     );
     await expect(page).toHaveURL(expected);
     expect(starts).toBe(1);
-    expect(errors).toEqual([]);
-    // The destination keeps loading public data after the assertion.
-    await page.unrouteAll({ behavior: "ignoreErrors" });
+    // The destination keeps loading public data after the assertion. Let it
+    // finish through the local routes, then leave it, so no request reaches
+    // the deployed site.
+    await page.waitForLoadState("networkidle");
+    await page.goto("about:blank");
   });
 }
 

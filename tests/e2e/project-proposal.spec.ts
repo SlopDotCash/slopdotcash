@@ -7,8 +7,7 @@
  */
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import {
   GithubLookupError,
   listOwnedRepositories,
@@ -20,6 +19,7 @@ import {
   MAX_PROJECT_ID_LENGTH,
 } from "../../src/lib/project-schema.mjs";
 import { REWARD_ASSET_NETWORKS } from "../../src/lib/reward-asset.mjs";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -185,25 +185,15 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
-function observe(page: Page) {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    // Chromium logs every non-2xx fetch; the GitHub 404/403 cases are the
-    // tested failure paths, not application errors.
-    if (
-      message.type() === "error" &&
-      !message.location().url.includes("/api/v1/project-github/")
-    )
-      errors.push(message.text());
-  });
-  return errors;
-}
-
 test("drafts a project through the setup steps and creates it without an admin", async ({
+  diagnostics,
   page,
 }) => {
-  const errors = observe(page);
+  // Chromium logs every non-2xx fetch; the GitHub 404 and 403 lookups are
+  // the tested failure paths, not application errors.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: .* at |\d{3} GET )http:\/\/[^ ]+\/api\/v1\/project-github\//u,
+  );
   await routeGitHub(page);
   // The registry API itself runs in the @registry lane; here it is a fixture
   // so the wizard's submission can be checked byte for byte.
@@ -340,13 +330,7 @@ test("drafts a project through the setup steps and creates it without an admin",
     0,
   );
   await expect(page.getByLabel("Project manifest JSON")).toHaveCount(0);
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
 
   // Creation posts the reviewed manifest, criteria and monthly amount, then
   // shows one setup status with the next action.
@@ -374,17 +358,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   await page.keyboard.press("Enter");
   await expect(details).toHaveAttribute("open", "");
   await expect(details).toContainText("@example-maintainer has admin access");
-  await expectAccessibleSetup();
-  async function expectAccessibleSetup() {
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .include(".project-setup-status")
-          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-          .analyze()
-      ).violations,
-    ).toEqual([]);
-  }
+  await expectAccessible(page, { include: ".project-setup-status" });
   await page.screenshot({
     path: test.info().outputPath("setup-status-badges.png"),
     fullPage: true,
@@ -468,13 +442,17 @@ test("drafts a project through the setup steps and creates it without an admin",
   await page.getByRole("button", { name: "Start over" }).click();
   await page.getByRole("button", { name: "Clear draft" }).click();
   await expect(page.getByLabel("Public GitHub repository")).toHaveValue("");
-  expect(errors).toEqual([]);
 });
 
 test("failed or partial GitHub lookups never fill unknown facts", async ({
+  diagnostics,
   page,
 }) => {
-  const errors = observe(page);
+  // Chromium logs every non-2xx fetch; the GitHub 404 and 403 lookups are
+  // the tested failure paths, not application errors.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: .* at |\d{3} GET )http:\/\/[^ ]+\/api\/v1\/project-github\//u,
+  );
   await routeGitHub(page, { repository: 404 });
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page
@@ -550,11 +528,17 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
       ),
     ).toBe(expected);
   }
-  expect(errors).toEqual([]);
 });
 
-test("Robinhood Chain drafts a USDG escrow manifest", async ({ page }) => {
-  const errors = observe(page);
+test("Robinhood Chain drafts a USDG escrow manifest", async ({
+  diagnostics,
+  page,
+}) => {
+  // Chromium logs every non-2xx fetch; the GitHub 404 and 403 lookups are
+  // the tested failure paths, not application errors.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: .* at |\d{3} GET )http:\/\/[^ ]+\/api\/v1\/project-github\//u,
+  );
   await routeGitHub(page);
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page
@@ -608,20 +592,17 @@ test("Robinhood Chain drafts a USDG escrow manifest", async ({ page }) => {
     escrow: { chain: "robinhood", deployments: [] },
     funding: { addresses: [] },
   });
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
-  expect(errors).toEqual([]);
+  await expectAccessible(page);
 });
 
 test("a signed-in maintainer picks an owned repository and gets suggested text", async ({
+  diagnostics,
   page,
 }) => {
-  const errors = observe(page);
+  // The signed-out session check is a real 401, which Chromium logs.
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of 401 .* at https:\/\/[^ ]+\/api\/v1\/points\/me$/u,
+  );
   const description =
     "Reproducible protein-folding benchmarks for open research labs.";
   // Only the public repository list for the signed-in login is a new fixture.
@@ -753,17 +734,7 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
   await expect(page.getByLabel("Project name")).toHaveValue("Open Protein");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
   await expect(page.getByLabel("No monthly funding")).toBeChecked();
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
-  // The signed-out session check is a real 401, which Chromium logs.
-  expect(
-    errors.filter((message) => !message.includes("status of 401")),
-  ).toEqual([]);
+  await expectAccessible(page);
 });
 
 for (const [name, expectedId] of [
@@ -773,8 +744,14 @@ for (const [name, expectedId] of [
     "a".repeat(MAX_PROJECT_ID_LENGTH - 1),
   ],
 ]) {
-  test(`submits a valid project identity for ${name}`, async ({ page }) => {
-    const errors = observe(page);
+  test(`submits a valid project identity for ${name}`, async ({
+    diagnostics,
+    page,
+  }) => {
+    // The fixture has no owned-repository list for the signed-in owner.
+    diagnostics.allow(
+      /^(?:console Failed to load resource: the server responded with a status of 502 \(Bad Gateway\) at |502 GET )http:\/\/[^ ]+\/api\/v1\/project-github\/owned-repositories$/u,
+    );
     await routeGitHub(page);
     await page.route("**/api/v1/project-session", (route) =>
       route.fulfill({
@@ -852,6 +829,5 @@ for (const [name, expectedId] of [
       },
       reviewSkill: { id: `review-${expectedId}-contributions` },
     });
-    expect(errors).toEqual([]);
   });
 }

@@ -14,9 +14,8 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import AxeBuilder from "@axe-core/playwright";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import { expect, type Page, type TestInfo, test } from "@playwright/test";
+import type { Page, TestInfo } from "@playwright/test";
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import {
   readVaultTotals,
@@ -36,6 +35,13 @@ import { formatAssetAmount } from "../../src/lib/project-schema.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
 import { CONTRIBUTION } from "../project-application-manifest";
+import {
+  type Diagnostics,
+  escapeRegExp,
+  expect,
+  expectAccessible,
+  test,
+} from "./fixtures";
 
 // Dependencies are installed by the existing Solana contract test command.
 const requireSolana = createRequire(
@@ -405,15 +411,18 @@ function installLocalSolanaWallet() {
 }
 
 test("Solana wallet deposits, recovers after reload, and owner withdraws with verified fee", async ({
+  diagnostics,
   page,
 }, info) => {
+  // The two funding rejections, asserted through apiRejections below.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 422 .* at |422 POST )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/solana-funding$/u,
+  );
   let selected = donor;
   let reject = false;
   let interrupted = false;
   const sends: string[] = [];
-  const errors: string[] = [];
   const apiRejections: number[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
   await page.exposeFunction("localSolanaAccount", () => ({
     address: selected.publicKey.toBase58(),
     publicKey: [...selected.publicKey.toBytes()],
@@ -830,14 +839,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
     "already committed",
   );
   expect(sends).toHaveLength(3);
-  expect(errors).toEqual([]);
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth - innerWidth,
@@ -846,7 +848,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
 });
 
 async function ownerSetupWorkflow(
-  { page }: { page: Page },
+  { diagnostics, page }: { diagnostics: Diagnostics; page: Page },
   info: TestInfo,
   bounty: boolean,
 ) {
@@ -1091,26 +1093,25 @@ async function ownerSetupWorkflow(
       // biome-ignore lint/suspicious/noDocumentCookie: The actual local API session is reused by the browser.
       document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
     }, initial.token);
-    const errors: string[] = [];
+    // The wrong-signature rejection and the private read outage below;
+    // failedRequests checks their timing.
+    diagnostics.allow(
+      new RegExp(
+        `^console Failed to load resource: the server responded with a status of (?:422|503) .* at ${escapeRegExp(origin)}/api/v1/`,
+        "u",
+      ),
+    );
     const failedRequests: string[] = [];
     let wrongSignature = false;
     let privateUnavailable = false;
     let privateErrors = 0;
-    page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (event) => {
       if (
         event.type() === "error" &&
         privateUnavailable &&
         event.text().includes("503")
-      ) {
-        privateErrors++;
-        return;
-      }
-      if (
-        event.type() === "error" &&
-        !(wrongSignature && event.text().includes("422"))
       )
-        errors.push(event.text());
+        privateErrors++;
     });
     page.on("response", (response) => {
       if (
@@ -1598,19 +1599,12 @@ async function ownerSetupWorkflow(
       ).text();
       expect(publicProject).not.toMatch(/availableMinor|freeMinor|snapshotAt/);
     }
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-          .analyze()
-      ).violations,
-    ).toEqual([]);
+    await expectAccessible(page);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
-    expect(errors).toEqual([]);
     expect(failedRequests).toEqual([]);
     await page.screenshot({
       path: info.outputPath(
@@ -1637,5 +1631,6 @@ for (const bounty of [false, true])
     bounty
       ? "owner creates, recovers and funds a private Solana bounty vault through the API"
       : "owner creates, recovers, registers and funds a Solana vault through the API",
-    ({ page }, info) => ownerSetupWorkflow({ page }, info, bounty),
+    ({ diagnostics, page }, info) =>
+      ownerSetupWorkflow({ diagnostics, page }, info, bounty),
   );

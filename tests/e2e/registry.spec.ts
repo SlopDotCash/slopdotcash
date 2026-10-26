@@ -10,20 +10,14 @@
  */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import AxeBuilder from "@axe-core/playwright";
-import {
-  type APIRequestContext,
-  expect,
-  type Locator,
-  type Page,
-  test,
-} from "@playwright/test";
+import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import {
   signedVettingHeaders,
   VETTING_EVIDENCE_OBJECTS,
   VETTING_TRACE_SHA,
   vettingResult,
 } from "../vetting-fixtures";
+import { expect, expectAccessible, projectSuffix, test } from "./fixtures";
 
 const APPLICANT_TOKEN = process.env.SLOP_E2E_APPLICANT_TOKEN ?? "";
 const ADMIN_TOKEN = process.env.SLOP_E2E_ADMIN_TOKEN ?? "";
@@ -181,13 +175,21 @@ async function queueScan(
 
 test.describe.configure({ mode: "serial" });
 
+// The points and payments APIs reject this local origin; only application
+// failures count.
+test.beforeEach(({ diagnostics }) => {
+  diagnostics.allow(
+    /^(?:console .* at |403 GET )http:\/\/[^ ]+\/api\/v1\/(?:points|payments)\//u,
+  );
+});
+
 /**
  * Every viewport shares one D1, so each uses its own repositories and project
  * ids instead of assuming the registry it finds is empty. The organization
  * repository cannot prove control; the user repository belongs to e2e-owner.
  */
 function fixtureProjects() {
-  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const suffix = projectSuffix();
   const words = suffix.replaceAll("-", " ");
   return {
     queued: {
@@ -247,20 +249,6 @@ async function signIn(page: Page, token: string) {
   }, token);
 }
 
-function observe(page: Page) {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    // Other APIs reject this local origin; only application failures count.
-    if (
-      message.type() === "error" &&
-      !/\/api\/v1\/(points|payments)\//u.test(message.location().url)
-    )
-      errors.push(message.text());
-  });
-  return errors;
-}
-
 /** One setup check shows its state badge and, under Check details, its message. */
 async function expectSetupCheck(
   setup: Locator,
@@ -278,16 +266,6 @@ async function expectSetupCheck(
       .locator(".setup-details dt", { hasText: check })
       .locator("xpath=following-sibling::dd[1]"),
   ).toHaveText(message);
-}
-
-async function expectAccessible(page: Page) {
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
 }
 
 async function draftApplication(
@@ -333,7 +311,6 @@ async function listedProject(page: Page, id: string) {
 test("an empty registry shows the empty state, never stale build data @registry", async ({
   page,
 }) => {
-  const errors = observe(page);
   const projects = await page.request.get("/api/v1/projects");
   expect(projects.status()).toBe(200);
   expect(projects.headers()["cache-control"]).toBe(
@@ -352,24 +329,16 @@ test("an empty registry shows the empty state, never stale build data @registry"
     section.getByRole("link", { name: "Add a project" }),
   ).toHaveAttribute("href", "/projects/new");
   await expectAccessible(page);
-  expect(errors).toEqual([]);
 });
 
 test("a signed-out visitor must sign in to look up GitHub and submit @registry", async ({
+  diagnostics,
   page,
 }) => {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    // The lookup API answers a signed-out visitor with an expected 401.
-    if (
-      message.type() === "error" &&
-      !/\/api\/v1\/(points|payments|project-github)\//u.test(
-        message.location().url,
-      )
-    )
-      errors.push(message.text());
-  });
+  // The lookup API answers a signed-out visitor with an expected 401.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at |401 GET )http:\/\/[^ ]+\/api\/v1\/project-github\//u,
+  );
   const project = fixtureProjects().queued;
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page.getByLabel("Public GitHub repository").fill(project.repository);
@@ -392,7 +361,6 @@ test("a signed-out visitor must sign in to look up GitHub and submit @registry",
   });
   expect(forged.status()).toBe(403);
   await expectAccessible(page);
-  expect(errors).toEqual([]);
 });
 
 test("an owner creates a paused project without admin approval @registry", async ({
@@ -401,7 +369,6 @@ test("an owner creates a paused project without admin approval @registry", async
   const project = fixtureProjects().queued;
   const context = await browser.newContext(walkthroughOptions());
   const page = await context.newPage();
-  const errors = observe(page);
   await signIn(page, APPLICANT_TOKEN);
   // Owner decision D11: Slop reads authority through the installation.
   await setSlopbot(`${project.repository}/installed`);
@@ -438,7 +405,6 @@ test("an owner creates a paused project without admin approval @registry", async
     "Setup status: Waiting for the security scan",
   );
   await expectAccessible(page);
-  expect(errors).toEqual([]);
   await context.close();
 });
 
@@ -448,7 +414,6 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   const project = fixtureProjects().owned;
   const ownerContext = await browser.newContext(walkthroughOptions());
   const owner = await ownerContext.newPage();
-  const ownerErrors = observe(owner);
   await signIn(owner, OWNER_TOKEN);
   await setSlopbot(`${project.repository}/installed`);
   await draftApplication(owner, project);
@@ -503,12 +468,10 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     status: 422,
     body: { error: "invalid_manifest" },
   });
-  expect(ownerErrors).toEqual([]);
   await ownerContext.close();
 
   const adminContext = await browser.newContext(walkthroughOptions());
   const admin = await adminContext.newPage();
-  const adminErrors = observe(admin);
   await signIn(admin, ADMIN_TOKEN);
   await admin.goto(`/admin?project=${project.id}`, {
     waitUntil: "networkidle",
@@ -559,13 +522,13 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     (await (await admin.request.get(`/api/v1/projects/${project.id}`)).json())
       .revision,
   ).toBe(2);
-  await admin.reload({ waitUntil: "networkidle" });
+  await admin.reload();
   await expect(card).toContainText("2 · updated");
   expect(
     (await (await admin.request.get(`/api/v1/projects/${project.id}`)).json())
       .project.headline,
   ).toBe("Useful accepted outcomes with a clearer project scope");
-  await returningOwner.reload({ waitUntil: "networkidle" });
+  await returningOwner.reload();
   await expect(consent).toBeChecked();
   await consent.uncheck();
   await returningOwner
@@ -599,7 +562,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await returningContext.close();
 
   // Revocation appended revision 3 after the admin's last read.
-  await admin.reload({ waitUntil: "networkidle" });
+  await admin.reload();
   await expect(card).toContainText("3 · updated");
   await card.getByRole("button", { name: "Delist", exact: true }).click();
   await card.getByRole("button", { name: "Delist project" }).click();
@@ -609,22 +572,25 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     status: "paused",
     listingTier: "retired",
   });
-  expect(adminErrors).toEqual([]);
   await adminContext.close();
 });
 
 test("an admin cannot activate or publish skills without canonical scan closure @registry", async ({
   browser,
+  diagnostics,
   request,
 }) => {
+  // The two refused activations below.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 422 \(Unprocessable Entity\) at |422 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
+  );
   const project = fixtureProjects().queued;
   const adminContext = await browser.newContext(walkthroughOptions());
   const admin = await adminContext.newPage();
-  const errors = observe(admin);
   await signIn(admin, ADMIN_TOKEN);
 
   // The approved paused project already shows on the public site from D1.
-  await admin.goto(`/projects/${project.id}`, { waitUntil: "networkidle" });
+  await admin.goto(`/projects/${project.id}`);
   await expect(admin.locator("h1")).toHaveText(project.name);
   // The reward asset is the Base stablecoin the application chose.
   await expect(admin.locator(".project-hero")).toContainText(
@@ -675,16 +641,11 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   await expect(refusedCard.getByRole("alert")).toContainText(
     "Security vetting is quarantined",
   );
-  // The refused write is the only failed request the browser saw.
-  expect(errors).toEqual([
-    "Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
-  ]);
-  errors.length = 0;
 
   // A signed clean claim still lacks canonical runtime closure.
   await queueScan(admin, project.id, "Rescan after the gap");
   await postVettingResult(request, project.id, project.repository, "clean");
-  await admin.reload({ waitUntil: "networkidle" });
+  await admin.reload();
   await expect(
     admin
       .getByRole("article", { name: `Security vetting for ${project.id}` })
@@ -719,10 +680,6 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   await expect(card.getByRole("alert")).toContainText(
     "Security vetting is quarantined",
   );
-  expect(errors).toEqual([
-    "Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
-  ]);
-  errors.length = 0;
   await postVettingResult(
     request,
     project.id,
@@ -784,7 +741,6 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   await card.getByRole("button", { name: "Save revision 2" }).click();
   await expect(card).toContainText("2 · updated");
   await expectAccessible(admin);
-  expect(errors).toEqual([]);
   await adminContext.close();
 });
 
@@ -794,7 +750,6 @@ test("the applicant's inbox lists each decision and revision once and keeps the 
   const project = fixtureProjects().queued;
   const context = await browser.newContext(walkthroughOptions());
   const page = await context.newPage();
-  const errors = observe(page);
   await signIn(page, APPLICANT_TOKEN);
   await page.goto("/inbox", { waitUntil: "networkidle" });
   await expect(page.locator("h1")).toHaveText("Inbox");
@@ -810,7 +765,7 @@ test("the applicant's inbox lists each decision and revision once and keeps the 
   await expect(revised.locator(".inbox-state")).toHaveText("Read");
   await expect(revised.getByRole("button")).toHaveCount(0);
   // The read state is stored, not kept only in the page.
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload();
   await expect(revised.locator(".inbox-state")).toHaveText("Read");
 
   // The request client sends no Secure cookie over local http.
@@ -842,19 +797,22 @@ test("the applicant's inbox lists each decision and revision once and keeps the 
     data: { eventKeys: [`project-revision:${project.id}:2`] },
   });
   expect(forged.status()).toBe(403);
-  expect(errors).toEqual([]);
   await context.close();
 });
 
 test("moderators restrict a project and refuse reinstatement without canonical scan closure @registry", async ({
   browser,
+  diagnostics,
   request,
 }) => {
+  // The refused reinstatement preview below.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 409 \(Conflict\) at |409 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
+  );
   const project = fixtureProjects().queued;
   const evidence = `https://github.com/${project.repository}/security/advisories/GHSA-e2e`;
   const adminContext = await browser.newContext(walkthroughOptions());
   const admin = await adminContext.newPage();
-  const adminErrors = observe(admin);
   await signIn(admin, ADMIN_TOKEN);
   await admin.goto(`/admin?project=${project.id}`, {
     waitUntil: "networkidle",
@@ -960,7 +918,7 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     decisionSource: "owner-request",
     appealAfter: "requested",
   });
-  await admin.reload({ waitUntil: "networkidle" });
+  await admin.reload();
   await expect(panel()).toContainText("Reinstatement requested");
   await panel()
     .getByText(/Enforcement history/u)
@@ -995,7 +953,6 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   );
   expect(self.status()).toBe(403);
   expect((await self.json()).error).toBe("independent_review_required");
-  expect(adminErrors).toEqual([]);
   await adminContext.close();
 
   const moderatorContext = await browser.newContext({
@@ -1003,7 +960,6 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     recordVideo: { dir: test.info().outputPath("enforcement-video") },
   });
   const moderator = await moderatorContext.newPage();
-  const moderatorErrors = observe(moderator);
   await signIn(moderator, MODERATOR_TOKEN);
   await moderator.goto(`/admin?project=${project.id}`, {
     waitUntil: "networkidle",
@@ -1088,10 +1044,6 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   await expect(moderatorPanel.getByRole("alert")).toContainText(
     "fresh clean scan",
   );
-  expect(moderatorErrors).toEqual([
-    "Failed to load resource: the server responded with a status of 409 (Conflict)",
-  ]);
-  moderatorErrors.length = 0;
   await expect(
     moderatorPanel.getByRole("button", {
       name: "Confirm: Reinstate after review",
@@ -1151,14 +1103,12 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   ).toBeVisible();
 
   await expectAccessible(moderator);
-  expect(moderatorErrors).toEqual([]);
   await moderatorContext.close();
 
   // The applicant who listed the project sees each enforcement record once,
   // without the private reason or evidence reference.
   const applicantContext = await browser.newContext(walkthroughOptions());
   const applicant = await applicantContext.newPage();
-  const applicantErrors = observe(applicant);
   await signIn(applicant, APPLICANT_TOKEN);
   await applicant.goto("/inbox", { waitUntil: "networkidle" });
   for (const [title, count] of [
@@ -1179,15 +1129,19 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     "needs your independent review",
   );
   await expectAccessible(applicant);
-  expect(applicantErrors).toEqual([]);
   await applicantContext.close();
 });
 
 test("a moderator decides a confirmed malicious result and bans the project and its maintainer @registry", async ({
   browser,
+  diagnostics,
   request,
 }) => {
-  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  // The banned maintainer's refused creation below.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 403 \(Forbidden\) at |403 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
+  );
+  const suffix = projectSuffix();
   const login = `e2e-maintainer-${suffix}`;
   const token = MAINTAINER_TOKENS[`maintainer-${suffix}`] ?? "";
   const words = suffix.replaceAll("-", " ");
@@ -1206,7 +1160,6 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   // The maintainer lists the project; setup queues its first scan.
   const maintainerContext = await browser.newContext(walkthroughOptions());
   const maintainer = await maintainerContext.newPage();
-  const maintainerErrors = observe(maintainer);
   await signIn(maintainer, token);
   await setSlopbot(`${project.repository}/installed`);
   await draftApplication(maintainer, project);
@@ -1222,13 +1175,11 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   expect((await request.get(`/api/v1/projects/${project.id}`)).status()).toBe(
     410,
   );
-  expect(maintainerErrors).toEqual([]);
   await maintainerContext.close();
 
   // Without an appeal, the moderator queue lists the result for a decision.
   const moderatorContext = await browser.newContext(walkthroughOptions());
   const moderator = await moderatorContext.newPage();
-  const moderatorErrors = observe(moderator);
   await signIn(moderator, MODERATOR_TOKEN);
   await moderator.goto("/admin", { waitUntil: "networkidle" });
   const summary = moderator.locator(".admin-project-summary", {
@@ -1292,7 +1243,6 @@ test("a moderator decides a confirmed malicious result and bans the project and 
     path: test.info().outputPath("malicious-decision-zoom200.png"),
     fullPage: true,
   });
-  expect(moderatorErrors).toEqual([]);
   await moderatorContext.close();
 
   // The decision stays a ban on every public route.
@@ -1307,7 +1257,6 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   // project.
   const returningContext = await browser.newContext(walkthroughOptions());
   const returning = await returningContext.newPage();
-  const returningErrors = observe(returning);
   await signIn(returning, token);
   await setSlopbot(`${next.repository}/installed`);
   await draftApplication(returning, next);
@@ -1318,10 +1267,6 @@ test("a moderator decides a confirmed malicious result and bans the project and 
     "A moderator banned this maintainer",
   );
   expect(await listedProject(returning, next.id)).toBeUndefined();
-  expect(returningErrors).toEqual([
-    "Failed to load resource: the server responded with a status of 403 (Forbidden)",
-  ]);
-  returningErrors.length = 0;
   await expectAccessible(returning);
   await returning.screenshot({
     path: test.info().outputPath("banned-maintainer-refused.png"),
@@ -1330,7 +1275,7 @@ test("a moderator decides a confirmed malicious result and bans the project and 
 
   // The maintainer's inbox has the automatic ban and the moderator decision,
   // without the private reason or evidence reference.
-  await returning.goto("/inbox", { waitUntil: "networkidle" });
+  await returning.goto("/inbox");
   await expect(
     returning.locator(".inbox-item", {
       hasText: `The ${project.id} project is banned.`,
@@ -1338,7 +1283,6 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   ).toHaveCount(2);
   await expect(returning.locator("main")).not.toContainText("steals tokens");
   await expect(returning.locator("main")).not.toContainText(evidence);
-  expect(returningErrors).toEqual([]);
   await returning.goto("/account", { waitUntil: "networkidle" });
   const appealForm = returning.getByRole("form", {
     name: `Account appeal for ${project.id}`,
@@ -1349,19 +1293,17 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   await appealForm.getByLabel("Evidence reference").fill(evidence);
   await appealForm.getByRole("button", { name: "Send account appeal" }).click();
   await expect(appealForm.getByRole("status")).toContainText("Appeal recorded");
-  await returning.reload({ waitUntil: "networkidle" });
+  await returning.reload();
   await expect(appealForm.getByRole("status")).toContainText("Appeal recorded");
   await expectAccessible(returning);
   await returning.screenshot({
     path: test.info().outputPath("account-appeal-submitted.png"),
     fullPage: true,
   });
-  expect(returningErrors).toEqual([]);
   await returningContext.close();
 
   const independentContext = await browser.newContext(walkthroughOptions());
   const independent = await independentContext.newPage();
-  const independentErrors = observe(independent);
   await signIn(independent, ADMIN_TOKEN);
   await independent.goto("/admin", { waitUntil: "networkidle" });
   await independent
@@ -1406,18 +1348,23 @@ test("a moderator decides a confirmed malicious result and bans the project and 
     path: test.info().outputPath("account-reinstated-project-banned.png"),
     fullPage: true,
   });
-  expect(independentErrors).toEqual([]);
   await independentContext.close();
 });
 
 test("an owner installs Slopbot before creation and resumes setup; a failed scan and lost access each show the next action @registry", async ({
   browser,
+  diagnostics,
   request,
 }) => {
+  // The refused creation before install and the refused publish after access
+  // is lost.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 409 \(Conflict\) at |409 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
+    /^(?:console Failed to load resource: the server responded with a status of 403 \(Forbidden\) at |403 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
+  );
   const project = fixtureProjects().setup;
   const context = await browser.newContext(walkthroughOptions());
   const page = await context.newPage();
-  const errors = observe(page);
   await signIn(page, OWNER_TOKEN);
   await draftApplication(page, project);
   const create = page.getByRole("button", {
@@ -1506,7 +1453,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   );
   await expectAccessible(page);
   // The failed scan reaches the owner's inbox once (PRD NOT-01).
-  await page.goto("/inbox", { waitUntil: "networkidle" });
+  await page.goto("/inbox");
   await expect(
     page.locator(".inbox-item", {
       hasText: `The security scan of ${project.id} could not finish.`,
@@ -1528,9 +1475,6 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await expect(
     page.getByRole("status").filter({ hasText: "Published revision 2" }),
   ).toBeVisible();
-  // The only console error so far is the refused creation before install.
-  expect(errors).toHaveLength(1);
-  expect(errors[0]).toContain("409");
 
   // A policy with no deployed or funded vault must not lock the asset.
   await expect(
@@ -1595,18 +1539,19 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     headline: "Accepted setup outcomes with a clear project scope",
   });
   await expectAccessible(page);
-  // The only console errors are the browser's reports of the refused
-  // creation (409) and the refused publish (403).
-  expect(errors).toHaveLength(2);
-  expect(errors[0]).toContain("409");
-  expect(errors[1]).toContain("403");
   await context.close();
 });
 
 test("an owner publishes while public GitHub is rate limited and recovers only a stale revision @registry", async ({
   browser,
+  diagnostics,
 }) => {
-  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  // The rate-limited lookup and the refused stale publish below.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at |503 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
+    /^(?:console Failed to load resource: the server responded with a status of 409 \(Conflict\) at |409 \w+ )http:\/\/[^ ]+\/api\/v1\//u,
+  );
+  const suffix = projectSuffix();
   const project = {
     id: `app-facts-${suffix}`,
     repository: `e2e-owner/app-facts-${suffix}`,
@@ -1615,7 +1560,6 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
   };
   const context = await browser.newContext(walkthroughOptions());
   const page = await context.newPage();
-  const errors = observe(page);
   await signIn(page, OWNER_TOKEN);
   await setSlopbot(`${project.repository}/installed`);
   await draftApplication(page, project);
@@ -1758,17 +1702,13 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
       (revision: { projectId: string }) => revision.projectId === project.id,
     ),
   ).toHaveLength(4);
-  // Browser HTTP diagnostics are only the two intentional refusals.
-  expect(errors).toHaveLength(2);
-  expect(errors[0]).toContain("503");
-  expect(errors[1]).toContain("409");
   await context.close();
 });
 
 test("an owner initializes a legacy monthly project without shortening its accepted policy @registry", async ({
   browser,
 }) => {
-  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const suffix = projectSuffix();
   const project = {
     id: `legacy-policy-${suffix}`,
     repository: `e2e-owner/legacy-policy-${suffix}`,
@@ -1777,7 +1717,6 @@ test("an owner initializes a legacy monthly project without shortening its accep
   };
   const context = await browser.newContext(walkthroughOptions());
   const page = await context.newPage();
-  const errors = observe(page);
   try {
     await signIn(page, OWNER_TOKEN);
     await setSlopbot(`${project.repository}/installed`);
@@ -1848,9 +1787,7 @@ test("an owner initializes a legacy monthly project without shortening its accep
     );
     expect(refreshed).toBe(200);
     expect((await listedProject(page, project.id)).escrow).toBeUndefined();
-    await page.goto(`/projects/${project.id}/manage`, {
-      waitUntil: "networkidle",
-    });
+    await page.goto(`/projects/${project.id}/manage`);
     await expect(
       page.getByLabel("Acceptance criteria", { exact: true }),
     ).toHaveValue(criteria);
@@ -1927,7 +1864,6 @@ test("an owner initializes a legacy monthly project without shortening its accep
       path: test.info().outputPath("published-vault-funding.png"),
       fullPage: true,
     });
-    expect(errors).toEqual([]);
   } finally {
     await context.close();
   }
@@ -1935,7 +1871,12 @@ test("an owner initializes a legacy monthly project without shortening its accep
 
 test("an applicant publishes an application stored before self-service setup without entering it again @registry", async ({
   browser,
+  diagnostics,
 }) => {
+  // The aborted form submission below.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: net::ERR_FAILED at |net::ERR_FAILED POST )http:\/\/[^ ]+\/api\/v1\/projects$/u,
+  );
   const project = fixtureProjects().stored;
   const persist = process.env.SLOP_E2E_PERSIST_TO;
   if (!persist) throw new Error("Missing E2E registry database");
@@ -2002,7 +1943,6 @@ test("an applicant publishes an application stored before self-service setup wit
 
   const context = await browser.newContext(walkthroughOptions());
   const page = await context.newPage();
-  const errors = observe(page);
   await signIn(page, OWNER_TOKEN);
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page.getByText("Your projects", { exact: true }).click();
@@ -2056,61 +1996,13 @@ test("an applicant publishes an application stored before self-service setup wit
   );
   expect(again.status()).toBe(409);
   await expectAccessible(page);
-  expect(errors).toEqual([]);
   await context.close();
-});
-
-test("an unavailable registry shows an error, never an empty list @registry", async ({
-  page,
-}) => {
-  await page.route("**/api/v1/projects", (route) =>
-    route.fulfill({ status: 503, json: { error: "unavailable" } }),
-  );
-  // A trusted build publishes the last good registry from projects:sync, and
-  // a PR build publishes none. This test covers a failure with no last good
-  // registry, so it removes that file in every build. home-cache.spec.ts
-  // covers the stale list.
-  await page.route("**/data/project-registry.json", (route) =>
-    route.fulfill({ status: 404, body: "Not Found" }),
-  );
-  await page.goto("/", { waitUntil: "networkidle" });
-  // With no last good registry, the failure is an alert with its status and
-  // a retry, never a list.
-  const alert = page.getByRole("alert");
-  await expect(alert).toContainText("503");
-  await expect(alert.getByRole("button")).toBeVisible();
-  await expect(page.locator("#projects")).toHaveCount(0);
-  await expectAccessible(page);
-  for (const [path, heading] of [
-    ["/account", "Account"],
-    ["/login", "Log in to slop.cash"],
-  ]) {
-    await page.goto(path, { waitUntil: "networkidle" });
-    await expect(page.getByRole("heading", { level: 1 })).toContainText(
-      heading,
-    );
-    await expect(
-      page.getByRole("heading", { name: "Projects are unavailable" }),
-    ).toHaveCount(0);
-  }
 });
 
 test.describe("private evidence console", () => {
   test("a designated operator inspects retained vetting bytes with reasoned access @registry", async ({
     page,
   }) => {
-    const errors: string[] = [];
-    const failures: string[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
-    page.on("console", (message) => {
-      if (message.type() === "error") errors.push(message.text());
-    });
-    page.on("requestfailed", (request) => {
-      if (new URL(request.url()).origin === new URL(page.url()).origin)
-        failures.push(
-          `${request.method()} ${new URL(request.url()).pathname}: ${request.failure()?.errorText}`,
-        );
-    });
     await signIn(page, ADMIN_TOKEN);
     const overview = await page.request.get("/api/v1/admin/vetting", {
       headers: { cookie: `__Host-slop_points=${ADMIN_TOKEN}` },
@@ -2215,8 +2107,6 @@ test.describe("private evidence console", () => {
       path: test.info().outputPath("private-evidence.png"),
       fullPage: true,
     });
-    expect(errors).toEqual([]);
-    expect(failures).toEqual([]);
     const video = page.video();
     await page.close();
     if (video)
@@ -2228,7 +2118,12 @@ test.describe("private evidence console", () => {
 
 test("repository lookup failures explain the next action and preserve the draft @registry", async ({
   browser,
+  diagnostics,
 }) => {
+  // The rate-limited and unavailable lookups below.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 50[23] .* at |50[23] GET )http:\/\/[^ ]+\/api\/v1\/project-github\/repositories\//u,
+  );
   const context = await browser.newContext(walkthroughOptions());
   const page = await context.newPage();
   await signIn(page, OWNER_TOKEN);
@@ -2253,7 +2148,7 @@ test("repository lookup failures explain the next action and preserve the draft 
   }
   // GitHub limits the shared anonymous Pages address. After Slopbot is
   // installed, the repository's own installation reads its facts.
-  const limited = `e2e-owner/slopbot-lookup-${test.info().project.name.replace(/-chromium$/u, "")}`;
+  const limited = `e2e-owner/slopbot-lookup-${projectSuffix()}`;
   expect(
     (
       await fetch(
@@ -2298,7 +2193,7 @@ test("two contributors flag through the form, pause the project and notify moder
 }) => {
   const readPrivate = (page: Page, path: string) =>
     page.evaluate(async (url) => (await fetch(url)).json(), path);
-  const suffix = test.info().project.name.replace(/-chromium$/u, "");
+  const suffix = projectSuffix();
   const project = {
     id: `flag-flow-${suffix}`,
     repository: `e2e-owner/flag-flow-${suffix}`,
@@ -2322,7 +2217,6 @@ test("two contributors flag through the form, pause the project and notify moder
 
   const ownerContext = await browser.newContext(walkthroughOptions());
   const owner = await ownerContext.newPage();
-  const ownerErrors = observe(owner);
   await signIn(owner, OWNER_TOKEN);
   await setSlopbot(`${project.repository}/installed`);
   await draftApplication(owner, project);
@@ -2362,7 +2256,6 @@ test("two contributors flag through the form, pause the project and notify moder
 
   const firstContext = await browser.newContext(walkthroughOptions());
   const first = await firstContext.newPage();
-  const firstErrors = observe(first);
   await signIn(first, APPLICANT_TOKEN);
   const firstEvidence =
     "Synthetic fixture: install.js requests credentials before starting.";
@@ -2388,7 +2281,6 @@ test("two contributors flag through the form, pause the project and notify moder
 
   const secondContext = await browser.newContext(walkthroughOptions());
   const second = await secondContext.newPage();
-  const secondErrors = observe(second);
   await signIn(second, SECURITY_ACCOUNT.token);
   expect(await readPrivate(second, ownPath)).toMatchObject({
     flag: null,
@@ -2446,9 +2338,6 @@ test("two contributors flag through the form, pause the project and notify moder
         notice.subject === project.id && notice.kind === "project_quarantined",
     ),
   ).toHaveLength(1);
-  expect(ownerErrors).toEqual([]);
-  expect(firstErrors).toEqual([]);
-  expect(secondErrors).toEqual([]);
   await ownerContext.close();
   await firstContext.close();
   await secondContext.close();

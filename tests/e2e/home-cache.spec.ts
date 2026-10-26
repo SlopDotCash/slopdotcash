@@ -2,22 +2,20 @@
  * First-visit discovery waits only for the project registry, which the site
  * reads from D1 at runtime; no other API or public data response may block it.
  */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+
 import { homeProjects } from "../../src/lib/home-projects";
+import { expect, expectAccessible, test } from "./fixtures";
 
 test.use({ video: "on" });
 
 test("renders bundled projects with data stalled and GitHub blocked", async ({
+  diagnostics,
   page,
 }) => {
+  // The blocked GitHub requests.
+  diagnostics.allow(/^console Failed to load resource: net::/u);
   const requests: string[] = [];
-  const errors: string[] = [];
   page.on("request", (request) => requests.push(request.url()));
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
   let release = () => {};
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -67,10 +65,7 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
         ),
       )
       .toBe(true);
-    const accessibility = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-      .analyze();
-    expect(accessibility.violations).toEqual([]);
+    await expectAccessible(page);
     // Project owner avatars are optional decoration: a blocked avatar falls
     // back to the bundled initial and never delays the project list.
     const avatar = /^https:\/\/avatars\.githubusercontent\.com\//u;
@@ -78,29 +73,62 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
       requests.filter((url) => !avatar.test(url) && /github/.test(url)),
     ).toEqual([]);
     await expect(page.locator("img.project-avatar")).toHaveCount(0);
-    expect(
-      errors.filter(
-        (error) => !error.startsWith("Failed to load resource: net::"),
-      ),
-    ).toEqual([]);
   } finally {
-    await test.info().attach("homepage-network-and-console", {
-      body: JSON.stringify({ requests, errors }, null, 2),
+    await test.info().attach("homepage-network", {
+      body: JSON.stringify({ requests }, null, 2),
       contentType: "application/json",
     });
     release();
   }
 });
 
-test("a failed registry read keeps the last good projects with a stale label", async ({
+test("an unavailable registry with no last good copy shows an error, never an empty list", async ({
+  diagnostics,
   page,
 }) => {
-  const errors: string[] = [];
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of (?:503|404) .*\/data\/(?:fixture-)?project-registry\.json$/u,
+    /^(?:503 GET http:\/\/[^ ]+\/data\/fixture-project-registry|404 GET http:\/\/[^ ]+\/data\/project-registry)\.json$/u,
+  );
+  // The fixture build reads its live registry from this file.
+  await page.route("**/data/fixture-project-registry.json", (route) =>
+    route.fulfill({ status: 503, json: { error: "unavailable" } }),
+  );
+  // A pull-request build publishes no last good registry.
+  await page.route("**/data/project-registry.json", (route) =>
+    route.fulfill({ status: 404, body: "Not Found" }),
+  );
+  await page.goto("/");
+  // With no last good registry, the failure is an alert with its status and
+  // a retry, never a list.
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("503");
+  await expect(alert.getByRole("button")).toBeVisible();
+  await expect(page.locator("#projects")).toHaveCount(0);
+  await expectAccessible(page);
+  for (const [path, heading] of [
+    ["/account", "Account"],
+    ["/login", "Log in to slop.cash"],
+  ]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(
+      heading,
+    );
+    await expect(
+      page.getByRole("heading", { name: "Projects are unavailable" }),
+    ).toHaveCount(0);
+  }
+});
+
+test("a failed registry read keeps the last good projects with a stale label", async ({
+  diagnostics,
+  page,
+}) => {
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of 503 .*\/data\/fixture-project-registry\.json$/u,
+    /^503 GET http:\/\/[^ ]+\/data\/fixture-project-registry\.json$/u,
+  );
   const published: number[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
   page.on("response", (response) => {
     if (new URL(response.url()).pathname === "/data/project-registry.json")
       published.push(response.status());
@@ -132,10 +160,7 @@ test("a failed registry read keeps the last good projects with a stale label", a
     path: test.info().outputPath("stale-registry-home.png"),
     fullPage: true,
   });
-  const home = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(home.violations).toEqual([]);
+  await expectAccessible(page);
   // The retry control is reachable by keyboard, and the label reflows at
   // 200% zoom (only where that keeps at least 320 CSS pixels).
   const retry = notice.getByRole("button", { name: "Try again" });
@@ -184,22 +209,16 @@ test("a failed registry read keeps the last good projects with a stale label", a
     "Account",
   );
   await expect(notice).toHaveCount(0);
-  expect(
-    errors.filter(
-      (error) =>
-        !error.startsWith("Failed to load resource: the server responded"),
-    ),
-  ).toEqual([]);
 });
 
 test("a failed snapshot refresh keeps the last good scores with a stale label", async ({
+  diagnostics,
   page,
 }) => {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of 503 .*\/data\/leaderboard\.json\?\S*$/u,
+    /^503 GET http:\/\/[^ ]+\/data\/leaderboard\.json\?\S*$/u,
+  );
   const project = homeProjects().find(
     (candidate) => candidate.listingTier === "featured",
   );
@@ -246,20 +265,11 @@ test("a failed snapshot refresh keeps the last good scores with a stale label", 
     path: test.info().outputPath("stale-snapshot-project.png"),
     fullPage: true,
   });
-  const accessibility = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(accessibility.violations).toEqual([]);
+  await expectAccessible(page);
 
   // A successful retry clears the stale label and keeps the scores.
   failSnapshot = false;
   await notice.getByRole("button", { name: "Retry" }).click();
   await expect(notice).toHaveCount(0);
   await expect(scoreRows).toHaveCount(rowCount);
-  expect(
-    errors.filter(
-      (error) =>
-        !error.startsWith("Failed to load resource: the server responded"),
-    ),
-  ).toEqual([]);
 });

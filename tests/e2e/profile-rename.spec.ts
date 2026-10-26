@@ -1,13 +1,13 @@
 /** Public-record fixtures exercise profile identity, not OAuth or settlement. */
 import { join } from "node:path";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { assertCycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { assertLeaderboardSnapshot } from "../../src/lib/leaderboard";
 import { assertProfiles } from "../../src/lib/profiles";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
+import { expect, expectAccessible, test } from "./fixtures";
 
 async function profileRecords(
   page: Page,
@@ -91,14 +91,7 @@ async function profileRecords(
 
 test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
   const { current } = await profileRecords(page);
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
-  await page.goto(`/contributors/${current.login}`, {
-    waitUntil: "networkidle",
-  });
+  await page.goto(`/contributors/${current.login}`);
   await expect(page.locator("main.profile-page")).toBeVisible();
   const history = page.locator(".profile-section", {
     has: page.getByRole("heading", { name: "Past cycles", exact: true }),
@@ -120,15 +113,8 @@ test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
   await expect(pastCycle).toBeVisible();
   await page.reload();
   await expect(pastCycle).toBeVisible();
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({ path: info.outputPath("renamed-profile.png") });
-  expect(errors).toEqual([]);
 });
 
 test("a different actor reusing an old login does not inherit its history", async ({
@@ -189,9 +175,7 @@ test("a directory-verified historical contributor keeps archived links", async (
   page,
 }) => {
   const { archived } = await profileRecords(page, { directoryOnly: true });
-  await page.goto(`/contributors/${archived.login}`, {
-    waitUntil: "networkidle",
-  });
+  await page.goto(`/contributors/${archived.login}`);
   await expect(
     page.getByRole("heading", { name: "Past cycles", exact: true }),
   ).toBeVisible();
@@ -294,8 +278,12 @@ test("a stale activity login cannot override a directory rename", async ({
 });
 
 test("an unavailable identity directory hides historical records until retry succeeds", async ({
+  diagnostics,
   page,
 }) => {
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at |503 GET )http:\/\/[^ ]+\/data\/profiles\.json$/u,
+  );
   const { profiles, archived, walletRequests } = await profileRecords(page, {
     directoryOnly: true,
   });
@@ -343,21 +331,16 @@ async function serveProfileSite(page: Page) {
 }
 
 test("profile payment totals stay unavailable until direct transfers recover", async ({
+  diagnostics,
   page,
 }, info) => {
   const site = await serveProfileSite(page);
   const { current } = await profileRecords(page);
-  const errors: string[] = [];
-  const consoleErrors: { message: string; url: string }[] = [];
+  // The one refused payment read, asserted below.
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of 503 .* at https:\/\/[^ ]+\/api\/v1\/payments\/actors\/1\/direct-transfers$/u,
+  );
   const failures: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error")
-      consoleErrors.push({
-        message: message.text(),
-        url: message.location().url,
-      });
-  });
   page.on("response", (response) => {
     if (new URL(response.url()).origin === site && response.status() >= 400)
       failures.push(`${response.status()} ${new URL(response.url()).pathname}`);
@@ -445,13 +428,7 @@ test("profile payment totals stay unavailable until direct transfers recover", a
       payouts.getByRole("link").filter({ hasText: "Direct transfer" }),
     ).toContainText("$2");
     await expect(retry).toHaveCount(0);
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-          .analyze()
-      ).violations,
-    ).toEqual([]);
+    await expectAccessible(page);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth + 1,
@@ -467,15 +444,7 @@ test("profile payment totals stay unavailable until direct transfers recover", a
     await expect(payoutTotal).toHaveText("$1 USDC");
     await expect(settlement).toContainText("$1");
     expect(requests).toBe(3);
-    expect(errors).toEqual([]);
     expect(failures).toEqual([`503 ${paymentPath}`]);
-    expect(
-      consoleErrors.every(
-        (error) =>
-          error.url === `${site}${paymentPath}` &&
-          error.message.includes("503"),
-      ),
-    ).toBe(true);
   } finally {
     releaseRetry();
   }

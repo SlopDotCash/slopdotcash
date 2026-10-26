@@ -1,10 +1,15 @@
 /** Browser-only synthetic identity responses never register a real wallet. */
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, type TestInfo, test } from "@playwright/test";
+import type { Page, TestInfo } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("legacy wallet links open Account Wallets on direct navigation and reload", {
   tag: ["@pages"],
-}, async ({ page }) => {
+}, async ({ diagnostics, page }) => {
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of 401 .* at http:\/\/[^ ]+\/api\/v1\/payments\/me$/u,
+    /^401 GET http:\/\/[^ ]+\/api\/v1\/payments\/me$/u,
+  );
   await page.route("**/api/v1/payments/me", (route) =>
     route.fulfill({ status: 401, json: { error: "not_signed_in" } }),
   );
@@ -25,18 +30,9 @@ test("legacy wallet links open Account Wallets on direct navigation and reload",
   }
 });
 
+/** Records every same-origin response for the attached network evidence. */
 function observe(page: Page) {
-  const errors: string[] = [];
   const network: { path: string; status: number }[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
-  page.on("requestfailed", (request) => {
-    errors.push(
-      `${new URL(request.url()).pathname}: ${request.failure()?.errorText}`,
-    );
-  });
   page.on("response", (response) => {
     if (new URL(response.url()).origin === new URL(page.url()).origin)
       network.push({
@@ -44,7 +40,7 @@ function observe(page: Page) {
         status: response.status(),
       });
   });
-  return { errors, network };
+  return { network };
 }
 
 async function audit(page: Page, info: TestInfo, label: string) {
@@ -169,10 +165,8 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
       await audit(page, info, "funding-200-percent-text");
     }
   }
-  await info.attach("console-network.json", {
+  await info.attach("network.json", {
     body: JSON.stringify(evidence, null, 2),
     contentType: "application/json",
   });
-  expect(evidence.errors).toEqual([]);
-  expect(evidence.network.filter((r) => r.status >= 400)).toEqual([]);
 });
