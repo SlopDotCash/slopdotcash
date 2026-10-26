@@ -241,6 +241,7 @@ export function ownerVaultSetupService(deps: {
           "vault_setup_unavailable",
           "The monthly amount exceeds the Solana vault limit.",
         );
+      let creationError: SolanaWalletActionError | undefined;
       for (const template of await programs(project, input.payoutPolicy)) {
         if (template.network !== input.network || !network.genesisHash)
           continue;
@@ -281,11 +282,15 @@ export function ownerVaultSetupService(deps: {
             prepared,
           };
         } catch (error) {
-          if (error instanceof SolanaWalletActionError)
-            fail(422, "vault_creation_invalid", error.message);
+          // A finalized creation can predate the current infrastructure pin.
+          // Try only retained reviewed configurations, never trust account fields
+          // as a new review. Preserve the failure if none matches this vault.
+          if (error instanceof SolanaWalletActionError) creationError ??= error;
           // Only a current verified program and Config may anchor new owner creation.
         }
       }
+      if (creationError)
+        fail(422, "vault_creation_invalid", creationError.message);
       fail(
         503,
         "vault_setup_unavailable",

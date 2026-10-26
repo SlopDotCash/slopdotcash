@@ -1220,6 +1220,96 @@ async function ownerSetupWorkflow(
     await expect(setup.getByRole("alert")).toContainText("does not match");
     wrongSignature = false;
     await connection.confirmTransaction(sends[0], "finalized");
+    // A new infrastructure pin must not strand an already finalized creation
+    // under an earlier reviewed domain. The account alone is not a review.
+    const newDomain = hash("slop-browser-new-domain").toString("hex");
+    await page.request.post(`${origin}/__fixture`, {
+      data: { programReview: { networkDomain: newDomain } },
+    });
+    const registration = {
+      step: "register",
+      expectedRevision: 1,
+      network: "solana-devnet",
+      claimId: claim.claimId,
+      automatic,
+      payoutPolicy: bounty ? "security-bounty" : "ordinary",
+      transactionId: sends[0],
+    };
+    const unreviewed = await page.request.post(reviewUrl, {
+      headers,
+      data: registration,
+    });
+    expect(unreviewed.status()).toBe(422);
+    expect((await unreviewed.json()).error).toBe("vault_creation_invalid");
+    const other = PROJECTS.find(
+      (p) => p.id !== project.id && p.reward.kind === "monthly-pool",
+    );
+    if (!other) throw new Error("Second registry fixture missing");
+    const retainedCreation = {
+      ...reviewed.review.creation,
+      owner: owner.publicKey.toBase58(),
+      projectDigest: registryProjectDigest(other.id),
+      payoutPolicy: "ordinary" as const,
+      monthlyCap: project.reward.monthlyCapMinor,
+      automaticMonthly: false,
+    };
+    const retainedPlan = buildInitializeVaultInstructions(retainedCreation);
+    const retainedBlock = await connection.getLatestBlockhash("finalized");
+    const retainedTransaction = web3.Transaction.from(
+      Buffer.concat([
+        Buffer.from([1]),
+        Buffer.alloc(64),
+        message(
+          retainedCreation.owner,
+          retainedBlock.blockhash,
+          retainedPlan.instructions,
+        ),
+      ]),
+    );
+    retainedTransaction.sign(owner);
+    const retainedSignature = await connection.sendRawTransaction(
+      retainedTransaction.serialize(),
+    );
+    await connection.confirmTransaction(retainedSignature, "finalized");
+    const retainedDeployment = {
+      ...deployment,
+      projectPda: retainedPlan.projectPda,
+      vault: retainedPlan.vault,
+      deploymentTransaction: retainedSignature,
+    };
+    await verifySolanaDeployment(
+      {
+        ...config,
+        projectPda: retainedPlan.projectPda,
+        vault: retainedPlan.vault,
+        payoutPolicy: "ordinary",
+      },
+      retainedCreation.projectDigest,
+    );
+    const retainedProject = {
+      ...other,
+      reward: project.reward,
+      rewardAsset: project.rewardAsset,
+      escrow: { ...project.escrow, deployments: [retainedDeployment] },
+    };
+    await page.request.post(`${origin}/__fixture`, {
+      data: { retainedProject },
+    });
+    await info.attach("retained-domain-recovery.json", {
+      body: JSON.stringify(
+        {
+          previousReviewedDomain: deployment.networkDomain,
+          newReviewedDomain: newDomain,
+          retainedProject: other.id,
+          retainedSignature,
+          refusedWithoutRetainedReview: unreviewed.status(),
+          targetSignature: sends[0],
+        },
+        null,
+        2,
+      ),
+      contentType: "application/json",
+    });
     await setup.getByLabel("Creation transaction signature").fill(sends[0]);
     await setup
       .getByRole("button", { name: "Check vault registration" })
@@ -1245,6 +1335,7 @@ async function ownerSetupWorkflow(
       : state.project.manifest.escrow.deployments[0];
     expect(created.owner).toBe(donor.publicKey.toBase58());
     expect(created.deploymentTransaction).toBe(sends[0]);
+    expect(created.networkDomain).toBe(deployment.networkDomain);
     const program = new anchor.Program(
       JSON.parse(
         readFileSync(`${root}/contracts/solana/idl/slop_escrow.json`, "utf8"),
