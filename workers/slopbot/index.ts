@@ -1,6 +1,7 @@
 // Slopbot GitHub App service (protocol/slopbot-v2.md).
 // fetch: verify and deduplicate webhooks, then enqueue identifiers only.
 // queue: re-read GitHub state and run the review pipeline.
+import { readLimitedBody } from "../../backend/trace/validation";
 import { dispatchDueAppeals } from "./appeals";
 import { resumeBudgetBlocks } from "./budget-blocks";
 import { APPEAL_COMMANDS, type Job } from "./contracts";
@@ -33,7 +34,6 @@ import {
 import { valueHistory } from "./value-journal";
 import { recordValueRequest } from "./value-requests";
 import { workUnitHistory } from "./value-work-unit-journal";
-import { readWebhookBody } from "./webhook-body";
 
 type Queue = { send(body: Job): Promise<void> };
 type Env = Omit<ValueConsumerEnv, "SLOPBOT_DB"> & {
@@ -325,8 +325,16 @@ export default {
     if (request.method !== "POST" || url.pathname !== "/github/webhook") {
       return new Response("not found", { status: 404 });
     }
-    const body = await readWebhookBody(request, MAX_WEBHOOK_BYTES);
-    if (body === null) {
+    // The HMAC covers the exact received bytes. A missing or false
+    // Content-Length never makes the read unbounded.
+    let body: Uint8Array<ArrayBuffer>;
+    try {
+      // readLimitedBody returns a fresh, unshared buffer.
+      body = (await readLimitedBody(
+        request,
+        MAX_WEBHOOK_BYTES,
+      )) as Uint8Array<ArrayBuffer>;
+    } catch {
       return new Response("payload too large", { status: 413 });
     }
     if (
