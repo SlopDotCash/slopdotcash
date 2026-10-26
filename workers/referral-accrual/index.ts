@@ -1,7 +1,7 @@
 /**
  * slop-referral-accrual: a cron Worker that files the project-referral
  * accruals of each closed UTC month (PRD section 11, "Referral program",
- * proposed). It reads finalized payouts and each project's immutable referrer,
+ * approved). It reads finalized payouts and each project's immutable referrer,
  * appends accrual rows, and publishes one public accrual file per epoch. It
  * has no HTTP route. `off` and `dry_run` load no key and never sign. `live`
  * adds the poster: after filing, it reconciles the distributor against the

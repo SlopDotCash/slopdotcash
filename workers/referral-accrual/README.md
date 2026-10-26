@@ -190,7 +190,14 @@ optional `RPC_URL_REFERRAL`.
 
 ## Deployment
 
-There is no release step for this Worker in `deploy.yml`. Nothing deploys it
-until posting activation is approved and a gated release is added in the shape of
-the fee converter's (`SLOP_FEE_CONVERTER_RELEASE`). Its tables come from the
-shared `slop-private` migrations (`0086_referral_accruals.sql`).
+The normal checked `main` release installs this private Worker through
+`scripts/release-referral.ts`, after the shared `slop-private` migrations.
+No manual Worker shell or separate release flag is needed. The helper verifies
+the exact source tag and one active version after deployment. In live mode it
+checks secret names without reading the poster key into CI.
+
+The owner requested full integration and activation on 25 October 2026, then
+confirmed that the program token is not deployed yet. Keep the reviewed mode
+Off until the actual token, funded distributor and required operating controls
+are verified. The November start and program amounts remain unchanged. A
+deployed Off Worker does not file accruals, sign roots or spend gas.
