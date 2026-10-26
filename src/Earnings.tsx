@@ -21,6 +21,7 @@ import {
 } from "./lib/payments/contracts";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { PayoutConsent } from "./PayoutConsent";
 import { formatCycleMonth, formatDate } from "./Presentation";
 
 function chainDefaultNetwork(chain: EscrowChain): string {
@@ -95,6 +96,7 @@ function account(value: unknown): PaymentsAccount {
         (p.transactionId !== null && typeof p.transactionId !== "string") ||
         (p.state === "paid" && !p.transactionId) ||
         typeof p.id !== "string" ||
+        typeof p.vault !== "string" ||
         !asset(p) ||
         !isBaseUnits(p.grossBase) ||
         !isBaseUnits(p.netBase) ||
@@ -737,12 +739,21 @@ export function EarningsPage({
                                 {
                                   paid: "Paid, verified on chain",
                                   needs_wallet: `Awaiting wallet: add or confirm your ${CHAIN_NAMES[payment.chain]} wallet`,
-                                  ready: "Ready, payment queued",
+                                  ready: "Payment queued",
                                   submitted:
                                     "Submitted, waiting for chain verification",
                                   held: "Held, funds remain reserved",
                                 }[payment.deliveryState]
                               }
+                              <PayoutConsent
+                                key={
+                                  data.wallets.find(
+                                    (wallet) => wallet.chain === payment.chain,
+                                  )?.claimId ?? "no-wallet"
+                                }
+                                payment={payment}
+                                account={data}
+                              />
                               {transactionUrl(
                                 payment.network,
                                 payment.transactionId,

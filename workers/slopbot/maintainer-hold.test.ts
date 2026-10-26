@@ -29,6 +29,7 @@ async function uncertainReview(
     writes: string[];
     labels: { name: string }[];
     sql: (q: string) => unknown;
+    advanceTarget: (changedSource: boolean) => void;
   }) => Promise<void>,
   confidence = 0.6,
 ) {
@@ -65,6 +66,8 @@ async function uncertainReview(
   let pullDraft = false;
   const writes: string[] = [];
   const labels: { name: string }[] = [];
+  let targetSha = "c".repeat(40);
+  let patch = "-const a = 1;\n+const b = 1;";
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -119,27 +122,37 @@ async function uncertainReview(
           draft: pullDraft,
           merged: false,
           head: { sha: "b".repeat(40) },
-          base: { sha: "c".repeat(40) },
+          base: {
+            sha: "c".repeat(40),
+            ref: "development",
+            repo: { id: repositoryId },
+          },
           additions: 1,
           deletions: 1,
           changed_files: 1,
         });
       if (path.endsWith("/branches/main"))
         return Response.json({ commit: { sha: "c".repeat(40) } });
-      if (path.endsWith("/pulls/5/files"))
-        return Response.json(
-          url.searchParams.get("page") === "1" || !url.searchParams.has("page")
-            ? [
-                {
-                  filename: "a.ts",
-                  status: "modified",
-                  additions: 1,
-                  deletions: 1,
-                  patch: "-const a = 1;\n+const b = 1;",
-                },
-              ]
-            : [],
-        );
+      if (path.endsWith("/branches/development"))
+        return Response.json({ commit: { sha: targetSha } });
+      if (path.includes("/compare/"))
+        return Response.json({
+          base_commit: { sha: targetSha },
+          merge_base_commit: { sha: "c".repeat(40) },
+          files:
+            url.searchParams.get("page") === "1" ||
+            !url.searchParams.has("page")
+              ? [
+                  {
+                    filename: "a.ts",
+                    status: "modified",
+                    additions: 1,
+                    deletions: 1,
+                    patch,
+                  },
+                ]
+              : [],
+        });
       if (path.endsWith("/permission"))
         return Response.json({
           permission: path.includes("/maintainer/") ? "write" : "read",
@@ -219,6 +232,10 @@ async function uncertainReview(
       labels,
       setDraft: (v: boolean) => {
         pullDraft = v;
+      },
+      advanceTarget: (changedSource) => {
+        targetSha = "d".repeat(40);
+        if (changedSource) patch = "+different current target comparison";
       },
       review: () => reviewItem(env as unknown as ReviewEnv, job),
       tick: async () => {
@@ -347,3 +364,26 @@ test("a pull request converted to draft during the window is not labeled", async
     ]);
   });
 });
+test.each([true, false])(
+  "a due hold rechecks substantive source after a target advance (changed=%s)",
+  async (changed) => {
+    await uncertainReview(false, async (run) => {
+      const start = Date.now();
+      await run.review();
+      const before = run.sql("SELECT due_at FROM slopbot_maintainer_holds");
+      run.advanceTarget(changed);
+      setSystemTime(new Date(start + 8 * day));
+      await run.deliver(await run.tick());
+      expect(run.labels).toEqual(
+        changed ? [] : [{ name: "slopbot:uncertain" }],
+      );
+      expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+        { outcome: changed ? "superseded" : "labeled" },
+      ]);
+      expect(run.sql("SELECT due_at FROM slopbot_maintainer_holds")).toEqual(
+        before,
+      );
+      expect(run.writes.some((w) => w.startsWith("PATCH "))).toBe(false);
+    });
+  },
+);

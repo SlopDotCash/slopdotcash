@@ -14,11 +14,15 @@ import { applicationManifest } from "../../tests/project-application-manifest.ts
 const directory = await mkdtemp(join(tmpdir(), "slop-reporting-readiness-"));
 const site = "https://slop.cash";
 const repository = "example/reporting-fixture";
-const token = "ghs_synthetic_reporting_fixture_only";
+const legacyToken = "ghs_synthetic_reporting_fixture_only";
+// GitHub completed its stateless installation-token rollout in October 2026.
+// These are synthetic opaque bytes, not a GitHub-issued or client-validated JWT.
+const statelessToken = `ghs_1_${"a".repeat(180)}.${"b".repeat(180)}.${"c".repeat(180)}`;
 const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const key = keys.privateKey.export({ format: "pem", type: "pkcs8" });
 let runtime;
 const state = {
+  token: legacyToken,
   enabled: true,
   installed: true,
   status: 200,
@@ -107,9 +111,9 @@ export default { async fetch(request, env) {
         repositories: ["reporting-fixture"],
         permissions: { repository_advisories: "read" },
       });
-      return Response.json({ token }, { status: 201 });
+      return Response.json({ token: state.token }, { status: 201 });
     }
-    assert.equal(auth, token);
+    assert.equal(auth, state.token);
     if (url.pathname === `/repos/${repository}`)
       return Response.json({
         id: state.id,
@@ -299,6 +303,53 @@ export default { async fetch(request, env) {
   const original = await row();
   checks.push("native App-authenticated refresh and provider-free public read");
 
+  for (const token of [statelessToken, legacyToken]) {
+    state.token = token;
+    assert.deepEqual(await refresh(), { checked: 1, failed: 0 });
+    assert.equal((await readiness()).state, "ready");
+    assert.equal((await readiness()).stale, false);
+  }
+  checks.push("legacy and stateless tokens reach verified native D1 readiness");
+
+  const lastGood = await row();
+  for (const token of [
+    undefined,
+    null,
+    42,
+    "",
+    " leading-space",
+    "embedded space",
+    "tab\tvalue",
+    "value\r\nx-injected: yes",
+    "non-ascii-\u0080",
+    "x".repeat(64 * 1024),
+  ]) {
+    state.token = token;
+    const firstStage = stages.length;
+    assert.deepEqual(await refresh(), { checked: 1, failed: 1 });
+    assert.equal(
+      stages
+        .slice(firstStage)
+        .some(
+          (stage) =>
+            stage.path === `/repos/${repository}` ||
+            stage.path.endsWith("/private-vulnerability-reporting"),
+        ),
+      false,
+      "Invalid token must stop before any authenticated repository request",
+    );
+    const retained = await row();
+    assert.equal(retained.verified_at, lastGood.verified_at);
+    assert.equal(retained.enabled, lastGood.enabled);
+    assert.equal((await readiness()).stale, true);
+  }
+  checks.push(
+    "malformed, header-unsafe and oversized token responses preserve stale last-good state",
+  );
+  state.token = statelessToken;
+  assert.deepEqual(await refresh(), { checked: 1, failed: 0 });
+  const latestGood = await readiness();
+
   state.status = 403;
   await expired();
   await assert.rejects(
@@ -313,7 +364,7 @@ export default { async fetch(request, env) {
   const failed = await readiness();
   assert.equal(failed.state, "ready");
   assert.equal(failed.stale, true);
-  assert.equal(failed.checkedAt, good.checkedAt);
+  assert.equal(failed.checkedAt, latestGood.checkedAt);
   assert.equal(failed.automatic, "unavailable");
   assert.equal((await row()).repository_id, original.repository_id);
   checks.push("failed read preserves last-good bytes and stale distinction");

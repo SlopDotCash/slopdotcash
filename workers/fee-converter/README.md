@@ -9,8 +9,12 @@ a permissionless claim sends them to the configured fee recipient. EVM uses
 of the vault mint that the fee recipient owns.
 This Worker claims those fees on both families (issue #905) and sells the
 tokens soon after they arrive, inside the same wallet. USDC is the only
-target: a network without a verified Circle USDC address converts nothing, and
-no other stablecoin or token named "USDC" stands in for it.
+conversion target on Base, Ethereum and Solana; an unverified asset never
+stands in for it. The owner decision of 25 October 2026 exempts Robinhood
+from conversion: keep received assets unchanged in the fee wallet and show
+"not converted". USDG stays USDG. Do not convert project-token fees to USDG
+or bridge them. The Worker and private admin report return `not_converted`.
+This does not activate claims, conversion or replacement transactions.
 
 It is a narrow exception to "Slop holds no keys" (PRD TOK-07, PAY-04,
 MVP-07c). It holds one hot key per
@@ -69,9 +73,12 @@ For each enabled network:
    row for `acquireLock` to reclaim, so a late run never disturbs a successor.
 2. Reconcile every unresolved live send (`submitted`, `unknown`) before
    anything new. See [Idempotency](#idempotency).
-3. A network without a verified USDC target stops here with status
-   `route_pending` and logs `fee_conversion_route_pending`. It quotes and
-   signs nothing and loads no key; its fees stay in the wallet.
+3. A network configured without a conversion target stops here with status
+   `not_converted` and logs `fee_conversion_not_converted`. Robinhood retains
+   each received asset unchanged: USDG stays USDG and project tokens stay in
+   their original token. It requests no quote, starts no new claim or send,
+   and loads no key. The private admin report shows the same state. Existing
+   uncertain sends still reconcile in step 2; their history is not rewritten.
 4. Recovery scans only: claim vault fees. For each ordinary
    `escrow.deployments[].vault` and bounty
    `securityBounty.settlement.deployments[].vault` on the network's escrow
@@ -170,7 +177,7 @@ rejects so the cron failure remains visible; it does not publish a successful
 | --- | --- | --- | --- |
 | Base (8453) | Circle USDC `0x8335…2913` | KyberSwap Aggregator API | No API key, one integration for all three EVM chains, the router is the same audited `MetaAggregationRouterV2` (`0x6131…37b5`) on each. Its calldata carries the receiver, the input amount and the minimum output, so the Worker can check them before signing. |
 | Ethereum (1) | Circle USDC `0xa0b8…eb48` | KyberSwap Aggregator API | Same router address and code on chain. AGENTS.md requires verifying this address from Circle's primary source before activation. |
-| Robinhood Chain (4663) | **Pending.** No verified Circle USDC. | KyberSwap Aggregator API once a target exists | The PRD supersedes the earlier USDG target. On 18 October 2026 there was no Circle USDC on 4663, and the tokens named "USDC" in KyberSwap's list were unrelated clones flagged as honeypots. The network runs as `route_pending` until a reviewed change sets `usdc` in `config.ts` to an address verified from Circle's primary source and a route to it is proven. |
+| Robinhood Chain (4663) | No conversion target | None | The owner chose unconverted retention on 25 October 2026. Keep each received asset unchanged; USDG stays USDG. No swap or bridge. The Worker and private admin report return `not_converted`. A USDC route is no longer a release requirement for this network. |
 | Solana | Circle USDC `EPjF…Dt1v` | Jupiter Swap API v1 | Uses `api.jup.ag` with or without `JUPITER_API_KEY`. An explicit `JUPITER_API_URL` overrides this default. |
 
 Jupiter's [migration guide](https://developers.jup.ag/docs/portal/migration)
@@ -259,7 +266,117 @@ decides each unresolved row:
   prove it was never included. Before expiry, recovery checks the deployment
   and rebroadcasts the recorded bytes.
 
-The Worker never signs a second transaction for a send that could still land.
+The Worker never signs a transaction with a new nonce for a send that could
+still land. The only other transaction it signs for that send is a same-nonce
+fee replacement, described next.
+
+### Same-nonce fee replacement (EVM)
+
+Owner decision of 25 October 2026. EVM fee claims, finite approvals and conversion swaps are
+signed with a fixed maximum fee. If gas stays high, the send can stay unmined.
+The Worker then replaces it with a transaction that has the same nonce and a
+higher fee, in bounded steps.
+
+A replacement is signed only when all of these are true:
+
+- The mode is `live` and the network has a fee-wallet key. A dry run
+  reconciles but signs nothing.
+- The send is not mined. A mined send that waits for finality is not
+  replaced.
+- The latest attempt (the original or the last replacement) was journaled at
+  least 3 minutes ago (`REPLACEMENT_WAIT_MS` in `core.ts`).
+- The latest block base fee is above the signed `maxFeePerGas` of the latest
+  attempt. A clipped or lower suggested priority fee alone does not trigger
+  replacement.
+- The new fees fit the step and the cap. Each step raises `maxFeePerGas` and
+  `maxPriorityFeePerGas` by 25%, rounded up. Neither field can go above three
+  times the original send's value. Each step must raise both fields by at
+  least 10%. When
+  the cap does not allow this, the cap is reached. With these values, a send
+  can have at most five replacements.
+- The worst-case fee (the original gas limit at the new `maxFeePerGas`, plus
+  on Base the L1 data fee of the replacement bytes from the GasPriceOracle
+  `getL1Fee`), priced in USDC, multiplied by `FEE_CONVERTER_GAS_MULTIPLE`, is not more
+  than the recorded USDC value of the send. This is the same approved
+  gas-cost threshold that the original send passed. The gas limit does not
+  change. A claim row records its quoted USDC value for this check. A claim
+  recorded before this change has no value, so it is not replaced.
+- A claim: the reviewed deployment is verified again, as for a rebroadcast.
+- An approval: the token, pinned router and finite original amount match.
+- A swap: its router deadline is more than 2 minutes away.
+
+If one of these is false, the send waits. The run logs `fee_send_waiting`
+with the reason, for example `fee replacement cap reached`. The send stays
+`submitted` or `unknown`. The token stays blocked until the send is
+reconciled.
+
+The replacement copies the recipient, calldata, value, gas limit, access list
+and nonce from the original signed bytes. Only the two fee fields change. The
+Worker does not quote a swap again under the same nonce.
+
+**Expired swap deadline.** A replacement keeps the calldata, so it also keeps
+the router deadline (20 minutes after signing). After that deadline, a
+same-nonce replacement would revert. The existing code has no zero-value
+self-cancel transaction, and this change does not add one. A swap within 2
+minutes of its deadline is not replaced; it waits. If it is mined later, it
+reverts and the row closes as `failed`. If the node drops it after the
+deadline, the row also closes as `failed`. A later run quotes and signs a new swap for
+the token. The token balance stays in the fee wallet during the wait.
+
+**Lease.** Claims, approvals, swaps and replacements recheck the current
+network lease before EVM signing and broadcast. Their durable insert requires
+the same live lease. Reconciliation also checks the lease before rebroadcast. The append also requires that same live
+lease, the still-open original and the next attempt number. A lost lease
+stops the run. Bytes already journaled remain available to its successor.
+
+**Receipt.** A final outcome requires the requested transaction hash in its
+exact canonical block position, at or below the finalized block. Missing or
+mismatched block evidence leaves the send open, including reverted attempts.
+
+**Journal.** Each replacement is stored in `fee_send_replacements`
+(migration `0087`) before it is broadcast: the row, attempt number, nonce,
+transaction hash, signed bytes and both fee fields. These rows cannot change
+or be deleted. The original row in `fee_conversions` does not change.
+
+**Reconciliation.** The original and every replacement share one nonce, so
+at most one can be included. Reconciliation checks the receipt of each hash.
+The included transaction decides the one outcome of the row, with the same
+claim and swap receipt checks as before. `landed_tx_id` records which
+transaction landed. A claim or conversion is counted once, whichever attempt
+lands.
+
+**Nonce floor.** A new claim, approval or swap never takes a nonce at or
+below the nonce of an open journaled send (`submitted` or `unknown`) on that
+network. A legacy approval hash also reserves its recorded nonce. A node, for example one behind a load-balanced RPC, can drop a
+stuck send and report its nonce as free. Without this floor, a new send for
+another token could take that nonce, and the two sends would outbid each
+other through their replacements. The new send is refused before it is
+signed; the refused conversion closes as `failed` with the reason, and a
+later run tries again.
+
+**Restart.** A run can stop after it journals a replacement and before the
+node receives it. The next run sees that the latest attempt is not in the
+node. It sends the journaled bytes again; it does not sign another
+replacement. A restart tries those bytes first even when the three-minute
+wait has elapsed. If the node explicitly refuses them because their maximum
+fee is below its base fee, the run may sign the next bounded step. A transport
+error or any other uncertain response keeps the same bytes and the row
+`unknown`. The wait, the step and the cap come from the journal, so repeated
+runs cannot pass the cap.
+
+**Approval before swap.** Migration `0088` keeps the exact finite approval as a
+separate immutable send in the same journal. Its bytes are stored before
+broadcast. An uncertain send blocks another intent for that token; a restart
+reuses its bytes. The receipt must be canonical and finalized, and the token,
+router, amount and allowance must match before a later run prepares a fresh
+swap. Approvals share the bounded replacement path but have no swap deadline.
+They count as neither conversions nor fee receipts and do not consume the
+conversion value caps. Those caps still apply to the later swap.
+
+Older rows with only an approval hash keep their original state and history.
+They hold the token and nonce until the exact approval can be verified. Missing
+bytes or uncertain receipts never authorize a new approval or a replacement.
+No raw bytes are fabricated for those rows.
 
 ## Configuration
 
@@ -312,7 +429,8 @@ the sweep keys; those wallets are not cold storage. A
 remote signer may replace it later. Signing stays narrow: only `live` mode on a
 network with a verified USDC target loads a key; the key signs only an exact
 approval to the pinned router, the checked swap, `claimFees()` (no
-arguments, no value) to a vault named in a D1 project manifest, and on Solana
+arguments, no value) to a vault named in a D1 project manifest, same-nonce fee
+replacements of that swap, approval or claim, and on Solana
 `claim_fees` for a verified manifest vault into the fee wallet's own token
 account; errors and logs never include it.
 
@@ -399,7 +517,7 @@ the Worker no sweep power.
 `GET /api/v1/admin/fee-conversions` (admin GitHub session) returns the 100 most
 recent records, exact per-token totals of finalized live conversions as
 decimal base-unit strings, state counts for the last 24 hours, and each
-network's USDC target with status `usdc` or `pending`. It never
+network's target with status `usdc` or `not_converted`. It never
 returns signed transaction bytes. There is no public page.
 
 ## Tests
@@ -444,8 +562,27 @@ after a lost send, lost response, incomplete transfer receipt or missing hash
 lookups. It also accepts the exact smaller fee after another caller claims
 first. Each recovery uses the same journaled claim and verifies it before a
 sale and finalized reconcile). The fee claim leaves both free principal and a reserved award
-unchanged. `SLOP_TEST_FEE_PORT` selects another local port. To run only this
+unchanged. The `bump-*` cases stop automatic mining and raises the base fee
+above the signed fee. It proves that a stalled claim gets a +25% same-nonce
+replacement only after the wait and never in a dry run, and that the
+replacement lands; that the original can land after its replacement was
+broadcast; that replacements stop at three times the original fee and a later
+run does not pass that cap; and that a run that stops after it journals a
+replacement sends the same bytes on the next run. `bump-nonce` drops a stuck
+claim from the node and proves that a WETH conversion is refused instead of
+taking the claim's nonce, and that the claim then lands on that nonce. Each
+case runs on a fresh
+fork and records one claim with the transaction that landed. To run only these
+cases, use `SLOP_TEST_CLAIM_FAULTS=bump-replaced,bump-original,bump-cap,bump-restart,bump-nonce bun run test:fee-converter:fork --fee-claim-only`. `SLOP_TEST_FEE_PORT` selects another local port. To run only this
 claim flow, use `bun run test:fee-converter:fork --fee-claim-only`.
+`SLOP_TEST_CLAIM_FAULTS=before,lease bun run test:fee-converter:fork --local`
+runs the same client, core, migrated SQLite and admin report against a private
+Anvil chain with generated test keys. Harmless ERC-20/router fixtures and fixed
+quote replies replace public assets and liquidity only. It proves actual
+approval signatures, persisted bytes, database reopen, finality before a fresh
+swap, matching token proceeds, lost-send recovery and refusal after a claim
+loses its network lease. It is not live Kyber, Circle or production evidence.
+
 The Solana check uses a local
 `solana-test-validator` (port 28899) that clones the mainnet Jupiter and
 Whirlpool programs and one JUP/USDC route. The Solana harness lifts the

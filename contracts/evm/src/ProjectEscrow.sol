@@ -104,6 +104,9 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     bytes32 private constant MONTHLY_RESERVE_TYPEHASH = keccak256(
         "MonthlyReserveV2(uint32 period,bytes32 allocationDigest,bytes32 allocationRoot,uint128 wholeGross,uint128 remainingGross,uint32 count,uint256 sourceSequence)"
     );
+    bytes32 private constant MONTHLY_RELEASE_TYPEHASH = keccak256(
+        "MonthlyRelease(uint32 period,bytes32 allocationDigest,bytes32 allocationRoot,uint128 remainingGross,uint128 releasedGross)"
+    );
     /// @dev Upper bound on s for a canonical secp256k1 signature (EIP-2).
     bytes32 private constant MAX_S = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
@@ -146,6 +149,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     uint128 public pendingMonthlyGross;
     uint256 public ordinarySourceSequence;
     mapping(uint32 => MonthlyReserve) public monthlyReserves;
+    /// @notice Gross of a period's V2 reserve that the owner returned to free balance with a signed release.
+    mapping(uint32 => uint128) public monthlyReleased;
 
     error Unauthorized();
     error InvalidInput();
@@ -166,6 +171,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     error AwardPending();
     error CancelLimit();
     error InvalidWalletSignature();
+    error MonthlyReserveChanged();
 
     event Deposited(address indexed depositor, uint128 amount);
     event AwardCommitted(bytes32 indexed id, uint64 indexed actorId, uint128 gross, uint128 fee, bytes32 sourceDigest);
@@ -194,6 +200,9 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         uint128 remainingGross,
         uint32 count,
         uint256 sourceSequence
+    );
+    event MonthlyReserveReleased(
+        uint32 indexed period, bytes32 allocationDigest, uint128 remainingGross, uint128 releasedGross
     );
 
     modifier onlyOwner() {
@@ -323,6 +332,32 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         return keccak256(
             abi.encodePacked(
                 "\x19\x01", domainSeparator(), keccak256(abi.encode(MONTHLY_RESERVE_TYPEHASH, period, reservation))
+            )
+        );
+    }
+
+    /// @notice The digest the identity authority signs to state that releasedGross of a period's unsettled
+    /// reserve can never settle. It binds the exact remaining gross, so a leaf that settles first makes it stale.
+    function monthlyReleaseDigest(uint32 period, uint128 remainingGross, uint128 releasedGross)
+        public
+        view
+        returns (bytes32)
+    {
+        MonthlyReserve storage month = monthlyReserves[period];
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                domainSeparator(),
+                keccak256(
+                    abi.encode(
+                        MONTHLY_RELEASE_TYPEHASH,
+                        period,
+                        month.allocationDigest,
+                        monthlyRoots[period],
+                        remainingGross,
+                        releasedGross
+                    )
+                )
             )
         );
     }
@@ -594,6 +629,32 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         pendingMonthlyGross -= entry.gross;
         // Reclassify an existing reserve. Do not charge freeBalance again.
         recordAward(awardId(entry.sourceDigest), entry.actorId, entry.gross, entry.sourceDigest, payoutFee(entry.gross));
+    }
+
+    /// @notice The owner returns gross of a V2 reserve that can never settle (an attester fault) to free
+    /// balance. The identity authority in force must sign monthlyReleaseDigest for the current remaining
+    /// gross. Committed leaves, awards and fees do not change. Time alone never releases a reserve, and
+    /// the period stays committed. A leaf still proves while its gross fits the remaining reserve.
+    function releaseMonthlyReserve(
+        uint32 period,
+        uint128 expectedRemaining,
+        uint128 releasedGross,
+        bytes calldata attestation
+    ) external onlyOwner {
+        MonthlyReserve storage month = monthlyReserves[period];
+        if (month.allocationDigest == bytes32(0) || releasedGross == 0) revert InvalidInput();
+        if (month.remaining != expectedRemaining) revert MonthlyReserveChanged();
+        if (releasedGross > expectedRemaining) revert InvalidInput();
+        if (!signedBy(
+                monthlyReleaseDigest(period, expectedRemaining, releasedGross), factory.identityAuthority(), attestation
+            )) {
+            revert InvalidAttestation();
+        }
+        month.remaining = expectedRemaining - releasedGross;
+        pendingMonthlyGross -= releasedGross;
+        monthlyReleased[period] += releasedGross;
+        freeBalance += releasedGross;
+        emit MonthlyReserveReleased(period, month.allocationDigest, expectedRemaining, releasedGross);
     }
 
     function sumNode(AllocationNode memory left, AllocationNode memory right)

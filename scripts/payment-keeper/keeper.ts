@@ -262,6 +262,8 @@ export async function runKeeper(
             : {}),
         }),
         JOURNAL: deps.store.journal,
+        // Bounded same-nonce fee replacement; each step is budgeted like a new send.
+        FEE_BUMP: { now: () => deps.now ?? new Date() },
       }
     : undefined;
   const solana: PublicSolanaExecutorEnvironment | undefined = deps.solanaSigner

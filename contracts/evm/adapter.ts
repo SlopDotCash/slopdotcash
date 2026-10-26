@@ -15,6 +15,40 @@ export type EvmRpc =
       request: (method: string, params: unknown[]) => Promise<unknown>;
     };
 
+/** The requested transaction must occupy its receipt's exact canonical block slot. */
+export function isCanonicalEvmReceipt(
+  transactionId: string,
+  receipt: {
+    transactionHash: string;
+    blockHash: string;
+    blockNumber: bigint;
+    transactionIndex: number;
+  },
+  block: {
+    hash: string;
+    number: bigint;
+    transactions: readonly unknown[];
+  } | null,
+): boolean {
+  const same = (left: unknown, right: unknown) =>
+    typeof left === "string" &&
+    typeof right === "string" &&
+    /^0x[0-9a-fA-F]{64}$/.test(left) &&
+    left.toLowerCase() === right.toLowerCase();
+  return (
+    same(receipt.transactionHash, transactionId) &&
+    typeof receipt.blockNumber === "bigint" &&
+    receipt.blockNumber >= 0n &&
+    block !== null &&
+    same(block.hash, receipt.blockHash) &&
+    block.number === receipt.blockNumber &&
+    Number.isSafeInteger(receipt.transactionIndex) &&
+    receipt.transactionIndex >= 0 &&
+    Array.isArray(block.transactions) &&
+    same(block.transactions[receipt.transactionIndex], transactionId)
+  );
+}
+
 /** One reviewed upgrade authority and implementation pair for the vault and factory proxies. */
 export interface EvmImplementationReview {
   authority: string;
@@ -192,6 +226,23 @@ export {
   readEvmMonthlyReserve,
 } from "./monthly-reserve";
 export { rpc as evmRpc };
+
+/** Explicit wallet-consent action: read the actor's current version only from a verified vault. */
+export async function readEvmBindingVersion(
+  config: EvmEscrowConfig,
+  actor: string,
+) {
+  if (!/^[1-9][0-9]*$/.test(actor) || BigInt(actor) > U64)
+    throw new Error("Invalid binding actor");
+  await verifyEvmDeployment(config);
+  const result = await rpc(config, "eth_call", [
+    { to: config.vault, data: `0xa45d1232${word(actor)}` },
+    "finalized",
+  ]);
+  if (typeof result !== "string" || !/^0x[0-9a-fA-F]{320}$/.test(result))
+    throw new Error("Binding version unavailable");
+  return uint64(result.slice(66, 130)).toString();
+}
 
 /** The reviewed factory rotates the identity authority only after this notice period. */
 export const EVM_AUTHORITY_ROTATION_DELAY = 0n;

@@ -342,4 +342,136 @@ contract MonthlyReserveV2Test {
         require(vault.freeBalance() == 10_000e6 - CAP - sum(e), "legacy month funded from free balance");
         require(vault.pendingMonthlyGross() == CAP, "stuck reserve unchanged");
     }
+
+    // ------------------------------------------------------------------
+    // Signed release of an unsettleable remainder
+    // ------------------------------------------------------------------
+
+    function signRelease(ProjectEscrow target, uint256 key, uint32 period, uint128 remaining, uint128 released)
+        internal
+        view
+        returns (bytes memory)
+    {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, target.monthlyReleaseDigest(period, remaining, released));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function stuck(ProjectEscrow target) internal {
+        reserve(
+            target,
+            PERIOD,
+            ProjectEscrow.MonthlyReservation(
+                keccak256("random"), keccak256("random root"), CAP, CAP, 1, target.ordinarySourceSequence()
+            )
+        );
+    }
+
+    function test_theOwnerReleasesAnUnsettleableReserveOnlyWithAFreshAttestation() public {
+        stuck(vault);
+        ProjectEscrow other = newVault(keccak256("other"));
+        stuck(other);
+        bytes32 manual = keccak256("manual");
+        bytes32 id = vault.awardId(manual);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.MonthlyLeavesPending.selector);
+        vault.commitAward(id, 7, 1e6, manual);
+        // Time alone never releases the reserve.
+        vm.warp(NOVEMBER_CLOSES + 365 days);
+        bytes memory signature = signRelease(vault, AUTHORITY_KEY, PERIOD, CAP, CAP);
+        // Only the owner, with the identity authority's signature over this exact state.
+        vm.prank(SUBMITTER);
+        vm.expectRevert(ProjectEscrow.Unauthorized.selector);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP, signature);
+        vm.prank(vm.addr(AUTHORITY_KEY));
+        vm.expectRevert(ProjectEscrow.Unauthorized.selector);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP, signature);
+        bytes memory forged = signRelease(vault, 0xBAD, PERIOD, CAP, CAP);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP, forged);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP - 1, signature);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.MonthlyReserveChanged.selector);
+        vault.releaseMonthlyReserve(PERIOD, CAP - 1, CAP, signature);
+        bytes memory excess = signRelease(vault, AUTHORITY_KEY, PERIOD, CAP, CAP + 1);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.InvalidInput.selector);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP + 1, excess);
+        bytes memory unreserved = signRelease(vault, AUTHORITY_KEY, NEXT_PERIOD, 0, 1);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.InvalidInput.selector);
+        vault.releaseMonthlyReserve(NEXT_PERIOD, 0, 1, unreserved);
+        // Another vault's signature for the same period and amounts does not verify here.
+        bytes memory elsewhere = signRelease(other, AUTHORITY_KEY, PERIOD, CAP, CAP);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP, elsewhere);
+        require(vault.pendingMonthlyGross() == CAP && vault.freeBalance() == 10_000e6 - CAP, "failures move nothing");
+
+        (bytes32 allocationDigest,,,,) = vault.monthlyReserves(PERIOD);
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit ProjectEscrow.MonthlyReserveReleased(PERIOD, allocationDigest, CAP, CAP);
+        vm.prank(OWNER);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP, signature);
+        require(vault.pendingMonthlyGross() == 0 && vault.freeBalance() == 10_000e6, "gross returns to free balance");
+        require(vault.monthlyReleased(PERIOD) == CAP, "release recorded");
+        (,, uint128 remaining,,) = vault.monthlyReserves(PERIOD);
+        require(remaining == 0, "nothing left to settle");
+        require(vault.reservedPrincipal() == 0 && vault.reservedFees() == 0 && vault.accruedFees() == 0, "no fee");
+        // The same signature cannot release twice, and the period stays committed.
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.MonthlyReserveChanged.selector);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP, signature);
+        require(vault.monthlyRoots(PERIOD) == keccak256("random root"), "period stays committed");
+        // Manual awards work again.
+        vm.prank(OWNER);
+        vault.commitAward(id, 7, 1e6, manual);
+    }
+
+    function test_aPartialReleaseKeepsSettleableLeavesPayable() public {
+        // The attester signed a tree whose last leaf can never commit (actor 0).
+        ProjectEscrow.MonthlyAward[] memory e = entries(3, 0);
+        e[2].actorId = 0;
+        reserve(vault, PERIOD, plan(vault, e, sum(e)));
+        (, ProjectEscrow.AllocationNode[] memory proof) = MonthlyTree.build(e, 2);
+        vm.expectRevert(ProjectEscrow.InvalidInput.selector);
+        vault.commitMonthlyLeaf(PERIOD, e[2], 2, proof);
+        uint128 whole = sum(e);
+        bytes memory faulty = signRelease(vault, AUTHORITY_KEY, PERIOD, whole, e[2].gross);
+        vm.prank(OWNER);
+        vault.releaseMonthlyReserve(PERIOD, whole, e[2].gross, faulty);
+        require(vault.pendingMonthlyGross() == e[0].gross + e[1].gross, "settleable leaves stay reserved");
+        require(vault.freeBalance() == 10_000e6 - e[0].gross - e[1].gross, "only the faulty gross returns");
+        // A release signed before a leaf settles is stale afterwards.
+        uint128 left = e[0].gross + e[1].gross;
+        bytes memory early = signRelease(vault, AUTHORITY_KEY, PERIOD, left, e[1].gross);
+        leaf(vault, PERIOD, e, 0);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.MonthlyReserveChanged.selector);
+        vault.releaseMonthlyReserve(PERIOD, left, e[1].gross, early);
+        leaf(vault, PERIOD, e, 1);
+        require(vault.pendingMonthlyGross() == 0, "every settleable leaf settled");
+        require(vault.reservedPrincipal() + vault.reservedFees() == e[0].gross + e[1].gross, "awards reserved");
+        bytes32 id = vault.awardId(e[1].sourceDigest);
+        address wallet = bindAndPay(id, e[1].actorId);
+        require(usdc.balanceOf(wallet) == e[1].gross - vault.payoutFee(e[1].gross), "settled leaf pays exactly");
+    }
+
+    function test_aRotatedIdentityAuthoritySignsTheRelease() public {
+        stuck(vault);
+        bytes memory stale = signRelease(vault, AUTHORITY_KEY, PERIOD, CAP, CAP);
+        uint256 nextKey = 0xA08;
+        vm.prank(REGISTRAR);
+        factory.proposeIdentityAuthority(vm.addr(nextKey));
+        factory.executeIdentityAuthorityRotation();
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP, stale);
+        bytes memory fresh = signRelease(vault, nextKey, PERIOD, CAP, CAP);
+        vm.prank(OWNER);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP, fresh);
+        require(vault.pendingMonthlyGross() == 0 && vault.freeBalance() == 10_000e6, "released");
+    }
 }

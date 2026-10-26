@@ -13,7 +13,10 @@ import type {
   MergedPullRequestReviewRecord,
   PullRequestReview,
 } from "../src/lib/leaderboard";
-import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
+import {
+  assertLeaderboardSnapshot,
+  createLeaderboardSnapshot,
+} from "../src/lib/leaderboard";
 import {
   applyPointsSnapshot,
   emptyPointsJournal,
@@ -944,6 +947,161 @@ test("a tier-none correction publishes the exclusion that zeroes pre-window revi
   }
 });
 
+test("review policy and window omissions preserve earned Points without blocking in-scope corrections", () => {
+  const merged = {
+    ...outcome(23, "2026-09-05T13:37:34.000Z"),
+    createdAt: "2026-08-27T00:00:00.000Z",
+  };
+  const august = review(
+    23,
+    1,
+    bob as GitHubActor,
+    "APPROVED",
+    "2026-08-29T11:58:00.000Z",
+  );
+  const september = review(
+    23,
+    2,
+    carol as GitHubActor,
+    "APPROVED",
+    "2026-09-04T11:58:00.000Z",
+  );
+  const snapshotAt = (
+    from: string,
+    to: string,
+    tier: "none" | "standard" | null,
+  ) => {
+    const base = input({
+      windowFrom: from,
+      windowTo: to,
+      verificationWindowFrom: from,
+      mergedPullRequestOutcomes: [merged],
+      reviewedMergedPullRequests: [reviewed(merged, [august, september])],
+      ...(tier === null
+        ? {}
+        : {
+            valuePolicy: { ...POLICY, effectiveAt: "2026-09-01T00:00:00.000Z" },
+            valueDecisions: new Map([
+              [
+                merged.id,
+                assessed(merged, "a", "medium", [
+                  { sourceId: august.id, tier },
+                  { sourceId: september.id, tier },
+                ]),
+              ],
+            ]) as unknown as LeaderboardInput["valueDecisions"],
+          }),
+    });
+    return createLeaderboardSnapshot({
+      ...base,
+      source: {
+        ...base.source,
+        cutoffAt: to,
+        verificationWindow: { days: 35, from, to },
+      },
+    });
+  };
+  const first = snapshotAt(
+    "2026-08-06T00:00:00.000Z",
+    "2026-09-10T00:00:00.000Z",
+    null,
+  );
+  const journal = applyPointsSnapshot(
+    emptyPointsJournal(AT),
+    first,
+    "a".repeat(64),
+    AT,
+  );
+  const original = JSON.stringify(journal);
+  const prior = [...latestPoints(journal).values()].find(
+    (r) => r.award.sourceId === august.id,
+  );
+  const inScope = [...latestPoints(journal).values()].find(
+    (r) => r.award.sourceId === september.id,
+  );
+  expect(prior?.award.amount).toBe(30);
+  expect(inScope?.award.amount).toBe(30);
+  if (!prior || !inScope) throw new Error("Missing original review awards");
+
+  // The same August record must survive both a disjoint September window
+  // and a rolling window that still contains its actual submission date.
+  for (const [from, to] of [
+    ["2026-09-01T00:00:00.000Z", "2026-10-06T00:00:00.000Z"],
+    ["2026-08-06T00:00:00.000Z", "2026-09-10T00:00:00.000Z"],
+  ]) {
+    for (const tier of ["none", "standard"] as const) {
+      const next = snapshotAt(from as string, to as string, tier);
+      expect(
+        next.reviewExclusions?.find((r) => r.reviewId === august.id)?.reason,
+      ).toBe("review-credit-before-policy");
+      expect(next.ledger.some((event) => event.source.id === august.id)).toBe(
+        false,
+      );
+      const updated = applyPointsSnapshot(journal, next, "b".repeat(64), AT);
+      expect(latestPoints(updated).get(prior.award.key)).toEqual(prior);
+      expect(latestPoints(updated).get(inScope.award.key)?.award.amount).toBe(
+        tier === "none" ? 0 : 30,
+      );
+      expect(updated.revisions.slice(0, journal.revisions.length)).toEqual(
+        journal.revisions,
+      );
+      expect(applyPointsSnapshot(updated, next, "b".repeat(64), AT)).toEqual(
+        updated,
+      );
+    }
+  }
+  // A still-positive in-scope review falling out of a later window is not a
+  // revocation. A real tier-none ruling still corrects that same old review.
+  for (const tier of ["standard", "none"] as const) {
+    const next = snapshotAt(
+      "2026-09-05T00:00:00.000Z",
+      "2026-10-10T00:00:00.000Z",
+      tier,
+    );
+    expect(
+      next.reviewExclusions?.find((r) => r.reviewId === september.id)?.reason,
+    ).toBe(
+      tier === "standard"
+        ? "review-credit-outside-window"
+        : "review-credit-zero-share",
+    );
+    const updated = applyPointsSnapshot(journal, next, "c".repeat(64), AT);
+    expect(latestPoints(updated).get(prior.award.key)).toEqual(prior);
+    expect(latestPoints(updated).get(inScope.award.key)?.award.amount).toBe(
+      tier === "standard" ? 30 : 0,
+    );
+  }
+  const correction = snapshotAt(
+    "2026-09-01T00:00:00.000Z",
+    "2026-10-06T00:00:00.000Z",
+    "none",
+  );
+  // An omission string cannot overrule the known original occurrence time.
+  for (const reason of [
+    "review-credit-outside-window",
+    "review-credit-before-policy",
+  ] as const) {
+    const forged = structuredClone(correction);
+    const row = forged.reviewExclusions?.find(
+      (r) => r.reviewId === september.id,
+    );
+    if (!row) throw new Error("Missing current review ruling");
+    row.reason = reason;
+    expect(() =>
+      applyPointsSnapshot(journal, forged, "d".repeat(64), AT),
+    ).toThrow("Review omission contradicts");
+  }
+  const missingBoundary = structuredClone(correction);
+  delete missingBoundary.valuePolicyEffectiveAt;
+  expect(() => assertLeaderboardSnapshot(missingBoundary)).toThrow(
+    "Review policy omissions require",
+  );
+  expect(() =>
+    applyPointsSnapshot(journal, missingBoundary, "d".repeat(64), AT),
+  ).toThrow("Review omission contradicts");
+  expect(JSON.stringify(journal)).toBe(original);
+});
+
 test("a joint award gives way to the minimum when its decision is no longer assessed", () => {
   const merged = outcome(14, "2026-10-20T10:00:00.000Z");
   const workUnitId = `wu_${"1".repeat(64)}`;
@@ -1213,7 +1371,7 @@ test("reviews outside the scoring window do not consume review credit", () => {
         reviewed(blocked, blockedReviews),
         reviewed(split, splitReviews),
       ],
-      valuePolicy: POLICY,
+      valuePolicy: { ...POLICY, effectiveAt: "2026-09-01T00:00:00.000Z" },
       valueDecisions: new Map<string, unknown>([
         [
           blocked.id,
@@ -1542,4 +1700,83 @@ test("published account bans remove new merge and review credit but retain earli
         new Response(null, { status: 503 })) as unknown as typeof fetch,
     ),
   ).rejects.toBeInstanceOf(ValueFeedUnavailableError);
+});
+
+test("banned formal reviews do not take the SCR-05 review slot or erase pre-ban credit", () => {
+  const bannedAt = "2026-10-12T07:30:00.000Z";
+  const shared = outcome(24, "2026-10-12T10:00:00.000Z");
+  const selfReplaced = outcome(25, "2026-10-12T10:00:00.000Z");
+  const priorCommit = "b".repeat(40);
+  const laterPriorCommit = "c".repeat(40);
+  const result = createLeaderboardSnapshot(
+    input({
+      mergedPullRequestOutcomes: [shared, selfReplaced],
+      reviewedMergedPullRequests: [
+        reviewed(shared, [
+          review(
+            24,
+            1,
+            carol as GitHubActor,
+            "CHANGES_REQUESTED",
+            "2026-10-12T07:00:00.000Z",
+            priorCommit,
+          ),
+          review(
+            24,
+            2,
+            bob as GitHubActor,
+            "CHANGES_REQUESTED",
+            "2026-10-12T08:00:00.000Z",
+            priorCommit,
+          ),
+        ]),
+        reviewed(selfReplaced, [
+          review(
+            25,
+            1,
+            bob as GitHubActor,
+            "CHANGES_REQUESTED",
+            "2026-10-12T07:00:00.000Z",
+            priorCommit,
+          ),
+          review(
+            25,
+            2,
+            bob as GitHubActor,
+            "CHANGES_REQUESTED",
+            "2026-10-12T08:00:00.000Z",
+            laterPriorCommit,
+          ),
+        ]),
+      ],
+      valuePolicy: POLICY,
+      valueDecisions: new Map(),
+      participationBans: new Map([["U_bob", bannedAt]]),
+    }),
+  );
+  const byId = new Map(result.ledger.map((event) => [event.id, event]));
+  expect(byId.get("PR_24:reviewer:U_carol")?.scoreThirds).toBe(1);
+  expect(byId.has("PR_24:reviewer:U_bob")).toBe(false);
+  expect(byId.get("PR_25:reviewer:U_bob")?.source.id).toBe("PRR_25_1");
+  expect(byId.get("PR_25:reviewer:U_bob")?.scoreThirds).toBe(1);
+  expect(byId.get("PR_25:reviewer:U_bob")?.reviewHistory).toBeUndefined();
+  expect(result.paymentReviewBasis?.removedEventIds).toEqual([]);
+  const exclusions = new Map(
+    (result.reviewExclusions ?? []).map((item) => [item.reviewId, item.reason]),
+  );
+  expect(exclusions.get("PRR_24_1")).toBeUndefined();
+  expect(exclusions.get("PRR_24_2")).toBe("review-credit-account-banned");
+  expect(exclusions.get("PRR_25_1")).toBeUndefined();
+  expect(exclusions.get("PRR_25_2")).toBe("review-credit-account-banned");
+  const journal = applyPointsSnapshot(
+    emptyPointsJournal(AT),
+    result,
+    "f".repeat(64),
+    AT,
+  );
+  const totals = new Map(
+    pointMembers(journal).map((member) => [member.actor.id, member.total]),
+  );
+  expect(totals.get("U_carol")).toBe(10);
+  expect(totals.get("U_bob")).toBe(10);
 });

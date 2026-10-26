@@ -1,4 +1,5 @@
 /** Queue-only, disposable hosted qualification. Never bind application stores. */
+
 import type { ProjectD1Database } from "../../backend/projects/cloudflare-persistence";
 import { sha256Hex } from "../../backend/trace/validation";
 import {
@@ -14,10 +15,15 @@ import backup, {
   restoreCheck,
   startDailyBackup,
 } from "./core";
+import { qualifyAccess } from "./qualification-access";
+import { qualifyRetention } from "./qualification-retention";
 
 export const qualificationMigrations = [
+  "0002_slop_identity.sql",
+  "0008_points.sql",
   "0034_vetting_private_evidence.sql",
   "0035_vetting_evidence_chunks.sql",
+  "0036_vetting_evidence_assembly.sql",
   "0066_vetting_case_retention.sql",
   "0067_vetting_audit_retention.sql",
   "0068_vetting_storage_cycles.sql",
@@ -45,7 +51,7 @@ type Environment = BackupEnvironment & {
 };
 type Command = {
   qualification: string;
-  action: "seed" | "verify" | "corrupt" | "empty";
+  action: "access" | "seed" | "verify" | "corrupt" | "retention" | "empty";
   delivery: string;
 };
 type Rows = Record<string, string | number | null>[];
@@ -93,8 +99,18 @@ async function phase(env: Environment, name: string) {
     .bind(name)
     .first<{ result: string }>();
 }
+async function access(env: Environment) {
+  if (await phase(env, "access")) return;
+  await record(env, "access", await qualifyAccess(env));
+}
 async function seed(env: Environment) {
   if (await phase(env, "seed")) return;
+  const accessRecord = await phase(env, "access");
+  check(accessRecord, "Access control qualification is absent");
+  const accessResult = JSON.parse(accessRecord.result) as {
+    objects: number;
+    bytes: number;
+  };
   for (let i = 0; i < 65; i++)
     await put(env.EVIDENCE_SOURCE, smallKey(i), smallBytes(i));
   await put(
@@ -118,7 +134,7 @@ async function seed(env: Environment) {
   const db = env.EVIDENCE_DATABASE,
     assessment = "vet_qualification_case",
     run = env.QUALIFICATION_RUN;
-  const now = "2026-10-25T00:00:00.000Z";
+  const now = new Date().toISOString();
   const policy = JSON.stringify({
     fixture: true,
     readGrantDurationSeconds: 900,
@@ -135,7 +151,7 @@ async function seed(env: Environment) {
     .run();
   await db
     .prepare(
-      "INSERT OR IGNORE INTO vetting_evidence_runs VALUES(?,?,?,?,?,?,?,?)",
+      "INSERT OR IGNORE INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)",
     )
     .bind(
       assessment,
@@ -220,10 +236,12 @@ async function seed(env: Environment) {
   await startDailyBackup(env, at);
   await record(env, "seed", {
     day,
+    fixtureAt: now,
     snapshotSha256: rowsSha,
     snapshotBytes: rows.length,
     objectSha256: sha,
-    objects: 68,
+    objects: 68 + accessResult.objects,
+    accessBytes: accessResult.bytes,
   });
 }
 async function verify(env: Environment) {
@@ -236,6 +254,7 @@ async function verify(env: Environment) {
     snapshotBytes: number;
     objectSha256: string;
     objects: number;
+    accessBytes: number;
   };
   const cycle = await env.EVIDENCE_DATABASE.prepare(
     "SELECT phase FROM vetting_storage_cycles WHERE day=?",
@@ -263,7 +282,8 @@ async function verify(env: Environment) {
     ) +
     EVIDENCE_CHUNK_BYTES +
     17 +
-    seeded.snapshotBytes;
+    seeded.snapshotBytes +
+    seeded.accessBytes;
   check(
     completion.objects === seeded.objects &&
       completion.pages === 3 &&
@@ -334,7 +354,7 @@ async function verify(env: Environment) {
     "Source database changed",
   );
   const row = await env.RESTORED_DB.prepare(
-    "SELECT * FROM vetting_evidence_objects",
+    "SELECT * FROM vetting_evidence_objects WHERE assessment_id='vet_qualification_case'",
   ).first<{ object_key: string; chunks: string; sha256: string }>();
   check(row, "Recovered object missing");
   const chunks = JSON.parse(row.chunks);
@@ -456,6 +476,14 @@ async function corrupt(env: Environment) {
     sourceUnchanged: true,
   });
 }
+async function retention(env: Environment) {
+  if (await phase(env, "retention")) return;
+  check(
+    await phase(env, "corrupt"),
+    "Intact recovery and corruption checks required",
+  );
+  await record(env, "retention", await qualifyRetention(env));
+}
 async function empty(env: Environment) {
   for (const bucket of [
     env.EVIDENCE_SOURCE,
@@ -528,9 +556,11 @@ export default {
         "Missing command delivery identity",
       );
       try {
-        if (command.action === "seed") await seed(env);
+        if (command.action === "access") await access(env);
+        else if (command.action === "seed") await seed(env);
         else if (command.action === "verify") await verify(env);
         else if (command.action === "corrupt") await corrupt(env);
+        else if (command.action === "retention") await retention(env);
         else if (command.action === "empty") await empty(env);
         else throw new Error("Unknown qualification action");
         await env.EVIDENCE_DATABASE.prepare(

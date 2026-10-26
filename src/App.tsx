@@ -2353,12 +2353,30 @@ function SponsorsPage({
           <h2>Fund the project escrow.</h2>
           <ul>
             <li>
-              Each project has one escrow vault on its settlement network. The
-              contract enforces reserved awards, fees and exact-once payment.
+              Project funds are held by the escrow contracts. Ordinary awards
+              and private bounties use separate vaults. The contracts enforce
+              reserved awards, fees and exact-once payment.
             </li>
             <li>
               The owner can withdraw free funds with the 2% fee. Reserved awards
-              cannot be withdrawn, and Slop cannot move funds.
+              cannot be withdrawn.
+            </li>
+            <li>
+              Slop’s fee key can claim accrued fees to its fee wallet and
+              convert received fees. It cannot withdraw free funds or reserved
+              awards.
+            </li>
+            <li>
+              Slop’s identity attester signs payout-wallet bindings and bounded
+              monthly allocations. A compromised attester key can redirect
+              unpaid awards. Slop’s owner holds upgrade keys that can change the
+              contracts. Read the{" "}
+              <ExternalLinkAnchor
+                href={`${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/docs/slop-product-requirements.md#11-source-delivery-and-acceptance`}
+              >
+                authority and key risks
+              </ExternalLinkAnchor>
+              .
             </li>
           </ul>
         </section>

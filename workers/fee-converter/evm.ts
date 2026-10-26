@@ -8,6 +8,7 @@
 
 import {
   type Address,
+  BaseError,
   type Chain,
   createPublicClient,
   decodeFunctionData,
@@ -15,19 +16,25 @@ import {
   defineChain,
   encodeFunctionData,
   erc20Abi,
+  FeeCapTooLowError,
   type Hex,
   http,
   keccak256,
   type PublicClient,
   parseEventLogs,
+  parseTransaction,
+  RpcRequestError,
+  recoverTransactionAddress,
   TransactionNotFoundError,
   type TransactionReceipt,
   TransactionReceiptNotFoundError,
+  type TransactionSerializedEIP1559,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   type EvmEscrowConfig,
   type EvmUpgrade,
+  isCanonicalEvmReceipt,
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import type { Limits, NetworkConfig } from "./config";
@@ -35,10 +42,11 @@ import type {
   ChainClient,
   ConversionRow,
   FeeVault,
-  PreparedApproval,
   PreparedSend,
   Quote,
   QuoteResult,
+  ReplacementResult,
+  SendReplacement,
   SendStatus,
 } from "./core";
 
@@ -97,6 +105,52 @@ const CLAIM_FEES = encodeFunctionData({
 });
 const DEADLINE_SECONDS = 20 * 60;
 const RECEIPT_WAIT_MS = 60_000;
+/**
+ * Same-nonce fee replacement policy (owner decision of 25 October 2026).
+ * Each step raises both fee fields by 25%, never above three times the
+ * original send's fields. Every step must raise both fields by at least 10%,
+ * the minimum that nodes accept for an EIP-1559 replacement; a step that
+ * cannot is the cap.
+ */
+const REPLACEMENT_STEP_PERCENT = 125n;
+const REPLACEMENT_MIN_PERCENT = 110n;
+const REPLACEMENT_CAP_MULTIPLE = 3n;
+/**
+ * A swap replacement reuses the signed calldata and so its router deadline.
+ * Within this margin of the deadline, a replacement would revert, so the
+ * send waits instead.
+ */
+const REPLACEMENT_DEADLINE_MARGIN_SECONDS = 120;
+
+/**
+ * The OP Stack GasPriceOracle predeploy. On Base a transaction also pays an
+ * L1 data fee that its gas limit does not cover. Ethereum has no such fee,
+ * and Arbitrum Nitro (Robinhood Chain) includes it in the gas estimate.
+ */
+const L1_FEE_ORACLE: Partial<Record<NetworkConfig["network"], Address>> = {
+  base: "0x420000000000000000000000000000000000000f",
+};
+const L1_FEE_ABI = [
+  {
+    type: "function",
+    name: "getL1Fee",
+    stateMutability: "view",
+    inputs: [{ type: "bytes" }],
+    outputs: [{ type: "uint256" }],
+  },
+] as const;
+
+/** An open journaled send already holds this nonce or a later one. */
+function nonceHeld(nonce: number, nonceFloor: number): Error | null {
+  return nonce < nonceFloor
+    ? new Error(
+        `fee-wallet nonce ${nonce} is held by an open journaled send; next free nonce is ${nonceFloor}`,
+      )
+    : null;
+}
+
+const ceilPercent = (value: bigint, percent: bigint) =>
+  (value * percent + 99n) / 100n;
 
 const DESCRIPTION = {
   type: "tuple",
@@ -275,6 +329,19 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       });
     } catch (error) {
       if (/already known/iu.test(String((error as Error).message))) return;
+      const rpcError =
+        error instanceof BaseError
+          ? error.walk((cause) => cause instanceof RpcRequestError)
+          : null;
+      // Only an explicit node rejection permits escalation after rebroadcast.
+      // Do not classify HTTP/transport failures or a generic "outdated" error.
+      if (
+        rpcError instanceof RpcRequestError &&
+        /max fee per gas less than block base fee|fee cap less than block base fee/iu.test(
+          rpcError.details ?? "",
+        )
+      )
+        throw new FeeCapTooLowError();
       throw error;
     }
   }
@@ -295,6 +362,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     to: Address,
     data: Hex,
     nonce: number,
+    assertLease?: () => Promise<void>,
   ): Promise<{ raw: Hex; hash: Hex }> {
     if (!account)
       throw new Error("Signing is disabled without a fee-wallet key");
@@ -305,6 +373,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       value: 0n,
     });
     const fees = await client.estimateFeesPerGas();
+    await assertLease?.();
     const raw = await account.signTransaction({
       chainId: chain.id,
       type: "eip1559",
@@ -490,8 +559,16 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         inUsd !== null && outUsd !== null && inUsd > 0n
           ? Number(inUsd > outUsd ? ((inUsd - outUsd) * 10_000n) / inUsd : 0n)
           : null;
-      const gasCostMicro =
-        (usdMicro(summary.gasUsd) ?? 0n) + (usdMicro(summary.l1FeeUsd) ?? 0n);
+      const gasUsd = usdMicro(summary.gasUsd);
+      // Ethereum has no separate L1 posting fee. Base needs both estimates;
+      // an unavailable price must not weaken the conversion's 10x gas gate.
+      const l1FeeUsd =
+        summary.l1FeeUsd === undefined && config.network === "ethereum"
+          ? 0n
+          : usdMicro(summary.l1FeeUsd);
+      if (gasUsd === null || l1FeeUsd === null)
+        throw new Error("KyberSwap gas cost is unavailable");
+      const gasCostMicro = gasUsd + l1FeeUsd;
       return {
         route: "kyberswap",
         amountIn: amount,
@@ -520,22 +597,26 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
     async prepare(
       token,
       quote: Quote,
-      recordApproval: (approval: PreparedApproval) => Promise<void>,
+      nonceFloor = 0,
+      assertLease?: () => Promise<void>,
     ): Promise<PreparedSend> {
       if (!account)
         throw new Error("Signing is disabled without a fee-wallet key");
       // Approve exactly the order amount to the pinned router, never more.
-      let approvalTxId: string | null = null;
       const allowance = await client.readContract({
         address: token as Address,
         abi: erc20Abi,
         functionName: "allowance",
         args: [wallet, router],
       });
-      let nonce = await client.getTransactionCount({
+      const nonce = await client.getTransactionCount({
         address: wallet,
         blockTag: "pending",
       });
+      // A node that dropped an open send reports its nonce as free. Never
+      // reuse it: the two sends would outbid each other.
+      const held = nonceHeld(nonce, nonceFloor);
+      if (held) throw held;
       if (allowance < quote.amountIn) {
         const approval = await signAndSend(
           token as Address,
@@ -545,19 +626,17 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
             args: [router, quote.amountIn],
           }),
           nonce,
+          assertLease,
         );
-        await recordApproval({
+        return {
+          kind: "approval",
           txId: approval.hash,
+          rawTx: approval.raw,
           evmNonce: nonce,
-        });
-        await sendRaw(approval.raw);
-        approvalTxId = approval.hash;
-        const receipt = await waitForReceipt(approval.hash);
-        if (!receipt)
-          throw new Error(`approval ${approval.hash} not mined in time`);
-        if (receipt.status !== "success")
-          throw new Error(`approval ${approval.hash} reverted`);
-        nonce += 1;
+          expiresAt: null,
+          approvalTxId: approval.hash,
+          minAmountOut: 0n,
+        };
       }
 
       // Re-route at the moment of signing with half the slippage budget, so
@@ -629,36 +708,95 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           "swap simulation returned less than the signed minimum",
         );
 
-      const swap = await signAndSend(router, built.data, nonce);
+      const swap = await signAndSend(router, built.data, nonce, assertLease);
       return {
         txId: swap.hash,
         rawTx: swap.raw,
         evmNonce: nonce,
         expiresAt: deadline,
-        approvalTxId,
+        approvalTxId: null,
         minAmountOut: desc.minReturnAmount,
       };
     },
 
     broadcast: (raw) => sendRaw(raw as Hex),
 
-    async status(row: ConversionRow): Promise<SendStatus> {
-      const hash = row.txId as Hex;
-      // Only the node's "not found" answer means absence. Any other lookup
-      // error throws, so the row stays open for the next run.
-      const receipt = await client
-        .getTransactionReceipt({ hash })
-        .catch((error: unknown) => {
-          if (error instanceof TransactionReceiptNotFoundError) return null;
-          throw error;
+    async status(
+      row: ConversionRow,
+      replacements: readonly SendReplacement[] = [],
+    ): Promise<SendStatus> {
+      // The original send and its replacements share one nonce, so at most
+      // one of them can be included. Check each; the included one decides.
+      const attempts = [
+        row.txId as Hex,
+        ...replacements.map((replacement) => replacement.txId as Hex),
+      ];
+      const latestRaw = replacements.at(-1)?.rawTx ?? (row.rawTx as string);
+      for (const hash of attempts) {
+        // Only the node's "not found" answer means absence. Any other lookup
+        // error throws, so the row stays open for the next run.
+        const receipt = await client
+          .getTransactionReceipt({ hash })
+          .catch((error: unknown) => {
+            if (error instanceof TransactionReceiptNotFoundError) return null;
+            throw error;
+          });
+        if (!receipt) continue;
+        const canonical = await client.getBlock({
+          blockNumber: receipt.blockNumber,
         });
-      if (receipt) {
+        if (
+          !isCanonicalEvmReceipt(hash, receipt, canonical) ||
+          !["success", "reverted"].includes(receipt.status)
+        )
+          throw new Error("Fee send receipt identity differs");
+        const landed = { txId: hash };
         const finalized = await client.getBlock({ blockTag: "finalized" });
-        if (receipt.blockNumber > finalized.number) return { kind: "pending" };
+        if (typeof finalized.number !== "bigint" || finalized.number < 0n)
+          throw new Error("Fee send finality unavailable");
+        if (receipt.blockNumber > finalized.number)
+          return { kind: "pending", mined: true };
+        if (row.kind === "approval") {
+          const transaction = await client.getTransaction({ hash });
+          const decoded = decodeFunctionData({
+            abi: erc20Abi,
+            data: transaction.input,
+          });
+          if (
+            transaction.hash.toLowerCase() !== hash.toLowerCase() ||
+            transaction.from.toLowerCase() !== wallet ||
+            transaction.to?.toLowerCase() !== row.token.toLowerCase() ||
+            transaction.nonce !== row.evmNonce ||
+            transaction.value !== 0n ||
+            transaction.blockHash !== receipt.blockHash ||
+            transaction.blockNumber !== receipt.blockNumber ||
+            decoded.functionName !== "approve" ||
+            decoded.args[0].toLowerCase() !== router ||
+            decoded.args[1] !== BigInt(row.amountIn)
+          )
+            throw new Error("Approval receipt differs from its bounded intent");
+          if (receipt.status !== "success")
+            return {
+              kind: "failed",
+              reason: "approval transaction reverted",
+              ...landed,
+            };
+          const allowance = await client.readContract({
+            address: row.token as Address,
+            abi: erc20Abi,
+            functionName: "allowance",
+            args: [wallet, router],
+            blockNumber: receipt.blockNumber,
+          });
+          if (allowance !== BigInt(row.amountIn))
+            throw new Error("Finalized approval allowance differs");
+          return { kind: "finalized", amountOut: 0n, ...landed };
+        }
         if (receipt.status !== "success")
           return {
             kind: "failed",
             reason: `${row.kind === "claim" ? "claim" : "swap"} transaction reverted`,
+            ...landed,
           };
         if (row.kind === "claim")
           return {
@@ -667,6 +805,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
               JSON.parse(row.quote as string) as FeeVault,
               receipt,
             ),
+            ...landed,
           };
         const logs = parseEventLogs({
           abi: erc20Abi,
@@ -680,15 +819,37 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         const amountOut = logs
           .filter((log) => log.args.to.toLowerCase() === wallet)
           .reduce((sum, log) => sum + log.args.value, 0n);
-        return { kind: "finalized", amountOut };
+        return { kind: "finalized", amountOut, ...landed };
       }
-      const pending = await client
-        .getTransaction({ hash })
-        .catch((error: unknown) => {
-          if (error instanceof TransactionNotFoundError) return null;
-          throw error;
-        });
-      if (pending) return { kind: "pending" };
+      const seen: Hex[] = [];
+      for (const hash of attempts) {
+        const pending = await client
+          .getTransaction({ hash })
+          .catch((error: unknown) => {
+            if (error instanceof TransactionNotFoundError) return null;
+            throw error;
+          });
+        if (pending) seen.push(hash);
+      }
+      const deadlinePassed =
+        row.expiresAt !== null &&
+        Math.floor(now().getTime() / 1000) > row.expiresAt + 60;
+      if (seen.includes(attempts[attempts.length - 1]))
+        return { kind: "pending" };
+      if (seen.length > 0) {
+        // An older attempt waits in the node, but the latest journaled
+        // replacement does not (a restart before its broadcast). Send the
+        // latest bytes; never sign another. A swap past its deadline would
+        // revert, so it only waits.
+        if (row.kind !== "claim" && row.kind !== "approval" && deadlinePassed)
+          return { kind: "pending" };
+        if (
+          row.kind === "claim" &&
+          !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
+        )
+          throw new Error("Recorded claim pays another fee wallet");
+        return { kind: "rebroadcast", rawTx: latestRaw };
+      }
       // Our nonce consumed in a finalized block by another transaction means
       // this send can never land.
       const finalizedNonce = await client.getTransactionCount({
@@ -698,14 +859,12 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
       if (row.evmNonce !== null && finalizedNonce > row.evmNonce)
         // A claim may itself have consumed the nonce while its hash lookups
         // are unavailable. Only its receipt proves what entered the wallet.
-        return row.kind === "claim"
-          ? { kind: "pending" }
+        // It is not replaced: the nonce is already spent.
+        return row.kind === "claim" || row.kind === "approval"
+          ? { kind: "pending", mined: true }
           : { kind: "failed", reason: "nonce used by another transaction" };
       // Past the router deadline the swap reverts even if it is mined later.
-      if (
-        row.expiresAt !== null &&
-        Math.floor(now().getTime() / 1000) > row.expiresAt + 60
-      )
+      if (deadlinePassed)
         return {
           kind: "failed",
           reason: "router deadline passed before inclusion",
@@ -715,7 +874,149 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
       )
         throw new Error("Recorded claim pays another fee wallet");
-      return { kind: "rebroadcast" };
+      // A historical approval hash without retained bytes cannot be resent.
+      if (row.rawTx === null) return { kind: "pending", mined: true };
+      return { kind: "rebroadcast", rawTx: latestRaw };
+    },
+
+    /**
+     * Signs one same-nonce replacement of a journaled claim or swap that is
+     * not mined (owner decision of 25 October 2026). It copies the recipient,
+     * calldata, value, gas limit and nonce of the original signed bytes, and
+     * raises only the two fee fields. It never broadcasts: core.ts journals
+     * the bytes first.
+     */
+    async replace(
+      row: ConversionRow,
+      replacements: readonly SendReplacement[],
+      assertLease: () => Promise<void>,
+    ): Promise<ReplacementResult> {
+      if (!account) return { wait: "signing needs the fee-wallet key" };
+      const original = parseTransaction(row.rawTx as Hex);
+      const previous = parseTransaction(
+        (replacements.at(-1)?.rawTx ?? row.rawTx) as Hex,
+      );
+      const recipient =
+        row.kind === "claim"
+          ? (JSON.parse(row.quote as string) as FeeVault).vault
+          : row.kind === "approval"
+            ? row.token
+            : router;
+      if (
+        original.type !== "eip1559" ||
+        previous.type !== "eip1559" ||
+        original.chainId !== chain.id ||
+        original.nonce !== row.evmNonce ||
+        previous.nonce !== row.evmNonce ||
+        original.to?.toLowerCase() !== recipient.toLowerCase() ||
+        original.data === undefined ||
+        original.gas === undefined ||
+        original.maxFeePerGas === undefined ||
+        original.maxPriorityFeePerGas === undefined ||
+        previous.maxFeePerGas === undefined ||
+        previous.maxPriorityFeePerGas === undefined ||
+        (
+          await recoverTransactionAddress({
+            serializedTransaction: row.rawTx as TransactionSerializedEIP1559,
+          })
+        ).toLowerCase() !== wallet
+      )
+        throw new Error("Recorded send cannot be replaced");
+      if (
+        row.kind !== "claim" &&
+        row.kind !== "approval" &&
+        row.expiresAt !== null &&
+        Math.floor(now().getTime() / 1000) +
+          REPLACEMENT_DEADLINE_MARGIN_SECONDS >=
+          row.expiresAt
+      )
+        return {
+          wait: "router deadline too close; a same-nonce replacement would revert",
+        };
+      if (row.kind === "approval") {
+        const decoded = decodeFunctionData({
+          abi: erc20Abi,
+          data: original.data,
+        });
+        if (
+          (original.value ?? 0n) !== 0n ||
+          decoded.functionName !== "approve" ||
+          decoded.args[0].toLowerCase() !== router ||
+          decoded.args[1] !== BigInt(row.amountIn)
+        )
+          throw new Error("Recorded approval differs from its bounded intent");
+      }
+      const block = await client.getBlock({ blockTag: "latest" });
+      if (block.baseFeePerGas === null || block.baseFeePerGas === undefined)
+        return { wait: "the current network base fee is unavailable" };
+      // EIP-1559 caps the effective tip at maxFee - baseFee. A new suggested
+      // tip does not make an otherwise includable transaction underpriced.
+      if (block.baseFeePerGas <= previous.maxFeePerGas)
+        return { wait: "the signed fee covers the current network fee" };
+      const step = (last: bigint, first: bigint) => {
+        const raised = ceilPercent(last, REPLACEMENT_STEP_PERCENT);
+        const cap = first * REPLACEMENT_CAP_MULTIPLE;
+        return raised < cap ? raised : cap;
+      };
+      const maxFeePerGas = step(previous.maxFeePerGas, original.maxFeePerGas);
+      const maxPriorityFeePerGas = step(
+        previous.maxPriorityFeePerGas,
+        original.maxPriorityFeePerGas,
+      );
+      if (
+        maxFeePerGas <
+          ceilPercent(previous.maxFeePerGas, REPLACEMENT_MIN_PERCENT) ||
+        maxPriorityFeePerGas <
+          ceilPercent(previous.maxPriorityFeePerGas, REPLACEMENT_MIN_PERCENT)
+      )
+        return { wait: "fee replacement cap reached" };
+      if (row.quoteValueMicro === null)
+        return { wait: "the send has no recorded value to bound its fee" };
+      if (
+        row.kind === "claim" &&
+        !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))
+      )
+        throw new Error("Recorded claim pays another fee wallet");
+      await assertLease();
+      const raw = await account.signTransaction({
+        chainId: chain.id,
+        type: "eip1559",
+        to: original.to as Address,
+        data: original.data,
+        value: original.value ?? 0n,
+        nonce: original.nonce,
+        gas: original.gas,
+        accessList: original.accessList,
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+      });
+      // The worst-case fee of the replacement (its whole gas limit at the new
+      // maximum fee, plus any L1 data fee of its bytes) must stay within the
+      // approved gas-cost multiple of the value it moves. Unused bytes are
+      // discarded: nothing is journaled or broadcast.
+      const oracle = L1_FEE_ORACLE[config.network];
+      const l1Fee = oracle
+        ? await client.readContract({
+            address: oracle,
+            abi: L1_FEE_ABI,
+            functionName: "getL1Fee",
+            args: [raw],
+          })
+        : 0n;
+      const priced = await self.quote(
+        NATIVE,
+        original.gas * maxFeePerGas + l1Fee,
+      );
+      if ("noRoute" in priced)
+        return { wait: "the replacement fee could not be priced" };
+      if (priced.amountOut * limits.gasMultiple > BigInt(row.quoteValueMicro))
+        return { wait: "the replacement fee is above the gas-cost multiple" };
+      return {
+        txId: keccak256(raw),
+        rawTx: raw,
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+      };
     },
 
     vaultFees: {
@@ -746,7 +1047,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
         return "noRoute" in priced ? null : priced.amountOut;
       },
 
-      async claim(entry, recordClaim) {
+      async claim(entry, recordClaim, nonceFloor = 0, assertLease) {
         const verified = await verifiedVault(entry);
         if (!verified) throw new Error("Vault pays another fee recipient");
         if (verified.amount === 0n) throw new Error("No accrued fees to claim");
@@ -762,7 +1063,14 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           throw new Error("an earlier fee-wallet transaction is still pending");
         if (!recordClaim)
           throw new Error("Fee claim requires a durable send record");
-        const sent = await signAndSend(vault as Address, CLAIM_FEES, latest);
+        const held = nonceHeld(latest, nonceFloor);
+        if (held) throw held;
+        const sent = await signAndSend(
+          vault as Address,
+          CLAIM_FEES,
+          latest,
+          assertLease,
+        );
         await recordClaim({
           txId: sent.hash,
           rawTx: sent.raw,
@@ -770,6 +1078,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient & {
           expiresAt: null,
           amount,
         });
+        await assertLease?.();
         await sendRaw(sent.raw);
         const receipt = await waitForReceipt(sent.hash);
         if (!receipt) throw new Error(`claim ${sent.hash} not mined in time`);

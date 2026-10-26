@@ -270,25 +270,33 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           draft: false,
           merged: false,
           head: { sha: "b".repeat(40) },
-          base: { sha: "c".repeat(40) },
+          base: {
+            sha: "c".repeat(40),
+            ref: "main",
+            repo: { id: repositoryId },
+          },
           additions: 1,
           deletions: 0,
           changed_files: 1,
         });
       if (path.endsWith("/branches/main"))
         return Response.json({ commit: { sha: "c".repeat(40) } });
-      if (path.endsWith("/pulls/5/files"))
-        return Response.json(
-          url.searchParams.get("page") === "1" || !url.searchParams.has("page")
-            ? [
-                {
-                  filename: "README.md",
-                  status: "modified",
-                  patch: `+${BODY}`,
-                },
-              ]
-            : [],
-        );
+      if (path.includes("/compare/"))
+        return Response.json({
+          base_commit: { sha: "c".repeat(40) },
+          merge_base_commit: { sha: "c".repeat(40) },
+          files:
+            url.searchParams.get("page") === "1" ||
+            !url.searchParams.has("page")
+              ? [
+                  {
+                    filename: "README.md",
+                    status: "modified",
+                    patch: `+${BODY}`,
+                  },
+                ]
+              : [],
+        });
       const user = path.match(/^\/user\/(\d+)$/u);
       if (user && login(Number(user[1])))
         return Response.json({
