@@ -4,7 +4,7 @@ import { deploymentTier } from "./deployment";
 import { isRecord } from "./record-validation.mjs";
 
 const CLOCK_SKEW_MS = 2 * 60_000;
-export interface IdentityAuthorization {
+interface IdentityAuthorization {
   flowId: string;
   pollCapability: string;
   authorizationUrl: string;

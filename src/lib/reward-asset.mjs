@@ -53,10 +53,10 @@ export const REWARD_ASSET_NETWORK_IDS = Object.freeze(
 );
 
 const SYMBOL = /^[A-Za-z0-9$._-]{1,16}$/u;
-export const MAX_REWARD_ASSET_DECIMALS = 36;
+const MAX_REWARD_ASSET_DECIMALS = 36;
 
 /** Lowercases EVM addresses; Solana mints are case-sensitive base58. */
-export function canonicalRewardAssetAddress(network, value) {
+function canonicalRewardAssetAddress(network, value) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   const definition = REWARD_ASSET_NETWORKS[network];

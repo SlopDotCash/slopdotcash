@@ -22,7 +22,7 @@ import snapshotJson from "../../data/who-builds/2026-09-17/snapshot.json";
 import type { LeaderboardSnapshot } from "./leaderboard-types";
 import { findProjectByRepositoryId } from "./projects.mjs";
 
-export interface WhoBuildsCohort {
+interface WhoBuildsCohort {
   name: string;
   /** Contributors in the cohort. */
   size: number;
@@ -34,7 +34,7 @@ export interface WhoBuildsCohort {
   aiExternalPr: number;
 }
 
-export interface WhoBuildsFocusArea {
+interface WhoBuildsFocusArea {
   area: string;
   /** Outside repositories assigned this focus area. */
   repos: number;
@@ -46,7 +46,7 @@ export interface WhoBuildsFocusArea {
   primaryContributors: number;
 }
 
-export interface WhoBuildsRepository {
+interface WhoBuildsRepository {
   /** GitHub `owner/name`. */
   repo: string;
   /** Merged pull requests from leaderboard contributors in 2026. */
@@ -56,7 +56,7 @@ export interface WhoBuildsRepository {
   stars: number;
 }
 
-export interface WhoBuildsSnapshot {
+interface WhoBuildsSnapshot {
   /** Date the cross-reference was run, YYYY-MM-DD. */
   generatedAt: string;
   leaderboardGeneratedAt: string;
@@ -116,7 +116,7 @@ export function whoBuildsDateLabel(date: string): string {
   }).format(new Date(`${date}T00:00:00Z`));
 }
 
-export interface RepositoryFootprint {
+interface RepositoryFootprint {
   /** Registered repository id, for example `elizaOS/eliza`. */
   repositoryId: string;
   /** Manifest display name for the repository, or the id when unregistered. */
@@ -133,7 +133,7 @@ export interface RepositoryFootprint {
   share: number;
 }
 
-export interface WhoBuildsSummary {
+interface WhoBuildsSummary {
   windowDays: number;
   /** Contributors on the leaderboard for the window. */
   contributors: number;

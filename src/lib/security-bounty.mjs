@@ -10,6 +10,7 @@ import {
   readRecord,
   exactKeys as sharedExactKeys,
 } from "./record-validation.mjs";
+
 /**
  * Public terms of a private security bounty program (PRD SEC-01, SEC-05,
  * SEC-06, SEC-18). The terms live in the project's D1 manifest revision as
@@ -17,14 +18,14 @@ import {
  * never enters this structure; it stays in the restricted case tables.
  */
 
-export const SECURITY_PROGRAM_STATUSES = Object.freeze([
+const SECURITY_PROGRAM_STATUSES = Object.freeze([
   "draft",
   "pending-approval",
   "open",
   "paused",
   "closed",
 ]);
-export const SECURITY_REWARD_MODES = Object.freeze(["bounty-only", "separate"]);
+const SECURITY_REWARD_MODES = Object.freeze(["bounty-only", "separate"]);
 /** The owner-approved split: researcher 75%, Slop 25% of the gross amount. */
 export const SECURITY_SPLIT = Object.freeze({
   researcherBasisPoints: 7500,

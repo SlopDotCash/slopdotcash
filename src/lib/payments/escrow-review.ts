@@ -11,20 +11,20 @@ import { MAX_BASE_UNITS } from "../escrow-policy.mjs";
 import type { assertProjectDefinition } from "../project-schema.mjs";
 import { CANONICAL_UINT } from "../record-validation.mjs";
 
-export interface EscrowReviewProposal {
+interface EscrowReviewProposal {
   projectId: string;
   cycleId: string;
   grossCapMicro: string;
   awards: { githubUserId: string; grossMicro: string; sourceDigest: string }[];
 }
-export interface EscrowDecision {
+interface EscrowDecision {
   githubUserId: string;
   state: "approved" | "held" | "excluded";
   approvedGrossMicro: string;
   adjustmentReason: string | null;
   relatedParty: boolean;
 }
-export interface EscrowDecisions {
+interface EscrowDecisions {
   schemaVersion: "1";
   proposalSha256: string;
   rows: EscrowDecision[];

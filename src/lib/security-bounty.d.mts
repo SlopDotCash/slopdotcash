@@ -82,11 +82,6 @@ export interface SecurityBountyTerms {
   readonly safeHarbor: string;
 }
 
-export declare const SECURITY_PROGRAM_STATUSES: readonly SecurityProgramStatus[];
-export declare const SECURITY_REWARD_MODES: readonly (
-  | "bounty-only"
-  | "separate"
-)[];
 export declare const SECURITY_SPLIT: Readonly<{
   researcherBasisPoints: 7500;
   slopBasisPoints: 2500;

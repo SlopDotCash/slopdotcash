@@ -32,7 +32,7 @@ export interface ScoreRatificationRecord {
   supersedes: string | null;
 }
 
-export interface ScoreRatificationContext {
+interface ScoreRatificationContext {
   projectId: ProjectId;
   pullRequestNodeId: string;
   headSha: string;
@@ -42,7 +42,7 @@ export interface ScoreRatificationContext {
   updatedAt: string;
 }
 
-export interface ScoreApprovalRecord {
+interface ScoreApprovalRecord {
   schemaVersion: "1";
   ruleVersion: "slop-score-v2";
   projectId: ProjectId;
@@ -59,7 +59,7 @@ function object(value: unknown): Record<string, unknown> {
   return value;
 }
 
-export function assertScoreRatificationRecord(
+function assertScoreRatificationRecord(
   value: unknown,
 ): ScoreRatificationRecord {
   const record = object(value);

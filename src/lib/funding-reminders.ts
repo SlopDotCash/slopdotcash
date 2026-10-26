@@ -1,11 +1,11 @@
 /** Deterministic, non-custodial cycle funding reminder copy. */
 
-export type CycleReminder = {
+type CycleReminder = {
   kind: "funding-check";
   message: string;
 };
 
-export type CycleReminderLifecycle =
+type CycleReminderLifecycle =
   | "closed-no-awards"
   | "external-provisional"
   | "live"

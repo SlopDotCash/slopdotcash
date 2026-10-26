@@ -38,7 +38,7 @@ export const VALUE_SCORING_POLICY_EFFECTIVE_AT =
   "2026-11-01T00:00:00.000Z" as const;
 export const REVIEW_CREDIT_POOL_RULE = "credited-bands-capped-at-size" as const;
 /** The smallest review pool of a pull request with a credited reviewer. */
-export const MIN_REVIEW_CREDIT_POOL_THIRDS = 1 as const;
+const MIN_REVIEW_CREDIT_POOL_THIRDS = 1 as const;
 
 export interface ValueScoringPolicy {
   id: typeof VALUE_SCORING_POLICY_ID;
@@ -86,7 +86,7 @@ export function valueScoringPolicy(): ValueScoringPolicy {
  * at the pull request's assessed size, with a minimum of one third. A lone
  * small review cannot earn a large pool, and reviews cannot outweigh the work.
  */
-export function reviewCreditPoolThirds(
+function reviewCreditPoolThirds(
   creditedBands: readonly number[],
   assessedSizeThirds: number,
 ): number {
@@ -148,7 +148,7 @@ export interface QualifyingReview<Actor extends { id: string }> {
   thirds: number;
 }
 
-export interface CreditedReviewer<Actor extends { id: string }> {
+interface CreditedReviewer<Actor extends { id: string }> {
   actor: Actor;
   /** The reviewer's highest-band review; the one source record credited. */
   source: QualifyingReview<Actor>;
@@ -157,7 +157,7 @@ export interface CreditedReviewer<Actor extends { id: string }> {
   repeatedReviewIds: string[];
 }
 
-export interface ReviewCreditAllocation<Actor extends { id: string }> {
+interface ReviewCreditAllocation<Actor extends { id: string }> {
   /** The pool shared by the credited reviewers; zero when nobody qualifies. */
   poolThirds: number;
   credited: CreditedReviewer<Actor>[];

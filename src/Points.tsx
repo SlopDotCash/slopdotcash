@@ -1519,7 +1519,7 @@ function XAccountLink({ account }: { account: XAccount }) {
     </a>
   );
 }
-export function PublicXLink({ actorId }: { actorId: string }) {
+function PublicXLink({ actorId }: { actorId: string }) {
   const [account, setAccount] = useState<XAccount | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {

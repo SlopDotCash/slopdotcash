@@ -156,7 +156,7 @@ export function isAssetDecimals(value: unknown): value is number {
  * other token shows its shortened address, because a token's own symbol()
  * text is not reviewed.
  */
-export function assetLabel(
+function assetLabel(
   network: string,
   assetAddress: string,
   assetDecimals: number,

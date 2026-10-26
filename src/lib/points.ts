@@ -264,7 +264,7 @@ export function pointKey(
 /** One legacy credit-third is ten Slop Points. */
 export const POINTS_PER_THIRD = 10;
 
-export function pointsForScore(
+function pointsForScore(
   event: Pick<ScoreEvent, "scoreThirds" | "points"> &
     Partial<Pick<ScoreEvent, "category" | "scoreDecisionSourceId">>,
 ): number {

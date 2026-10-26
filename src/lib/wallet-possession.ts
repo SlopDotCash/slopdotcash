@@ -50,7 +50,7 @@ export interface WalletPossessionAttestation {
  * derived address or a multisig vault, which is a valid destination that simply
  * cannot produce a detached Ed25519 signature.
  */
-export type WalletPossessionState =
+type WalletPossessionState =
   | "proven"
   | "unproven"
   | "not-provable-by-signature";
@@ -196,7 +196,7 @@ function decodeSignature(signature: unknown): Uint8Array {
   return bytes;
 }
 
-export interface VerifyWalletPossessionInput {
+interface VerifyWalletPossessionInput {
   challenge: unknown;
   signature: unknown;
   /** The claim the attestation is being attached to. */

@@ -7,7 +7,7 @@ import {
 
 /** Validates canonical public receiving addresses for each funding network. */
 
-export const MAX_FUNDING_ROUTES = 32;
+const MAX_FUNDING_ROUTES = 32;
 
 function decodedBase58Length(value, minimumLength, maximumLength) {
   return typeof value === "string" &&

@@ -1,7 +1,7 @@
 import { assertCycleIndex, type CycleIndex } from "./cycle-index";
 import { type PointAward, pointKey } from "./points";
 
-export const PAYOUT_POINTS = 25;
+const PAYOUT_POINTS = 25;
 /** One award per recipient/project/cycle, independent of amount or transaction count. */
 export function payoutPointAwards(index: CycleIndex): PointAward[] {
   assertCycleIndex(index);
