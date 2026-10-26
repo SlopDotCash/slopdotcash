@@ -13,10 +13,12 @@ import {
   decodeEventLog,
   defineChain,
   encodeFunctionData,
+  erc20Abi,
   type Hex,
   http,
   keccak256,
   type PublicClient,
+  parseAbi,
   parseAbiItem,
   parseTransaction,
   RpcRequestError,
@@ -42,99 +44,17 @@ import {
   validateGasLimits,
 } from "./gas";
 
-const DISTRIBUTOR_ABI = [
-  {
-    type: "function",
-    name: "token",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "address" }],
-  },
-  {
-    type: "function",
-    name: "owner",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "address" }],
-  },
-  {
-    type: "function",
-    name: "poster",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "address" }],
-  },
-  {
-    type: "function",
-    name: "paused",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "bool" }],
-  },
-  {
-    type: "function",
-    name: "epochCap",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "activeTotal",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "totalClaimed",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "nextEpoch",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "hasPendingRoot",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "bool" }],
-  },
-  {
-    type: "function",
-    name: "epochAt",
-    stateMutability: "view",
-    inputs: [{ type: "uint256", name: "index" }],
-    outputs: [
-      {
-        type: "tuple",
-        components: [
-          { type: "bytes32", name: "root" },
-          { type: "uint256", name: "total" },
-          { type: "uint64", name: "postedAt" },
-          { type: "bool", name: "voided" },
-        ],
-      },
-    ],
-  },
-  {
-    type: "function",
-    name: "postRoot",
-    stateMutability: "nonpayable",
-    inputs: [
-      { type: "uint256", name: "index" },
-      { type: "bytes32", name: "root" },
-      { type: "uint256", name: "newTotal" },
-    ],
-    outputs: [],
-  },
-] as const;
+const DISTRIBUTOR_ABI = parseAbi([
+  "function token() view returns (address)",
+  "function poster() view returns (address)",
+  "function paused() view returns (bool)",
+  "function epochCap() view returns (uint256)",
+  "function totalClaimed() view returns (uint256)",
+  "function nextEpoch() view returns (uint256)",
+  "function hasPendingRoot() view returns (bool)",
+  "function epochAt(uint256 index) view returns ((bytes32 root,uint256 total,uint64 postedAt,bool voided))",
+  "function postRoot(uint256 index,bytes32 root,uint256 newTotal)",
+]);
 
 const ROOT_POSTED = parseAbiItem(
   "event RootPosted(uint256 indexed epoch, bytes32 root, uint256 total, uint64 claimableAt)",
@@ -143,30 +63,18 @@ const ROOT_VOIDED = parseAbiItem(
   "event RootVoided(uint256 indexed epoch, bytes32 root)",
 );
 
-const ERC20_ABI = [
-  {
-    type: "function",
-    name: "balanceOf",
-    stateMutability: "view",
-    inputs: [{ type: "address", name: "account" }],
-    outputs: [{ type: "uint256" }],
-  },
-] as const;
-
 export interface EvmPosterOptions {
   config: PosterConfig;
   /** Absent in dry_run: the client can read but cannot sign. */
   privateKey?: string;
   fetch?: typeof fetch;
-  /** Local Anvil only: replaces the chain id the transaction signs for. */
-  chainIdOverride?: number;
 }
 
 export function createEvmPoster(options: EvmPosterOptions): PosterClient {
   const { config } = options;
   validateGasLimits(config.gas);
   const chain: Chain = defineChain({
-    id: options.chainIdOverride ?? config.chainId,
+    id: config.chainId,
     name: config.network,
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     rpcUrls: { default: { http: [config.rpcUrl] } },
@@ -211,6 +119,20 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
     return receipt;
   };
 
+  const epochAt = async (index: number) => {
+    const epoch = await read<{
+      root: Hex;
+      total: bigint;
+      postedAt: bigint;
+      voided: boolean;
+    }>("epochAt", [BigInt(index)]);
+    return {
+      root: epoch.root.toLowerCase(),
+      total: epoch.total,
+      voided: epoch.voided,
+    };
+  };
+
   return {
     address: () => account?.address.toLowerCase() ?? null,
 
@@ -218,67 +140,37 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
       const chainId = await client.getChainId();
       const [
         token,
-        owner,
         poster,
         paused,
         epochCap,
-        activeTotal,
         totalClaimed,
         nextEpoch,
         hasPendingRoot,
       ] = await Promise.all([
         read<Address>("token"),
-        read<Address>("owner"),
         read<Address>("poster"),
         read<boolean>("paused"),
         read<bigint>("epochCap"),
-        read<bigint>("activeTotal"),
         read<bigint>("totalClaimed"),
         read<bigint>("nextEpoch"),
         read<boolean>("hasPendingRoot"),
       ]);
-      const balance = (await client.readContract({
+      const balance = await client.readContract({
         address: token,
-        abi: ERC20_ABI,
+        abi: erc20Abi,
         functionName: "balanceOf",
         args: [distributor],
-      })) as bigint;
-      const count = Number(nextEpoch);
-      const latest =
-        count > 0
-          ? await this.epochAt(count - 1).then((epoch) => ({
-              index: count - 1,
-              ...epoch,
-            }))
-          : null;
+      });
       return {
         chainId,
         token: token.toLowerCase(),
-        owner: owner.toLowerCase(),
         poster: poster.toLowerCase(),
         paused,
         epochCap,
-        activeTotal,
         totalClaimed,
         balance,
-        nextEpoch: count,
+        nextEpoch: Number(nextEpoch),
         hasPendingRoot,
-        latest,
-      };
-    },
-
-    async epochAt(index: number) {
-      const epoch = await read<{
-        root: Hex;
-        total: bigint;
-        postedAt: bigint;
-        voided: boolean;
-      }>("epochAt", [BigInt(index)]);
-      return {
-        root: epoch.root.toLowerCase(),
-        total: epoch.total,
-        postedAt: Number(epoch.postedAt),
-        voided: epoch.voided,
       };
     },
 
@@ -476,7 +368,7 @@ export function createEvmPoster(options: EvmPosterOptions): PosterClient {
           throw new Error("Referral posted event differs");
         // Latest state can hold a run; it cannot establish a terminal owner void.
         // Robinhood need not serve historical eth_call for canonical receipt/log proof.
-        const epoch = await this.epochAt(row.epoch);
+        const epoch = await epochAt(row.epoch);
         if (
           epoch.root !== row.merkleRoot ||
           epoch.total !== BigInt(row.totalBase)
