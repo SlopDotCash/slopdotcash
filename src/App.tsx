@@ -138,36 +138,123 @@ function publicFooterDomain(hostname: string): "slop.cash" | "slop.tech" {
     : "slop.cash";
 }
 
-interface Route {
-  kind:
-    | "admin"
-    | "cycle"
-    | "funding-project"
-    | "home"
-    | "how-it-works"
-    | "owner-awards"
-    | "manage-project"
-    | "new-project"
-    | "profile"
-    | "project"
-    | "receipts"
-    | "models"
-    | "sponsors"
-    | "cycle-archive"
-    | "unknown"
-    | "account"
-    | "points"
-    | "login"
-    | "earnings"
-    | "inbox"
-    | "vetting-evidence"
-    | "operator-traces"
-    | "security-cases"
-    | "security-program";
-  projectId?: string;
-  cycleId?: string;
-  login?: string;
-}
+type ProjectRouteKind =
+  | "project"
+  | "funding-project"
+  | "manage-project"
+  | "security-program"
+  | "owner-awards";
+type PageRouteKind =
+  | "home"
+  | "how-it-works"
+  | "receipts"
+  | "models"
+  | "sponsors"
+  | "cycle-archive"
+  | "unknown"
+  | "account"
+  | "points"
+  | "login"
+  | "earnings"
+  | "inbox"
+  | "admin"
+  | "new-project"
+  | "vetting-evidence"
+  | "operator-traces"
+  | "security-cases";
+type Route =
+  | { kind: PageRouteKind }
+  | { kind: ProjectRouteKind; projectId: string }
+  | { kind: "cycle"; projectId: string; cycleId: string }
+  | { kind: "profile"; login: string };
+
+/**
+ * Each page's data needs. `snapshot` loads the public snapshot. `registry`
+ * says whether the page works without the project registry ("independent"),
+ * needs the current registry because it acts on a manifest ("current", PRD
+ * section 9), or may show the last good registry ("cached").
+ */
+const ROUTES: Record<
+  Route["kind"],
+  {
+    snapshot: boolean;
+    registry: "independent" | "current" | "cached";
+    privateTitle?: string;
+  }
+> = {
+  home: { snapshot: false, registry: "cached" },
+  "how-it-works": { snapshot: false, registry: "independent" },
+  receipts: { snapshot: true, registry: "cached" },
+  models: { snapshot: true, registry: "cached" },
+  sponsors: { snapshot: true, registry: "cached" },
+  "cycle-archive": { snapshot: false, registry: "cached" },
+  unknown: { snapshot: false, registry: "cached" },
+  account: {
+    snapshot: false,
+    registry: "independent",
+    privateTitle: "Account",
+  },
+  points: { snapshot: false, registry: "cached" },
+  login: { snapshot: false, registry: "independent", privateTitle: "Log in" },
+  earnings: {
+    snapshot: false,
+    registry: "independent",
+    privateTitle: "Your payouts",
+  },
+  inbox: { snapshot: false, registry: "independent", privateTitle: "Inbox" },
+  admin: { snapshot: false, registry: "independent", privateTitle: "Admin" },
+  "new-project": { snapshot: false, registry: "independent" },
+  "vetting-evidence": {
+    snapshot: false,
+    registry: "independent",
+    privateTitle: "Private vetting evidence",
+  },
+  "operator-traces": {
+    snapshot: false,
+    registry: "independent",
+    privateTitle: "Private traces",
+  },
+  "security-cases": {
+    snapshot: false,
+    registry: "independent",
+    privateTitle: "Security cases",
+  },
+  project: { snapshot: true, registry: "cached" },
+  "funding-project": { snapshot: true, registry: "current" },
+  "manage-project": { snapshot: false, registry: "current" },
+  "security-program": { snapshot: false, registry: "current" },
+  "owner-awards": {
+    snapshot: false,
+    registry: "current",
+    privateTitle: "Monthly awards",
+  },
+  cycle: { snapshot: true, registry: "cached" },
+  profile: { snapshot: true, registry: "cached" },
+};
+
+/** Pages whose whole path is one fixed segment. */
+const PAGE_ROUTES = new Map<string, PageRouteKind>([
+  ["earnings", "earnings"],
+  ["login", "login"],
+  ["inbox", "inbox"],
+  ["vetting-evidence", "vetting-evidence"],
+  ["security", "security-cases"],
+  ["admin", "admin"],
+  ["account", "account"],
+  ["how-it-works", "how-it-works"],
+  ["receipts", "receipts"],
+  ["models", "models"],
+  ["sponsors", "sponsors"],
+  ["cycles", "cycle-archive"],
+]);
+
+/** Project pages at /projects/<id>/<section>. */
+const PROJECT_SECTIONS = new Map<string, ProjectRouteKind>([
+  ["awards", "owner-awards"],
+  ["manage", "manage-project"],
+  ["security", "security-program"],
+  ["funding", "funding-project"],
+]);
 
 function internalRoute(pathname: string): Route {
   let segments: string[];
@@ -176,96 +263,34 @@ function internalRoute(pathname: string): Route {
   } catch {
     return { kind: "unknown" };
   }
+  const [first, second, third] = segments;
   if (segments.length === 0) return { kind: "home" };
-  if (segments.length === 1 && segments[0] === "earnings")
-    return { kind: "earnings" };
-  if (segments.length === 1 && segments[0] === "login")
-    return { kind: "login" };
-  if (segments.length === 1 && segments[0] === "inbox")
-    return { kind: "inbox" };
-  if (segments.length === 1 && segments[0] === "vetting-evidence")
-    return { kind: "vetting-evidence" };
-  if (
-    segments.length === 2 &&
-    segments[0] === "operator" &&
-    segments[1] === "traces"
-  )
+  if (segments.length === 1) {
+    if (first === "points")
+      return {
+        kind: new URLSearchParams(window.location.search).has("x")
+          ? "account"
+          : "points",
+      };
+    const kind = PAGE_ROUTES.get(first);
+    if (kind) return { kind };
+  }
+  if (segments.length === 2 && first === "operator" && second === "traces")
     return { kind: "operator-traces" };
-  if (segments.length === 1 && segments[0] === "security")
-    return { kind: "security-cases" };
-  if (
-    segments.length === 3 &&
-    segments[0] === "projects" &&
-    segments[2] === "awards"
-  )
-    return { kind: "owner-awards", projectId: segments[1] };
   // Admin emails sent before self-service setup link /admin/applications/<id>.
-  if (
-    segments[0] === "admin" &&
-    (segments.length === 1 ||
-      (segments.length === 3 && segments[1] === "applications"))
-  )
+  if (segments.length === 3 && first === "admin" && second === "applications")
     return { kind: "admin" };
-  if (segments.length === 1 && segments[0] === "account")
-    return { kind: "account" };
-  if (segments.length === 1 && segments[0] === "points")
-    return {
-      kind: new URLSearchParams(window.location.search).has("x")
-        ? "account"
-        : "points",
-    };
-  if (segments.length === 1 && segments[0] === "how-it-works") {
-    return { kind: "how-it-works" };
-  }
-  if (segments.length === 1 && segments[0] === "receipts") {
-    return { kind: "receipts" };
-  }
-  if (segments.length === 1 && segments[0] === "models") {
-    return { kind: "models" };
-  }
-  if (segments.length === 1 && segments[0] === "sponsors") {
-    return { kind: "sponsors" };
-  }
-  if (segments.length === 1 && segments[0] === "cycles") {
-    return { kind: "cycle-archive" };
-  }
-  if (
-    segments.length === 2 &&
-    segments[0] === "projects" &&
-    segments[1] === "new"
-  ) {
-    return { kind: "new-project" };
-  }
-  if (
-    segments[0] === "projects" &&
-    segments.length === 3 &&
-    segments[2] === "manage"
-  ) {
-    return { kind: "manage-project", projectId: segments[1] };
-  }
-  if (
-    segments[0] === "projects" &&
-    segments.length === 3 &&
-    segments[2] === "security"
-  ) {
-    return { kind: "security-program", projectId: segments[1] };
-  }
-  if (
-    segments[0] === "projects" &&
-    segments.length === 3 &&
-    segments[2] === "funding"
-  ) {
-    return { kind: "funding-project", projectId: segments[1] };
-  }
-  if (segments[0] === "projects" && segments.length === 2) {
-    return { kind: "project", projectId: segments[1] };
-  }
-  if (segments[0] === "contributors" && segments.length === 2) {
-    return { kind: "profile", login: segments[1] };
-  }
-  if (segments[0] === "cycles" && segments.length === 3) {
-    return { kind: "cycle", projectId: segments[1], cycleId: segments[2] };
-  }
+  if (first === "projects" && segments.length === 2)
+    return second === "new"
+      ? { kind: "new-project" }
+      : { kind: "project", projectId: second };
+  const section = PROJECT_SECTIONS.get(third);
+  if (first === "projects" && segments.length === 3 && section)
+    return { kind: section, projectId: second };
+  if (first === "contributors" && segments.length === 2)
+    return { kind: "profile", login: second };
+  if (first === "cycles" && segments.length === 3)
+    return { kind: "cycle", projectId: second, cycleId: third };
   return { kind: "unknown" };
 }
 
@@ -297,22 +322,10 @@ function useRoute(): Route {
   return useMemo(() => internalRoute(path), [path]);
 }
 
-const PRIVATE_PAGE_TITLES = new Map<Route["kind"], string>([
-  ["admin", "Admin"],
-  ["owner-awards", "Monthly awards"],
-  ["account", "Account"],
-  ["login", "Log in"],
-  ["earnings", "Your payouts"],
-  ["inbox", "Inbox"],
-  ["security-cases", "Security cases"],
-  ["vetting-evidence", "Private vetting evidence"],
-  ["operator-traces", "Private traces"],
-]);
-
 /** The title and canonical path of a route; a missing page has no canonical. */
 function routeHead(route: Route): { title: string; path: string | null } {
   const notFound = { title: pageTitle("Page not found"), path: null };
-  const privateTitle = PRIVATE_PAGE_TITLES.get(route.kind);
+  const privateTitle = ROUTES[route.kind].privateTitle;
   if (privateTitle) {
     return {
       title: pageTitle(privateTitle),
@@ -327,25 +340,18 @@ function routeHead(route: Route): { title: string; path: string | null } {
     };
   }
   if (route.kind === "profile") {
-    const login = route.login ?? "";
     return {
-      title: pageTitle(login),
-      path: `/contributors/${encodeURIComponent(login)}`,
+      title: pageTitle(route.login),
+      path: `/contributors/${encodeURIComponent(route.login)}`,
     };
   }
-  if (
-    route.kind === "project" ||
-    route.kind === "funding-project" ||
-    route.kind === "manage-project" ||
-    route.kind === "security-program" ||
-    route.kind === "cycle"
-  ) {
-    const project = findProject(route.projectId ?? "");
+  if ("projectId" in route) {
+    const project = findProject(route.projectId);
     if (!project) return notFound;
     if (route.kind === "cycle") {
       return {
         title: pageTitle(`${project.name} ${route.cycleId} cycle`),
-        path: `/cycles/${project.id}/${encodeURIComponent(route.cycleId ?? "")}`,
+        path: `/cycles/${project.id}/${encodeURIComponent(route.cycleId)}`,
       };
     }
     const base = `/projects/${project.slug}`;
@@ -2852,30 +2858,14 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
   );
 }
 
-const REGISTRY_INDEPENDENT_ROUTES: Route["kind"][] = [
-  "login",
-  "account",
-  "admin",
-  "inbox",
-  "earnings",
-  "security-cases",
-  "vetting-evidence",
-  "operator-traces",
-  "new-project",
-  "how-it-works",
-];
-
-/**
- * Routes that act on a project's current manifest. They never use the last
- * good registry, because sensitive actions recheck current authority (PRD
- * section 9).
- */
-const CURRENT_REGISTRY_ROUTES: Route["kind"][] = [
-  "funding-project",
-  "manage-project",
-  "owner-awards",
-  "security-program",
-];
+/** A project page, or "Project not found" for an unknown project id. */
+function withProject(
+  route: { projectId: string },
+  render: (project: ProjectDefinition) => ReactNode,
+): ReactNode {
+  const project = findProject(route.projectId);
+  return project ? render(project) : <NotFound title="Project not found" />;
+}
 
 export function App() {
   const route = useRoute();
@@ -2894,34 +2884,16 @@ export function App() {
 function AppContent({ route }: { route: Route }) {
   useInitialHashScroll();
   useDocumentHead(route);
-  const snapshotFree: Route["kind"][] = [
-    "admin",
-    "home",
-    "points",
-    "account",
-    "login",
-    "earnings",
-    "inbox",
-    "how-it-works",
-    "new-project",
-    "manage-project",
-    "owner-awards",
-    "security-cases",
-    "vetting-evidence",
-    "operator-traces",
-    "security-program",
-    "unknown",
-    "cycle-archive",
-  ];
+  const { registry, snapshot } = ROUTES[route.kind];
   const staleRegistry = globalThis.__SLOP_PROJECT_REGISTRY_STALE__;
-  const registryIndependent = REGISTRY_INDEPENDENT_ROUTES.includes(route.kind);
+  const registryIndependent = registry === "independent";
   const registryError =
     globalThis.__SLOP_PROJECT_REGISTRY_ERROR__ ??
-    (staleRegistry && CURRENT_REGISTRY_ROUTES.includes(route.kind)
+    (staleRegistry && registry === "current"
       ? `${staleRegistry.reason} This page needs the current project registry.`
       : undefined);
   const blocked = Boolean(registryError) && !registryIndependent;
-  const needsSnapshot = !blocked && !snapshotFree.includes(route.kind);
+  const needsSnapshot = !blocked && snapshot;
   const [state, retry] = useSnapshot(needsSnapshot);
   const [archive, retryArchive] = useCycleIndex(route.kind === "cycle-archive");
   let content: ReactNode;
@@ -2965,29 +2937,20 @@ function AppContent({ route }: { route: Route }) {
   else if (route.kind === "vetting-evidence") content = <VettingEvidencePage />;
   else if (route.kind === "operator-traces") content = <OperatorTracesPage />;
   else if (route.kind === "security-cases") content = <SecurityCasesPage />;
-  else if (route.kind === "security-program") {
-    const project = findProject(route.projectId ?? "");
-    content = project ? (
+  else if (route.kind === "security-program")
+    content = withProject(route, (project) => (
       <SecurityProgramPage key={project.id} project={project} />
-    ) : (
-      <NotFound title="Project not found" />
-    );
-  } else if (route.kind === "owner-awards") {
-    const project = findProject(route.projectId ?? "");
-    content = project ? (
+    ));
+  else if (route.kind === "owner-awards")
+    content = withProject(route, (project) => (
       <OwnerAwardsPage key={project.id} project={project} />
-    ) : (
-      <NotFound title="Project not found" />
-    );
-  } else if (route.kind === "manage-project") {
-    const project = findProject(route.projectId ?? "");
-    content = project ? (
+    ));
+  else if (route.kind === "manage-project")
+    content = withProject(route, (project) => (
       <ProjectUpdatePage key={project.id} project={project} />
-    ) : (
-      <NotFound title="Project not found" />
-    );
-  } else if (route.kind === "project") {
-    const project = findProject(route.projectId ?? "");
+    ));
+  else if (route.kind === "project") {
+    const project = findProject(route.projectId);
     content = project ? (
       <ProjectPage project={project} retry={retry} state={state} />
     ) : (
@@ -2999,37 +2962,29 @@ function AppContent({ route }: { route: Route }) {
         </p>
         <ProjectRiskFlag
           key={`flag:${route.projectId}`}
-          projectId={route.projectId ?? ""}
+          projectId={route.projectId}
         />
         <p>
           <Link href="/">See open projects</Link>
         </p>
       </main>
     );
-  } else if (route.kind === "funding-project") {
-    const project = findProject(route.projectId ?? "");
-    content = project ? (
+  } else if (route.kind === "funding-project")
+    content = withProject(route, (project) => (
       <ProjectFundingPage key={project.id} project={project} />
-    ) : (
-      <NotFound title="Project not found" />
-    );
-  } else if (route.kind === "profile")
-    content = (
-      <ProfilePage login={route.login ?? ""} retry={retry} state={state} />
-    );
-  else if (route.kind === "cycle") {
-    const project = findProject(route.projectId ?? "");
-    content = project ? (
+    ));
+  else if (route.kind === "profile")
+    content = <ProfilePage login={route.login} retry={retry} state={state} />;
+  else if (route.kind === "cycle")
+    content = withProject(route, (project) => (
       <CyclePage
-        cycleId={route.cycleId ?? ""}
+        cycleId={route.cycleId}
         project={project}
         retry={retry}
         state={state}
       />
-    ) : (
-      <NotFound title="Project not found" />
-    );
-  } else content = <NotFound />;
+    ));
+  else content = <NotFound />;
   return (
     <>
       <Header />
