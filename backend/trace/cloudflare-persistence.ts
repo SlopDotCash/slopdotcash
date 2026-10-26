@@ -272,6 +272,117 @@ function sameCreate(existing: RunRow, input: CreateRunInput): boolean {
   );
 }
 
+/**
+ * The one writer of `wallet_claims`: the claim, its audit event and the
+ * wallet-change notice commit together. A replay returns the existing claim;
+ * a concurrent successor of the same predecessor is a conflict.
+ */
+export async function insertWalletClaim(
+  db: D1Database,
+  claim: WalletClaim,
+  audit: AuditInput,
+): Promise<PersistenceResult<WalletClaim>> {
+  const byDigest = await db
+    .prepare("SELECT * FROM wallet_claims WHERE record_sha256 = ?")
+    .bind(claim.recordSha256)
+    .first<WalletClaimRow>();
+  if (byDigest !== null)
+    return { status: "existing", value: mapWalletClaim(byDigest) };
+  if (claim.supersedesClaimId !== null) {
+    const previous = await db
+      .prepare("SELECT * FROM wallet_claims WHERE id = ?")
+      .bind(claim.supersedesClaimId)
+      .first<WalletClaimRow>();
+    if (
+      previous === null ||
+      previous.github_user_id !== claim.githubId ||
+      previous.chain !== claim.chain
+    ) {
+      return { status: "conflict" };
+    }
+  }
+  const claimInsert = db
+    .prepare(
+      `INSERT INTO wallet_claims (
+          id, github_user_id, github_login, wallet_address, chain, source,
+          issue_repository, issue_number, source_body_sha256, observed_at,
+          record_sha256, supersedes_claim_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      claim.id,
+      claim.githubId,
+      claim.githubLogin,
+      claim.walletAddress,
+      claim.chain,
+      claim.source,
+      claim.issueRepository,
+      claim.issueNumber,
+      claim.sourceBodySha256,
+      claim.observedAt,
+      claim.recordSha256,
+      claim.supersedesClaimId,
+      claim.createdAt,
+    );
+  const auditInsert = db
+    .prepare(
+      `INSERT INTO private_audit_events (
+        id, actor_github_id, action, target, request_id, created_at, details_json
+      ) SELECT ?, ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM wallet_claims WHERE id = ?)`,
+    )
+    .bind(
+      audit.id,
+      audit.actorGithubId,
+      audit.action,
+      audit.target,
+      audit.requestId,
+      audit.createdAt,
+      JSON.stringify(audit.details),
+      claim.id,
+    );
+  try {
+    // The inbox row is a no-op on replay, so only the claim and its audit
+    // are checked.
+    const results = (
+      await db.batch([
+        claimInsert,
+        auditInsert,
+        notifyWalletChanged(db, claim.id, claim.createdAt),
+      ])
+    ).slice(0, 2);
+    if (
+      results.length !== 2 ||
+      results.some((result) => !result.success) ||
+      results.some((result) => (result.meta?.changes ?? 0) !== 1)
+    ) {
+      throw new Error("Atomic wallet claim and audit did not both commit");
+    }
+  } catch (error) {
+    const raced = await db
+      .prepare("SELECT * FROM wallet_claims WHERE record_sha256 = ?")
+      .bind(claim.recordSha256)
+      .first<WalletClaimRow>();
+    if (raced !== null)
+      return { status: "existing", value: mapWalletClaim(raced) };
+    const competing = await (claim.supersedesClaimId === null
+      ? db
+          .prepare(
+            `SELECT id FROM wallet_claims
+             WHERE github_user_id = ? AND chain = ?
+               AND supersedes_claim_id IS NULL`,
+          )
+          .bind(claim.githubId, claim.chain)
+      : db
+          .prepare("SELECT id FROM wallet_claims WHERE supersedes_claim_id = ?")
+          .bind(claim.supersedesClaimId)
+    ).first<{ id: string }>();
+    if (competing !== null) return { status: "conflict" };
+    throw error;
+  }
+  return { status: "created", value: claim };
+}
+
 export class CloudflareTracePersistence implements TracePersistence {
   constructor(
     private readonly db: D1Database,
@@ -964,108 +1075,11 @@ export class CloudflareTracePersistence implements TracePersistence {
       .run();
   }
 
-  async createWalletClaim(
+  createWalletClaim(
     claim: WalletClaim,
     audit: AuditInput,
   ): Promise<PersistenceResult<WalletClaim>> {
-    const byDigest = await this.db
-      .prepare("SELECT * FROM wallet_claims WHERE record_sha256 = ?")
-      .bind(claim.recordSha256)
-      .first<WalletClaimRow>();
-    if (byDigest !== null)
-      return { status: "existing", value: mapWalletClaim(byDigest) };
-    if (claim.supersedesClaimId !== null) {
-      const previous = await this.getWalletClaim(claim.supersedesClaimId);
-      if (
-        previous === null ||
-        previous.githubId !== claim.githubId ||
-        previous.chain !== claim.chain
-      ) {
-        return { status: "conflict" };
-      }
-    }
-    const claimInsert = this.db
-      .prepare(
-        `INSERT INTO wallet_claims (
-            id, github_user_id, github_login, wallet_address, chain, source,
-            issue_repository, issue_number, source_body_sha256, observed_at,
-            record_sha256, supersedes_claim_id, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        claim.id,
-        claim.githubId,
-        claim.githubLogin,
-        claim.walletAddress,
-        claim.chain,
-        claim.source,
-        claim.issueRepository,
-        claim.issueNumber,
-        claim.sourceBodySha256,
-        claim.observedAt,
-        claim.recordSha256,
-        claim.supersedesClaimId,
-        claim.createdAt,
-      );
-    const auditInsert = this.db
-      .prepare(
-        `INSERT INTO private_audit_events (
-          id, actor_github_id, action, target, request_id, created_at, details_json
-        ) SELECT ?, ?, ?, ?, ?, ?, ?
-          WHERE EXISTS (SELECT 1 FROM wallet_claims WHERE id = ?)`,
-      )
-      .bind(
-        audit.id,
-        audit.actorGithubId,
-        audit.action,
-        audit.target,
-        audit.requestId,
-        audit.createdAt,
-        JSON.stringify(audit.details),
-        claim.id,
-      );
-    try {
-      // The inbox row is a no-op on replay, so only the claim and its audit
-      // are checked.
-      const results = (
-        await this.db.batch([
-          claimInsert,
-          auditInsert,
-          notifyWalletChanged(this.db, claim.id, claim.createdAt),
-        ])
-      ).slice(0, 2);
-      if (
-        results.length !== 2 ||
-        results.some((result) => !result.success) ||
-        results.some((result) => (result.meta?.changes ?? 0) !== 1)
-      ) {
-        throw new Error("Atomic wallet claim and audit did not both commit");
-      }
-    } catch (error) {
-      const raced = await this.db
-        .prepare("SELECT * FROM wallet_claims WHERE record_sha256 = ?")
-        .bind(claim.recordSha256)
-        .first<WalletClaimRow>();
-      if (raced !== null)
-        return { status: "existing", value: mapWalletClaim(raced) };
-      const competing = await (claim.supersedesClaimId === null
-        ? this.db
-            .prepare(
-              `SELECT id FROM wallet_claims
-               WHERE github_user_id = ? AND chain = ?
-                 AND supersedes_claim_id IS NULL`,
-            )
-            .bind(claim.githubId, claim.chain)
-        : this.db
-            .prepare(
-              "SELECT id FROM wallet_claims WHERE supersedes_claim_id = ?",
-            )
-            .bind(claim.supersedesClaimId)
-      ).first<{ id: string }>();
-      if (competing !== null) return { status: "conflict" };
-      throw error;
-    }
-    return { status: "created", value: claim };
+    return insertWalletClaim(this.db, claim, audit);
   }
 
   async createWalletPossessionChallenge(
