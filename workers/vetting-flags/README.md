@@ -44,6 +44,13 @@ controls or prove real scanner/model behavior. A partial command cannot run
 again over its partial state; it records failure and requires a new isolated
 run. Replayed completed commands preserve the original result and data.
 
+Wrangler may deploy the Worker before queue-consumer setup fails. Recovery
+verifies the exact tagged version and complete private binding set before it
+claims that partial deployment for cleanup. A missing consumer does not prevent
+removal of the owned Worker and its producer-bound queue. A changed source or
+binding remains unresolved. The result keeps the original failure, fixed stage,
+process status and numeric provider codes; it never stores raw process output.
+
 Run locally before review:
 
 ```sh
