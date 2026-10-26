@@ -845,6 +845,43 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(
       page.getByRole("link", { name: "Report privately on GitHub" }),
     ).toHaveCount(0);
+    // A removed App makes the last verified observation stale. Program C is
+    // new, so its first read shows what the background refresh recorded.
+    const c = {
+      id: `bounty-c-${suffix}`,
+      repository: `e2e-security/bounty-c-${suffix}`,
+    };
+    await listProject(request, TOKENS.security, c.repository, c.id, {
+      reward: {
+        ...(applicationManifest(c.id, c.repository).reward as object),
+        monthlyCapMinor: "0",
+        monthlyCapDisplay: "$0",
+      },
+      securityBounty: bountyTerms(c.repository),
+    });
+    expect(
+      (
+        await revise(request, c.id, (m) => ({
+          ...m,
+          securityBounty: openTerms(
+            m.securityBounty as Record<string, unknown>,
+          ),
+        }))
+      ).status,
+    ).toBe(200);
+    await refreshReporting(request);
+    expect(
+      (
+        await request.fetch(
+          `${GITHUB_FIXTURE}/__fixture/intake-app/${c.repository}/missing`,
+          { method: "PUT" },
+        )
+      ).status(),
+    ).toBe(204);
+    await refreshReporting(request);
+    await page.goto(`/projects/${c.id}/security`);
+    await expect(page.getByRole("alert")).toContainText("is out of date");
+    await expect(handoff).toHaveCount(0);
     await context.close();
     for (const state of ["forbidden", "unavailable"]) {
       await setIntake(request, b.repository, state);
