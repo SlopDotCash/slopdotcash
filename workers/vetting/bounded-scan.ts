@@ -14,7 +14,6 @@
  * isolated runner only when its bytes cannot be judged statically, and that
  * runner never receives secrets.
  */
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { VettingArtifact } from "../../backend/vetting/result";
@@ -29,6 +28,8 @@ import {
   VETTING_SCAN_SCHEMA,
   type VettingScanResult,
 } from "../../backend/vetting/scan-result";
+import { sha256Hex as sha256 } from "../../src/lib/sha256";
+import type { QueuedAssessment } from "./queue";
 import { SCAN_REVIEW_AREAS, type ScannerEvidence } from "./scanners";
 
 export const INVENTORY_SCHEMA = "slop-scan-inventory-v2";
@@ -38,12 +39,7 @@ export const MAX_INVENTORY_ITEMS = 1024;
 /** A single text file larger than this is a visibility gap, not a skip. */
 export const MAX_TEXT_FILE_BYTES = 256 * 1024;
 
-const sha256 = (bytes: string | Uint8Array) =>
-  createHash("sha256").update(bytes).digest("hex");
-
 export type ScanInputFile = { path: string; bytes: Uint8Array };
-/** An install-time download an operator retrieved by its exact URL. */
-export type RetrievedDownload = { url: string; bytes: Uint8Array };
 
 export type ScanFinding = VettingScanResult["findings"][number] & {
   path: string;
@@ -348,8 +344,6 @@ export function inspectRepository(input: {
   files: ScanInputFile[];
   /** Source the acquisition could not read; each keeps the scan incomplete. */
   acquisitionGaps?: string[];
-  /** Install-time downloads an operator retrieved, by exact URL. */
-  retrievedDownloads?: RetrievedDownload[];
 }): RepositoryInspection {
   const files = [...input.files].sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
@@ -436,45 +430,11 @@ export function inspectRepository(input: {
         downloads.add((match[1] ?? match[2]).slice(0, 500));
     addItem(file.path, text, surfaces);
   }
-  const retrieved = new Map(
-    (input.retrievedDownloads ?? []).map((download) => [
-      download.url,
-      download.bytes,
-    ]),
-  );
+  // The scan does not retrieve install-time downloads; each stays a gap.
   for (const url of [...downloads].sort()) {
     counts.downloads += 1;
-    const bytes = retrieved.get(url);
-    if (bytes === undefined) {
-      partial.add("downloads");
-      gaps.push(`Install-time download not retrieved: ${url}`);
-      continue;
-    }
-    const text = decode(bytes);
-    const artifactFindings =
-      text === null ? [] : checkText(url, text, ["installScripts"]);
-    findings.push(...artifactFindings);
-    artifacts.push({
-      sha256: sha256(bytes),
-      parentSha256: null,
-      origin: url,
-      path: url,
-      type: "second-stage",
-      // Readable text with no indicator is statically clean; anything else
-      // waits for a specialist.
-      state:
-        text !== null && artifactFindings.length === 0
-          ? "released"
-          : "quarantined",
-      analysis:
-        text === null
-          ? "pending"
-          : artifactFindings.length === 0
-            ? "static-clean"
-            : "suspicious",
-      requestedExecution: true,
-    });
-    if (text !== null) addItem(`download:${url}`, text, ["downloads"]);
+    partial.add("downloads");
+    gaps.push(`Install-time download not retrieved: ${url}`);
   }
   const inventory = new TextEncoder().encode(
     JSON.stringify({
@@ -515,6 +475,45 @@ export function inspectRepository(input: {
 }
 
 /**
+ * Adds isolated-execution evidence to the inventory the model reads. `add`
+ * refuses an item beyond the inventory budget. `finish` records the given
+ * gaps on the inspection and its inventory, then replaces the inventory
+ * bytes and digest.
+ */
+export function executionInventory(inspection: RepositoryInspection) {
+  const inventory = JSON.parse(
+    new TextDecoder().decode(inspection.inventory),
+  ) as {
+    items: { id: string; text: string; sha256: string }[];
+    visibilityGaps: string[];
+  };
+  return {
+    add(id: string, text: string): boolean {
+      const item = { id, text, sha256: sha256(text) };
+      const candidate = { ...inventory, items: [...inventory.items, item] };
+      if (
+        candidate.items.length > MAX_INVENTORY_ITEMS ||
+        new TextEncoder().encode(JSON.stringify(candidate)).length >
+          MAX_INVENTORY_BYTES
+      )
+        return false;
+      inventory.items.push(item);
+      return true;
+    },
+    finish(gaps: string[]) {
+      for (const gap of gaps) {
+        inspection.visibilityGaps.push(gap);
+        inventory.visibilityGaps.push(gap);
+      }
+      inspection.inventory = new TextEncoder().encode(
+        JSON.stringify(inventory),
+      );
+      inspection.inventorySha256 = sha256(inspection.inventory);
+    },
+  };
+}
+
+/**
  * The intake form of one model review. Its risk is read from the review
  * itself, with no score threshold: any suspected malice or high finding is
  * high risk, any other finding or incomplete coverage is ambiguous.
@@ -549,21 +548,13 @@ export function scanReview(evidence: ScannerEvidence): ScanReview {
 }
 
 /** The queue assignment a scan answers, exactly as the signed queue sent it. */
-export type QueuedScan = {
-  assessmentId: string;
-  projectId: string;
-  revision: number;
-  manifestSha256: string;
-  repository: string;
-  commitSha: string;
-  templateSha256: string;
-};
+export type QueuedScan = QueuedAssessment & { repository: string };
 
 /**
  * Composes the signed-intake result and its private report. The disposition
- * is derived, never supplied: a trusted confirmation makes it malicious,
- * otherwise it is clean only when the intake's own rules accept clean, and
- * incomplete in every other case. A primary review is always required; a
+ * is derived, never supplied: it is clean only when the intake's own rules
+ * accept clean, and incomplete in every other case. A scan never confirms
+ * malice; a moderator does. A primary review is always required; a
  * specialist review is needed only when `needsSpecialist` says so.
  */
 export function composeScanResult(input: {
@@ -577,8 +568,6 @@ export function composeScanResult(input: {
   specialist?: ScannerEvidence | null;
   execution?: VettingScanResult["execution"];
   executionEvidenceSha256s?: string[];
-  /** A separate trusted reviewer, never a model response or repository text. */
-  confirmation?: NonNullable<VettingScanResult["confirmation"]>;
 }) {
   const { inspection } = input;
   for (const scanner of [input.primary, input.specialist ?? null])
@@ -646,55 +635,13 @@ export function composeScanResult(input: {
     result.visibilityGaps.push("More than 200 scan findings");
   if (inspection.artifacts.length > 500)
     result.visibilityGaps.push("More than 500 scan artifacts");
-  if (input.confirmation) {
-    result.disposition = "malicious";
-    result.confirmation = input.confirmation;
-  } else {
-    result.disposition = "clean";
-    if (scanProblems(result).length > 0) result.disposition = "incomplete";
-  }
+  result.disposition = "clean";
+  if (scanProblems(result).length > 0) result.disposition = "incomplete";
   return {
     result,
     report,
     /** True when only a second model or specialist can finish this scan. */
-    needsSpecialist:
-      result.disposition !== "malicious" &&
-      !input.specialist &&
-      specialistRequired(result),
-  };
-}
-
-/**
- * A cached clean result for byte-identical executable content, restated for
- * a new queue assignment. The intake checks the cited original.
- */
-export function reuseCleanScan(input: {
-  queued: QueuedScan;
-  original: VettingScanResult;
-  originalAssessmentId: string;
-  inventorySha256: string;
-}): VettingScanResult {
-  const { original } = input;
-  if (
-    original.disposition !== "clean" ||
-    original.reusedAssessmentId !== null ||
-    original.assessed.inputManifestSha256 !== input.inventorySha256 ||
-    original.assessed.templateSha256 !== input.queued.templateSha256 ||
-    original.assessed.repository.toLowerCase() !==
-      input.queued.repository.toLowerCase()
-  )
-    throw new Error("The cached scan does not cover this executable content");
-  return {
-    ...original,
-    assessmentId: input.queued.assessmentId,
-    projectId: input.queued.projectId,
-    revision: input.queued.revision,
-    manifestSha256: input.queued.manifestSha256,
-    assessed: {
-      ...original.assessed,
-      commitSha: input.queued.commitSha,
-    },
-    reusedAssessmentId: input.originalAssessmentId,
+    needsSpecialist: !input.specialist && specialistRequired(result),
   };
 }
 
@@ -717,16 +664,27 @@ export async function readAcquiredSource(directory: string): Promise<{
   if (inventory.schema !== "slop-source-inventory-v1")
     throw new Error("Unknown source inventory");
   const files: ScanInputFile[] = [];
-  for (const record of inventory.records) {
-    if (record.sha256 === null) continue;
-    if (!/^[0-9a-f]{64}$/u.test(record.sha256))
-      throw new Error("Invalid source object digest");
-    const bytes = new Uint8Array(
-      await readFile(join(directory, "objects", record.sha256)),
-    );
-    if (sha256(bytes) !== record.sha256)
-      throw new Error("Acquired source bytes changed");
-    files.push({ path: record.path, bytes });
-  }
+  for (const record of inventory.records)
+    if (record.sha256 !== null)
+      files.push({
+        path: record.path,
+        bytes: await readAcquiredObject(directory, record.sha256),
+      });
   return { files, acquisitionGaps: [...inventory.visibilityGaps] };
+}
+
+/** An acquired object, read by its SHA-256 and rechecked against it. */
+export async function readAcquiredObject(
+  directory: string,
+  digest: string,
+): Promise<Uint8Array> {
+  // The digest names the object file, so it must not name another path.
+  if (!/^[0-9a-f]{64}$/u.test(digest))
+    throw new Error("Invalid acquired object digest");
+  const bytes = new Uint8Array(
+    await readFile(join(directory, "objects", digest)),
+  );
+  if (sha256(bytes) !== digest)
+    throw new Error("Acquired object bytes changed");
+  return bytes;
 }

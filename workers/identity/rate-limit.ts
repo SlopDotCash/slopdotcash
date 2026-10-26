@@ -3,7 +3,7 @@
  * The edge Rate Limiting binding remains a fast approximate shield; this single-statement
  * counter supplies the deterministic rejection boundary required before clients can ship.
  */
-import { sha256Hex } from "./crypto";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { D1Database } from "./persistence";
 
 type RateLimitRow = {

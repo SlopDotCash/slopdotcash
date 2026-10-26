@@ -86,7 +86,7 @@ type Run = {
   reopen: (senderId?: number, occurredAt?: string) => Promise<Job>;
   head: (sha: string) => void;
   loseNextLabelDelete: () => void;
-  maintainerPermission: (value: boolean) => void;
+  maintainerPermission: (value: boolean | "unavailable") => void;
   writes: string[];
   comments: string[];
   labels: string[];
@@ -181,7 +181,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let closeOptions: { loseResponse?: boolean; afterWrite?: () => void } = {};
   let head = "b".repeat(40);
   let loseLabelDelete = false;
-  let maintainerPermission = true;
+  let maintainerPermission: boolean | "unavailable" = true;
   let pauseReopen: (() => Promise<void>) | null = null;
   let pauseFindingLabel: (() => Promise<void>) | null = null;
   let loseFindingLabelResponse = false;
@@ -375,12 +375,14 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           id: Number(user[1]),
         });
       if (path.endsWith("/permission"))
-        return Response.json({
-          permission:
-            path.includes("/maintainer/") && maintainerPermission
-              ? "write"
-              : "read",
-        });
+        return maintainerPermission === "unavailable"
+          ? new Response(null, { status: 503 })
+          : Response.json({
+              permission:
+                path.includes("/maintainer/") && maintainerPermission
+                  ? "write"
+                  : "read",
+            });
       if (path.endsWith("/issues/5/comments") && request.method === "GET") {
         if (appealHistoryMode === "unavailable")
           return new Response(null, { status: 503 });
@@ -1827,6 +1829,11 @@ test("unknown label DELETE retries preserve one reversal and current maintainer 
         "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'human_reopen'",
       ),
     ).toEqual([{ n: 1 }]);
+    // A GitHub outage retries the job instead of dropping the decision.
+    run.maintainerPermission("unavailable");
+    await expect(run.deliver(reopened)).rejects.toThrow(
+      "appeal job was retried",
+    );
     run.maintainerPermission(false);
     expect(await run.deliver(reopened)).toBe(
       "reopen by a non-maintainer recorded as no decision",

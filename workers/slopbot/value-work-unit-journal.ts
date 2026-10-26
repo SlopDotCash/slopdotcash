@@ -1,20 +1,17 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { assertProjectRegistry } from "../../src/lib/project-schema.mjs";
-import {
-  findProject,
-  type ProjectDefinition,
-} from "../../src/lib/projects.mjs";
+import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
   collectTargetRepositories,
-  REGISTERED_REPOSITORIES,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
 import { VALUE_RUBRIC_VERSION } from "../../src/lib/value-assessment";
-import { sha256Hex } from "./github";
 import type { D1Database } from "./persistence";
 import {
   type ValueContextSelection,
   valueContextSelections,
 } from "./value-context";
+import { findRepository } from "./value-evidence";
 import type { StoredValueRecord } from "./value-journal";
 import { type ValueMergeRecipe, validMergeRecipe } from "./value-merge-profile";
 import {
@@ -77,25 +74,18 @@ export async function prepareWorkUnitRecord(
   supersedes: readonly string[],
   legacyPredecessors: readonly string[],
   revisionReason: string | null,
-  projects?: readonly ProjectDefinition[],
+  projects: readonly ProjectDefinition[],
 ) {
-  // Internal callers may supply the independently fetched D1 registry. Never
-  // derive project authority from the model result or captured source policy.
-  const registry =
-    projects === undefined ? null : assertProjectRegistry(projects);
-  const repositories =
-    registry === null
-      ? REGISTERED_REPOSITORIES
-      : collectTargetRepositories(registry);
+  // Callers supply the independently fetched D1 registry. Never derive
+  // project authority from the model result or captured source policy.
+  const registry = assertProjectRegistry(projects);
+  const repositories = collectTargetRepositories(registry);
   // Recompute bindings instead of trusting caller-supplied claims or recipients.
   const evidence = await prepareWorkUnitEvidence(
     supplied.sources,
     repositories,
   );
-  const project =
-    registry === null
-      ? findProject(evidence.projectId)
-      : registry.find((entry) => entry.id === evidence.projectId);
+  const project = registry.find((entry) => entry.id === evidence.projectId);
   if (project?.status !== "active")
     throw new Error("Joint value source must belong to an active project");
   if (
@@ -152,7 +142,7 @@ export async function prepareWorkUnitRecord(
 
 export function workUnitSourceBindings(
   evidence: WorkUnitEvidence,
-  repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
+  repositories: readonly TargetRepository[],
 ): WorkUnitRecord["sources"] {
   return evidence.sources.map(
     ({ evidence: source, policy, mergeRecipe }, i) => {
@@ -162,11 +152,7 @@ export function workUnitSourceBindings(
         source.pull.merged_at ??
         source.indirectAcceptance?.observedOnBranchAt ??
         source.pull.closed_at;
-      const repository = repositories.find((entry) =>
-        [entry.id, ...entry.aliases].some(
-          (id) => id.toLowerCase() === source.repository.toLowerCase(),
-        ),
-      );
+      const repository = findRepository(repositories, source.repository);
       if (!repository)
         throw new Error("Joint source repository is unregistered");
       if (occurredAt === null)

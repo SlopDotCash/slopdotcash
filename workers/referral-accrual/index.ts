@@ -11,6 +11,7 @@
  */
 
 import { refreshReferralClaims } from "../../backend/referrals/cache";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { parseConfig, posterKey, type ReferralAccrualEnv } from "./config";
 import {
   message,
@@ -33,21 +34,11 @@ export interface RunOutcome extends RunResult {
   post?: PostResult;
 }
 
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text),
-  );
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 export async function runOnce(
   env: Env,
   now: () => Date = () => new Date(),
   /** Local harnesses only; the scheduled handler never passes overrides. */
-  overrides: { fetch?: typeof fetch; chainIdOverride?: number } = {},
+  overrides: { fetch?: typeof fetch } = {},
 ): Promise<RunOutcome | null> {
   // Off is inert even when the rest of the configuration is incomplete.
   if ((env.REFERRAL_ACCRUAL_MODE ?? "off").trim() === "off") return null;
@@ -78,7 +69,6 @@ export async function runOnce(
       config: config.poster,
       privateKey: secret,
       fetch: overrides.fetch,
-      chainIdOverride: overrides.chainIdOverride,
     }),
     now,
     randomId,

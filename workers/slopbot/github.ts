@@ -3,8 +3,6 @@ import { encodeBase64Url } from "../../src/lib/byte-encoding";
 // GitHub App plumbing: webhook signatures, App JWT, installation tokens, and
 // the few REST calls Slopbot is allowed to make (BOT-01, slopbot-v2 permissions).
 
-export { sha256Hex } from "../../src/lib/async-sha256.mjs";
-
 const API = "https://api.github.com";
 const encoder = new TextEncoder();
 

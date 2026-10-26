@@ -36,23 +36,11 @@ try {
     pruneAccessAudit,
     cleanupEvidence,
   } = await import(pathToFileURL(bundle).href);
-  const workerBundle = join(directory, "worker-entry.mjs");
-  const workerBuild = spawnSync(
-    "bun",
-    [
-      "build",
-      "workers/vetting-backup/index.ts",
-      "--target=browser",
-      `--outfile=${workerBundle}`,
-    ],
-    { encoding: "utf8" },
-  );
-  assert.equal(workerBuild.status, 0, workerBuild.stderr);
   runtime = new Miniflare(
     convertV4MiniflareOptions({
       name: "backup-workflow",
       modules: true,
-      script: await readFile(workerBundle, "utf8"),
+      script: await readFile(bundle, "utf8"),
       compatibilityDate: "2026-07-30",
       bindings: { EVIDENCE_BACKUP_MODE: "enabled" },
       r2Buckets: ["EVIDENCE_SOURCE", "EVIDENCE_BACKUPS", "RESTORED"],
