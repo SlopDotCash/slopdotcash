@@ -5,7 +5,7 @@ import { readLimitedBody } from "../../backend/trace/validation";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { readRecord } from "../../src/lib/record-validation.mjs";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
-import { acquireRepository } from "./acquire";
+import { AcquisitionRefusal, acquireRepository } from "./acquire";
 import {
   serviceOrigin,
   signedVettingFetch,
@@ -153,7 +153,7 @@ export async function acquireQueuedAssessment(
     manifest.id !== assessment.projectId ||
     manifest.repositories.length !== 1
   )
-    throw new Error("Unsupported repository inventory");
+    throw new AcquisitionRefusal("Unsupported repository inventory");
   const repositoryIdentity = json(
     await bytes(
       fetcher,
@@ -174,7 +174,7 @@ export async function acquireQueuedAssessment(
       manifest.repositories[0].id.toLowerCase() ||
     repositoryIdentity.private !== false
   )
-    throw new Error("Immutable repository identity mismatch");
+    throw new AcquisitionRefusal("Immutable repository identity mismatch");
   const index = json(
     await bytes(fetcher, `${origin}/skill-templates/index.json`),
   );
@@ -265,7 +265,7 @@ export async function acquireQueuedAssessment(
       const content = await bytes(fetcher, source.url);
       templateBytes += content.byteLength;
       if (templateBytes > 32 * 1024 * 1024)
-        throw new Error("Template acquisition size limit");
+        throw new AcquisitionRefusal("Template acquisition size limit");
       if (sha256(content) !== source.sha256)
         throw new Error("Template file bytes changed");
       const objectPath = join(acquired.directory, "objects", source.sha256);

@@ -13,6 +13,12 @@ const hash = (bytes: Uint8Array, algorithm = "sha256") =>
   createHash(algorithm).update(bytes).digest("hex");
 const object = (value: unknown) => readRecord(value, "GitHub object");
 
+/** The pinned input is outside the acquisition policy, so a retry of the
+ * same pin cannot pass. Outages and changed bytes are not refusals. */
+export class AcquisitionRefusal extends Error {
+  override name = "AcquisitionRefusal";
+}
+
 export async function acquireRepository(input: {
   repository: string;
   commitSha: string;
@@ -24,7 +30,9 @@ export async function acquireRepository(input: {
     input.repository.split("/").some((part) => part === "." || part === "..") ||
     !SHA.test(input.commitSha)
   )
-    throw new Error("An exact repository and commit SHA are required");
+    throw new AcquisitionRefusal(
+      "An exact repository and commit SHA are required",
+    );
   const fetcher = input.fetch ?? fetch;
   let transferred = 0;
   const deadline = AbortSignal.timeout(120_000);
@@ -67,7 +75,7 @@ export async function acquireRepository(input: {
   )
     throw new Error("Incomplete commit tree");
   if (tree.tree.length > MAX_FILES)
-    throw new Error("Source entry limit exceeded");
+    throw new AcquisitionRefusal("Source entry limit exceeded");
   const names = new Set<string>();
   const entries = tree.tree.map((value) => {
     const row = object(value);
@@ -86,7 +94,7 @@ export async function acquireRepository(input: {
       names.has(row.path) ||
       !SHA.test(String(row.sha))
     )
-      throw new Error("Invalid source tree path or digest");
+      throw new AcquisitionRefusal("Invalid source tree path or digest");
     names.add(row.path);
     if (
       !(
@@ -96,7 +104,7 @@ export async function acquireRepository(input: {
           ["100644", "100755", "120000"].includes(String(row.mode)))
       )
     )
-      throw new Error("Unsupported source tree entry");
+      throw new AcquisitionRefusal("Unsupported source tree entry");
     return {
       path: row.path,
       gitSha: String(row.sha),
@@ -200,7 +208,8 @@ export async function acquireRepository(input: {
       )
         throw new Error("Blob bytes do not match the Git object");
       bytes += content.length;
-      if (bytes > MAX_BYTES) throw new Error("Source byte limit exceeded");
+      if (bytes > MAX_BYTES)
+        throw new AcquisitionRefusal("Source byte limit exceeded");
       const sha256 = hash(content);
       if (!stored.has(sha256)) {
         await writeFile(join(directory, "objects", sha256), content, {
