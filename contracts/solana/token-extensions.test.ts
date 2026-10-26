@@ -1,0 +1,307 @@
+import { describe, expect, test } from "bun:test";
+import { decodeBase58Bytes } from "../../src/lib/base58";
+import {
+  ACCOUNT_SIZE,
+  MINT_SIZE,
+  readTokenAccount,
+  readTokenMint,
+  TOKEN_2022_PROGRAM,
+  TOKEN_PROGRAM,
+} from "./token-extensions";
+
+/**
+ * Synthetic Token-2022 mint with disabled mint and freeze authorities. Its only
+ * records are MetadataPointer (18, 64 bytes) and TokenMetadata (19, 124 bytes).
+ */
+const FIXTURE_MINT =
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCl1OgAAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARIAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqEwB8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioEAAAAVEVTVAQAAABURVNUJAAAAGh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2ZpeHR1cmUvbWludAAAAAA=";
+/** A synthetic token account of that mint: account type 2 plus ImmutableOwner (7, 0 bytes). */
+const FIXTURE_ACCOUNT =
+  "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB0BCDwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgcAAAA=";
+const MINT_ADDRESS = decodeBase58Bytes(
+  "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh",
+);
+const OTHER_MINT = new Uint8Array(32).fill(4);
+const bytes = (base64: string) =>
+  Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+const account = (owner: string, data: Uint8Array) => ({
+  owner,
+  executable: false,
+  lamports: 1,
+  data: [Buffer.from(data).toString("base64"), "base64"],
+});
+/** A copy of the synthetic mint with one byte range changed. */
+const mutatedMint = (
+  mutate: (data: Uint8Array) => Uint8Array | undefined,
+): Uint8Array => {
+  const data = bytes(FIXTURE_MINT).slice();
+  return mutate(data) ?? data;
+};
+/** A Token-2022 token account: the 165-byte base, an account type and its records. */
+function tokenAccount(records: Uint8Array, type = 2): Uint8Array {
+  const data = new Uint8Array(ACCOUNT_SIZE + 1 + records.length);
+  data.set(MINT_ADDRESS, 0);
+  data.set(new Uint8Array(32).fill(3), 32);
+  data[ACCOUNT_SIZE] = type;
+  data.set(records, ACCOUNT_SIZE + 1);
+  return data;
+}
+/** A classic SPL mint with the given decimals. */
+function classicMint(decimals: number, size = MINT_SIZE): Uint8Array {
+  const data = new Uint8Array(size);
+  data[44] = decimals;
+  data[45] = 1;
+  return data;
+}
+const record = (...values: number[]) => Uint8Array.from(values);
+
+describe("readTokenMint", () => {
+  test("admits the synthetic metadata-only mint", () => {
+    const mint = readTokenMint(
+      account(TOKEN_2022_PROGRAM, bytes(FIXTURE_MINT)),
+      MINT_ADDRESS,
+    );
+    expect(mint.program).toBe(TOKEN_2022_PROGRAM);
+    expect(mint.raw.length).toBe(362);
+    expect(mint.extensions).toEqual([18, 19]);
+    expect(mint.decimals).toBe(6);
+  });
+
+  test("admits trailing zero padding after the last record", () => {
+    const padded = mutatedMint((data) => {
+      const next = new Uint8Array(data.length + 8);
+      next.set(data);
+      return next;
+    });
+    expect(
+      readTokenMint(account(TOKEN_2022_PROGRAM, padded), MINT_ADDRESS)
+        .extensions,
+    ).toEqual([18, 19]);
+  });
+
+  test("keeps classic SPL mints", () => {
+    const mint = readTokenMint(
+      account(TOKEN_PROGRAM, classicMint(9)),
+      MINT_ADDRESS,
+    );
+    expect(mint.program).toBe(TOKEN_PROGRAM);
+    expect(mint.decimals).toBe(9);
+    expect(mint.extensions).toEqual([]);
+  });
+
+  test("refuses an unsupported owner and a non-base64 account", () => {
+    expect(() =>
+      readTokenMint(
+        account("11111111111111111111111111111111", classicMint(6)),
+      ),
+    ).toThrow("Not a supported token program account");
+    expect(() =>
+      readTokenMint({
+        owner: TOKEN_2022_PROGRAM,
+        data: [Buffer.from(classicMint(6)).toString("base64"), "base64"],
+        executable: false,
+        lamports: 1,
+      }),
+    ).toThrow("Truncated Token-2022 account");
+    expect(() =>
+      readTokenMint({
+        owner: TOKEN_2022_PROGRAM,
+        data: [Buffer.from(bytes(FIXTURE_MINT)).toString("hex"), "hex"],
+        executable: false,
+        lamports: 1,
+      }),
+    ).toThrow("Wrong account encoding");
+  });
+
+  test("refuses an uninitialized mint and a wrong classic layout", () => {
+    const uninitialized = classicMint(6);
+    uninitialized[45] = 0;
+    expect(() => readTokenMint(account(TOKEN_PROGRAM, uninitialized))).toThrow(
+      "Mint is not initialized",
+    );
+    expect(() =>
+      readTokenMint(account(TOKEN_PROGRAM, classicMint(6, 83))),
+    ).toThrow("Classic mint layout mismatch");
+    expect(() =>
+      readTokenMint(account(TOKEN_PROGRAM, classicMint(6, 40))),
+    ).toThrow("Truncated mint account");
+  });
+
+  test("refuses a Token-2022 mint whose authorities are not disabled", () => {
+    const tagged = mutatedMint((data) => {
+      data[46] = 1;
+      return undefined;
+    });
+    expect(() => readTokenMint(account(TOKEN_2022_PROGRAM, tagged))).toThrow(
+      "Token-2022 freeze authority is not disabled",
+    );
+    const mintAuthority = mutatedMint((data) => {
+      data[0] = 1;
+      return undefined;
+    });
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, mintAuthority)),
+    ).toThrow("Token-2022 mint authority is not disabled");
+    const hiddenAuthority = mutatedMint((data) => {
+      data[45 + 30] = 9;
+      return undefined;
+    });
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, hiddenAuthority)),
+    ).toThrow("Token-2022 freeze authority is not disabled");
+  });
+
+  test("refuses every other or unknown mint extension", () => {
+    // A TransferFeeConfig record is not admitted.
+    const transferFee = mutatedMint((data) => {
+      data[234] = 1;
+      data[235] = 0;
+      return undefined;
+    });
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, transferFee)),
+    ).toThrow("Unsupported Token-2022 extension 1");
+    // A mint carrying an account-only extension is refused too.
+    const immutableOwner = Uint8Array.from([
+      ...bytes(FIXTURE_MINT).slice(0, 362),
+      7,
+      0,
+      0,
+      0,
+    ]);
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, immutableOwner)),
+    ).toThrow("Unsupported Token-2022 extension 7");
+    // A duplicate record is refused.
+    const duplicate = Uint8Array.from([
+      ...bytes(FIXTURE_MINT).slice(0, 362),
+      18,
+      0,
+      0,
+      0,
+    ]);
+    expect(() => readTokenMint(account(TOKEN_2022_PROGRAM, duplicate))).toThrow(
+      "Duplicate Token-2022 extension 18",
+    );
+  });
+
+  test("refuses a truncated, mistyped or unpadded base", () => {
+    const truncatedRecord = bytes(FIXTURE_MINT).slice(0, 360);
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, truncatedRecord)),
+    ).toThrow("Truncated Token-2022 extension");
+    const wrongType = mutatedMint((data) => {
+      data[165] = 2;
+      return undefined;
+    });
+    expect(() => readTokenMint(account(TOKEN_2022_PROGRAM, wrongType))).toThrow(
+      "Token-2022 account type mismatch",
+    );
+    const padded = mutatedMint((data) => {
+      data[100] = 7;
+      return undefined;
+    });
+    expect(() => readTokenMint(account(TOKEN_2022_PROGRAM, padded))).toThrow(
+      "Unexpected Token-2022 base padding",
+    );
+  });
+
+  test("refuses metadata that does not name the requested mint", () => {
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, bytes(FIXTURE_MINT)), OTHER_MINT),
+    ).toThrow("Metadata pointer does not name the mint");
+    const embedded = mutatedMint((data) => {
+      data[238 + 32] = 5;
+      return undefined;
+    });
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, embedded), MINT_ADDRESS),
+    ).toThrow("Token metadata does not embed the mint");
+  });
+
+  test("refuses malformed metadata", () => {
+    const badUri = mutatedMint((data) => {
+      // The uri length at the end of the metadata payload overruns the payload.
+      data[318] = 0xff;
+      data[319] = 0xff;
+      return undefined;
+    });
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, badUri), MINT_ADDRESS),
+    ).toThrow("Malformed token metadata");
+    const badAdditional = mutatedMint((data) => {
+      // An additional-metadata count larger than the payload can hold.
+      data[358] = 0xff;
+      data[359] = 0xff;
+      data[360] = 0xff;
+      data[361] = 0xff;
+      return undefined;
+    });
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, badAdditional), MINT_ADDRESS),
+    ).toThrow("Malformed token metadata");
+  });
+});
+
+describe("readTokenAccount", () => {
+  test("admits the synthetic ImmutableOwner token account", () => {
+    const reading = readTokenAccount(
+      account(TOKEN_2022_PROGRAM, bytes(FIXTURE_ACCOUNT)),
+    );
+    expect(reading.program).toBe(TOKEN_2022_PROGRAM);
+    expect(reading.raw.length).toBe(170);
+    expect(reading.extensions).toEqual([7]);
+  });
+
+  test("admits a Token-2022 token account with no extension", () => {
+    expect(
+      readTokenAccount(account(TOKEN_2022_PROGRAM, tokenAccount(record())))
+        .extensions,
+    ).toEqual([]);
+  });
+
+  test("keeps classic SPL token accounts", () => {
+    const classic = new Uint8Array(ACCOUNT_SIZE);
+    expect(readTokenAccount(account(TOKEN_PROGRAM, classic)).program).toBe(
+      TOKEN_PROGRAM,
+    );
+    expect(() =>
+      readTokenAccount(account(TOKEN_PROGRAM, new Uint8Array(169))),
+    ).toThrow("Classic token account layout mismatch");
+    expect(() =>
+      readTokenAccount(account(TOKEN_2022_PROGRAM, new Uint8Array(169))),
+    ).toThrow("Token-2022 account type mismatch");
+  });
+
+  test("admits ImmutableOwner with trailing padding and refuses a payload", () => {
+    const padded = tokenAccount(record(7, 0, 0, 0, 0, 0, 0, 0, 0));
+    expect(
+      readTokenAccount(account(TOKEN_2022_PROGRAM, padded)).extensions,
+    ).toEqual([7]);
+    const payload = tokenAccount(record(7, 0, 4, 0, 1, 2, 3, 4));
+    expect(() =>
+      readTokenAccount(account(TOKEN_2022_PROGRAM, payload)),
+    ).toThrow("Malformed ImmutableOwner");
+  });
+
+  test("refuses every other or unknown token-account extension", () => {
+    const transferFeeAmount = tokenAccount(
+      record(2, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    );
+    expect(() =>
+      readTokenAccount(account(TOKEN_2022_PROGRAM, transferFeeAmount)),
+    ).toThrow("Unsupported Token-2022 extension 2");
+    const memoTransfer = tokenAccount(record(7, 0, 0, 0, 8, 0, 1, 0));
+    expect(() =>
+      readTokenAccount(account(TOKEN_2022_PROGRAM, memoTransfer)),
+    ).toThrow("Unsupported Token-2022 extension 8");
+    const duplicate = tokenAccount(record(7, 0, 0, 0, 7, 0, 0, 0));
+    expect(() =>
+      readTokenAccount(account(TOKEN_2022_PROGRAM, duplicate)),
+    ).toThrow("Duplicate Token-2022 extension 7");
+    const truncated = tokenAccount(record(7, 0, 3, 0, 1));
+    expect(() =>
+      readTokenAccount(account(TOKEN_2022_PROGRAM, truncated)),
+    ).toThrow("Truncated Token-2022 extension");
+  });
+});
