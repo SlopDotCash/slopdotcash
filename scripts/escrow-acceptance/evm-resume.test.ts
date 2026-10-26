@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,16 +25,41 @@ const rpcUrl = "http://127.0.0.1:1/closed-keeper-resume-fixture";
 const originalFetch = globalThis.fetch;
 let originalEnv: Record<string, string | undefined>;
 let directory: string;
+let source: string;
 let methods: string[];
 const evidenceBytes = () => readFileSync(join(directory, "evidence.json"));
 
 beforeEach(() => {
-  originalEnv = {};
+  originalEnv = {
+    GIT_DIR: process.env.GIT_DIR,
+    GIT_WORK_TREE: process.env.GIT_WORK_TREE,
+  };
   for (const name of Object.keys(process.env)) {
     if (!name.startsWith("ESCROW_ACCEPTANCE_")) continue;
     originalEnv[name] = process.env[name];
     delete process.env[name];
   }
+  // Evidence binds a clean source commit. CI syncs the registry snapshot into
+  // the checkout before tests, so bind a separate clean fixture repository.
+  source = mkdtempSync(join(tmpdir(), "slop-keeper-source-"));
+  execFileSync("git", ["init", "-q", source]);
+  execFileSync("git", [
+    "-C",
+    source,
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "fixture",
+  ]);
+  process.env.GIT_DIR = join(source, ".git");
+  process.env.GIT_WORK_TREE = source;
   for (const [index, name] of roles.entries())
     process.env[`ESCROW_ACCEPTANCE_${name}_KEY`] = fixtureKey(index + 101);
   process.env.ESCROW_ACCEPTANCE_RPC_URL = rpcUrl;
@@ -77,8 +103,16 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   for (const name of Object.keys(process.env))
     if (name.startsWith("ESCROW_ACCEPTANCE_")) delete process.env[name];
-  Object.assign(process.env, originalEnv);
+  for (const name of ["GIT_DIR", "GIT_WORK_TREE"])
+    if (originalEnv[name] === undefined) delete process.env[name];
+  Object.assign(
+    process.env,
+    Object.fromEntries(
+      Object.entries(originalEnv).filter(([, value]) => value !== undefined),
+    ),
+  );
   rmSync(directory, { recursive: true, force: true });
+  rmSync(source, { recursive: true, force: true });
 });
 
 test("dedicated keeper is pinned at creation and resumes its waiting evidence", async () => {

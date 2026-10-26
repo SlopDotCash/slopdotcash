@@ -422,9 +422,10 @@ reads a key.
 
 The token-value caps above do not bound gas. Live EVM signing also needs its
 own native transaction and UTC-day limits. The owner selected them on 26
-October 2026: Base 0.0002 ETH per transaction and 0.001 ETH per UTC day, with a
-0.00001 ETH data/operator allowance; Ethereum 0.002 ETH and 0.005 ETH; Robinhood
-0.0002 ETH and 0.001 ETH. They are set in `FEE_CONVERTER_NATIVE_BUDGETS`.
+October 2026: Base 0.0001 ETH per transaction and 0.001 ETH per UTC day, with a
+0.00005 ETH data/operator allowance inside the transaction ceiling; Ethereum
+0.001 ETH and 0.01 ETH; Robinhood 0.0002 ETH and 0.002 ETH. This latest approval
+supersedes the earlier values. They are set in `FEE_CONVERTER_NATIVE_BUDGETS`.
 Base needs a positive allowance for data and operator fees; Ethereum uses
 zero additional allowance. Robinhood remains retain-only and loads no key.
 Solana live signing remains blocked by its separate qualification gate.
