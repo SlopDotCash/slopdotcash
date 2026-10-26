@@ -13,14 +13,28 @@ import {
   VETTING_DISPOSITIONS,
   type VettingDisposition,
 } from "../../src/lib/vetting-contracts";
-import { validIsoTimestamp, validSha256 } from "../trace/validation";
+import { PROJECT_ID } from "../http";
 import {
+  ARTIFACT_ANALYSES,
+  ARTIFACT_STATES,
   ARTIFACT_TYPES,
+  CONFIRMATION_BASES,
+  count,
+  digest,
   dispositionProblems,
+  label,
+  list,
+  object,
+  oneOf,
   parseVettingResult,
+  REVIEW_STATUSES,
+  REVIEW_VERDICTS,
+  reject,
+  SEVERITIES,
+  text,
+  timestamp,
   type VettingArtifact,
   type VettingResult,
-  VettingResultError,
 } from "./result";
 
 export const VETTING_SCAN_SCHEMA = "slop-vetting-result-v2";
@@ -48,27 +62,8 @@ export type ScanThreat = (typeof SCAN_THREATS)[number];
 
 const SURFACE_STATES = ["complete", "partial", "unsupported"] as const;
 const CHECK_STATES = ["passed", "flagged", "not-run"] as const;
-const ARTIFACT_STATES = ["quarantined", "released", "blocked"] as const;
-const ARTIFACT_ANALYSES = [
-  "pending",
-  "static-clean",
-  "detonation-clean",
-  "suspicious",
-  "malicious",
-] as const;
-const REVIEW_STATUSES = ["completed", "unavailable", "failed"] as const;
-const REVIEW_VERDICTS = [
-  "no-findings",
-  "findings",
-  "malicious-suspected",
-] as const;
 const RISKS = ["low", "ambiguous", "high"] as const;
-const SEVERITIES = ["info", "low", "medium", "high", "critical"] as const;
 const FINDING_CATEGORIES = [...SCAN_THREATS, "other"] as const;
-const CONFIRMATION_BASES = [
-  "reproducible-behavior",
-  "verified-source-evidence",
-] as const;
 const ISOLATION = ["hardware-vm", "microvm", "sandbox"] as const;
 
 export type ScanReview = {
@@ -152,80 +147,6 @@ export type VettingScanResult = {
 /** Either recorded result schema: historical v1 or the bounded scan. */
 export type RecordedVettingResult = VettingResult | VettingScanResult;
 
-function reject(message: string): never {
-  throw new VettingResultError(message);
-}
-
-type Shape = Record<string, unknown>;
-
-function object(value: unknown, name: string, keys: readonly string[]): Shape {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    reject(`${name} must be an object`);
-  const record = value as Shape;
-  const allowed = new Set(keys);
-  for (const key of Object.keys(record))
-    if (!allowed.has(key)) reject(`${name}.${key} is not allowed`);
-  for (const key of keys)
-    if (!Object.hasOwn(record, key)) reject(`${name}.${key} is required`);
-  return record;
-}
-
-function text(value: unknown, name: string, max: number): string {
-  if (
-    typeof value !== "string" ||
-    value.length < 1 ||
-    value.length > max ||
-    value.trim() !== value ||
-    /\p{Cc}/u.test(value)
-  )
-    reject(`${name} must be 1 to ${max} printable characters`);
-  return value;
-}
-
-const LABEL = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,127}$/u;
-function label(value: unknown, name: string): string {
-  if (typeof value !== "string" || !LABEL.test(value))
-    reject(`${name} must be an exact identifier`);
-  return value;
-}
-
-function digest(value: unknown, name: string): string {
-  if (!validSha256(value)) reject(`${name} must be a lowercase SHA-256`);
-  return value as string;
-}
-
-function oneOf<T extends string>(
-  value: unknown,
-  name: string,
-  options: readonly T[],
-): T {
-  if (!options.includes(value as T))
-    reject(`${name} must be one of ${options.join(", ")}`);
-  return value as T;
-}
-
-function list<T>(
-  value: unknown,
-  name: string,
-  max: number,
-  read: (item: unknown, itemName: string) => T,
-): T[] {
-  if (!Array.isArray(value) || value.length > max)
-    reject(`${name} must be a list of at most ${max} items`);
-  return value.map((item, index) => read(item, `${name}[${index}]`));
-}
-
-function count(value: unknown, name: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0)
-    reject(`${name} must be a non-negative integer`);
-  return value as number;
-}
-
-function timestamp(value: unknown, name: string): string {
-  if (!validIsoTimestamp(value)) reject(`${name} must be an ISO UTC time`);
-  return value as string;
-}
-
 function ordered(startedAt: string, completedAt: string, name: string) {
   if (Date.parse(completedAt) < Date.parse(startedAt))
     reject(`${name}.completedAt is before startedAt`);
@@ -300,10 +221,7 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
     !ASSESSMENT_ID.test(body.assessmentId)
   )
     reject("assessmentId is invalid");
-  if (
-    typeof body.projectId !== "string" ||
-    !/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u.test(body.projectId)
-  )
+  if (typeof body.projectId !== "string" || !PROJECT_ID.test(body.projectId))
     reject("projectId is invalid");
   if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1)
     reject("revision must be a positive integer");
@@ -622,7 +540,7 @@ export function parseRecordedVettingResult(
   if (
     typeof value === "object" &&
     value !== null &&
-    (value as Shape).schemaVersion === VETTING_SCAN_SCHEMA
+    (value as { schemaVersion?: unknown }).schemaVersion === VETTING_SCAN_SCHEMA
   )
     return parseVettingScanResult(value);
   return parseVettingResult(value);

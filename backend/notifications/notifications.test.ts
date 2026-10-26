@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { parseNotificationsResponse } from "../../src/lib/notifications";
+import type { ProjectEnforcement } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
@@ -15,7 +16,6 @@ import {
 } from "../payments/ledger";
 import { registerPaymentWallet } from "../payments/wallet-registration";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
-import type { ProjectEnforcement } from "../projects/contracts";
 import { CloudflareTracePersistence } from "../trace/cloudflare-persistence";
 import { notifySlopbotAppeal, notifySlopbotScamReview } from "./events";
 import { handleNotificationsApi } from "./handler";
@@ -260,7 +260,7 @@ describe("notification events", () => {
   test("wallet changes and finalized payment events notify the contributor once", async () => {
     const { db, sqlite, rows } = open();
     const d1 = db as unknown as D1Database;
-    const member = { github_id: APPLICANT, login: "e2e-applicant" };
+    const member = { githubId: APPLICANT, githubLogin: "e2e-applicant" };
     const stewarded = JSON.stringify({
       id: "alpha",
       status: "paused",

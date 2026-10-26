@@ -11,18 +11,24 @@
  * `/user` must name the signed-in account, so a reporter cannot authorize
  * as one GitHub account and report as another.
  */
-import { encodeBase64Url, ownedBuffer } from "../../src/lib/byte-encoding";
+
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { readBoundedJson } from "../../src/lib/browser-json";
+import {
+  decodeBase64Url,
+  encodeBase64Url,
+  ownedBuffer,
+} from "../../src/lib/byte-encoding";
 import {
   constantTimeEqual,
   pkceChallenge,
   randomToken,
-  sha256Hex,
 } from "../../workers/identity/crypto";
+import { cookieValue } from "../http";
 import {
   type IntakeInstallationCheck,
   type PrivateAdvisoryClient,
   type ReporterGrant,
-  readBoundedJson,
   reporterGrant,
 } from "./github-advisories";
 import type { PrivateReportAnalyzer } from "./report-analysis";
@@ -50,23 +56,16 @@ export type IntakeConfig = {
   analyzer: PrivateReportAnalyzer;
 };
 
-export const GRANT_COOKIE = "__Secure-slop_intake_grant";
-export const FLOW_COOKIE = "__Secure-slop_intake_flow";
+const GRANT_COOKIE = "__Secure-slop_intake_grant";
+const FLOW_COOKIE = "__Secure-slop_intake_flow";
 /** Cookies reach only the submission routes. `__Host-` would force Path=/. */
 const COOKIE_PATH = "/api/v1/security-submissions";
-export const GRANT_SECONDS = 2 * 60 * 60;
+const GRANT_SECONDS = 2 * 60 * 60;
 const FLOW_SECONDS = 10 * 60;
 const SESSION_COOKIE = "__Host-slop_points";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
-
-function decodeBase64Url(value: string): Uint8Array {
-  if (!/^[A-Za-z0-9_-]+$/u.test(value)) throw new Error("Invalid base64url");
-  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
-}
 
 async function aesKey(secret: string): Promise<CryptoKey> {
   const bytes = decodeBase64Url(secret);
@@ -121,16 +120,8 @@ async function open(
   }
 }
 
-function cookieValue(request: Request, name: string): string | null {
-  const found = (request.headers.get("cookie") ?? "")
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${name}=`));
-  return found === undefined ? null : found.slice(name.length + 1);
-}
-
 /** A hash of the site session cookie; binds the grant to that session. */
-export async function sessionBinding(request: Request): Promise<string | null> {
+async function sessionBinding(request: Request): Promise<string | null> {
   const token = cookieValue(request, SESSION_COOKIE);
   if (!token || !/^[A-Za-z0-9_-]{40,128}$/u.test(token)) return null;
   return sha256Hex(`slop-intake-session:v1:${token}`);
@@ -153,7 +144,7 @@ function clearFlowCookie(): string {
   return cookie(FLOW_COOKIE, "", 0, "Lax");
 }
 
-export function callbackUrl(request: Request): string {
+function callbackUrl(request: Request): string {
   return `${new URL(request.url).origin}/api/v1/security-submissions/authorize/callback`;
 }
 
@@ -372,7 +363,7 @@ export function githubIntakeOAuth(options: {
           },
         );
         if (!response.ok) return null;
-        const body = (await readBoundedJson(response, 64 * 1024)) as {
+        const body = (await readBoundedJson(response, 64 * 1024, "GitHub")) as {
           access_token?: unknown;
           token_type?: unknown;
         };

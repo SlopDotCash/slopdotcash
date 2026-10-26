@@ -6,14 +6,17 @@
  * head; each skill request also verifies its retained private evidence.
  */
 
+import type {
+  ProjectEnforcement,
+  ProjectRecord,
+} from "../../src/lib/project-contracts";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import {
   buildProjectPublication,
   PUBLIC_SITE_ORIGIN,
 } from "../../src/lib/project-skill-publication.mjs";
+import { PROJECT_ID } from "../http";
 import type { VettingClearance } from "../vetting/persistence";
-import type { ProjectEnforcement, ProjectRecord } from "./contracts";
-import { type EdgeCache, PUBLIC_PROJECT_CACHE_CONTROL } from "./edge-cache";
 import { publicRestrictionOf } from "./enforcement";
 
 /** The build's /skill-templates/index.json. */
@@ -82,7 +85,6 @@ export type SkillPublicationDependencies = {
   getProject(id: string): Promise<ProjectRecord | null>;
   listProjects(): Promise<ProjectRecord[]>;
   listEnforcements(): Promise<ProjectEnforcement[]>;
-  enforcementGeneration(): Promise<number>;
   loadTemplate(): Promise<SkillTemplateSource>;
   /**
    * Security vetting of the revision's exact content, integration-branch head
@@ -93,11 +95,8 @@ export type SkillPublicationDependencies = {
     project: ProjectRecord,
     templateSha256: string,
   ): Promise<VettingClearance>;
-  cache?: EdgeCache;
-  waitUntil?: (promise: Promise<unknown>) => void;
 };
 
-const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
 /** Paths the generated publication defines, plus readable aliases. */
 const ARTIFACT =
   /^(?:(?:review-)?(?:skill|mission|codex|claude|claude-code|manual)\.md|(?:review-)?skill-manifest\.json|downloads\/[a-z0-9-]{1,96}\.skill(?:\.sha256)?|terms\.json|SKILL\.md|review\/SKILL\.md)$/u;
@@ -126,7 +125,6 @@ function contentType(path: string): string {
 function headers(type: string, extra: Record<string, string> = {}) {
   return {
     "access-control-allow-origin": "*",
-    "cache-control": PUBLIC_PROJECT_CACHE_CONTROL,
     "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
     "content-type": type,
     "referrer-policy": "no-referrer",

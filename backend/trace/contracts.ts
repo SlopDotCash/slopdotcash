@@ -12,6 +12,11 @@ export type TraceContentType = (typeof TRACE_CONTENT_TYPES)[number];
 
 export type ApiRole = "contributor" | "project_owner" | "operator";
 
+/** The renewed private-reporting observation that gates optional traces. */
+export type PrivateIntakeStatus =
+  | { status: "verified"; enabled: boolean; verifiedAt: string }
+  | { status: "unavailable" };
+
 export type AuthenticatedActor = {
   githubId: string;
   githubLogin: string;
