@@ -52,6 +52,7 @@
     "src/lib/solana-vault-actions.ts",
     "src/lib/project-api.ts",
     "src/lib/evm-vault-actions.ts",
+    "src/lib/referral-claims.ts",
     "src/lib/use-payout-wallets.ts",
     "src/lib/notifications.ts",
     "src/lib/github-actor.ts",

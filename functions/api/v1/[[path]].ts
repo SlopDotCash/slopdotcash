@@ -46,6 +46,7 @@ import {
 import { assetTemplateSource } from "../../../backend/projects/skill-publication";
 import { rpcTokenMetadataReader } from "../../../backend/projects/token-metadata";
 import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
+import { handleReferralClaims } from "../../../backend/referrals/claims";
 import { handleReferralsApi } from "../../../backend/referrals/handler";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
@@ -803,6 +804,17 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     cache: edgeCache(),
   });
   if (vettingResponse !== null) return vettingResponse;
+  const referralClaims = await handleReferralClaims(context.request, {
+    db: context.env.SLOP_DB,
+    sessionActor: (request) =>
+      sessionGithubActor(
+        request,
+        context.env.SLOP_DB,
+        new Date().toISOString(),
+      ),
+    now: () => new Date(),
+  });
+  if (referralClaims !== null) return referralClaims;
   const referralsResponse = await handleReferralsApi(context.request, {
     db: context.env.SLOP_DB,
   });

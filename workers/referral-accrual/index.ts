@@ -10,6 +10,7 @@
  * distributor, the token and the network are all set.
  */
 
+import { refreshReferralClaims } from "../../backend/referrals/cache";
 import { parseConfig, posterKey, type ReferralAccrualEnv } from "./config";
 import {
   message,
@@ -23,6 +24,8 @@ import { D1AccrualStore, type ReferralD1Database } from "./store";
 
 export interface Env extends ReferralAccrualEnv {
   REFERRAL_DB: ReferralD1Database;
+  REFERRAL_DEPLOYMENT_BLOCK?: string;
+  REFERRAL_DISTRIBUTOR_CODE_HASH?: string;
 }
 
 export interface RunOutcome extends RunResult {
@@ -91,7 +94,7 @@ export default {
     ctx: { waitUntil(promise: Promise<unknown>): void },
   ) {
     ctx.waitUntil(
-      runOnce(env)
+      Promise.all([runOnce(env), refreshReferralClaims(env)])
         .then((result) =>
           console.log(
             JSON.stringify({ event: "referral_accrual_run", result }),
