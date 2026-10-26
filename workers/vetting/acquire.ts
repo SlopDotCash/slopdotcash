@@ -2,6 +2,8 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { readLimitedBody } from "../../backend/trace/validation";
+import { readRecord } from "../../src/lib/record-validation.mjs";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 const MAX_FILES = 1024;
@@ -9,11 +11,7 @@ const SHA = /^[0-9a-f]{40}$/u;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const hash = (bytes: Uint8Array, algorithm = "sha256") =>
   createHash(algorithm).update(bytes).digest("hex");
-const object = (value: unknown): Record<string, unknown> => {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid GitHub object");
-  return value as Record<string, unknown>;
-};
+const object = (value: unknown) => readRecord(value, "GitHub object");
 
 export async function acquireRepository(input: {
   repository: string;
@@ -46,23 +44,13 @@ export async function acquireRepository(input: {
     );
     if (!response.ok || response.body === null)
       throw new Error("Immutable source is unavailable");
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        transferred += value.byteLength;
-        if (size > limit || transferred > MAX_BYTES * 2)
-          throw new Error("Source transfer limit exceeded");
-        chunks.push(value);
-      }
-    } finally {
-      await reader.cancel();
-    }
-    return object(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    // Each read stays within its own limit and the cumulative transfer cap.
+    const bytes = await readLimitedBody(
+      response,
+      Math.min(limit, MAX_BYTES * 2 - transferred),
+    );
+    transferred += bytes.byteLength;
+    return object(JSON.parse(new TextDecoder().decode(bytes)));
   };
   const commit = await get(`commits/${input.commitSha}`, 1024 * 1024);
   if (
