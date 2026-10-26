@@ -12,6 +12,10 @@ import {
 import { CloudflareVettingPersistence } from "../../backend/vetting/persistence";
 import { onRequest as pagesArtifact } from "../../functions/[[path]]";
 import { onRequest as pagesApi } from "../../functions/api/v1/[[path]]";
+import {
+  REPOSITORY_READ_HEADER,
+  REPOSITORY_READ_URL,
+} from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import {
@@ -67,6 +71,7 @@ async function run(env: Environment, inputs: Inputs) {
   const repositories = new Set<string>();
   const now = new Date().toISOString();
   let calls = 0;
+  let slopbotBranchReads = 0;
   let unexpectedRequests = 0;
   fixtureFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     try {
@@ -90,15 +95,10 @@ async function run(env: Environment, inputs: Inputs) {
           created_at: "2020-01-01T00:00:00Z",
         });
       }
-      const repo =
-        /^\/repos\/(example\/qual-[a-z-]+)\/(issues|branches\/main)$/.exec(
-          url.pathname,
-        );
+      const repo = /^\/repos\/(example\/qual-[a-z-]+)\/issues$/.exec(
+        url.pathname,
+      );
       check(repo && repositories.has(repo[1]), "Unknown fixture repository");
-      if (repo[2] === "branches/main") {
-        check(!url.search, "Unexpected branch query");
-        return Response.json({ commit: { sha: "a".repeat(40) } });
-      }
       const actor = Object.values(actors).find(
         (a) => a.login === url.searchParams.get("creator"),
       );
@@ -162,20 +162,42 @@ async function run(env: Environment, inputs: Inputs) {
     },
     SLOPBOT: {
       fetch: async (request: Request) => {
-        const url = new URL(request.url);
-        check(
-          url.origin === "https://slopbot.internal" &&
-            url.pathname === "/v1/repository-access" &&
-            request.method === "GET" &&
-            repositories.has(url.searchParams.get("repository") ?? ""),
-          "Unexpected Slopbot request",
-        );
-        return Response.json({
-          installation: "installed",
-          installationId: 1,
-          permission: "read",
-          roleName: null,
-        });
+        try {
+          const url = new URL(request.url);
+          check(request.method === "GET", "Unexpected Slopbot method");
+          if (`${url.origin}${url.pathname}` === REPOSITORY_READ_URL) {
+            const branch =
+              /^\/repos\/(example\/qual-[a-z-]+)\/branches\/main$/.exec(
+                url.searchParams.get("path") ?? "",
+              );
+            check(
+              branch &&
+                repositories.has(branch[1]) &&
+                [...url.searchParams].length === 1,
+              "Unexpected Slopbot repository read",
+            );
+            slopbotBranchReads++;
+            return Response.json(
+              { commit: { sha: "a".repeat(40) } },
+              { headers: { [REPOSITORY_READ_HEADER]: "github" } },
+            );
+          }
+          check(
+            url.origin === "https://slopbot.internal" &&
+              url.pathname === "/v1/repository-access" &&
+              repositories.has(url.searchParams.get("repository") ?? ""),
+            "Unexpected Slopbot request",
+          );
+          return Response.json({
+            installation: "installed",
+            installationId: 1,
+            permission: "read",
+            roleName: null,
+          });
+        } catch (error) {
+          unexpectedRequests++;
+          throw error;
+        }
       },
     },
   } as Parameters<typeof pagesApi>[0]["env"];
@@ -524,6 +546,7 @@ async function run(env: Environment, inputs: Inputs) {
     "wrong-source-pin-refused",
   );
   check(unexpectedRequests === 0, "Unexpected transport request was swallowed");
+  check(slopbotBranchReads > 0, "Pages did not use the Slopbot branch read");
   const counts = await db
     .prepare(
       "SELECT (SELECT count(*) FROM projects) projects,(SELECT count(*) FROM project_flags) flags,(SELECT count(*) FROM vetting_assessments) assessments,(SELECT count(*) FROM project_enforcements) enforcements,(SELECT count(*) FROM points_sessions) sessions,(SELECT count(*) FROM notifications) notifications,(SELECT count(*) FROM vetting_evidence_objects) evidenceObjects",
@@ -541,8 +564,9 @@ async function run(env: Environment, inputs: Inputs) {
     browser: false,
     liveScanner: false,
     productionTouched: false,
-    assertions: [...assertions, "one-moderator-notice"],
+    assertions: [...assertions, "one-moderator-notice", "slopbot-branch-read"],
     githubFixtureReads: calls,
+    slopbotBranchReads,
     unexpectedTransportRequests: unexpectedRequests,
     counts,
   };

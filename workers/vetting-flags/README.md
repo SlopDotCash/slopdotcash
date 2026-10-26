@@ -16,9 +16,12 @@ application database, evidence bucket or service secret is bound.
 The entry calls both complete Pages factories. Synthetic sessions pass
 through the real D1 session lookup. A closed `globalThis.fetch` replacement
 exists only in this disposable entry: it serves fixed GitHub account,
-accepted-PR and branch responses. It rejects every other outbound request;
+accepted-PR responses. It rejects every other outbound request;
 it never calls the network. A fixed Slopbot binding supplies repository
-permission facts. Production origin controls and authentication are unchanged.
+permission and branch facts. Branch reads must use that binding; an ordinary
+GitHub branch fallback fails the fixture. Unexpected service requests also
+fail, even if an application fallback catches them. Production origin controls
+and authentication are unchanged.
 The asset binding serves the exact repository template files and hashes.
 
 The fixture starts from explicit seeded project state; it does not claim
