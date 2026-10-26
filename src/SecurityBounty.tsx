@@ -44,6 +44,7 @@ import {
   type SecurityBountyTerms,
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
+import { useAction } from "./lib/use-action";
 import {
   ExternalLinkAnchor,
   formatNullableUtc as formatUtc,
@@ -552,8 +553,7 @@ function AutomaticReportForm({
 }) {
   const session = useProjectSession();
   const [key] = useState(requestKey);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAction();
   if (session.status !== "signed-in")
     return (
       <p>
@@ -561,40 +561,26 @@ function AutomaticReportForm({
         privately through Slop, or report directly on GitHub.
       </p>
     );
-  const submit = async (event: FormEvent) => {
+  const submit = (event: FormEvent) => {
     event.preventDefault();
-    setBusy(true);
-    setError(null);
-    if (!(await ensureReady())) {
-      setBusy(false);
-      return;
-    }
-    await projectApiRequest<{ submission: Submission; authorizeUrl: string }>(
-      "POST",
-      "security-submissions",
-      { projectId: project.id, idempotencyKey: key, origin: "slop" },
-    ).then(
-      (body) => {
-        if (saveDraft(body.submission.id, draft)) {
-          window.location.assign(body.authorizeUrl);
-          return;
-        }
-        setBusy(false);
-        setError(DRAFT_STORAGE_ERROR);
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
+    void run(async () => {
+      if (!(await ensureReady())) return;
+      const body = await projectApiRequest<{
+        submission: Submission;
+        authorizeUrl: string;
+      }>("POST", "security-submissions", {
+        projectId: project.id,
+        idempotencyKey: key,
+        origin: "slop",
+      });
+      if (!saveDraft(body.submission.id, draft))
+        throw new Error(DRAFT_STORAGE_ERROR);
+      window.location.assign(body.authorizeUrl);
+      return "navigating";
+    });
   };
   return (
-    <form
-      className="security-form"
-      onSubmit={(event) => {
-        void submit(event);
-      }}
-    >
+    <form className="security-form" onSubmit={submit}>
       <IntakeConsent login={session.session.githubLogin} />
       <ReportFields draft={draft} onChange={onDraft} />
       <FormError message={error} />
@@ -1089,39 +1075,27 @@ function ImportReports({
   onImported: () => void;
 }) {
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
-  const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run: act } = useAction();
   const run = (event: FormEvent) => {
     event.preventDefault();
-    setBusy(true);
-    setError(null);
     setNote(null);
-    projectApiRequest<{ state: "ok" | "unavailable"; received: number }>(
-      "POST",
-      "security-cases",
-      { mode: "import", projectId },
-    ).then(
-      (body) => {
-        setBusy(false);
-        if (body.state === "unavailable")
-          setError(
-            "Slop could not read the repository's private reports on GitHub. Nothing changed; try again later.",
-          );
-        else {
-          setNote(
-            body.received === 0
-              ? "Every private report on GitHub already has a case."
-              : `${body.received} new private report${body.received === 1 ? "" : "s"} recorded.`,
-          );
-          onImported();
-        }
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
+    void act(async () => {
+      const body = await projectApiRequest<{
+        state: "ok" | "unavailable";
+        received: number;
+      }>("POST", "security-cases", { mode: "import", projectId });
+      if (body.state === "unavailable")
+        throw new Error(
+          "Slop could not read the repository's private reports on GitHub. Nothing changed; try again later.",
+        );
+      setNote(
+        body.received === 0
+          ? "Every private report on GitHub already has a case."
+          : `${body.received} new private report${body.received === 1 ? "" : "s"} recorded.`,
+      );
+      onImported();
+    });
   };
   return (
     <form className="security-form" onSubmit={run}>
@@ -1159,33 +1133,28 @@ function ClaimForm({
   const [projectId, setProjectId] = useState(programProjects[0]?.id ?? "");
   const [advisory, setAdvisory] = useState("");
   const [key, setKey] = useState(requestKey);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAction();
   if (programProjects.length === 0)
     return (
       <p className="admin-status">No project runs a security program yet.</p>
     );
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    setBusy(true);
-    setError(null);
-    projectApiRequest<{ case: SecurityCase }>("POST", "security-cases", {
-      mode: "claim",
-      projectId,
-      advisory: advisory.trim(),
-      idempotencyKey: key,
-    }).then(
-      (body) => {
-        setBusy(false);
-        setAdvisory("");
-        setKey(requestKey());
-        onCreated(body.case);
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
+    void run(async () => {
+      const body = await projectApiRequest<{ case: SecurityCase }>(
+        "POST",
+        "security-cases",
+        {
+          mode: "claim",
+          projectId,
+          advisory: advisory.trim(),
+          idempotencyKey: key,
+        },
+      );
+      setAdvisory("");
+      setKey(requestKey());
+      onCreated(body.case);
+    });
   };
   return (
     <form className="security-form" onSubmit={submit}>
@@ -1232,37 +1201,35 @@ function DirectVerifyForm({
   const [projectId, setProjectId] = useState(programProjects[0]?.id ?? "");
   const [advisory, setAdvisory] = useState("");
   const [key] = useState(requestKey);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAction();
   if (programProjects.length === 0)
     return (
       <p className="admin-status">No project runs a security program yet.</p>
     );
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    setBusy(true);
-    setError(null);
-    projectApiRequest<{ submission: Submission; authorizeUrl: string }>(
-      "POST",
-      "security-submissions",
-      {
-        projectId,
-        advisory: advisory.trim(),
-        idempotencyKey: key,
-        origin: "direct",
-      },
-    ).then(
-      (body) => window.location.assign(body.authorizeUrl),
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
+    void run(async () => {
+      try {
+        const body = await projectApiRequest<{
+          submission: Submission;
+          authorizeUrl: string;
+        }>("POST", "security-submissions", {
+          projectId,
+          advisory: advisory.trim(),
+          idempotencyKey: key,
+          origin: "direct",
+        });
+        window.location.assign(body.authorizeUrl);
+        return "navigating";
+      } catch (caught) {
         if (
           caught instanceof ProjectApiError &&
           caught.code === "intake_unavailable"
         )
           onUnavailable();
-      },
-    );
+        throw caught;
+      }
+    });
   };
   return (
     <form className="security-form" onSubmit={submit}>
@@ -1348,55 +1315,46 @@ function SubmissionCard({
   const [draft, setDraft] = useState<ReportDraft>(
     () => loadDraft(submission.id) ?? EMPTY_DRAFT,
   );
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, setError, run: act } = useAction();
   const [needsGrant, setNeedsGrant] = useState(false);
   const session = useProjectSession();
   const keepDraft = needsDraft(submission);
   useEffect(() => {
     if (!keepDraft) clearDraft(submission.id);
   }, [submission.id, keepDraft]);
-  const run = (path: string, body: Record<string, unknown>) => {
-    setBusy(true);
-    setError(null);
-    projectApiRequest<{ submission: Submission }>(
-      "POST",
-      `security-submissions/${encodeURIComponent(submission.id)}/${path}`,
-      body,
-    ).then(
-      (result) => {
-        setBusy(false);
+  const run = (path: string, body: Record<string, unknown>) =>
+    void act(async () => {
+      try {
+        const result = await projectApiRequest<{ submission: Submission }>(
+          "POST",
+          `security-submissions/${encodeURIComponent(submission.id)}/${path}`,
+          body,
+        );
         setNeedsGrant(false);
         onUpdated(result.submission);
-      },
-      (caught: unknown) => {
-        setBusy(false);
+      } catch (caught) {
         if (
-          caught instanceof ProjectApiError &&
-          caught.code === "grant_required"
+          !(caught instanceof ProjectApiError) ||
+          caught.code !== "grant_required"
         )
-          setNeedsGrant(true);
-        else setError(errorMessage(caught));
-      },
-    );
-  };
+          throw caught;
+        setNeedsGrant(true);
+      }
+    });
   const authorize = () => {
     if (keepDraft && !saveDraft(submission.id, draft)) {
       setError(DRAFT_STORAGE_ERROR);
       return;
     }
-    setBusy(true);
-    projectApiRequest<{ authorizeUrl: string }>(
-      "POST",
-      `security-submissions/${encodeURIComponent(submission.id)}/authorize`,
-      {},
-    ).then(
-      (body) => window.location.assign(body.authorizeUrl),
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
+    void act(async () => {
+      const body = await projectApiRequest<{ authorizeUrl: string }>(
+        "POST",
+        `security-submissions/${encodeURIComponent(submission.id)}/authorize`,
+        {},
+      );
+      window.location.assign(body.authorizeUrl);
+      return "navigating";
+    });
   };
   const canSend =
     submission.origin === "slop" &&
@@ -1610,32 +1568,27 @@ function RecordForm({
   const [receivedAt, setReceivedAt] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [key, setKey] = useState(requestKey);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAction();
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    setBusy(true);
-    setError(null);
-    projectApiRequest<{ case: SecurityCase }>("POST", "security-cases", {
-      mode: "record",
-      projectId,
-      advisory: advisory.trim(),
-      reporterGithubId: reporterId.trim(),
-      reporterGithubLogin: reporterLogin.trim(),
-      receivedAt: utcInput(receivedAt),
-      confirmation: confirmed,
-      idempotencyKey: key,
-    }).then(
-      (body) => {
-        setBusy(false);
-        setKey(requestKey());
-        onCreated(body.case);
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
+    void run(async () => {
+      const body = await projectApiRequest<{ case: SecurityCase }>(
+        "POST",
+        "security-cases",
+        {
+          mode: "record",
+          projectId,
+          advisory: advisory.trim(),
+          reporterGithubId: reporterId.trim(),
+          reporterGithubLogin: reporterLogin.trim(),
+          receivedAt: utcInput(receivedAt),
+          confirmation: confirmed,
+          idempotencyKey: key,
+        },
+      );
+      setKey(requestKey());
+      onCreated(body.case);
+    });
   };
   return (
     <form className="security-form" onSubmit={submit}>
@@ -2141,8 +2094,7 @@ function ActionForm({
   const spec = actionSpec(action, record);
   const [values, setValues] = useState(() => (spec ? initialValues(spec) : {}));
   const [key] = useState(requestKey);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, setError, run } = useAction();
   if (spec === null) return null;
   const shown = (field: FieldSpec) =>
     !("when" in field) ||
@@ -2175,25 +2127,17 @@ function ActionForm({
         continue;
       else body[field.name] = value;
     }
-    setBusy(true);
-    setError(null);
-    projectApiRequest<{ case: SecurityCase }>(
-      "POST",
-      `security-cases/${encodeURIComponent(record.id)}/actions`,
-      body,
-    ).then(
-      (response) => {
-        setBusy(false);
-        onDone(
-          "allowedActions" in response.case ? response.case : null,
-          `${spec.title}: saved.`,
-        );
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
+    void run(async () => {
+      const response = await projectApiRequest<{ case: SecurityCase }>(
+        "POST",
+        `security-cases/${encodeURIComponent(record.id)}/actions`,
+        body,
+      );
+      onDone(
+        "allowedActions" in response.case ? response.case : null,
+        `${spec.title}: saved.`,
+      );
+    });
   };
   const formId = `${record.id}-${action}`;
   return (
@@ -2340,30 +2284,20 @@ function AnalysisPanel({
   onRetry: () => void;
 }) {
   const analysis = record.analysis ?? null;
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const retry = () => {
-    setBusy(true);
-    setError(null);
-    projectApiRequest<{ case: SecurityCase }>(
-      "POST",
-      `security-cases/${encodeURIComponent(record.id)}/actions`,
-      {
-        action: "analyze",
-        expectedRevision: record.revision,
-        idempotencyKey: requestKey(),
-      },
-    ).then(
-      () => {
-        setBusy(false);
-        onRetry();
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
-  };
+  const { busy, error, run } = useAction();
+  const retry = () =>
+    void run(async () => {
+      await projectApiRequest<{ case: SecurityCase }>(
+        "POST",
+        `security-cases/${encodeURIComponent(record.id)}/actions`,
+        {
+          action: "analyze",
+          expectedRevision: record.revision,
+          idempotencyKey: requestKey(),
+        },
+      );
+      onRetry();
+    });
   return (
     <section aria-labelledby={`analysis-${record.id}`}>
       <h4 id={`analysis-${record.id}`}>AI summary</h4>
@@ -2437,30 +2371,20 @@ function AppealTriagePanel({
   onRetry: () => void;
 }) {
   const triage = record.appealTriage ?? null;
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const retry = () => {
-    setBusy(true);
-    setError(null);
-    projectApiRequest<{ case: SecurityCase }>(
-      "POST",
-      `security-cases/${encodeURIComponent(record.id)}/actions`,
-      {
-        action: "triage-appeal",
-        expectedRevision: record.revision,
-        idempotencyKey: requestKey(),
-      },
-    ).then(
-      () => {
-        setBusy(false);
-        onRetry();
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
-  };
+  const { busy, error, run } = useAction();
+  const retry = () =>
+    void run(async () => {
+      await projectApiRequest<{ case: SecurityCase }>(
+        "POST",
+        `security-cases/${encodeURIComponent(record.id)}/actions`,
+        {
+          action: "triage-appeal",
+          expectedRevision: record.revision,
+          idempotencyKey: requestKey(),
+        },
+      );
+      onRetry();
+    });
   return (
     <section aria-labelledby={`appeal-triage-${record.id}`}>
       <h4 id={`appeal-triage-${record.id}`}>Slopbot appeal triage</h4>
@@ -2779,30 +2703,20 @@ function CheckReceipt({
   record: SecurityCase;
   onDone: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const check = () => {
-    setBusy(true);
-    setError(null);
-    projectApiRequest(
-      "POST",
-      `security-cases/${encodeURIComponent(record.id)}/actions`,
-      {
-        action: "check-receipt",
-        expectedRevision: record.revision,
-        idempotencyKey: requestKey(),
-      },
-    ).then(
-      () => {
-        setBusy(false);
-        onDone();
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
-  };
+  const { busy, error, run } = useAction();
+  const check = () =>
+    void run(async () => {
+      await projectApiRequest(
+        "POST",
+        `security-cases/${encodeURIComponent(record.id)}/actions`,
+        {
+          action: "check-receipt",
+          expectedRevision: record.revision,
+          idempotencyKey: requestKey(),
+        },
+      );
+      onDone();
+    });
   return (
     <div>
       <button

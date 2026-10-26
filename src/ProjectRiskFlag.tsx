@@ -12,6 +12,7 @@ import {
   ProjectApiError,
   projectApiRequest,
 } from "./lib/project-api";
+import { useAction } from "./lib/use-action";
 import { loginHref } from "./Points";
 import { formatDateTime } from "./Presentation";
 
@@ -58,8 +59,7 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
   const [category, setCategory] = useState<Category>("credential-theft");
   const [evidence, setEvidence] = useState("");
   const [evidenceUrl, setEvidenceUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAction();
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -96,21 +96,20 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
     request: Promise<FlagStatus>,
     done: (value: FlagStatus) => string,
   ) => {
-    setBusy(true);
-    setError(null);
     setNotice(null);
-    request.then(
-      (value) => {
-        setBusy(false);
-        setState({ status: "ready", value });
-        setNotice(done(value));
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        if (caught instanceof ProjectApiError && caught.status === 401)
+    void run(
+      async () => {
+        try {
+          const value = await request;
+          setState({ status: "ready", value });
+          setNotice(done(value));
+        } catch (caught) {
+          if (!(caught instanceof ProjectApiError) || caught.status !== 401)
+            throw caught;
           setState({ status: "signed-out" });
-        else setError(errorMessage(caught, "The request failed."));
+        }
       },
+      (caught) => errorMessage(caught, "The request failed."),
     );
   };
 

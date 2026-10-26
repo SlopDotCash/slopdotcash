@@ -13,6 +13,7 @@ import {
   notificationTitle,
   parseNotificationsResponse,
 } from "./lib/notifications";
+import { useAction } from "./lib/use-action";
 import { loginHref } from "./Points";
 import { formatDateTime } from "./Presentation";
 
@@ -86,8 +87,7 @@ export default function InboxPage() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [previousPages, setPreviousPages] = useState<(string | null)[]>([]);
   const [state, setState] = useState<InboxState>({ status: "loading" });
-  const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState("");
+  const { busy, error: actionError, run } = useAction();
   const [message, setMessage] = useState("");
   const generation = useRef(0);
   const load = useCallback(() => {
@@ -107,26 +107,23 @@ export default function InboxPage() {
   }, [cursor]);
   useEffect(() => load(), [load]);
 
-  async function act(action: () => Promise<"ok" | "signed-out">, done: string) {
-    setBusy(true);
-    setActionError("");
+  function act(action: () => Promise<"ok" | "signed-out">, done: string) {
     setMessage("");
-    try {
-      if ((await action()) === "signed-out") {
-        setState({ status: "signed-out" });
-        return;
-      }
-      const current = ++generation.current;
-      const next = await loadInbox(new AbortController().signal, cursor);
-      if (generation.current === current) {
-        setState(next);
-        setMessage(done);
-      }
-    } catch (error) {
-      setActionError(errorMessage(error, UNAVAILABLE));
-    } finally {
-      setBusy(false);
-    }
+    return run(
+      async () => {
+        if ((await action()) === "signed-out") {
+          setState({ status: "signed-out" });
+          return;
+        }
+        const current = ++generation.current;
+        const next = await loadInbox(new AbortController().signal, cursor);
+        if (generation.current === current) {
+          setState(next);
+          setMessage(done);
+        }
+      },
+      (error) => errorMessage(error, UNAVAILABLE),
+    );
   }
 
   return (

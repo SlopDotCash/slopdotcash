@@ -40,6 +40,7 @@ import {
 import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
+import { useAction } from "./lib/use-action";
 import { useAllDirectTransfers } from "./lib/use-direct-transfers";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
@@ -265,8 +266,7 @@ export function PointsNav() {
     useContext(Context);
   const [open, setOpen] = useState(false);
   const [failedImage, setFailedImage] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const panelId = useId();
@@ -314,23 +314,20 @@ export function PointsNav() {
     };
   }, []);
   const navigate = () => setOpen(false);
-  async function signout() {
-    setBusy(true);
-    setError("");
-    try {
-      await requestJson("/api/v1/points/signout", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      });
-      clearAllDrafts();
-      setMe(null);
-      setOpen(false);
-    } catch {
-      setError("Could not sign out. Please retry.");
-    } finally {
-      setBusy(false);
-    }
+  function signout() {
+    void run(
+      async () => {
+        await requestJson("/api/v1/points/signout", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        clearAllDrafts();
+        setMe(null);
+        setOpen(false);
+      },
+      () => "Could not sign out. Please retry.",
+    );
   }
   if (!me && window.location.pathname === "/login") return null;
   if (!me && session === "loading")
@@ -424,7 +421,7 @@ export function PointsNav() {
             Account settings
           </a>
           <AdminAccountLink onNavigate={navigate} />
-          <button type="button" onClick={() => void signout()} disabled={busy}>
+          <button type="button" onClick={signout} disabled={busy}>
             {busy ? "Signing out…" : "Sign out"}
           </button>
           {error ? <p role="alert">{error}</p> : null}
@@ -950,41 +947,36 @@ function AccountClosure({
 }) {
   const { setMe } = useContext(Context);
   const [confirmation, setConfirmation] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   const inputId = useId();
   const matches = confirmation.trim().toLowerCase() === login.toLowerCase();
   return (
     <form
       className="account-closure"
       aria-labelledby={`${inputId}-heading`}
-      onSubmit={async (event) => {
+      onSubmit={(event) => {
         event.preventDefault();
         if (!matches || busy) return;
-        setBusy(true);
-        setError("");
-        try {
-          await requestJson("/api/v1/points/account/close", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ login: confirmation.trim() }),
-          });
-          onClosed(
-            "Your account is closed and every session is signed out. Sign in with GitHub to reopen it and claim any unpaid award.",
-          );
-          setMe(null);
-        } catch (caught) {
-          setError(
+        void run(
+          async () => {
+            await requestJson("/api/v1/points/account/close", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ login: confirmation.trim() }),
+            });
+            onClosed(
+              "Your account is closed and every session is signed out. Sign in with GitHub to reopen it and claim any unpaid award.",
+            );
+            setMe(null);
+          },
+          (caught) =>
             caught instanceof PointsRequestError &&
-              caught.code === "confirmation_mismatch"
+            caught.code === "confirmation_mismatch"
               ? "The username does not match this account."
               : caught instanceof PointsRequestError && caught.status === 401
                 ? "Your session ended. Sign in again to close your account."
                 : "Could not confirm whether your account closed. Reload this page to check your sign-in state before trying again.",
-          );
-        } finally {
-          setBusy(false);
-        }
+        );
       }}
     >
       <h3 id={`${inputId}-heading`}>Close your account</h3>

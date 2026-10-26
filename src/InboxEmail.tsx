@@ -1,7 +1,9 @@
 /** Explicit opt-in to the signed-in account's verified email destination (NOT-01). */
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
+import { useAction } from "./lib/use-action";
 import { loginHref } from "./Points";
 
 type Preference =
@@ -39,9 +41,8 @@ function preference(value: unknown): Preference {
 
 export function InboxEmail() {
   const [state, setState] = useState<State>({ status: "loading" });
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   const generation = useRef(0);
   const load = useCallback(() => {
     const current = ++generation.current;
@@ -75,59 +76,56 @@ export function InboxEmail() {
   }, []);
   useEffect(() => load(), [load]);
 
-  async function save() {
+  function save() {
     if (state.status !== "ready") return;
     const previous = state.value;
     const enabled = !previous.enabled;
     if (enabled && previous.availability !== "verified") return;
-    setBusy(true);
     setMessage("");
-    setError("");
-    try {
-      const response = await fetchWithDeadline(PATH, {
-        method: "POST",
-        credentials: "same-origin",
-        cache: "no-store",
-        redirect: "error",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          enabled && previous.availability === "verified"
-            ? { enabled, destinationVersion: previous.destinationVersion }
-            : { enabled: false },
-        ),
-      });
-      if (response.status === 401) {
-        setState({ status: "signed-out" });
-        return;
-      }
-      if (response.status === 409) {
-        load();
-        throw new Error(
-          "Your verified destination changed. Review it before turning on email.",
+    void run(
+      async () => {
+        const response = await fetchWithDeadline(PATH, {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          redirect: "error",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            enabled && previous.availability === "verified"
+              ? { enabled, destinationVersion: previous.destinationVersion }
+              : { enabled: false },
+          ),
+        });
+        if (response.status === 401) {
+          setState({ status: "signed-out" });
+          return;
+        }
+        if (response.status === 409) {
+          load();
+          throw new Error(
+            "Your verified destination changed. Review it before turning on email.",
+          );
+        }
+        if (!response.ok)
+          throw new Error("Your preference could not be saved. Please retry.");
+        const result = (await readBoundedJson(
+          response,
+          4096,
+          "saved email preference",
+        )) as { enabled?: unknown } | null;
+        if (result?.enabled !== enabled)
+          throw new Error(
+            "The saved preference could not be verified. Please retry.",
+          );
+        setState({ status: "ready", value: { ...previous, enabled } });
+        setMessage(
+          enabled
+            ? "Optional activity email is on."
+            : "Optional activity email is off.",
         );
-      }
-      if (!response.ok)
-        throw new Error("Your preference could not be saved. Please retry.");
-      const result = (await readBoundedJson(
-        response,
-        4096,
-        "saved email preference",
-      )) as { enabled?: unknown } | null;
-      if (result?.enabled !== enabled)
-        throw new Error(
-          "The saved preference could not be verified. Please retry.",
-        );
-      setState({ status: "ready", value: { ...previous, enabled } });
-      setMessage(
-        enabled
-          ? "Optional activity email is on."
-          : "Optional activity email is off.",
-      );
-    } catch (cause) {
-      setError(errorMessage(cause, "Your preference could not be saved."));
-    } finally {
-      setBusy(false);
-    }
+      },
+      (cause) => errorMessage(cause, "Your preference could not be saved."),
+    );
   }
 
   return (
@@ -171,7 +169,7 @@ export function InboxEmail() {
               className="button secondary-button"
               type="button"
               disabled={busy}
-              onClick={() => void save()}
+              onClick={save}
             >
               {busy
                 ? "Saving email preference…"
