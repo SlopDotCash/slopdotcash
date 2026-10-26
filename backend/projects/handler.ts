@@ -2189,11 +2189,7 @@ async function requestReinstatement(
     expectedRevision: null,
     expectedSequence: null,
     actor: { githubId: session.githubId, githubLogin: session.githubLogin },
-    actorRole: async (project) => {
-      const restriction = projectRestriction(
-        project.id,
-        await deps.persistence.listEnforcements(),
-      );
+    actorRole: async (project, restriction) => {
       const isBannedAccount = restriction.bannedMaintainers.some(
         (account) => account.githubId === session.githubId,
       );
@@ -2237,6 +2233,7 @@ async function recordEnforcement(
     actor: GithubActor;
     actorRole: (
       project: ProjectRecord,
+      restriction: ProjectRestriction,
     ) => EnforcementActorRole | Promise<EnforcementActorRole>;
     decisionSource: ProjectEnforcement["decisionSource"];
     mode: "preview" | "apply";
@@ -2254,11 +2251,13 @@ async function recordEnforcement(
   } = input;
   const project = await deps.persistence.getProject(projectId);
   if (project === null) fail(404, "not_found", "Project not found");
-  const actorRole = await input.actorRole(project);
   const restriction = projectRestriction(
     projectId,
     await deps.persistence.listEnforcements(),
   );
+  // Role, plan, recipients and append sequence share one restriction snapshot.
+  // A concurrent decision then fails the existing append conflict check.
+  const actorRole = await input.actorRole(project, restriction);
   if (
     (expectedRevision !== null && project.revision !== expectedRevision) ||
     (expectedSequence !== null && restriction.nextSequence !== expectedSequence)

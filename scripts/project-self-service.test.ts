@@ -1264,7 +1264,7 @@ test("an explicit moderator ban blocks new contribution intake without blaming t
   expect(await hasParticipationBan(t.db, "900000004")).toBe(false);
 });
 
-test("account-ban appeals after project appeal or reinstatement resolve role, refusal and independent reviewer notices", async () => {
+async function accountAppealFlow(concurrent: boolean) {
   const MOD_2 = "900000005";
   const STEWARD = "987654321";
   const t = registry();
@@ -1332,33 +1332,64 @@ test("account-ban appeals after project appeal or reinstatement resolve role, re
   );
   expect(banned.status).toBe(200);
 
-  // The unbanned steward opens the project appeal first.
-  const stewardAppeal = await t.call("POST", "project-appeals", STEWARD, {
-    projectId: "appeal-roles",
-    reason:
-      "Steward appeals the project restriction after reverting the commit",
-    evidenceReference: "private-steward-appeal-fixture",
-  });
-  expect(stewardAppeal.status).toBe(200);
-  expect(stewardAppeal.body.record).toMatchObject({
-    actorRole: "project-steward",
-    decisionSource: "owner-request",
-    stateAfter: "banned",
-    appealAfter: "requested",
-  });
+  const openProjectAppeal = async () => {
+    const stewardAppeal = await t.call("POST", "project-appeals", STEWARD, {
+      projectId: "appeal-roles",
+      reason:
+        "Steward appeals the project restriction after reverting the commit",
+      evidenceReference: "private-steward-appeal-fixture",
+    });
+    expect(stewardAppeal.status).toBe(200);
+    expect(stewardAppeal.body.record).toMatchObject({
+      actorRole: "project-steward",
+      decisionSource: "owner-request",
+      stateAfter: "banned",
+      appealAfter: "requested",
+    });
+  };
 
   // The banned project applicant can still file their individual account appeal,
   // which records as a banned-account appeal and notifies only the moderator who did not ban them.
-  const applicantAccountAppeal = await t.call(
-    "POST",
-    "project-appeals",
-    OWNER,
-    {
+  const openAccountAppeal = () =>
+    t.call("POST", "project-appeals", OWNER, {
       projectId: "appeal-roles",
       reason: "Applicant appeals their individual account ban",
       evidenceReference: "private-applicant-account-appeal-fixture",
-    },
-  );
+    });
+  if (concurrent) {
+    const readEnforcements = t.persistence.listEnforcements.bind(t.persistence);
+    let pending = true;
+    t.persistence.listEnforcements = async () => {
+      const snapshot = await readEnforcements();
+      if (pending) {
+        pending = false;
+        await openProjectAppeal();
+      }
+      return snapshot;
+    };
+    try {
+      const stale = await openAccountAppeal();
+      expect(stale.status).toBe(409);
+      expect(stale.body.error).toBe("stale_enforcement");
+      expect(
+        (await readEnforcements()).filter(
+          (record) => record.action === "request_reinstatement",
+        ),
+      ).toMatchObject([{ actorRole: "project-steward", sequence: 3 }]);
+      expect(
+        t.sqlite
+          .query(
+            "SELECT recipient_github_id FROM notifications WHERE kind = 'reinstatement_review'",
+          )
+          .all(),
+      ).toEqual([{ recipient_github_id: MOD_2 }]);
+    } finally {
+      t.persistence.listEnforcements = readEnforcements;
+    }
+  } else {
+    await openProjectAppeal();
+  }
+  const applicantAccountAppeal = await openAccountAppeal();
   expect(applicantAccountAppeal.status).toBe(200);
   const applicantAppealRecord = applicantAccountAppeal.body.record as {
     id: string;
@@ -1471,7 +1502,13 @@ test("account-ban appeals after project appeal or reinstatement resolve role, re
       )
       .all(`reinstatement-review:${otherAppealRecord.id}`),
   ).toEqual([{ recipient_github_id: MOD_2 }]);
-});
+}
+
+test("account-ban appeals after project appeal or reinstatement resolve role, refusal and independent reviewer notices", () =>
+  accountAppealFlow(false));
+
+test("a concurrent project appeal refuses the stale account request and a fresh retry uses the account role", () =>
+  accountAppealFlow(true));
 
 test("account-reinstatement upgrade preserves prior releases and separates future project decisions", async () => {
   const names = readdirSync(new URL("../migrations/", import.meta.url))
