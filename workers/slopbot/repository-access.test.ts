@@ -7,7 +7,9 @@ import { generateKeyPairSync } from "node:crypto";
 import { parseRepositoryAccess } from "../../backend/projects/setup";
 import {
   handleRepositoryAccess,
+  handleRepositoryRead,
   REPOSITORY_ACCESS_URL,
+  REPOSITORY_READ_URL,
 } from "./repository-access";
 
 const { privateKey } = generateKeyPairSync("rsa", {
@@ -181,4 +183,30 @@ test("a reused username cannot inherit another account's repository authority", 
     }),
   );
   expect(response).toEqual({ status: 503, body: { error: "unavailable" } });
+});
+
+test("reads one repository resource only through its own installation", async () => {
+  const readPath = async (path: string, fetcher: typeof fetch) => {
+    const url = new URL(REPOSITORY_READ_URL);
+    url.searchParams.set("path", path);
+    return handleRepositoryRead(new Request(url), env, fetcher);
+  };
+  const calls: string[] = [];
+  const fetcher = github(installed, calls);
+  const facts = await readPath("/repos/example/open-registry", fetcher);
+  expect(facts.status).toBe(200);
+  expect(facts.headers.get("x-slopbot-repository-read")).toBe("github");
+  expect(await facts.json()).toEqual({ id: 123456789 });
+  // Encoded dot segments and other resources are refused before any call.
+  calls.length = 0;
+  for (const path of [
+    "/repos/example/open-registry/branches/%2e%2e",
+    "/repos/example/open-registry/collaborators/owner/permission",
+  ])
+    expect((await readPath(path, fetcher)).status).toBe(400);
+  expect(calls).toEqual([]);
+  // Without an installation the caller makes its ordinary read.
+  const missing = await readPath("/repos/example/other", github({}));
+  expect(missing.status).toBe(404);
+  expect(missing.headers.get("x-slopbot-repository-read")).toBeNull();
 });

@@ -96,6 +96,12 @@ export function fixtureBranchHead(fullName, branch) {
   return createHash("sha1").update(`${fullName}#${branch}`).digest("hex");
 }
 
+/** A stable integration-branch head, which security vetting pins. */
+function fixtureBranch(repository, encodedName) {
+  const name = decodeURIComponent(encodedName);
+  return { name, commit: { sha: fixtureBranchHead(repository, name) } };
+}
+
 const GHSA_ALPHABET = "23456789cfghjmpqrvwx";
 
 /** The fixture's private advisory store and intake App state. */
@@ -507,6 +513,9 @@ function handleSlopbotApp(state, request, response, path) {
   const repository = /^\/repos\/([^/]+\/[^/]+)$/u.exec(route);
   if (request.method === "GET" && repository)
     return send(200, fixtureRepository(repository[1]));
+  const branch = /^\/repos\/([^/]+\/[^/]+)\/branches\/([^/]+)$/u.exec(route);
+  if (request.method === "GET" && branch)
+    return send(200, fixtureBranch(branch[1], branch[2]));
   const permission =
     /^\/repos\/([^/]+\/[^/]+)\/collaborators\/([^/]+)\/permission$/u.exec(
       route,
@@ -626,27 +635,25 @@ export function startGitHubApiFixture(port) {
     }
     const repository = /^\/repos\/([^/]+\/[^/]+)$/u.exec(path);
     const branch = /^\/repos\/([^/]+\/[^/]+)\/branches\/([^/]+)$/u.exec(path);
-    // A stable integration-branch head, which security vetting pins.
+    const limited = (repository ?? branch)?.[1].toLowerCase();
+    if (
+      request.method === "GET" &&
+      limited !== undefined &&
+      limitedRepositories.has(limited)
+    ) {
+      response.writeHead(403, {
+        "content-type": "application/json",
+        "x-ratelimit-remaining": "0",
+      });
+      response.end('{"message":"API rate limit exceeded"}');
+      return;
+    }
     if (request.method === "GET" && branch) {
-      const name = decodeURIComponent(branch[2]);
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(
-        JSON.stringify({
-          name,
-          commit: { sha: fixtureBranchHead(branch[1], name) },
-        }),
-      );
+      response.end(JSON.stringify(fixtureBranch(branch[1], branch[2])));
       return;
     }
     if (request.method === "GET" && repository) {
-      if (limitedRepositories.has(repository[1].toLowerCase())) {
-        response.writeHead(403, {
-          "content-type": "application/json",
-          "x-ratelimit-remaining": "0",
-        });
-        response.end('{"message":"API rate limit exceeded"}');
-        return;
-      }
       const name = repository[1].split("/")[1];
       if (name === "lookup-rate-limited" || name === "lookup-unavailable") {
         response.writeHead(name === "lookup-rate-limited" ? 429 : 503, {

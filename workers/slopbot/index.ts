@@ -18,7 +18,9 @@ import {
 } from "./registry";
 import {
   handleRepositoryAccess,
+  handleRepositoryRead,
   REPOSITORY_ACCESS_URL,
+  REPOSITORY_READ_URL,
 } from "./repository-access";
 import {
   applyAppealCommand,
@@ -342,6 +344,12 @@ export default {
       url.pathname === new URL(REPOSITORY_ACCESS_URL).pathname
     )
       return handleRepositoryAccess(request, env);
+    if (
+      request.method === "GET" &&
+      url.origin === new URL(REPOSITORY_READ_URL).origin &&
+      url.pathname === new URL(REPOSITORY_READ_URL).pathname
+    )
+      return handleRepositoryRead(request, env);
     if (request.method !== "POST" || url.pathname !== "/github/webhook") {
       return new Response("not found", { status: 404 });
     }

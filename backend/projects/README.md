@@ -109,7 +109,11 @@ checks. Funding is reported separately; a project works without it.
   repository's installation with its App JWT and checks the repository id.
   The current Pages client requests the repository's public identity fields
   with `includeRepository=1` and reuses that authenticated read. It does not
-  make a second anonymous request for the primary repository. Tokens never
+  make a second anonymous request for the primary repository. The
+  repository lookup on `/projects/new` and the vetting branch-head pin also
+  read through the repository's installation (`/v1/repository-read`), and
+  make the ordinary GitHub read only when Slopbot is not installed or does
+  not answer. Tokens never
   leave the Worker. Deploy the Worker before Pages: requests without the flag
   retain the old response, while a current Pages client refuses a response
   without the required identity fields. Without the binding the check reports
