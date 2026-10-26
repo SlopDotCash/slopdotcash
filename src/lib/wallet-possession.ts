@@ -7,6 +7,7 @@
  */
 
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { isRecord } from "./record-validation.mjs";
 import { decodeSolanaSignature } from "./solana-signature";
 import { isSolanaAddress, solanaAddressBytes } from "./wallets";
 
@@ -67,10 +68,9 @@ const CANONICAL_KEYS = [
 ].join(",");
 
 function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value))
     throw new TypeError("Wallet possession challenge must be an object");
-  }
-  return value as Record<string, unknown>;
+  return value;
 }
 
 function timestamp(value: unknown, field: string): number {

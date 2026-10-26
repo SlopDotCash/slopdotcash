@@ -1,5 +1,6 @@
 import { parseFencedRecord } from "./fenced-record";
 import { findProject, type ProjectId } from "./projects.mjs";
+import { isRecord } from "./record-validation.mjs";
 
 const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const NODE_ID_PATTERN = /^[A-Za-z0-9_=-]{4,256}$/u;
@@ -54,10 +55,8 @@ export interface ScoreApprovalRecord {
 }
 
 function object(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError("score record must be an object");
-  }
-  return value as Record<string, unknown>;
+  if (!isRecord(value)) throw new TypeError("score record must be an object");
+  return value;
 }
 
 export function assertScoreRatificationRecord(

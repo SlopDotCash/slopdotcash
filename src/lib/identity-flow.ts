@@ -1,6 +1,7 @@
 /** Shared identity start/poll protocol; consumers retain separate audiences and session exchanges. */
 import { identityPublicOrigin } from "../../workers/identity/contracts";
 import { deploymentTier } from "./deployment";
+import { isRecord } from "./record-validation.mjs";
 
 const CLOCK_SKEW_MS = 2 * 60_000;
 export interface IdentityAuthorization {
@@ -16,8 +17,8 @@ function invalid(): never {
   );
 }
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) invalid();
-  return value as Record<string, unknown>;
+  if (!isRecord(value)) invalid();
+  return value;
 }
 function timestamp(value: unknown): number {
   if (
