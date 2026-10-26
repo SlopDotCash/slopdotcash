@@ -122,6 +122,13 @@ function token2022Vault(amount: bigint, extension = [7, 0, 0, 0]): Uint8Array {
   data.set(extension, 166);
   return data;
 }
+/** An initialized mint sized between the base and account layouts: no valid Token-2022 shape. */
+function truncatedMint(size: number): Uint8Array {
+  const data = new Uint8Array(size);
+  data[44] = 6;
+  data[45] = 1;
+  return data;
+}
 function mockRpc(accounts: {
   project: Uint8Array;
   mint: Uint8Array;
@@ -244,11 +251,13 @@ describe("readVaultTotals", () => {
     );
   });
 
-  test("refuses a malformed Token-2022 mint and an uninitialized mint", async () => {
+  test("refuses a truncated Token-2022 mint and an uninitialized mint", async () => {
     mockRpc({
       project: projectAccount(base),
-      mint: mintAccount(6),
+      mint: truncatedMint(120),
       mintOwner: TOKEN_2022,
+      vault: token2022Vault(10n ** 19n),
+      vaultOwner: TOKEN_2022,
     });
     await expect(readVaultTotals(config)).rejects.toThrow(
       "Truncated Token-2022 account",
