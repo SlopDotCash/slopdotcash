@@ -48,8 +48,8 @@ export const ARTIFACT_TYPES = [
   "second-stage",
   "other",
 ] as const;
-const ARTIFACT_STATES = ["quarantined", "released", "blocked"] as const;
-const ARTIFACT_ANALYSES = [
+export const ARTIFACT_STATES = ["quarantined", "released", "blocked"] as const;
+export const ARTIFACT_ANALYSES = [
   "pending",
   "static-clean",
   "detonation-clean",
@@ -57,10 +57,20 @@ const ARTIFACT_ANALYSES = [
   "malicious",
 ] as const;
 const REVIEWERS = ["astra", "opus"] as const;
-const REVIEW_STATUSES = ["completed", "unavailable", "failed"] as const;
-const REVIEW_VERDICTS = ["no-findings", "findings", "malicious-suspected"];
-const SEVERITIES = ["info", "low", "medium", "high", "critical"] as const;
-const CONFIRMATION_BASES = [
+export const REVIEW_STATUSES = ["completed", "unavailable", "failed"] as const;
+export const REVIEW_VERDICTS = [
+  "no-findings",
+  "findings",
+  "malicious-suspected",
+] as const;
+export const SEVERITIES = [
+  "info",
+  "low",
+  "medium",
+  "high",
+  "critical",
+] as const;
+export const CONFIRMATION_BASES = [
   "reproducible-behavior",
   "verified-source-evidence",
 ] as const;
@@ -84,7 +94,7 @@ export type ModelReview = {
   inputManifestSha256: string;
   runId: string;
   status: (typeof REVIEW_STATUSES)[number];
-  verdict: "no-findings" | "findings" | "malicious-suspected" | null;
+  verdict: (typeof REVIEW_VERDICTS)[number] | null;
   findingCount: number;
 };
 
@@ -140,13 +150,18 @@ export class VettingResultError extends Error {
   readonly code = "invalid_vetting_result";
 }
 
-function reject(message: string): never {
+// Exact field readers shared by the v1 and v2 result parsers.
+export function reject(message: string): never {
   throw new VettingResultError(message);
 }
 
 type Shape = Record<string, unknown>;
 
-function object(value: unknown, name: string, keys: string[]): Shape {
+export function object(
+  value: unknown,
+  name: string,
+  keys: readonly string[],
+): Shape {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     reject(`${name} must be an object`);
   const record = value as Shape;
@@ -158,7 +173,7 @@ function object(value: unknown, name: string, keys: string[]): Shape {
   return record;
 }
 
-function text(value: unknown, name: string, max: number): string {
+export function text(value: unknown, name: string, max: number): string {
   if (
     typeof value !== "string" ||
     value.length < 1 ||
@@ -171,13 +186,13 @@ function text(value: unknown, name: string, max: number): string {
 }
 
 const LABEL = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,127}$/u;
-function label(value: unknown, name: string): string {
+export function label(value: unknown, name: string): string {
   if (typeof value !== "string" || !LABEL.test(value))
     reject(`${name} must be an exact identifier`);
   return value;
 }
 
-function digest(value: unknown, name: string): string {
+export function digest(value: unknown, name: string): string {
   if (!validSha256(value)) reject(`${name} must be a lowercase SHA-256`);
   return value as string;
 }
@@ -188,7 +203,7 @@ function gitSha(value: unknown, name: string): string {
   return value;
 }
 
-function oneOf<T extends string>(
+export function oneOf<T extends string>(
   value: unknown,
   name: string,
   options: readonly T[],
@@ -198,7 +213,7 @@ function oneOf<T extends string>(
   return value as T;
 }
 
-function list<T>(
+export function list<T>(
   value: unknown,
   name: string,
   max: number,
@@ -209,13 +224,13 @@ function list<T>(
   return value.map((item, index) => read(item, `${name}[${index}]`));
 }
 
-function count(value: unknown, name: string): number {
+export function count(value: unknown, name: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0)
     reject(`${name} must be a non-negative integer`);
   return value as number;
 }
 
-function timestamp(value: unknown, name: string): string {
+export function timestamp(value: unknown, name: string): string {
   if (!validIsoTimestamp(value)) reject(`${name} must be an ISO UTC time`);
   return value as string;
 }
