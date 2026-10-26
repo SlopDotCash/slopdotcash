@@ -2013,7 +2013,7 @@ test("private settlement requires visibility consent and produces an unsigned re
   await expect(
     page.getByRole("status").filter({ hasText: "Request download started." }),
   ).toBeVisible();
-  await expectAccessible(page);
+  await expectAccessible(page, { everyRule: true });
   await page.screenshot({
     path: test.info().outputPath("private-settlement.png"),
     fullPage: true,
@@ -2021,7 +2021,7 @@ test("private settlement requires visibility consent and produces an unsigned re
   await page.evaluate(() => {
     document.documentElement.style.zoom = "2";
   });
-  await expectAccessible(page);
+  await expectAccessible(page, { everyRule: true });
   await page.screenshot({
     path: test.info().outputPath("private-settlement-zoom.png"),
     fullPage: true,

@@ -83,7 +83,7 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
   await item.getByRole("button", { name: "Mark as read" }).focus();
   await page.keyboard.press("Enter");
   await expect(item.locator(".inbox-state")).toHaveText("Read");
-  await expectAccessible(page);
+  await expectAccessible(page, { everyRule: true });
   await page.screenshot({
     path: test.info().outputPath("appeal-review.png"),
     fullPage: true,
