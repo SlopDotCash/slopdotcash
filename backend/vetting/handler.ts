@@ -561,12 +561,20 @@ async function serviceResult(
   if (isScanResult(result) && result.reusedAssessmentId !== null) {
     // A cached clean scan stands in only for byte-identical executable
     // content of the same repository under the same policy and template.
-    const cached = await deps.vetting.getAssessment(result.reusedAssessmentId);
+    // Reinstatement after a contributor-flag pause requires a fresh clean scan
+    // requested on or after the pause (PRD sections 1, 8, 11).
+    const [cached, enforcements] = await Promise.all([
+      deps.vetting.getAssessment(result.reusedAssessmentId),
+      deps.projects.listEnforcements(),
+    ]);
+    const restriction = projectRestriction(project.id, enforcements);
     const prior = cached?.result;
     if (
+      pausedByFlagsOnly(restriction) ||
       result.disposition !== "clean" ||
       cached === null ||
       cached.state !== "clean" ||
+      (restriction.since !== null && cached.requestedAt < restriction.since) ||
       prior == null ||
       !isScanResult(prior) ||
       prior.reusedAssessmentId !== null ||
@@ -596,6 +604,10 @@ async function serviceResult(
         ? "Clean scan results require the exact retained report, inventory, dependency locks and artifacts"
         : "Clean results require a complete authorized canonical assembly and its exact retained evidence",
     );
+  const livePin =
+    result.disposition === "clean"
+      ? await deps.livePin(project.manifest).catch(() => null)
+      : undefined;
   const resultText = JSON.stringify(result);
   const recorded = await deps.vetting.recordResult({
     result,
@@ -603,6 +615,7 @@ async function serviceResult(
     resultSha256: await sha256Hex(new TextEncoder().encode(resultText)),
     signingKeySha256: keySha256,
     operatorGithubIds: deps.operatorGithubIds,
+    livePin,
     at: deps.now().toISOString(),
   });
   if (recorded === "conflict") {

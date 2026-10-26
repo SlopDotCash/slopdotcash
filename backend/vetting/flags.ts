@@ -328,15 +328,25 @@ export class ProjectFlagStore {
     githubId: string,
     at: string,
   ): Promise<boolean> {
-    const result = await this.db
-      .prepare(
-        `UPDATE project_flags
-            SET state = 'withdrawn', closed_at = ?, closed_by = 'reporter'
-          WHERE project_id = ? AND reporter_github_id = ? AND state = 'active'`,
-      )
-      .bind(at, projectId, githubId)
-      .run();
-    return result.meta?.changes === 1;
+    const cutoff = flagCutoff(new Date(at));
+    const results = await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE project_flags
+              SET state = 'expired', closed_at = ?, closed_by = 'lifetime'
+            WHERE project_id = ? AND state = 'active' AND created_at <= ?`,
+        )
+        .bind(at, projectId, cutoff),
+      this.db
+        .prepare(
+          `UPDATE project_flags
+              SET state = 'withdrawn', closed_at = ?, closed_by = 'reporter'
+            WHERE project_id = ? AND reporter_github_id = ?
+              AND state = 'active' AND created_at > ?`,
+        )
+        .bind(at, projectId, githubId, cutoff),
+    ]);
+    return results[1]?.meta?.changes === 1;
   }
 }
 

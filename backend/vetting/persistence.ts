@@ -31,7 +31,11 @@ import {
 } from "../projects/enforcement";
 import { sha256Hex } from "../trace/validation";
 import type { VettingArtifact } from "./result";
-import { type RecordedVettingResult, resultReviewers } from "./scan-result";
+import {
+  isScanResult,
+  type RecordedVettingResult,
+  resultReviewers,
+} from "./scan-result";
 
 export type {
   AssessmentState,
@@ -281,6 +285,7 @@ export class CloudflareVettingPersistence {
     resultSha256: string;
     signingKeySha256: string;
     operatorGithubIds?: readonly string[];
+    livePin?: VettingPin | null;
     at: string;
   }): Promise<"recorded" | "conflict"> {
     const { result } = input;
@@ -330,7 +335,10 @@ export class CloudflareVettingPersistence {
         createdAt: input.at,
       };
     }
-    if (result.disposition === "clean") {
+    if (
+      result.disposition === "clean" &&
+      !(isScanResult(result) && result.reusedAssessmentId !== null)
+    ) {
       // A clean fresh scan reinstates a project that flags alone paused
       // (PRD section 8). The record commits with the result or not at all.
       const projects = new CloudflareProjectPersistence(this.db);
@@ -338,9 +346,16 @@ export class CloudflareVettingPersistence {
         projects.getProject(result.projectId),
         this.getAssessment(result.assessmentId),
       ]);
+      const liveMatches =
+        input.livePin === undefined ||
+        (input.livePin !== null &&
+          assessment !== null &&
+          assessment.commitSha === input.livePin.commitSha &&
+          assessment.templateSha256 === input.livePin.templateSha256);
       if (
         project &&
         assessment &&
+        liveMatches &&
         (await this.assessmentCoversActiveFlags(assessment.id))
       )
         enforcement = planScanReinstatement({
