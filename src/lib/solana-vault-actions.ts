@@ -15,6 +15,7 @@ import {
 } from "./payments/contracts";
 import { parseVaultAmount } from "./payments/vault-amount";
 import { apiRequest, projectApiRequest } from "./project-api";
+import { CANONICAL_UINT } from "./record-validation.mjs";
 
 export type SolanaFundingPlan = Awaited<
   ReturnType<typeof prepareSolanaFunding>
@@ -117,7 +118,7 @@ export async function reviewSolanaVaultAction(
     typeof plan.freeBalance !== "string" ||
     !/^(0|[1-9][0-9]{0,19})$/.test(plan.freeBalance) ||
     typeof plan.networkFeeLamports !== "string" ||
-    !/^(0|[1-9][0-9]*)$/.test(plan.networkFeeLamports)
+    !CANONICAL_UINT.test(plan.networkFeeLamports)
   )
     throw new Error("The funding review response is invalid.");
   const gross = parseVaultAmount(amount, plan.decimals);

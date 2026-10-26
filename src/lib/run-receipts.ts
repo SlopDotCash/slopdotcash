@@ -1,5 +1,7 @@
 import {
   exactKeys,
+  isCanonicalUint,
+  isExactUtc,
   isRecord,
   nonNegativeInteger,
 } from "./record-validation.mjs";
@@ -320,12 +322,7 @@ export function assertProjectRunReceipt(value: unknown): ProjectRunReceipt {
 }
 
 function isoTimestamp(value: unknown, path: string): string {
-  if (
-    typeof value !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) ||
-    !Number.isFinite(Date.parse(value)) ||
-    new Date(value).toISOString() !== value
-  ) {
+  if (!isExactUtc(value)) {
     throw new TypeError(`${path} must be a canonical UTC ISO timestamp`);
   }
   return value;
@@ -383,7 +380,7 @@ function base64url(
 }
 
 function minorUnits(value: unknown, path: string): string {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+  if (!isCanonicalUint(value)) {
     throw new TypeError(`${path} must be canonical integer minor units`);
   }
   BigInt(value);

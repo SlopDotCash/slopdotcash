@@ -4,7 +4,14 @@ import {
   isEscrowChain,
   maxBaseUnitsForChain,
 } from "./escrow-policy.mjs";
-import { exactKeys, readRecord as record } from "./record-validation.mjs";
+import {
+  boundedText,
+  CANONICAL_UINT,
+  exactKeys,
+  isCanonicalUint,
+  readRecord as record,
+  timestamp,
+} from "./record-validation.mjs";
 /**
  * Validates untrusted project folders before they enter discovery, ingestion,
  * skills, or money-shaped views. The schema is intentionally narrow so a pull
@@ -106,7 +113,7 @@ export const MAX_MONTHLY_CAP_MINOR = 1_000_000_000_000_000n;
 
 /** Formats cent-precise USDC minor units without floating-point conversion. */
 export function formatMonthlyCapDisplay(value) {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+  if (!isCanonicalUint(value)) {
     throw new TypeError("monthly cap must be canonical integer minor units");
   }
   const amount = BigInt(value);
@@ -122,7 +129,7 @@ export function formatMonthlyCapDisplay(value) {
 
 /** Formats integer base units of an asset with `decimals`, without floats. */
 export function formatAssetAmount(value, decimals) {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+  if (!isCanonicalUint(value)) {
     throw new TypeError("amount must be canonical integer base units");
   }
   const scale = 10n ** BigInt(decimals);
@@ -172,16 +179,8 @@ export function monthlyAmountDisplay(value, rewardAsset) {
   return `${formatAssetAmount(value, rewardAsset.decimals)} ${rewardAsset.symbol}`;
 }
 
-function text(value, field, { max = 500, min = 1, pattern } = {}) {
-  if (
-    typeof value !== "string" ||
-    value.length < min ||
-    value.length > max ||
-    (pattern && !pattern.test(value))
-  ) {
-    throw new TypeError(`${field} is invalid`);
-  }
-  return value;
+function text(value, field, options = {}) {
+  return boundedText(value, field, { max: 500, ...options });
 }
 
 function url(value, field, expectedOrigin) {
@@ -205,7 +204,7 @@ function url(value, field, expectedOrigin) {
 }
 
 function minor(value, field) {
-  return text(value, field, { pattern: /^(?:0|[1-9]\d*)$/u });
+  return text(value, field, { pattern: CANONICAL_UINT });
 }
 
 function nullable(value, field, validator) {
@@ -759,18 +758,6 @@ function validateTerms(
     }
   }
   return terms;
-}
-
-function timestamp(value, field) {
-  const result = text(value, field, {
-    pattern: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
-  });
-  if (
-    !Number.isFinite(Date.parse(result)) ||
-    new Date(result).toISOString() !== result
-  )
-    throw new TypeError(`${field} is invalid`);
-  return result;
 }
 
 function validateRepository(value, index) {

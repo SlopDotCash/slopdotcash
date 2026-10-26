@@ -8,6 +8,7 @@ import type { VaultConnection } from "./evm-vault-actions";
 import type { OwnerCommitmentPlan } from "./owner-commitment-actions";
 import { isAssetDecimals } from "./payments/contracts";
 import { apiRequest } from "./project-api";
+import { CANONICAL_UINT } from "./record-validation.mjs";
 import { sendSolanaWalletTransaction } from "./solana-vault-actions";
 
 export type SolanaCommitmentPlan = Awaited<
@@ -39,7 +40,7 @@ export function verifySolanaCommitmentPlan(
     typeof transaction.freeBalance !== "string" ||
     !/^(0|[1-9][0-9]{0,19})$/.test(transaction.freeBalance) ||
     typeof transaction.networkFeeLamports !== "string" ||
-    !/^(0|[1-9][0-9]*)$/.test(transaction.networkFeeLamports)
+    !CANONICAL_UINT.test(transaction.networkFeeLamports)
   )
     throw new Error(
       "The prepared transaction differs from the reviewed award.",
