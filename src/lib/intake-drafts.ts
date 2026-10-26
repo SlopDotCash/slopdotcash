@@ -2,7 +2,8 @@
  * Report drafts for automatic private intake. A draft holds the report text,
  * so it lives only in this tab's sessionStorage (OPEN_QUESTION 6) and is
  * removed as soon as its submission can no longer be sent, and on sign-out.
- * Storage may be unavailable; callers then keep the draft in memory.
+ * Storage may be unavailable; the draft then stays in memory only, so a
+ * caller must not leave the page for GitHub without a saved draft.
  */
 
 export type ReportDraft = {
@@ -85,15 +86,18 @@ export function loadDraft(
   }
 }
 
+/** Whether the draft was stored and survives a GitHub redirect. */
 export function saveDraft(
   id: string,
   draft: ReportDraft,
   storage: DraftStorage | null = sessionStore(),
-): void {
+): boolean {
+  if (storage === null) return false;
   try {
-    storage?.setItem(draftKey(id), JSON.stringify(draft));
+    storage.setItem(draftKey(id), JSON.stringify(draft));
+    return true;
   } catch {
-    // The draft stays in memory.
+    return false;
   }
 }
 
