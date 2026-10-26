@@ -499,6 +499,20 @@ jobs:
           # Publish the named refresher before its existing hourly caller.
           ./node_modules/.bin/wrangler deploy --config workers/identity/wrangler.staging.toml
           node scripts/configure-staging-secrets.mjs
+          # Qualify fee receipts and quotes in isolated D1 without loading keys.
+          # A second live signer must never compete for the production wallets.
+          bun -e '
+            const config = Bun.TOML.parse(await Bun.file("workers/fee-converter/wrangler.staging.toml").text());
+            if (config.vars.FEE_CONVERTER_MODE !== "dry_run" ||
+                config.name !== "slop-fee-converter-staging" ||
+                config.d1_databases.length !== 1 ||
+                config.d1_databases[0].binding !== "FEE_DB" ||
+                config.d1_databases[0].database_id !== "6fcddcc1-f3d7-4175-bdde-09afddd53a8a") {
+              throw new Error("Staging fee conversion requires dry_run and isolated staging D1");
+            }
+          '
+          ./node_modules/.bin/wrangler deploy --config workers/fee-converter/wrangler.staging.toml \
+            --tag="$GITHUB_SHA" --message="slop.cash staging $GITHUB_SHA"
           if [ "$SLOP_NOTIFY_RELEASE" = "enabled" ]; then
             bun scripts/release-notify.mjs deploy staging "$RUNNER_TEMP/slop-notify-staging-release"
           else

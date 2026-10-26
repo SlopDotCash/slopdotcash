@@ -1,0 +1,65 @@
+# Staging receipt/quote qualification (PRD section 6, issue #905).
+# Separate D1 journal; dry_run never loads a signing key.
+name = "slop-fee-converter-staging"
+main = "index.ts"
+compatibility_date = "2026-07-30"
+workers_dev = false
+preview_urls = false
+
+# No routes: the Worker runs only on its cron trigger. Every minute it converts
+# fees whose fee-wallet balance changed (receipts); each 15th minute it runs a
+# full recovery scan instead (index.ts RECOVERY_SCAN_MINUTES).
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "FEE_DB"
+database_name = "slop-staging"
+database_id = "6fcddcc1-f3d7-4175-bdde-09afddd53a8a"
+migrations_dir = "../../migrations"
+
+[vars]
+# off | dry_run | live. dry_run quotes and records but never loads a key.
+FEE_CONVERTER_MODE = "dry_run"
+# Comma-separated subset of base,ethereum,robinhood,solana.
+# Observe all networks without loading keys or reserving native gas.
+FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood,solana"
+# Optional operator allowlist, e.g. {"base":["0x..."]}. Project reward assets
+# from D1 are always candidates; arbitrary airdropped tokens never are.
+FEE_CONVERTER_ALLOWLIST = ""
+# USDC micro-units (1 USDC = 1000000). Every limit below is required once the
+# mode is not off; the code has no fallback.
+# Dust threshold: owner decision of 24 October 2026 (PRD section 11). Balances
+# under 5 USDC, or worth less than 10 times the gas cost, accumulate until they
+# are worth converting.
+FEE_CONVERTER_MIN_VALUE_MICRO = "5000000"
+FEE_CONVERTER_GAS_MULTIPLE = "10"
+FEE_CONVERTER_MAX_SLIPPAGE_BPS = "100"
+FEE_CONVERTER_MAX_PRICE_IMPACT_BPS = "200"
+FEE_CONVERTER_RUN_CAP_MICRO = "1000000000"
+FEE_CONVERTER_DAILY_CAP_MICRO = "5000000000"
+FEE_CONVERTER_SOLANA_FEE_MICRO = "2000"
+# Native gas budgets in decimal wei (owner decision, 26 October 2026): Base
+# 0.0001 ETH per transaction and 0.001 ETH per UTC day with a 0.00005 ETH
+# data/operator allowance inside the transaction ceiling; Ethereum 0.001 and
+# 0.01 ETH; Robinhood 0.0002 and 0.002 ETH. These supersede the earlier values.
+# Base requires a positive allowance; other networks use "0".
+FEE_CONVERTER_NATIVE_BUDGETS = '{"base":{"perTransaction":"100000000000000","perDay":"1000000000000000","additionalFeeReserve":"50000000000000"},"ethereum":{"perTransaction":"1000000000000000","perDay":"10000000000000000","additionalFeeReserve":"0"},"robinhood":{"perTransaction":"200000000000000","perDay":"2000000000000000","additionalFeeReserve":"0"}}'
+# Robinhood fees are not_converted: retain each received asset unchanged.
+# No conversion target, quote, signing key load, swap or bridge is needed.
+# Published network fee wallets (docs/slop-product-requirements.md TOK-06). Robinhood
+# Chain and Ethereum fee-wallet decisions are recorded in the PRD. Network
+# configuration and conversion activation still require their reviewed gates.
+FEE_WALLET_BASE = "0x8f77c37d8650776bfe73c9b12b15209ee15d9b86"
+# Owner decision 19 October 2026: the Base fee wallet is also the Robinhood
+# Chain and Ethereum fee wallet.
+FEE_WALLET_ROBINHOOD = "0x8f77c37d8650776bfe73c9b12b15209ee15d9b86"
+FEE_WALLET_ETHEREUM = "0x8f77c37d8650776bfe73c9b12b15209ee15d9b86"
+FEE_WALLET_SOLANA = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY"
+KYBERSWAP_CLIENT_ID = "slop-fee-converter"
+
+[observability]
+enabled = true
+
+  [observability.logs]
+  invocation_logs = false

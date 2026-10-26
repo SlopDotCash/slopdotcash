@@ -46,6 +46,22 @@ distinct identity, fee-recipient and rotation keys. A Solana claim verifies
 the pinned Config, including its independent rotation authority, before it
 signs.
 
+## Staging
+
+The normal `development` release deploys `slop-fee-converter-staging` with
+`wrangler.staging.toml`. Its minute cron runs receipt and recovery checks on
+all four networks in `dry_run`, with the isolated `slop-staging` D1 journal.
+It uses public read-only RPCs and never loads a signing key. Production owns
+live sends for the shared fee wallets; staging must not sign concurrently
+against a separate journal. Staging quotes and skips establish staging
+behavior only; finalized production transactions remain separate acceptance.
+
+Reconciliation reads only `live` rows. In every mode except `off`, it can
+rebroadcast their recorded signed bytes, and a rebroadcast needs no key.
+Staging writes only `dry_run` rows, so its journal has no send to rebroadcast.
+Never copy production `fee_conversions` rows into `slop-staging`, and never
+point a `live` converter at it.
+
 ## What one run does
 
 The Worker has no HTTP route. A cron trigger runs it every minute. Most runs
