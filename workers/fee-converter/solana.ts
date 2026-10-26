@@ -23,6 +23,8 @@ import {
   type SolanaEscrowConfig,
   solanaAccount,
   solanaBase58,
+  solanaBase64,
+  solanaBase64Bytes,
   solanaUint,
   solanaVaultAddress,
   verifySolanaDeployment,
@@ -232,14 +234,6 @@ function decimalBps(value: unknown): number | null {
   const rest = /[1-9]/u.test(fraction.slice(4)) ? 1n : 0n;
   return Number(whole + rest);
 }
-
-const toBase64 = (bytes: Uint8Array) => {
-  let text = "";
-  for (const byte of bytes) text += String.fromCharCode(byte);
-  return btoa(text);
-};
-const fromBase64 = (value: string) =>
-  Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 
 interface JupiterQuote {
   inputMint: string;
@@ -732,14 +726,14 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       throw new Error(
         `${label} simulation did not credit the ${label === "claim" ? "fee" : "USDC"} account`,
       );
-    const data = fromBase64(simulated.data[0]);
+    const data = solanaBase64Bytes(simulated.data[0]);
     return (
       new DataView(data.buffer, data.byteOffset).getBigUint64(64, true) - before
     );
   }
 
   async function broadcast(rawTx: string): Promise<void> {
-    const raw = fromBase64(rawTx);
+    const raw = solanaBase64Bytes(rawTx);
     const parsed = parseTransaction(raw);
     const expected = solanaBase58(
       raw.slice(parsed.messageOffset - 64, parsed.messageOffset),
@@ -841,7 +835,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         programs.at(-1) === escrow.programId &&
         log.startsWith("Program data: ")
       ) {
-        const data = fromBase64(log.slice("Program data: ".length));
+        const data = solanaBase64Bytes(log.slice("Program data: ".length));
         if (!eventTag.every((byte, index) => data[index] === byte)) continue;
         if (
           amount !== null ||
@@ -929,7 +923,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       ]);
       if (
         (await simulatedCredit(
-          toBase64(concat(Uint8Array.of(1), new Uint8Array(64), body)),
+          solanaBase64(concat(Uint8Array.of(1), new Uint8Array(64), body)),
           feeAccount,
           "claim",
         )) < amount
@@ -946,7 +940,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       );
       const signature = ed25519.sign(body, seed);
       const txId = solanaBase58(signature);
-      const rawTx = toBase64(concat(Uint8Array.of(1), signature, body));
+      const rawTx = solanaBase64(concat(Uint8Array.of(1), signature, body));
       await recordClaim({
         nativeGasId,
         txId,
@@ -1092,7 +1086,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           },
         }),
       });
-      const raw = fromBase64(swap.swapTransaction);
+      const raw = solanaBase64Bytes(swap.swapTransaction);
       const parsed = parseTransaction(raw);
       if (
         parsed.signatureCount !== 1 ||
@@ -1128,7 +1122,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         throw new Error("Jupiter returned an invalid block height");
 
       if (
-        (await simulatedCredit(toBase64(raw), ata(usdc, wallet), "swap")) <
+        (await simulatedCredit(solanaBase64(raw), ata(usdc, wallet), "swap")) <
         minAmountOut
       )
         throw new Error(
@@ -1146,7 +1140,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       return {
         nativeGasId,
         txId: solanaBase58(signature),
-        rawTx: toBase64(raw),
+        rawTx: solanaBase64(raw),
         evmNonce: null,
         expiresAt: lastValidBlockHeight,
         approvalTxId: null,
