@@ -527,9 +527,9 @@ export function OwnerVaultSetup({
             <dt>Network</dt>
             <dd>{networkLabel(active.input.network)}</dd>
             <dt>Owner wallet</dt>
-            <dd className="break-all">{active.review.owner}</dd>
+            <dd>{active.review.owner}</dd>
             <dt>Reward token</dt>
-            <dd className="break-all">{active.review.asset}</dd>
+            <dd>{active.review.asset}</dd>
             {!bounty ? (
               <>
                 <dt>Monthly cap</dt>
