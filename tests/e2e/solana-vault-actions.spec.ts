@@ -938,18 +938,22 @@ async function ownerSetupWorkflow(
     });
   }
 
-  const other = PROJECTS.find(
-    (p) => p.id !== project.id && p.reward.kind === "monthly-pool",
-  );
-  if (!other) throw new Error("Second registry fixture missing");
-  const template = {
-    ...other,
-    reward: bounty ? project.reward : target.reward,
-    rewardAsset: project.rewardAsset,
-    escrow: project.escrow,
+  // The first vault has reviewed program infrastructure but no template project.
+  const program = {
+    network: deployment.network,
+    sourceCommit: deployment.sourceCommit,
+    programId: deployment.programId,
+    networkDomain: deployment.networkDomain,
+    codeSha256: deployment.codeSha256,
+    upgradeAuthority: deployment.upgradeAuthority,
+    identityAuthority: deployment.identityAuthority,
+    feeRecipient: deployment.feeRecipient,
+    rotationAuthority: deployment.rotationAuthority,
+    bindingDelaySeconds: deployment.bindingDelaySeconds,
+    rotationDelaySeconds: deployment.rotationDelaySeconds,
   };
   const file = join(temporary, "projects.json");
-  writeFileSync(file, JSON.stringify({ project: target, template }));
+  writeFileSync(file, JSON.stringify({ project: target, program }));
   // Only the isolated harness bundle changes the expected public-cluster identity.
   // The RPC, program code, Config, transactions, signatures and balances remain real.
   mkdirSync(join(temporary, "tests"));
@@ -1007,6 +1011,19 @@ async function ownerSetupWorkflow(
       cookie: `__Host-slop_points=${initial.token}`,
       "content-type": "application/json",
     };
+    expect(initial.projects).toBe(1);
+    const setupStatus = () =>
+      page.request
+        .get(`${origin}/api/v1/project-vaults/${project.id}`, { headers })
+        .then((r) => r.json());
+    expect((await setupStatus()).networks).toEqual(["solana-devnet"]);
+    await page.request.post(`${origin}/__fixture`, {
+      data: { templatesEnabled: false },
+    });
+    expect((await setupStatus()).networks).toEqual([]);
+    await page.request.post(`${origin}/__fixture`, {
+      data: { templatesEnabled: true },
+    });
     const api = async (path: string, data: unknown) => {
       const response = await page.request.post(`${origin}/api/v1/${path}`, {
         headers,

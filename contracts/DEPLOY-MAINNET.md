@@ -660,7 +660,7 @@ payments.
 2. The owner creates the vault through project funding. The server verifies
    the finalized creation and records it in a permanent project revision
    (`escrow.deployments`). No per-project admin approval is required. For the
-   first EVM vault, complete the factory review below before owner creation.
+   first vault, complete the factory or program review below before owner creation.
 3. The identity authority address in each factory (EVM) or Config (Solana) is
    the address of the attester key that the attester Worker will use. Read it
    back from the chain at the finalized block and record it.
@@ -695,6 +695,32 @@ unpaid awards and prior deployment reviews remain unchanged.
 The normal main release can first install an inactive Base attester with
 an empty allowlist and no cron. This lets the owner install its secrets
 before creating a vault; it does not establish vault or payment readiness.
+
+### First Solana vault: reviewed program infrastructure
+
+`contracts/solana/programs.ts` holds the program review. It contains no project,
+owner, mint or vault inventory. The mainnet pin records the finalized #901
+upgrade at slot 461493344 from source `83827c042c7f28479f7d6a959d7ee5a64652fe85`.
+The ProgramData bytes after the 45-byte header have SHA-256
+`38c8d776e9d4d763f16c834d76aa0497ba1c3f2a3b8bbe17a60067268782005d`.
+This includes zero padding; do not substitute the unpadded build digest.
+New mainnet projects use the reviewed replay domain
+`SHA256("slop-escrow:solana-mainnet")`. This first-vault infrastructure choice
+does not change any existing project's recorded domain. Each signed message
+also binds the program and project PDA.
+
+Owner setup verifies the cluster, executable program, exact code, upgrade
+key and singleton Config before it prepares a transaction. It does not need
+an existing project account. The confirmed owner wallet, registry project
+digest, asset, purpose and monthly choice determine the new vault. The server
+registers it only after the exact owner-signed transaction is finalized and
+the created project matches those fields. Recovery uses that same transaction.
+Existing D1 deployments can still supply a reviewed program configuration.
+
+A program pin does not enable the network, attester, keeper or automatic
+payments. Keep their release and first-payment gates separate. The new public
+devnet lifecycle runs reported in #902 still need independent raw-receipt
+reconciliation; the local bootstrap workflow is not that evidence.
 
 ### 3.2 Configure the stack
 

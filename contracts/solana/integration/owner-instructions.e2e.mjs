@@ -19,7 +19,6 @@ import {
   verifySolanaVaultCreation,
 } from "../.local/owner-creation.mjs";
 import { buildInitializeVaultInstructions } from "../.local/owner-instructions.mjs";
-import { message } from "../.local/transactions.mjs";
 import { ownerPlan } from "../scripts/owner-plan.mjs";
 import {
   configFees,
@@ -94,6 +93,63 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
       }),
     /no automatic monthly policy/,
   );
+  const infrastructure = {
+    programId: base.programId,
+    networkDomain: base.networkDomain,
+    identityAuthority: base.identityAuthority,
+    feeRecipient: base.feeRecipient,
+    bindingDelaySeconds: base.bindingDelaySeconds,
+    rotationDelaySeconds: base.rotationDelaySeconds,
+    ...expectedDeployment,
+    rpcUrl: provider.connection.rpcEndpoint,
+    genesisHash,
+    network: "solana-localnet",
+  };
+  // The first project is absent: neither preparation nor signature verification
+  // may require a prior registered vault. Keep the reviewed Config/code checks.
+  await assert.rejects(
+    () =>
+      prepareSolanaVaultCreation(
+        {
+          ...infrastructure,
+          codeSha256: "0".repeat(64),
+        },
+        { ...base, monthlyCap: "20", automaticMonthly: true },
+      ),
+    /reviewed digest/,
+  );
+  await assert.rejects(
+    () =>
+      prepareSolanaVaultCreation(
+        {
+          ...infrastructure,
+          feeRecipient: owner.publicKey.toBase58(),
+        },
+        { ...base, monthlyCap: "20", automaticMonthly: true },
+      ),
+    /pinned escrow Config/,
+  );
+  await assert.rejects(
+    () =>
+      prepareSolanaVaultCreation(
+        {
+          ...infrastructure,
+          genesisHash: "different-cluster",
+        },
+        { ...base, monthlyCap: "20", automaticMonthly: true },
+      ),
+    /Wrong Solana cluster/,
+  );
+  await assert.rejects(
+    () =>
+      prepareSolanaVaultCreation(infrastructure, {
+        ...base,
+        networkDomain: hash("unreviewed-domain"),
+        monthlyCap: "20",
+        automaticMonthly: true,
+      }),
+    /creation policy differs/,
+  );
   const vaults = new Set();
   for (const choice of [
     { name: "on", monthlyCap: "20", automaticMonthly: true },
@@ -154,12 +210,14 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
     const referenceTx = Transaction.from(
       Buffer.from(reference.transactionBase64, "base64"),
     );
+    assert.equal(
+      await provider.connection.getAccountInfo(expectedProject, "finalized"),
+      null,
+    );
+    const prepared = await prepareSolanaVaultCreation(infrastructure, input);
+    assert.equal(prepared.existingVault, null);
     const transaction = Transaction.from(
-      Buffer.concat([
-        Buffer.from([1]),
-        Buffer.alloc(64),
-        message(input.owner, block.blockhash, plan.instructions),
-      ]),
+      Buffer.from(prepared.transaction.transaction, "base64"),
     );
     assert.equal(transaction.signatures.length, 1);
     assert.equal(transaction.signatures[0].signature, null);
@@ -205,15 +263,28 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
       assert.equal(current.monthlyCap.toString(), "30");
       assert.equal(current.monthlyEnabled, !input.automaticMonthly);
     }
-    const recovered = await prepareSolanaVaultCreation(config, input, true);
+    const recovered = await prepareSolanaVaultCreation(
+      infrastructure,
+      input,
+      true,
+    );
     assert.equal(recovered.existingVault, plan.vault);
     assert.equal(recovered.transaction, null);
     assert.deepEqual(
-      await verifySolanaVaultCreation(config, input, signature),
+      await verifySolanaVaultCreation(infrastructure, input, signature),
       {
         projectPda: plan.projectPda,
         vault: plan.vault,
       },
+    );
+    await assert.rejects(
+      () =>
+        verifySolanaVaultCreation(
+          { ...infrastructure, networkDomain: hash("other-cluster-domain") },
+          { ...input, networkDomain: hash("other-cluster-domain") },
+          signature,
+        ),
+      /does not match the pending wallet action/,
     );
     if (!bounty)
       await assert.rejects(
