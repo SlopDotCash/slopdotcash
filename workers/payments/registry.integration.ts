@@ -38,7 +38,10 @@ import {
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../identity/crypto";
-import { paymentStack } from "../payment-executor/configure.mjs";
+import {
+  type PaymentStackInput,
+  paymentStack,
+} from "../payment-executor/configure.mjs";
 import { PaymentSignerJournal } from "../payment-executor/index";
 import { registryDeployments, syncRegistryVaults } from "./index";
 
@@ -619,7 +622,7 @@ try {
       monthlySchedule:
         '{"firstPeriod":"2026-09","cutoffSecondsAfterPeriodEnd":259200}',
       ...input,
-    } as never);
+    } as PaymentStackInput & { stack?: "test" });
   const stagingRecord = paymentDeploymentRecord("eliza", deployment);
   const relayerTopology = stagingStack();
   assert.deepEqual(relayerTopology.names, {
