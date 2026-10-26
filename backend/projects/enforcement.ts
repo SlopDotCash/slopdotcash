@@ -368,12 +368,19 @@ function requireIndependentModerator(
     );
 }
 
+/**
+ * A decision on account appeals needs a moderator who did not ban any of the
+ * accounts it decides and is not one of them (ELG-02). Releases, denials and
+ * malicious-result bans use this one rule; the 0072 trigger repeats the ban
+ * half for each release.
+ */
 function requireIndependentAccountModerator(
   restriction: ProjectRestriction,
   actor: GithubActor,
   accountGithubIds: ReadonlySet<string>,
 ): void {
   if (
+    accountGithubIds.has(actor.githubId) ||
     activeAccountBans(restriction.records).some(
       ({ account, record }) =>
         accountGithubIds.has(account.githubId) &&
@@ -385,6 +392,21 @@ function requireIndependentAccountModerator(
       "independent_review_required",
       "A moderator who did not ban this account must decide its appeal.",
     );
+}
+
+/** Accounts among `accounts` whose own appeal is open. */
+function openAccountAppeals(
+  restriction: ProjectRestriction,
+  accounts: readonly GithubActor[],
+): Set<string> {
+  return new Set(
+    accounts
+      .filter(
+        (account) =>
+          accountAppealState(restriction, account.githubId) === "requested",
+      )
+      .map((account) => account.githubId),
+  );
 }
 
 function revisionTo(
@@ -437,17 +459,27 @@ export function planEnforcement(input: {
         );
       if (action === "ban" && restriction.state === "banned" && !deciding)
         refuse("already_restricted", "The project is already banned");
-      // Deciding a confirmed malicious result bans the maintainer too, and
-      // closes an open appeal as denied, so the same independence applies.
-      if (deciding && restriction.appeal === "requested")
+      // Deciding a confirmed malicious result bans the maintainer too. It
+      // closes the open project appeal and the open appeal of each account it
+      // bans again, so the same independence applies to each.
+      const decidesAppeal = deciding && restriction.appeal === "requested";
+      const reBanned = decidesAppeal
+        ? openAccountAppeals(restriction, input.responsibleAccounts ?? [])
+        : new Set<string>();
+      if (decidesAppeal) {
         requireIndependentModerator(restriction, actor);
+        requireIndependentAccountModerator(restriction, actor, reBanned);
+      }
       return {
         stateAfter: action === "ban" ? "banned" : "quarantined",
-        // An escalation keeps an open appeal open for independent review.
+        // An escalation, or a decision that bans no appealing account again,
+        // keeps an open account appeal open for independent review.
         appealAfter:
           restriction.appeal !== "requested"
             ? "none"
-            : deciding
+            : decidesAppeal &&
+                (projectAppealState(restriction) === "requested" ||
+                  reBanned.size > 0)
               ? "denied"
               : "requested",
         bansMaintainer: deciding,
@@ -503,6 +535,7 @@ export function planEnforcement(input: {
           "Record an appeal before reinstating an account",
         );
       const releasedIds = new Set(selected.map((account) => account.githubId));
+      requireIndependentAccountModerator(restriction, actor, releasedIds);
       const appealStillOpen =
         projectAppealState(restriction) === "requested" ||
         restriction.bannedMaintainers.some(
@@ -529,21 +562,15 @@ export function planEnforcement(input: {
           "no_open_appeal",
           "Record a reinstatement request before a decision",
         );
+      // A denial with no open project appeal decides the open account
+      // appeals, so it needs independence from those account bans instead.
       if (action === "reinstate" || projectAppeal === "requested")
         requireIndependentModerator(restriction, actor);
       else
         requireIndependentAccountModerator(
           restriction,
           actor,
-          new Set(
-            restriction.bannedMaintainers
-              .filter(
-                (account) =>
-                  accountAppealState(restriction, account.githubId) ===
-                  "requested",
-              )
-              .map((account) => account.githubId),
-          ),
+          openAccountAppeals(restriction, restriction.bannedMaintainers),
         );
       if (action === "deny_reinstatement") {
         if (deciding)

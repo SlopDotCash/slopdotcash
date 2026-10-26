@@ -2329,12 +2329,6 @@ async function recordEnforcement(
           "account_not_banned",
           "The selected account has no active ban from this project.",
         );
-      if (bans.some(({ record }) => record.actor?.githubId === actor.githubId))
-        fail(
-          403,
-          "independent_review_required",
-          "A moderator who did not ban this account must decide its appeal.",
-        );
       for (const { record } of bans)
         accountReinstatements.push({
           ...selected,
