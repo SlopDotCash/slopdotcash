@@ -27,12 +27,12 @@ import {
 import { verifySolanaVaultCreation } from "../../contracts/solana/owner-creation";
 import { buildInitializeVaultInstructions } from "../../contracts/solana/owner-instructions";
 import { message } from "../../contracts/solana/transactions";
+import { formatBaseUnits } from "../../src/lib/base-units.mjs";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
 } from "../../src/lib/escrow-policy.mjs";
-import { formatAssetAmount } from "../../src/lib/project-schema.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
 import { CONTRIBUTION } from "../project-application-manifest";
@@ -289,7 +289,7 @@ test.beforeAll(async () => {
       ...original.reward,
       chain: "solana",
       currency: "TEST",
-      monthlyCapDisplay: `${formatAssetAmount(original.reward.monthlyCapMinor, 6)} TEST`,
+      monthlyCapDisplay: `${formatBaseUnits(original.reward.monthlyCapMinor, 6)} TEST`,
       feeBasisPoints: 200,
       paymentMode: "disabled",
       committedMinor: "0",

@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowRight } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
+import { formatBaseUnits } from "./lib/base-units.mjs";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import {
   CONTRIBUTION_LABELS,
@@ -47,7 +48,6 @@ import {
 } from "./lib/project-proposal";
 import { classifyRevisionChanges } from "./lib/project-revision-changes";
 import {
-  formatAssetAmount,
   monthlyAmountDisplay,
   PROJECT_SKILL_TEMPLATES,
   parseAssetAmount,
@@ -2020,7 +2020,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     monthlyAmount:
       capMinor === "0"
         ? ""
-        : formatAssetAmount(capMinor, decimals).replaceAll(",", ""),
+        : formatBaseUnits(capMinor, decimals, { grouping: false }),
     ...(Object.fromEntries(
       SKILL_RULE_FIELDS.map((field) => [
         field,

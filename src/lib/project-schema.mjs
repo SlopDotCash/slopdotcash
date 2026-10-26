@@ -1,3 +1,4 @@
+import { decimalBaseUnits, formatBaseUnits } from "./base-units.mjs";
 import {
   assertEscrowPolicy,
   isBaseUnits,
@@ -127,23 +128,6 @@ export function formatMonthlyCapDisplay(value) {
   return `$${whole}${cents === 0 ? "" : `.${String(cents).padStart(2, "0")}`}`;
 }
 
-/** Formats integer base units of an asset with `decimals`, without floats. */
-export function formatAssetAmount(value, decimals) {
-  if (!isCanonicalUint(value)) {
-    throw new TypeError("amount must be canonical integer base units");
-  }
-  const scale = 10n ** BigInt(decimals);
-  const amount = BigInt(value);
-  const whole = (amount / scale)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/gu, ",");
-  const fraction =
-    decimals === 0
-      ? ""
-      : (amount % scale).toString().padStart(decimals, "0").replace(/0+$/u, "");
-  return fraction === "" ? whole : `${whole}.${fraction}`;
-}
-
 /**
  * Converts a decimal amount in whole units of an asset to its integer base
  * units (owner decision D11: amounts use asset base units).
@@ -160,10 +144,7 @@ export function parseAssetAmount(value, decimals) {
       `amount has more decimal places than the asset's ${decimals}`,
     );
   }
-  return (
-    BigInt(match[1]) * 10n ** BigInt(decimals) +
-    BigInt(fraction.padEnd(decimals, "0") || "0")
-  ).toString();
+  return decimalBaseUnits(match[1], fraction, decimals).toString();
 }
 
 /**
@@ -176,7 +157,7 @@ export function monthlyAmountDisplay(value, rewardAsset) {
   if (!isBaseUnits(value)) {
     throw new RangeError("monthly amount is too large");
   }
-  return `${formatAssetAmount(value, rewardAsset.decimals)} ${rewardAsset.symbol}`;
+  return `${formatBaseUnits(value, rewardAsset.decimals)} ${rewardAsset.symbol}`;
 }
 
 function text(value, field, options = {}) {

@@ -9,6 +9,7 @@
  * AI summary and the request-information, award and remediation actions.
  * The API returns only the cases and fields the caller's current role allows.
  */
+
 import { CircleAlert, ExternalLink, RotateCcw } from "lucide-react";
 import {
   type FormEvent,
@@ -21,6 +22,7 @@ import {
 } from "react";
 import { SignInPanel } from "./Admin";
 import { Link } from "./Link";
+import { decimalBaseUnits } from "./lib/base-units.mjs";
 import { copyText } from "./lib/copy-text";
 import { errorMessage } from "./lib/errors";
 import {
@@ -958,11 +960,8 @@ function decimalToMinor(text: string, decimals: number): string | null {
   const value = text.replaceAll(",", "").trim();
   const match = /^(\d{1,16})(?:\.(\d+))?$/u.exec(value);
   if (!match || (match[2] ?? "").length > decimals) return null;
-  const minor = `${match[1]}${(match[2] ?? "").padEnd(decimals, "0")}`.replace(
-    /^0+(?=\d)/u,
-    "",
-  );
-  return minor === "0" ? null : minor;
+  const minor = decimalBaseUnits(match[1], match[2] ?? "", decimals);
+  return minor === 0n ? null : minor.toString();
 }
 
 const RECEIPT_LABELS: Record<string, string> = {

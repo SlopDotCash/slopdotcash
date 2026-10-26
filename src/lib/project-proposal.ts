@@ -1,3 +1,4 @@
+import { decimalBaseUnits, formatBaseUnits } from "./base-units.mjs";
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 import { isEscrowChain } from "./escrow-policy.mjs";
 import {
@@ -6,7 +7,6 @@ import {
   validRepositoryPath,
 } from "./project-contracts";
 import {
-  formatAssetAmount,
   formatMonthlyCapDisplay,
   MAX_MONTHLY_CAP_MINOR,
   MAX_PROJECT_ID_LENGTH,
@@ -91,10 +91,8 @@ export function monthlyPoolValue(value: string): {
     return { display: "$0", minor: "0", valid: false };
   }
   const [whole, fraction = ""] = value.split(".");
-  const minor = (
-    BigInt(whole) * 1_000_000n +
-    BigInt(fraction.padEnd(2, "0")) * 10_000n
-  ).toString();
+  // USDC has six decimals; the pool amount has at most two.
+  const minor = decimalBaseUnits(whole, fraction, 6).toString();
   if (BigInt(minor) > MAX_MONTHLY_CAP_MINOR) {
     return { display: "$0", minor: "0", valid: false };
   }
@@ -115,7 +113,7 @@ export function formatMonthlyAmount(
   decimals: number,
   symbol: string,
 ): string {
-  return `${formatAssetAmount(minor, decimals)} ${symbol}`;
+  return `${formatBaseUnits(minor, decimals)} ${symbol}`;
 }
 
 /** The one optional funding choice of project setup. */

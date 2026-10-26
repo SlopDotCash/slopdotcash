@@ -1,8 +1,11 @@
+import { formatBaseUnits } from "../base-units.mjs";
 import {
   ESCROW_NETWORKS,
   type EscrowChain,
   MAX_BASE_UNITS,
 } from "../escrow-policy.mjs";
+
+export { formatBaseUnits };
 
 export type PaymentChain = EscrowChain;
 /**
@@ -136,19 +139,6 @@ export function isAssetDecimals(value: unknown): value is number {
   return (
     Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 36
   );
-}
-/** Exact decimal text of a base-unit amount; trailing fraction zeros removed. */
-export function formatBaseUnits(value: string, decimals: number): string {
-  const amount = BigInt(value);
-  if (amount < 0n || !isAssetDecimals(decimals))
-    throw new Error("Invalid base-unit amount");
-  if (decimals === 0) return amount.toLocaleString("en-US");
-  const scale = 10n ** BigInt(decimals);
-  const fraction = (amount % scale)
-    .toString()
-    .padStart(decimals, "0")
-    .replace(/0+$/, "");
-  return `${(amount / scale).toLocaleString("en-US")}${fraction ? `.${fraction}` : ""}`;
 }
 /**
  * The display name of a vault asset. Only a reviewed reference token of the

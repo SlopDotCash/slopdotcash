@@ -1,3 +1,4 @@
+import { formatBaseUnits } from "./base-units.mjs";
 import {
   assertEscrowTransition,
   assertSecurityEscrowPolicy,
@@ -116,16 +117,7 @@ export function securityBountySplit(grossMinor) {
 
 /** Formats integer minor units without floating-point conversion. */
 export function formatSecurityAmount(minorUnits, amount) {
-  const value = BigInt(minorUnits);
-  const scale = 10n ** BigInt(amount.decimals);
-  const whole = (value / scale)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/gu, ",");
-  const fraction = (value % scale)
-    .toString()
-    .padStart(amount.decimals, "0")
-    .replace(/0+$/u, "");
-  const number = fraction ? `${whole}.${fraction}` : whole;
+  const number = formatBaseUnits(minorUnits, amount.decimals);
   return amount.currency === "USD" ? `$${number}` : `${number} USDC`;
 }
 
