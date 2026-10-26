@@ -162,10 +162,11 @@ export function ReferralClaims() {
   return (
     <section
       aria-labelledby="referral-rewards-heading"
-      className="earnings-section"
+      className="referral-claims"
     >
       <h2 id="referral-rewards-heading">Referral rewards</h2>
       <p>Program tokens are separate from Points and project awards.</p>
+      <p>Totals cover filed months. New rewards are added after month-end.</p>
       {error && <p role="alert">{error}</p>}
       {data.status === "unknown" && (
         <p role="status">
@@ -227,13 +228,14 @@ export function ReferralClaims() {
       )}
       {data.wallet ? (
         <p>
-          Referral wallet: <span className="wallet-address">{data.wallet}</span>
-          . This address stays fixed for this program.
+          Referral wallet (fixed for this program):
+          <code className="referral-address">{data.wallet}</code>
         </p>
       ) : (
         <p>
           <a href="/account#wallets">Confirm a Robinhood wallet in Account</a>.
-          Rewards enter a later monthly root after confirmation.
+          Rewards enter a later monthly root after confirmation. The first
+          address included stays fixed for this program.
         </p>
       )}
       {message && <p role="status">{message}</p>}
@@ -291,20 +293,27 @@ export function ReferralClaims() {
         <p>Open this page in a browser with your EVM wallet to claim.</p>
       )}
       {review && (
-        <section className="callout" aria-label="Review referral claim">
+        <section
+          className="referral-claim-review"
+          aria-label="Review referral claim"
+        >
           <h3>Review your claim</h3>
           <p>
-            Receive {amount(review.data.claimableBase)} at{" "}
-            <span className="wallet-address">{review.data.wallet}</span> on{" "}
-            {networkLabel(review.data.program?.network ?? "")}. Your wallet pays
-            the network fee. No token approval is required.
+            Receive {amount(review.data.claimableBase)} on{" "}
+            {networkLabel(review.data.program?.network ?? "")}.
           </p>
           <p>
-            Contract:{" "}
-            <span className="wallet-address">
+            Destination:{" "}
+            <code className="referral-address">{review.data.wallet}</code>
+          </p>
+          <p>
+            Your wallet pays the network fee. No token approval is required.
+          </p>
+          <p>
+            Contract:
+            <code className="referral-address">
               {review.data.program?.distributor}
-            </span>
-            .
+            </code>
           </p>
           <div className="handoff-actions">
             <button
