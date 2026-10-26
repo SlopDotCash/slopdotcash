@@ -1,10 +1,15 @@
 export interface PaymentStackInput {
   stack?: "test" | "production";
+  /** `staging` serves the staging site from slop-staging; test stacks only. */
+  environment?: "isolated" | "staging";
+  /** `keeper`: scheduled attester bindings and no dispatcher schedule. */
+  topology?: "relayer" | "keeper";
   scope?: "ordinary" | "security-bounty";
   network: string;
   databaseId?: string;
   databaseName?: string;
-  deployments: unknown;
+  /** Omitted for a staging stack, which pins its registry deployments. */
+  deployments?: unknown;
   registry: unknown;
   registryDatabase: { database_name: string; database_id: string };
   /** The Pages `MONTHLY_PAYMENT_SCHEDULE` for the ordinary dispatcher. */

@@ -600,6 +600,86 @@ try {
   assert.equal(testStack.secret, "TEST_SIGNER_PRIVATE_KEY");
   assert.equal(testStack.configs.attester.vars.SIGNER_STACK, "test");
 
+  // 3c'. A staging stack serves the staging site: its payment and registry
+  //      databases are slop-staging, so the staging account API reads what
+  //      it records, and it pins every deployment of the network in the
+  //      staging registry. The keeper topology binds on the attester's
+  //      schedule and gives the dispatcher no schedule. It never names
+  //      production storage, a separate database or its own pins.
+  const stagingDatabase = {
+    database_name: "slop-staging",
+    database_id: "00000000-0000-4000-8000-000000000002",
+  };
+  const stagingStack = (input: Record<string, unknown> = {}) =>
+    paymentStack({
+      environment: "staging",
+      network: "base-sepolia",
+      registry: [withEscrow],
+      registryDatabase: stagingDatabase,
+      monthlySchedule:
+        '{"firstPeriod":"2026-09","cutoffSecondsAfterPeriodEnd":259200}',
+      ...input,
+    } as never);
+  const stagingRecord = paymentDeploymentRecord("eliza", deployment);
+  const relayerTopology = stagingStack();
+  assert.deepEqual(relayerTopology.names, {
+    attester: "slop-payments-base-sepolia-staging-attester",
+    relayer: "slop-payments-base-sepolia-staging-relayer",
+    dispatcher: "slop-payments-base-sepolia-staging-dispatcher",
+  });
+  for (const config of Object.values(relayerTopology.configs))
+    assert.deepEqual(config.d1_databases[0], {
+      binding: "PAYMENTS_DB",
+      ...stagingDatabase,
+    });
+  assert.deepEqual(relayerTopology.configs.dispatcher.d1_databases[1], {
+    binding: "REGISTRY_DB",
+    ...stagingDatabase,
+  });
+  assert.equal(
+    relayerTopology.configs.attester.vars.PAYMENT_DEPLOYMENTS,
+    JSON.stringify([stagingRecord]),
+  );
+  assert.equal(
+    relayerTopology.configs.attester.vars.SCHEDULED_BINDINGS,
+    undefined,
+  );
+  assert.deepEqual(relayerTopology.configs.dispatcher.triggers, {
+    crons: ["*/5 * * * *"],
+  });
+  const keeperTopology = stagingStack({ topology: "keeper" });
+  assert.equal(keeperTopology.configs.attester.vars.SCHEDULED_BINDINGS, "on");
+  assert.deepEqual(keeperTopology.configs.dispatcher.triggers, { crons: [] });
+  assert.throws(
+    () => stagingStack({ registryDatabase }),
+    /slop-staging database/,
+  );
+  assert.throws(
+    () => stagingStack({ deployments: [stagingRecord] }),
+    /do not name a database or deployments/,
+  );
+  assert.throws(
+    () => stagingStack({ network: "base-mainnet" }),
+    /do not name a database or deployments/,
+  );
+  assert.throws(
+    () => stagingStack({ network: "robinhood-testnet" }),
+    /no deployment on this network/,
+  );
+  assert.throws(
+    () =>
+      paymentStack({
+        topology: "keeper",
+        network: "base-sepolia",
+        databaseId: "00000000-0000-4000-8000-000000000001",
+        databaseName: "slop-payments-base-sepolia",
+        deployments: [stagingRecord],
+        registry: [withEscrow],
+        registryDatabase,
+      } as never),
+    /staging topology/,
+  );
+
   // 3d. The hosted signer reads only its own stack's secret, and only after
   //     the stack, network and preflight checks pass. Each secret is a
   //     getter that records a read; no value is a usable key.
