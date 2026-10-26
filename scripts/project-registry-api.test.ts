@@ -1121,6 +1121,19 @@ describe("generated skill publication", () => {
     const reviewer = `review-${id}-contributions`;
     expect(reviewer.length).toBeLessThanOrEqual(64);
     expect(Object.keys(files ?? {})).toContain(`downloads/${reviewer}.skill`);
+    for (const path of ["skill-manifest.json", "review-skill-manifest.json"]) {
+      const manifest = JSON.parse(new TextDecoder().decode(files?.[path]));
+      expect(manifest.telemetry.policy).toContain(
+        "From November 2026, monthly and external-prize reward shares use accepted-work Points only.",
+      );
+      expect(manifest.telemetry.policy).toContain(
+        "Optional traces add no payment weight. Older calculations and funded awards stay unchanged; unpaid September–October work stays subject to the reviewed historical reconciliation.",
+      );
+      expect(manifest.telemetry.policy).not.toContain("earns the trace bonus");
+      expect(manifest.telemetry.policy).toContain(
+        "Missing evidence never blocks submission.",
+      );
+    }
   });
 
   test("historical clean metadata cannot publish skills without canonical closure", async () => {

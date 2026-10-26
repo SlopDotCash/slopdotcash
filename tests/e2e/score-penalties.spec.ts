@@ -113,6 +113,7 @@ test("How it works explains the current scoring policy once", async ({
     "need a second maintainer",
     "answered its request for changes",
     "fixed 15% weight",
+    "fixed 15% to that outcome",
     "It is submitted as Request changes",
     "the latest request for changes that the merged code answered",
   ])
@@ -121,6 +122,19 @@ test("How it works explains the current scoring policy once", async ({
   await page.getByText("Do reviews earn points?", { exact: true }).click();
   await expect(page.locator("main")).toContainText(
     "It can find a correction or validate the change; a request for changes is not required.",
+  );
+  const modelQuestion = page.getByText("Does the model I use matter?", {
+    exact: true,
+  });
+  await modelQuestion.focus();
+  await page.keyboard.press("Enter");
+  const modelAnswer = modelQuestion.locator("..");
+  await expect(modelAnswer).toHaveAttribute("open", "");
+  await expect(modelAnswer).toContainText(
+    "From November 2026, monthly and external-prize reward shares use accepted-work Points only.",
+  );
+  await expect(modelAnswer).toContainText(
+    "Optional traces add no payment weight. Older calculations and funded awards stay unchanged; unpaid September–October work stays subject to the reviewed historical reconciliation.",
   );
   await expectAccessible(page);
   await page.screenshot({
