@@ -126,6 +126,11 @@ closed. See [`evaluations/README.md`](../evaluations/README.md).
 
 ## Evidence bonuses
 
+These are historical allocation terms. From November 2026, monthly shares
+use accepted-work Points only; a trace adds no payment weight (PRD section 7).
+Keep old calculations and funded awards unchanged. Unpaid September–October
+corrections remain subject to the reviewed historical reconciliation.
+
 A valid signed receipt with an outcome-matched finalized private trace adds a
 fixed 15% weight. This applies equally to an ordinary qualifying formal review
 when its exact review source carries the same actor's valid receipt and the
@@ -238,8 +243,8 @@ A valid human ratification takes precedence. Every revision appends a successor
 and explains the change; absence or failure of assessment remains visible and
 does not manufacture a successful assessment at the default tier.
 
-Keep Slop Score, participation Points, allocation weight, approved awards, and
-paid amounts separate. Apply shared-commit attribution once per logical work
+Use one public Points measure. Keep approved awards and verified payments
+separate from Points. Apply shared-commit attribution once per logical work
 unit. Grouping must reconcile contributors and preserve source credit. Do not
 let split PRs, a promotion, or a repeated cherry-pick multiply one outcome.
 
