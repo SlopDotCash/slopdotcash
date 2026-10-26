@@ -1466,6 +1466,7 @@ jobs:
             ...networks.map((n) => `FEE_WALLET_KEY_${n}`),
             ...networks.map((n) => `RPC_URL_${n}`),
             "JUPITER_API_KEY",
+            "SOLANA_RECOVERY_RPC_URL",
           ]);
           const names = value.map((entry) => entry?.name);
           if (names.some((name) => !allowed.has(name))) {

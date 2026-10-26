@@ -11,7 +11,7 @@
  */
 
 import { readBoundedJson } from "../../src/lib/browser-json";
-import type { GithubActor } from "../projects/contracts";
+import type { GithubActor } from "../../src/lib/project-contracts";
 import {
   type GithubFetch,
   GithubLookupError,

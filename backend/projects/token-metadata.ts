@@ -4,12 +4,14 @@
  * in the manifest; page views never read chain.
  */
 
+import { TOKEN as SPL_TOKEN_PROGRAM } from "../../contracts/solana/transactions";
+import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   REWARD_ASSET_NETWORKS,
   type RewardAssetNetwork,
 } from "../../src/lib/reward-asset.mjs";
 
-export type TokenMetadata = { decimals: number; symbol: string | null };
+type TokenMetadata = { decimals: number; symbol: string | null };
 
 export type TokenMetadataReader = (
   network: RewardAssetNetwork,
@@ -19,17 +21,14 @@ export type TokenMetadataReader = (
 export class TokenMetadataError extends Error {}
 
 /** Public mainnet RPC endpoints; a Pages variable may replace each one. */
-export const DEFAULT_REWARD_RPC_URLS: Readonly<
-  Record<RewardAssetNetwork, string>
-> = Object.freeze({
-  base: "https://mainnet.base.org",
-  ethereum: "https://ethereum-rpc.publicnode.com",
-  robinhood: "https://rpc.mainnet.chain.robinhood.com",
-  solana: "https://api.mainnet-beta.solana.com",
-});
+const DEFAULT_REWARD_RPC_URLS: Readonly<Record<RewardAssetNetwork, string>> =
+  Object.freeze({
+    base: "https://mainnet.base.org",
+    ethereum: "https://ethereum-rpc.publicnode.com",
+    robinhood: "https://rpc.mainnet.chain.robinhood.com",
+    solana: "https://api.mainnet-beta.solana.com",
+  });
 
-/** The classic SPL Token program; Token-2022 mints are not accepted. */
-const SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const MAX_RPC_BYTES = 64 * 1024;
 const SYMBOL = /^[A-Za-z0-9$._-]{1,16}$/u;
 
@@ -49,10 +48,17 @@ async function rpc(
     throw new TokenMetadataError(
       `The network RPC returned HTTP ${response.status}`,
     );
-  const text = await response.text();
-  if (text.length > MAX_RPC_BYTES)
-    throw new TokenMetadataError("The network RPC response is too large");
-  const body = JSON.parse(text) as { result?: unknown; error?: unknown };
+  let body: { result?: unknown; error?: unknown };
+  try {
+    body = (await readBoundedJson(response, MAX_RPC_BYTES, "network RPC")) as {
+      result?: unknown;
+      error?: unknown;
+    };
+  } catch (error) {
+    if (error instanceof RangeError)
+      throw new TokenMetadataError("The network RPC response is too large");
+    throw error;
+  }
   if (body.error !== undefined || !Object.hasOwn(body, "result"))
     throw new TokenMetadataError("The network RPC refused the request");
   return body.result;
@@ -66,7 +72,7 @@ function word(hex: string, index: number): bigint {
 }
 
 /** Decodes an ABI `string` or a legacy `bytes32` symbol; null when neither. */
-export function decodeSymbol(result: unknown): string | null {
+function decodeSymbol(result: unknown): string | null {
   if (typeof result !== "string" || !/^0x(?:[0-9a-fA-F]{2})*$/u.test(result))
     return null;
   try {
@@ -149,6 +155,7 @@ async function solanaMetadata(
   const account = result?.value;
   if (!account)
     throw new TokenMetadataError("No account exists at that mint address");
+  // The classic SPL Token program; Token-2022 mints are not accepted.
   if (account.owner !== SPL_TOKEN_PROGRAM)
     throw new TokenMetadataError("The mint is not a classic SPL Token mint");
   const parsed = account.data?.parsed;

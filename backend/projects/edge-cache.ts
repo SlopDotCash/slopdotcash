@@ -84,49 +84,21 @@ export async function cachedPublicResponse(
   });
 }
 
-/** Every public path whose bytes derive from one project's current revision. */
-export function projectCachePaths(
-  projectId: string,
-  skillNames: string[],
-): string[] {
-  const base = `/projects/${projectId}`;
-  return [
-    "/api/v1/projects",
-    `/api/v1/projects/${projectId}`,
-    "/api/v1/project-revisions",
-    "/.well-known/slop/projects.json",
-    `${base}/terms.json`,
-    `${base}/SKILL.md`,
-    `${base}/review/SKILL.md`,
-    ...["", "review-"].flatMap((prefix) =>
-      [
-        "skill.md",
-        "mission.md",
-        "codex.md",
-        "claude.md",
-        "claude-code.md",
-        "manual.md",
-        "skill-manifest.json",
-      ].map((file) => `${base}/${prefix}${file}`),
-    ),
-    ...skillNames.flatMap((name) => [
-      `${base}/downloads/${name}.skill`,
-      `${base}/downloads/${name}.skill.sha256`,
-    ]),
-  ];
-}
+/**
+ * The public project lists stored under the enforcement generation. Project
+ * detail, terms, skills and archives are served with no-store and never stored.
+ */
+const PROJECT_LIST_PATHS = ["/api/v1/projects", "/api/v1/project-revisions"];
 
-/** Deletes a project's public keys in this colo after an admin write. */
+/** Deletes the public project lists in this colo after a project write. */
 export async function purgeProjectCache(
   cache: EdgeCache | undefined,
   origin: string,
-  projectId: string,
-  skillNames: string[],
   generation?: number,
 ): Promise<void> {
   if (cache === undefined) return;
   await Promise.all(
-    projectCachePaths(projectId, skillNames).map((path) =>
+    PROJECT_LIST_PATHS.map((path) =>
       cache.delete(cacheKey(origin, path, generation)).catch(() => false),
     ),
   );

@@ -2,8 +2,9 @@ import { compareActors } from "./github-actor";
 import { ordinaryFee } from "./payments/contracts";
 /**
  * Derives one project's cycle leaderboard, diagnostic compute evidence, and
- * reward simulation from the canonical GitHub snapshot. A finalized private
- * trace can earn a fixed evidence bonus; token usage never changes scoring.
+ * reward simulation from the canonical GitHub snapshot. November 2026 and
+ * later allocations use accepted-work Points only (PRD section 7). Older
+ * calculations retain their recorded evidence terms.
  */
 
 import {
@@ -580,13 +581,19 @@ export function createProjectView(
     );
     const penaltyThirds = deductions.get(actor.id) ?? 0;
     const rawThirds = earnedThirds - penaltyThirds;
-    const earnedWeight = events.reduce(
-      (total, event) =>
-        total +
-        (event.scoreThirds ?? event.points * 3) *
-          (10_000 + (event.evidenceBonusBasisPoints ?? 0)),
-      0,
-    );
+    // The automatic monthly policy starts in November. Preserve archived
+    // calculations; unpaid historical corrections require their own reviewed
+    // assessment and funded-history reconciliation (PRD sections 7 and 11).
+    const earnedWeight =
+      cycleId >= "2026-11"
+        ? earnedThirds * 10_000
+        : events.reduce(
+            (total, event) =>
+              total +
+              (event.scoreThirds ?? event.points * 3) *
+                (10_000 + (event.evidenceBonusBasisPoints ?? 0)),
+            0,
+          );
     // A debit lowers the payment weight in the same proportion as the score.
     const weightedThirdBasisPoints =
       penaltyThirds === 0

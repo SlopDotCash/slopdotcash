@@ -3,7 +3,7 @@ import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { D1Database, D1QueryStatement } from "../d1";
 
 type Database = D1Database<D1QueryStatement>;
-export const REPORTING_OBSERVATION_SECONDS = 60 * 60;
+const REPORTING_OBSERVATION_SECONDS = 60 * 60;
 
 export type ReportingTarget = {
   projectId: string;

@@ -67,7 +67,10 @@ export async function verifiedPart(
       if (done) break;
       if (offset + value.byteLength > size) {
         await reader.cancel();
-        throw new Error("Evidence length changed");
+        throw Object.assign(new Error("Evidence length changed"), {
+          status: 409,
+          code: "evidence_corrupt",
+        });
       }
       result.set(value, offset);
       offset += value.byteLength;

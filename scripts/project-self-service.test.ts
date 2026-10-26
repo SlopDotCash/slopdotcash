@@ -9,10 +9,7 @@ import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { hasParticipationBan } from "../backend/projects/account-bans";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
-import type {
-  ProjectEnforcement,
-  RepositoryControl,
-} from "../backend/projects/contracts";
+import type { RepositoryControl } from "../backend/projects/contracts";
 import {
   handleProjectApi,
   type ProjectApiDependencies,
@@ -32,7 +29,10 @@ import {
 } from "../backend/trace/handler";
 import { vettedContentSha256 } from "../backend/vetting/persistence";
 import type { EscrowDeployment } from "../src/lib/escrow-policy.mjs";
-import type { RepositoryAccess } from "../src/lib/project-contracts";
+import type {
+  ProjectEnforcement,
+  RepositoryAccess,
+} from "../src/lib/project-contracts";
 import { classifyRevisionChanges } from "../src/lib/project-revision-changes";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";

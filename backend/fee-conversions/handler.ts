@@ -8,6 +8,7 @@ import {
   NETWORK_DEFINITIONS,
   NETWORKS,
 } from "../../workers/fee-converter/config";
+import { apiErrorResponse, fail, json, requireActor } from "../http";
 
 export interface FeeConversionsDependencies {
   db: {
@@ -23,17 +24,6 @@ export interface FeeConversionsDependencies {
 
 export const FEE_CONVERSIONS_PATH = "/api/v1/admin/fee-conversions";
 const RECENT_LIMIT = 100;
-
-const headers = {
-  "content-type": "application/json; charset=utf-8",
-  "cache-control": "private, no-store",
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "no-referrer",
-};
-
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers });
-}
 
 interface RecentRow {
   id: string;
@@ -68,7 +58,7 @@ interface SettledRow {
   amount_out: string;
 }
 
-export interface FeeConversionTotal {
+interface FeeConversionTotal {
   network: string;
   token: string;
   targetToken: string;
@@ -79,7 +69,7 @@ export interface FeeConversionTotal {
 }
 
 /** Sums finalized live conversions per network and token in exact integers. */
-export function totalsPerToken(rows: SettledRow[]): FeeConversionTotal[] {
+function totalsPerToken(rows: SettledRow[]): FeeConversionTotal[] {
   const totals = new Map<
     string,
     {
@@ -118,7 +108,7 @@ export function totalsPerToken(rows: SettledRow[]): FeeConversionTotal[] {
     }));
 }
 
-export interface FeeConversionRoute {
+interface FeeConversionRoute {
   network: string;
   /** Circle USDC on the network, or null when received assets stay unconverted. */
   targetToken: string | null;
@@ -127,7 +117,7 @@ export interface FeeConversionRoute {
 }
 
 /** The conversion target of every network, including explicit unconverted retention. */
-export function conversionRoutes(): FeeConversionRoute[] {
+function conversionRoutes(): FeeConversionRoute[] {
   return NETWORKS.map((network) => {
     const usdc = NETWORK_DEFINITIONS[network].usdc;
     return {
@@ -147,17 +137,9 @@ export async function handleFeeConversionsApi(
   if (request.method !== "GET")
     return json(405, { error: "method_not_allowed" });
   try {
-    const actor = await deps.sessionActor(request);
-    if (actor === null)
-      return json(401, {
-        error: "unauthorized",
-        message: "Sign in with GitHub",
-      });
+    const actor = await requireActor(request, deps);
     if (!deps.adminGithubIds.has(actor.githubId))
-      return json(403, {
-        error: "forbidden",
-        message: "Admin access is required",
-      });
+      fail(403, "forbidden", "Admin access is required");
     const [recent, settled, states] = await Promise.all([
       deps.db
         .prepare(
@@ -217,8 +199,7 @@ export async function handleFeeConversionsApi(
       totals: totalsPerToken(settled.results),
       last24Hours: states.results,
     });
-  } catch {
-    console.error("fee conversions API failure");
-    return json(500, { error: "internal_error", message: "Internal error" });
+  } catch (caught) {
+    return apiErrorResponse(caught, { label: "fee conversions API failure" });
   }
 }

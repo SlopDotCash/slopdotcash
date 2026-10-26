@@ -1,84 +1,74 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import type { GithubActor } from "../../src/lib/project-contracts";
 import type { WalletChain } from "../../src/lib/wallets";
-import { sha256Hex } from "../../workers/identity/crypto";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
-import { notifyWalletChanged } from "../notifications/events";
+import { insertWalletClaim } from "../trace/cloudflare-persistence";
 /** Canonical registry bytes preserve the original Solana layout and Base chain field. */
 export async function registerPaymentWallet(
   db: D1Database,
-  actor: { github_id: string; login: string },
+  actor: GithubActor,
   chain: WalletChain,
   address: string,
   now: string,
 ): Promise<{ claimId: string; conflict?: boolean }> {
-  const current = await db
-    .prepare(
-      "SELECT id,wallet_address,github_login FROM wallet_claims w WHERE github_user_id=? AND chain=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
-    )
-    .bind(actor.github_id, chain)
-    .first<{ id: string; wallet_address: string; github_login: string }>();
+  const tip = () =>
+    db
+      .prepare(
+        "SELECT id,wallet_address,github_login FROM wallet_claims w WHERE github_user_id=? AND chain=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
+      )
+      .bind(actor.githubId, chain)
+      .first<{ id: string; wallet_address: string; github_login: string }>();
+  const current = await tip();
   if (
     current?.wallet_address === address &&
-    current.github_login.toLowerCase() === actor.login.toLowerCase()
+    current.github_login.toLowerCase() === actor.githubLogin.toLowerCase()
   )
     return { claimId: current.id };
   const predecessor = current?.id ?? null;
   const { sourceBodySha256, recordDigest } = await canonicalWalletClaimDigests({
-    githubActorId: actor.github_id,
-    githubLogin: actor.login,
+    githubActorId: actor.githubId,
+    githubLogin: actor.githubLogin,
     address,
     chain,
     observedAt: now,
     supersedesClaimId: predecessor,
   });
   const id = crypto.randomUUID();
-  try {
-    const results = await db.batch([
-      db
-        .prepare(
-          "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,chain,source,issue_repository,issue_number,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at) VALUES(?,?,?,?,?,'d1_registry',NULL,NULL,?,?,?,?,?)",
-        )
-        .bind(
-          id,
-          actor.github_id,
-          actor.login,
-          address,
-          chain,
-          sourceBodySha256,
-          now,
-          recordDigest,
-          predecessor,
-          now,
-        ),
-      db
-        .prepare(
-          "INSERT INTO private_audit_events(id,actor_github_id,action,target,request_id,created_at,details_json) VALUES(?,?,'wallet_claim.created',?,?,?,?)",
-        )
-        .bind(
-          crypto.randomUUID(),
-          actor.github_id,
-          `wallet-claim:${id}`,
-          crypto.randomUUID(),
-          now,
-          JSON.stringify({ recordDigest, supersedesClaimId: predecessor }),
-        ),
-      notifyWalletChanged(db, id, now),
-    ]);
-    if (results.some((r) => !r.success || r.meta?.changes !== 1))
-      throw new Error("Atomic wallet registration failed");
-    return { claimId: id };
-  } catch (error) {
-    const tip = await db
-      .prepare(
-        "SELECT id,wallet_address FROM wallet_claims w WHERE github_user_id=? AND chain=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
-      )
-      .bind(actor.github_id, chain)
-      .first<{ id: string; wallet_address: string }>();
-    if (tip && tip.id !== predecessor)
-      return tip.wallet_address === address
-        ? { claimId: tip.id }
-        : { claimId: tip.id, conflict: true };
-    throw error;
-  }
+  const result = await insertWalletClaim(
+    db,
+    {
+      id,
+      githubId: actor.githubId,
+      githubLogin: actor.githubLogin,
+      walletAddress: address,
+      chain,
+      source: "d1_registry",
+      issueRepository: null,
+      issueNumber: null,
+      sourceBodySha256,
+      observedAt: now,
+      recordSha256: recordDigest,
+      supersedesClaimId: predecessor,
+      createdAt: now,
+    },
+    {
+      id: crypto.randomUUID(),
+      actorGithubId: actor.githubId,
+      action: "wallet_claim.created",
+      target: `wallet-claim:${id}`,
+      requestId: crypto.randomUUID(),
+      createdAt: now,
+      details: { recordDigest, supersedesClaimId: predecessor },
+    },
+  );
+  if (result.status !== "conflict") return { claimId: result.value.id };
+  // A concurrent registration replaced the same predecessor first.
+  const winner = await tip();
+  if (winner === null)
+    throw new Error("A wallet registration conflict left no current claim");
+  return winner.wallet_address === address
+    ? { claimId: winner.id }
+    : { claimId: winner.id, conflict: true };
 }
 
 export async function canonicalWalletClaimDigests(input: {

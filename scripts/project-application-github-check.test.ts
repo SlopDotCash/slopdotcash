@@ -5,7 +5,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { onRequest, repositoryControl } from "../functions/api/v1/[[path]]";
+import { repositoryControl } from "../backend/projects/setup";
+import { onRequest } from "../functions/api/v1/[[path]]";
 import { parseRepositoryIdentity } from "../src/lib/project-contracts";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
@@ -93,7 +94,11 @@ async function control(manifest: unknown) {
   const project = manifest as ProjectDefinition;
   return await repositoryControl(
     project,
-    {} as never,
+    {
+      fetch: (url, init) => fetch(url, init),
+      token: undefined,
+      apiOrigin: API,
+    },
     parseRepositoryIdentity(repositories[project.repositories[0].id]),
   );
 }

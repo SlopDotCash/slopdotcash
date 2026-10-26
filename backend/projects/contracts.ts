@@ -30,24 +30,6 @@ export type NewProjectInput = {
   referrer: GithubActor | null;
 };
 
-export type {
-  AdminNotification,
-  AppealState,
-  ApplicationStatus,
-  DecisionInput,
-  EnforcementAction,
-  EnforcementActorRole,
-  EnforcementResult,
-  GithubActor,
-  ProjectApplication,
-  ProjectEnforcement,
-  ProjectRecord,
-  ProjectRevision,
-  ProjectRevisionInput,
-  RestrictionState,
-  WebSession,
-} from "../../src/lib/project-contracts";
-
 export interface ProjectPersistence {
   listProjects(): Promise<ProjectRecord[]>;
   getProject(id: string): Promise<ProjectRecord | null>;

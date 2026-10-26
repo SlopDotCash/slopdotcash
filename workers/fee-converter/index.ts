@@ -96,6 +96,7 @@ export function chainClient(
         keypair: secret,
         fetch: overrides.fetch,
         localBlockhash: overrides.localBlockhash,
+        recoveryRpcUrl: env.SOLANA_RECOVERY_RPC_URL,
         nativeGas: overrides.nativeGas,
       });
 }
