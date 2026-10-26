@@ -164,6 +164,18 @@ bun run dev
 
 Open `http://127.0.0.1:4466`.
 
+To work on the interface without a live ingestion run, sync the registry
+snapshot and start Vite directly:
+
+```bash
+bun run projects:sync
+bun --bun vite --port 4466
+```
+
+The dev server then reads the project registry, public direct-payment totals,
+and any published snapshot in `/data/` that is not generated locally from
+`https://slop.cash`, read-only. Do not commit the synced registry files.
+
 Before requesting review:
 
 ```bash

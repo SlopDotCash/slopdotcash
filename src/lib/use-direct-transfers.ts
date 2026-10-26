@@ -30,8 +30,12 @@ async function loadDirectTransfers(
   path: string,
   signal: AbortSignal,
 ): Promise<DirectTransfer[]> {
-  // The payments API answers only the deployed product origins.
-  if (!browserDeployment.browserOrigins.has(window.location.origin))
+  // The payments API answers only the deployed product origins. The local dev
+  // server proxies this public read to slop.cash (vite.config.ts).
+  if (
+    !import.meta.env.DEV &&
+    !browserDeployment.browserOrigins.has(window.location.origin)
+  )
     throw new Error("Direct payment records unavailable");
   const response = await fetchWithDeadline(
     `/api/v1/payments/${path}/direct-transfers`,

@@ -2,10 +2,16 @@
  * Builds the static slop.cash contribution surface for Cloudflare Pages.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+
+const publicDirectory = `${fileURLToPath(new URL("./public", import.meta.url))}${sep}`;
+// Local UI development reads the registry and the published snapshots from one
+// public origin, so the snapshots validate against the registry they cite.
+const localReadOrigin = "https://slop.cash";
 
 export default defineConfig({
   plugins: [
@@ -45,26 +51,53 @@ export default defineConfig({
       },
     },
   ],
-  // Local UI development reads the public staging registry, independently of
-  // build outputs. The legacy file URL is also supported for existing sessions.
+  // Local UI development reads the public registry, independently of build
+  // outputs, and the public direct-transfer totals behind "Money received".
+  // The legacy file URL is also supported for existing sessions.
   server: {
     proxy: {
-      "^/(?:api/v1/projects|data/project-registry\\.json)(?:\\?.*)?$": {
-        target: "https://staging.slop.cash",
-        changeOrigin: true,
-        rewrite: (path) =>
-          path.replace(/^\/data\/project-registry\.json/, "/api/v1/projects"),
-        bypass: (request) =>
-          request.method === "GET" || request.method === "HEAD"
-            ? undefined
-            : false,
-        configure: (proxy) => {
-          proxy.on("proxyReq", (request) => {
-            request.removeHeader("cookie");
-            request.removeHeader("authorization");
-          });
+      "^/(?:api/v1/projects|api/v1/payments/[^?]+/direct-transfers|data/project-registry\\.json)(?:\\?.*)?$":
+        {
+          target: localReadOrigin,
+          changeOrigin: true,
+          rewrite: (path) =>
+            path.replace(/^\/data\/project-registry\.json/, "/api/v1/projects"),
+          bypass: (request) =>
+            request.method === "GET" || request.method === "HEAD"
+              ? undefined
+              : false,
+          configure: (proxy) => {
+            proxy.on("proxyReq", (request) => {
+              request.removeHeader("cookie");
+              request.removeHeader("authorization");
+            });
+          },
         },
-      },
+      // Published snapshots (leaderboard, points, cycles, profiles) are build
+      // outputs. A local file from the generators wins; otherwise read the
+      // published copy so the leaderboard loads without a live ingestion run.
+      "^/data/(?:leaderboard\\.json|points\\.json|points/|cycles/|profiles\\.json)":
+        {
+          target: localReadOrigin,
+          changeOrigin: true,
+          bypass: (request) => {
+            if (request.method !== "GET" && request.method !== "HEAD")
+              return false;
+            const path = decodeURIComponent(
+              new URL(request.url ?? "/", "http://local").pathname,
+            );
+            const file = resolve(publicDirectory, `.${path}`);
+            return file.startsWith(publicDirectory) && existsSync(file)
+              ? request.url
+              : undefined;
+          },
+          configure: (proxy) => {
+            proxy.on("proxyReq", (request) => {
+              request.removeHeader("cookie");
+              request.removeHeader("authorization");
+            });
+          },
+        },
     },
   },
   build: {
