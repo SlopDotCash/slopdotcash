@@ -26,6 +26,7 @@ import {
   assertAllocationFundingBasis,
   LAST_LEGACY_CAP_CYCLE,
 } from "./allocation-funding";
+import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 import { findHistoricalProject } from "./projects.mjs";
 import {
   isWalletAddress,
@@ -995,4 +996,24 @@ export function assertCycleIndex(value: unknown): asserts value is CycleIndex {
       throw new TypeError("cycle index is not canonically ordered");
     }
   }
+}
+
+/** Reads and validates the published cycle index; `query` only busts caches. */
+export async function loadCycleIndex(
+  signal: AbortSignal,
+  query: string,
+): Promise<CycleIndex> {
+  const response = await fetchWithDeadline(`/data/cycles/index.json?${query}`, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error(`cycle index returned ${response.status}`);
+  const cycleIndex = await readBoundedJson(
+    response,
+    8 * 1024 * 1024,
+    "cycle index",
+  );
+  assertCycleIndex(cycleIndex);
+  return cycleIndex;
 }

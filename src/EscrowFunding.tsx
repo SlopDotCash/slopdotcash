@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { AutomaticMonthlyPayment } from "./AutomaticMonthlyPayment";
 import { readBoundedJson } from "./lib/browser-json";
-import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { networkLabel } from "./lib/network-names";
@@ -15,6 +14,7 @@ import {
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { CANONICAL_UINT } from "./lib/record-validation.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
+import { usePublicResource } from "./lib/use-public-resource";
 import { OwnerVaultSetup } from "./OwnerVaultSetup";
 import { formatDateTime } from "./Presentation";
 import { VaultActions } from "./VaultActions";
@@ -126,45 +126,42 @@ export function useVaultTotals(
   project: ProjectDefinition,
   revision = 0,
 ): VaultTotalsState {
-  const [vault, setVault] = useState<VaultResponse | null>(null);
-  const [error, setError] = useState("");
   const deployed = Boolean(project.escrow?.deployments.length);
   // biome-ignore lint/correctness/useExhaustiveDependencies: explicit refresh reloads the cached vault totals.
-  useEffect(() => {
-    setVault(null);
-    setError("");
-    if (!deployed) return;
-    const controller = new AbortController();
-    fetch(`/api/v1/payments/projects/${encodeURIComponent(project.id)}/vault`, {
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok)
-          throw new Error("Vault totals are not available. Please retry.");
-        const value = (await readBoundedJson(
-          response,
-          65536,
-          "project vault totals",
-        )) as VaultResponse;
-        if (
-          !value ||
-          !Array.isArray(value.snapshots) ||
-          !Number.isSafeInteger(value.staleAfterMs) ||
-          Number.isNaN(Date.parse(value.servedAt)) ||
-          !value.snapshots.every((s) => validSnapshot(s, project.id))
-        )
-          throw new Error("The vault totals could not be verified.");
-        if (!controller.signal.aborted) setVault(value);
-      })
-      .catch((reason) => {
-        if (!controller.signal.aborted)
-          setError(errorMessage(reason, "Could not load vault totals."));
-      });
-    return () => controller.abort();
-  }, [project.id, deployed, revision]);
+  const load = useCallback(
+    async (signal: AbortSignal) => {
+      const response = await fetch(
+        `/api/v1/payments/projects/${encodeURIComponent(project.id)}/vault`,
+        { signal },
+      );
+      if (!response.ok)
+        throw new Error("Vault totals are not available. Please retry.");
+      const vault = (await readBoundedJson(
+        response,
+        65536,
+        "project vault totals",
+      )) as VaultResponse;
+      if (
+        !vault ||
+        !Array.isArray(vault.snapshots) ||
+        !Number.isSafeInteger(vault.staleAfterMs) ||
+        Number.isNaN(Date.parse(vault.servedAt)) ||
+        !vault.snapshots.every((s) => validSnapshot(s, project.id))
+      )
+        throw new Error("The vault totals could not be verified.");
+      return { vault };
+    },
+    [project.id, revision],
+  );
+  const [state] = usePublicResource(
+    deployed,
+    load,
+    "Could not load vault totals.",
+  );
   if (!deployed) return { status: "none" };
-  if (error) return { status: "error", message: error };
-  return vault ? { status: "ready", vault } : { status: "loading" };
+  return state.status === "ready"
+    ? { status: "ready", vault: state.vault }
+    : state;
 }
 
 export { reservedGross };
