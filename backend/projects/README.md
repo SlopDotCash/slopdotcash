@@ -335,12 +335,13 @@ rate limit, and caches each answer for five minutes. The browser never calls
   ID again. An empty selection bans only the project. Current stewardship
   and the original application do not select accounts automatically
   (`0066_project_maintainer_bans.sql`). The decision closes an open project
-  appeal as denied. It also closes the appeal that the malicious result
-  kept: a kept project appeal even while an account appeal is open, and
-  any kept appeal when no account appeal is open. A moderator who placed the
-  restriction cannot close those appeals. The decision also closes the open
-  appeal of each account that it bans again. A moderator who banned one of
-  those accounts, or who is one of those accounts, cannot close those
+  appeal as denied. It also closes the project appeal that one or more
+  malicious results kept, also when an account appeal is open. When no
+  account appeal is open, it closes any appeal that a result kept. A
+  moderator who placed the restriction cannot close those appeals. The
+  decision also closes the open appeal of each account that it bans again.
+  A moderator who banned one of those accounts, or who is one of those
+  accounts, cannot close those
   appeals. When the decision closes no appeal, its record keeps the open
   account appeals `requested`. A plain denial is refused with
   `malicious_decision_required` until the decision is made. While the account
