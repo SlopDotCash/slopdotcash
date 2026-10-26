@@ -111,13 +111,36 @@ HTTP read or control route, cron, model call, scan publication or policy
 attestation. The driver verifies private bindings and one queue consumer
 before sending fixed fixture commands.
 
-The test copies 68 harmless parts across multiple pages. It restores exact
+The test calls the actual Pages evidence handler internally with real D1 session
+lookup and generated, synthetic operator sessions. Its fixed path and environment
+allowlists contain only the disposable stores and a clearly marked fixture policy.
+It refuses anonymous, expired, revoked, non-reader, cross-origin, wrong-object,
+expired-grant and replay requests. Two simultaneous consumes must produce one
+success. It verifies private response headers, exact single and chunked bytes,
+scoped download cookies, completion/cancellation audit, policy-owner closure,
+closure replay and access before/after the 90-day limit. It exposes no HTTP
+adapter and makes no OAuth, provider or model request. No real operator is impersonated.
+
+The test copies 73 harmless parts across multiple pages. It restores exact
 bytes and a chunked file, rejects changed bytes and a missing page, preserves
 the source, and repeats delivery without changing its completion. A synthetic
 case snapshot restores the same inventory, policy, consumed grant, closure
 and audit rows into the separate D1 database with their actual immutable-table
 guards. This tests case identity recovery. It does not implement production
 D1 backups or prove point-in-time recovery of the shared application database.
+
+A separate fixed command runs the existing storage core on the same disposable
+D1/R2 bindings with fixture-only retention enabled. Its sequential subjobs use a
+controlled queue adapter for fault insertion; they do not claim hosted queue retry
+evidence. The original backup phase still exercises real queue deliveries.
+Incomplete, missing or corrupt exact backups must refuse deletion. An injected
+interruption after one real part deletion must recover without an early completion
+receipt. Open and recent cases and the non-scanner sentinel remain. Missing
+inventory stays audited without a complete deletion receipt. Deleted harmless
+chunks restore under the separate destination prefix. Replays preserve permanent
+receipts. The actual scheduled handler prunes only old audit fixtures; disabled
+backup mode and the migration guards preserve current and invalid-date audit.
+Timestamps are explicitly aged fixtures, not elapsed lifecycle observations.
 
 The driver deletes only resources it created in that run, after checking
 their exact IDs or creation identity. It first empties only its verified
@@ -138,8 +161,11 @@ qualification entry with local Workerd, D1, R2 and queues. `--execute` is
 refused outside the exact protected workflow checkout. Hosted execution and
 cleanup must be reviewed before dispatch. A passing harmless recovery test
 does not enable retention deletion, the scanner controller or its schedule.
-Daily hosted scheduling, full case recovery, isolation, reader controls and
-the responsible owner's factual attestation remain separate acceptance work.
+The report separates actual handler/session/core results from live OAuth and
+operator-browser acceptance, production Pages bindings, elapsed 90-day retention,
+and observed 30-day bucket expiry. Daily deployed scheduling, isolation and the
+responsible owner's factual attestation remain separate acceptance work. This
+controlled proof is not activation of production deletion.
 
 Incomplete uploads can leave inventory without bytes. Cleanup audits parts absent
 from both source and backup as `retention-missing`; it does not record a complete

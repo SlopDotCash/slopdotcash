@@ -21,9 +21,9 @@ export interface NetworkDefinition {
   escrowNetworks: readonly string[];
   /**
    * Circle USDC on this network: the only conversion target (PRD section 6).
-   * Null until its address is verified from Circle's primary source; a
-   * network without one converts nothing and its fees stay pending in the
-   * fee wallet. Never substitute another stablecoin or a token named "USDC".
+   * Null when the network retains received assets without conversion.
+   * Robinhood has this policy (PRD sections 6 and 11, 25 October 2026).
+   * Never substitute another stablecoin or a token named "USDC".
    */
   usdc: string | null;
   defaultRpcUrl: string;
@@ -37,10 +37,8 @@ export interface NetworkDefinition {
  * USDC targets: Base and Solana USDC match src/lib/escrow-policy.mjs.
  * Ethereum USDC is Circle's published mainnet contract (AGENTS.md: verify it
  * from Circle's primary source before activation). Robinhood Chain has no
- * verified Circle USDC: the tokens named "USDC" in KyberSwap's 4663 list are
- * unrelated clones. The PRD supersedes the earlier USDG target, so Robinhood
- * stays pending until an owner-verified Circle USDC address lands here in a
- * reviewed change.
+ * verified Circle USDC. The owner chose to retain each received asset there
+ * without conversion or bridging (PRD sections 6 and 11, 25 October 2026).
  */
 export const NETWORK_DEFINITIONS: Readonly<Record<Network, NetworkDefinition>> =
   Object.freeze({
@@ -66,7 +64,7 @@ export const NETWORK_DEFINITIONS: Readonly<Record<Network, NetworkDefinition>> =
       family: "evm",
       chainId: 4663,
       escrowNetworks: ["robinhood-mainnet"],
-      // Owner decision required: no Circle USDC verified on chain 4663.
+      // Owner decision: retain received assets without conversion on chain 4663.
       usdc: null,
       defaultRpcUrl: "https://rpc.mainnet.chain.robinhood.com",
       kyberChain: "robinhood",

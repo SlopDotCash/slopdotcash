@@ -50,7 +50,9 @@ Staging project setup also uses `SLOPBOT_APP_ID` and
 `SLOPBOT_APP_PRIVATE_KEY` from this environment for the existing slopdotcash
 GitHub App. The workflow stores them only on `slop-repository-access-staging`.
 This private Worker reuses the bot's installation and permission lookup. It has
-no webhook, queue, database or scheduled handler. Pages reaches it through its
+no webhook, queue or scheduled handler. Its named services use only staging D1
+for historical intake and cached reporting readiness; historical reconstruction
+uses the staging merge verifier. Pages reaches installation lookup through its
 `SLOPBOT` binding. Do not bind staging Pages to the production bot.
 
 The workflow installs these application secrets on the staging Worker and Pages

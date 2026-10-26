@@ -1,8 +1,9 @@
 # Slopbot worker
 
 Hosted Slopbot GitHub App service under `protocol/slopbot-v2.md` (approved
-9 October 2026; PRD BOT-08 to BOT-13). It is not deployed yet, and closing is
-disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
+9 October 2026; PRD BOT-08 to BOT-13). Protected releases deploy the service.
+Automatic closing remains disabled unless `SLOPBOT_CLOSURE_ENABLED` is set
+to `"true"` after the explicit production qualification and activation review.
 
 ## Flow
 
@@ -23,7 +24,13 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
    then gets an installation token and re-reads the
    repository, the item, any optional `.github/slopbot.json`, and `AGENTS.md`,
    `CONTRIBUTING.md` and `README.md` from the default branch at its current
-   SHA.
+   SHA. PR content comes from an immutable comparison of the current
+   GitHub-selected target branch and PR head, with the target repository ID
+   verified. Stale PR-file metadata cannot add inherited changes. Missing
+   patches, unavailable comparisons and the 300-file comparison limit stop
+   review. Before action, recheck the target, head, merge base and content.
+   A due maintainer hold also compares the current item with its stored content
+   digest; a changed finding is superseded without changing the hold deadline.
 3. `routing.ts` applies the published precedence: installation, private
    repository, type switch, open/draft, bot author, human reopen, exemption,
    audience, author cap, budget. Advisory review stays broad; closure needs the
@@ -48,7 +55,9 @@ disabled by `SLOPBOT_CLOSURE_ENABLED = "false"`.
    - for guidance categories, a rule quoted verbatim from the named file;
    - confidence ≥ 0.9;
    - closure enabled globally and by the repository;
-   - the shadow period over;
+   - reviewed real cases and counterexamples recorded for production activation,
+     with the separate verifier-profile qualification in `QUALITY.md` for
+     objective `low_quality` closure;
    - no circuit breaker and no daily cap hit;
    - a confirming second verdict (Surplus, falling back to GPT-6.1 Sol);
    - an unchanged item just before acting.
