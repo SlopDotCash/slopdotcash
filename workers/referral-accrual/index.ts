@@ -93,8 +93,9 @@ export default {
     env: Env,
     ctx: { waitUntil(promise: Promise<unknown>): void },
   ) {
+    ctx.waitUntil(refreshReferralClaims(env));
     ctx.waitUntil(
-      Promise.all([runOnce(env), refreshReferralClaims(env)])
+      runOnce(env)
         .then((result) =>
           console.log(
             JSON.stringify({ event: "referral_accrual_run", result }),
