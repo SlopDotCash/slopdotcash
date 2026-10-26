@@ -431,6 +431,10 @@ const GRANT_ERRORS: Record<string, string> = {
   grant_flow_missing: "The GitHub authorization expired. Try again.",
 };
 
+/** The report text must survive the GitHub authorization redirect. */
+const DRAFT_STORAGE_ERROR =
+  "This browser could not keep your report during GitHub authorization. Allow site storage for this tab, then try again.";
+
 /** One consent line before the fields. */
 function IntakeConsent({ login }: { login: string | null }) {
   return (
@@ -571,8 +575,12 @@ function AutomaticReportForm({
       { projectId: project.id, idempotencyKey: key, origin: "slop" },
     ).then(
       (body) => {
-        saveDraft(body.submission.id, draft);
-        window.location.assign(body.authorizeUrl);
+        if (saveDraft(body.submission.id, draft)) {
+          window.location.assign(body.authorizeUrl);
+          return;
+        }
+        setBusy(false);
+        setError(DRAFT_STORAGE_ERROR);
       },
       (caught: unknown) => {
         setBusy(false);
@@ -1373,6 +1381,10 @@ function SubmissionCard({
     );
   };
   const authorize = () => {
+    if (keepDraft && !saveDraft(submission.id, draft)) {
+      setError(DRAFT_STORAGE_ERROR);
+      return;
+    }
     setBusy(true);
     projectApiRequest<{ authorizeUrl: string }>(
       "POST",

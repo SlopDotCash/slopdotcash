@@ -90,4 +90,14 @@ describe("intake drafts", () => {
     expect(() => pruneDrafts([], null)).not.toThrow();
     expect(loadDraft("x", null)).toBeNull();
   });
+
+  test("a draft that storage refuses is reported unsaved", () => {
+    const full = memoryStorage();
+    full.setItem = () => {
+      throw new DOMException("quota", "QuotaExceededError");
+    };
+    expect(saveDraft("x", draft, full)).toBe(false);
+    expect(saveDraft("x", draft, null)).toBe(false);
+    expect(saveDraft("x", draft, memoryStorage())).toBe(true);
+  });
 });
