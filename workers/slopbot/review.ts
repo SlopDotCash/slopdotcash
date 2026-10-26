@@ -128,6 +128,7 @@ type Issue = {
   node_id: string;
   number: number;
   state: string;
+  closed_by?: { id: number } | null;
   title: string;
   body: string | null;
   user: { login: string; id: number; type: string };
@@ -1045,7 +1046,7 @@ async function runReview(
   await store.assertReviewClaim(db, claim);
   await requireScope(db, job, scope);
   if (!routing.review) {
-    await clearConfirmedReopenFindings(env, job, context);
+    await reconcileConfirmedReopen(env, job, context);
     await store.finishReview(db, reviewKey, claimToken, "skipped", {
       skipReason: routing.reason,
     });
@@ -1332,7 +1333,7 @@ async function runReview(
   );
   await store.assertReviewClaim(db, claim);
   await requireScope(db, job, scope);
-  if (await clearConfirmedReopenFindings(env, job, context)) {
+  if (await reconcileConfirmedReopen(env, job, context)) {
     await store.finishReview(db, reviewKey, claimToken, "completed", {
       verdict,
       action: "comment",
@@ -1364,7 +1365,7 @@ async function runReview(
     "label",
     category,
   );
-  if (await clearConfirmedReopenFindings(env, job, context)) {
+  if (await reconcileConfirmedReopen(env, job, context)) {
     await store.finishReview(db, reviewKey, claimToken, "completed", {
       verdict,
       action: "label",
@@ -1433,6 +1434,16 @@ async function runReview(
       "close",
       JSON.stringify({ category, penaltyEligible: routing.penaltyEligible }),
     );
+    if (await confirmedReopenFor(db, issue.node_id, context.revision)) {
+      const restored = await reconcileConfirmedReopen(env, job, context);
+      await store.finishReview(db, reviewKey, claimToken, "completed", {
+        verdict,
+        action: "close",
+      });
+      return restored
+        ? "maintainer reopened the reviewed revision; late close reversed"
+        : "maintainer reopened the reviewed revision; later state kept";
+    }
     // Only a confirmed close of a closure-eligible author reaches the table.
     // A maintainer reopen or an earlier upheld appeal keeps its reversal: the
     // row is written once per pull request.
@@ -1447,6 +1458,17 @@ async function runReview(
           closedAt: new Date(),
         })
       : null;
+    if (await confirmedReopenFor(db, issue.node_id, context.revision)) {
+      await reversePenalty(db, issue.node_id, "maintainer_reopen");
+      const restored = await reconcileConfirmedReopen(env, job, context);
+      await store.finishReview(db, reviewKey, claimToken, "completed", {
+        verdict,
+        action: "close",
+      });
+      return restored
+        ? "maintainer reopened the reviewed revision; late close reversed"
+        : "maintainer reopened the reviewed revision; later state kept";
+    }
     await upsertComment(
       env,
       job,
@@ -1693,7 +1715,7 @@ async function latestFinding(
  * passed routing before its marker was recorded. The comment action stores
  * the category before label POST, so a lost POST response is also recoverable.
  */
-async function clearConfirmedReopenFindings(
+async function reconcileConfirmedReopen(
   env: ReviewEnv,
   job: Job,
   session: Pick<AppealSession, "github" | "issue" | "revision">,
@@ -1705,13 +1727,31 @@ async function clearConfirmedReopenFindings(
   const issue = await github.get<Issue>(
     `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
   );
-  if (
-    !issue ||
-    issue.node_id !== session.issue.node_id ||
-    issue.state !== "open" ||
-    (await itemRevision(github, job, issue)).revision !== revision
-  )
-    return false;
+  if (!issue || issue.node_id !== session.issue.node_id) return false;
+  const current = await itemRevision(github, job, issue);
+  if (current.revision !== revision || current.pull?.merged) return false;
+  if (issue.state === "closed") {
+    // GET issue supplies GitHub's immutable closer ID for issues and PRs.
+    // Undo only our own late close, never a later human decision.
+    if (
+      !issue.closed_by ||
+      !Number.isSafeInteger(issue.closed_by.id) ||
+      issue.closed_by.id <= 0
+    )
+      throw new Error("Closer is unavailable; reopen recovery is pending");
+    if (String(issue.closed_by.id) !== env.SLOPBOT_APP_USER_ID) return false;
+    await requireScope(db, job, "security");
+    const reopened = await github.request<{ state: string }>(
+      "PATCH",
+      `/repos/${job.owner}/${job.repo}/${job.itemKind === "pull_request" ? "pulls" : "issues"}/${job.number}`,
+      { state: "open" },
+    );
+    if (reopened.status !== 200 || reopened.data?.state !== "open")
+      throw new GitHubError(
+        reopened.status,
+        "GitHub did not confirm reopen recovery",
+      );
+  } else if (issue.state !== "open") return false;
   const row = await db
     .prepare(
       `SELECT json_group_array(DISTINCT a.detail) AS categories
@@ -1758,7 +1798,12 @@ export async function recordHumanSignal(
     if (
       source.itemNodeId !== issue.node_id ||
       source.revision !== revision ||
-      issue.state !== "open"
+      (issue.state !== "open" &&
+        (issue.state !== "closed" ||
+          (issue.closed_by &&
+            Number.isSafeInteger(issue.closed_by.id) &&
+            issue.closed_by.id > 0 &&
+            String(issue.closed_by.id) !== env.SLOPBOT_APP_USER_ID)))
     )
       return "reopen source changed; no decision";
   }
@@ -1787,7 +1832,7 @@ export async function recordHumanSignal(
     // The signed event and current authority have both been checked. A hold
     // write that loses its response can reconcile this decision on its retry.
     await confirmReopen(db, job.deliveryId);
-    if (!(await clearConfirmedReopenFindings(env, job, session)))
+    if (!(await reconcileConfirmedReopen(env, job, session)))
       return "reopen source changed; no cleanup";
     await reversePenalty(db, issue.node_id, "maintainer_reopen");
     const appeal = await appealByKey(db, `appeal:${issue.node_id}:${revision}`);

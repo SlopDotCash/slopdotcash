@@ -62,6 +62,14 @@ type Run = {
   policyResponse: (status: number, body?: unknown) => void;
   closureEnabled: (value: boolean) => void;
   pauseNextReopen: () => { entered: Promise<void>; release: () => void };
+  pauseNextClose: (options?: {
+    loseResponse?: boolean;
+    afterWrite?: () => void;
+  }) => { entered: Promise<void>; release: () => void };
+  beforePenaltyInsert: (callback: () => Promise<void>) => void;
+  currentState: () => string;
+  closerEvidence: (available: boolean) => void;
+  merged: (value: boolean) => void;
   pauseNextFindingLabel: (loseResponse?: boolean) => {
     entered: Promise<void>;
     release: () => void;
@@ -94,6 +102,24 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       .filter((p) => p.endsWith(".sql"))
       .sort(),
   );
+  let beforePenaltyInsert: (() => Promise<void>) | null = null;
+  const prepare = db.prepare.bind(db);
+  db.prepare = (sql) => {
+    const statement = prepare(sql);
+    if (!sql.startsWith("INSERT OR IGNORE INTO slopbot_penalties"))
+      return statement;
+    const wrap = (inner: typeof statement): typeof statement => ({
+      ...inner,
+      bind: (...values) => wrap(inner.bind(...values)),
+      run: async () => {
+        const callback = beforePenaltyInsert;
+        beforePenaltyInsert = null;
+        await callback?.();
+        return inner.run();
+      },
+    });
+    return wrap(statement);
+  };
   const project = findProject("asi");
   if (!project) throw new Error("fixture project missing");
   const manifest = JSON.stringify({
@@ -148,6 +174,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   const comments: string[] = [];
   const labels: string[] = [];
   let state = "open";
+  let closedBy: number | null = null;
+  let closerEvidence = true;
+  let merged = false;
+  let pauseClose: (() => Promise<void>) | null = null;
+  let closeOptions: { loseResponse?: boolean; afterWrite?: () => void } = {};
   let head = "b".repeat(40);
   let loseLabelDelete = false;
   let maintainerPermission = true;
@@ -267,6 +298,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           node_id: "PR_local",
           number: 5,
           state,
+          closed_by:
+            closerEvidence && closedBy !== null ? { id: closedBy } : null,
           title: "Followers",
           body: BODY,
           user: { login: "author", id: AUTHOR, type: "User" },
@@ -281,7 +314,19 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           pauseReopen = null;
           await pause();
         }
+        if (next === "closed" && pauseClose) {
+          const pause = pauseClose;
+          pauseClose = null;
+          await pause();
+        }
         state = next;
+        closedBy = next === "closed" ? 999 : null;
+        if (next === "closed") {
+          const options = closeOptions;
+          closeOptions = {};
+          options.afterWrite?.();
+          if (options.loseResponse) return new Response(null, { status: 503 });
+        }
         if (next === "open" && loseReopenResponse) {
           loseReopenResponse = false;
           return Response.json(
@@ -294,7 +339,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       if (path.endsWith("/pulls/5"))
         return Response.json({
           draft: false,
-          merged: false,
+          merged,
           head: { sha: head },
           base: {
             sha: "c".repeat(40),
@@ -525,6 +570,32 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         });
         return sent;
       },
+      currentState: () => state,
+      closerEvidence: (available) => {
+        closerEvidence = available;
+      },
+      merged: (value) => {
+        merged = value;
+      },
+      beforePenaltyInsert: (callback) => {
+        beforePenaltyInsert = callback;
+      },
+      pauseNextClose: (options = {}) => {
+        let entered!: () => void;
+        let release!: () => void;
+        const arrival = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const resumed = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        pauseClose = async () => {
+          entered();
+          await resumed;
+        };
+        closeOptions = options;
+        return { entered: arrival, release };
+      },
       head: (sha) => {
         head = sha;
       },
@@ -539,6 +610,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         occurredAt = new Date().toISOString(),
       ) => {
         state = "open";
+        closedBy = null;
         const body = {
           kind: "human_reopen" as const,
           deliveryId: `webhook-reopen-${crypto.randomUUID()}`,
@@ -555,6 +627,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       },
       closeByMaintainer: () => {
         state = "closed";
+        closedBy = MAINTAINER;
       },
       loseNextReopenResponse: () => {
         loseReopenResponse = true;
@@ -1764,5 +1837,113 @@ test("the first delivery of an old-head reopen preserves a newer finding", async
         "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'human_reopen'",
       ),
     ).toEqual([{ n: 0 }]);
+  });
+});
+
+for (const failure of [
+  "none",
+  "close response",
+  "reopen response",
+  "closer evidence",
+] as const) {
+  test(`a confirmed same-revision reopen recovers a close already in flight: ${failure}`, async () => {
+    setSystemTime(new Date(CLOSED_AT));
+    await closedItem(async (run) => {
+      const paused = run.pauseNextClose({
+        loseResponse: failure === "close response",
+      });
+      const pending = run.review().then(
+        (outcome) => ({ outcome }),
+        (error) => ({ error }),
+      );
+      try {
+        await paused.entered;
+        run.closeByMaintainer();
+        expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+        if (failure === "reopen response") run.loseNextReopenResponse();
+        if (failure === "closer evidence") run.closerEvidence(false);
+      } finally {
+        paused.release();
+      }
+      const result = await pending;
+      if (failure !== "none") {
+        expect(result).toHaveProperty("error");
+        expect(run.sql(PENALTY)).toEqual([]);
+        if (failure === "closer evidence") {
+          expect(run.currentState()).toBe("closed");
+          const before = run.writes.length;
+          await expect(run.review()).rejects.toThrow("Closer is unavailable");
+          expect(run.writes).toHaveLength(before);
+          run.closerEvidence(true);
+        }
+        await run.review();
+      }
+      expect(run.currentState()).toBe("open");
+      expect(run.labels).not.toContain("slopbot: spam");
+      expect(run.sql(PENALTY)).toEqual([]);
+      expect(
+        run.writes.filter((w) => w === "PATCH /repos/SlopDotCash/asi/pulls/5"),
+      ).toHaveLength(2);
+    });
+  });
+}
+
+for (const later of ["human close", "new head", "merged"] as const) {
+  test(`late-close recovery preserves a subsequent ${later}`, async () => {
+    setSystemTime(new Date(CLOSED_AT));
+    await closedItem(async (run) => {
+      const paused = run.pauseNextClose({
+        afterWrite: () => {
+          if (later === "human close") run.closeByMaintainer();
+          if (later === "new head") run.head("d".repeat(40));
+          if (later === "merged") run.merged(true);
+        },
+      });
+      const pending = run.review();
+      try {
+        await paused.entered;
+        run.closeByMaintainer();
+        expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+      } finally {
+        paused.release();
+      }
+      await pending;
+      expect(run.currentState()).toBe("closed");
+      expect(run.sql(PENALTY)).toEqual([]);
+      expect(
+        run.writes.filter((w) => w === "PATCH /repos/SlopDotCash/asi/pulls/5"),
+      ).toHaveLength(1);
+    });
+  });
+}
+
+test("a reopen that confirms at the first penalty INSERT atomically prevents a new debit", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.beforePenaltyInsert(async () => {
+      expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+    });
+    await run.review();
+    expect(run.currentState()).toBe("open");
+    expect(run.sql(PENALTY)).toEqual([]);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_deliveries WHERE reopen_confirmed_at IS NOT NULL",
+      ),
+    ).toEqual([{ n: 1 }]);
+  });
+});
+
+test("a delayed genuine reopen reverses the bot close that raced before queue delivery", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const reopened = await run.reopen();
+    expect(await run.review()).toBe("closed (spam)");
+    expect(await run.deliver(reopened)).toBe("human_reopen");
+    expect(run.currentState()).toBe("open");
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: "maintainer_reopen" }]);
+    const first = run.sql("SELECT reversed_at FROM slopbot_penalties");
+    expect(await run.deliver(reopened)).toBe("human_reopen");
+    expect(run.sql("SELECT reversed_at FROM slopbot_penalties")).toEqual(first);
   });
 });

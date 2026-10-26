@@ -118,6 +118,13 @@ to `"true"` after the explicit production qualification and activation review.
    successful label write whose response was lost. Event time is audit evidence,
    not a precision-based wait. Repeated cleanup keeps one penalty reversal and
    never changes a prior denied appeal into an upheld decision.
+   If our close request was already in flight, restore only a close whose
+   fresh GitHub `closed_by.id` matches the configured App user ID, at the same
+   unmerged revision. Keep a later human close or changed revision. Missing
+   closer evidence stays pending. The penalty insert checks the confirmed
+   receipt atomically, so a late close cannot add a new debit after the reopen.
+   [GitHub's issue endpoint](https://docs.github.com/en/rest/issues/issues#get-an-issue)
+   supplies the closer identity for issues and pull requests.
 
 
 ## Project consent and repository restrictions
