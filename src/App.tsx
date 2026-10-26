@@ -85,7 +85,6 @@ import {
   NotFound,
   PaymentLifecycle,
   reviewBudgetLabel,
-  stale,
   UNFUNDED_POOL_HEADLINE,
 } from "./Presentation";
 import { ProfilePage } from "./ProfilePage";
@@ -556,14 +555,7 @@ function ProjectOwnerAvatar({ project }: { project: ProjectDefinition }) {
   );
 }
 
-function ProjectCard({
-  project,
-  scoresUpdatedAt,
-}: {
-  project: ProjectDefinition;
-  /** Present only once the shared snapshot covering this project is ready. */
-  scoresUpdatedAt: string | null;
-}) {
+function ProjectCard({ project }: { project: ProjectDefinition }) {
   const amount =
     project.reward.kind === "monthly-pool"
       ? monthlyPoolCapLabel(project)
@@ -597,14 +589,6 @@ function ProjectCard({
             + {reviewBudgetLabel(project.reward.reviewBudget)}
           </small>
         ) : null}
-        {scoresUpdatedAt === null ? null : (
-          <small className="project-freshness">
-            {stale({ generatedAt: scoresUpdatedAt })
-              ? "Points may be outdated · updated "
-              : "Points updated "}
-            {formatDateTime(scoresUpdatedAt)}
-          </small>
-        )}
       </div>
     </Link>
   );
@@ -623,13 +607,8 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
         <span className="project-row-name">
           <strong>{project.name}</strong>
           <small>{project.description}</small>
-          {project.status === "paused" ? (
-            <small className="project-money-state">Paused</small>
-          ) : null}
         </span>
-        <span className="project-row-amount">
-          {project.status === "paused" ? null : amount}
-        </span>
+        <span className="project-row-amount">{amount}</span>
         <ChevronRight aria-hidden="true" />
       </Link>
     </li>
@@ -721,14 +700,8 @@ function bootstrapAgentPrompt(): string {
 function HomePage() {
   const featuredProjects = homeProjects();
   const listedCommunityProjects = communityProjects();
-  // One shared read feeds the leaderboard and card freshness; project cards
-  // never wait for it and never fetch per card.
+  // One shared read feeds the leaderboard; project cards never wait for it.
   const [scores, retryScores] = useSnapshot(true);
-  const scoresUpdatedAt = (projectId: string) =>
-    scores.status === "ready" &&
-    scores.views.some((view) => view.project.id === projectId)
-      ? scores.snapshot.generatedAt
-      : null;
   return (
     <main>
       <section className="hero shell">
@@ -758,11 +731,7 @@ function HomePage() {
                 <h3 id="featured-projects">Featured</h3>
                 <div className="project-grid">
                   {featuredProjects.map((project) => (
-                    <ProjectCard
-                      key={project.id}
-                      project={project}
-                      scoresUpdatedAt={scoresUpdatedAt(project.id)}
-                    />
+                    <ProjectCard key={project.id} project={project} />
                   ))}
                 </div>
               </section>

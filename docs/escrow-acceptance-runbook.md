@@ -185,7 +185,7 @@ logic that the factory creates (`monthlyReserveVersion()` of
   `runKeeper`) reads it through the unchanged public registry and payment
   routes. The keeper sends `reserveMonthly`, then one `commitMonthlyLeaf` per
   unfunded award, and pays each award after its wallet is bound. The relayer
-  key is the keeper's gas signer; it has no vault role. The manual award stays
+  key, or `ESCROW_ACCEPTANCE_KEEPER_KEY` when set, is the keeper's gas signer; it must have no vault or factory role. The manual award stays
   out of the reserve. A keeper rerun signs nothing, and a second
   `reserveMonthly`, `commitMonthly` or leaf is refused. The keeper serves the
   PRD schedule, from period 2026-11, unless
@@ -222,6 +222,7 @@ Additional environment for the extended suite:
 | `ESCROW_ACCEPTANCE_ROTATION_AUTHORITY_KEY` | Solana | `key-recovery`: the Config rotation authority (64-character hex seed). The run derives the replacement identity key in memory; the relayer pays its fees. |
 | `ESCROW_ACCEPTANCE_KEEPER_ADDITIONAL_FEE_RESERVE` | Base Sepolia, `keeper-v2` | Base L1 and operator fee reserve per keeper transaction, in wei. Required on Base Sepolia; `0` elsewhere. |
 | `ESCROW_ACCEPTANCE_MONTHLY_SCHEDULE` | EVM, `keeper-v2`, optional | The `MONTHLY_PAYMENT_SCHEDULE` JSON the keeper serves. Omitted: the PRD schedule. |
+| `ESCROW_ACCEPTANCE_KEEPER_KEY` | EVM, `keeper-v2`, optional | The keeper's dedicated gas key. It must hold no vault or factory role; required where the relayer test key is also the factory upgrade authority. Omitted: the relayer key. |
 
 The owner key needs 500 units of the scenario asset for the monthly scenario,
 100 for each lifecycle vault, 50 for the interrupted send and 150 for key

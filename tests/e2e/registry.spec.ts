@@ -1052,6 +1052,21 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   });
   await queueScan(moderator, project.id, "Confirm the reported finding", 3);
   await postVettingResult(request, project.id, project.repository, "malicious");
+  // The newer confirmed-malicious ban supersedes the original project appeal.
+  // Its owner must appeal this restriction before a moderator can review it.
+  const reappealed = await moderator.request.post("/api/v1/project-appeals", {
+    headers: {
+      origin: new URL(moderator.url()).origin,
+      cookie: `__Host-slop_points=${APPLICANT_TOKEN}`,
+    },
+    data: appeal,
+  });
+  expect(reappealed.status()).toBe(200);
+  expect((await reappealed.json()).record).toMatchObject({
+    actorRole: "project-steward",
+    decisionSource: "owner-request",
+    appealAfter: "requested",
+  });
   await queueScan(
     moderator,
     project.id,
@@ -1084,7 +1099,7 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   ).toHaveCount(0);
   await expectAccessible(moderator);
   await moderatorPanel.getByText(/Enforcement history/u).click();
-  await expect(moderatorPanel.locator("li")).toHaveCount(4);
+  await expect(moderatorPanel.locator("li")).toHaveCount(5);
   await expect(moderatorPanel).toContainText(
     "the signed security vetting service",
   );
@@ -1104,10 +1119,11 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   const review = moderator.locator(".inbox-item", {
     hasText: `A reinstatement request for ${project.id} needs your independent review.`,
   });
-  await expect(review).toHaveCount(1);
-  await expect(
-    review.getByRole("link", { name: "Open admin" }),
-  ).toHaveAttribute("href", "/admin");
+  await expect(review).toHaveCount(2);
+  for (const notice of await review.all())
+    await expect(
+      notice.getByRole("link", { name: "Open admin" }),
+    ).toHaveAttribute("href", "/admin");
   const banNotice = moderator.locator(".inbox-item", {
     hasText: `The ${project.id} project is banned.`,
   });
@@ -1145,14 +1161,17 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   const applicantErrors = observe(applicant);
   await signIn(applicant, APPLICANT_TOKEN);
   await applicant.goto("/inbox", { waitUntil: "networkidle" });
-  for (const title of [
-    `The ${project.id} project is quarantined.`,
-    `The ${project.id} project is banned.`,
-    `A reinstatement request for ${project.id} is open for independent review.`,
-  ])
+  for (const [title, count] of [
+    [`The ${project.id} project is quarantined.`, 1],
+    [`The ${project.id} project is banned.`, 2],
+    [
+      `A reinstatement request for ${project.id} is open for independent review.`,
+      2,
+    ],
+  ] as const)
     await expect(
       applicant.locator(".inbox-item", { hasText: title }),
-    ).toHaveCount(title === `The ${project.id} project is banned.` ? 2 : 1);
+    ).toHaveCount(count);
   await expect(applicant.locator("main")).not.toContainText("malware");
   await expect(applicant.locator("main")).not.toContainText(evidence);
   // Only moderators are asked to decide the appeal.

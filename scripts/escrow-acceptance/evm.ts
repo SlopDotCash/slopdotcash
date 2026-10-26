@@ -461,6 +461,14 @@ export async function openEvmRun(
     identityAuthority: identity.address.toLowerCase(),
     relayer: keys.relayer.address.toLowerCase(),
     feeRecipient: feeRecipient.toLowerCase(),
+    // The extended suite's dedicated keeper gas wallet, when supplied.
+    ...(process.env.ESCROW_ACCEPTANCE_KEEPER_KEY
+      ? {
+          keeper: privateKeyToAccount(
+            evmKey("ESCROW_ACCEPTANCE_KEEPER_KEY"),
+          ).address.toLowerCase(),
+        }
+      : {}),
   };
   if (!evidence) {
     evidence = newEvidence({

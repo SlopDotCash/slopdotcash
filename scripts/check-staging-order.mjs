@@ -31,6 +31,54 @@ execFileSync(
 const tip = execFileSync("git", ["rev-parse", "FETCH_HEAD"], options).trim();
 execFileSync("git", ["merge-base", "--is-ancestor", revision, tip], options);
 
+// These dispatches hold the staging environment for its secrets only. They
+// create, probe and delete their own disposable resources and never change the
+// shared staging Workers, database or Pages project, so a newer one is not a
+// staging attempt. Any other or unknown creator still counts.
+const NON_RELEASE_WORKFLOWS = new Set([
+  ".github/workflows/vetting-recovery-qualification.yml",
+  ".github/workflows/vetting-sandbox-qualification.yml",
+]);
+function createdByNonReleaseWorkflow(deployment) {
+  if (!Number.isSafeInteger(deployment.id)) return false;
+  try {
+    const statuses = JSON.parse(
+      execFileSync(
+        "gh",
+        [
+          "api",
+          `repos/SlopDotCash/slopdotcash/deployments/${deployment.id}/statuses?per_page=100`,
+        ],
+        options,
+      ),
+    );
+    if (!Array.isArray(statuses) || statuses.length === 0) return false;
+    const runs = new Set(
+      statuses.map(
+        (status) =>
+          /^https:\/\/github\.com\/SlopDotCash\/slopdotcash\/actions\/runs\/(\d+)\//.exec(
+            status?.log_url ?? "",
+          )?.[1] ?? null,
+      ),
+    );
+    if (runs.size !== 1 || runs.has(null)) return false;
+    const [run] = runs;
+    const workflow = JSON.parse(
+      execFileSync(
+        "gh",
+        ["api", `repos/SlopDotCash/slopdotcash/actions/runs/${run}`],
+        options,
+      ),
+    );
+    return (
+      workflow?.head_sha === deployment.sha &&
+      NON_RELEASE_WORKFLOWS.has(workflow?.path)
+    );
+  } catch {
+    return false;
+  }
+}
+
 const checked = new Set();
 for (let page = 1; page <= 10; page++) {
   const history = JSON.parse(
@@ -58,7 +106,6 @@ for (let page = 1; page <= 10; page++) {
       );
     }
     if (checked.has(deployment.sha)) continue;
-    checked.add(deployment.sha);
     // Do not inspect only successful Pages releases: a failed newer attempt may
     // have applied migrations or published identity before the Pages failure.
     try {
@@ -68,11 +115,20 @@ for (let page = 1; page <= 10; page++) {
         options,
       );
     } catch (cause) {
+      // Judge each such deployment by its own creator: a release of the same
+      // revision may appear later in the history.
+      if (createdByNonReleaseWorkflow(deployment)) {
+        console.log(
+          `Ignoring qualification-only staging deployment ${deployment.sha}`,
+        );
+        continue;
+      }
       throw new Error(
         `Refusing staging rollback across attempted revision ${deployment.sha}`,
         { cause },
       );
     }
+    checked.add(deployment.sha);
   }
   if (history.length < 100) {
     if (!checked.has(revision)) {
