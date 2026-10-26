@@ -2968,6 +2968,7 @@ function createSnapshotWithReviewCutoff(
       repository: repositoryIdFromUrl(pullRequest.url),
       url: review.url,
       reason,
+      ...(review.author ? { reviewerId: review.author.id } : {}),
     });
   };
   const scoredAttributionSources = new Map<string, GitHubTextSource>();
@@ -5244,12 +5245,15 @@ function assertReviewExclusionValue(
     "reviewId",
     "url",
   ];
-  if (
-    JSON.stringify(Object.keys(exclusion).sort()) !==
-    JSON.stringify(expectedKeys)
-  ) {
+  // `reviewerId` is additive; earlier snapshots omit it.
+  const keys = Object.keys(exclusion)
+    .filter((key) => key !== "reviewerId")
+    .sort();
+  if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
     throw new Error(`${path} must contain exactly the review exclusion fields`);
   }
+  if ("reviewerId" in exclusion)
+    assertString(exclusion.reviewerId, `${path}.reviewerId`);
   assertString(exclusion.id, `${path}.id`);
   assertString(exclusion.pullRequestId, `${path}.pullRequestId`);
   assertPositiveInteger(

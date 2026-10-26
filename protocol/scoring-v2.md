@@ -93,8 +93,10 @@ requested node, count, timestamp, review page, or inline-comment page is missing
 or inconsistent. Review-only hydration never enables author-detail bonuses.
 
 Each collected formal review that does not score appears in the public
-`reviewExclusions` array with immutable pull-request and review node IDs, its
-canonical public URL and repository, and one closed reason enum. This makes
+`reviewExclusions` array with immutable pull-request and review node IDs, the
+reviewer's immutable node ID when GitHub returned one, its canonical public URL
+and repository, and one closed reason enum. Each contributor profile lists its
+own excluded reviews with their reasons. This makes
 self-review, bot, post-merge, duplicate-reviewer, non-decision, insufficient-
 substance, pre-existing evaluated-contribution awards, external-prize-policy,
 reviewer-cycle-cap, unchanged-outcome, and pull-request-review-awarded
