@@ -427,7 +427,6 @@ try {
       db,
       {
         ...config,
-        chain: "base",
         deploymentTransaction: deploymentTransactions.get(vault),
       },
       rpcUrl,
@@ -441,7 +440,6 @@ try {
       db,
       {
         ...config,
-        chain: "base",
         scanPageBlocks: "2000",
         deploymentTransaction: deploymentTransactions.get(vault),
       },

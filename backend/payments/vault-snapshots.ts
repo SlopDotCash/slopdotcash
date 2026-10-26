@@ -17,7 +17,7 @@ export interface SnapshotDeployment {
   vault: string;
   asset: string;
   /** Solana only: the adapter reads, and reports as `vault`, the project PDA. */
-  projectPda?: string;
+  projectPda?: string | null;
 }
 export type VaultTotalsReader<D extends SnapshotDeployment> = (
   deployment: D,

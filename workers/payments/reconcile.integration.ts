@@ -10,7 +10,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
-import type { PaymentDeployment } from "./index";
 import { reconcileFailedAttempts } from "./reconcile";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -102,35 +101,15 @@ function makeDatabase() {
   return { directory, sql, db };
 }
 
-const deployments: PaymentDeployment[] = [
+const deployments = [
   {
-    projectId: "fixture-base",
     network: "base-local",
     chain: "base",
     vault: "vault-base",
-    asset: "USDC",
-    owner: "fixture-owner",
-    identityAuthority: "fixture-authority",
-    feeRecipient: "fixture-fee",
-    codeSha256: "c".repeat(64),
-    bindingDelaySeconds: "0",
-    upgradeAuthority: null,
     chainId: "1",
   },
-  {
-    projectId: "fixture-solana",
-    network: "solana-local",
-    chain: "solana",
-    vault: "vault-solana",
-    asset: "USDC",
-    owner: "fixture-owner",
-    identityAuthority: "fixture-authority",
-    feeRecipient: "fixture-fee",
-    codeSha256: "c".repeat(64),
-    bindingDelaySeconds: "0",
-    upgradeAuthority: null,
-  },
-];
+  { network: "solana-local", chain: "solana", vault: "vault-solana" },
+] as const;
 const rpcUrls = { "base-local": BASE_RPC, "solana-local": SOLANA_RPC };
 const genesisHashes = { "solana-local": GENESIS };
 
@@ -256,7 +235,7 @@ try {
         `expected an AggregateError, got ${String(error)}`,
       );
       assert.equal(error.errors.length, 1);
-      assert.match(String(error.errors[0]), /Reconciliation RPC unavailable/);
+      assert.match(String(error.errors[0]), /RPC HTTP failure: 503/);
       assert.deepEqual(attemptState(sql, "attempt-solana"), {
         attemptState: "failed",
         outboxState: "ready",
