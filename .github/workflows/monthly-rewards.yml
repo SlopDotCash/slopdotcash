@@ -66,6 +66,9 @@ jobs:
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    env:
+      # Ledger generation must use the same registry tier as this proposal.
+      VITE_SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
     permissions:
       contents: read
       issues: read
