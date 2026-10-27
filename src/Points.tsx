@@ -14,7 +14,11 @@ import {
 import { identityPublicOrigin } from "../workers/identity/contracts";
 import { AccountAppeals } from "./AccountAppeals";
 import { Link } from "./Link";
-import { browserDeployment, loginHref } from "./lib/browser-deployment";
+import {
+  browserDeployment,
+  localBackendOrigin,
+  loginHref,
+} from "./lib/browser-deployment";
 import {
   fetchWithDeadline,
   readBoundedJson,
@@ -642,14 +646,18 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
     try {
       const assertion = await requestIdentityAssertion({
         origin: identityPublicOrigin(
-          [
-            "https://staging.slop.cash",
-            "https://slop-staging.pages.dev",
-          ].includes(window.location.origin)
-            ? import.meta.env.VITE_IDENTITY_PUBLIC_ORIGIN
-            : undefined,
+          // A local backend serves sign-in from the dev server's own origin.
+          localBackendOrigin ??
+            ([
+              "https://staging.slop.cash",
+              "https://slop-staging.pages.dev",
+            ].includes(window.location.origin)
+              ? import.meta.env.VITE_IDENTITY_PUBLIC_ORIGIN
+              : undefined),
           deploymentTier(import.meta.env.VITE_SLOP_ENVIRONMENT),
+          { loopback: localBackendOrigin !== null },
         ),
+        allowLoopback: localBackendOrigin !== null,
         audience: "slop-points-web",
         signal: c.signal,
         authorize: (url) => popup.location.replace(url),
