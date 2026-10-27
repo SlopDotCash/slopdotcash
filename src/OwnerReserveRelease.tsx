@@ -11,6 +11,11 @@ import {
 import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
 import { useAction } from "./lib/use-action";
 import { usePayoutWallets } from "./lib/use-payout-wallets";
+import {
+  PendingTransaction,
+  UnsentTransactionRecovery,
+} from "./OwnerPresentation";
+import { NoWalletFound, WalletConnection } from "./Presentation";
 
 type Pending = { planId: string; hash: string | null };
 const HELD: Record<string, string> = {
@@ -94,7 +99,7 @@ export default function OwnerReserveRelease({
         </button>
       )}
       {pending ? (
-        <div>
+        <PendingTransaction>
           <p>
             The wallet request is recorded. Check its result before another
             attempt.
@@ -152,21 +157,17 @@ export default function OwnerReserveRelease({
             Check transaction
           </button>
           {!pending.hash && (
-            <button
-              className="button secondary-button"
-              type="button"
+            <UnsentTransactionRecovery
               disabled={busy}
-              onClick={() => {
+              onClear={() => {
                 sessionStorage.removeItem(key);
                 setPending(null);
                 setPlan(null);
                 setNotice("Local request cleared after your wallet check.");
               }}
-            >
-              I checked wallet activity; nothing was submitted
-            </button>
+            />
           )}
-        </div>
+        </PendingTransaction>
       ) : (
         <>
           <button
@@ -203,29 +204,16 @@ export default function OwnerReserveRelease({
                 withdraw funds.
               </p>
               {!wallet ? (
-                <fieldset disabled={busy}>
-                  <legend>Connect the vault owner's wallet</legend>
-                  {wallets.map((provider) => (
-                    <button
-                      className="button secondary-button"
-                      type="button"
-                      key={provider.id}
-                      onClick={() =>
-                        void run(async () =>
-                          setWallet(await provider.connect()),
-                        )
-                      }
-                    >
-                      Connect {provider.name}
-                    </button>
-                  ))}
-                  {!wallets.length && (
-                    <p>
-                      No compatible wallet found. Open your wallet extension and
-                      reload.
-                    </p>
-                  )}
-                </fieldset>
+                <WalletConnection
+                  address={null}
+                  wallets={wallets}
+                  disabled={busy}
+                  legend="Connect the vault owner's wallet"
+                  empty={<NoWalletFound solana={family === "solana"} />}
+                  onConnect={(provider) =>
+                    void run(async () => setWallet(await provider.connect()))
+                  }
+                />
               ) : (
                 <button
                   className="button primary-button"

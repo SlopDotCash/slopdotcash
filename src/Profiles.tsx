@@ -1,6 +1,8 @@
-import { type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
+import { Link } from "./Link";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
+import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { transactionUrl } from "./lib/payments/contracts";
 import type { PointsMember } from "./lib/points";
@@ -11,19 +13,25 @@ import {
   profileCounts,
 } from "./lib/profiles";
 import { findProject } from "./lib/projects.mjs";
+import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
 import {
   type PublicResourceState,
   usePublicResource,
 } from "./lib/use-public-resource";
+import { useVaultPayments } from "./lib/use-vault-payments";
+import { PaymentRecord, VaultPaymentRecord } from "./PaymentRecords";
 import {
   ContributorIdentity,
+  cycleContributorStateLabel,
+  cycleLifecycleLabel,
   ExternalLinkAnchor,
   formatCycleMonth,
   formatDate,
   formatMicroUsdc,
+  formatPercent,
+  formatPointsFromThirds,
 } from "./Presentation";
-import { VaultPaymentHistory } from "./VaultPaymentHistory";
 
 async function loadProfiles(signal: AbortSignal) {
   const response = await fetchWithDeadline("/data/profiles.json", {
@@ -91,47 +99,6 @@ export function ProfileActivity({
   const image =
     p?.avatarUrl ??
     `https://avatars.githubusercontent.com/${encodeURIComponent(login)}?size=160`;
-  const payments =
-    cycles && id
-      ? cycles.cycles.flatMap((c) =>
-          c.contributors
-            .filter((m) => m.actor.id === id && m.state === "paid")
-            .map((m) => ({
-              date: c.settledAt,
-              amount: BigInt(m.paidMinor),
-              href: `/cycles/${c.projectId}/${c.cycleId}`,
-              name: `${findProject(c.projectId)?.name ?? c.projectId} · ${formatCycleMonth(c.cycleId)}`,
-            })),
-        )
-      : null;
-  const githubUserId = id
-    ? /^[1-9]\d*$/u.test(id)
-      ? id
-      : githubUserIdFromNodeId(id)
-    : null;
-  const [directState, retryDirect] = useDirectTransfers(
-    githubUserId ? { githubUserId } : null,
-  );
-  const direct =
-    directState.status === "ready"
-      ? directState.transfers.map((t) => ({
-          date: t.blockTime,
-          amount: BigInt(t.amountMicro),
-          href:
-            transactionUrl(t.network, t.transactionId) ??
-            `/projects/${encodeURIComponent(t.projectId)}/funding`,
-          name: `${findProject(t.projectId)?.name ?? t.projectId} · ${formatCycleMonth(t.contributionMonth)}`,
-        }))
-      : [];
-  const paid =
-    payments && directState.status === "ready"
-      ? [...payments, ...direct].reduce((total, row) => total + row.amount, 0n)
-      : null;
-  const paidMissing =
-    (!id && state.status === "loading") ||
-    (githubUserId && directState.status === "loading")
-      ? "Loading…"
-      : "Unavailable";
   return (
     <section className="profile-activity" aria-label="Contributor profile">
       {showIdentity ? (
@@ -144,26 +111,8 @@ export function ProfileActivity({
         />
       ) : null}
       {badges}
+      <div className="profile-totals">{summary}</div>
       {awards ? <ActivityChart awards={awards} /> : null}
-      <div className="profile-totals">
-        {summary}
-        <div>
-          <strong>{paid === null ? paidMissing : dollars(paid)}</strong>
-          <span>direct and archived payments · USDC</span>
-        </div>
-      </div>
-      {directState.status === "error" ? (
-        <p role="status">
-          Payment records unavailable.{" "}
-          <button
-            className="button secondary-button button-small"
-            type="button"
-            onClick={retryDirect}
-          >
-            Retry payment records
-          </button>
-        </p>
-      ) : null}
       {state.status === "error" ? (
         <p role="status">
           PR counts are unavailable.{" "}
@@ -181,12 +130,7 @@ export function ProfileActivity({
         <PullRequestBar counts={counts} login={p?.login ?? login} />
       ) : null}
       {children}
-      <PayoutList
-        payments={payments ?? []}
-        direct={direct}
-        total={paid === null ? paidMissing : `${dollars(paid)} USDC`}
-      />
-      <VaultPaymentHistory scope={githubUserId ? { githubUserId } : null} />
+      {id ? <ProfilePaymentHistory actorId={id} cycles={cycles} /> : null}
     </section>
   );
 }
@@ -259,7 +203,7 @@ function ActivityChart({ awards }: { awards: PointsMember["awards"] }) {
       className="activity-chart"
       aria-label={`Points per day, last ${ACTIVITY_DAYS} days`}
     >
-      <figcaption>Points · last {ACTIVITY_DAYS} days</figcaption>
+      <figcaption>Daily activity · last {ACTIVITY_DAYS} days</figcaption>
       <div className="activity-bars" aria-hidden="true">
         {days.map((entry) => (
           <span
@@ -274,64 +218,193 @@ function ActivityChart({ awards }: { awards: PointsMember["awards"] }) {
   );
 }
 
-type Payout = {
-  date: string | null;
-  amount: bigint;
-  href: string;
-  name: string;
-};
-
-function PayoutList({
-  payments,
-  direct,
-  total,
+/** One record list keeps archived awards, direct transfers and vault payments distinct. */
+function ProfilePaymentHistory({
+  actorId,
+  cycles,
 }: {
-  payments: Payout[];
-  direct: Payout[];
-  total: string;
+  actorId: string;
+  cycles?: CycleIndex;
 }) {
-  const [allPayouts, setAllPayouts] = useState(false);
-  const rows = [
-    ...payments.map((payment) => ({ ...payment, kind: "Verified settlement" })),
-    ...direct.map((payment) => ({ ...payment, kind: "Direct transfer" })),
-  ].sort(
-    (a, b) =>
-      (b.date ?? "").localeCompare(a.date ?? "") ||
-      a.href.localeCompare(b.href),
+  const [showAll, setShowAll] = useState(false);
+  const githubUserId = /^[1-9]\d*$/u.test(actorId)
+    ? actorId
+    : githubUserIdFromNodeId(actorId);
+  const scope = githubUserId ? { githubUserId } : null;
+  const [directState, retryDirect] = useDirectTransfers(scope);
+  const [vaultState, retryVault] = useVaultPayments(scope);
+  const history = (cycles?.cycles ?? []).flatMap((cycle) =>
+    cycle.contributors
+      .filter((contributor) => contributor.actor.id === actorId)
+      .map((contributor) => ({ contributor, cycle })),
   );
-  if (rows.length === 0) return null;
+  const direct = directState.status === "ready" ? directState.transfers : [];
+  const total =
+    cycles && directState.status === "ready"
+      ? history.reduce(
+          (sum, { contributor }) =>
+            sum +
+            (contributor.state === "paid" ? BigInt(contributor.paidMinor) : 0n),
+          direct.reduce(
+            (sum, payment) => sum + BigInt(payment.amountMicro),
+            0n,
+          ),
+        )
+      : null;
+  const entries = [
+    ...history.map(({ contributor, cycle }) => ({
+      id: `cycle:${cycle.projectId}:${cycle.cycleId}`,
+      sortAt: cycle.settledAt ?? cycle.approvedAt ?? cycle.generatedAt,
+      content: (
+        <PaymentRecord
+          name={
+            <Link href={`/cycles/${cycle.projectId}/${cycle.cycleId}`}>
+              {findProject(cycle.projectId)?.name ?? cycle.projectId} ·{" "}
+              {formatCycleMonth(cycle.cycleId)}
+            </Link>
+          }
+          detail={
+            <>
+              Archived cycle · {cycleLifecycleLabel(cycle)} ·{" "}
+              {formatPointsFromThirds(
+                contributor.scoreThirds ?? contributor.score * 3,
+              )}{" "}
+              points
+            </>
+          }
+          amount={
+            <>
+              <strong>
+                {cycle.kind === "external-prize-share"
+                  ? contributor.sharePartsPerMillion === null
+                    ? "Share not recorded"
+                    : `${formatPercent(contributor.sharePartsPerMillion)} share`
+                  : `${formatMicroUsdc(
+                      contributor.state === "paid"
+                        ? contributor.paidMinor
+                        : contributor.approvedMinor !== "0"
+                          ? contributor.approvedMinor
+                          : contributor.suggestedMinor,
+                    )} USDC`}
+              </strong>
+              <small>{cycleContributorStateLabel(contributor.state)}</small>
+            </>
+          }
+        />
+      ),
+    })),
+    ...direct.map((payment) => {
+      const network =
+        ESCROW_NETWORKS[payment.network as keyof typeof ESCROW_NETWORKS];
+      const href = transactionUrl(payment.network, payment.transactionId);
+      return {
+        id: `direct:${payment.network}:${payment.transactionId}`,
+        sortAt: payment.blockTime,
+        content: (
+          <PaymentRecord
+            name={findProject(payment.projectId)?.name ?? payment.projectId}
+            detail={
+              <>
+                Direct transfer · {NETWORK_NAMES[payment.chain]}
+                {network?.testnet ? " testnet" : ""} · Work month:{" "}
+                {formatCycleMonth(payment.contributionMonth)} · Paid{" "}
+                {formatDate(payment.blockTime)}
+              </>
+            }
+            amount={
+              <>
+                <strong>{formatMicroUsdc(payment.amountMicro)} USDC</strong>
+                <small>Paid directly</small>
+              </>
+            }
+            action={
+              href ? (
+                <ExternalLinkAnchor href={href}>
+                  View transaction
+                </ExternalLinkAnchor>
+              ) : (
+                <Link href={`/projects/${payment.projectId}/funding`}>
+                  Funding record
+                </Link>
+              )
+            }
+          />
+        ),
+      };
+    }),
+    ...(vaultState.status === "ready" ? vaultState.payments : []).map(
+      (payment) => ({
+        id: `vault:${payment.id}`,
+        sortAt: payment.indexedAt,
+        content: <VaultPaymentRecord payment={payment} />,
+      }),
+    ),
+  ].sort(
+    (left, right) =>
+      right.sortAt.localeCompare(left.sortAt) ||
+      left.id.localeCompare(right.id),
+  );
   return (
-    <section className="profile-card" aria-label="Payouts">
+    <section
+      className="profile-card profile-payments"
+      aria-label="Awards and payments"
+    >
       <div className="profile-card-heading">
-        <h2>Payouts</h2>
-        <span>{total}</span>
+        <h2>Awards and payments</h2>
       </div>
-      <ul className="payout-list">
-        {(allPayouts ? rows : rows.slice(0, 3)).map((row) => (
-          <li key={`${row.kind}:${row.href}`}>
-            <ExternalLinkAnchor href={row.href}>
-              <span>
-                <strong>{row.name}</strong>
-                <small>
-                  {row.date ? formatDate(row.date) : "Date unavailable"} ·{" "}
-                  {row.kind}
-                </small>
-              </span>
-              <strong className="payout-amount">{dollars(row.amount)}</strong>
-            </ExternalLinkAnchor>
-          </li>
-        ))}
-      </ul>
-      {rows.length > 3 ? (
+      <p className="profile-payments-summary">
+        Direct and archived paid · USDC:{" "}
+        <strong>
+          {total !== null
+            ? dollars(total)
+            : scope && directState.status === "loading"
+              ? "Loading…"
+              : "Unavailable"}
+        </strong>
+      </p>
+      <div className="profile-payment-notices">
+        {!scope ? (
+          <p role="status">Payment identity unavailable.</p>
+        ) : directState.status === "error" ? (
+          <p role="status">
+            Direct payment records unavailable.{" "}
+            <button className="text-button" type="button" onClick={retryDirect}>
+              Retry payment records
+            </button>
+          </p>
+        ) : directState.status === "loading" ? (
+          <p role="status">Loading direct payments…</p>
+        ) : null}
+        {!scope ? null : vaultState.status === "error" ? (
+          <p role="status">
+            Project payment records unavailable.{" "}
+            <button className="text-button" type="button" onClick={retryVault}>
+              Retry project payments
+            </button>
+          </p>
+        ) : vaultState.status === "loading" ? (
+          <p role="status">Loading project payments…</p>
+        ) : null}
+      </div>
+      {entries.length > 0 ? (
+        <ul className="payment-records">
+          {(showAll ? entries : entries.slice(0, 5)).map((entry) => (
+            <Fragment key={entry.id}>{entry.content}</Fragment>
+          ))}
+        </ul>
+      ) : directState.status === "ready" && vaultState.status === "ready" ? (
+        <p>No awards or payments recorded.</p>
+      ) : null}
+      {entries.length > 5 ? (
         <button
           className="button secondary-button button-small"
           type="button"
-          aria-expanded={allPayouts}
-          onClick={() => setAllPayouts(!allPayouts)}
+          aria-expanded={showAll}
+          onClick={() => setShowAll(!showAll)}
         >
-          {allPayouts
-            ? "Show recent payouts"
-            : `Show all ${rows.length} payouts`}
+          {showAll
+            ? "Show recent records"
+            : `Show all ${entries.length} records`}
         </button>
       ) : null}
     </section>

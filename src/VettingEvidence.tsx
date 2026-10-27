@@ -1,5 +1,5 @@
 import { FileSearch, LockKeyhole } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { sha256Hex } from "./lib/async-sha256.mjs";
 import { fetchWithDeadline } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
@@ -42,6 +42,7 @@ export default function VettingEvidencePage() {
       runId: query.get("runId") ?? "",
     };
   });
+  const assessmentInput = useRef<HTMLInputElement>(null);
   const [assessment, setAssessment] = useState(initial.assessment);
   const [runId, setRunId] = useState(initial.runId);
   const [lookup, setLookup] = useState(
@@ -117,6 +118,7 @@ export default function VettingEvidencePage() {
               Assessment ID
               <input
                 required
+                ref={assessmentInput}
                 value={assessment}
                 onChange={(e) => setAssessment(e.target.value)}
               />
@@ -144,7 +146,18 @@ export default function VettingEvidencePage() {
       ) : null}
       {session.status === "signed-in" && error ? (
         <p role="alert">
-          {error} Check the IDs or{" "}
+          {error}{" "}
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => {
+              setLookupOpen(true);
+              requestAnimationFrame(() => assessmentInput.current?.focus());
+            }}
+          >
+            Edit IDs
+          </button>{" "}
+          or{" "}
           <button
             className="text-button"
             type="button"
@@ -165,7 +178,6 @@ export default function VettingEvidencePage() {
             >
               <header className="operations-card-heading">
                 <h2>Evidence inventory</h2>
-                <StatusBadge icon={<LockKeyhole />}>Private</StatusBadge>
               </header>
               <details className="security-reference operations-disclosure">
                 <summary>Run details and retention</summary>
@@ -247,16 +259,11 @@ export default function VettingEvidencePage() {
                             </span>
                           </span>
                           <span className="evidence-object-status">
-                            <StatusBadge
-                              tone={
-                                object.state === "stored-unverified"
-                                  ? "neutral"
-                                  : "warning"
-                              }
-                            >
-                              {object.state}
-                            </StatusBadge>
-                            <code>{object.sha256.slice(0, 12)}</code>
+                            {object.state !== "stored-unverified" && (
+                              <StatusBadge tone="warning">
+                                {evidenceState(object.state)}
+                              </StatusBadge>
+                            )}
                           </span>
                         </button>
                       </li>
@@ -277,6 +284,12 @@ export default function VettingEvidencePage() {
     </main>
   );
 }
+function evidenceState(state: string) {
+  return state === "stored-unverified"
+    ? "Retained; not yet verified"
+    : state.replaceAll("-", " ");
+}
+
 function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
   const [reason, setReason] = useState(""),
     [content, setContent] = useState<string | null>(null),
@@ -349,7 +362,7 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
     <article className="evidence-object operations-detail-panel">
       <header className="operations-card-heading">
         <h3>{object.label}</h3>
-        <StatusBadge tone="warning">{object.state}</StatusBadge>
+        <StatusBadge tone="warning">{evidenceState(object.state)}</StatusBadge>
       </header>
       <dl className="operations-facts">
         <div>

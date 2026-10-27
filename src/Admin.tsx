@@ -33,6 +33,7 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
+import { ChangeReview } from "./OwnerPresentation";
 import {
   formatDateTime,
   MetricGrid,
@@ -41,6 +42,36 @@ import {
   SignInPanel,
   StatusBadge,
 } from "./Presentation";
+
+const CHANGE_LABELS: Record<string, string> = {
+  name: "Project name",
+  headline: "Short description",
+  description: "Goal",
+  listingTier: "Discovery placement",
+  status: "Project status",
+  reward: "Reward terms",
+  rewardAsset: "Reward asset",
+  escrow: "Project vault",
+  funding: "Funding terms",
+  securityBounty: "Security bounty",
+  contribution: "Contribution rules",
+  slopbot: "Slopbot consent",
+  repositories: "Repositories",
+  skill: "Contributor skill",
+  reviewSkill: "Reviewer skill",
+};
+const changeLabel = (field: string) =>
+  CHANGE_LABELS[field] ?? field.replace(/([a-z])([A-Z])/g, "$1 $2");
+function ChangedValue({ value, empty }: { value: unknown; empty: string }) {
+  if (value === undefined || value === null) return <>{empty}</>;
+  if (typeof value !== "object") return <>{String(value)}</>;
+  return (
+    <details>
+      <summary>View full value</summary>
+      <pre>{JSON.stringify(value, null, 2)}</pre>
+    </details>
+  );
+}
 
 function LoadNotice({
   state,
@@ -383,11 +414,7 @@ function ProjectEditor({
             <option value="active">Active</option>
           </select>
         </label>
-        <p className="admin-status">
-          Activation needs verified authority, Slopbot, and a{" "}
-          <a href="#admin-vetting">passed scan</a> or an explicit recorded
-          exemption.
-        </p>
+        <a href="#admin-vetting">Security vetting details</a>
       </fieldset>
       <fieldset className="admin-fieldset">
         <legend>Discovery</legend>
@@ -579,23 +606,21 @@ function ProjectEditor({
           <p>No changes.</p>
         ) : (
           changedFields.map((field) => (
-            <details key={field}>
-              <summary>{field}</summary>
-              <p>Current</p>
-              <pre>
-                {JSON.stringify(
-                  (project.manifest as unknown as Record<string, unknown>)[
-                    field
-                  ],
-                  null,
-                  2,
-                ) ?? "Not set"}
-              </pre>
-              <p>Proposed</p>
-              <pre>
-                {JSON.stringify(preview?.[field], null, 2) ?? "Removed"}
-              </pre>
-            </details>
+            <ChangeReview
+              key={field}
+              label={changeLabel(field)}
+              before={
+                <ChangedValue
+                  value={
+                    (project.manifest as unknown as Record<string, unknown>)[
+                      field
+                    ]
+                  }
+                  empty="Not set"
+                />
+              }
+              after={<ChangedValue value={preview?.[field]} empty="Removed" />}
+            />
           ))
         )}
       </section>
@@ -856,6 +881,10 @@ function ProjectsSection({
                       <dd>{project.id}</dd>
                     </div>
                     <div>
+                      <dt>Discovery placement</dt>
+                      <dd>{project.manifest.listingTier}</dd>
+                    </div>
+                    <div>
                       <dt>Revision</dt>
                       <dd>
                         {project.revision} · updated{" "}
@@ -925,26 +954,34 @@ function ProjectsSection({
                 <div>
                   <h3>{project.manifest.name}</h3>
                   <p>
-                    {project.id} · Revision {project.revision} ·{" "}
-                    {project.manifest.listingTier}
+                    {project.manifest.repositories
+                      .map((repository) => repository.id)
+                      .join(", ")}
                   </p>
                   <StatusBadge
                     tone={
-                      project.enforcement.decisionRequired
+                      project.enforcement.decisionRequired ||
+                      project.enforcement.state === "banned"
                         ? "danger"
-                        : project.status === "active"
-                          ? "success"
-                          : "warning"
+                        : project.enforcement.state !== "clear" ||
+                            project.status !== "active"
+                          ? "warning"
+                          : "success"
                     }
                   >
-                    {project.status}
+                    {project.enforcement.decisionRequired
+                      ? "Moderator decision needed: confirmed malicious result"
+                      : project.enforcement.state !== "clear"
+                        ? project.enforcement.state === "banned"
+                          ? "Banned"
+                          : "Quarantined"
+                        : project.status}
                   </StatusBadge>
-                  {project.enforcement.decisionRequired ? (
-                    <p className="form-error">
-                      <CircleAlert aria-hidden="true" /> Moderator decision
-                      needed: confirmed malicious result
+                  {project.enforcement.state !== "clear" && (
+                    <p className="admin-status">
+                      Registry status: {project.status}
                     </p>
-                  ) : null}
+                  )}
                 </div>
                 <button
                   className="button secondary-button"

@@ -112,6 +112,13 @@ test("finalized project payments show net assets and source months on cycles and
       indexedAt: now,
     },
   ];
+  for (let index = 0; index < 4; index++) {
+    payments.push({
+      ...payments[0],
+      id: `ordinary-more-${index}`,
+      transactionId: `0x${String(index + 5).repeat(64)}`,
+    });
+  }
   let fail = true;
   await page.route("**/api/v1/payments/**vault-payments*", (route) => {
     if (fail) {
@@ -124,9 +131,9 @@ test("finalized project payments show net assets and source months on cycles and
     const second = new URL(route.request().url()).searchParams.has("after");
     return route.fulfill({
       json: {
-        payments: [payments[second ? 1 : 0]],
-        through: 2,
-        total: 2,
+        payments: second ? payments.slice(1) : payments.slice(0, 1),
+        through: payments.length,
+        total: payments.length,
         next: second ? null : 1,
       },
     });
@@ -139,7 +146,10 @@ test("finalized project payments show net assets and source months on cycles and
   await expect(history).toContainText("Project payment records unavailable.");
   await expect(history).not.toContainText("No finalized");
   await history.getByRole("button", { name: "Retry project payments" }).click();
-  await expect(history.getByRole("article")).toHaveCount(2);
+  await expect(history.getByRole("listitem")).toHaveCount(5);
+  await history.getByRole("button", { name: "Show all 6 payments" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(history.getByRole("listitem")).toHaveCount(6);
   await expect(history).toContainText(/98\s*USDC/u);
   await page.screenshot({
     path: info.outputPath("cycle-vault-payments.png"),
@@ -193,13 +203,29 @@ test("finalized project payments show net assets and source months on cycles and
   await page.goto(`${site}/contributors/${actor.login}`, {
     waitUntil: "networkidle",
   });
-  await expect(history.getByRole("article")).toHaveCount(2);
-  await expect(history).toContainText(/98\s*USDC/u);
-  await expect(history).not.toContainText("100 USDC");
-  await expect(history.locator("code")).toHaveText(token);
+  const profileHistory = page.getByRole("region", {
+    name: "Awards and payments",
+    exact: true,
+  });
+  await expect(
+    profileHistory
+      .getByRole("listitem")
+      .filter({ hasText: "Finalized vault payment" }),
+  ).toHaveCount(5);
+  await profileHistory
+    .getByRole("button", { name: /Show all .* records/u })
+    .click();
+  await expect(
+    profileHistory
+      .getByRole("listitem")
+      .filter({ hasText: "Finalized vault payment" }),
+  ).toHaveCount(6);
+  await expect(profileHistory).toContainText(/98\s*USDC/u);
+  await expect(profileHistory).not.toContainText("100 USDC");
+  await expect(profileHistory.locator("code")).toHaveText(token);
   // The established text-enlargement fixture checks 200% text at both
   // viewport widths; it does not claim to set native browser zoom.
-  await history.evaluate((element) => {
+  await profileHistory.evaluate((element) => {
     const sizes = [element, ...element.querySelectorAll<HTMLElement>("*")].map(
       (child) => ({
         child,
@@ -208,7 +234,7 @@ test("finalized project payments show net assets and source months on cycles and
     );
     for (const { child, size } of sizes) child.style.fontSize = `${size * 2}px`;
   });
-  await expect(history.locator("code")).toBeVisible();
+  await expect(profileHistory.locator("code")).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

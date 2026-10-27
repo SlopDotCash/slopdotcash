@@ -34,6 +34,7 @@ import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { shortAddress } from "./lib/wallets";
+import { CompactIdentifier } from "./Operations";
 import { PayoutConsent } from "./PayoutConsent";
 import {
   AWARD_STATUS,
@@ -600,15 +601,14 @@ export function EarningsPage({
                       <div className="wallet-card-main">
                         <h3>{family.label}</h3>
                         {addresses.length === 1 ? (
-                          <p className="wallet-card-address">
-                            <span aria-hidden="true" title={addresses[0]}>
-                              {shortAddress(addresses[0])}
-                            </span>
-                            <span className="visually-hidden">
-                              {addresses[0]}
-                            </span>
+                          <div className="wallet-card-address">
+                            <CompactIdentifier
+                              label={`${family.label} wallet address`}
+                              value={addresses[0]}
+                              preview={shortAddress(addresses[0])}
+                            />
                             {status(confirmed)}
-                          </p>
+                          </div>
                         ) : (
                           rows.some((r) => r.wallet) && (
                             <ul className="wallet-card-rows">
@@ -616,15 +616,11 @@ export function EarningsPage({
                                 wallet ? (
                                   <li key={chain}>
                                     <ChainIcon chain={chain} decorative />
-                                    <span
-                                      aria-hidden="true"
-                                      title={wallet.address}
-                                    >
-                                      {shortAddress(wallet.address)}
-                                    </span>
-                                    <span className="visually-hidden">
-                                      {NETWORK_NAMES[chain]} {wallet.address}
-                                    </span>
+                                    <CompactIdentifier
+                                      label={`${NETWORK_NAMES[chain]} wallet address`}
+                                      value={wallet.address}
+                                      preview={shortAddress(wallet.address)}
+                                    />
                                     {status(wallet.authorized)}
                                   </li>
                                 ) : null,
@@ -743,7 +739,7 @@ export function EarningsPage({
           ) : (
             <>
               <section aria-labelledby={`${heading}-payments`}>
-                <h2 id={`${heading}-payments`}>Payment history</h2>
+                <h2 id={`${heading}-payments`}>Awards and payments</h2>
                 {data.payments.length === 0 &&
                 data.monthlyAwards.length === 0 ? (
                   <p>No approved awards yet.</p>

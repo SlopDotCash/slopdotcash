@@ -1,6 +1,7 @@
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 import { copyText } from "./lib/copy-text";
+import "./operations-copy.css";
 
 /** A compact copy action with the same label for sighted and screen-reader users. */
 export function CopyButton({
@@ -64,5 +65,23 @@ export function CopyIdentifier({
       <code>{value}</code>
       <CopyButton label={label} text={value} />
     </span>
+  );
+}
+
+/** Touch and keyboard users can reveal the exact value before copying it. */
+export function CompactIdentifier({
+  label,
+  value,
+  preview,
+}: {
+  label: string;
+  value: string;
+  preview: string;
+}) {
+  return (
+    <details className="compact-identifier">
+      <summary aria-label={`Show full ${label}`}>{preview}</summary>
+      <CopyIdentifier label={label} value={value} />
+    </details>
   );
 }

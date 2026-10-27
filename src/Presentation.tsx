@@ -1,5 +1,5 @@
 import { ArrowRight, CircleAlert, RotateCcw, Wallet } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link } from "./Link";
 import { loginHref } from "./lib/browser-deployment";
 import type { CycleIndexEntry } from "./lib/cycle-index";
@@ -11,6 +11,56 @@ import type { ProjectDefinition } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 
 type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";
+
+/** A reference section that stays reachable through existing section links. */
+export function Disclosure({
+  id,
+  summary,
+  children,
+  className,
+  lazy = false,
+  revealFor = [],
+}: {
+  id?: string;
+  summary: ReactNode;
+  children: ReactNode;
+  className?: string;
+  lazy?: boolean;
+  revealFor?: readonly string[];
+}) {
+  const details = useRef<HTMLDetailsElement>(null);
+  const [activated, setActivated] = useState(!lazy);
+  const aliases = revealFor.join("\n");
+  useEffect(() => {
+    const reveal = () => {
+      const target = window.location.hash.slice(1);
+      if (
+        target &&
+        (target === id || aliases.split("\n").includes(target)) &&
+        details.current
+      ) {
+        setActivated(true);
+        details.current.open = true;
+      }
+    };
+    reveal();
+    window.addEventListener("hashchange", reveal);
+    return () => window.removeEventListener("hashchange", reveal);
+  }, [id, aliases]);
+  return (
+    <details
+      id={id}
+      className={className}
+      ref={details}
+      onToggle={(event) => {
+        if (event.currentTarget.open) setActivated(true);
+      }}
+    >
+      <summary>{summary}</summary>
+      {activated ? children : null}
+    </details>
+  );
+}
 
 function SectionNav({
   label,
@@ -133,14 +183,19 @@ export function StatusBadge({
   icon,
   children,
   className = "",
+  title,
 }: {
   tone?: RouteTone;
   icon?: ReactNode;
   children: ReactNode;
   className?: string;
+  title?: string;
 }) {
   return (
-    <span className={`route-badge route-badge--${tone} ${className}`}>
+    <span
+      className={`route-badge route-badge--${tone} ${className}`}
+      title={title}
+    >
       {icon ? <span aria-hidden="true">{icon}</span> : null}
       {children}
     </span>

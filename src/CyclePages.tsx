@@ -591,12 +591,9 @@ export function CycleArchivePage({
                   </div>
                 </dl>
               ) : (
-                <details className="cycle-amounts">
-                  <summary>
-                    {amountStage} <strong>{formatMicroUsdc(amount)}</strong>
-                  </summary>
-                  <CycleAmountHistory amounts={cycle.reward} />
-                </details>
+                <p className="cycle-current-amount">
+                  {amountStage} <strong>{formatMicroUsdc(amount)}</strong>
+                </p>
               )}
             </article>
           );

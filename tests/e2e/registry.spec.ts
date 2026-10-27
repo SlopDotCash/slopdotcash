@@ -2012,10 +2012,15 @@ test("an owner initializes a legacy monthly project without shortening its accep
       fullPage: true,
     });
     await expectAccessible(page);
-    await page
-      .getByRole("navigation", { name: "Project navigation", exact: true })
-      .getByRole("link", { name: "Funds & awards", exact: true })
-      .click();
+    const vaultSetupLink = page
+      .getByRole("status")
+      .filter({ hasText: "Published revision 5" })
+      .getByRole("link", { name: "Set up vault", exact: true });
+    await vaultSetupLink.focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(
+      new RegExp(`/projects/${project.id}/funding$`),
+    );
     await expect(
       page.getByRole("heading", { name: /Project vault.*Solana/i }),
     ).toBeVisible();

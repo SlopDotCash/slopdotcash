@@ -10,7 +10,10 @@ import {
   Wallet,
 } from "lucide-react";
 import { PENALTY_TABLE } from "../workers/slopbot/penalties";
+import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
+import { ContributionPointTiers } from "./PointsRules";
+import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
@@ -35,17 +38,20 @@ import {
   monthlyPoolLabel,
   NetworkName,
   PaymentLifecycle,
-  paymentStateLabel,
   RoutePageHeader,
   reviewBudgetLabel,
-  StatusBadge,
-  vaultStateLabel,
 } from "./Presentation";
 
 export function HowItWorksPage() {
   return (
     <main className="shell evidence-page how-it-works route-guide">
       <RoutePageHeader title="How Slop works" icon={<BookOpen />} />
+      <nav className="guide-role-nav" aria-label="Guide sections">
+        <a href="#contributor-path">Contributors</a>
+        <a href="#maintainer-path">Maintainers</a>
+        <a href="#points">Points</a>
+        <a href="#payments">Payments</a>
+      </nav>
       <div className="how-paths">
         <section aria-labelledby="contributor-path">
           <h2 id="contributor-path">For contributors</h2>
@@ -78,8 +84,9 @@ export function HowItWorksPage() {
               <Wallet className="route-step-icon" aria-hidden="true" />
               <strong>4. Points and payout</strong>
               <p>
-                Funded projects pay monthly by accepted-work Points share when
-                payments are enabled.
+                Track points and funded awards in{" "}
+                <Link href="/earnings">Payouts</Link>.{" "}
+                <a href="#payments">Payment stages and timing</a>.
               </p>
             </li>
           </ol>
@@ -117,8 +124,8 @@ export function HowItWorksPage() {
               <CalendarCheck className="route-step-icon" aria-hidden="true" />
               <strong>4. Automatic payment</strong>
               <p>
-                When payments are enabled, funded awards pay automatically 72
-                hours after the month ends, unless you turn this off.
+                Funded awards pay at the <a href="#payments">monthly cutoff</a>{" "}
+                unless you turn automatic payment off.
               </p>
             </li>
           </ol>
@@ -171,48 +178,7 @@ export function HowItWorksPage() {
             </p>
           </details>
         </div>
-        <section
-          className="plain-table-wrap score-tier-wrap"
-          aria-label="Contribution point tiers"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
-          tabIndex={0}
-        >
-          <table className="plain-table score-tier-table">
-            <caption>Contribution tiers</caption>
-            <thead>
-              <tr>
-                <th scope="col">Tier</th>
-                <th scope="col">Points</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <th scope="row">Micro</th>
-                <td>10</td>
-              </tr>
-              <tr>
-                <th scope="row">Small</th>
-                <td>30</td>
-              </tr>
-              <tr>
-                <th scope="row">Medium</th>
-                <td>90</td>
-              </tr>
-              <tr>
-                <th scope="row">Large</th>
-                <td>240</td>
-              </tr>
-              <tr>
-                <th scope="row">XL</th>
-                <td>450</td>
-              </tr>
-              <tr>
-                <th scope="row">Exceptional</th>
-                <td>750</td>
-              </tr>
-            </tbody>
-          </table>
-        </section>
+        <ContributionPointTiers />
       </section>
       <section className="worked-example">
         <div>
@@ -237,7 +203,13 @@ export function HowItWorksPage() {
         </dl>
       </section>
       <section className="custody-proof money-states">
-        <h2>Payment stages</h2>
+        <h2 id="payments">Payment stages</h2>
+        <p>
+          After each UTC month ends, the owner has 72 hours to adjust awards.
+          When payments are enabled, the vault then pays funded awards
+          automatically unless the owner turned this off. Awards without a
+          wallet remain reserved.
+        </p>
         <PaymentLifecycle />
       </section>
       <section
@@ -272,29 +244,12 @@ export function HowItWorksPage() {
           </p>
         </details>
         <details>
-          <summary>Does the model I use matter?</summary>
+          <summary>How do I receive an award?</summary>
           <p>
-            Not to your points. Disclose the provider, exact model, and client;
-            the declaration adds no points. From November 2026, monthly and
-            external-prize reward shares use accepted-work Points only. Optional
-            traces add no payment weight. Older calculations and funded awards
-            stay unchanged; unpaid September–October work stays subject to the
-            reviewed historical reconciliation.
-          </p>
-        </details>
-        <details>
-          <summary>How and when do I get paid?</summary>
-          <p>
-            Add a wallet for your award's network (Base, Solana, Robinhood Chain
-            or Ethereum) in <Link href="/account#wallets">Account wallets</Link>
-            . Wallet confirmation requires your signature. Awards wait for your
-            wallet.
-          </p>
-          <p>
-            Monthly. After a UTC month ends, the owner has 72 hours to adjust
-            awards. Then, if payments are enabled, the vault pays funded awards
-            automatically unless the owner turned that off. Slop publishes final
-            awards and payment evidence, not the owner's changes.
+            Add a wallet for your award's network in{" "}
+            <Link href="/account#wallets">Account wallets</Link>. Wallet
+            confirmation requires your signature. Follow the award and its
+            payment status in <Link href="/earnings">Payouts</Link>.
           </p>
         </details>
         <details>
@@ -561,24 +516,10 @@ export function SponsorsPage({
                     {NETWORK_NAMES[project.reward.chain]}
                   </NetworkName>
                 ) : null}
-                <div className="route-sponsor-status">
-                  <StatusBadge
-                    tone={
-                      project.escrow?.deployments.length ? "info" : "neutral"
-                    }
-                  >
-                    Vault: {vaultStateLabel(project)}
-                  </StatusBadge>
-                  <StatusBadge
-                    tone={
-                      project.reward.paymentMode === "enabled"
-                        ? "success"
-                        : "neutral"
-                    }
-                  >
-                    Payments: {paymentStateLabel(project)}
-                  </StatusBadge>
-                </div>
+                <FundingStatus
+                  project={project}
+                  className="route-sponsor-status"
+                />
                 {hasReviewBudget ? (
                   project.reward.reviewBudget ? (
                     <small>

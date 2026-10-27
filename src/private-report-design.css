@@ -1,0 +1,53 @@
+/* Compact private record presentation; report bodies stay in Security. */
+.inbox-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.8rem;
+}
+.private-report-status {
+  margin-block: 0.5rem;
+}
+.private-report-status p {
+  margin-block: 0.35rem;
+}
+.private-report-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  cursor: pointer;
+}
+.private-report-summary h3 {
+  display: inline;
+  margin: 0;
+}
+.private-report-summary::before {
+  content: "▸";
+}
+details[open] > .private-report-summary::before {
+  content: "▾";
+}
+.security-case:has(> details) {
+  padding: 1rem;
+}
+.security-case > details > .private-report-summary + * {
+  margin-top: 0.9rem;
+}
+
+.private-report-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+.private-report-heading h3 {
+  margin: 0;
+}
+.private-report-next {
+  margin-block: 0.5rem;
+}
+.private-report-next .security-next-step {
+  margin-block: 0.5rem;
+}

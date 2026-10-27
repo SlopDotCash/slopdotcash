@@ -19,6 +19,7 @@ import {
   knownAssetSymbol,
   type PaymentChain,
 } from "./lib/payments/contracts";
+import { StatusBadge } from "./Presentation";
 
 type PayoutTone = "success" | "warning" | "danger" | "neutral";
 
@@ -109,10 +110,14 @@ export function PayoutRow({
           {note ? ` · ${note}` : ""}
         </small>
       </span>
-      <span className="payout-pill" data-tone={status.tone} title={statusTitle}>
-        <status.icon aria-hidden="true" size={14} />
+      <StatusBadge
+        className="payout-pill"
+        tone={status.tone}
+        title={statusTitle}
+        icon={<status.icon aria-hidden="true" size={14} />}
+      >
         {status.label}
-      </span>
+      </StatusBadge>
       {transactionUrl ? (
         <a
           className="payout-tx"
