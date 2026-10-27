@@ -55,19 +55,7 @@ export async function collectIndirectValueAcceptance(
   const closedAt = Date.parse(source.pull.closed_at);
   const texts = source.comments
     .filter((c) => /\b(?:merged?|integrat(?:ed|ion))\b/iu.test(c.body))
-    // Receipt IDs and skill revisions describe the agent, not an integration.
-    // Remove them only from discovery; retain the complete comment evidence.
-    .map((c) =>
-      c.body
-        .replace(
-          /<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:v[12]|slop-contribution-attribution:v1)\b[\s\S]*?-->/giu,
-          "",
-        )
-        .replace(
-          /^\s*(?:[-*+]\s+)?(?:\*\*)?(?:Contribution skill revision|Skill revision)(?:\*\*)?\s*:[^\r\n]*/gimu,
-          "",
-        ),
-    );
+    .map((c) => c.body);
   const hints = [
     ...new Set(
       texts.flatMap((text) =>

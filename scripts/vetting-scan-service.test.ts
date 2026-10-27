@@ -70,7 +70,7 @@ const templateInputs = {
   rendererSources: [{ path: "src/render.mjs", sha256: digest(rendererText) }],
   acceptedRevisions: ["1"],
 };
-const TEMPLATE = digest(JSON.stringify(templateInputs));
+let templateSha256 = digest(JSON.stringify(templateInputs));
 const REPOSITORY_FILES: Record<string, string> = {
   "README.md": "# Fixture\nRun `bun test`.\n",
   "AGENTS.md": "Keep changes small and run the tests.\n",
@@ -95,6 +95,8 @@ let server: ReturnType<typeof Bun.serve>;
 let config: ScanServiceConfig;
 let resultPublicKeys: string;
 let ids = 0;
+let acquisitionRequests: { host: string; authorization: string | null }[];
+let publicGitHubLimit: number;
 /** The inventory items the primary reviewer last received. */
 let reviewedItems: { id: string; text: string }[] = [];
 /** What the synthetic Surplus provider answers on each transport. */
@@ -225,7 +227,7 @@ async function surplus(request: Request, path: string): Promise<Response> {
   });
 }
 
-const readLivePin = async () => ({ commitSha, templateSha256: TEMPLATE });
+const readLivePin = async () => ({ commitSha, templateSha256 });
 const randomId = () =>
   `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`;
 const actorOf = (request: Request) =>
@@ -398,20 +400,35 @@ const flagApi = (request: Request) =>
 async function route(incoming: Request): Promise<Response> {
   const url = new URL(incoming.url);
   const host = incoming.headers.get("x-fixture-host");
+  acquisitionRequests.push({
+    host: host ?? "",
+    authorization: incoming.headers.get("authorization"),
+  });
   const path = url.pathname;
   if (host === "api.surplusintelligence.ai") return surplus(incoming, path);
   if (host === "raw.githubusercontent.com")
     return path.endsWith("/src/render.mjs")
       ? new Response(rendererText)
       : new Response(null, { status: 404 });
-  if (host === "api.github.com") return github(url);
+  if (host === "api.github.com") {
+    const requests = acquisitionRequests.filter((r) => r.host === host);
+    if (
+      requests.length > publicGitHubLimit &&
+      incoming.headers.get("authorization") !== "Bearer fixture-github-key"
+    )
+      return Response.json(
+        { message: "API rate limit exceeded" },
+        { status: 403 },
+      );
+    return github(url);
+  }
   const request = new Request(`${ORIGIN}${path}${url.search}`, incoming);
   if (path === "/skill-templates/index.json")
     return Response.json({
       schemaVersion: "1",
       repository: "example/templates",
       commit: commitSha,
-      templateSha256: TEMPLATE,
+      templateSha256,
       revisionStatus: "committed",
       contributor: templateInputs.contributor,
       reviewer: templateInputs.reviewer,
@@ -460,6 +477,10 @@ const profile = (
 });
 
 beforeEach(async () => {
+  acquisitionRequests = [];
+  publicGitHubLimit = Number.POSITIVE_INFINITY;
+  templateInputs.acceptedRevisions = ["1"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
   clock = NOW;
   root = await mkdtemp(join(tmpdir(), "slop-scan-service-"));
   repository = join(root, "git");
@@ -563,6 +584,74 @@ async function activate() {
     }),
   );
 }
+
+test("authenticated source acquisition exceeds the public quota without sharing its credential", async () => {
+  await commit(
+    Object.fromEntries(
+      Array.from({ length: 65 }, (_, i) => [
+        `src/file-${i}.ts`,
+        `export const value${i} = ${i};\n`,
+      ]),
+    ),
+    "Public repository exceeds the anonymous request allowance",
+  );
+  publicGitHubLimit = 60;
+  provider.up = false;
+  const unauthenticated = await runScanPass(config);
+  expect(unauthenticated.assessments[0]).toMatchObject({
+    state: "retry",
+    step: "acquire",
+  });
+  acquisitionRequests = [];
+  config.githubToken = "fixture-github-key";
+  const authenticated = await runScanPass(config);
+  expect(authenticated.assessments[0]).toMatchObject({
+    state: "retry",
+    step: "primary-review",
+  });
+  const githubRequests = acquisitionRequests.filter(
+    (r) => r.host === "api.github.com",
+  );
+  expect(githubRequests.length).toBeGreaterThan(60);
+  expect(
+    githubRequests.every(
+      (r) => r.authorization === "Bearer fixture-github-key",
+    ),
+  ).toBe(true);
+  expect(
+    acquisitionRequests
+      .filter((r) => r.host !== "api.github.com")
+      .every((r) => r.authorization !== "Bearer fixture-github-key"),
+  ).toBe(true);
+  expect(await readdir(config.workDirectory)).toEqual([]);
+});
+
+test("a template update replaces stale queued work without changing its retained assessment", async () => {
+  provider.up = false;
+  const first = await runScanPass(config);
+  const original = await vetting.getAssessment(
+    first.assessments[0].assessmentId,
+  );
+  expect(original?.state).toBe("pending");
+  if (!original) throw new Error("The first scan was not queued");
+
+  templateInputs.acceptedRevisions = ["1", "2"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
+  clock = new Date(clock.getTime() + 1000);
+  const next = await runScanPass(config);
+  const pending = await vetting.pendingAssessments();
+  expect(pending).toHaveLength(1);
+  expect(pending[0].templateSha256).toBe(templateSha256);
+  expect(pending[0].id).not.toBe(original?.id);
+  expect(next.assessments).toEqual([
+    { assessmentId: pending[0].id, state: "retry", step: "primary-review" },
+  ]);
+  expect(await vetting.getAssessment(original.id)).toEqual(original);
+  expect(await vetting.listAssessments()).toHaveLength(2);
+  await runScanPass(config);
+  expect(await vetting.listAssessments()).toHaveLength(2);
+  expect((await activate()).status).toBe(422);
+});
 
 test("a provider outage leaves the scan pending; the next pass clears the project with one Surplus review", async () => {
   provider.up = false;
@@ -800,6 +889,14 @@ test("a two-flag pause is reinstated automatically after the service's clean fre
   await runScanPass(config);
   expect((await activate()).status).toBe(200);
 
+  // An unfinished scan must not block a later scan covering new flags.
+  await commit({ "README.md": "# Updated fixture\n" }, "Update public guide");
+  provider.up = false;
+  const interrupted = await runScanPass(config);
+  const oldId = interrupted.assessments[0].assessmentId;
+  expect((await vetting.getAssessment(oldId))?.state).toBe("pending");
+  provider.up = true;
+
   expect((await flag("alice")).status).toBe(201);
   clock = new Date(NOW.getTime() + 60_000);
   expect(await (await flag("bob")).json()).toMatchObject({
@@ -812,9 +909,31 @@ test("a two-flag pause is reinstated automatically after the service's clean fre
       .status,
   ).toBe(410);
 
+  // An older app can write the same flags in a different order during rollout.
+  // The database must refuse that duplicate before it supersedes this scan.
+  const pending = await vetting.pendingAssessments();
+  expect(() =>
+    sqlite
+      .query(
+        `INSERT INTO vetting_assessments
+         (id, project_id, revision, manifest_sha256, content_sha256, commit_sha,
+          template_sha256, requested_by_github_id, requested_by_github_login,
+          requested_at, request_reason, state, flag_ids)
+         SELECT ?, project_id, revision, manifest_sha256, content_sha256, commit_sha,
+                template_sha256, requested_by_github_id, requested_by_github_login,
+                requested_at, request_reason, state,
+                (SELECT json_group_array(value) FROM
+                  (SELECT value FROM json_each(a.flag_ids) ORDER BY value DESC))
+           FROM vetting_assessments a WHERE id = ?`,
+      )
+      .run(`vet_${"f".repeat(32)}`, pending[0].id),
+  ).toThrow(/vetting_assessments.current_pending/u);
+
   clock = new Date(NOW.getTime() + 120_000);
   const report = await runScanPass(config);
   const [{ assessmentId }] = report.assessments;
+  expect(assessmentId).not.toBe(oldId);
+  expect((await vetting.getAssessment(oldId))?.state).toBe("pending");
   expect(report.assessments).toEqual([
     {
       assessmentId,

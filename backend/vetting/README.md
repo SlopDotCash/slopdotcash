@@ -84,6 +84,11 @@ skills, discovery and public clearance responses use no-store. Each request
 checks current private evidence; an old cache cannot bypass access expiry.
 
 A queued rescan keeps the last finished decision until its result lands.
+The service queue returns only the newest assessment for each project. A
+changed commit, template, revision or active flag set can queue a replacement
+while an older scan is pending. Repeating the current pending request does
+not add a row. Superseded assessments remain unchanged in the audit history;
+they do not establish clearance or prevent the current scan from running.
 Reinstatement after a ban uses the ADM-06 path and the exact reviewed scan
 records described in [Independent reinstatement](#independent-reinstatement).
 

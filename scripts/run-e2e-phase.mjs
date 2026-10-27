@@ -29,13 +29,17 @@ export function runE2ePhase({
       stdio: ["ignore", "pipe", "pipe"],
     });
     let settled = false;
+    let timedOut = false;
+    let cleanupTimer;
     const finish = (status) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(cleanupTimer);
       resolvePhase(status);
     };
     const timer = setTimeout(() => {
+      timedOut = true;
       process.stderr.write(
         `[${label}] exceeded the ${timeoutMs}ms phase deadline\n`,
       );
@@ -64,11 +68,18 @@ export function runE2ePhase({
           }
         }
       }
-      // A descendant can retain an inherited pipe after the launcher exits.
-      // Do not wait for close to enforce the failed phase's deadline.
-      child.stdout.destroy();
-      child.stderr.destroy();
-      finish(1);
+      // Sending SIGKILL is asynchronous. Wait for close (including inherited
+      // pipes) before reporting cleanup complete; otherwise a descendant can
+      // still finish a write after the caller starts its next phase.
+      // Keep this wait bounded if a descendant escaped the process group.
+      cleanupTimer = setTimeout(() => {
+        process.stderr.write(
+          `[${label}] process cleanup did not close its pipes\n`,
+        );
+        child.stdout.destroy();
+        child.stderr.destroy();
+        finish(1);
+      }, 5000);
     }, timeoutMs);
     prefixLines(child.stdout, label, process.stdout);
     prefixLines(child.stderr, label, process.stderr);
@@ -78,7 +89,7 @@ export function runE2ePhase({
     });
     child.on("close", (status, signal) => {
       if (signal) process.stderr.write(`[${label}] terminated by ${signal}\n`);
-      finish(status ?? 1);
+      finish(timedOut ? 1 : (status ?? 1));
     });
   });
 }
