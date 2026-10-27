@@ -1,19 +1,11 @@
 # Referral distributor: Robinhood Chain Testnet runbook (prepare only)
 
-Owner decision, 27 October 2026: defer referrals from launch. Keep the Worker
-mode Off and the program flag false. Do not execute this rehearsal or resume
-token setup, funding or posting under the earlier launch request. These are
-not launch requirements. Preserve this procedure for review after a separate
-owner reactivation approval, under
-[PRD section 11](slop-product-requirements.md#referral-program).
-
 This runbook rehearses `ReferralDistributor` on Robinhood Chain Testnet
 (chain id 46630) with a mock token. It is a preparation document: nothing in
 it has been run and no address below is a deployment. The owner approved the
 program and its initial parameters in PRD section 11, "Referral program", and
-requested full integration and activation on 25 October 2026; the deferral
-above supersedes that launch request. The program token is not deployed yet.
-After reapproval, complete and record this rehearsal before live activation.
+requested full integration and activation on 25 October 2026. The program token
+is not deployed yet. Complete and record this rehearsal before live activation.
 A human or owner-authorized agent may run the reviewed steps under PRD
 section 11. Keep credentials private.
 Never run this script on chain id 4663 and never use a production key.

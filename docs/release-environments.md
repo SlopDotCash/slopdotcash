@@ -45,11 +45,7 @@ The approved referral Worker follows the normal checked `main` release. Its
 reviewed configuration starts Off and requires no manual Worker shell or
 separate release flag. Deployment verifies one active version tagged with the
 tested source. Live posting remains separate from deployment and requires the
-token, funded distributor and operating controls in PRD section 11. Owner
-decision, 27 October 2026: referrals are deferred from launch. Keep mode Off
-and the program flag false until separate owner reactivation approval;
-referral setup and qualification do not block launch. Preserve the Worker
-and its history.
+token, funded distributor and operating controls in PRD section 11.
 
 Staging uses separate private storage and keys. Its API is on the staging
 website origin. Its identity origin is `https://identity-staging.slop.cash`.
