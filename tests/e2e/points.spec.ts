@@ -60,7 +60,9 @@ test(
     await expect(coverage).toHaveText(
       /^(This month ranks .+ UTC to .+ UTC\. )?Snapshot window: .+ UTC to .+ UTC\. Source: [\d,]+ merged pull requests and [\d,]+ closed issues across [\d,]+ repositories\.$/u,
     );
-    await page.getByRole("button", { name: "Lifetime", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Recorded history", exact: true })
+      .click();
     await expect(coverage).toContainText(/Includes [\d,]+ closed cycles?\.$/u);
     await expect(page.getByRole("table")).toBeVisible({ timeout: 30000 });
     await expect(
@@ -75,14 +77,14 @@ test(
       page.getByRole("columnheader", { name: "Money received", exact: true }),
     ).toHaveAttribute("aria-sort", "descending");
     await expect(
-      page.getByRole("button", { name: "Lifetime", exact: true }),
+      page.getByRole("button", { name: "Recorded history", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "Points", exact: true }).click();
     await expect(page.getByLabel("Cohort", { exact: true })).toHaveCount(0);
     // The earlier combined link still opens recorded history.
     await page.goto("/points?period=new");
     await expect(
-      page.getByRole("button", { name: "Lifetime", exact: true }),
+      page.getByRole("button", { name: "Recorded history", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await page.goto("/points?sort=points&period=lifetime");
     await expect(
@@ -107,7 +109,9 @@ test(
       });
     }
 
-    await page.getByRole("button", { name: "Lifetime", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Recorded history", exact: true })
+      .click();
     const first = page.getByRole("table").getByRole("row").nth(1);
     const login = await first.getByRole("link").innerText();
     await page.getByLabel("Find a contributor").fill(login);
