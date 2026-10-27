@@ -309,6 +309,27 @@ export default function InboxPage() {
           </button>
         ))}
       </nav>
+      {state.status === "loading" ? (
+        <p role="status">Loading your inbox…</p>
+      ) : null}
+      {state.status === "signed-out" ? (
+        <SignInPanel
+          state={{ status: "signed-out" }}
+          next={`/inbox${window.location.search}`}
+        />
+      ) : null}
+      {state.status === "error" ? (
+        <div role="alert">
+          <p>{state.message}</p>
+          <button
+            className="button secondary-button"
+            type="button"
+            onClick={load}
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
       {view === "reports" && recipient !== null ? (
         <Suspense fallback={<p role="status">Loading reports…</p>}>
           <SecurityInbox embedded key={recipient} />
@@ -316,27 +337,6 @@ export default function InboxPage() {
       ) : null}
       {view === "notifications" ? (
         <>
-          {state.status === "loading" ? (
-            <p role="status">Loading your inbox…</p>
-          ) : null}
-          {state.status === "signed-out" ? (
-            <SignInPanel
-              state={{ status: "signed-out" }}
-              next={`/inbox${window.location.search}`}
-            />
-          ) : null}
-          {state.status === "error" ? (
-            <div role="alert">
-              <p>{state.message}</p>
-              <button
-                className="button secondary-button"
-                type="button"
-                onClick={load}
-              >
-                Retry
-              </button>
-            </div>
-          ) : null}
           {grantError ? (
             <p role="alert" className="form-error">
               {GRANT_ERRORS[grantError] ?? GRANT_ERRORS.grant_exchange_failed}{" "}
