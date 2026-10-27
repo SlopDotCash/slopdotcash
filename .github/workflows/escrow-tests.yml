@@ -26,6 +26,7 @@ on:
       - 'src/lib/*commitment-actions.ts'
       - 'src/lib/use-payout-wallets.ts'
       - 'tests/e2e/*vault-actions.spec.ts'
+      - 'tests/e2e/fixtures.ts'
       - 'src/lib/wallets.ts'
       - 'src/lib/wallet-registration.ts'
       - 'src/lib/funding-address.*'

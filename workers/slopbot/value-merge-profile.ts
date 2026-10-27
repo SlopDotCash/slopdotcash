@@ -1,5 +1,5 @@
 /** A server-created collection recipe, not uploaded resolution evidence. */
-import { sha256Hex } from "./github";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { ValueEvidence } from "./value-evidence";
 import type { ValueMergeResolution } from "./value-merge-resolution";
 

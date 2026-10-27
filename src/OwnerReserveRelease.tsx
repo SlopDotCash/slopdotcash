@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
+import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import {
@@ -64,11 +65,7 @@ export default function OwnerReserveRelease({
     try {
       await action();
     } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "The release is unavailable. Retry.",
-      );
+      setError(errorMessage(reason, "The release is unavailable. Retry."));
     } finally {
       setBusy(false);
     }

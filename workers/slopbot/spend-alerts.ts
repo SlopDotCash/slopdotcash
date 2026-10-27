@@ -3,6 +3,7 @@ import {
   SLOPBOT_SPEND_NOTICE_PATH,
   validSpendNotice,
 } from "../notify/contracts";
+import { deliverNotice } from "./failure-alerts";
 import type { D1Database } from "./persistence";
 
 type NotifyBinding = { fetch(request: Request): Promise<Response> };
@@ -54,26 +55,24 @@ export async function dispatchSpendAlert(
     )
     .first();
   if (!claimed) return;
-  let outcome = "ambiguous";
-  try {
-    const response = await notify.fetch(
-      new Request(`https://notify.internal${SLOPBOT_SPEND_NOTICE_PATH}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(row),
-      }),
-    );
-    if (response.status === 202) outcome = "accepted";
-  } catch {
-    // Acceptance may precede a transport error. Retain the durable claim.
-  }
-  await db
-    .prepare(
-      `INSERT INTO slopbot_spend_alert_receipts(month,threshold_micro_usd,outcome,recorded_at) VALUES (?,?,?,?)`,
-    )
-    .bind(row.month, row.thresholdMicroUsd, outcome, new Date().toISOString())
-    .run();
-  if (outcome !== "accepted")
+  const accepted = await deliverNotice(
+    notify,
+    SLOPBOT_SPEND_NOTICE_PATH,
+    row,
+    (outcome) =>
+      db
+        .prepare(
+          `INSERT INTO slopbot_spend_alert_receipts(month,threshold_micro_usd,outcome,recorded_at) VALUES (?,?,?,?)`,
+        )
+        .bind(
+          row.month,
+          row.thresholdMicroUsd,
+          outcome,
+          new Date().toISOString(),
+        )
+        .run(),
+  );
+  if (!accepted)
     throw new Error(
       "Slopbot cost alert delivery needs operator reconciliation",
     );

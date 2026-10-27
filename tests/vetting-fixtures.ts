@@ -9,18 +9,7 @@
 import { createHash } from "node:crypto";
 import { vettingSignedMessage } from "../backend/vetting/handler";
 import { TELEMETRY_CHANNELS } from "../backend/vetting/result";
-
-export type VettingFixtureTarget = {
-  assessmentId: string;
-  projectId: string;
-  revision: number;
-  manifestSha256: string;
-  repository: string;
-  /** The integration-branch commit the queue assigned. */
-  commitSha: string;
-  /** The skill template input digest the queue assigned. */
-  templateSha256: string;
-};
+import type { QueuedScan } from "../workers/vetting/bounded-scan";
 
 export const VETTING_TRACE_BODY = "Harmless synthetic private vetting trace.\n";
 export const VETTING_TRACE_SHA = createHash("sha256")
@@ -63,7 +52,7 @@ export const VETTING_EVIDENCE_OBJECTS = [
 const digest = (character: string) => character.repeat(64);
 
 export function vettingResult(
-  target: VettingFixtureTarget,
+  target: QueuedScan,
   disposition: "clean" | "incomplete" | "malicious",
 ) {
   const complete = Object.fromEntries(
@@ -234,7 +223,7 @@ export async function signedVettingHeaders(
  * `retain(assessmentId, runId)` makes a clean result admissible.
  */
 export function vettingScanResult(
-  target: VettingFixtureTarget,
+  target: QueuedScan,
   disposition: "clean" | "incomplete" | "malicious",
   options: {
     runId?: string;

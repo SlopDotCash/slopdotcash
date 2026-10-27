@@ -12,6 +12,7 @@ import {
   allocationFundingMinor,
   deriveAllocationFundingBasis,
 } from "./allocation-funding";
+import type { EscrowChain } from "./escrow-policy.mjs";
 import { fundingAssetForNetwork } from "./funding-address.mjs";
 import type {
   CapUsageStatus,
@@ -40,9 +41,9 @@ import {
 } from "./projects.mjs";
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
-import { penaltyDeductions } from "./score-penalties";
+import { eventThirds, penaltyDeductions } from "./score-penalties";
 
-export const MAX_CREDITED_TOKENS_PER_OUTCOME = 1_000_000;
+const MAX_CREDITED_TOKENS_PER_OUTCOME = 1_000_000;
 const SHARE_PARTS_PER_MILLION = 1_000_000;
 
 export interface ProjectUsageSummary {
@@ -76,8 +77,17 @@ export interface ProjectContributor {
   projectedSharePartsPerMillion: number | null;
   /** Applied Slopbot debit thirds in this project and cycle. */
   penaltyThirds: number;
-  /** An explicit payout exclusion for this cycle; the score is kept. */
+  /** An explicit payout exclusion for this cycle; the Points are kept. */
   payoutExclusion: PayoutExclusionRelationship | null;
+}
+
+/**
+ * Reads a projection that this view's reward kind always sets. A null here is
+ * a broken invariant, never a zero amount or share.
+ */
+export function requiredProjection<T>(value: T | null, field: string): T {
+  if (value === null) throw new TypeError(`Missing projected ${field}`);
+  return value;
 }
 
 export interface ReceiptConflict {
@@ -93,7 +103,7 @@ export type ProjectRewardProjection =
   | {
       kind: "monthly-pool";
       currency: "USDC" | "USDG";
-      chain: "solana" | "base" | "robinhood" | "ethereum";
+      chain: EscrowChain;
       capMinor: string;
       projectedPrincipalMinor: string;
       platformFeeMinor: string;
@@ -576,7 +586,7 @@ export function createProjectView(
     const events = ledger.filter((event) => event.actor.id === actor.id);
     const usage = usageForActor(actor.id, events, runs);
     const earnedThirds = events.reduce(
-      (total, event) => total + (event.scoreThirds ?? event.points * 3),
+      (total, event) => total + eventThirds(event),
       0,
     );
     const penaltyThirds = deductions.get(actor.id) ?? 0;

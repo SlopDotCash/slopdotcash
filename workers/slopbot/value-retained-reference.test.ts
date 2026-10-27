@@ -103,6 +103,7 @@ function fixture({
     comments: [comment],
     resolution: commit(merge) as ReturnType<typeof commit> | null,
     failure: false,
+    failureStatus: 422,
     calls: [] as string[],
     routes: new Map<string, unknown>(),
   };
@@ -118,7 +119,12 @@ function fixture({
         result = { id: 42, node_id: repository.expectedNodeId, private: false };
       else if (url.pathname === `${root}/commits/${short}`) {
         if (state.failure)
-          throw new GitHubError(422, "Ambiguous local reference");
+          throw new GitHubError(
+            state.failureStatus,
+            state.failureStatus === 422
+              ? "Ambiguous local reference"
+              : "Short reference lookup unavailable",
+          );
         result = state.resolution;
       } else if (url.pathname === `${root}/commits/${merge}/pulls`)
         result = [{ number: 2, merged_at: mergedAt, merge_commit_sha: merge }];
@@ -536,6 +542,17 @@ for (const [name, originalCommitAuthor] of [
       "PR_1: retained primary author identity differs between commits",
     );
   });
+
+for (const status of [403, 500, 503]) {
+  test(`a ${status} short merge lookup stops collection instead of dropping the acknowledgement`, async () => {
+    const f = fixture();
+    f.state.failure = true;
+    f.state.failureStatus = status;
+    await expect(f.collect()).rejects.toThrow(
+      "Short reference lookup unavailable",
+    );
+  });
+}
 
 test("a hint flood holds the source instead of hiding the acknowledgement", async () => {
   const f = fixture();

@@ -11,7 +11,6 @@ import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
   copyFileSync,
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -25,6 +24,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gunzipSync } from "node:zlib";
+import {
+  copyFixtureHistory,
+  copyFixtureSkills,
+} from "../tests/fixture-overlay.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtures = join(repositoryRoot, "tests", "fixtures");
@@ -69,10 +72,8 @@ function overlayFixtures(workspace) {
     registry,
     `\nexport const PROJECT_REGISTRY_SYNCED_AT = ${JSON.stringify(FIXTURE_REGISTRY_SYNCED_AT)};\n`,
   );
-  cpSync(join(fixtures, "skills"), join(workspace, "skills"), {
-    recursive: true,
-  });
-  cpSync(join(fixtures, "history"), workspace, { recursive: true });
+  copyFixtureSkills(join(workspace, "skills"));
+  copyFixtureHistory(workspace);
 }
 
 export async function prepareE2eFixture() {

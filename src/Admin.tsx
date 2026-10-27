@@ -7,18 +7,12 @@
  */
 
 import { CircleAlert, RotateCcw } from "lucide-react";
-import {
-  type FormEvent,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { ProjectEnforcementPanel } from "./AdminProjectEnforcement";
 import { ActivationClearance, VettingSection } from "./AdminVetting";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
+import { errorMessage } from "./lib/errors";
 import {
   type AdminProject,
   type ProjectSessionState,
@@ -36,8 +30,9 @@ import {
   type RewardAssetNetwork,
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
+import { usePublicResource } from "./lib/use-public-resource";
 import { loginHref } from "./Points";
-import { errorMessage, formatTime } from "./Presentation";
+import { formatDateTime } from "./Presentation";
 
 export function SignInPanel({
   state,
@@ -70,44 +65,6 @@ export function SignInPanel({
   );
 }
 
-type LoadState<T> =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; value: T };
-
-function useAdminData<T>(
-  path: string,
-  select: (body: never) => T,
-): [LoadState<T>, () => void] {
-  const [state, setState] = useState<LoadState<T>>({ status: "loading" });
-  // Only the newest request may settle, so a slow reply cannot overwrite a
-  // retry or a newer tab selection.
-  const generation = useRef(0);
-  const load = useCallback(() => {
-    const current = ++generation.current;
-    setState({ status: "loading" });
-    projectApiRequest<never>("GET", path).then(
-      (body) => {
-        if (generation.current === current) {
-          setState({ status: "ready", value: select(body) });
-        }
-      },
-      (error: unknown) => {
-        if (generation.current === current) {
-          setState({ status: "error", message: errorMessage(error) });
-        }
-      },
-    );
-  }, [path, select]);
-  useEffect(() => {
-    load();
-    return () => {
-      generation.current += 1;
-    };
-  }, [load]);
-  return [state, load];
-}
-
 function LoadNotice({
   state,
   retry,
@@ -134,7 +91,15 @@ function LoadNotice({
   );
 }
 
-const selectProjects = (body: { projects: AdminProject[] }) => body.projects;
+/** The admin project list; the API checks admin authority on every read. */
+const loadAdminProjects = async () => ({
+  projects: (
+    await projectApiRequest<{ projects: AdminProject[] }>(
+      "GET",
+      "admin/projects",
+    )
+  ).projects,
+});
 
 type AssetDraft = {
   network: RewardAssetNetwork;
@@ -592,7 +557,7 @@ function ProjectEditor({
         ) : null}
         <p className="admin-status">
           {project.manifest.rewardAsset
-            ? `Stored: ${project.manifest.rewardAsset.symbol}, ${project.manifest.rewardAsset.decimals} decimals, verified ${formatTime(project.manifest.rewardAsset.verifiedAt)} UTC.`
+            ? `Stored: ${project.manifest.rewardAsset.symbol}, ${project.manifest.rewardAsset.decimals} decimals, verified ${formatDateTime(project.manifest.rewardAsset.verifiedAt)}.`
             : "No reward asset is stored yet."}{" "}
           A changed token is read from chain once when you save.
         </p>
@@ -785,7 +750,11 @@ function ProjectsSection({
   onSelect: (id: string | null) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [state, reload] = useAdminData("admin/projects", selectProjects);
+  const [state, reload] = usePublicResource(
+    true,
+    loadAdminProjects,
+    "Something went wrong.",
+  );
   const [editing, setEditing] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   // Confirmed malicious results that wait for a moderator decision come
@@ -793,10 +762,10 @@ function ProjectsSection({
   const matchingProjects =
     state.status === "ready"
       ? [
-          ...state.value.filter(
+          ...state.projects.filter(
             (project) => project.enforcement.decisionRequired,
           ),
-          ...state.value.filter(
+          ...state.projects.filter(
             (project) => !project.enforcement.decisionRequired,
           ),
         ].filter((project) =>
@@ -838,7 +807,7 @@ function ProjectsSection({
       ) : null}
       {state.status !== "ready" ? (
         <LoadNotice label="projects" retry={reload} state={state} />
-      ) : state.value.length === 0 ? (
+      ) : state.projects.length === 0 ? (
         <p className="admin-status">No projects are listed yet.</p>
       ) : (
         <>
@@ -861,7 +830,7 @@ function ProjectsSection({
                     <dt>Revision</dt>
                     <dd>
                       {project.revision} · updated{" "}
-                      {formatTime(project.updatedAt)} UTC
+                      {formatDateTime(project.updatedAt)}
                     </dd>
                   </div>
                   <div>
@@ -952,7 +921,7 @@ function ProjectsSection({
   );
 }
 
-export function AdminPage() {
+export default function AdminPage() {
   const [selectedProject, setSelectedProject] = useState(() =>
     new URLSearchParams(window.location.search).get("project"),
   );
@@ -1019,5 +988,3 @@ export function AdminPage() {
     </main>
   );
 }
-
-export default AdminPage;

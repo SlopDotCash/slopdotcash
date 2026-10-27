@@ -1,3 +1,4 @@
+import { readBoundedJson } from "../../src/lib/browser-json";
 import { deploymentTier } from "../../src/lib/deployment";
 import { identityPublicOrigin } from "./contracts";
 import { randomToken } from "./crypto";
@@ -31,7 +32,7 @@ type Env = {
   };
 };
 
-export const MAX_GITHUB_RESPONSE_BYTES = 64 * 1024;
+const MAX_GITHUB_RESPONSE_BYTES = 64 * 1024;
 export const PRIVATE_INTAKE_STATUS_URL =
   "https://api.github.com/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting";
 
@@ -101,43 +102,6 @@ function classifyRejection(response: Response): PrivateIntakeSkipReason {
     return "unauthorized";
   }
   return "rejected";
-}
-
-export async function readBoundedGithubJson(
-  response: Response,
-): Promise<unknown> {
-  const declared = response.headers.get("content-length");
-  if (
-    declared !== null &&
-    (!/^\d+$/u.test(declared) || Number(declared) > MAX_GITHUB_RESPONSE_BYTES)
-  ) {
-    throw new RangeError("GitHub response exceeded its size limit");
-  }
-  if (!response.body) throw new TypeError("GitHub returned no readable body");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      total += chunk.value.byteLength;
-      if (total > MAX_GITHUB_RESPONSE_BYTES) {
-        await reader.cancel();
-        throw new RangeError("GitHub response exceeded its size limit");
-      }
-      chunks.push(chunk.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
 }
 
 function rateLimitKey(request: Request): string {
@@ -279,7 +243,11 @@ async function resolveGithubIdentity(
       },
     );
     if (!tokenResponse.ok) return null;
-    const tokenBody = await readBoundedGithubJson(tokenResponse);
+    const tokenBody = await readBoundedJson(
+      tokenResponse,
+      MAX_GITHUB_RESPONSE_BYTES,
+      "GitHub token response",
+    );
     if (typeof tokenBody !== "object" || tokenBody === null) return null;
     const candidate = (tokenBody as { access_token?: unknown }).access_token;
     const tokenType = (tokenBody as { token_type?: unknown }).token_type;
@@ -303,7 +271,11 @@ async function resolveGithubIdentity(
     });
     accessToken = "";
     if (!userResponse.ok) return null;
-    const user = await readBoundedGithubJson(userResponse);
+    const user = await readBoundedJson(
+      userResponse,
+      MAX_GITHUB_RESPONSE_BYTES,
+      "GitHub user",
+    );
     if (typeof user !== "object" || user === null) return null;
     const id = (user as { id?: unknown }).id;
     const login = (user as { login?: unknown }).login;
@@ -386,7 +358,11 @@ export async function renewPrivateIntakeStatus(options: {
   }
   let value: unknown;
   try {
-    value = await readBoundedGithubJson(response);
+    value = await readBoundedJson(
+      response,
+      MAX_GITHUB_RESPONSE_BYTES,
+      "GitHub intake status",
+    );
   } catch {
     return { status: "skipped", reason: "malformed", tokenRejected };
   }

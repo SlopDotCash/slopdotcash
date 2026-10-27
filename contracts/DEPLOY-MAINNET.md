@@ -928,70 +928,77 @@ only binding path. Slop does not submit the payout: `pay` is permissionless
 
 #### Base test payout, owner sequence
 
-This is the full sequence for one 10 USDC test award. The owner must authorize
-the award and its transactions before a human or agent runs it. `$RPC` is your
-Base RPC URL, `--account owner` is your Foundry
-keystore for the owner wallet, and `$ACTOR` is the contributor's numeric
-GitHub ID. Run the commands from a clean checkout of `development`.
+This is the sequence for the one first Base qualification transfer that the
+owner approved. The row "First Base qualification transfer" in
+[PRD section 11](../docs/slop-product-requirements.md#11-source-delivery-and-acceptance)
+sets its recipient, amounts, vault policy and gas ceiling. Recheck each step
+against that row before you sign, and stop if eligibility, simulation or
+reconciliation fails. The owner must authorize each transaction before a
+human or agent sends it.
+
+Slop's Base vault already exists (#904). Do not create a second vault, and do
+not append an escrow revision on `/admin`. Owner registration accepts only the
+exact reviewed creation request, so it refuses a vault made by a manual
+factory call. `$RPC` is your Base RPC URL, and `--account owner` is your
+Foundry keystore for the owner wallet that created the vault. Run the
+commands from a clean checkout of `development`.
 
 ```sh
-FACTORY=0xe51AbF8c6Dbb3Ca6E9AD09F2dc6EF141d7364aAb
 USDC=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
-OWNER=<your owner wallet address>
-PROJECT=<the Slop project ID>
-PROJECT_ID=$(cast format-bytes32-string "$PROJECT")
+VAULT=0x6c1297c3b96a00347cb501f572cb5811c2a8ed36
+ACTOR=18633264
 ```
 
-1. Create the vault from the owner wallet. Purpose `0` is the ordinary
-   vault. `PROJECT_ID` is a nonzero label only; the admin revision of step 2
-   links the vault to the project.
+1. Install the attester secrets (steps 1 to 3 above) before you register the
+   vault. Each `main` release snapshots the live registry. The first release
+   after registration pins the vault and stops at the secret check if a
+   secret is missing.
 
-   ```sh
-   cast send "$FACTORY" 'create(bytes32,address,uint8)' "$PROJECT_ID" "$USDC" 0 \
-     --rpc-url "$RPC" --account owner
-   KEY=$(cast call "$FACTORY" 'vaultKey(address,bytes32,address,uint8)(bytes32)' \
-     "$OWNER" "$PROJECT_ID" "$USDC" 0 --rpc-url "$RPC")
-   VAULT=$(cast call "$FACTORY" 'vaults(bytes32)(address)' "$KEY" --rpc-url "$RPC")
-   ```
+2. Register the existing vault:
+   1. Sign in with GitHub as the project steward. In **Account → Wallets**,
+      confirm the owner wallet that created the vault. It must be your only
+      confirmed Base wallet.
+   2. On `/projects/slopdotcash/funding`, select Base and set
+      **Automatic monthly payment** to Off. This is the setting that the
+      creation used.
+   3. Do not connect a wallet. Select **Recover existing vault**.
+   4. Check the review: Base, your owner wallet, USDC, a monthly cap of
+      1,000 USDC and automatic payment Off.
+   5. Enter the creation transaction hash
+      `0x3e9776e0598fed367611286e45ffc4c4726629dad9d1bc81261de559eb75cf63`
+      and select **Check vault registration**.
 
-   Record the creation transaction and the vault's runtime code SHA-256
-   (section 1.6).
+   Registration appends the project revision. If the review or the check
+   refuses the vault, stop and record the message on #904.
 
-2. On `/admin`, append a manifest revision for the project with a reason.
-   It adds the `escrow` policy with one `base-mainnet` deployment: the vault,
-   USDC as `asset`, your wallet as `owner`, the identity authority, fee
-   recipient, factory, registrar, factory and vault code digests,
-   `evmUpgrade`, `bindingDelaySeconds` `"0"` and the creation transaction
-   (section 1.7). `escrow` is the payment switch: the schema requires
-   `reward.paymentMode` `"disabled"` beside it, because that field controls
-   only the old direct-payment path. Then sync the snapshot in a reviewed
-   pull request to `development`: `bun run projects:sync`.
-
-3. Install the attester secrets (steps 1 to 3 above). Do this before the
-   promotion that carries the new snapshot reaches `main`, or the release
-   stops at the secret check. Then merge the promotion pull request to
-   `main` (step 6 above). The release deploys the attester and its cron.
+3. Merge the next promotion pull request to `main`, or run the release
+   workflow by hand on `main` (step 6 above). The release pins the vault and
+   deploys the attester and its cron.
 
 4. Fund the attester for gas (step 4 above). About 0.001 ETH on Base pays
-   for many bindings.
+   for many bindings. The gas of every qualification wallet counts toward
+   the ceiling in the PRD row.
 
-5. Deposit USDC into the vault. Use the "Fund or withdraw" panel on the
-   project funding page, or approve and deposit (20 USDC here):
+5. Deposit 10 USDC into the vault. Use the "Fund or withdraw" panel on the
+   project funding page, or approve and deposit:
 
    ```sh
-   cast send "$USDC" 'approve(address,uint256)' "$VAULT" 20000000 --rpc-url "$RPC" --account owner
-   cast send "$VAULT" 'deposit(uint128)' 20000000 --rpc-url "$RPC" --account owner
+   cast send "$USDC" 'approve(address,uint256)' "$VAULT" 10000000 --rpc-url "$RPC" --account owner
+   cast send "$VAULT" 'deposit(uint128)' 10000000 --rpc-url "$RPC" --account owner
    ```
 
-6. Approve a 10 USDC award for the contributor. The monthly flow starts with
-   the period `2026-11`, so for this test the owner commits the award
-   directly. `SOURCE` must be a new nonzero 32-byte value for each award:
+6. Commit the 1 USDC gross award. The monthly flow starts with the period
+   `2026-11` and automatic monthly payment is Off, so the owner commits the
+   award directly. `SOURCE` is the SHA-256 of the published
+   [qualification source](https://github.com/SlopDotCash/slopdotcash/releases/tag/pr-evidence-base-qualification-ee37fc86).
+   It is separate from every earned-reward cycle and evaluation, and the
+   vault accepts each source only once:
 
    ```sh
-   SOURCE=$(cast keccak "slop-base-test-1")
+   SOURCE=0x991cdcc980c86dee602eccb30c79290a51a67f4569b2292efad7211d62086ee3
    AWARD=$(cast call "$VAULT" 'awardId(bytes32)(bytes32)' "$SOURCE" --rpc-url "$RPC")
    cast send "$VAULT" 'commitAward(bytes32,uint64,uint128,bytes32)' \
-     "$AWARD" "$ACTOR" 10000000 "$SOURCE" --rpc-url "$RPC" --account owner
+     "$AWARD" "$ACTOR" 1000000 "$SOURCE" --rpc-url "$RPC" --account owner
    ```
 
    After the block is finalized (about 15 minutes on Base), the next
@@ -1026,10 +1033,10 @@ PROJECT_ID=$(cast format-bytes32-string "$PROJECT")
    cast send "$VAULT" 'pay(bytes32,uint64)' "$AWARD" 1 --rpc-url "$RPC" --account owner
    ```
 
-   The contributor receives 9.8 USDC. After finality the attester run marks
+   The contributor receives 0.98 USDC. After finality the attester run marks
    the award paid, and `/earnings` shows it.
 
-9. Move the 2% fee (0.2 USDC) to the fee recipient
+9. Move the 2% fee (0.02 USDC) to the fee recipient
    `0x8f77C37D8650776bFe73c9b12B15209eE15D9b86`. Anyone may call it:
 
    ```sh
@@ -1037,14 +1044,14 @@ PROJECT_ID=$(cast format-bytes32-string "$PROJECT")
    cast call "$USDC" 'balanceOf(address)(uint256)' 0x8f77C37D8650776bFe73c9b12B15209eE15D9b86 --rpc-url "$RPC"
    ```
 
-10. Withdraw the unused balance (10 USDC here). The vault keeps the 2%
-    withdrawal fee. Use "Fund or withdraw" on the funding page, or:
+10. Optional: withdraw the unused 9 USDC. The vault keeps the 2% withdrawal
+    fee (0.18 USDC). Use "Fund or withdraw" on the funding page, or:
 
     ```sh
-    cast send "$VAULT" 'withdrawUnused(uint128)' 10000000 --rpc-url "$RPC" --account owner
+    cast send "$VAULT" 'withdrawUnused(uint128)' 9000000 --rpc-url "$RPC" --account owner
     ```
 
-    You receive 9.8 USDC. Run step 9 again to move the withdrawal fee.
+    You receive 8.82 USDC. Run step 9 again to move the withdrawal fee.
 
 Record the transactions on the release issue (section 3.5).
 

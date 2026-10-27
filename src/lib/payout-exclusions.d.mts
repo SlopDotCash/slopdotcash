@@ -14,7 +14,6 @@ export interface PayoutExclusion {
   readonly untilCycle: string | null;
 }
 
-export const PAYOUT_EXCLUSION_RELATIONSHIPS: readonly PayoutExclusionRelationship[];
 export function validatePayoutExclusions(
   value: unknown,
   field: string,

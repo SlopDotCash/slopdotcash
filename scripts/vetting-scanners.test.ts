@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
-  REVIEW_AREAS,
-  reviewIndependently,
+  reviewScan,
+  SCAN_REVIEW_AREAS,
   type ScannerProfile,
 } from "../workers/vetting/scanners";
 
@@ -71,9 +71,11 @@ beforeAll(() => {
         verdict: openai ? "no-findings" : "malicious-suspected",
         confidence: 0.75,
         coverage: Object.fromEntries(
-          REVIEW_AREAS.map((area) => [
+          SCAN_REVIEW_AREAS.map((area) => [
             area,
-            mode === "partial" && area === "binaries" ? "partial" : "complete",
+            mode === "partial" && area === "prompt-injection"
+              ? "partial"
+              : "complete",
           ]),
         ),
         findings: openai
@@ -140,13 +142,9 @@ const transport: typeof fetch = ((
   expect(init?.method).toBe("POST");
   return fetch(`http://localhost:${server.port}${url.pathname}`, init);
 }) as typeof fetch;
-const run = () =>
-  reviewIndependently({
-    evidence,
-    inputSha256: digest(evidence),
-    profiles,
-    fetch: transport,
-  });
+const scan = (profile: ScannerProfile, inputSha256 = digest(evidence)) =>
+  reviewScan({ evidence, inputSha256, profile, fetch: transport });
+const run = () => Promise.all(profiles.map((profile) => scan(profile)));
 
 test("independent HTTP reviews bind exact input and identities and retain disagreement without a disposition", async () => {
   mode = "normal";
@@ -219,25 +217,11 @@ test("partial evidence coverage stays explicit; missing credentials fail readine
   mode = "partial";
   requests = [];
   const result = await run();
-  expect(result[0].visibilityGaps).toContain("astra:binaries:partial");
+  expect(result[0].visibilityGaps).toContain("astra:prompt-injection:partial");
   requests = [];
-  await expect(
-    reviewIndependently({
-      evidence,
-      inputSha256: digest(evidence),
-      profiles: [profiles[0], { ...profiles[1], apiKey: "" }],
-      fetch: transport,
-    }),
-  ).rejects.toThrow();
+  await expect(scan({ ...profiles[1], apiKey: "" })).rejects.toThrow();
   expect(requests).toHaveLength(0);
-  await expect(
-    reviewIndependently({
-      evidence,
-      inputSha256: "0".repeat(64),
-      profiles,
-      fetch: transport,
-    }),
-  ).rejects.toThrow();
+  await expect(scan(profiles[0], "0".repeat(64))).rejects.toThrow();
   expect(requests).toHaveLength(0);
 });
 
@@ -261,32 +245,22 @@ test("only the pinned Surplus profiles are contacted, with the account key as a 
   const [astra, opus] = profiles;
   for (const unapproved of [
     // The providers' own APIs would receive the Surplus key.
-    [{ ...astra, endpoint: "https://api.openai.com/v1/responses" }, opus],
-    [astra, { ...opus, endpoint: "https://api.anthropic.com/v1/messages" }],
-    [
-      astra,
-      { ...opus, endpoint: "https://surplus.example.invalid/v1/messages" },
-    ],
+    { ...astra, endpoint: "https://api.openai.com/v1/responses" },
+    { ...opus, endpoint: "https://api.anthropic.com/v1/messages" },
+    { ...opus, endpoint: "https://surplus.example.invalid/v1/messages" },
     // An endpoint pinned to the other transport.
-    [{ ...astra, endpoint: opus.endpoint }, opus],
+    { ...astra, endpoint: opus.endpoint },
     // Any other model, including the other pinned model on this transport.
-    [{ ...astra, model: "gpt-6.1" }, opus],
-    [astra, { ...opus, model: "gpt-6.1-sol" }],
+    { ...astra, model: "gpt-6.1" },
+    { ...opus, model: "gpt-6.1-sol" },
     // A reviewer class that is not the pinned one for its transport.
-    [
-      { ...astra, reviewer: "opus" },
-      { ...opus, reviewer: "astra" },
-    ],
-  ] as [ScannerProfile, ScannerProfile][]) {
+    { ...astra, reviewer: "opus" },
+    { ...opus, reviewer: "astra" },
+  ] as ScannerProfile[]) {
     requests = [];
-    await expect(
-      reviewIndependently({
-        evidence,
-        inputSha256: digest(evidence),
-        profiles: unapproved,
-        fetch: transport,
-      }),
-    ).rejects.toThrow("Unapproved scanner profile");
+    await expect(scan(unapproved)).rejects.toThrow(
+      "Unapproved scanner profile",
+    );
     expect(requests).toHaveLength(0);
   }
 });

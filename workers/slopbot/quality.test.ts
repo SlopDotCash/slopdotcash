@@ -1,8 +1,8 @@
 // Deterministic trust-boundary tests. These are NOT provider or approved-VM
 // acceptance evidence, and do not qualify production closure.
 import { expect, test } from "bun:test";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { parseRepositoryConfig, type Verdict } from "./contracts";
-import { sha256Hex } from "./github";
 import {
   QUALITY_MARKER,
   type QualitySubject,
@@ -370,10 +370,10 @@ test("claim evidence must cite the actual immutable artifact and contradict its 
 });
 
 test("missing provider credentials never produce a confirmation", async () => {
-  const { runRoute, CONFIRM_ROUTE } = await import("./models");
+  const { runRoute, TRIAGE_ROUTE } = await import("./models");
   const result = await runRoute(
     {},
-    CONFIRM_ROUTE,
+    TRIAGE_ROUTE,
     {
       system: "Classify this harmless acceptance probe.",
       policy: "No policy",

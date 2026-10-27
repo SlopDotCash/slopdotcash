@@ -1,26 +1,12 @@
 import { join } from "node:path";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
+import { expect, expectAccessible, test } from "./fixtures";
 
 test(
   "points history is usable, accessible and independent of payments",
   { tag: ["@pages"] },
   async ({ page }, info) => {
-    const errors: string[] = [];
-    const failures: string[] = [];
-    page.on("pageerror", (e) => errors.push(e.message));
-    page.on("console", (m) => {
-      if (m.type() === "error") errors.push(m.text());
-    });
-    page.on("response", (r) => {
-      if (
-        new URL(r.url()).origin === new URL(page.url()).origin &&
-        r.status() >= 400
-      )
-        failures.push(`${r.status()} ${r.url()}`);
-    });
     const response = await page.goto("/points");
     expect(response?.status()).toBe(200);
     const reloaded = await page.reload();
@@ -103,10 +89,7 @@ test(
     expect(
       await page.evaluate(() => document.activeElement !== document.body),
     ).toBe(true);
-    const accessibility = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-      .analyze();
-    expect(accessibility.violations).toEqual([]);
+    await expectAccessible(page);
     await page.screenshot({
       path: info.outputPath("points.png"),
       fullPage: true,
@@ -153,8 +136,6 @@ test(
       path: info.outputPath("points-zoom.png"),
       fullPage: true,
     });
-    expect(errors).toEqual([]);
-    expect(failures).toEqual([]);
   },
 );
 

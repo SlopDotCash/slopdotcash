@@ -1,12 +1,14 @@
 import { Link } from "./Link";
 import type { PayoutExclusionRelationship } from "./lib/payout-exclusions.mjs";
-import type { ProjectContributor, ProjectView } from "./lib/project-view";
+import {
+  type ProjectContributor,
+  type ProjectView,
+  requiredProjection,
+} from "./lib/project-view";
 import {
   type ReviewerLeader,
   selectReviewerLeaders,
 } from "./lib/reviewer-leaders";
-import type { DataState } from "./lib/use-snapshot";
-import { ContributorStandings } from "./Points";
 import {
   Avatar,
   EmptyState,
@@ -14,6 +16,7 @@ import {
   formatDate,
   formatMicroUsdc,
   formatPercent,
+  formatPointsFromThirds,
   monthlyPoolLabel,
   monthlyPoolUnfunded,
   reviewBudgetLabel,
@@ -26,31 +29,13 @@ const PAYOUT_EXCLUSION_LABELS: Record<PayoutExclusionRelationship, string> = {
   "related-party": "related party",
 };
 
-interface CycleAllocationProps {
+export function CycleAllocation({
+  updatedAt,
+  view,
+}: {
   updatedAt: string;
   view: ProjectView;
-}
-export function ProjectLeaderboard({
-  state,
-  retry,
-  ...props
-}: CycleAllocationProps & {
-  state: DataState;
-  retry: () => void;
 }) {
-  return (
-    <div id="contributors">
-      <ContributorStandings
-        projectId={props.view.project.id}
-        scoreState={state}
-        retryScore={retry}
-        compact
-      />
-    </div>
-  );
-}
-
-export function CycleAllocation({ updatedAt, view }: CycleAllocationProps) {
   const reviewers = new Map(
     selectReviewerLeaders(view.ledger).map((reviewer) => [
       reviewer.actor.id,
@@ -62,100 +47,98 @@ export function CycleAllocation({ updatedAt, view }: CycleAllocationProps) {
       left.rank - right.rank || left.actor.id.localeCompare(right.actor.id),
   );
   return (
-    <>
-      <section className="section project-leader-section">
-        <div className="section-heading">
-          <h2>{formatCycleMonth(view.cycle.id)}</h2>
-          <p className="data-freshness">Updated {formatDate(updatedAt)}</p>
-          {view.project.reward.reviewBudget ? (
-            <p>{reviewBudgetLabel(view.project.reward.reviewBudget)}</p>
-          ) : null}
-          {view.reward.kind === "monthly-pool" ? (
-            <p>
-              {monthlyPoolUnfunded(view.project.reward)
-                ? `${UNFUNDED_POOL_HEADLINE}.`
-                : `Projected from accepted work · ${monthlyPoolLabel(view.project.reward)}.`}
-            </p>
-          ) : null}
-        </div>
-        {view.leaders.length === 0 ? (
-          <EmptyState text="No accepted work this month yet." />
-        ) : (
-          <div className="leader-table">
-            <table className="leader-grid">
-              <caption className="visually-hidden">
-                {view.project.name} leaderboard
-              </caption>
-              <thead>
-                <tr className="leader-row project-leader-head">
-                  <th scope="col">Rank</th>
-                  <th scope="col">Contributor</th>
-                  <th scope="col">Points</th>
-                  <th scope="col">
-                    {view.reward.kind === "monthly-pool" &&
-                    monthlyPoolUnfunded(view.project.reward)
-                      ? "Share"
-                      : "Projected share"}
-                  </th>
+    <section className="section project-leader-section">
+      <div className="section-heading">
+        <h2>{formatCycleMonth(view.cycle.id)}</h2>
+        <p className="data-freshness">Updated {formatDate(updatedAt)}</p>
+        {view.project.reward.reviewBudget ? (
+          <p>{reviewBudgetLabel(view.project.reward.reviewBudget)}</p>
+        ) : null}
+        {view.reward.kind === "monthly-pool" ? (
+          <p>
+            {monthlyPoolUnfunded(view.project.reward)
+              ? `${UNFUNDED_POOL_HEADLINE}.`
+              : `Projected from accepted work · ${monthlyPoolLabel(view.project.reward)}.`}
+          </p>
+        ) : null}
+      </div>
+      {view.leaders.length === 0 ? (
+        <EmptyState text="No accepted work this month yet." />
+      ) : (
+        <div className="leader-table">
+          <table className="leader-grid">
+            <caption className="visually-hidden">
+              {view.project.name} leaderboard
+            </caption>
+            <thead>
+              <tr className="leader-row project-leader-head">
+                <th scope="col">Rank</th>
+                <th scope="col">Contributor</th>
+                <th scope="col">Points</th>
+                <th scope="col">
+                  {view.reward.kind === "monthly-pool" &&
+                  monthlyPoolUnfunded(view.project.reward)
+                    ? "Share"
+                    : "Projected share"}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {leaders.map((leader) => (
+                <tr
+                  className="leader-row project-leader-row"
+                  key={leader.actor.id}
+                >
+                  <td className="rank-cell">#{leader.rank}</td>
+                  <td className="person-cell">
+                    <Link
+                      className="person-link"
+                      href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
+                    >
+                      <Avatar actor={leader.actor} />
+                      <span>
+                        <strong>{leader.actor.login}</strong>
+                        <small>
+                          {leader.acceptedOutcomeCount} accepted{" "}
+                          {leader.acceptedOutcomeCount === 1
+                            ? "event"
+                            : "events"}
+                        </small>
+                      </span>
+                    </Link>
+                  </td>
+                  <td>
+                    <strong>
+                      {formatPointsFromThirds(leader.scoreThirds)}
+                    </strong>
+                    <ReviewContribution
+                      reviewer={reviewers.get(leader.actor.id)}
+                    />
+                    {leader.penaltyThirds > 0 ? (
+                      <small>
+                        After a {formatPointsFromThirds(leader.penaltyThirds)}{" "}
+                        point Slopbot penalty
+                      </small>
+                    ) : null}
+                    {leader.computeBonusBasisPoints > 0 ? (
+                      <small>
+                        +{leader.computeBonusBasisPoints / 100}% receipt
+                        evidence
+                      </small>
+                    ) : null}
+                  </td>
+                  <td>
+                    <strong>
+                      <RewardValue leader={leader} view={view} />
+                    </strong>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {leaders.map((leader) => (
-                  <tr
-                    className="leader-row project-leader-row"
-                    key={leader.actor.id}
-                  >
-                    <td className="rank-cell">#{leader.rank}</td>
-                    <td className="person-cell">
-                      <Link
-                        className="person-link"
-                        href={`/contributors/${encodeURIComponent(leader.actor.login)}`}
-                      >
-                        <Avatar actor={leader.actor} />
-                        <span>
-                          <strong>{leader.actor.login}</strong>
-                          <small>
-                            {leader.acceptedOutcomeCount} accepted{" "}
-                            {leader.acceptedOutcomeCount === 1
-                              ? "event"
-                              : "events"}
-                          </small>
-                        </span>
-                      </Link>
-                    </td>
-                    <td>
-                      <strong>
-                        {(leader.scoreThirds * 10).toLocaleString()}
-                      </strong>
-                      <ReviewContribution
-                        reviewer={reviewers.get(leader.actor.id)}
-                      />
-                      {leader.penaltyThirds > 0 ? (
-                        <small>
-                          After a {(leader.penaltyThirds * 10).toLocaleString()}{" "}
-                          point Slopbot penalty
-                        </small>
-                      ) : null}
-                      {leader.computeBonusBasisPoints > 0 ? (
-                        <small>
-                          +{leader.computeBonusBasisPoints / 100}% receipt
-                          evidence
-                        </small>
-                      ) : null}
-                    </td>
-                    <td>
-                      <strong>
-                        <RewardValue leader={leader} view={view} />
-                      </strong>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -172,18 +155,22 @@ export function RewardValue({
         Excluded from payout ({PAYOUT_EXCLUSION_LABELS[leader.payoutExclusion]})
       </>
     );
+  if (view.reward.kind === "external-prize-share")
+    return (
+      <>
+        {formatPercent(
+          requiredProjection(leader.projectedSharePartsPerMillion, "share"),
+        )}{" "}
+        share
+      </>
+    );
   // Token amounts are in the token's base units, never dollars.
   if (
-    leader.simulatedMinor === null ||
-    view.project.rewardAsset?.kind === "token"
+    view.project.rewardAsset?.kind !== "token" &&
+    !monthlyPoolUnfunded(view.project.reward)
   ) {
-    return (
-      <>{formatPercent(leader.projectedSharePartsPerMillion ?? 0)} share</>
-    );
-  }
-  if (!monthlyPoolUnfunded(view.project.reward)) {
     return formatMicroUsdc(
-      leader.simulatedDisplayMinor ?? leader.simulatedMinor,
+      requiredProjection(leader.simulatedDisplayMinor, "display amount"),
     );
   }
   const totalWeight = view.leaders.reduce(
@@ -206,7 +193,7 @@ function ReviewContribution({ reviewer }: { reviewer?: ReviewerLeader }) {
   if (!reviewer) return null;
   return (
     <small className="review-score-detail">
-      Includes {(reviewer.reviewThirds * 10).toLocaleString()} review points ·{" "}
+      Includes {formatPointsFromThirds(reviewer.reviewThirds)} review points ·{" "}
       {reviewer.reviewEventCount} scored review
       {reviewer.reviewEventCount === 1 ? "" : "s"}
     </small>

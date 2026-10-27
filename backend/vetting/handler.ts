@@ -250,7 +250,7 @@ async function adminOverview(
             state: "unavailable",
             queueRegistrationAvailable,
             reason: queueRegistrationAvailable
-              ? "Private evidence storage or policy is unavailable. You may queue a scan, but acquisition and clean clearance must wait."
+              ? "Private evidence storage is not bound. You may queue a scan, but acquisition and clean clearance must wait."
               : "The vetting service key is unavailable. New scans cannot be queued, acquired or recorded. Existing decisions still require current retained evidence.",
           },
     assessments: assessments.map(adminAssessment),

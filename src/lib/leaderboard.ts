@@ -45,6 +45,16 @@ import type {
   WorkItemModelStatus,
   WorkItemSelection,
 } from "./leaderboard-types";
+import {
+  COVERAGE_STATUSES,
+  EVIDENCE_CATEGORIES,
+  GITHUB_ACTOR_KINDS,
+  SCORE_CATEGORIES,
+  WORK_ITEM_ACTIONABILITIES,
+  WORK_ITEM_CANDIDATE_EXCLUSIONS,
+  WORK_ITEM_CLAIM_SOURCES,
+  WORK_ITEM_PRIORITIES,
+} from "./leaderboard-types";
 import { isRecord } from "./record-validation.mjs";
 import { penaltyDeductions } from "./score-penalties";
 import {
@@ -658,14 +668,6 @@ export function isNearMaterialTestChange(
     churn >= Math.ceil(MATERIAL_TEST_CHURN / 2)
   );
 }
-
-const EVIDENCE_CATEGORIES: readonly EvidenceCategory[] = [
-  "screenshot",
-  "video",
-  "logs",
-  "trajectory",
-  "domain-artifact",
-];
 
 interface EvidenceClaim {
   category: EvidenceCategory;
@@ -1480,16 +1482,17 @@ export function leaderboardMethodology(
     : "";
   return {
     summary: valuePolicy
-      ? `${policyStart}Slopbot's source-bound value assessments size each accepted pull request and value its reviews; a valid maintainer ratification is the exception that takes precedence. An accepted merge without a current assessment, or assessed at zero, keeps the one-third minimum. Each pull request's review pool is the sum of the highest assessed bands of its first ${valuePolicy.reviewCredit.maxReviewers} distinct qualifying reviewers, capped at the pull request's assessed size and never less than one third; it is split by band in integer thirds by largest remainder. Each unreversed debit from Slopbot's published penalty table reduces its author's score for the same project and UTC month once, never below zero; an upheld appeal or a maintainer reopen removes it, and closed reward cycles keep their recorded scores. Work accepted earlier keeps the Slop Score v2 and SCR-05 rules unchanged. Payout approval remains separate.`
-      : "Slop Score v2 groups accepted work into logical work units and stores credit in integer thirds. Claude review agents propose effort, complexity, impact, and review load; maintainers ratify the score on GitHub. From October 2026 an unratified merge starts at one point, and a formal review scores 1/3 only when the merged code answered its request for changes, once per pull request. Only the actor's aggregate is rounded down at cycle close.",
+      ? `${policyStart}Slopbot's source-bound value assessments size each accepted pull request and value its reviews; a valid maintainer ratification is the exception that takes precedence. An accepted merge without a current assessment, or assessed at zero, keeps the 10-point minimum. Each pull request's review pool is the sum of the highest assessed bands of its first ${valuePolicy.reviewCredit.maxReviewers} distinct qualifying reviewers, capped at the pull request's assessed size and never less than 10 Points; it is split by band in 10-point increments by largest remainder. Each unreversed debit from Slopbot's published penalty table reduces its author's Points for the same project and UTC month once, never below zero; an upheld appeal or a maintainer reopen removes it, and closed reward cycles keep their recorded Points. Work accepted earlier keeps its earlier v2 and SCR-05 rules unchanged. Payout approval remains separate.`
+      : "Accepted work is grouped into logical work units and credited in 10-point increments. Claude review agents propose effort, complexity, impact, and review load; maintainers ratify the credit on GitHub. From October 2026 an unratified merge starts at 30 Points, and a formal review earns 10 Points only when the merged code answered its request for changes, once per pull request. Only the actor's aggregate is rounded down at cycle close.",
     scoringRules: [
       {
         id: "merged-pull-request",
-        points: "micro 1/3; small 1; medium 3; large 8; XL 15; exceptional 25",
+        points:
+          "micro 10; small 30; medium 90; large 240; XL 450; exceptional 750",
         cap: "uncapped; related or split pull requests share one workUnitId",
         qualification: provisionalValues
-          ? `${policyStart}a complete exact-head assessment or valid human ratification binds the accepted outcome. Provisional credit is shared among verified implementation identities without increasing its total. Overlapping accepted commits require joint work-unit assessment. Missing, incomplete, stale, unresolved or zero value keeps the one-third minimum, shared at least one third per credit actor. Earlier merges keep the Score v2 provisional and ratified rules.`
-          : "Authored pull request merged during the rolling window. Unratified work merged before 2026-10-01 receives provisional micro credit and later work provisional small credit; other tiers require an immutable exact-head maintainer slop-score record. Integration-branch merge credit is split equally, at least 1/3 each, among the author and linked non-bot commit authors; each commit scores only in its earliest merged pull request.",
+          ? `${policyStart}a complete exact-head assessment or valid human ratification binds the accepted outcome. Provisional credit is shared among verified implementation identities without increasing its total. Overlapping accepted commits require joint work-unit assessment. Missing, incomplete, stale, unresolved or zero value keeps the 10-point minimum, shared at least 10 Points per credit actor. Earlier merges keep their earlier v2 provisional and ratified rules.`
+          : "Authored pull request merged during the rolling window. Unratified work merged before 2026-10-01 receives provisional micro credit and later work provisional small credit; other tiers require an immutable exact-head maintainer slop-score record. Integration-branch merge credit is split equally, at least 10 Points each, among the author and linked non-bot commit authors; each commit scores only in its earliest merged pull request.",
       },
       {
         id: "resolved-issue",
@@ -1514,9 +1517,9 @@ export function leaderboardMethodology(
       {
         id: "substantive-review",
         points:
-          "triage 1/3; standard 1; deep reproduction 3; specialist 8; ratification 1/3",
+          "triage 10; standard 30; deep reproduction 90; specialist 240; ratification 10",
         cap: valuePolicy
-          ? `one pool per pull request: the credited reviewers' bands, capped at the pull request's assessed size, minimum 1/3; at most ${valuePolicy.reviewCredit.maxReviewers} distinct reviewers; one credited record per reviewer`
+          ? `one pool per pull request: the credited reviewers' bands, capped at the pull request's assessed size, minimum 10 Points; at most ${valuePolicy.reviewCredit.maxReviewers} distinct reviewers; one credited record per reviewer`
           : "from 2026-10-01, one ordinary review award per merged pull request; no self-review and no duplicate reviewer credit on one artifact",
         qualification: valuePolicy
           ? `${policyStart}complete source-bound assessments value distinct evidenced review outcomes, including useful validation; a request for changes is not required. Reviews by implementation actors, bots, after merge or closure, and duplicate findings do not qualify. A qualifying review submitted outside the scoring window publishes review-credit-outside-window and takes no reviewer slot or share. The remaining reviews are grouped by immutable reviewer ID and ordered by their first in-window qualifying review's submission time, then review node ID. The first ${valuePolicy.reviewCredit.maxReviewers} share the pull request's review pool by their highest in-window assessed band using integer largest remainder, earlier reviewers first on equal remainders. Later reviewers publish review-credit-reviewer-limit. Valid human decisions and reviewed evaluation awards take precedence. Missing, stale or unresolved assessments do not receive legacy review credit. Reviews of pull requests accepted earlier keep the SCR-05 rule.`
@@ -1524,7 +1527,7 @@ export function leaderboardMethodology(
       },
       {
         id: "evaluated-contribution",
-        points: "integer-thirds maintainer decision",
+        points: "maintainer decision in 10-point increments",
         cap: "uncapped; cannot duplicate an ordinary source or work unit",
         qualification:
           "A public, strictly validated award manifest was reviewed and merged into elizaOS/slopdotcash for useful implementation, tests, review, diagnosis, or evidence that is not already rewarded as a merged outcome.",
@@ -5103,11 +5106,7 @@ function assertActorValue(value: unknown, path: string): void {
       `${path}.url must match the actor's canonical GitHub profile`,
     );
   }
-  assertEnum(
-    actor.kind,
-    ["Bot", "Mannequin", "Organization", "User", "Unknown"],
-    `${path}.kind`,
-  );
+  assertEnum(actor.kind, GITHUB_ACTOR_KINDS, `${path}.kind`);
 }
 
 function assertNullableActor(
@@ -5154,14 +5153,7 @@ function assertMethodologyValue(value: unknown, path: string): void {
   ) {
     throw new Error(`${path}.scoringRules must contain all six scoring rules`);
   }
-  const expectedRuleIds: ScoreCategory[] = [
-    "merged-pull-request",
-    "resolved-issue",
-    "material-test-change",
-    "evidence",
-    "substantive-review",
-    "evaluated-contribution",
-  ];
+  const expectedRuleIds = SCORE_CATEGORIES;
   const seenRuleIds = new Set<string>();
   methodology.scoringRules.forEach((ruleValue, index) => {
     const rulePath = `${path}.scoringRules[${index}]`;
@@ -5652,11 +5644,7 @@ function assertCoverageCounts(
     humanOnlySourceCount,
     `${path}.humanOnlySourceCount`,
   );
-  assertEnum(
-    value.status,
-    ["complete", "partial", "missing", "invalid"],
-    `${path}.status`,
-  );
+  assertEnum(value.status, COVERAGE_STATUSES, `${path}.status`);
   if (
     validSourceCount > eligibleSourceCount ||
     invalidSourceCount > eligibleSourceCount ||
@@ -5707,14 +5695,10 @@ function assertWorkItemValue(
   assertIsoTimestamp(item.createdAt, `${path}.createdAt`);
   assertIsoTimestamp(item.updatedAt, `${path}.updatedAt`);
   const labels = assertStringArray(item.labels, `${path}.labels`);
-  assertEnum(
-    item.priority,
-    ["urgent", "high", "normal", "low"],
-    `${path}.priority`,
-  );
+  assertEnum(item.priority, WORK_ITEM_PRIORITIES, `${path}.priority`);
   assertEnum(
     item.actionability,
-    ["actionable", "blocked", "draft"],
+    WORK_ITEM_ACTIONABILITIES,
     `${path}.actionability`,
   );
   const labelRecords = labels.map((name) => ({ id: name, name, color: "" }));
@@ -5770,11 +5754,7 @@ function assertWorkItemValue(
 
   const claim = assertObject(item.claim, `${path}.claim`);
   assertEnum(claim.status, ["claimed", "unclaimed"], `${path}.claim.status`);
-  assertEnum(
-    claim.source,
-    ["assignee", "label", "claim-comment", "pull-request", "none"],
-    `${path}.claim.source`,
-  );
+  assertEnum(claim.source, WORK_ITEM_CLAIM_SOURCES, `${path}.claim.source`);
   if (claim.kind !== null) {
     assertEnum(claim.kind, ["implementation", "review"], `${path}.claim.kind`);
   }
@@ -5824,18 +5804,7 @@ function assertWorkItemValue(
   selectionReasons.forEach((reason, index) => {
     assertEnum(
       reason,
-      [
-        "active-review-request",
-        "already-approved",
-        "blocked",
-        "bot-authored",
-        "changes-requested",
-        "claimed",
-        "draft",
-        "security-sensitive",
-        "untriaged",
-        "unknown-author",
-      ],
+      WORK_ITEM_CANDIDATE_EXCLUSIONS,
       `${path}.selection.reasons[${index}]`,
     );
   });
@@ -5887,7 +5856,7 @@ function assertWorkItemValue(
   categories.forEach((category, index) => {
     assertEnum(
       category,
-      ["screenshot", "video", "logs", "trajectory", "domain-artifact"],
+      EVIDENCE_CATEGORIES,
       `${path}.evidence.categories[${index}]`,
     );
   });
@@ -5906,11 +5875,7 @@ function assertWorkItemValue(
   }
 
   const model = assertObject(item.model, `${path}.model`);
-  assertEnum(
-    model.status,
-    ["complete", "partial", "missing", "invalid"],
-    `${path}.model.status`,
-  );
+  assertEnum(model.status, COVERAGE_STATUSES, `${path}.model.status`);
   const identifiers = assertStringArray(
     model.identifiers,
     `${path}.model.identifiers`,
@@ -5962,18 +5927,7 @@ function assertLedgerValue(
   const event = assertObject(value, path);
   assertString(event.id, `${path}.id`);
   assertActorValue(event.actor, `${path}.actor`);
-  assertEnum(
-    event.category,
-    [
-      "merged-pull-request",
-      "resolved-issue",
-      "material-test-change",
-      "evidence",
-      "substantive-review",
-      "evaluated-contribution",
-    ],
-    `${path}.category`,
-  );
+  assertEnum(event.category, SCORE_CATEGORIES, `${path}.category`);
   assertNonNegativeNumber(event.points, `${path}.points`);
   const eventPoints = Number(event.points);
   const isV2 =
@@ -6282,18 +6236,7 @@ function assertOpportunityValue(
     ],
     `${path}.kind`,
   );
-  assertEnum(
-    opportunity.category,
-    [
-      "merged-pull-request",
-      "resolved-issue",
-      "material-test-change",
-      "evidence",
-      "substantive-review",
-      "evaluated-contribution",
-    ],
-    `${path}.category`,
-  );
+  assertEnum(opportunity.category, SCORE_CATEGORIES, `${path}.category`);
   const kind = opportunity.kind as ScoreOpportunityKind;
   const category = opportunity.category as ScoreCategory;
   let potentialPoints: number | null = null;

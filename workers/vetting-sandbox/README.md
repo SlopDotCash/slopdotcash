@@ -24,7 +24,7 @@ an artifact safe, releases quarantine, grants project clearance or makes a
 moderator decision. Preserve the response in the existing private evidence
 store before relying on it.
 
-Supported commands are fixed: shell, Python, Node.js or a native executable.
+Supported commands are fixed: Python, Node.js or a native executable.
 The service does not accept shell fragments, extra arguments, URLs, arbitrary
 paths or environment variables. Missing dependencies and blocked network
 requests are execution failures or coverage gaps, not clean results.

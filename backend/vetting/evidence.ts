@@ -3,7 +3,7 @@ import {
   parseProvenanceReport,
 } from "../../workers/vetting/provenance-report";
 
-/** Separate private vetting evidence. Policy and external controls have no defaults. */
+/** Separate private vetting evidence. Its terms are fixed in source as EVIDENCE_POLICY. */
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { WebSession } from "../../src/lib/project-contracts";
@@ -1248,7 +1248,7 @@ export class VettingEvidence {
       runs: result,
       policy,
       retentionBoundary:
-        "Access expiry is enforced here. Physical retention, legal holds and backups are external, operator-attested controls; this console does not verify or execute them.",
+        "Access expiry is enforced here. Backups, raw-evidence deletion and legal holds are separate from this console; it does not verify or execute them.",
     });
   }
   async grant(

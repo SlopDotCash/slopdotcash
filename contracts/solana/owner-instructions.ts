@@ -1,6 +1,7 @@
 /** Edge-safe vault creation. The caller verifies the reviewed program and Config. */
 import type { PayoutPolicy } from "../../src/lib/payments/contracts";
 import { solanaDigest } from "./adapter";
+import { TOKEN_2022_PROGRAM } from "./token";
 import {
   bytes,
   encoder,
@@ -16,6 +17,8 @@ export interface SolanaVaultCreation {
   programId: string;
   owner: string;
   mint: string;
+  /** Server-verified mint owner; omitted only for existing classic SPL callers. */
+  tokenProgram?: string;
   projectDigest: string;
   networkDomain: string;
   identityAuthority: string;
@@ -62,6 +65,9 @@ export function buildInitializeVaultInstructions(input: SolanaVaultCreation) {
     cap = le(BigInt(input.monthlyCap));
   }
   bytes(input.mint);
+  const tokenProgram = input.tokenProgram ?? TOKEN;
+  if (tokenProgram !== TOKEN && tokenProgram !== TOKEN_2022_PROGRAM)
+    throw new Error("Unsupported mint token program");
   const projectDigest = solanaDigest(input.projectDigest);
   const projectPda = pda(input.programId, [
     encoder.encode("project"),
@@ -82,7 +88,7 @@ export function buildInitializeVaultInstructions(input: SolanaVaultCreation) {
         { key: projectPda, write: true },
         { key: input.mint, write: false },
         { key: vault, write: true },
-        { key: TOKEN, write: false },
+        { key: tokenProgram, write: false },
         { key: SYSTEM, write: false },
         { key: config, write: false },
       ],

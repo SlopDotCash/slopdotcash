@@ -4,10 +4,10 @@ import {
   type ProjectD1Database,
 } from "../../backend/projects/cloudflare-persistence";
 import type { R2Bucket } from "../../backend/trace/cloudflare-persistence";
-import { sha256Hex } from "../../backend/trace/validation";
 import { CloudflareVettingPersistence } from "../../backend/vetting/persistence";
 import { onRequest as pagesArtifact } from "../../functions/[[path]]";
 import { onRequest as pagesApi } from "../../functions/api/v1/[[path]]";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   REPOSITORY_READ_HEADER,
   REPOSITORY_READ_URL,

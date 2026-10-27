@@ -169,34 +169,38 @@ export default defineConfig({
         stdout: "pipe",
         stderr: "pipe",
       },
+  // Every spec runs at the 1440 px desktop and the 320 px mobile viewport; the
+  // 1024 px laptop and 768 px tablet viewports run the @layout route checks.
+  // The email workflow observed a Chromium no-store stream EOF and ERR_ABORTED
+  // (https://github.com/microsoft/playwright/issues/42742). Keep the bounded
+  // private reader and strict failure assertions, and run the email workflow
+  // in Firefox at both widths. Firefox also repeats the private evidence
+  // download. The registry lane shards by test order, and each viewport's
+  // registry workflow is one serial group, so Firefox comes first: the
+  // desktop group then starts in the first shard and the mobile group in the
+  // second.
   projects: [
     {
-      name: "evidence-firefox",
-      testMatch: "**/evidence-download.spec.ts",
+      name: "firefox-desktop",
+      testMatch: [
+        "**/evidence-download.spec.ts",
+        "**/email-preferences.spec.ts",
+      ],
       use: {
         ...devices["Desktop Firefox"],
         viewport: { width: 1440, height: 1000 },
       },
     },
-    // Observed no-store stream EOF + ERR_ABORTED matches this Chromium report:
-    // https://github.com/microsoft/playwright/issues/42742
-    // Keep the bounded private reader and strict failure assertions. Exercise
-    // the new email workflow in Firefox; existing Chromium coverage is unchanged.
-    ...[
-      ["wide-desktop", 1440, 1000],
-      ["desktop", 1024, 768],
-      ["tablet", 768, 1024],
-      ["narrow-mobile", 320, 800],
-    ].map(([name, width, height]) => ({
-      name: `${name}-email-firefox`,
+    {
+      name: "firefox-mobile",
       testMatch: "**/email-preferences.spec.ts",
       use: {
         ...devices["Desktop Firefox"],
-        viewport: { width: Number(width), height: Number(height) },
+        viewport: { width: 320, height: 800 },
       },
-    })),
+    },
     {
-      name: "wide-desktop-chromium",
+      name: "chromium-desktop",
       testIgnore: "**/email-preferences.spec.ts",
       use: {
         ...devices["Desktop Chrome"],
@@ -204,27 +208,27 @@ export default defineConfig({
       },
     },
     {
-      name: "desktop-chromium",
+      name: "chromium-mobile",
       testIgnore: "**/email-preferences.spec.ts",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 320, height: 800 },
+      },
+    },
+    {
+      name: "chromium-laptop",
+      grep: /@layout/,
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 1024, height: 768 },
       },
     },
     {
-      name: "tablet-chromium",
-      testIgnore: "**/email-preferences.spec.ts",
+      name: "chromium-tablet",
+      grep: /@layout/,
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 768, height: 1024 },
-      },
-    },
-    {
-      name: "narrow-mobile-chromium",
-      testIgnore: "**/email-preferences.spec.ts",
-      use: {
-        ...devices["Desktop Chrome"],
-        viewport: { width: 320, height: 800 },
       },
     },
   ],

@@ -2,12 +2,17 @@ import { CircleAlert, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
+import { errorMessage } from "./lib/errors";
 import { cycleSettlementReminder } from "./lib/funding-reminders";
 import {
   monthlyCutoff,
   PRD_MONTHLY_SCHEDULE,
 } from "./lib/payments/monthly-allocation";
-import { createProjectView, type ProjectView } from "./lib/project-view";
+import {
+  createProjectView,
+  type ProjectView,
+  projectCycleHasOpened,
+} from "./lib/project-view";
 import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
 import { resolveRewardCapMinor } from "./lib/reward-cap.mjs";
 import type { CycleIndexState } from "./lib/use-cycle-index";
@@ -42,33 +47,45 @@ export function CyclePage({
   if (!/^\d{4}-(0[1-9]|1[0-2])$/u.test(cycleId)) {
     return <NotFound title="Cycle unavailable" />;
   }
-  if (state.status !== "ready")
-    return (
-      <main className="shell route-main">
-        <h1>
-          {project.name} · {formatCycleMonth(cycleId)}
-        </h1>
-        <DataNotice state={state} retry={retry} />
-      </main>
-    );
+  const notice = (noticeState: DataState) => (
+    <main className="shell route-main">
+      <h1>
+        {project.name} · {formatCycleMonth(cycleId)}
+      </h1>
+      <DataNotice state={noticeState} retry={retry} />
+    </main>
+  );
+  if (state.status !== "ready") return notice(state);
   const record = state.cycleIndex.cycles.find(
     (cycle) => cycle.projectId === project.id && cycle.cycleId === cycleId,
   );
+  // A paused project is not collected; its recorded cycles still render.
+  const collected = project.repositories.every((repository) =>
+    state.snapshot.repositories.some(
+      (candidate) => candidate.id === repository.id,
+    ),
+  );
   let view: ProjectView | null = null;
-  try {
-    view = createProjectView(state.snapshot, project.id, cycleId);
-  } catch {
-    if (!record) {
-      return (
-        <NotFound title={`No ${formatCycleMonth(cycleId)} cycle record`}>
-          <p>
-            {project.name} has no record for this month. See the{" "}
-            <Link href={`/projects/${project.slug}`}>project page</Link> for
-            payments.
-          </p>
-        </NotFound>
-      );
+  // A month outside the snapshot window has no live view.
+  if (collected && projectCycleHasOpened(state.snapshot, project.id, cycleId)) {
+    try {
+      view = createProjectView(state.snapshot, project.id, cycleId);
+    } catch (error) {
+      return notice({ status: "error", message: errorMessage(error) });
     }
+  }
+  if (!view && !record) {
+    return (
+      <NotFound title={`No ${formatCycleMonth(cycleId)} cycle record`}>
+        <p>
+          {collected
+            ? `${project.name} has no record for this month.`
+            : "Activity for this project has not been collected yet."}{" "}
+          See the <Link href={`/projects/${project.slug}`}>project page</Link>{" "}
+          for payments.
+        </p>
+      </NotFound>
+    );
   }
   const from = record?.contributionWindow.from ?? view?.cycle.from;
   const to = record?.contributionWindow.to ?? view?.cycle.endsAt;

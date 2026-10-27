@@ -23,8 +23,9 @@ v2 keeps every v1 rule except the ones listed under "Changes from v1".
    opt-outs, category restrictions and repository rejection rules still apply.
 3. **Permissions.** Read: Contents, Metadata, Organization members.
    Write: Issues and Pull requests, used only to comment, label, close, and
-   reopen an item that Slopbot closed when its appeal is upheld.
-   No other write permission.
+   reopen an item while Slopbot's own close is its current close (GitHub
+   `closed_by`): after an upheld appeal, or to undo a late close after a
+   maintainer reopened the same revision. No other write permission.
 4. **Audience.** "Participants only" or "Protection" (PRD BOT-02) selects
    advisory review. Exempt actors are never closed. Closure is limited to
    verified slop.cash members using the Slop skill (PRD section 5, owner
@@ -113,8 +114,10 @@ moderator when any of these is true:
 5. The appeal is unresolved 7 days after it opened.
 
 A moderator decides an escalated appeal and never their own. An upheld
-appeal reopens an item that Slopbot closed and reverses its penalty once. A
-maintainer reopen always wins.
+appeal reverses its penalty once. It reopens the item only while Slopbot's own
+close is the current close (GitHub `closed_by`); a later close by another
+account stays. If GitHub does not report the closer, the decision is retried.
+A maintainer reopen always wins.
 
 ## Restricted projects
 

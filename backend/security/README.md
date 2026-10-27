@@ -331,9 +331,13 @@ The 22 October 2026 product decision uses the existing escrow rails with a
 records, attempts and finalized vault snapshots from ordinary payments.
 Canonical wallet possession and binding authorizations remain shared.
 
-Payment uses the reserved gross amount of the approved award. An admin must
-record a reviewed `securityBounty.settlement` policy with a
-separate vault and `feeBasisPoints: 2500`. The vault must not appear in
+Payment uses the reserved gross amount of the approved award. The project
+owner sets up a separate bounty vault in the **Bounty funds** section of
+`/projects/<id>/manage`, without admin approval (PRD section 11, "Security
+bounty opening"). Registration of the finalized vault attaches the
+`securityBounty.settlement` policy with `feeBasisPoints: 2500` and
+`withdrawalFeeBasisPoints: 200` (`attachBountyVault` in
+`backend/projects/vault-setup.ts`). The vault must not appear in
 any other payment program. USDC awards require a matching reviewed USDC rail;
 USD awards cannot be converted implicitly. The reporter accepts the selected
 rail's public chain visibility before the maintainer or delegated payer prepares an
@@ -346,8 +350,9 @@ uses the existing finalized-event verifier and recovery engine, with the
 25% fee policy and the exact approved private intent. Public payment queries,
 notifications and aggregates never use these tables. A lost response is
 uncertain until verified chain evidence resolves it. No action can manually
-mark an award paid. Missing wallets retain their award; the canonical wallet
-proof and delay apply when a wallet is added or changed.
+mark an award paid. Missing wallets retain their award. An added or changed
+wallet activates immediately after the account and wallet-control proof,
+with no waiting period (PRD section 11, "Wallet activation").
 
 Generate the reviewed private deployment inventory with
 `bun scripts/prepare-payment-deployments.ts testnet <network> --security-bounty`

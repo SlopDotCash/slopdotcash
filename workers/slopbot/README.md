@@ -1087,10 +1087,17 @@ Migration `0052_slopbot_value_processing.sql` separates operational claims from
 immutable request history. A ten-minute lease has a unique token. Only the
 current unexpired owner may finish a request. A disappeared worker can be
 reclaimed after expiry; its old token cannot report success. An explicit retry
-time retains budget, authority and evidence blocks. Published/current outcomes
-and open-context dispositions complete that delivery only; a later source event
-has its own request. The consumer must check ownership before external calls
-and publication. The scheduler processes one due request per invocation. Single-source and
+time retains budget, authority and evidence blocks. Published/current outcomes,
+open-context dispositions and `historical` outcomes complete the request. A PR
+closed before the API start is `historical` (migration
+`0097_slopbot_value_historical.sql`): the subscription intake owns it.
+The consumer reads GitHub after its claim, so each outcome, including a retry
+time, also settles every unread or waiting delivery for the same PR received by
+the claim time. A later source event keeps its own request. The consumer must
+check ownership before external calls and publication. Each scheduled run takes
+due requests in the order they became due (receipt, retry time or expired
+lease), so a failed request waits behind newer work. A run stops when no
+request is due, after ten requests or after four minutes. Single-source and
 joint consumption use the same durable request lifecycle.
 
 A file-backed SQLite replay verifies one concurrent winner, process restart,

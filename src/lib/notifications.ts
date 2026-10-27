@@ -6,7 +6,7 @@
  * `application_rejected` came from the removed admin admission path and
  * stay readable as history.
  */
-export const NOTIFICATION_KINDS = [
+const NOTIFICATION_KINDS = [
   "application_approved",
   "application_rejected",
   "project_ready",

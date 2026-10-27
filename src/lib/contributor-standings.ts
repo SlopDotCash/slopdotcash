@@ -1,10 +1,11 @@
 /** One display projection for points and finalized principal. */
+
 import { githubUserIdFromNodeId } from "./github-actor";
+import type { ActorRef } from "./leaderboard-types";
 import type { DirectTransfer } from "./payments/contracts";
 import type { PointsMember } from "./points";
 import type { DataState } from "./use-snapshot";
 
-export type StandingsSort = "points" | "money";
 export function contributorStandings(
   state: DataState,
   members: readonly PointsMember[] | null,
@@ -25,12 +26,12 @@ export function contributorStandings(
   const rows = new Map<
     string,
     {
-      actor: { id: string; login: string };
+      actor: ActorRef;
       points: number | null;
       money: bigint | null;
     }
   >();
-  const row = (actor: { id: string; login: string }) => {
+  const row = (actor: ActorRef) => {
     let value = rows.get(actor.id);
     if (!value) {
       value = {
@@ -61,7 +62,7 @@ export function contributorStandings(
   }
   if (state.status === "ready" && directTransfers !== null) {
     // Direct transfers name numeric GitHub IDs; rows may carry node IDs.
-    const byNumericId = new Map<string, { id: string; login: string }>();
+    const byNumericId = new Map<string, ActorRef>();
     for (const actor of [
       ...currentActors.values(),
       ...[...rows.values()].map((value) => value.actor),

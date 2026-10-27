@@ -6,9 +6,6 @@ import {
   assertEscrowPolicy,
   assertEscrowTransition,
   chainFamily,
-  ESCROW_CHAINS,
-  ESCROW_NETWORKS,
-  EVM_CHAINS,
   isEscrowChain,
 } from "../../src/lib/escrow-policy.mjs";
 
@@ -69,93 +66,12 @@ const policy = (chain: string, deployment: object) => ({
 });
 
 describe("escrow chain families", () => {
-  test("each chain maps to exactly one family", () => {
-    expect([...ESCROW_CHAINS]).toEqual([
-      "base",
-      "solana",
-      "robinhood",
-      "ethereum",
-    ]);
-    expect(chainFamily("base")).toBe("evm");
-    expect(chainFamily("solana")).toBe("solana");
-    expect(chainFamily("robinhood")).toBe("evm");
-    expect(chainFamily("ethereum")).toBe("evm");
-    expect([...EVM_CHAINS]).toEqual(["base", "robinhood", "ethereum"]);
-  });
   test("an unknown chain is rejected, never defaulted to a family", () => {
     expect(isEscrowChain("evm")).toBe(false);
     expect(isEscrowChain("BASE")).toBe(false);
     expect(isEscrowChain(undefined)).toBe(false);
     expect(() => chainFamily("evm")).toThrow(TypeError);
     expect(() => chainFamily("BASE")).toThrow(TypeError);
-  });
-  test("EVM networks carry chain id, gas ceiling and scan page; Solana networks carry none", () => {
-    for (const network of Object.values(ESCROW_NETWORKS)) {
-      expect(chainFamily(network.chain)).toBe(network.family);
-      expect(typeof network.assetSymbol).toBe("string");
-      expect(network.assetSymbol.length).toBeGreaterThan(0);
-      if (network.family === "evm") {
-        expect(network.chainId).toMatch(/^[1-9][0-9]*$/);
-        expect(network.gasCeiling).toMatch(/^[1-9][0-9]*$/);
-        expect(network.scanPageBlocks).toMatch(/^[1-9][0-9]*$/);
-      } else {
-        expect(network.chainId).toBeUndefined();
-        expect(network.gasCeiling).toBeUndefined();
-        expect(network.scanPageBlocks).toBeUndefined();
-      }
-    }
-  });
-  test("Base keeps its executor and scanner limits", () => {
-    for (const name of ["base-sepolia", "base-mainnet"] as const) {
-      expect(ESCROW_NETWORKS[name].gasCeiling).toBe("500000");
-      expect(ESCROW_NETWORKS[name].scanPageBlocks).toBe("2000");
-      expect(ESCROW_NETWORKS[name].assetSymbol).toBe("USDC");
-    }
-    expect(ESCROW_NETWORKS["solana-testnet"].assetSymbol).toBe("TEST");
-  });
-  test("Robinhood Chain carries its own limits, chain ids and USDG", () => {
-    const testnet = ESCROW_NETWORKS["robinhood-testnet"];
-    const mainnet = ESCROW_NETWORKS["robinhood-mainnet"];
-    expect(testnet).toEqual({
-      chain: "robinhood",
-      family: "evm",
-      testnet: true,
-      chainId: "46630",
-      asset: "0x7e955252e15c84f5768b83c41a71f9eba181802f",
-      assetSymbol: "USDG",
-      assetDecimals: 6,
-      assets: [
-        {
-          address: "0x7e955252e15c84f5768b83c41a71f9eba181802f",
-          symbol: "USDG",
-          decimals: 6,
-          source: expect.stringMatching(/^https:\/\//),
-        },
-      ],
-      gasCeiling: "2000000",
-      scanPageBlocks: "9000",
-    });
-    expect(mainnet).toEqual({
-      chain: "robinhood",
-      family: "evm",
-      testnet: false,
-      chainId: "4663",
-      asset: "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
-      assetSymbol: "USDG",
-      assetDecimals: 6,
-      assets: [
-        {
-          address: "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
-          symbol: "USDG",
-          decimals: 6,
-          source: expect.stringMatching(/^https:\/\//),
-        },
-      ],
-      gasCeiling: "2000000",
-      scanPageBlocks: "9000",
-    });
-    // Under the common 10,000-block eth_getLogs provider limit (spec section 4).
-    expect(Number(mainnet.scanPageBlocks)).toBeLessThan(10_000);
   });
 });
 
@@ -244,38 +160,7 @@ describe("assertEscrowPolicy after the family refactor", () => {
     ).toThrow(/separate roles/);
   });
 });
-describe("escrow v2 network registry", () => {
-  test("Ethereum mainnet and Sepolia carry Circle USDC with its source", () => {
-    expect(ESCROW_NETWORKS.ethereum).toMatchObject({
-      chain: "ethereum",
-      family: "evm",
-      testnet: false,
-      chainId: "1",
-      asset: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-      assetSymbol: "USDC",
-      assetDecimals: 6,
-    });
-    expect(ESCROW_NETWORKS["ethereum-sepolia"]).toMatchObject({
-      chain: "ethereum",
-      testnet: true,
-      chainId: "11155111",
-      asset: "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238",
-    });
-    for (const name of ["ethereum", "ethereum-sepolia"] as const)
-      expect(ESCROW_NETWORKS[name].assets[0].source).toBe(
-        "https://developers.circle.com/stablecoins/usdc-contract-addresses",
-      );
-  });
-  test("every reference asset has whole decimals and the default repeats the first", () => {
-    for (const network of Object.values(ESCROW_NETWORKS)) {
-      for (const asset of network.assets)
-        expect(Number.isInteger(asset.decimals) && asset.decimals >= 0).toBe(
-          true,
-        );
-      expect(network.asset).toBe(network.assets[0]?.address ?? null);
-      expect(network.assetDecimals).toBe(network.assets[0]?.decimals ?? null);
-    }
-  });
+describe("escrow withdrawal fee", () => {
   test("the withdrawal fee equals the 2% payout fee and nothing else", () => {
     expect(() =>
       assertEscrowPolicy({

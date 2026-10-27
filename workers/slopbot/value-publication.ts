@@ -3,12 +3,11 @@
 
 import {
   collectTargetRepositories,
-  REGISTERED_REPOSITORIES,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
 import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
-import { type D1Database, installation } from "./persistence";
+import { type D1Database, installationActive } from "./persistence";
 import { registeredProject, requireRegisteredRepository } from "./registry";
 import { loadPolicy, type ReviewEnv } from "./review";
 import { readValueDecision } from "./value-consumption";
@@ -16,6 +15,7 @@ import { collectValueContext, valueContextSelections } from "./value-context";
 import {
   collectValueEvidence,
   type EvidenceClient,
+  findRepository,
   type ValueEvidence,
 } from "./value-evidence";
 import { appendValueRecord, prepareValueRecord } from "./value-journal";
@@ -50,14 +50,10 @@ export async function verifyCurrentValueSource(
   github: ValueClient,
   evidence: ValueEvidence,
   result: Pick<ValueResult, "policySha" | "sourceDigest">,
-  repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
+  repositories: readonly TargetRepository[],
   mergeRecipe?: ValueMergeRecipe,
 ) {
-  const repository = repositories.find((entry) =>
-    [entry.id, ...entry.aliases].some(
-      (id) => id.toLowerCase() === evidence.repository.toLowerCase(),
-    ),
-  );
+  const repository = findRepository(repositories, evidence.repository);
   if (!repository)
     throw new Error("Value source is absent from the verified registry");
   const [owner, repo] = evidence.repository.split("/");
@@ -193,8 +189,7 @@ export async function assertValueInstallation(
   db: D1Database,
   installationId: number,
 ) {
-  const state = await installation(db, installationId);
-  if (!state || state.removed_at !== null || state.suspended_at !== null)
+  if (!(await installationActive(db, installationId)))
     throw new Error("Value publication installation is inactive");
 }
 

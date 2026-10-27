@@ -1,7 +1,7 @@
 /** Owner-signed creation, checked against a current reviewed deployment. */
 import {
   type SolanaProgramConfig,
-  solanaMintDecimals,
+  solanaMintDetails,
   solanaRpc,
   verifySolanaDeployment,
   verifySolanaProgram,
@@ -58,8 +58,12 @@ export async function prepareSolanaVaultCreation(
   registrationOnly = false,
 ) {
   await verifySolanaProgram(template);
-  const { plan, config } = candidate(template, input);
-  const decimals = await solanaMintDecimals(template, input.mint);
+  const mint = await solanaMintDetails(template, input.mint);
+  const { plan, config } = candidate(template, {
+    ...input,
+    tokenProgram: mint.tokenProgram,
+  });
+  const decimals = mint.decimals;
   const existing = object(
     await solanaRpc(template, "getAccountInfo", [
       plan.projectPda,
@@ -113,7 +117,11 @@ export async function verifySolanaVaultCreation(
   transactionId: string,
 ) {
   await verifySolanaProgram(template);
-  const { plan, config } = candidate(template, input);
+  const mint = await solanaMintDetails(template, input.mint);
+  const { plan, config } = candidate(template, {
+    ...input,
+    tokenProgram: mint.tokenProgram,
+  });
   const raw = await solanaRpc(template, "getTransaction", [
     transactionId,
     {

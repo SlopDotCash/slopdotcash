@@ -9,6 +9,7 @@ import "@fontsource/jetbrains-mono/700.css";
 import { type ComponentType, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { errorMessage } from "./lib/errors";
 import {
   installProjectRegistry,
   loadProjectRegistry,
@@ -32,7 +33,7 @@ if (window.location.hostname === "deck.slop.cash") {
 
 type BootState =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error"; title: string; message: string }
   | { status: "ready"; App: ComponentType };
 
 function RegistryBoot() {
@@ -46,20 +47,23 @@ function RegistryBoot() {
       try {
         projects = await loadProjectRegistry();
       } catch (error) {
-        const reason =
-          error instanceof Error
-            ? error.message
-            : "The project registry could not be read.";
+        const reason = errorMessage(
+          error,
+          "The project registry could not be read.",
+        );
         try {
           // PRD section 9: keep the last good registry with a stale label.
           const published = await loadPublishedProjectRegistry();
           projects = published.projects;
           staleRegistry = { syncedAt: published.syncedAt, reason };
-        } catch {
-          // error-policy:J3 no last good registry; project routes show the
-          // live-read failure and account routes remain available.
+        } catch (publishedError) {
+          // error-policy:J3 no last good registry; project routes show both
+          // failures and account routes remain available.
           projects = [];
-          registryError = reason;
+          registryError = `${reason} ${errorMessage(
+            publishedError,
+            "The published project registry could not be read.",
+          )}`;
         }
       }
       if (!active) return;
@@ -70,13 +74,12 @@ function RegistryBoot() {
         const { App } = await import("./App");
         if (active) setState({ status: "ready", App });
       } catch (error) {
+        // A failed app chunk is not a registry outage.
         if (active)
           setState({
             status: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "The application could not load.",
+            title: "Slop could not load",
+            message: errorMessage(error, "The application could not load."),
           });
       }
     })();
@@ -91,7 +94,7 @@ function RegistryBoot() {
         <p role="status">Loading projects…</p>
       ) : (
         <div role="alert">
-          <h1>Projects are unavailable</h1>
+          <h1>{state.title}</h1>
           <p>{state.message}</p>
           <button
             className="button primary-button"

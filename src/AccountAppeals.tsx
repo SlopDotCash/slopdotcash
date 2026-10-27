@@ -1,7 +1,8 @@
 import { type FormEvent, useEffect, useState } from "react";
+import { errorMessage } from "./lib/errors";
 import { projectApiRequest } from "./lib/project-api";
 import type { AppealState, RestrictionState } from "./lib/project-contracts";
-import { errorMessage } from "./Presentation";
+import { useAction } from "./lib/use-action";
 
 type AccountAppeal = {
   projectId: string;
@@ -74,26 +75,20 @@ function AccountAppealForm({
 }) {
   const [reason, setReason] = useState("");
   const [evidence, setEvidence] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAction();
   const [sent, setSent] = useState(false);
-  const submit = async (event: FormEvent) => {
+  const submit = (event: FormEvent) => {
     event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
+    void run(async () => {
       await projectApiRequest("POST", "project-appeals", {
         projectId: appeal.projectId,
+        appealScope: "account",
         reason: reason.trim(),
         evidenceReference: evidence.trim(),
       });
       setSent(true);
       onSent();
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
   return (
     <form

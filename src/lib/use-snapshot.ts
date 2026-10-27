@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
-import { assertCycleIndex, type CycleIndex } from "./cycle-index";
+import { type CycleIndex, loadCycleIndex } from "./cycle-index";
 import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
@@ -15,7 +15,6 @@ import { PROJECTS } from "./projects.mjs";
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
 const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
-const MAX_CYCLE_INDEX_BYTES = 8 * 1024 * 1024;
 export type DataState =
   | { status: "loading" }
   | { status: "error"; message: string }
@@ -53,32 +52,25 @@ export function useSnapshot(enabled: boolean): [DataState, () => void] {
         SNAPSHOT_TIMEOUT_MS,
       );
       try {
-        const request = {
-          cache: "no-store" as const,
-          headers: { Accept: "application/json" },
-          signal: requestController.signal,
+        const query = `attempt=${attempt}&retry=${retry}`;
+        const readSnapshot = async () => {
+          const response = await fetchWithDeadline(
+            `/data/leaderboard.json?${query}`,
+            {
+              cache: "no-store",
+              headers: { Accept: "application/json" },
+              signal: requestController.signal,
+            },
+          );
+          if (!response.ok)
+            throw new Error(`snapshot returned ${response.status}`);
+          return readBoundedJson(response, MAX_LEADERBOARD_BYTES, "snapshot");
         };
-        const [response, cycleResponse] = await Promise.all([
-          fetchWithDeadline(
-            `/data/leaderboard.json?attempt=${attempt}&retry=${retry}`,
-            request,
-          ),
-          fetchWithDeadline(
-            `/data/cycles/index.json?attempt=${attempt}&retry=${retry}`,
-            request,
-          ),
-        ]);
-        if (!response.ok)
-          throw new Error(`snapshot returned ${response.status}`);
-        if (!cycleResponse.ok) {
-          throw new Error(`cycle index returned ${cycleResponse.status}`);
-        }
-        const [value, cycleValue]: [unknown, unknown] = await Promise.all([
-          readBoundedJson(response, MAX_LEADERBOARD_BYTES, "snapshot"),
-          readBoundedJson(cycleResponse, MAX_CYCLE_INDEX_BYTES, "cycle index"),
+        const [value, cycleValue]: [unknown, CycleIndex] = await Promise.all([
+          readSnapshot(),
+          loadCycleIndex(requestController.signal, query),
         ]);
         assertLeaderboardSnapshot(value);
-        assertCycleIndex(cycleValue);
         // A project whose pool starts after this snapshot has no cycle to
         // show yet. Skipping it keeps one future-dated registry entry from
         // failing the whole page; every other contract violation still

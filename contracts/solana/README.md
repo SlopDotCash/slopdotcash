@@ -1,16 +1,23 @@
 # Solana protected payout escrow
 
-This Anchor program holds classic SPL Token mints in a separate PDA vault for
-each owner, project digest and purpose. The project PDA seeds are
+This Anchor program holds classic SPL Token mints and the approved metadata-only
+Token-2022 subset in a separate PDA vault for each owner, project digest and purpose. The project PDA seeds are
 `["project", owner, project digest, purpose]`, where the purpose byte is `0`
 for ordinary awards and `1` for private bounties, so one owner can hold separate
 ordinary and bounty projects for the same digest (owner decision D13, 24
 October 2026). `initialize` is permissionless: the signing owner pays and owns
-the project. Any classic SPL mint is accepted, with any number of
-decimals. Every transfer passes the mint's own decimals to `transfer_checked`.
-Token-2022 mints are rejected: `Account<Mint>` and `Program<Token>` require the
-classic token program. Classic SPL has no transfer fee and no rebasing, so the
-vault always receives the exact amount sent. Deployment policy must pin the
+the project. Classic SPL mints retain their existing behavior. Token-2022 mints
+must have disabled mint and freeze authorities and may contain only
+`MetadataPointer` and `TokenMetadata`; token accounts may contain only
+`ImmutableOwner`, or no extensions. Unknown extensions, transfer fees, transfer
+hooks and rebasing behavior remain unsupported (PRD section 6, owner decision
+26 October 2026). The program and TypeScript adapter both check this subset.
+Every transfer uses the mint's own token program and decimals with
+`transfer_checked`, so the vault receives the exact amount sent.
+
+This source change is not deployment evidence. The currently recorded mainnet
+program still requires a separately reviewed and owner-approved upgrade before
+Token-2022 vaults can be activated. Deployment policy must pin the
 approved mint and network domain. The program cannot determine GitHub authority
 or whether a mint is the asset the project intends. A reviewed project manifest
 must bind its program ID, project PDA, network, mint, owner and identity
@@ -220,6 +227,7 @@ initial state. A period is a calendar UTC
 month written as `YYYYMM`. Its window opens 72 hours after the month ends, at
 00:00 UTC on the 4th, and closes when the next month's window opens, so only one
 period is open at a time.
+
 1. Anyone calls `commit_monthly(period, allocation_root, total, frozen_at)`
    inside the window, while the switch is on. The instruction just before it in the same
    transaction must be an Ed25519 program check of one signature by the
@@ -235,7 +243,7 @@ period is open at a time.
    fully covered by free vault funds. Recording the root reserves that full
    total before any individual award can be created.
 2. Anyone calls `commit_monthly_award(period, award_id, source_digest,
-   actor_id, gross, index, count, proof)` for each award. The program rebuilds
+actor_id, gross, index, count, proof)` for each award. The program rebuilds
    the root from the leaf and its Merkle proof. A leaf is
    `sha256(0x00 || actor_id LE || gross LE || source_digest)` and a node is
    `sha256(0x01 || left hash || left total LE || right hash || right total LE)`.
@@ -247,7 +255,7 @@ period is open at a time.
    commits as an ordinary award with the 2% fee
    through the same `origin` and `award` PDAs, so a source commits once, by
    hand or monthly. It also creates the `["monthly-source", project,
-   source_digest]` marker.
+source_digest]` marker.
 3. Recording a root adds its total to `monthly_outstanding`; each committed
    award subtracts its gross. While `monthly_outstanding` is positive the owner's
    ordinary `commit` fails with `MonthlyOutstanding`, so the owner cannot consume
@@ -265,7 +273,7 @@ period is open at a time.
    change. See `docs/escrow-unsettleable-month-release.md`.
 4. An award that can never commit is returned to free balance by anyone with
    `release_monthly_award(period, source_digest, actor_id, gross, index, count,
-   proof)`, passing the source's `origin`, its `monthly-source` marker and the
+proof)`, passing the source's `origin`, its `monthly-source` marker and the
    obligation the origin records. The leaf must prove against the recorded
    month, and one of these must hold: its actor is zero; the recorded
    obligation pays this actor at least this gross (an identical hand award,
@@ -299,8 +307,8 @@ commit more than one owner cap in each calendar month. Payment stays
 permissionless `pay` through the ordinary binding and delay rules. The adapter
 verifies a `commit_monthly_award` reservation like a `commit` reservation.
 
-All transfer instructions validate the classic token program, mint, token account
-owners, vault PDA, project account and signer. Failed token transfers roll back the
+All transfer instructions validate the mint's token program, admitted extensions,
+token account owners, vault PDA, project account and signer. Failed token transfers roll back the
 entire transaction, including fees and accounting. Frozen destinations do not block
 other awards. `paid`, reserve, principal paid and fee counters are on-chain. Paid
 records remain permanently allocated to prevent account recreation replay.
@@ -320,8 +328,11 @@ recipient. The suites also cover a permissionless deposit by a third party
 that the owner then withdraws, 18-decimal and 0-decimal mints through deposit,
 commit, pay and withdraw, the 2% withdrawal fee rounded up per withdrawal,
 `initialize` rejected when the identity authority or fee recipient differs from
-the Config, a Token-2022 mint rejected at `initialize`, and `readVaultTotals`
-against the on-chain counters.
+the Config, unsafe Token-2022 mint authorities rejected at `initialize`, and
+`readVaultTotals` against the on-chain counters. The Token-2022 suite loads synthetic
+metadata-only mint bytes into the isolated validator and covers deposit, reservation,
+payment, withdrawal and fee claims, including wrong-program and duplicate-payment
+rejection. It uses local test funds only.
 These use real token accounts, transactions, finalized receipts and balance
 checks. They cover the canonical lifecycle, delayed wallet registration, wallet
 rotation that freezes payment to the earlier wallet, project-scoped bindings,
@@ -401,8 +412,15 @@ Config is missing, or unless the project fee recipient, the Config fee
 recipient and the reviewed `feeRecipient` are equal and the reviewed
 `identityAuthority` is the Config identity authority. It also requires the
 reviewed `rotationAuthority` to equal the separate Config rotation authority. For `pay` it reads the
-mint at finalized commitment (classic SPL layout, decimals at byte 44, owned by
-the Token program) and requires each transfer's decimals to equal the mint's.
+mint at finalized commitment (decimals at byte 44) and requires each transfer's
+decimals and token program to equal the mint's. `contracts/solana/token-extensions.ts`
+admits a classic SPL mint, or the metadata-only Token-2022 subset of PRD section
+6: mint and freeze authorities disabled, mint extensions limited to
+`MetadataPointer` and `TokenMetadata`, and token accounts with only
+`ImmutableOwner` or no extension. It refuses every other or unknown extension, a
+wrong account type, non-zero base padding and a metadata pointer or embedded
+metadata mint that does not name the mint. The vault token account must be owned
+by the same token program as its mint.
 The result fields `grossMicro`, `netMicro` and `feeMicro` keep their names; they
 carry token base units of the project mint as decimal strings. The adapter checks every field
 against finalized state except the identity authority: after activation it
