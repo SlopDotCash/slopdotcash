@@ -10,6 +10,9 @@
  * that already failed with a 4xx/5xx response counts once, as that response,
  * even when the browser later cancels its unread body.
  */
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import {
   type BrowserContext,
@@ -18,6 +21,7 @@ import {
   type Page,
   type Request,
 } from "@playwright/test";
+import type { CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 
 export { expect };
@@ -55,6 +59,26 @@ export type Diagnostics = {
 
 /** A first-party request that the page or the browser canceled. */
 export const CANCELED = /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) /u;
+
+/** Match historical cycles to a test's deliberately scoped runtime registry. */
+export async function serveProjectCycleIndex(
+  page: Page,
+  projectIds: readonly string[],
+): Promise<void> {
+  const cycleIndex = JSON.parse(
+    readFileSync(join(process.cwd(), "public/data/cycles/index.json"), "utf8"),
+  ) as CycleIndex;
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    route.fulfill({
+      json: {
+        ...cycleIndex,
+        cycles: cycleIndex.cycles.filter((cycle) =>
+          projectIds.includes(cycle.projectId),
+        ),
+      },
+    }),
+  );
+}
 
 /** Escapes a literal for a RegExp source. */
 export const escapeRegExp = (value: string) =>
