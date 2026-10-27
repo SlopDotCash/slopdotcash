@@ -1383,10 +1383,16 @@ export function ContributorStandings({
       aria-label={title ?? "Contributor standings"}
     >
       {compact ? (
-        <div className="points-panel-heading">
+        projectId ? (
           <h2>{title ?? "Contributor standings"}</h2>
-          <Link href={`/points?${fullView.toString()}`}>View leaderboard</Link>
-        </div>
+        ) : (
+          <div className="points-panel-heading">
+            <h2>{title ?? "Contributor standings"}</h2>
+            <Link href={`/points?${fullView.toString()}`}>
+              View leaderboard
+            </Link>
+          </div>
+        )
       ) : null}
       {showDataNotice ? (
         <DataNotice state={scores} retry={retryScore ?? retryLoadedScore} />
