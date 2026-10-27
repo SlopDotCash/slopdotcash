@@ -1319,6 +1319,7 @@ test("a recorded debit reaches the published score once and an upheld appeal res
       projects: 1,
     });
     const original = structuredClone(journal.revisions);
+    const originalBadges = [...member()!.badges];
 
     setSystemTime(new Date(CLOSED_AT));
     expect(await run.review()).toBe("closed (spam)");
@@ -1355,6 +1356,7 @@ test("a recorded debit reaches the published score once and an upheld appeal res
       projects: 1,
     });
     expect(journal.revisions.slice(0, original.length)).toEqual(original);
+    expect(member()!.badges).toEqual(originalBadges);
     expect(adjustments()).toMatchObject([
       {
         award: { amount: -10 },
