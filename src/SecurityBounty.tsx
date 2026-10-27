@@ -2310,6 +2310,10 @@ function ActionForm({
   );
 }
 
+function caseTitle(record: SecurityCase): string {
+  return record.advisory?.ghsa ?? `Case ${record.id.slice(-8)}`;
+}
+
 function awardText(record: SecurityCase): string {
   if (record.award === null || record.terms === null)
     return AWARD_LABELS[record.awardState] ?? record.awardState;
@@ -2612,7 +2616,7 @@ function CaseDetail({
     >
       <header>
         <h3 id={`case-${record.id}`}>
-          {record.advisory?.ghsa ?? record.id} · {record.projectId}
+          {caseTitle(record)} · {record.projectId}
         </h3>
         <StatusBadge icon={<LockKeyhole />}>Private case</StatusBadge>
       </header>
@@ -2950,7 +2954,7 @@ export default function SecurityCasesPage() {
                     type="button"
                   >
                     <span>{record.projectId}</span>
-                    <strong>{record.advisory?.ghsa ?? record.id}</strong>
+                    <strong title={record.id}>{caseTitle(record)}</strong>
                     <span>{record.nextStep}</span>
                     <span>Award: {awardText(record)}</span>
                   </button>
