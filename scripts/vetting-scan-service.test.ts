@@ -15,6 +15,7 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
+import { projectRestriction } from "../backend/projects/enforcement";
 import { handleProjectApi } from "../backend/projects/handler";
 import { flaggerAuthority } from "../backend/projects/setup";
 import { githubFlaggerStanding } from "../backend/vetting/flagger-standing";
@@ -722,6 +723,237 @@ test("an ambiguous primary review runs the Surplus specialist once before public
   const assessment = await vetting.getAssessment(assessmentId);
   expect(assessment?.state).toBe("clean");
 });
+
+function emptyCommit(message: string) {
+  git(
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "--allow-empty",
+    "--no-gpg-sign",
+    "-qm",
+    message,
+  );
+  commitSha = git("rev-parse", "HEAD").toString().trim();
+  clock = new Date(clock.getTime() + 1000);
+}
+
+test("scan reuse does not disclose a cached result without a service signature", async () => {
+  const first = await runScanPass(config);
+  const transport = config.connection.fetch;
+  if (!transport) throw new Error("Missing fixture transport");
+  const response = await transport(`${ORIGIN}/api/v1/vetting/reuse`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      assessmentId: first.assessments[0].assessmentId,
+      inputManifestSha256: "a".repeat(64),
+      policyVersion: config.policyVersion,
+    }),
+  });
+  expect(response.status).toBe(401);
+  expect(await response.json()).toMatchObject({ error: "invalid_signature" });
+});
+
+test("scan reuse binds empty new commits to the original retained clean result without provider calls", async () => {
+  const first = await runScanPass(config);
+  const original = await vetting.getAssessment(
+    first.assessments[0].assessmentId,
+  );
+  if (!original?.result || !isScanResult(original.result))
+    throw new Error("Missing original scan");
+  const originalSnapshot = structuredClone(original);
+  expect((await activate()).status).toBe(200);
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("Missing current project");
+  provider.calls = [];
+  provider.up = false;
+  for (const message of ["First empty commit", "Second empty commit"]) {
+    emptyCommit(message);
+    const pass = await runScanPass(config);
+    expect(pass.assessments[0]).toMatchObject({
+      state: "published",
+      disposition: "clean",
+      outcome: "accepted",
+      evidence: "retained",
+    });
+    const current = await vetting.getAssessment(
+      pass.assessments[0].assessmentId,
+    );
+    expect(current?.commitSha).toBe(commitSha);
+    expect(current?.revision).toBe(project.revision);
+    expect(current?.manifestSha256).toBe(project.manifestSha256);
+    expect(current?.result).toMatchObject({
+      assessmentId: current?.id,
+      reusedAssessmentId: original.id,
+      assessed: {
+        commitSha,
+        inputManifestSha256: original.result.assessed.inputManifestSha256,
+      },
+      scan: original.result.scan,
+      primaryReview: original.result.primaryReview,
+    });
+    if (!current?.result) throw new Error("Missing reused scan");
+    expect(await retained.evidence.retained(current.result)).toBe(true);
+  }
+  expect(provider.calls).toEqual([]);
+  expect(await vetting.getAssessment(original.id)).toEqual(originalSnapshot);
+});
+
+test("scan reuse refuses changed executable bytes and reviews the new inventory", async () => {
+  const first = await runScanPass(config);
+  const original = await vetting.getAssessment(
+    first.assessments[0].assessmentId,
+  );
+  provider.calls = [];
+  await commit(
+    {
+      "src/index.ts":
+        "export const parse = (value: string) => value.toUpperCase();\n",
+    },
+    "Change executable source",
+  );
+  clock = new Date(clock.getTime() + 1000);
+  const next = await runScanPass(config);
+  const current = await vetting.getAssessment(next.assessments[0].assessmentId);
+  expect(current?.result).toMatchObject({ reusedAssessmentId: null });
+  expect(current?.commitSha).toBe(commitSha);
+  expect(
+    current?.result && isScanResult(current.result)
+      ? current.result.assessed.inputManifestSha256
+      : null,
+  ).not.toBe(
+    original?.result && isScanResult(original.result)
+      ? original.result.assessed.inputManifestSha256
+      : null,
+  );
+  expect(provider.calls.map((call) => call.path)).toEqual([
+    "/anthropic/v1/messages",
+  ]);
+});
+
+for (const change of ["policy", "template"] as const) {
+  test(`scan reuse refuses a changed ${change} even with unchanged repository bytes`, async () => {
+    await runScanPass(config);
+    provider.calls = [];
+    emptyCommit(`New commit under changed ${change}`);
+    if (change === "policy") config.policyVersion = "scan-policy-2";
+    else {
+      templateInputs.acceptedRevisions = ["1", "2"];
+      templateSha256 = digest(JSON.stringify(templateInputs));
+    }
+    const next = await runScanPass(config);
+    const current = await vetting.getAssessment(
+      next.assessments[0].assessmentId,
+    );
+    expect(current?.result).toMatchObject({ reusedAssessmentId: null });
+    expect(provider.calls.map((call) => call.path)).toEqual([
+      "/anthropic/v1/messages",
+    ]);
+  });
+}
+
+test("scan reuse is revalidated at publication after a two-flag pause", async () => {
+  await runScanPass(config);
+  expect((await activate()).status).toBe(200);
+  provider.calls = [];
+  emptyCommit("Same bytes before pause");
+  const transport = config.connection.fetch;
+  if (!transport) throw new Error("Missing fixture transport");
+  let paused = false;
+  config.connection.fetch = (async (input, init) => {
+    const response = await transport(input, init);
+    if (String(input).endsWith("/api/v1/vetting/reuse") && response.ok) {
+      const value = await response.clone().json();
+      if (value.result !== null && !paused) {
+        paused = true;
+        expect((await flag("alice")).status).toBe(201);
+        expect((await flag("bob")).status).toBe(201);
+      }
+    }
+    return response;
+  }) as typeof fetch;
+  const pass = await runScanPass(config);
+  expect(paused).toBe(true);
+  expect(pass.assessments[0]).toMatchObject({
+    state: "published",
+    outcome: "rejected",
+  });
+  expect(provider.calls).toEqual([]);
+  expect(await flags.activeFlags(clock)).toHaveLength(2);
+  expect(
+    projectRestriction("open-registry", await projects.listEnforcements())
+      .state,
+  ).toBe("quarantined");
+});
+
+test("scan reuse requires the original report to remain in private R2", async () => {
+  const first = await runScanPass(config);
+  const original = await vetting.getAssessment(
+    first.assessments[0].assessmentId,
+  );
+  if (!original) throw new Error("Missing original scan");
+  const object = sqlite
+    .query(
+      "SELECT object_key FROM vetting_evidence_objects WHERE assessment_id = ? AND kind = 'trace' LIMIT 1",
+    )
+    .get(original.id) as { object_key: string };
+  await retained.bucket.delete(object.object_key);
+  provider.calls = [];
+  emptyCommit("Same source after evidence loss");
+  const next = await runScanPass(config);
+  const current = await vetting.getAssessment(next.assessments[0].assessmentId);
+  expect(current?.result).toMatchObject({ reusedAssessmentId: null });
+  expect(provider.calls.map((call) => call.path)).toEqual([
+    "/anthropic/v1/messages",
+  ]);
+  expect(next.assessments[0]).toMatchObject({ outcome: "accepted" });
+});
+
+test("scan reuse rejects a response rebound to a different commit before publishing or reviewing", async () => {
+  await runScanPass(config);
+  provider.calls = [];
+  emptyCommit("Same source with mismatched lookup response");
+  const transport = config.connection.fetch;
+  if (!transport) throw new Error("Missing fixture transport");
+  config.connection.fetch = (async (input, init) => {
+    const response = await transport(input, init);
+    if (!String(input).endsWith("/api/v1/vetting/reuse") || !response.ok)
+      return response;
+    const value = await response.json();
+    value.result.assessed.commitSha = "f".repeat(40);
+    return Response.json(value);
+  }) as typeof fetch;
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({ state: "retry", step: "reuse" });
+  expect(provider.calls).toEqual([]);
+  expect(
+    (await vetting.pendingAssessments()).map((row) => row.commitSha),
+  ).toContain(commitSha);
+});
+
+for (const status of [404, 503]) {
+  test(`scan reuse lookup HTTP ${status} leaves pending work without a provider fallback`, async () => {
+    const transport = config.connection.fetch;
+    if (!transport) throw new Error("Missing fixture transport");
+    config.connection.fetch = (async (input, init) =>
+      String(input).endsWith("/api/v1/vetting/reuse")
+        ? new Response(null, { status })
+        : transport(input, init)) as typeof fetch;
+    const pass = await runScanPass(config);
+    expect(pass.assessments[0]).toMatchObject({
+      state: "retry",
+      step: "reuse",
+    });
+    expect(provider.calls).toEqual([]);
+    expect(await readdir(config.journalDirectory)).toEqual([]);
+    expect((await vetting.pendingAssessments()).map((row) => row.id)).toContain(
+      pass.assessments[0].assessmentId,
+    );
+  });
+}
 
 test("a failed specialist is a service failure: nothing is published and the scan retries", async () => {
   provider.primary = "findings";

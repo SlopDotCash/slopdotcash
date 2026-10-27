@@ -148,8 +148,8 @@ The API never upgrades a result:
   requires `secretsProvided: false` and default-deny egress.
 - A clean result needs its retained report, inventory, dependency locks and
   artifacts in the evidence store (`evidence_incomplete` otherwise). A reused
-  result must cite an original clean, non-reused scan of the same repository,
-  inventory, template, policy, run and report (`reuse_mismatch` otherwise);
+  result must cite an original clean, non-reused scan of the same project and
+  repository, inventory, template, policy, run and report (`reuse_mismatch` otherwise);
   the original's retained evidence stands in.
 - `malicious` needs a `confirmation` with basis `reproducible-behavior` or
   `verified-source-evidence`, a rule id and evidence references. A model label
@@ -159,6 +159,14 @@ The API never upgrades a result:
 Historical `slop-vetting-result-v1` results keep their secure-VM rules in
 `result.ts`: eleven telemetry channels, two model reviews and a complete
 canonical assembly. No recorded incomplete result is reinterpreted as clean.
+
+The scanner may query signed `POST /api/v1/vetting/reuse` after its isolated
+inspection. The bounded body names the pending assessment, final inventory
+digest and policy version. A hit returns the original clean result rebound to
+the queued revision and commit; a miss returns `result: null`. The lookup
+checks retained evidence and shares the result intake's original-scan and
+restriction predicate. It never records clearance: normal signed result
+publication repeats these checks, including current contributor-flag pauses.
 
 ## Scanner service dependency
 
