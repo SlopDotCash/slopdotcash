@@ -129,35 +129,43 @@ describe("reward token metadata", () => {
     const authorized = token2022Mint(6);
     authorized[46] = 1;
     await expect(read(TOKEN_2022, authorized).metadata).rejects.toThrow(
-      "Token-2022 freeze authority is not disabled",
+      "The account is not a supported SPL mint",
     );
     const extra = token2022Mint(6);
     extra[234] = 1;
     extra[235] = 0;
     await expect(read(TOKEN_2022, extra).metadata).rejects.toThrow(
-      "Unsupported Token-2022 extension 1",
+      "The account is not a supported SPL mint",
     );
     await expect(
       read(TOKEN_2022, classicMint(6, 120)).metadata,
-    ).rejects.toThrow("Truncated Token-2022 account");
+    ).rejects.toThrow("The account is not a supported SPL mint");
   });
 
   test("refuses an account that is not a mint or not a token program", async () => {
-    // A 165-byte token account that is initialized but is not a mint.
-    await expect(read(TOKEN, classicMint(6, 165)).metadata).rejects.toThrow(
-      "Classic mint layout mismatch",
-    );
+    // Byte 45 is part of the owner key in a token account, not mint initialization.
+    for (const ownerByte of [7, 1]) {
+      const tokenAccount = new Uint8Array(165);
+      tokenAccount.set(MINT_BYTES, 0);
+      tokenAccount.fill(ownerByte, 32, 64);
+      tokenAccount[108] = 1;
+      for (const program of [TOKEN, TOKEN_2022]) {
+        await expect(read(program, tokenAccount).metadata).rejects.toThrow(
+          "The account is not a supported SPL mint",
+        );
+      }
+    }
     await expect(read(TOKEN, classicMint(6, 83)).metadata).rejects.toThrow(
-      "Classic mint layout mismatch",
+      "The account is not a supported SPL mint",
     );
     const uninitialized = classicMint(6);
     uninitialized[45] = 0;
     await expect(read(TOKEN, uninitialized).metadata).rejects.toThrow(
-      "Mint is not initialized",
+      "The account is not a supported SPL mint",
     );
     await expect(
       read("11111111111111111111111111111111", classicMint(6)).metadata,
-    ).rejects.toThrow("Not a supported token program account");
+    ).rejects.toThrow("The account is not a supported SPL mint");
   });
 
   test("reports a missing account and wraps every refusal as a token metadata error", async () => {
