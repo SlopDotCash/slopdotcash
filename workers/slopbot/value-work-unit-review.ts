@@ -10,6 +10,7 @@ import {
   runValueInference,
   type ValueInferenceBudget,
 } from "./value-inference";
+import { valueModelSource } from "./value-model-source";
 import type { SubscriptionResult } from "./value-producer";
 import {
   validateWorkUnitPartition,
@@ -180,15 +181,16 @@ export async function assessWorkUnits(
     throw new Error(
       "Complete joint source evidence is required before valuation",
     );
+  const source = valueModelSource(evidence);
   const result = await runValueInference(
     env,
     {
-      system: `${VALUE_SYSTEM_PROMPT}
+      system: `${VALUE_SYSTEM_PROMPT}${source.systemSuffix}
 
 Joint assessment: return units under the supplied joint schema. Partition EVERY supplied commit/path claim exactly once by its claimId. Shared PR carriers of the same claim are one source, not repeated work. One PR may contain several independent outcomes, and several PRs may contribute to one outcome. Do not make one unit per PR mechanically. Preserve original implementation separately from distinct integration work. For indirectAcceptance sources, only the historical accepted commit/path claims are eligible: compare retainedFiles historical and accepted texts, honor verified renames, and do not credit source hunks removed by integration repairs. The branch observation is acceptance evidence, not a fabricated GitHub PR merge. Put EVERY supplied formal review in exactly one unit, compare findings across the entire source group chronologically, and retain the earliest source for duplicate findings. A review-only unit may have no claims and must have tier null; it still needs a demonstrated retained review outcome. Units with missing value evidence remain unresolved with tier null and explicit limitations. For retainedCopy claims, the claim commit and credit PR are the original source; the acceptance PR and copied commit prove the retained integration. Compare both complete commit files, including preexistingCommitShas for omitted already-present hunks; do not price the original and copy separately. Do not assign actors or invent claims. Related PRs may be assessed together only when their full source is supplied; an uninspected external relationship remains unresolved.`,
       policy:
         "Use each source's exact pinned project policy. Conflicting or incomplete authority is unresolved.",
-      item: JSON.stringify(evidence),
+      item: source.item,
     },
     {
       sourceDigest: evidence.sourceDigest,

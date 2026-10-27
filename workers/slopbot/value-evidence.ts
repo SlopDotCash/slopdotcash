@@ -8,6 +8,12 @@ import {
   collectAcceptedValueRange,
 } from "./value-accepted-range";
 import {
+  type AddedBinaryProof,
+  addedBinaryRecovery,
+  binarySourceLimitations,
+  needsAddedBinaryProof,
+} from "./value-binary";
+import {
   collectBranchPolicy,
   matchesHistoricalIntegrationBranch,
   type ValueBranchPolicy,
@@ -110,6 +116,7 @@ export interface FileChange {
     before: { blobSha: string; text: string };
   };
   unchangedRename?: { baseSha: string; headSha: string; blobSha: string };
+  addedBinary?: AddedBinaryProof;
 }
 interface Commit {
   sha: string;
@@ -177,6 +184,17 @@ function changeBytes(files: FileChange[]): string {
               file.fullComparison.after.blobSha,
             ]
           : null,
+        // Keep every old text-only signature byte-identical.
+        ...(file.addedBinary
+          ? [
+              [
+                file.addedBinary.mode,
+                file.addedBinary.blobSha,
+                file.addedBinary.size,
+                file.addedBinary.sha256,
+              ],
+            ]
+          : []),
       ]),
   );
 }
@@ -702,12 +720,14 @@ export async function collectValueEvidence(
   if (repositoryPolicy === null)
     limitations.push("Registered repository scoring policy is unavailable");
   const recoverAddedPatches = addedValuePatchRecovery(client, repository);
+  const recoverBinary = addedBinaryRecovery(client, repository);
   await recoverAddedPatches(files, pull.head.sha);
   if (
     files.some(
       (file) =>
         needsFullValueComparison(file) ||
         needsRemovedValueComparison(file) ||
+        needsAddedBinaryProof(file) ||
         (file.status === "renamed" &&
           file.patch === undefined &&
           file.additions === 0 &&
@@ -735,6 +755,11 @@ export async function collectValueEvidence(
       await recoverUnchangedValueRenames(
         client,
         repository,
+        files,
+        comparison.merge_base_commit.sha,
+        pull.head.sha,
+      );
+      await recoverBinary(
         files,
         comparison.merge_base_commit.sha,
         pull.head.sha,
@@ -774,6 +799,11 @@ export async function collectValueEvidence(
           await recoverUnchangedValueRenames(
             client,
             repository,
+            mergeCommitEvidence.files,
+            mergeCommitEvidence.parents[0].sha,
+            mergeCommitEvidence.sha,
+          );
+          await recoverBinary(
             mergeCommitEvidence.files,
             mergeCommitEvidence.parents[0].sha,
             mergeCommitEvidence.sha,
@@ -843,7 +873,11 @@ export async function collectValueEvidence(
   // GitHub omits binary and oversized patches. Do not let absent or truncated
   // content turn into a confident low-value recommendation.
   for (const file of [...files, ...(mergeCommitEvidence?.files ?? [])]) {
-    if (!hasCompleteValuePatch(file) && file.fullComparison === undefined)
+    if (
+      !hasCompleteValuePatch(file) &&
+      file.fullComparison === undefined &&
+      file.addedBinary === undefined
+    )
       limitations.push(`Full diff required: ${file.filename}`);
   }
   const related = await relatedPullRequests(
@@ -886,6 +920,20 @@ export async function collectValueEvidence(
       commit.sha,
       `Commit ${commit.sha}`,
     );
+    if (changes.commit && commit.parents.length === 1) {
+      // Recover only the newly admitted paths; unrelated commit text keeps its
+      // original representation and digest. Later rewrites remain unsupported.
+      await recoverBinary(
+        changes.commit.files.filter((file) =>
+          files.some(
+            (submitted) =>
+              submitted.addedBinary && submitted.filename === file.filename,
+          ),
+        ),
+        commit.parents[0].sha,
+        commit.sha,
+      );
+    }
     const attribution: CommitAttribution = {
       sha: commit.sha,
       actorNodeIds: commit.author ? [commit.author.node_id] : [],
@@ -1023,7 +1071,7 @@ export async function collectValueEvidence(
           Date.parse(review.submitted_at) < Date.parse(outcomeAt)),
     )
     .map((review) => review.node_id);
-  return {
+  const evidence: ValueEvidence = {
     repository,
     repositoryNodeId: repositoryIdentity.node_id,
     repositoryDatabaseId: repositoryIdentity.id,
@@ -1060,4 +1108,6 @@ export async function collectValueEvidence(
     commitAttribution,
     relatedPullRequests: related.references,
   };
+  limitations.push(...(await binarySourceLimitations(evidence)));
+  return evidence;
 }
