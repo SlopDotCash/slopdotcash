@@ -35,6 +35,7 @@ import { copyText } from "./lib/copy-text";
 import { communityProjects, homeProjects } from "./lib/home-projects";
 import { networkLabel } from "./lib/network-names";
 import { formatAssetAmount } from "./lib/payments/contracts";
+import type { ProjectView } from "./lib/project-view";
 import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
 import { REWARD_ASSET_NETWORKS } from "./lib/reward-asset.mjs";
 import { pageTitle, SITE_ORIGIN, STATIC_PAGE_TITLES } from "./lib/site-routes";
@@ -68,6 +69,7 @@ import {
   RoutePageHeader,
   reviewBudgetLabel,
   StatusBadge,
+  stale,
   vaultStateLabel,
 } from "./Presentation";
 import { ProjectRiskFlag } from "./ProjectRiskFlag";
@@ -899,10 +901,14 @@ function ProjectParticipation({
   project,
   cycles,
   displayCycleId,
+  view,
+  outdated = false,
 }: {
   project: ProjectDefinition;
   cycles: readonly PromotionCycle[] | null;
   displayCycleId: string | null;
+  view?: ProjectView;
+  outdated?: boolean;
 }) {
   if (project.participation?.state === "archived") {
     const successor = findProject(project.participation.successorProjectId);
@@ -942,7 +948,9 @@ function ProjectParticipation({
     );
   }
   if (projectPromotionEligible(project, cycles, displayCycleId))
-    return <InstallPanel project={project} />;
+    return (
+      <ProjectInstallPanel project={project} view={view} outdated={outdated} />
+    );
   return (
     <section className="section" id="start">
       <h2>Agent setup</h2>
@@ -957,8 +965,7 @@ function ProjectParticipation({
   );
 }
 
-function InstallPanel({ project }: { project?: ProjectDefinition }) {
-  if (project) return <ProjectInstallPanel project={project} />;
+function InstallPanel() {
   return (
     <div className="home-agent-setup">
       <p className="hero-copy">Paste this into your coding agent.</p>
@@ -973,7 +980,15 @@ function InstallPanel({ project }: { project?: ProjectDefinition }) {
  * confirms this project, the panel offers the generic agent prompt, which
  * selects only cleared projects itself.
  */
-function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
+function ProjectInstallPanel({
+  project,
+  view,
+  outdated,
+}: {
+  project: ProjectDefinition;
+  view: ProjectView | undefined;
+  outdated: boolean;
+}) {
   const projectId = project.id;
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
@@ -1033,7 +1048,74 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
       <AgentPromptBox
         prompt={ready ? projectAgentPrompt(project) : bootstrapAgentPrompt()}
       />
+      {ready && view ? (
+        <ProjectOpenWork project={project} view={view} outdated={outdated} />
+      ) : null}
     </div>
+  );
+}
+
+const OPEN_WORK_LIMIT = 5;
+
+/**
+ * PRD section 7: the contributor goes from the project to eligible work. Only
+ * items whose published selection decision is "candidate" appear, so
+ * assignees, claims, drafts, review requests, approvals, requested changes,
+ * security labels, blocked or untriaged issues and epics stay out. The list
+ * appears only for a project cleared for agents, and agents recheck GitHub.
+ */
+function ProjectOpenWork({
+  project,
+  view,
+  outdated,
+}: {
+  project: ProjectDefinition;
+  view: ProjectView;
+  outdated: boolean;
+}) {
+  const candidates = [
+    ...view.workQueue.issues,
+    ...view.workQueue.pullRequests,
+  ].filter((item) => item.selection.status === "candidate");
+  const shown = candidates.slice(0, OPEN_WORK_LIMIT);
+  return (
+    <section aria-labelledby="open-work-heading" className="open-work">
+      <h3 id="open-work-heading">Open work</h3>
+      <p>
+        {outdated ? "May be outdated. " : ""}Issues ready for a fix and pull
+        requests ready for review, read from GitHub{" "}
+        {formatDateTime(view.generatedAt)}. Your agent checks each item again
+        before it starts.
+      </p>
+      {shown.length === 0 ? (
+        <EmptyState text="No open issue or pull request is ready for new work now." />
+      ) : (
+        <ul className="project-rows">
+          {shown.map((item) => (
+            <li key={item.id}>
+              <ExternalLinkAnchor className="project-row" href={item.url}>
+                <span className="project-row-name">
+                  <strong>{item.title}</strong>
+                  <small>
+                    {item.kind === "issue" ? "Issue" : "Pull request to review"}{" "}
+                    · {item.repository}#{item.number}
+                  </small>
+                </span>
+                <ExternalLink aria-hidden="true" />
+              </ExternalLinkAnchor>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="open-work-more">
+        {candidates.length > shown.length
+          ? `${shown.length} of ${candidates.length} shown. `
+          : ""}
+        <ExternalLinkAnchor href={project.links.issues}>
+          All issues on GitHub
+        </ExternalLinkAnchor>
+      </p>
+    </section>
   );
 }
 
@@ -1374,6 +1456,11 @@ function ProjectPage({
               project={project}
               displayCycleId={view?.cycle.id ?? null}
               cycles={state.status === "ready" ? state.cycleIndex.cycles : null}
+              view={view}
+              outdated={
+                state.status === "ready" &&
+                (state.refreshError !== undefined || stale(state.snapshot))
+              }
             />
           ) : null}
         </div>
