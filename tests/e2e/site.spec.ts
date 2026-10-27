@@ -1272,6 +1272,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
             enforcement: {
               state: "clear",
               appeal: "none",
+              projectAppeal: "none",
               since: null,
               restrictedBy: [],
               nextSequence: 1,
@@ -1295,6 +1296,20 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
           queueRegistrationAvailable: false,
         },
         projects: [],
+      },
+    }),
+  );
+  // The admin project list also reads the private fee report (PRD section 6).
+  await page.route("**/api/v1/admin/fee-conversions", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        recent: [],
+        routes: [
+          { network: "robinhood", targetToken: null, status: "not_converted" },
+        ],
+        totals: [],
+        last24Hours: [],
       },
     }),
   );

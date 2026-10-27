@@ -26,8 +26,11 @@ FEE_CONVERTER_MODE = "live"
 # Conditional owner activation requires verified funding and limits. Native
 # operating limits below are owner-approved. Solana's separate rotation
 # authority is verified; approved lamport limits use the durable native journal.
-# Solana stays excluded until this control release and the approved gas top-up
-# are finalized; its final activation uses a separate reviewed network change.
+# The controls release and approved 0.05 SOL gas top-up are complete (#905).
+# Owner decision, 27 October 2026: approval is conditional; live Solana remains
+# deferred while owner vault setup is on another computer. Verify an independent
+# full-history recovery RPC and the first registered Solana vault, then use a
+# later reviewed main release to activate. Do not repeat funding or upgrades.
 FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"
 # Optional operator allowlist, e.g. {"base":["0x..."]}. Project reward assets
 # from D1 are always candidates; arbitrary airdropped tokens never are.

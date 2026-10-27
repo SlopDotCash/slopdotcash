@@ -987,8 +987,8 @@ function networkName(network: string): string {
     : network;
 }
 
-function shortToken(address: string): string {
-  return `token ${address.slice(0, 6)}…${address.slice(-4)}`;
+function tokenLabel(address: string): string {
+  return `token ${address}`;
 }
 
 /** Output in the network's reviewed stablecoin decimals, else exact base units. */
@@ -1007,7 +1007,7 @@ function convertedAmount(
       : stablecoin.address.toLowerCase() === targetToken.toLowerCase());
   return reviewed
     ? `${formatBaseUnits(amount, stablecoin.decimals)} ${stablecoin.symbol}`
-    : `${amount} base units of ${shortToken(targetToken)}`;
+    : `${amount} base units of ${tokenLabel(targetToken)}`;
 }
 
 /**
@@ -1051,7 +1051,7 @@ function FeeConversionsSection() {
                         {total.conversions}{" "}
                         {total.conversions === 1 ? "conversion" : "conversions"}
                         : {total.amountIn} base units of{" "}
-                        {shortToken(total.token)} to{" "}
+                        {tokenLabel(total.token)} to{" "}
                         {convertedAmount(
                           total.network,
                           total.targetToken,
