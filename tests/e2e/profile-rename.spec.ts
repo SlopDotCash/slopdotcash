@@ -205,7 +205,7 @@ test("historical names alone do not identify a current contributor or wallet", a
   await expect(page.getByText(/Past wallet/)).toHaveCount(0);
   expect(walletRequests).toEqual([]);
   await expect(page.getByRole("status")).toContainText(
-    "Current contributor identity could not be verified",
+    "This contributor could not be verified.",
   );
 });
 
@@ -244,7 +244,7 @@ test("conflicting current names withhold history and wallet lookups", async ({
     waitUntil: "networkidle",
   });
   await expect(page.getByRole("status")).toContainText(
-    "Current contributor identity could not be verified",
+    "This contributor could not be verified.",
   );
   await expect(page.getByRole("heading", { name: "Past cycles" })).toHaveCount(
     0,
@@ -271,7 +271,7 @@ test("a stale activity login cannot override a directory rename", async ({
     waitUntil: "networkidle",
   });
   await expect(page.getByRole("status")).toContainText(
-    "Current contributor identity could not be verified",
+    "This contributor could not be verified.",
   );
   await expect(page.getByRole("heading", { name: "Past cycles" })).toHaveCount(
     0,
@@ -303,7 +303,7 @@ test("an unavailable identity directory hides historical records until retry suc
     waitUntil: "networkidle",
   });
   await expect(page.getByRole("status")).toContainText(
-    "Current contributor identity is unavailable",
+    "Contributor records are unavailable.",
   );
   expect(walletRequests).toEqual([]);
   unavailable = false;
@@ -592,7 +592,7 @@ for (const scenario of [
       await (await memberResponse).finished();
       if (scenario === "delayed directory") {
         await expect(
-          page.getByText("Checking current contributor identity…", {
+          page.getByText("Checking contributor…", {
             exact: true,
           }),
         ).toBeVisible();

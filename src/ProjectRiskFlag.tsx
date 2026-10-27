@@ -48,8 +48,7 @@ type State =
   | { status: "error"; message: string }
   | { status: "ready"; value: FlagStatus };
 
-const UNAVAILABLE =
-  "Flag status is unavailable. Nothing was filed. Please retry.";
+const UNAVAILABLE = "Flag status is unavailable.";
 
 function categoryLabel(category: FlagCategory): string {
   return CATEGORY_LABELS[category] ?? category;
@@ -127,8 +126,8 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
         setEvidence("");
         setEvidenceUrl("");
         return value.paused
-          ? "Flag recorded. A second member had flagged this project, so it is now paused and moderators were notified. A clean fresh scan reinstates it."
-          : "Flag recorded. Your flag counts for 90 days, until you withdraw it, or until a later clean scan resolves it.";
+          ? "Flag recorded. This project is now paused."
+          : "Flag recorded.";
       },
     );
   };
@@ -136,19 +135,15 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
   const withdraw = () =>
     act(
       projectApiRequest<FlagStatus>("POST", `${path}/withdraw`, {}),
-      () =>
-        "Flag withdrawn. It no longer counts toward a pause; a pause already in place stays until a clean scan.",
+      () => "Flag withdrawn. An existing pause stays until a clean scan.",
     );
 
   return (
     <details className="project-risk-flag">
       <summary>Report malicious code in this project</summary>
       <p>
-        Stop work and flag code or instructions that steal wallets, credentials
-        or secrets, run unsafe downloads, or redirect your agent. Flags from two
-        members pause the project. Flagging requires a GitHub account at least
-        30 days old and one accepted Slop contribution. Report ordinary
-        vulnerabilities privately through the project&apos;s security policy.
+        Flagging needs a GitHub account at least 30 days old and one accepted
+        Slop contribution. Two flags pause the project.
       </p>
       {state.status === "loading" ? (
         <p role="status">Loading your flag status…</p>
@@ -214,8 +209,7 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
               value={evidence}
             />
             <small className="field-hint">
-              Name the file, line or command and what it does. Do not paste
-              secrets, keys or private data.
+              Name the file, line or command. Do not paste secrets.
             </small>
           </label>
           <label>

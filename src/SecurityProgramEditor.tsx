@@ -14,51 +14,27 @@ import {
 import { useAction } from "./lib/use-action";
 
 const TEXT_FIELDS = [
-  [
-    "includedAssets",
-    "Covered assets",
-    "One asset per line. Describe what researchers may test.",
-  ],
+  ["includedAssets", "Covered assets", "One asset per line."],
   [
     "excludedDependencies",
     "Excluded dependencies",
     "One dependency per line. Leave empty if none.",
   ],
-  [
-    "testingPermission",
-    "Test rules",
-    "State where and how researchers may test.",
-  ],
-  [
-    "severityRubric",
-    "Severity guide",
-    "Explain how you assess impact. Awards remain your decision.",
-  ],
+  ["testingPermission", "Test rules", ""],
+  ["severityRubric", "Severity guide", ""],
   [
     "lossDefinition",
     "Loss of funds",
     "Describe the funds and losses covered by this program.",
   ],
-  [
-    "exhaustionRule",
-    "When funds run out",
-    "Explain what happens when the program cannot fund another award.",
-  ],
-  [
-    "dispute",
-    "Disputes",
-    "Explain how to request a review. Slop moderators handle escalated disputes.",
-  ],
+  ["exhaustionRule", "When funds run out", ""],
+  ["dispute", "Disputes", "Explain how to request a review."],
   [
     "disclosure",
     "Disclosure",
     "State when and how a report may become public.",
   ],
-  [
-    "safeHarbor",
-    "Researcher protection",
-    "State the protection you offer for research that follows these rules.",
-  ],
+  ["safeHarbor", "Researcher protection", ""],
 ] as const;
 type TextField = (typeof TEXT_FIELDS)[number][0];
 const lines = (value: string) =>
@@ -205,13 +181,9 @@ export function SecurityProgramEditor({
       <h2 id="owner-security-title">Security bounty</h2>
       <div className="owner-form">
         <p>
-          Researchers submit through Slop. Reports stay private in GitHub. You
-          decide each award. The researcher receives 75%; Slop receives 25%.
+          You decide each award. The researcher receives 75%; Slop receives 25%.
         </p>
-        <p>
-          Changes apply to later reports. Existing reports and funded awards
-          keep their recorded terms.
-        </p>
+        <p>Changes apply to later reports only.</p>
         {existing && (
           <p>
             <Link href={`/projects/${project.slug}/security`}>
@@ -256,17 +228,15 @@ export function SecurityProgramEditor({
                   <option value="draft">Draft</option>
                 )}
                 {existing?.status === "pending-approval" && (
-                  <option value="pending-approval">Pending (legacy)</option>
+                  <option value="pending-approval">Pending</option>
                 )}
                 <option value="paused">Paused</option>
                 <option value="open">Open</option>
                 <option value="closed">Closed</option>
               </select>
               <p>
-                Opening requires available funds in a verified, separate bounty
-                vault. Slop checks the latest finalized balance. Closing stops
-                new paid research. Private reporting, existing cases, and funded
-                awards remain available.
+                Opening requires available funds in the bounty vault. Closing
+                stops new paid reports only.
               </p>
               <label htmlFor="bounty-amount">
                 Published gross award ({existing?.amount.currency ?? "USDC"})
@@ -278,10 +248,7 @@ export function SecurityProgramEditor({
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
               />
-              <p>
-                This amount is a guide, not a guaranteed payment. You set the
-                amount for each approved report.
-              </p>
+              <p>A guide, not a guaranteed payment.</p>
               <label htmlFor="bounty-network">Bounty network</label>
               <select
                 id="bounty-network"
@@ -333,10 +300,10 @@ export function SecurityProgramEditor({
               {TEXT_FIELDS.map(([key, label, help]) => (
                 <div className="form-field" key={key}>
                   <label htmlFor={`bounty-${key}`}>{label}</label>
-                  <p id={`bounty-${key}-help`}>{help}</p>
+                  {help ? <p id={`bounty-${key}-help`}>{help}</p> : null}
                   <textarea
                     id={`bounty-${key}`}
-                    aria-describedby={`bounty-${key}-help`}
+                    aria-describedby={help ? `bounty-${key}-help` : undefined}
                     rows={3}
                     required={key !== "excludedDependencies"}
                     minLength={
@@ -397,7 +364,7 @@ export function SecurityProgramEditor({
               {(existing?.approvers.technical ?? [actor])
                 .map((person) => `@${person.githubLogin}`)
                 .join(", ")}
-              . Slop checks current repository access when you publish.
+              .
             </p>
             {error && (
               <p className="form-error" role="alert">

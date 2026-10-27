@@ -226,8 +226,7 @@ test("creation requires the Slopbot installation, then queues the first scan and
   expect(refused.status).toBe(409);
   expect(refused.body).toMatchObject({
     error: "slopbot_required",
-    message:
-      "Slop reads your access to example/open-registry through Slopbot. Install Slopbot on example/open-registry, then try again.",
+    message: "Install Slopbot on example/open-registry to confirm your access.",
   });
   expect(await persistence.listProjects()).toEqual([]);
   expect(state.scans).toEqual([]);

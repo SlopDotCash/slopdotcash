@@ -2,8 +2,9 @@ import { type FormEvent, useState } from "react";
 import { sha256Hex } from "./lib/async-sha256.mjs";
 import { fetchWithDeadline } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
-import { projectApiRequest } from "./lib/project-api";
+import { projectApiRequest, useProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
+import { loginHref } from "./Points";
 
 type EvidenceObject = {
   sha256: string;
@@ -35,6 +36,7 @@ export default function VettingEvidencePage() {
   const [runId, setRunId] = useState(query.get("runId") ?? "");
   const [data, setData] = useState<Overview | null>(null);
   const { busy, error, run } = useAction();
+  const session = useProjectSession();
   function load(event: FormEvent) {
     event.preventDefault();
     setData(null);
@@ -56,13 +58,21 @@ export default function VettingEvidencePage() {
     >
       <h1>Private vetting evidence</h1>
       <p>
-        For designated vetting operators. Project membership or an admin role
-        alone does not grant access. Evidence can contain hostile code and
-        private data; this page never executes it.
+        Designated vetting operators only. Evidence may contain hostile code and
+        private data.
       </p>
-      <p>
-        <a href="/login?next=%2Fvetting-evidence">Sign in with GitHub</a>
-      </p>
+      {session.status === "signed-out" ? (
+        <p>
+          {/* Keep the assessment and run IDs through sign-in. */}
+          <a
+            href={loginHref(
+              `${window.location.pathname}${window.location.search}`,
+            )}
+          >
+            Sign in with GitHub
+          </a>
+        </p>
+      ) : null}
       <form className="admin-card" onSubmit={load}>
         <label className="form-field">
           Assessment ID
@@ -84,9 +94,7 @@ export default function VettingEvidencePage() {
           {busy ? "Loading evidence…" : "Inspect evidence inventory"}
         </button>
       </form>
-      {error ? (
-        <p role="alert">{error} You can correct the identities and retry.</p>
-      ) : null}
+      {error ? <p role="alert">{error} Check the IDs and retry.</p> : null}
       {data ? (
         <>
           <p>{data.retentionBoundary}</p>
@@ -100,7 +108,7 @@ export default function VettingEvidencePage() {
               <p>Assessment: {run.assessmentId}</p>
               {run.assembly ? (
                 <p>
-                  Canonical assembly:{" "}
+                  Evidence assembly:{" "}
                   {run.assembly.retained ? "Retained" : "Not verified"}.{" "}
                   {run.assembly.reason} Clean admission is unavailable.
                 </p>
@@ -143,7 +151,7 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
           link.download = `${object.sha256}.bin`;
           link.click();
           setStatus(
-            "Download requested. Check your browser downloads; an interrupted transfer requires a new reasoned grant. Do not execute the file.",
+            "Download requested. Do not execute the file. A failed transfer needs a new grant.",
           );
           return;
         }
@@ -159,7 +167,7 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
         });
         if (!response.ok)
           throw new Error(
-            `Evidence read failed (${response.status}); request a new grant after resolving the problem.`,
+            `Evidence read failed (${response.status}). Request a new grant.`,
           );
         const bytes = await response.arrayBuffer();
         if (bytes.byteLength !== object.sizeBytes)

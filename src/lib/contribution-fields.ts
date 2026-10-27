@@ -20,19 +20,17 @@ export const CONTRIBUTION_LABELS: Record<
 > = {
   approvedScope: {
     label: "Approved scope",
-    hint: "The accepted outcomes. Required, 6 to 2000 characters.",
+    hint: "The accepted outcomes. Required.",
   },
   contributionGuide: {
     label: "Contribution guide",
     hint: "How to set up, branch and submit.",
-    placeholder:
-      "How should a contributor set up, branch and submit? Leave empty to follow the repository's CONTRIBUTING.md.",
+    placeholder: "Setup, branch and submit steps. Empty uses CONTRIBUTING.md.",
   },
   supportedTasks: {
     label: "Supported tasks",
     hint: "The kinds of work the project wants.",
-    placeholder:
-      "Which kinds of work do you want, for example bug fixes or benchmark runs?",
+    placeholder: "For example: bug fixes, benchmark runs.",
   },
   requiredTests: {
     label: "Required tests",
@@ -47,7 +45,7 @@ export const CONTRIBUTION_LABELS: Record<
   securityContact: {
     label: "Security contact",
     hint: "Where security reports go privately.",
-    placeholder: "Where should security reports go privately?",
+    placeholder: "Email or Signal address",
   },
   closurePolicy: {
     label: "Closure policy",

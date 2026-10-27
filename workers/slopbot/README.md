@@ -1092,13 +1092,19 @@ open-context dispositions and `historical` outcomes complete the request. A PR
 closed before the API start is `historical` (migration
 `0097_slopbot_value_historical.sql`): the subscription intake owns it.
 The consumer reads GitHub after its claim, so each outcome, including a retry
-time, also settles every unread or waiting delivery for the same PR received by
-the claim time. A later source event keeps its own request. The consumer must
-check ownership before external calls and publication. Each scheduled run takes
-due requests in the order they became due (receipt, retry time or expired
-lease), so a failed request waits behind newer work. A run stops when no
-request is due, after ten requests or after four minutes. Single-source and
-joint consumption use the same durable request lifecycle.
+time, also settles every unread or waiting delivery received by the claim time
+that has the same installation, repository ID, repository name and PR number.
+These are all the inputs of the outcome. A later source event, or a delivery
+under another installation or repository name, keeps its own request. The
+consumer must check ownership before external calls and publication. Each
+scheduled run takes due requests in the order they became due (receipt, retry
+time or expired lease), so a failed request waits behind newer work. A run
+stops when no request is due, after ten requests or after four minutes.
+Migration `0098_slopbot_value_queue_indexes.sql` indexes running claims and the
+deliveries of each PR. The running-claim checks and settlement then read only
+matching rows; the scheduler still reads each request once to find unread
+requests. Single-source and joint consumption use the same durable request
+lifecycle.
 
 A file-backed SQLite replay verifies one concurrent winner, process restart,
 expiry/reclaim, rejection of a stale completion, scheduled budget retry and a

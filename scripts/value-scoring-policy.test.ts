@@ -1432,6 +1432,92 @@ test("reviews outside the scoring window do not consume review credit", () => {
   expect(exclusions.get("PRR_9_3")).toBeUndefined();
 });
 
+test("later runs keep a merged pull request's review allocation as its oldest review leaves the window", () => {
+  // Bob's deep review is inside the 35 days before the merge. A run on 21
+  // October publishes it; by 23 October it is before the rolling window while
+  // the merge is still scored.
+  const pull = outcome(30, "2026-10-20T10:00:00.000Z");
+  const reviews = [
+    review(30, 1, bob as GitHubActor, "APPROVED", "2026-09-17T00:00:00.000Z"),
+    review(30, 2, bob as GitHubActor, "APPROVED", "2026-10-19T01:00:00.000Z"),
+    review(30, 3, carol as GitHubActor, "APPROVED", "2026-10-19T02:00:00.000Z"),
+  ];
+  const run = (from: string, to: string) => {
+    const base = input({
+      generatedAt: to,
+      windowFrom: from,
+      windowTo: to,
+      sourceUpdatedAt: to,
+      verificationWindowFrom: from,
+      mergedPullRequestOutcomes: [pull],
+      reviewedMergedPullRequests: [reviewed(pull, reviews)],
+      valuePolicy: { ...POLICY, effectiveAt: "2026-09-01T00:00:00.000Z" },
+      valueDecisions: new Map<string, unknown>([
+        [
+          pull.id,
+          assessed(pull, "e", "medium", [
+            { sourceId: "PRR_30_1", tier: "deep" },
+            { sourceId: "PRR_30_2", tier: "standard" },
+            { sourceId: "PRR_30_3", tier: "standard" },
+          ]),
+        ],
+      ]) as unknown as LeaderboardInput["valueDecisions"],
+    });
+    return createLeaderboardSnapshot({
+      ...base,
+      source: {
+        ...base.source,
+        fetchedAt: to,
+        cutoffAt: to,
+        verificationWindow: { days: 35, from, to },
+      },
+    });
+  };
+  const first = run("2026-09-16T12:00:00.000Z", "2026-10-21T12:00:00.000Z");
+  const second = run(FROM, AT);
+  const credit = (snapshot: typeof first) =>
+    snapshot.ledger
+      .filter((event) => event.category === "substantive-review")
+      .map((event) => [event.id, event.actor.id, event.scoreThirds]);
+  expect(credit(first)).toEqual([
+    ["PR_30:value-review:PRR_30_1", "U_bob", 7],
+    ["PR_30:value-review:PRR_30_3", "U_carol", 2],
+  ]);
+  // The same two reviewers keep the same shares. Bob's award is omitted, not
+  // reissued from his later review, and Carol's share is not revised upward.
+  expect(credit(second)).toEqual([
+    ["PR_30:value-review:PRR_30_3", "U_carol", 2],
+  ]);
+  const exclusions = new Map(
+    (second.reviewExclusions ?? []).map((exclusion) => [
+      exclusion.reviewId,
+      exclusion.reason,
+    ]),
+  );
+  expect(exclusions.get("PRR_30_1")).toBe("review-credit-outside-window");
+  expect(exclusions.get("PRR_30_2")).toBe("already-awarded-reviewer");
+  let journal = applyPointsSnapshot(
+    emptyPointsJournal(AT),
+    first,
+    "a".repeat(64),
+    AT,
+  );
+  journal = applyPointsSnapshot(journal, second, "b".repeat(64), AT);
+  const awards = [...latestPoints(journal).values()]
+    .map((record) => record.award)
+    .filter(
+      (award) =>
+        award.category === "substantive-review" &&
+        award.sourceUrl.includes("/pull/30#"),
+    )
+    .map((award) => [award.actor.id, award.sourceId, award.amount]);
+  // The pool stays the medium size credit, 90 points, with one share each.
+  expect(awards).toEqual([
+    ["U_bob", "PRR_30_1", 70],
+    ["U_carol", "PRR_30_3", 20],
+  ]);
+});
+
 test("excluding an old joint review does not shrink the pull request size", () => {
   const pull = outcome(10, "2026-10-20T10:00:00.000Z");
   const reviews = [

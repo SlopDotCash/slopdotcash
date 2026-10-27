@@ -930,8 +930,7 @@ async function queueScan(
   if (deps.requestScan === undefined)
     return {
       state: "unavailable",
-      message:
-        "The security scan service is not available yet, so the scan cannot be queued. Check again later.",
+      message: "The scan service is unavailable. Check again later.",
     };
   try {
     return await deps.requestScan(project, actor, reason);
