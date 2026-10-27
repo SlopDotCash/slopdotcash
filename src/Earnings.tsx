@@ -547,7 +547,7 @@ export function EarningsPage({
                             chain={chain}
                             status={
                               wallet
-                                ? wallet.authorized && addresses.length === 1
+                                ? wallet.authorized
                                   ? "confirmed"
                                   : "not confirmed"
                                 : undefined
