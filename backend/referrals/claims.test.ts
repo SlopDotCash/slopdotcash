@@ -24,7 +24,7 @@ const code: Hex = "0x60006000";
 const unit = 10n ** 18n;
 const now = new Date();
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
-function harness() {
+function harness(mode: "live" | "dry_run" = "live") {
   const { db, sqlite } = sqliteD1();
   function file(period: string, epoch: number, cumulative: bigint) {
     const tree = buildTree([{ address: wallet, cumulativeBase: cumulative }]);
@@ -42,11 +42,12 @@ function harness() {
     });
     sqlite
       .query(
-        "INSERT INTO referral_accrual_files(period,epoch,run_id,mode,body,body_sha256,merkle_root,tree_total_base,leaf_count,created_at) VALUES(?,?,'rrun_fixture0001','live',?,?,?,?,1,?)",
+        "INSERT INTO referral_accrual_files(period,epoch,run_id,mode,body,body_sha256,merkle_root,tree_total_base,leaf_count,created_at) VALUES(?,?,'rrun_fixture0001',?,?,?,?,?,1,?)",
       )
       .run(
         period,
         epoch,
+        mode,
         body,
         sha(body),
         tree.root,
@@ -58,9 +59,9 @@ function harness() {
   // An empty month has already filed: file epoch 1 maps to contract epoch 0.
   sqlite
     .query(
-      "INSERT INTO referral_accrual_files(period,epoch,run_id,mode,body,body_sha256,merkle_root,tree_total_base,leaf_count,created_at) VALUES('2026-11',0,'rrun_fixture0000','live',?,?,NULL,'0',0,?)",
+      "INSERT INTO referral_accrual_files(period,epoch,run_id,mode,body,body_sha256,merkle_root,tree_total_base,leaf_count,created_at) VALUES('2026-11',0,'rrun_fixture0000',?,?,?,NULL,'0',0,?)",
     )
-    .run('{"referrers":[]}', sha('{"referrers":[]}'), now.toISOString());
+    .run(mode, '{"referrers":[]}', sha('{"referrers":[]}'), now.toISOString());
   const first = file("2026-12", 1, 100n * unit);
   file("2027-01", 2, 150n * unit);
   sqlite
@@ -169,6 +170,11 @@ test("cache failure and expiry preserve last verified totals; never-activated is
     pendingBase: null,
   });
   h.sqlite.close();
+  // PRD section 11: dry-run accruals before the owner's activation stay
+  // hidden, also when the claim cache has a program.
+  const dryRun = harness("dry_run");
+  expect((await dryRun.read()).body).toEqual({ enabled: false });
+  dryRun.sqlite.close();
 });
 
 test("a paused pending window never matures, and a void retains the preceding root", async () => {
