@@ -141,12 +141,12 @@ describe("readTokenMint", () => {
     expect(() =>
       readTokenMint(account(TOKEN_2022_PROGRAM, mintAuthority)),
     ).toThrow("Token-2022 mint authority is not disabled");
-    const hiddenAuthority = mutatedMint((data) => {
-      data[45 + 30] = 9;
+    const malformedAuthorityTag = mutatedMint((data) => {
+      data[47] = 1;
       return undefined;
     });
     expect(() =>
-      readTokenMint(account(TOKEN_2022_PROGRAM, hiddenAuthority)),
+      readTokenMint(account(TOKEN_2022_PROGRAM, malformedAuthorityTag)),
     ).toThrow("Token-2022 freeze authority is not disabled");
   });
 
