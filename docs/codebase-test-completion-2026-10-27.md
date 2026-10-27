@@ -29,6 +29,10 @@ The existing native contract complexity was also checked against the requested s
 
 ## Detailed independent audits
 
+### Execution finding before the final test correction
+
+The first grouped run after the removals passed 63 cases, skipped the intentional native-sandbox case, and failed four newly added acquisition-refusal cases. All four fail on the same pre-existing `ReferenceError: TEMPLATE is not defined`: development `0f44509a` appended an assertion using the old fixture constant after the earlier fixture had become mutable `templateSha256`. The cleanup did not change that reference. Replace only the stale name with `templateSha256`, retaining the exact assessed-template assertion and the complete persisted refusal/notice/repeat workflows. This is a test correction, not a production scanner change. The failed run remains recorded at `/tmp/slop-residual-scripts-tests.log` and must not be represented as a pass.
+
 # Final script-test classification audit
 
 Audited source: `7812a2fb90365f8ba1c8ce34f45096340332e397`, whose complete tree matches main `c28814f4`. Later development changes are excluded except the two explicitly requested `e2a0148e` additions below. Read-only; no test execution or source edits.
