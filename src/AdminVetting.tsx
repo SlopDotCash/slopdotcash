@@ -14,6 +14,7 @@ import { CircleAlert, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { projectApiRequest } from "./lib/project-api";
 import type {
+  AdmissionExemption,
   AssessmentState,
   AssessmentSummary,
   VettingClearance as Clearance,
@@ -58,6 +59,7 @@ type Overview = {
     clearance: Clearance;
   }[];
   assessments: AdminAssessment[];
+  exemptions?: AdmissionExemption[];
   /** Active contributor flags; they count without moderator approval. */
   flags?: {
     id: string;
@@ -83,7 +85,9 @@ const LABELS: Record<Clearance["state"], string> = {
 /** PRD section 8: the existing-project exemption is never a passed scan. */
 function clearanceLabel(clearance: Clearance): string {
   return clearance.state === "cleared" && clearance.assessment === null
-    ? "Exempt"
+    ? "exemption" in clearance
+      ? "Owner-approved exemption"
+      : "Existing-project exemption"
     : clearance.state === "cleared" && clearance.basis === "admission"
       ? "Admitted"
       : LABELS[clearance.state];
@@ -95,6 +99,189 @@ const STATE_TEXT: Record<AssessmentState, string> = {
   clean: "Clean",
   malicious: "Confirmed malicious",
 };
+
+function AdmissionExemptionForm({
+  project,
+  exemption,
+  onSaved,
+}: {
+  project: Overview["projects"][number];
+  exemption?: AdmissionExemption;
+  onSaved: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [decisionReference, setDecisionReference] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const revoke = exemption !== undefined;
+  const save = async () => {
+    if (!confirmed || reason.trim().length < 8 || !decisionReference.trim()) {
+      setError("Record the reason, owner decision reference and confirmation.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await projectApiRequest(
+        "POST",
+        revoke
+          ? `admin/vetting/exemptions/${encodeURIComponent(exemption.id)}/revoke`
+          : "admin/vetting/exemptions",
+        {
+          ...(revoke
+            ? {}
+            : { projectId: project.id, revision: project.revision }),
+          reason: reason.trim(),
+          decisionReference: decisionReference.trim(),
+          confirmation: true,
+        },
+      );
+      onSaved();
+    } catch (caught) {
+      setError(message(caught));
+      setBusy(false);
+    }
+  };
+  return (
+    <details className="admin-actions">
+      <summary>
+        {revoke
+          ? "Revoke owner-approved exemption"
+          : "Record owner-approved exemption"}
+      </summary>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
+        <p>
+          {revoke
+            ? "Revocation restores the normal admission requirement and keeps the grant history."
+            : `This records an explicit human decision for ${project.name}, revision ${project.revision}, and its current GitHub repository identity. It does not record a passed scan.`}{" "}
+          Contributor flags, investigations, bans and fresh reinstatement checks
+          still apply.
+        </p>
+        <label>
+          {revoke ? "Reason for revocation" : "Reason for the exemption"}
+          <textarea
+            minLength={8}
+            maxLength={1000}
+            required
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+          />
+        </label>
+        <label>
+          Owner decision reference
+          <input
+            type="text"
+            maxLength={500}
+            required
+            value={decisionReference}
+            onChange={(event) => setDecisionReference(event.target.value)}
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            required
+            checked={confirmed}
+            onChange={(event) => setConfirmed(event.target.checked)}
+          />
+          {revoke
+            ? "I confirm the human owner authorized this revocation."
+            : "I confirm the human owner explicitly authorized this exemption for this repository."}
+        </label>
+        {error ? (
+          <p className="form-error" role="alert">
+            <CircleAlert aria-hidden="true" /> {error}
+          </p>
+        ) : null}
+        <button
+          className="button secondary-button"
+          type="submit"
+          disabled={
+            busy ||
+            !confirmed ||
+            reason.trim().length < 8 ||
+            !decisionReference.trim()
+          }
+        >
+          {busy ? "Saving…" : revoke ? "Revoke exemption" : "Record exemption"}
+        </button>
+      </form>
+    </details>
+  );
+}
+
+function AdmissionExemptionHistory({
+  exemptions,
+}: {
+  exemptions: AdmissionExemption[];
+}) {
+  if (exemptions.length === 0) return null;
+  return (
+    <details className="admin-reference">
+      <summary>Owner-approved exemption history</summary>
+      {exemptions.map((exemption) => (
+        <dl className="admin-facts" key={exemption.id}>
+          <div>
+            <dt>Grant</dt>
+            <dd>
+              Revision {exemption.revision} · @{exemption.grantedBy.githubLogin}{" "}
+              · {time(exemption.grantedAt)} ·{" "}
+              {exemption.revokedAt ? "Revoked" : "Active"}
+            </dd>
+          </div>
+          <div>
+            <dt>Reason</dt>
+            <dd>{exemption.reason}</dd>
+          </div>
+          <div>
+            <dt>Owner decision</dt>
+            <dd>{exemption.decisionReference}</dd>
+          </div>
+          <div>
+            <dt>Repository identity</dt>
+            <dd>
+              <CopyIdentifier
+                label="GitHub repository ID"
+                value={exemption.repositoryId}
+              />
+              <CopyIdentifier
+                label="GitHub repository node ID"
+                value={exemption.repositoryNodeId}
+              />
+            </dd>
+          </div>
+          <div>
+            <dt>Approved manifest</dt>
+            <dd>
+              <CopyIdentifier
+                label="approved manifest digest"
+                value={exemption.manifestSha256}
+              />
+            </dd>
+          </div>
+          {exemption.revokedAt ? (
+            <div>
+              <dt>Revocation</dt>
+              <dd>
+                @{exemption.revokedBy?.githubLogin ?? "unknown"} ·{" "}
+                {time(exemption.revokedAt)} · {exemption.revocationReason}
+                {exemption.revocationDecisionReference
+                  ? ` · ${exemption.revocationDecisionReference}`
+                  : ""}
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+      ))}
+    </details>
+  );
+}
 
 function QueueScan({
   project,
@@ -404,6 +591,12 @@ export function VettingSection({ projectId }: { projectId: string }) {
                     assessment.state === "pending" &&
                     assessment.revision === project.revision,
                 );
+                const exemptions = (state.value.exemptions ?? []).filter(
+                  (exemption) => exemption.projectId === project.id,
+                );
+                const activeExemption = exemptions.find(
+                  (exemption) => exemption.revokedAt === null,
+                );
                 return (
                   <article
                     aria-label={`Security vetting for ${project.id}`}
@@ -442,7 +635,9 @@ export function VettingSection({ projectId }: { projectId: string }) {
                             : clearance.state === "unverified"
                               ? clearance.reason
                               : clearance.assessment === null
-                                ? "Existing-project exemption"
+                                ? "exemption" in clearance
+                                  ? "Explicit owner-approved exemption; see the recorded decision below."
+                                  : "Existing-project exemption"
                                 : clearance.state === "stale"
                                   ? `Live head ${clearance.live.commitSha} (template ${clearance.live.templateSha256}) is not scanned. Last scan: ${clearance.assessment.commitSha}.`
                                   : `${clearance.state === "cleared" && clearance.basis === "admission" ? "Admission scan" : "Scan"} of revision ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`}
@@ -459,6 +654,20 @@ export function VettingSection({ projectId }: { projectId: string }) {
                         </div>
                       ) : null}
                     </dl>
+                    <AdmissionExemptionHistory exemptions={exemptions} />
+                    <AdmissionExemptionForm
+                      key={`${project.revision}:${activeExemption?.id ?? "grant"}`}
+                      project={project}
+                      exemption={activeExemption}
+                      onSaved={() => {
+                        setNote(
+                          activeExemption
+                            ? `Revoked the owner-approved exemption for ${project.id}.`
+                            : `Recorded the owner-approved exemption for ${project.id}.`,
+                        );
+                        load();
+                      }}
+                    />
                     {clearance.state === "banned" ? (
                       <p className="form-error">
                         <CircleAlert aria-hidden="true" /> Confirmed malicious.
