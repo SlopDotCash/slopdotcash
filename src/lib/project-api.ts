@@ -58,6 +58,7 @@ export async function projectApiRequest<T>(
   method: "GET" | "POST" | "PUT",
   path: string,
   body?: unknown,
+  options?: { expectedActorGithubId?: string },
 ): Promise<T> {
   let response: Response;
   try {
@@ -67,6 +68,9 @@ export async function projectApiRequest<T>(
       credentials: "same-origin",
       headers: {
         accept: "application/json",
+        ...(options?.expectedActorGithubId === undefined
+          ? {}
+          : { "x-slop-expected-github-id": options.expectedActorGithubId }),
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
