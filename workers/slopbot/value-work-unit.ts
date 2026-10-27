@@ -262,7 +262,8 @@ export async function prepareWorkUnitEvidence(
           origin.pull.node_id !== pull.node_id &&
           origin.pull.merge_commit_sha === commit.sha &&
           origin.mergeCommitEvidence?.sha === commit.sha &&
-          origin.mergeCommitEvidence.parents.length === 1 &&
+          (noChangePromotion ||
+            origin.mergeCommitEvidence.parents.length === 1) &&
           origin.pull.merged_at !== null &&
           Date.parse(origin.pull.merged_at) < mergedAt,
       );
