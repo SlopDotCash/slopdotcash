@@ -318,6 +318,18 @@ type RelatedOpenItem = {
   contentDigest: string;
 };
 
+/** GitHub did not return the complete current comparison. The item and pull
+ * request facts that were read before the comparison stay available.
+ */
+class IncompleteComparisonError extends Error {
+  constructor(
+    readonly issue: Issue,
+    readonly pull: Pull | null,
+  ) {
+    super("Pull request comparison is incomplete");
+  }
+}
+
 // Surplus may never see private content, and v2 supports public repositories only.
 async function publicRepository(
   github: GitHubClient,
@@ -391,8 +403,7 @@ async function loadContext(
           targetRef: repo.default_branch,
         }
       : await pullDiff(github, job.owner, job.repo, repo.id, pull);
-  const { truncated } = comparison;
-  if (truncated) throw new Error("Pull request comparison is incomplete");
+  if (comparison.truncated) throw new IncompleteComparisonError(issue, pull);
   const itemText = reviewedItemText(issue, pull, comparison);
   const revision =
     pull?.head.sha ?? (await sha256Hex(`${issue.title}\n${issue.body ?? ""}`));
@@ -2557,11 +2568,24 @@ export async function applyMaintainerHold(
     return supersede("security review only");
   if (!(await store.installationActive(db, job.installationId)))
     return supersede("installation removed or suspended");
-  const context = await loadContext(
-    env,
-    { ...job, kind: "review" },
-    registration,
-  );
+  let context: Context | null;
+  try {
+    context = await loadContext(env, { ...job, kind: "review" }, registration);
+  } catch (error) {
+    // The held revision had a complete comparison. A later push can add a
+    // file without a patch, and then the comparison never becomes complete.
+    // The item facts still end the hold; an unchanged item is retried.
+    if (
+      error instanceof IncompleteComparisonError &&
+      (error.issue.node_id !== hold.item_node_id ||
+        error.issue.state !== "open" ||
+        error.pull?.draft ||
+        error.pull?.merged ||
+        error.pull?.head.sha !== hold.revision)
+    )
+      return supersede("item changed after the review");
+    throw error;
+  }
   if (context === null || context.issue.node_id !== hold.item_node_id)
     return supersede("item not readable");
   const { github, repo, issue, pull, revision } = context;
