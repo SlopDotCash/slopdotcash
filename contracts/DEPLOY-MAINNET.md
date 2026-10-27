@@ -461,6 +461,18 @@ independent check. Qualify this exact artifact on the test network before the
 authorized mainnet upgrade. Steps 3 to 9 still verify the deployed bytes,
 executable hash and authority.
 
+The `solana-verifiable` job in `escrow-tests.yml` also builds this deployable
+program on native Linux x86-64 with the same pinned image, `/workdir`, target
+directory, platform tools and locked Cargo command that Anchor uses above.
+It retains `solana-verifiable-<source SHA>` with the ELF, SHA-256 checksum,
+tool versions and a manifest bound to the checked-out commit and Solana source
+tree. It calls the container build command directly and does not run the later
+host IDL extraction. Use a successful run at the exact reviewed commit; a PR
+artifact does not prove the final main build or authorize an upgrade. Download
+and verify its checksum before the isolated qualification and the steps below.
+The existing validator job remains separate lifecycle evidence. Neither job
+uses a signing key, performs a public deployment or proves mainnet acceptance.
+
 ### 3. Record the current deployed program
 
 If the program account is absent, verify the target cluster and that

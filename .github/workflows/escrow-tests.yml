@@ -58,6 +58,80 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  solana-verifiable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SLOP_SOLANA_BUILD_IMAGE: solanafoundation/anchor@sha256:facc4ebd0738ba7ebc1eb4ef000deab6b37e7747960d3f400c73c40c5421b5de
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build the deployable Solana program in the pinned image
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/amd64 "$SLOP_SOLANA_BUILD_IMAGE"
+          mkdir -p "$RUNNER_TEMP/solana-verifiable"
+          docker run --rm --platform linux/amd64 "$SLOP_SOLANA_BUILD_IMAGE" \
+            sh -c 'anchor --version; solana --version; cargo --version; rustc --version' \
+            > "$RUNNER_TEMP/solana-verifiable/toolchain.txt"
+          # Same /workdir and target directory as Anchor 0.32.1 --verifiable.
+          # Calling its build command directly avoids the later host IDL step.
+          docker run --rm --platform linux/amd64 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/contracts/solana,target=/workdir" \
+            --workdir /workdir \
+            --env CARGO_TARGET_DIR=/workdir/docker-target \
+            "$SLOP_SOLANA_BUILD_IMAGE" \
+            cargo build-sbf --manifest-path programs/slop-escrow/Cargo.toml \
+              --tools-version v1.52 -- --locked
+          cp contracts/solana/docker-target/deploy/slop_escrow.so \
+            "$RUNNER_TEMP/solana-verifiable/slop_escrow.so"
+      - name: Bind the program artifact to its source and build
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          output = Path(os.environ["RUNNER_TEMP"]) / "solana-verifiable"
+          program = (output / "slop_escrow.so").read_bytes()
+          if not program.startswith(b"\x7fELF"):
+              raise SystemExit("The program build did not produce an ELF artifact")
+          digest = hashlib.sha256(program).hexdigest()
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          tree = subprocess.check_output(
+              ["git", "rev-parse", "HEAD:contracts/solana"], text=True
+          ).strip()
+          manifest = {
+              "schemaVersion": 1,
+              "sourceCommit": commit,
+              "solanaSourceTree": tree,
+              "buildImage": os.environ["SLOP_SOLANA_BUILD_IMAGE"],
+              "platform": "linux/amd64",
+              "platformTools": "v1.52",
+              "command": "cargo build-sbf --manifest-path programs/slop-escrow/Cargo.toml --tools-version v1.52 -- --locked",
+              "toolchain": (output / "toolchain.txt").read_text().splitlines(),
+              "file": "slop_escrow.so",
+              "sha256": digest,
+              "sizeBytes": len(program),
+              "workflowRun": os.environ["GITHUB_RUN_ID"],
+              "workflowAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
+          }
+          (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          (output / "SHA256SUMS").write_text(f"{digest}  slop_escrow.so\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: solana-verifiable-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/solana-verifiable/
+          if-no-files-found: error
+          retention-days: 30
+
   evm:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
