@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fixtureCheckout } from "../tests/fixture-checkout";
+import { fixtureProject } from "../tests/fixture-overlay.mjs";
 
 let root = "";
 afterEach(() => {
@@ -34,7 +35,7 @@ import { snapshotFixture } from "./tests/fixtures";
 const bytes = readFileSync("cycles/eliza/2026-09/source-snapshot.json");
 const snapshot = JSON.parse(bytes.toString());
 assertLeaderboardSnapshot(snapshot);
-const project = JSON.parse(readFileSync(${JSON.stringify(resolve(import.meta.dir, "../tests/fixtures/projects/eliza.json"))}, "utf8"));
+const project = ${JSON.stringify(fixtureProject("eliza"))};
 project.reward.feeBasisPoints = 200;
 project.escrow = { schemaVersion: "1", effectiveCycle: "2026-09", chain: "solana", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] };
 const view = createPaymentProjectView(snapshot, "eliza", "2026-09", undefined, project);

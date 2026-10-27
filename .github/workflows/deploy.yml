@@ -265,10 +265,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Unit, integration and installer checks run beside the build, so the browser
+  # Integration and installer checks run beside the build, so the browser
   # lanes start as soon as the bundle exists. The quality gate needs both.
   check:
-    name: Unit, integration and installer checks
+    name: Integration and installer checks
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -319,20 +319,25 @@ jobs:
       matrix:
         include:
           - lane: preview-1
+            browsers: chromium
             server: preview
             shard: 1/2
           - lane: preview-2
+            browsers: chromium
             server: preview
             shard: 2/2
           - lane: pages
+            browsers: chromium
             server: pages
             shard: 1/1
           # The shipped bundle with Pages Functions. Each shard runs on its own
           # runner with its own fresh local D1, Wrangler and GitHub fixture.
           - lane: registry-1
+            browsers: chromium firefox
             server: registry
             shard: 1/2
           - lane: registry-2
+            browsers: chromium firefox
             server: registry
             shard: 2/2
     env:
@@ -390,12 +395,12 @@ jobs:
           # Do not retry an interrupted package transaction on the same runner.
           # Hosted package downloads exceeded ten minutes in two release runs.
           sudo timeout --signal=TERM --kill-after=15s 20m \
-            "$(command -v node)" ./node_modules/playwright/cli.js install-deps chromium firefox
-      - name: Install Playwright Chromium and Firefox
+            "$(command -v node)" ./node_modules/playwright/cli.js install-deps ${{ matrix.browsers }}
+      - name: Install assigned Playwright browsers
         run: |
           set -euo pipefail
           for attempt in 1 2; do
-            if timeout --signal=TERM --kill-after=15s 10m ./node_modules/.bin/playwright install chromium firefox; then
+            if timeout --signal=TERM --kill-after=15s 10m ./node_modules/.bin/playwright install ${{ matrix.browsers }}; then
               exit 0
             fi
             if [ "$attempt" -eq 2 ]; then

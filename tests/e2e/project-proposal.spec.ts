@@ -201,14 +201,15 @@ test("drafts a project through the setup steps and creates it without an admin",
     manifest: Record<string, unknown>;
     referrer?: string;
   } | null = null;
+  let currentSession = {
+    githubId: "4242",
+    githubLogin: "example-maintainer",
+    admin: false,
+  };
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
       json: {
-        session: {
-          githubId: "4242",
-          githubLogin: "example-maintainer",
-          admin: false,
-        },
+        session: currentSession,
       },
     }),
   );
@@ -301,7 +302,27 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(page.locator(".fee-preview")).toContainText(
     "Payout fee: 2%. Unused-fund withdrawal fee: 2%.",
   );
+  // A different account may have signed in in another tab during setup.
+  // Review must identify the current actor before enabling creation.
+  currentSession = {
+    ...currentSession,
+    githubId: "4343",
+    githubLogin: "other-maintainer",
+  };
   await page.getByRole("button", { name: "Next: Review" }).click();
+  await expect(
+    page.getByText("Creating as @other-maintainer.", { exact: true }),
+  ).toBeVisible();
+  currentSession = {
+    ...currentSession,
+    githubId: "4242",
+    githubLogin: "example-maintainer",
+  };
+  await page.getByRole("button", { name: "3 Rewards", exact: true }).click();
+  await page.getByRole("button", { name: "Next: Review" }).click();
+  await expect(
+    page.getByText("Creating as @example-maintainer.", { exact: true }),
+  ).toBeVisible();
 
   const preview = page.getByRole("article", { name: "Listing preview" });
   await expect(preview).toContainText("Preview");

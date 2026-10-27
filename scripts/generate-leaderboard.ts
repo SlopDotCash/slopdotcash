@@ -68,7 +68,7 @@ import {
   isTransientArtifactFailure,
   planReferencedArtifacts,
   verifyReferencedArtifacts,
-} from "./check-pr-evidence.mjs";
+} from "./pr-evidence-artifacts.mjs";
 import { verifyRunReceiptSignature } from "./run-receipt-crypto";
 
 export const SEARCH_SAFE_RESULT_LIMIT = 950;

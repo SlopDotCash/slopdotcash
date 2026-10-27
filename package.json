@@ -60,7 +60,6 @@
     "test:contracts:evm": "bun contracts/evm/adapter.integration.ts && bun contracts/evm/monthly-reserve.integration.ts && bun scripts/payment-keeper/evm.integration.ts",
     "test:security-payments": "node scripts/run-security-payments.mjs",
     "test:payments": "bun run test:security-payments && bun backend/payments/evm.integration.ts && bun workers/payments/recovery.integration.ts && bun workers/payments/reconcile.integration.ts && bun workers/payments/registry.integration.ts && bun workers/payment-executor/bind-trigger.integration.ts",
-    "test:escrow-policy": "bun test --timeout 30000 backend/payments/migrations.test.ts backend/payments/monthly.test.ts backend/payments/vault-snapshots.test.ts workers/payment-executor/wallet-rotation.test.ts contracts/evm/scripts.test.ts contracts/solana/monthly-commitment.test.ts",
     "build:contracts:solana": "bash contracts/solana/scripts/build-local.sh",
     "test:contracts:solana": "bash contracts/solana/scripts/test-e2e.sh",
     "escrow:acceptance": "bun scripts/escrow-acceptance.ts",

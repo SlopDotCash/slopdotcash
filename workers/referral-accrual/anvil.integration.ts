@@ -1,7 +1,7 @@
 /**
  * Live poster against a real local chain: deploys the compiled
- * ReferralDistributor and mock token on Anvil, files one epoch from a seeded
- * in-memory D1, lets the Worker post its root in live mode, reconciles the
+ * ReferralDistributor and mock token on Anvil, files an empty month before a
+ * funded epoch from seeded D1, lets the Worker post its root, reconciles the
  * receipt, and claims from a referrer wallet. Public Anvil fixture keys only;
  * no hosted database, no public chain. Run with Bun:
  *   bun workers/referral-accrual/anvil.integration.ts
@@ -212,7 +212,8 @@ try {
   const env = {
     REFERRAL_DB: db,
     REFERRAL_ACCRUAL_MODE: "live",
-    REFERRAL_FIRST_PERIOD: "2026-11",
+    // The empty first month must not consume a contract epoch or block November.
+    REFERRAL_FIRST_PERIOD: "2026-10",
     REFERRAL_RATE_BASE_PER_MICRO: RATE.toString(),
     REFERRAL_TOKEN_DECIMALS: "18",
     REFERRAL_POOL_BASE: (2_000_000n * ONE).toString(),
@@ -260,15 +261,22 @@ try {
   const first = await runOnce(env, at("2026-12-02T01:23:00.000Z"));
   assert.equal(first?.status, "ran");
   assert.deepEqual(held?.filed, [
-    { period: "2026-11", epoch: 0, rows: 1, leafCount: 1 },
+    { period: "2026-10", epoch: 0, rows: 0, leafCount: 0 },
+    { period: "2026-11", epoch: 1, rows: 1, leafCount: 1 },
   ]);
   assert.deepEqual(first?.filed, []);
   assert.equal(first?.post?.status, "posted");
   const file = sqlite
     .query(
-      "SELECT merkle_root, tree_total_base, body FROM referral_accrual_files WHERE period = '2026-11'",
+      "SELECT epoch, merkle_root, tree_total_base, body FROM referral_accrual_files WHERE period = '2026-11'",
     )
-    .get() as { merkle_root: string; tree_total_base: string; body: string };
+    .get() as {
+    epoch: number;
+    merkle_root: string;
+    tree_total_base: string;
+    body: string;
+  };
+  assert.equal(file.epoch, 1);
   assert.equal(BigInt(file.tree_total_base), CUMULATIVE);
   // Anvil marks a block finalized two epochs (64 slots) later; the poster
   // reads the receipt as finalized only once the chain says so.
@@ -295,6 +303,7 @@ try {
     block_number: string;
   };
   assert.equal(post.state, "finalized");
+  // File epoch 0 is empty; the first nonempty file (epoch 1) posts as contract epoch 0.
   assert.equal(post.epoch, 0);
   assert.equal(post.merkle_root, file.merkle_root);
   assert.equal(call(distributor, "nextEpoch()(uint256)"), "1");

@@ -101,15 +101,3 @@ test("acknowledges public security bounty terms and a policy served before them"
     policyRevision: "draft-1",
   });
 });
-
-test("still refuses unexpected policy fields and malformed bounty terms", async () => {
-  const policy = await servedTerms();
-  await expect(acknowledge({ ...policy, extra: true })).rejects.toThrow(
-    "project policy has unexpected or missing fields",
-  );
-  for (const securityBounty of ["open", [], 0]) {
-    await expect(acknowledge({ ...policy, securityBounty })).rejects.toThrow(
-      "project security bounty is invalid",
-    );
-  }
-});

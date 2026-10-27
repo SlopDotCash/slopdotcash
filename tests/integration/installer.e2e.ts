@@ -1,4 +1,5 @@
 /// <reference types="bun-types" />
+import { fixtureProject } from "../fixture-overlay.mjs";
 /**
  * Exercises installer authorization and lifecycle transitions against a
  * deterministic file-backed GitHub authority and real generated ZIP archives.
@@ -2352,12 +2353,7 @@ describe("generated project skill installation", () => {
   // Maintainer text stresses both renderers: quotes, control characters,
   // non-ASCII, astral-plane characters and Markdown that tries to add rules.
   function manifestFor(notes: string): ProjectDefinition {
-    const base = JSON.parse(
-      readFileSync(
-        join(repositoryRoot, "tests/fixtures/projects/thenetwork.json"),
-        "utf8",
-      ),
-    );
+    const base = fixtureProject("thenetwork");
     return assertProjectDefinition({
       ...base,
       skill: {

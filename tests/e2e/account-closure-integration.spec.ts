@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { expect, expectAccessible, test } from "./fixtures";
+import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
 
 const { site: SITE, identity: IDENTITY } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -15,6 +15,11 @@ for (const withObligations of [false, true])
     diagnostics,
     page,
   }, info) => {
+    const droppedClosure = new RegExp(
+      `^console Failed to load resource: net::ERR_FAILED at ${escapeRegExp(SITE)}/api/v1/points/account/close$`,
+      "u",
+    );
+    if (withObligations) diagnostics.allow(droppedClosure);
     // The two refusals the closed account expects, asserted below.
     diagnostics.allow(
       /^console Failed to load resource: the server responded with a status of 40[19] .* at https:\/\/[^ ]+\/api\/v1\/(payments\/me|points\/join)$/u,
@@ -62,6 +67,7 @@ for (const withObligations of [false, true])
           reject(error);
         });
       });
+      let dropClosureResponse = withObligations;
       const failures: string[] = [];
       const retiredRequests: string[] = [];
       page.on("request", (request) => {
@@ -108,6 +114,14 @@ for (const withObligations of [false, true])
           url: `${started.url}/${url.origin === SITE ? "site" : "identity"}${url.pathname}${url.search}`,
           maxRedirects: 0,
         });
+        if (
+          dropClosureResponse &&
+          url.pathname === "/api/v1/points/account/close"
+        ) {
+          dropClosureResponse = false;
+          await route.abort("failed");
+          return;
+        }
         // Browser redirect chains skip route interception. Start a new local
         // navigation for each redirect so external OAuth stays in this fixture.
         const location = response.headers().location;
@@ -180,7 +194,14 @@ for (const withObligations of [false, true])
       await recovery
         .getByRole("button", { name: "Close account", exact: true })
         .click();
-      await expect(recovery).toContainText("Your account is closed");
+      if (withObligations) {
+        await expect(recovery.getByRole("alert")).toContainText(
+          "Could not confirm whether your account closed.",
+        );
+        await page.reload();
+      } else {
+        await expect(recovery).toContainText("Your account is closed");
+      }
       const closed = await readState();
       expect(closed.retained).toEqual(before.retained);
       expect(closed.member.public).toBe(0);
@@ -218,6 +239,7 @@ for (const withObligations of [false, true])
       expect(reopened.preferences.enabled).toBe(0);
       await expectAccessible(page);
       expect(retiredRequests).toEqual([]);
+      expect(diagnostics.count(droppedClosure)).toBe(withObligations ? 1 : 0);
       expect(failures).toEqual([
         "401 /api/v1/payments/me",
         "409 /api/v1/points/join",

@@ -1,19 +1,15 @@
 /** Shared unsigned transaction encoding for wallet funding and the payment executor. */
-import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { decodeBase58Bytes } from "../../src/lib/base58";
-import { solanaBase58 } from "./adapter";
+import {
+  solanaPublicKeyBytes as bytes,
+  solanaProgramAddress as pda,
+} from "./adapter";
 import { CLASSIC_TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from "./token";
 
 const TOKEN = CLASSIC_TOKEN_PROGRAM,
   ASSOCIATED = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
   SYSTEM = "11111111111111111111111111111111";
 const encoder = new TextEncoder();
-const bytes = (value: string) => {
-  const result = decodeBase58Bytes(value);
-  if (result.length !== 32) throw new Error("Invalid public key");
-  return result;
-};
 const concat = (...parts: Uint8Array[]) => {
   const result = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let offset = 0;
@@ -28,24 +24,6 @@ function le(value: bigint) {
   const b = new Uint8Array(8);
   new DataView(b.buffer).setBigUint64(0, value, true);
   return b;
-}
-function pda(program: string, seeds: Uint8Array[]): string {
-  for (let bump = 255; bump >= 0; bump--) {
-    const hash = sha256(
-      concat(
-        ...seeds,
-        Uint8Array.of(bump),
-        bytes(program),
-        encoder.encode("ProgramDerivedAddress"),
-      ),
-    );
-    try {
-      ed25519.Point.fromBytes(hash);
-    } catch {
-      return solanaBase58(hash);
-    }
-  }
-  throw new Error("No program address");
 }
 const instructionData = (name: string, ...args: Uint8Array[]) =>
   concat(sha256(encoder.encode(`global:${name}`)).slice(0, 8), ...args);

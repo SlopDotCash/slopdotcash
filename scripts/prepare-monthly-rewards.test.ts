@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { buildMonthlyBase, monthlyBasesSql } from "./prepare-monthly-rewards";
 
@@ -7,9 +8,7 @@ const snapshotBytes = readFileSync(
   "tests/fixtures/history/cycles/eliza/2026-09/source-snapshot.json",
 );
 function fundedProject(projectId = "eliza", effectiveCycle = "2026-09") {
-  const project = JSON.parse(
-    readFileSync(`tests/fixtures/projects/${projectId}.json`, "utf8"),
-  );
+  const project = fixtureProject(projectId);
   project.reward.feeBasisPoints = 200;
   project.escrow = {
     schemaVersion: "1",
