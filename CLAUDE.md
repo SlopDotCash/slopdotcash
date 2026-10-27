@@ -38,8 +38,9 @@ alias only.
     signs each funded project's monthly allocation root (the owner waived the
     independent audit, PRD section 11 "External reviews"). The contract limits
     that commitment to the owner's monthly cap, one commitment per period, and
-    the owner's opt-out; the attester still cannot withdraw, redirect, or pay
-    funds. Owner decision of 25 October 2026: it may automatically cancel its
+    the owner's opt-out. Owner decision of 26 October 2026 requires exact owner
+    finalization without an automatic deadline before a new monthly commitment;
+    the attester still cannot withdraw, redirect, or pay funds. Owner decision of 25 October 2026: it may automatically cancel its
     own obsolete pending EVM wallet-binding transaction with a same-nonce,
     zero-native-value transfer to itself, with empty data and the existing gas
     limits. Retain both signed attempts and reconcile either canonical
@@ -350,8 +351,9 @@ Generated points projections are build outputs; do not edit them by hand.
 Monthly allocations are private D1 records. The trusted `monthly-rewards.yml`
 workflow freezes the complete ledger of the closed UTC month and writes each
 funded project's proposal to D1 once; a repeat run never adds or replaces
-rows. The owner changes amounts privately, and the owner or the automatic
-cutoff freezes the final allocation (`backend/payments/README.md`).
+rows. The owner changes amounts privately and explicitly finalizes the exact
+allocation when ready; there is no automatic deadline or freeze
+(`backend/payments/README.md`).
 `cycles/` keeps only the format notes of historical cycles; do not add cycle
 files.
 
@@ -363,15 +365,22 @@ New project setup uses one monthly pool. Preserve historical committed review
 budgets and their terms; do not offer a second review budget for new projects.
 Review credit follows the canonical scoring policy.
 
-Automatic monthly payment is the PRD default for every project with funds
-committed in its vault. The owner sets the monthly amount during setup, can
-adjust allocations before execution, and can turn the default off; do not show
-adjustment history or require public reasons. Distribute the current
-allocations at the monthly cutoff if the owner has not done so. The period is
-the calendar UTC month, starting with 2026-11, and the cutoff is 72 hours after
-the month ends (PRD sections 6 and 11). Keep internal reconciliation and prevent
-manual/automatic duplicate payments. Walletless funded awards remain reserved.
-Private reports are automatic; bounty awards and payouts remain discretionary.
+Automatic monthly payment after owner finalization is the PRD default for every
+project with funds committed in its vault. The owner sets the monthly amount
+during setup, can adjust unfinalized allocations, and can turn automatic payment
+off. Do not show adjustment history or require public reasons.
+Owners finalize a closed month whenever ready; no 72-hour deadline,
+automatic freeze or expiry applies to an unfinalized month (owner decision,
+26 October 2026). An unchanged proposal does not authorize payment.
+Distribute the exact finalized allocation only when the whole month is funded.
+The period remains the calendar UTC month, starting with 2026-11. Preserve
+monthly caps, one allocation per period, owner opt-out, reconciliation,
+manual/automatic duplicate refusal and walletless funded reserves.
+Removing the calendar window must not broaden attester authority: contracts
+must verify the owner's exact allocation authorization, including past months.
+Current deployed timing remains until reviewed implementation, qualification
+and an owner-approved upgrade; this policy does not authorize a transaction.
+Private reports remain automatic; bounty awards and payouts remain discretionary.
 Slopbot triages disputes first, and a moderator decides escalated disputes.
 Preserve already funded obligations.
 
