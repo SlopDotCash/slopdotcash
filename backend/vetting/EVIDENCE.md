@@ -15,7 +15,12 @@ the terms it used.
 
 `readGrantDurationSeconds` (900, the approved 15-minute operator grant) controls
 the read token, database expiry and download cookie only.
-`postClosureRetentionSeconds` is 7776000 (90 days). Migration 0066 records
+`postClosureRetentionSeconds` is 7776000 (90 days) for other cases. Successful
+bounded admission-scan evidence is retained permanently, including original
+evidence behind a reused result (owner decision, 27 October 2026,
+[#1467](https://github.com/SlopDotCash/slopdotcash/issues/1467#issuecomment-6438784205)).
+This classification affects retention only. It never turns an incomplete or
+historical metadata-only result into valid clearance. Migration 0066 records
 an immutable case closure when a clean scan is accepted, in the same transaction.
 Existing clean assessments receive their original completion time as closure.
 Incomplete and malicious assessments stay open until the policy owner calls
@@ -26,7 +31,8 @@ the original date and cannot restart the clock. Closure does not release a
 quarantined project, change a scan result, or change awards.
 
 Evidence remains readable while the case is open. The operator overview returns
-`expiresAt: null` then, and the closure time plus 90 days afterward. At that
+`expiresAt: null` while open or for permanent admission evidence, and otherwise
+the closure time plus 90 days afterward. At that
 boundary new grants and reads are refused. The old upload-based `expires_at`
 column stays in immutable run history but no longer determines current access.
 
@@ -43,7 +49,8 @@ and [retention and recovery terms](https://github.com/SlopDotCash/slopdotcash/is
   (202660855). `lalalune` is the policy authority. This access is separate
   from the moderator role.
 - Each audited read grant lasts 15 minutes.
-- Keep raw evidence while its case is open and for 90 days after closure.
+- Keep successful bounded admission-scan evidence permanently. Keep other raw
+  evidence while its case is open and for 90 days after closure.
 - Make daily private backups. Keep each backup for 30 days. Deleted evidence
   can therefore remain in backups for up to 30 additional days.
 - Keep access logs for one year.

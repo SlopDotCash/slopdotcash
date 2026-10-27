@@ -285,7 +285,8 @@ async function requestAssessment(
     );
   const project = await deps.projects.getProject(body.projectId);
   if (project === null) fail(404, "not_found", "Project not found");
-  // Only the current revision is scanned: an older one can never be served.
+  // New scan requests must pin the current revision. A completed admission
+  // remains evidence for its original revision when routine changes follow.
   if (project.revision !== body.revision)
     fail(409, "stale_revision", "Scan the project's current revision");
   const queued = await queueAssessment(
@@ -429,9 +430,8 @@ export function vettingScanRequester(input: {
 const MAX_AUTOMATIC_SCANS = 25;
 
 /**
- * Queues the scans that changed executable content needs, without an admin
- * (PRD sections 4 and 8): a listed project whose current content or live
- * pin has no scan, and a project that flags alone paused and that has no
+ * Queues initial repository admission without an admin (PRD sections 4 and 8),
+ * and a project that flags alone paused and that has no
  * scan requested since the pause. A fresh clean scan at the live pin that
  * could not reinstate when it landed reinstates here. Banned and
  * moderator-restricted projects wait for a moderator. The signed scanner
@@ -511,9 +511,6 @@ async function refreshQueue(
       );
       if (clearance.state === "unscanned")
         reason = "Automatic scan of new project content";
-      else if (clearance.state === "stale")
-        reason =
-          "Automatic rescan: executable content or skill template changed";
     }
     if (reason === null) continue;
     try {

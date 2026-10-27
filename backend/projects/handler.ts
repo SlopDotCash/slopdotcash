@@ -941,9 +941,9 @@ async function queueScan(
 
 /**
  * Runs every setup check for `actor` and acts on the result: it queues a
- * scan of an unscanned or stale revision, and activates a paused project
+ * scan for missing admission or fresh reinstatement, and activates a paused project
  * whose owner has write access read through Slopbot, whose repository has
- * Slopbot installed and whose exact content has a clean scan. Activation
+ * Slopbot installed and with retained clean repository admission. Activation
  * changes only the status, so the clearance carries over.
  */
 async function runSetupCheck(
@@ -955,6 +955,8 @@ async function runSetupCheck(
     authority?: { authority: SetupAuthority; access: AccessCheck };
     scanRequest?: ScanRequest | null;
     requestScan?: boolean;
+    /** Routine edits do not resume a project the owner deliberately paused. */
+    allowActivation?: boolean;
   } = {},
 ): Promise<ProjectSetupStatus> {
   let project = initial;
@@ -1007,6 +1009,7 @@ async function runSetupCheck(
   let activatedRevision: number | null = null;
   if (
     open &&
+    options.allowActivation !== false &&
     project.status === "paused" &&
     authority.state === "verified" &&
     access.state === "read" &&
@@ -1018,7 +1021,7 @@ async function runSetupCheck(
       current: project,
       manifest: { ...project.manifest, status: "active" },
       ownerParticipation: true,
-      reason: `Activated automatically after setup checks for @${actor.githubLogin}: ${authority.message} Slopbot installation ${access.access.installationId}. ${clearance.assessment === null ? "Grandfathered before security scans" : `Clean scan ${clearance.assessment.id}`}.`,
+      reason: `Activated automatically after setup checks for @${actor.githubLogin}: ${authority.message} Slopbot installation ${access.access.installationId}. ${clearance.assessment === null ? "Grandfathered before security scans" : `Admission scan ${clearance.assessment.id}`}.`,
       actor,
     });
     activatedRevision = project.revision;
@@ -1374,8 +1377,8 @@ async function ownerVault(
 
 /**
  * Publishes an owner's revision at once (PRD section 4). Presentation
- * changes publish as they are; a change to the skill inputs pauses an active
- * project and queues a fresh scan unless PRD section 8 exempts it. A clean
+ * changes publish as they are; skill edits retain admission for the same
+ * immutable repository. An unadmitted repository needs a scan. A clean
  * result reactivates it on the next setup check; a financial change applies
  * from the next UTC cycle.
  * Identity, status, listing, steward, authority and terms stay with the
@@ -1521,11 +1524,10 @@ async function publishOwnerRevision(
     changes.executable.length > 0
       ? await deps.vettingClearance(projectId, manifest, current.revision)
       : null;
-  // The permanent exemption also covers future executable changes. The
-  // restriction and current-owner checks above still apply to every edit.
+  // Admission carries across routine updates of the same immutable repository.
+  // Restriction, evidence and current-owner checks still apply to every edit.
   const scanRequired =
-    changes.executable.length > 0 &&
-    !(clearance?.state === "cleared" && clearance.assessment === null);
+    changes.executable.length > 0 && clearance?.state !== "cleared";
   if (scanRequired && manifest.status === "active")
     manifest = { ...manifest, status: "paused" };
   const summary = [
@@ -1533,7 +1535,7 @@ async function publishOwnerRevision(
       ? `presentation (${changes.presentation.join(", ")}) published`
       : null,
     changes.executable.length > 0
-      ? `skill inputs (${changes.executable.join(", ")}) ${scanRequired ? "need a new scan" : "published under the existing-project scan exemption"}`
+      ? `skill inputs (${changes.executable.join(", ")}) ${scanRequired ? "need a new scan" : "published under the existing admission clearance"}`
       : null,
     changes.financial.length > 0
       ? `financial policy (${changes.financial.join(", ")}) published; monthly amounts apply from the next UTC cycle and bounty terms apply to later reports`
@@ -1560,6 +1562,7 @@ async function publishOwnerRevision(
   const setup = await runSetupCheck(request, deps, updated, actor, {
     authority: checked,
     scanRequest,
+    allowActivation: false,
   });
   const published = await deps.persistence.getProject(projectId);
   if (published === null) fail(500, "internal_error", "Project vanished");
@@ -1786,8 +1789,8 @@ async function replaceProjectManifest(
 /**
  * Appends one revision after every registry rule: restrictions, policy
  * transitions, registry uniqueness, generated-skill content and the
- * clearance gate. Only content a scan cleared may become active, or change
- * its skill inputs while active (PRD VET-01).
+ * admission gate. The immutable repository must have retained clearance before
+ * activation or skill changes while active (PRD section 8).
  */
 async function appendRevision(
   request: Request,
@@ -1876,7 +1879,7 @@ async function appendRevision(
       fail(
         422,
         "vetting_required",
-        `Security vetting is ${vetting.state}. Only a revision whose skill inputs and source passed a clean scan of the current integration-branch head and skill template can activate.`,
+        `Security vetting is ${vetting.state}. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.`,
       );
   }
   const result = await deps.persistence.appendProjectRevision(

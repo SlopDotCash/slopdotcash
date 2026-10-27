@@ -2166,7 +2166,7 @@ describe("generated project skill installation", () => {
           project: { ...manifest, status: "active" },
           skillsPublished: false,
         },
-        "has no clean security scan",
+        "skills or repository admission are unavailable",
       ],
       [
         {

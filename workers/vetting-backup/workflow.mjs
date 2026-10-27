@@ -65,7 +65,7 @@ try {
   const db = await runtime.getD1Database("EVIDENCE_DATABASE");
   await db
     .prepare(
-      "CREATE TABLE vetting_assessments(id TEXT PRIMARY KEY,state TEXT,completed_at TEXT)",
+      "CREATE TABLE vetting_assessments(id TEXT PRIMARY KEY,state TEXT,completed_at TEXT,result TEXT)",
     )
     .run();
   for (const migration of [
@@ -212,12 +212,29 @@ try {
     ["vet_partial_upload", 91, true],
     ["vet_recent_case", 89, false],
     ["vet_open_case", null, false],
+    ["vet_permanent_admission", 91, false],
   ]) {
     await db
-      .prepare("INSERT INTO vetting_assessments VALUES(?,'incomplete',?)")
+      .prepare(
+        "INSERT INTO vetting_assessments(id,state,completed_at) VALUES(?,'incomplete',?)",
+      )
       .bind(id, new Date(now).toISOString())
       .run();
-    if (age !== null)
+    if (id === "vet_permanent_admission")
+      await db
+        .prepare(
+          "UPDATE vetting_assessments SET state='clean',result=?,completed_at=? WHERE id=?",
+        )
+        .bind(
+          JSON.stringify({
+            schemaVersion: "slop-vetting-result-v2",
+            disposition: "clean",
+          }),
+          new Date(now - age * 86400_000).toISOString(),
+          id,
+        )
+        .run();
+    if (age !== null && id !== "vet_permanent_admission")
       await db
         .prepare(
           "INSERT INTO vetting_evidence_case_closures VALUES(?,?, 'fixture', 'fixture closure')",
@@ -342,7 +359,10 @@ try {
   }
   for (const item of retainedCases)
     for (const key of item.keys) {
-      assert.equal(Boolean(await source.head(key)), item.age !== 91);
+      assert.equal(
+        Boolean(await source.head(key)),
+        item.age !== 91 || item.id === "vet_permanent_admission",
+      );
       assert.equal(
         Boolean(await backups.head(`daily/${retentionDay}/objects/${key}`)),
         !item.id.startsWith("vet_missing_") &&

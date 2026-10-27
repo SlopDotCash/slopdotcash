@@ -5,7 +5,8 @@
  * - presentation: listing text, links and explicit Slopbot consent. Publishes
  *   at once; consent is authorization, not executable skill content.
  * - executable: the repository source and the maintainer-authored rules that
- *   generate the contributor and reviewer skills. Needs a fresh security scan.
+ *   generate the contributor and reviewer skills. Changes the recorded content
+ *   digest; routine updates retain same-repository admission clearance.
  * - financial: reward, asset, vault and bounty policy. Applies prospectively.
  *
  * Every other field (identity, status, listing tier, steward, authority,
@@ -27,7 +28,8 @@ const PRESENTATION_FIELDS = [
 /**
  * The content a malicious-code scan covers: the project id, the repository
  * source it names and the inputs of the generated skills. A clearance binds
- * this content, so presentation and financial edits keep it.
+ * this actual content as evidence; admission eligibility is separately bound to
+ * the immutable repository identity.
  */
 const EXECUTABLE_FIELDS = [
   "id",
