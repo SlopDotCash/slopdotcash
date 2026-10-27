@@ -12,6 +12,7 @@ import {
 import { reconcileSecurityMail } from "../../workers/notify/security";
 import type { SecurityD1Database } from "../security/handler";
 import { handleEmailPreferences } from "./email";
+import { notifyProjectEnforcement, notifyVettingBanAudience } from "./events";
 import type { NotificationsDependencies } from "./handler";
 
 function setup() {
@@ -416,6 +417,8 @@ test("scheduled drains finish activity delivery and report a failed security que
 
 test("project notices recheck the current steward before activity mail", async () => {
   const h = setup();
+  // Staff membership does not substitute for the owner of an owner-only notice.
+  h.mail.adminGithubIds = new Set(["101"]);
   const current = await h.call("GET");
   expect(
     (
@@ -506,4 +509,143 @@ test("project notices recheck the current steward before activity mail", async (
     "project-revision:steward-change:2": "suppressed",
   });
   h.sqlite.close();
+});
+
+test("vetting ban mail rechecks affected contributors and current staff after an ownership change", async () => {
+  for (const staffRemoved of [false, true]) {
+    const h = setup();
+    try {
+      for (const id of ["101", "102", "103", "104"]) {
+        h.mail.config.recipients[id] = {
+          ...h.mail.config.recipients["101"],
+          email: `member${id}@example.com`,
+        };
+        const current = await h.call("GET", undefined, id);
+        expect(
+          (
+            await h.call(
+              "POST",
+              {
+                enabled: true,
+                destinationVersion: current.body.destinationVersion,
+              },
+              id,
+            )
+          ).status,
+        ).toBe(200);
+      }
+      const at = h.now().toISOString();
+      const manifest = applicationManifest(
+        "affected-project",
+        "example/affected-project",
+      );
+      manifest.steward = {
+        ...(manifest.steward as Record<string, unknown>),
+        kind: "user",
+        github: {
+          actorId: "103",
+          nodeId: "U_103",
+          login: "steward",
+          type: "User",
+          profileUrl: "https://github.com/steward",
+        },
+      };
+      const body = JSON.stringify(manifest);
+      h.sqlite
+        .query(
+          "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES ('affected-project',1,?,?,'Fixture','303','lister',?)",
+        )
+        .run(body, "a".repeat(64), at);
+      h.sqlite
+        .query(
+          "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES ('affected-project','paused',1,?,?,?,?)",
+        )
+        .run(body, "a".repeat(64), at, at);
+      h.sqlite
+        .query(
+          "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('affected','101','affected',?,0)",
+        )
+        .run(at);
+      h.sqlite
+        .query(
+          "INSERT INTO points_revisions(id,source_key,previous,recorded_at,payload) VALUES('credit','credit',NULL,?,?)",
+        )
+        .run(
+          at,
+          JSON.stringify({
+            award: {
+              actor: { id: "affected" },
+              projectId: "affected-project",
+              amount: 10,
+            },
+          }),
+        );
+      h.sqlite
+        .query(
+          "INSERT INTO payment_direct_transfers(network,transaction_id,project_id,contribution_month,github_user_id,github_node_id,github_login,chain,recipient,amount_micro,block_time,block_id,source_path,imported_at) VALUES('base-mainnet','fixture-transfer','affected-project','2026-10','102','U_102','financial','base','fixture-wallet','1',?,'fixture-block','fixture',?)",
+        )
+        .run(at, at);
+      h.sqlite
+        .query(
+          "INSERT INTO project_enforcements(id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,result,created_at) VALUES ('enf_mail_fixture','affected-project',1,'ban','banned','none','Confirmed malicious','fixture','1','[\"example/affected-project\"]',?,'vetting-service','standing-rule',1,?,'revision_pending',?)",
+        )
+        .run(
+          JSON.stringify({
+            kind: "vetting-service",
+            keySha256: "b".repeat(64),
+            assessmentId: "fixture",
+            policyVersion: "fixture",
+            rule: "confirmed-malicious",
+          }),
+          "a".repeat(64),
+          at,
+        );
+      await h.db.batch([
+        notifyProjectEnforcement(h.db, "enf_mail_fixture"),
+        notifyVettingBanAudience(h.db, "enf_mail_fixture", ["103", "104"]),
+      ]);
+      expect(h.rows()).toHaveLength(4);
+      // The owner writer wins the shared event key, so this staff member's
+      // notice has a project link even after they stop being the steward.
+      expect(
+        h.sqlite
+          .query(
+            "SELECT recipient_github_id,action_path FROM notifications WHERE recipient_github_id IN ('103','104') ORDER BY recipient_github_id",
+          )
+          .all(),
+      ).toEqual([
+        {
+          recipient_github_id: "103",
+          action_path: "/projects/affected-project",
+        },
+        { recipient_github_id: "104", action_path: "/admin" },
+      ]);
+      h.mail.adminGithubIds = new Set(staffRemoved ? [] : ["103"]);
+      h.mail.moderatorGithubIds = new Set(staffRemoved ? [] : ["104"]);
+      h.sqlite
+        .query(
+          "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) SELECT id,2,json_set(manifest, '$.steward.github.actorId', '202'),?,'Steward change','303','lister',? FROM projects WHERE id='affected-project'",
+        )
+        .run("b".repeat(64), at);
+      h.sqlite
+        .query(
+          "UPDATE projects SET revision=2,manifest=(SELECT manifest FROM project_revisions WHERE project_id='affected-project' AND revision=2),manifest_sha256=? WHERE id='affected-project'",
+        )
+        .run("b".repeat(64));
+      await dispatchActivityMail(h.mail);
+      expect(h.sent).toHaveLength(staffRemoved ? 2 : 4);
+      for (const id of ["101", "102", "103", "104"])
+        expect(
+          h.sent.filter((mime) => mime.includes(`To: member${id}@example.com`)),
+        ).toHaveLength(staffRemoved && (id === "103" || id === "104") ? 0 : 1);
+      expect(
+        h.rows().filter((row) => row.state === "provider-accepted"),
+      ).toHaveLength(staffRemoved ? 2 : 4);
+      expect(h.rows().filter((row) => row.state === "suppressed")).toHaveLength(
+        staffRemoved ? 2 : 0,
+      );
+    } finally {
+      h.sqlite.close();
+    }
+  }
 });

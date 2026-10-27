@@ -61,6 +61,19 @@ export const PROJECT_OWNERS = (project: string) => `(
    WHERE id = ${project}
 )`;
 
+/** Current contribution and retained payment records identify affected people. */
+export const PROJECT_AFFECTED_CONTRIBUTORS = (project: string) => `(
+  SELECT m.github_id AS recipient FROM points_revisions r
+    JOIN points_members m ON m.actor_id = json_extract(r.payload, '$.award.actor.id')
+   WHERE json_extract(r.payload, '$.award.projectId') = ${project}
+     AND json_extract(r.payload, '$.award.amount') > 0
+     AND NOT EXISTS (SELECT 1 FROM points_revisions successor WHERE successor.previous = r.id)
+  UNION
+  SELECT github_user_id FROM payment_obligations WHERE project_id = ${project}
+  UNION
+  SELECT github_user_id FROM payment_direct_transfers WHERE project_id = ${project}
+)`;
+
 /**
  * A manifest revision reaches the account that listed the project (its
  * applicant, or its self-service creator) and its GitHub steward, never the
@@ -374,18 +387,7 @@ export function notifyVettingBanAudience<S>(
       JOIN (
         SELECT value AS recipient FROM json_each(?2)
         UNION
-        SELECT m.github_id FROM points_revisions r
-          JOIN points_members m ON m.actor_id = json_extract(r.payload, '$.award.actor.id')
-         WHERE json_extract(r.payload, '$.award.projectId') =
-               (SELECT project_id FROM project_enforcements WHERE id = ?1)
-           AND json_extract(r.payload, '$.award.amount') > 0
-           AND NOT EXISTS (SELECT 1 FROM points_revisions successor WHERE successor.previous = r.id)
-        UNION
-        SELECT github_user_id FROM payment_obligations
-         WHERE project_id = (SELECT project_id FROM project_enforcements WHERE id = ?1)
-        UNION
-        SELECT github_user_id FROM payment_direct_transfers
-         WHERE project_id = (SELECT project_id FROM project_enforcements WHERE id = ?1)
+        SELECT recipient FROM ${PROJECT_AFFECTED_CONTRIBUTORS("(SELECT project_id FROM project_enforcements WHERE id = ?1)")}
       ) audience
      WHERE e.id = ?1 AND e.action = 'ban' AND e.actor_role = 'vetting-service'
        AND ${GITHUB_ID("audience.recipient")}
