@@ -1184,7 +1184,12 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     expect(response.status(), path).toBe(301);
     expect(response.headers().location, path).toBe("/projects/eliza/funding");
   }
-  for (const path of ["/operator/traces", "/operator/traces/"]) {
+  for (const path of [
+    "/models",
+    "/models/",
+    "/operator/traces",
+    "/operator/traces/",
+  ]) {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status(), path).toBe(404);
     expect(await response.text(), path).not.toContain('<div id="root"></div>');
@@ -1320,7 +1325,6 @@ for (const scenario of [
   // its own timeout and the matrix runs across workers.
   test.describe(`reflow ${scenario.name}`, { tag: "@desktop-only" }, () => {
     for (const path of [
-      "/models",
       "/how-it-works",
       "/",
       "/projects/eliza",
@@ -1400,25 +1404,7 @@ test("finds a receipt and opens its full evidence and GitHub contribution", asyn
 }) => {
   const snapshot = await loadSnapshot(request);
   const entry = snapshot.attributions.find((entry) => entry.run !== null);
-  await page.goto("/models", { waitUntil: "networkidle" });
-  const modelReceipts = page
-    .locator('.model-outcome-details a[href^="/receipts?q="]')
-    .first();
-  if (await modelReceipts.count()) {
-    await modelReceipts
-      .locator("xpath=ancestor::details")
-      .locator("summary")
-      .focus();
-    await page.keyboard.press("Enter");
-    await modelReceipts.click();
-    await expect(page).toHaveURL(/\/receipts\?q=/u);
-    await expect(
-      page.getByRole("searchbox", { name: "Find a receipt" }),
-    ).not.toHaveValue("");
-    expect(await page.locator(".receipt-record").count()).toBeGreaterThan(0);
-  } else {
-    await page.goto("/receipts", { waitUntil: "networkidle" });
-  }
+  await page.goto("/receipts", { waitUntil: "networkidle" });
   if (!entry?.run) {
     await expect(page.locator(".receipt-record")).toHaveCount(0);
     return;
@@ -1477,7 +1463,6 @@ test("finds a receipt and opens its full evidence and GitHub contribution", asyn
 // layout family instead of repeating each project's identical layout.
 const breakpointRoutes = new Set([
   "/",
-  "/models",
   "/account",
   "/projects/eliza",
   "/projects/eliza/funding",
@@ -1485,7 +1470,6 @@ const breakpointRoutes = new Set([
 ]);
 for (const route of [
   "latest cycle",
-  "/models",
   "/receipts",
   "/sponsors",
   "/how-it-works",
@@ -1565,81 +1549,6 @@ for (const route of [
     }
   });
 }
-
-test("opens the models page directly and through keyboard navigation", async ({
-  page,
-}, testInfo) => {
-  await page.goto("/models", { waitUntil: "networkidle" });
-  await page.reload({ waitUntil: "networkidle" });
-  const outcomes = page.getByRole("list", {
-    name: "Accepted outcomes by model",
-    exact: true,
-  });
-  const firstModel = outcomes.locator(":scope > li").first();
-  await expect(firstModel).toBeVisible();
-  const disclosure = firstModel.locator("summary");
-  await disclosure.focus();
-  await page.keyboard.press("Enter");
-  await expect(firstModel.locator("details")).toHaveAttribute("open", "");
-  await expect(
-    firstModel
-      .locator("dd")
-      .filter({ hasText: /\d[\d,]* of \d[\d,]* outcomes/ }),
-  ).toBeVisible();
-  const clients = page.locator(".model-clients > summary");
-  await clients.focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("list", { name: "Client outcomes", exact: true }),
-  ).toBeVisible();
-  const client = page
-    .locator(".model-clients .model-outcome-list > li")
-    .first();
-  await client.locator("summary").press("Enter");
-  await expect(client.locator("details")).toHaveAttribute("open", "");
-  // Frozen accepted outcomes use the same public Points unit as profiles.
-  for (const [model, points] of [
-    ["deepseek/deepseek-v4.1-flash-free", "30"],
-    ["openai/gpt-6", "10"],
-  ]) {
-    const row = outcomes.locator(":scope > li").filter({
-      has: page.getByRole("heading", { name: model, exact: true }),
-    });
-    await row.locator("summary").click();
-    await expect(
-      row
-        .locator("dl > div")
-        .filter({
-          has: page.getByText("PR points", { exact: true }),
-        })
-        .locator("dd"),
-    ).toHaveText(points);
-  }
-  await testInfo.attach("models-page", {
-    body: await page.screenshot({ fullPage: true }),
-    contentType: "image/png",
-  });
-  const home = page.getByRole("link", { name: "Slop home", exact: true });
-  await home.focus();
-  const homeSnapshot = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
-  );
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/$/);
-  // Points can render before the separate score download finishes. A previous
-  // SPA route's networkidle state does not prove this response body is complete.
-  expect(await (await homeSnapshot).finished()).toBeNull();
-  await expect(page.locator("#leaderboard").getByRole("table")).toBeVisible({
-    timeout: 60_000,
-  });
-  const modelsSnapshot = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
-  );
-  await page.goBack({ waitUntil: "networkidle" });
-  await expect(page).toHaveURL(/\/models$/u);
-  expect(await (await modelsSnapshot).finished()).toBeNull();
-  await expect(firstModel).toBeVisible();
-});
 
 test("opens the sponsors page directly and through keyboard navigation", async ({
   page,
@@ -1775,11 +1684,23 @@ test("lands direct and lazy cross-route hash links on their section", async ({
   }
 });
 
-test("refuses prototype paths", async ({ page }) => {
-  for (const path of ["/constructor", "/__proto__"]) {
+test("refuses retired and unknown paths and recovers to projects", async ({
+  page,
+}) => {
+  for (const path of ["/models", "/models/", "/constructor", "/__proto__"]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", { name: "Page not found", exact: true }),
     ).toBeVisible();
+    await expect(page).toHaveTitle("Page not found · Slop");
+    await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+    await page
+      .getByRole("link", { name: "See open projects", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/$/u);
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+      "href",
+      "https://slop.cash/",
+    );
   }
 });
