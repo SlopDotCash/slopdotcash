@@ -239,8 +239,8 @@ for (const change of [
  * November schedule: 30 deliveries for 12 PRs merged in October, 15 November
  * PRs whose source stays unavailable, and then a new November request. Just
  * before it, the same PR has a delivery under an App installation that was
- * removed (an uninstall and reinstall). That delivery always retries and must
- * not hold back the valid one.
+ * removed (an uninstall and reinstall), and one under its old repository name.
+ * Neither failed delivery may hold back the valid one.
  */
 test("old and failing requests cannot starve new valuation requests", async () => {
   const { db, sqlite } = liveRegistration();
@@ -269,9 +269,15 @@ test("old and failing requests cannot starve new valuation requests", async () =
       number: 201 + i,
     })),
     { at: Date.parse("2026-11-01T03:01:00Z"), number: 300, installationId: 3 },
+    {
+      at: Date.parse("2026-11-01T03:01:30Z"),
+      number: 300,
+      previousName: true,
+    },
     { at: Date.parse("2026-11-01T03:02:00Z"), number: 300 },
   ].map((delivery, i) => ({
     installationId: job.installationId,
+    previousName: false,
     ...delivery,
     deliveryId: `delivery-${i}`,
   }));
@@ -319,7 +325,22 @@ test("old and failing requests cannot starve new valuation requests", async () =
         const { at: received, ...delivery } = deliveries[pending];
         setSystemTime(new Date(received));
         await recordDelivery(db, delivery.deliveryId, "issue_comment");
-        await recordValueRequest(db, { ...job, ...delivery });
+        // The request was admitted before the repository was renamed.
+        if (delivery.previousName)
+          sqlite.run(
+            `INSERT INTO slopbot_value_requests
+             (delivery_id,installation_id,repository_id,owner,repo,pull_request_number,received_at)
+             VALUES (?,?,?,?,'previous-name',?,?)`,
+            [
+              delivery.deliveryId,
+              job.installationId,
+              job.repositoryId,
+              job.owner,
+              delivery.number,
+              new Date(received).toISOString(),
+            ],
+          );
+        else await recordValueRequest(db, { ...job, ...delivery });
       }
       setSystemTime(new Date(tick));
       await worker.scheduled({}, env);
@@ -334,10 +355,11 @@ test("old and failing requests cannot starve new valuation requests", async () =
         )
         .all(number);
     // The new request is read by the first schedule after it arrives. The
-    // delivery under the removed installation keeps retrying on its own.
+    // removed-installation and old-name deliveries retry on their own.
     expect(reads.get(300)).toEqual([Date.parse("2026-11-01T03:05:00Z")]);
     expect(state(300)).toEqual([
       { state: "completed", outcome: "open", deliveries: 1 },
+      { state: "waiting", outcome: "authority", deliveries: 1 },
       { state: "waiting", outcome: "retry", deliveries: 1 },
     ]);
     // One read settles every waiting delivery for a PR closed before the start.
