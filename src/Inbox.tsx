@@ -121,6 +121,7 @@ async function acknowledgeSecurity(
 export default function InboxPage() {
   const [view, setView] = useState(() => {
     const query = new URLSearchParams(window.location.search);
+    if (query.get("view") === "notifications") return "notifications";
     return query.get("view") === "reports" ||
       query.has("case") ||
       query.has("submission")
@@ -185,11 +186,12 @@ export default function InboxPage() {
     [cursor, acceptRecipient],
   );
   const needsReports =
-    focusId !== null ||
-    (state.status === "ready" &&
-      state.value.notifications.some(
-        (notice) => notice.kind === "security_report_received",
-      ));
+    view === "notifications" &&
+    (focusId !== null ||
+      (state.status === "ready" &&
+        state.value.notifications.some(
+          (notice) => notice.kind === "security_report_received",
+        )));
   const loadReports = useCallback(() => {
     const current = ++reportsGeneration.current;
     if (recipient === null || !needsReports) return;

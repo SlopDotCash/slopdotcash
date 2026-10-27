@@ -134,7 +134,9 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
     throw new Error(`Unexpected private-inbox fixture request: ${path}`);
   });
   diagnostics.allowResponse(503, "GET", "/api/v1/notifications");
-  await page.goto(`/inbox?submission=${id}`, { waitUntil: "networkidle" });
+  await page.goto(`/inbox?view=notifications&submission=${id}`, {
+    waitUntil: "networkidle",
+  });
   const receipt = page.getByRole("list", { name: "Private report receipt" });
   await expect(receipt).toContainText("More evidence needed");
   await expect(page.getByText(report.description, { exact: true })).toHaveCount(
@@ -181,13 +183,15 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   actor = "43";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(receipt).toHaveCount(0);
-  await expect(page).toHaveURL(/\/inbox$/u);
+  await expect(page).toHaveURL(/\/inbox\?view=notifications$/u);
   await expect(page.locator("textarea")).toHaveCount(0);
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByText("You have no notifications.")).toBeVisible();
   actor = "42";
-  await page.goto(`/inbox?submission=${id}`, { waitUntil: "networkidle" });
+  await page.goto(`/inbox?view=notifications&submission=${id}`, {
+    waitUntil: "networkidle",
+  });
   await expect(page.getByRole("list", { name: "Notifications" })).toContainText(
     "More evidence needed",
   );
