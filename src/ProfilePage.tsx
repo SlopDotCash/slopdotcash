@@ -86,7 +86,9 @@ export function ProfilePage({
             Retry profile
           </button>
         ) : null}
-        <Link href="/points">Find a contributor</Link>
+        <p>
+          <Link href="/points">Find a contributor</Link>
+        </p>
       </main>
     );
   const globalLeaders = createGlobalLeaders(
