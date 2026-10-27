@@ -1,4 +1,4 @@
-import { ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
 import { browserDeployment } from "./lib/browser-deployment";
@@ -6,15 +6,8 @@ import { readBoundedJson } from "./lib/browser-json";
 import { isFundingAddress } from "./lib/funding-address.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { createGlobalLeaders, openMonthScores } from "./lib/global-leaderboard";
-import {
-  type GitHubActor,
-  PROFILE_OPPORTUNITY_LIMIT,
-  penaltyProjectOf,
-  type ReviewExclusion,
-  type ReviewExclusionReason,
-  type ScoreOpportunity,
-} from "./lib/leaderboard";
-import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
+import { type GitHubActor, penaltyProjectOf } from "./lib/leaderboard";
+import { findProject } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 import { ProfilePoints, useProfileMembership } from "./Points";
 import {
@@ -24,7 +17,6 @@ import {
   DataNotice,
   ExternalLinkAnchor,
   formatCycleMonth,
-  formatDate,
   formatMicroUsdc,
   formatPointsFromThirds,
 } from "./Presentation";
@@ -38,34 +30,6 @@ const PENALTY_CATEGORY_LABELS: Record<string, string> = {
   busywork: "Clear violation of a quoted project rule",
   gaming: "Clear violation of a quoted project rule",
 };
-
-/** Plain wording of each published review exclusion (protocol/scoring-v2.md). */
-const REVIEW_EXCLUSION_LABELS: Record<ReviewExclusionReason, string> = {
-  "missing-reviewer": "Reviewer account unavailable",
-  "bot-reviewer": "Submitted by a bot",
-  "missing-pull-request-author": "Pull request author unavailable",
-  "bot-pull-request-author": "Pull request opened by a bot",
-  "self-review": "Review of your own work",
-  "missing-submission-time": "No submission time recorded",
-  "unmerged-pull-request": "Pull request not merged",
-  "post-merge": "Submitted after the merge",
-  "non-decision": "Comment only, not approve or request changes",
-  "insufficient-substance": "Too short to count",
-  "already-awarded-reviewer": "Another of your reviews here counted",
-  "evaluated-contribution-award": "Covered by an evaluation award",
-  "external-prize-policy": "Project uses an external prize",
-  "reviewer-cycle-cap": "Monthly review cap reached",
-  "unchanged-outcome": "Did not change what merged",
-  "pull-request-review-awarded": "Another review on this pull request counted",
-  "review-credit-reviewer-limit": "After the first five reviewers",
-  "review-credit-zero-share": "No review share",
-  "review-credit-outside-window": "Submitted outside the scoring window",
-  "review-credit-before-policy": "Submitted before the current scoring rules",
-  "review-credit-account-banned": "Submitted after an account ban",
-};
-
-/** Long review histories list only this many rows; the counts cover all. */
-const PROFILE_REVIEW_EXCLUSION_LIMIT = 50;
 
 export function ProfilePage({
   login,
@@ -142,23 +106,7 @@ export function ProfilePage({
       .filter((contributor) => contributor.actor.id === actor.id)
       .map((contributor) => ({ contributor, cycle })),
   );
-  const actorOpportunities = state.views.flatMap((view) =>
-    view.opportunities
-      .filter((opportunity) => opportunity.actor.id === actor.id)
-      .map((opportunity) => ({ opportunity, project: view.project })),
-  );
-  const reviewExclusions = (state.snapshot.reviewExclusions ?? []).filter(
-    (exclusion) => exclusion.reviewer?.id === actor.id,
-  );
-  const unscoredReviews = (
-    <ProfileReviewExclusions exclusions={reviewExclusions} />
-  );
-  if (
-    matches.length === 0 &&
-    history.length === 0 &&
-    !globalLeader &&
-    actorOpportunities.length === 0
-  ) {
+  if (matches.length === 0 && history.length === 0 && !globalLeader) {
     return (
       <main className="shell route-main">
         <DataNotice state={state} retry={retry} />
@@ -170,30 +118,17 @@ export function ProfilePage({
           profileMembership={membership}
           cycles={state.cycleIndex}
           showIdentity
-          notFoundWhenUnrecorded={reviewExclusions.length === 0}
+          notFoundWhenUnrecorded
         />
-        {unscoredReviews}
       </main>
     );
   }
-  const events = state.snapshot.ledger.filter(
-    (event) => event.actor.id === actor.id,
-  );
   const penalties = (state.snapshot.penalties ?? []).filter(
     (penalty) => penalty.actor.id === actor.id,
   );
   // The same open-month deductions as the accepted-work credits.
   const appliedPenalties = openMonthScores(state.snapshot, state.cycleIndex)
     .deductions.byPenalty;
-  const opportunities = actorOpportunities
-    .sort(
-      (left, right) =>
-        Date.parse(right.opportunity.occurredAt) -
-          Date.parse(left.opportunity.occurredAt) ||
-        left.opportunity.source.number - right.opportunity.source.number ||
-        left.opportunity.id.localeCompare(right.opportunity.id),
-    )
-    .slice(0, PROFILE_OPPORTUNITY_LIMIT);
   const historicalWallet = history.find(({ contributor }) => contributor.wallet)
     ?.contributor.wallet;
   const wallet =
@@ -221,7 +156,6 @@ export function ProfilePage({
         profileCensus={profiles}
         profileMembership={membership}
         actorId={actor.id}
-        work={events}
         login={login}
         cycles={state.cycleIndex}
       >
@@ -300,16 +234,6 @@ export function ProfilePage({
           </ul>
         </section>
       ) : null}
-      {unscoredReviews}
-      {opportunities.length > 0 ? (
-        <section className="section profile-section">
-          <div className="profile-section-heading">
-            <h2>Open work</h2>
-            <span>{opportunities.length} available</span>
-          </div>
-          <OpportunityList opportunities={opportunities} />
-        </section>
-      ) : null}
       {history.length > 0 ? (
         <section className="section profile-section">
           <div className="profile-section-heading">
@@ -363,69 +287,6 @@ export function ProfilePage({
         </section>
       ) : null}
     </main>
-  );
-}
-
-/** Reviews excluded from this snapshot, not a revocation of earlier credit. */
-function ProfileReviewExclusions({
-  exclusions,
-}: {
-  exclusions: readonly ReviewExclusion[];
-}) {
-  if (exclusions.length === 0) return null;
-  const counts = new Map<ReviewExclusionReason, number>();
-  for (const exclusion of exclusions)
-    counts.set(exclusion.reason, (counts.get(exclusion.reason) ?? 0) + 1);
-  const shown = exclusions
-    .slice()
-    .sort(
-      (left, right) =>
-        right.pullRequestNumber - left.pullRequestNumber ||
-        left.id.localeCompare(right.id),
-    )
-    .slice(0, PROFILE_REVIEW_EXCLUSION_LIMIT);
-  return (
-    <section
-      className="section profile-section"
-      aria-labelledby="profile-review-exclusions"
-    >
-      <div className="profile-section-heading">
-        <h2 id="profile-review-exclusions">Review credit exclusions</h2>
-        <span>
-          {exclusions.length.toLocaleString()} recorded in this snapshot
-        </span>
-      </div>
-      <p>
-        These reviews add no credit in this snapshot. Earlier Points can remain.{" "}
-        <Link href="/how-it-works#points">How reviews score</Link>
-      </p>
-      <p className="profile-review-reasons">
-        {[...counts]
-          .sort(([, left], [, right]) => right - left)
-          .map(
-            ([reason, count]) =>
-              `${REVIEW_EXCLUSION_LABELS[reason]}: ${count.toLocaleString()}`,
-          )
-          .join(" · ")}
-      </p>
-      <ul className="profile-penalties">
-        {shown.map((exclusion) => (
-          <li key={exclusion.id}>
-            <ExternalLinkAnchor href={exclusion.url}>
-              {findProject(penaltyProjectOf(exclusion.repository))?.name ??
-                exclusion.repository}{" "}
-              #{exclusion.pullRequestNumber}
-            </ExternalLinkAnchor>{" "}
-            <span>{REVIEW_EXCLUSION_LABELS[exclusion.reason]}</span>
-          </li>
-        ))}
-      </ul>
-      {exclusions.length > shown.length ? (
-        <p>
-          Showing {shown.length} of {exclusions.length.toLocaleString()}.
-        </p>
-      ) : null}
-    </section>
   );
 }
 
@@ -613,44 +474,3 @@ type CurrentWalletState =
 const WALLET_CLAIM_TIMEOUT_MS = 12_000;
 
 const MAX_WALLET_CLAIM_BYTES = 16 * 1024;
-
-function OpportunityList({
-  opportunities,
-}: {
-  opportunities: Array<{
-    opportunity: ScoreOpportunity;
-    project: ProjectDefinition;
-  }>;
-}) {
-  return (
-    <div className="event-list opportunity-list">
-      {opportunities.map(({ opportunity, project }) => (
-        <ExternalLinkAnchor href={opportunity.source.url} key={opportunity.id}>
-          <span className="event-points">
-            {opportunityPointsLabel(opportunity)}
-          </span>
-          <span>
-            <strong>{opportunity.hint}</strong>
-            <small>
-              {opportunity.source.title} · {project.name} ·{" "}
-              {formatDate(opportunity.occurredAt)}
-            </small>
-          </span>
-          <ExternalLink aria-hidden="true" size={16} />
-        </ExternalLinkAnchor>
-      ))}
-    </div>
-  );
-}
-
-function opportunityPointsLabel(opportunity: ScoreOpportunity): string {
-  if (
-    opportunity.kind === "missing-evidence" ||
-    opportunity.kind === "partial-evidence"
-  ) {
-    return "Evidence guidance";
-  }
-  return opportunity.kind === "expand-review"
-    ? "Review guidance"
-    : "Test guidance";
-}
