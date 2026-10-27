@@ -1,6 +1,7 @@
 import {
   type DeploymentTier,
   deploymentOrigins,
+  isLocalDevelopmentOrigin,
 } from "../../src/lib/deployment";
 export const IDENTITY_PUBLIC_ORIGIN = "https://identity.slop.cash";
 export const IDENTITY_INTERNAL_HOST = "identity.internal";
@@ -82,13 +83,20 @@ export interface IdentityPersistence {
   deleteExpired(now: string): Promise<void>;
 }
 
-/** Dedicated isolated test worker only; never arbitrary OAuth redirect hosts. */
+/**
+ * Dedicated isolated test worker only; never arbitrary OAuth redirect hosts.
+ * A local development origin is accepted only when `loopback` is set, which
+ * the local development backend and dev server alone do.
+ */
 export function identityPublicOrigin(
   value?: string,
   tier?: DeploymentTier,
+  options: { loopback?: boolean } = {},
 ): string {
   const canonical = deploymentOrigins(tier).identity;
   if (value === undefined || value === canonical) return canonical;
+  if (options.loopback === true && isLocalDevelopmentOrigin(value))
+    return value;
   if (
     /^https:\/\/slop-identity-test\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.workers\.dev$/.test(
       value,

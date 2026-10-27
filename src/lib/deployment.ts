@@ -26,3 +26,12 @@ export function deploymentTier(value: unknown): DeploymentTier {
   if (value === "staging") return "staging";
   throw new Error("Invalid deployment tier");
 }
+const LOCAL_ORIGIN = /^http:\/\/(?:localhost|127\.0\.0\.1):([1-9][0-9]{3,4})$/u;
+/**
+ * The origin of a developer's own dev server. A request can reach it only from
+ * that machine, so production traffic never carries it.
+ */
+export function isLocalDevelopmentOrigin(value: unknown): value is string {
+  const port = typeof value === "string" ? LOCAL_ORIGIN.exec(value)?.[1] : null;
+  return port != null && Number(port) <= 65_535;
+}

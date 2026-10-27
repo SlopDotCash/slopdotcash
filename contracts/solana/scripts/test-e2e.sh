@@ -36,8 +36,16 @@ stop_validator() {
   wait "$validator_pid" 2>/dev/null || true
   validator_pid=""
 }
+# CI qualifies the exact retained production artifact. Local runs without one
+# keep building their program as before. IDL extraction does not replace it.
+if [[ -n "${SLOP_SOLANA_TEST_ARTIFACT:-}" ]]; then
+  mkdir -p target/idl
+  anchor idl build --out target/idl/slop_escrow.json
+  node scripts/prepare-test-program.mjs "$SLOP_SOLANA_TEST_ARTIFACT"
+else
+  bash scripts/build-local.sh
+fi
 # Prove the production build accepts zero delay and rejects invalid bounds.
-bash scripts/build-local.sh
 start_validator
 bash scripts/run-test-stage.sh production-delay node --test --test-force-exit --test-isolation=none integration/production-delay.e2e.mjs
 stop_validator

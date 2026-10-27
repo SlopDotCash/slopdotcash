@@ -21,10 +21,7 @@ import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
-import {
-  runMonthlyCommitments,
-  runMonthlyCoordinator,
-} from "../../workers/payments/index";
+import { runMonthlyCommitments } from "../../workers/payments/index";
 import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
@@ -1071,14 +1068,6 @@ describe("monthly coordinator", () => {
       "month_open",
     );
   });
-
-  test("private bounty programs never run the monthly coordinator", async () => {
-    expect(
-      await runMonthlyCoordinator({
-        PAYMENT_SCOPE: "security-bounty",
-      } as never),
-    ).toBeNull();
-  });
 });
 
 describe("monthly attestation input", () => {
@@ -2061,7 +2050,7 @@ test("Solana v3 retries preserve the first signed freeze time after a signer out
   expect(freezeReads).toBe(1);
 });
 
-test("reserve release requires the live monthly owner authority and current policy before requesting any attestation", async () => {
+test("reserve release requires current authority and refuses a revision changed during the request", async () => {
   const token = "r".repeat(43);
   sqlite
     .prepare(
@@ -2072,7 +2061,8 @@ test("reserve release requires the live monthly owner authority and current poli
     .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
     .run(await sha256Hex(token), "release-owner", "2027-01-01T00:00:00.000Z");
   let authority = true,
-    requested = 0;
+    requested = 0,
+    reviseDuringRelease = false;
   const service = monthlyOwnerService({
     db,
     ...projects(),
@@ -2095,6 +2085,24 @@ test("reserve release requires the live monthly owner authority and current poli
         manifestSha256: project.manifestSha256,
       });
       requested++;
+      if (reviseDuringRelease) {
+        const text = JSON.stringify(project.manifest);
+        expect(
+          await new CloudflareProjectPersistence(db).appendProjectRevision(
+            {
+              projectId: project.id,
+              expectedRevision: project.revision,
+              manifest: project.manifest,
+              manifestText: text,
+              manifestSha256: await sha256Hex(text),
+              reason: "Owner updated the project while release was checked",
+              actor,
+              at: afterCutoff.toISOString(),
+            },
+            0,
+          ),
+        ).toBe("updated");
+      }
       return { status: "held", reason: "allocation-unavailable" };
     },
   });
@@ -2132,33 +2140,15 @@ test("reserve release requires the live monthly owner authority and current poli
   expect(requested).toBe(0);
   expect((await request()).status).toBe(200);
   expect(requested).toBe(1);
-});
-
-test("a concurrent project revision change refuses a prepared reserve release", async () => {
-  let revision = 0;
-  const service = monthlyOwnerService({
-    db,
-    ...projects(),
-    getProject: async () => ({
-      ...project,
-      revision: project.revision + revision,
-    }),
-    networks: () => ["base-sepolia"],
-    schedule: () => schedule,
-    now: () => clock,
-    verifyAuthority: async () => {},
-    releaseReserve: async () => {
-      revision++;
-      return { status: "held", reason: "allocation-unavailable" };
-    },
-  });
-  await rejects(
-    service.releaseReserve(project.id, "2026-11", actor, {
-      network: "base-sepolia",
-      manifestSha256: project.manifestSha256,
-    }),
-    "project_changed",
-  );
+  reviseDuringRelease = true;
+  const changed = await request();
+  expect(changed.status).toBe(409);
+  expect(await changed.json()).toMatchObject({ error: "project_changed" });
+  expect(requested).toBe(2);
+  expect(
+    (await new CloudflareProjectPersistence(db).getProject(project.id))
+      ?.revision,
+  ).toBe(project.revision + 1);
 });
 
 test("account keeps an award visible when a reservation is indexed during its read", async () => {

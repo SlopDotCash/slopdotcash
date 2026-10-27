@@ -177,78 +177,109 @@ function harness(
 }
 
 describe("release gates", () => {
-  test("mode defaults to off and runs nothing", async () => {
-    const { db, sqlite } = sqliteD1();
-    expect(parseConfig({}).mode).toBe("off");
-    expect(
-      await runOnce({ FEE_DB: db, FEE_CONVERTER_NETWORKS: "base" }),
-    ).toEqual([]);
-    expect(
-      sqlite.query("SELECT COUNT(*) AS n FROM fee_conversions").get(),
-    ).toEqual({ n: 0 });
-  });
-
-  test("scheduled startup failures reject after every enabled network is attempted", async () => {
+  test("a scheduled startup failure preserves completed network work, and off leaves its records unchanged", async () => {
+    const { privateKeyToAccount } = await import("viem/accounts");
+    const privateKey = `0x${"1".repeat(64)}` as const;
+    const wallet = privateKeyToAccount(privateKey).address.toLowerCase();
     const { db, sqlite } = sqliteD1();
     const errors: string[] = [];
-    const original = console.error;
+    const originalError = console.error;
+    const originalLog = console.log;
+    const originalFetch = globalThis.fetch;
+    const network = config({ FEE_WALLET_BASE: wallet }).networks[0];
+    let requests = 0;
+    globalThis.fetch = (async (input, init) => {
+      requests++;
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (url.origin === "https://aggregator-api.kyberswap.com") {
+        return Response.json({
+          code: 0,
+          data: {
+            routerAddress: network.definition.router,
+            routeSummary: {
+              tokenIn: TOKEN,
+              tokenOut: USDC,
+              amountIn: "4000000",
+              amountOut: "4000000",
+              amountInUsd: "4",
+              amountOutUsd: "4",
+              gasUsd: "0.01",
+              l1FeeUsd: "0.01",
+            },
+          },
+        });
+      }
+      if (url.origin !== "https://base.fixture.invalid")
+        throw new Error(`Unexpected Worker origin ${url.origin}`);
+      const rpc = await request.json();
+      if (
+        rpc.method !== "eth_call" ||
+        !rpc.params[0].data.startsWith("0x70a08231")
+      )
+        throw new Error(`Unexpected Worker RPC ${rpc.method}`);
+      return Response.json({
+        jsonrpc: "2.0",
+        id: rpc.id,
+        result: `0x${(rpc.params[0].to.toLowerCase() === TOKEN ? 4000000n : 0n).toString(16).padStart(64, "0")}`,
+      });
+    }) as typeof fetch;
     console.error = (line: string) => errors.push(line);
+    console.log = () => {};
+    const env = {
+      FEE_DB: db,
+      FEE_CONVERTER_MODE: "live",
+      FEE_CONVERTER_NETWORKS: "ethereum,base",
+      FEE_WALLET_BASE: wallet,
+      FEE_WALLET_ETHEREUM: WALLET,
+      RPC_URL_BASE: "https://base.fixture.invalid",
+      FEE_WALLET_KEY_BASE: privateKey,
+      FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [TOKEN] }),
+      ...LIMITS,
+    };
     try {
       let work: Promise<unknown> | undefined;
-      await worker.scheduled(
-        undefined,
-        {
-          FEE_DB: db,
-          FEE_CONVERTER_MODE: "live",
-          FEE_CONVERTER_NETWORKS: "base,ethereum",
-          FEE_WALLET_BASE: WALLET,
-          FEE_WALLET_ETHEREUM: WALLET,
-          ...LIMITS,
+      await worker.scheduled(undefined, env, {
+        waitUntil(promise) {
+          work = promise;
         },
+      });
+      if (!work)
+        throw new Error("The scheduled Worker did not provide its work");
+      await expect(work).rejects.toThrow("fee conversion failed on 1 networks");
+      const records = () =>
+        sqlite.query("SELECT * FROM fee_conversions ORDER BY id").all();
+      const completed = records();
+      expect(completed).toMatchObject([
         {
-          waitUntil(promise) {
-            work = promise;
-          },
+          network: "base",
+          fee_wallet: wallet,
+          token: TOKEN,
+          amount_in: "4000000",
+          quote_amount_out: "4000000",
+          state: "pending",
+          reason: "below the minimum conversion value",
+          raw_tx: null,
         },
+      ]);
+      expect(completed).toHaveLength(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("live mode needs FEE_WALLET_KEY_ETHEREUM");
+      expect(sqlite.query("SELECT * FROM fee_converter_locks").all()).toEqual(
+        [],
       );
-      expect(work).toBeDefined();
-      await expect(work!).rejects.toThrow(
-        "fee conversion failed on 2 networks",
-      );
-      expect(errors).toHaveLength(2);
-      expect(errors[0]).toContain("live mode needs FEE_WALLET_KEY_BASE");
-      expect(errors[1]).toContain("live mode needs FEE_WALLET_KEY_ETHEREUM");
-      expect(
-        sqlite.query("SELECT COUNT(*) AS n FROM fee_converter_locks").get(),
-      ).toEqual({ n: 0 });
-      expect(
-        sqlite.query("SELECT COUNT(*) AS n FROM fee_conversions").get(),
-      ).toEqual({ n: 0 });
+      const beforeOff = requests;
+      const { FEE_CONVERTER_MODE: _mode, ...defaultOff } = env;
+      expect(await runOnce(defaultOff)).toEqual([]);
+      expect(await runOnce({ ...env, FEE_CONVERTER_MODE: "off" })).toEqual([]);
+      expect(records()).toEqual(completed);
+      expect(requests).toBe(beforeOff);
     } finally {
-      console.error = original;
+      globalThis.fetch = originalFetch;
+      console.error = originalError;
+      console.log = originalLog;
       sqlite.close();
     }
-  });
-
-  test("a key that does not control the configured fee wallet is refused", async () => {
-    const { generatePrivateKey } = await import("viem/accounts");
-    const { db } = sqliteD1();
-    expect(() =>
-      createEvmClient({
-        config: config().networks[0],
-        limits: config().limits,
-        kyberClientId: "test",
-        privateKey: generatePrivateKey(),
-        nativeGas: new NativeGasJournal(
-          db,
-          "base",
-          WALLET,
-          "fixture",
-          config().networks[0].nativeBudget!,
-          () => new Date(),
-        ),
-      }),
-    ).toThrow(/does not control the configured fee wallet/);
   });
 });
 

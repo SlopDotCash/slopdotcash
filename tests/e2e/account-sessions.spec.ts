@@ -77,7 +77,7 @@ test("Account waits for identity, revokes another session and signs out the curr
   await expect(page.locator("#wallets")).toContainText("Checking your account");
   releaseIdentity();
   await expect(
-    page.getByRole("button", { name: "Connect Ethereum wallet", exact: true }),
+    page.getByRole("button", { name: "Connect EVM wallet", exact: true }),
   ).toBeVisible();
   const panel = page.locator("#sessions");
   await expect(panel).toContainText("This session");

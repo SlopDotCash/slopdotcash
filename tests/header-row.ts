@@ -1,10 +1,9 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 /**
- * Checks the site header: below 680px it is one row with the S mark, a "?"
- * link named "How it works", and the account or login control at the right
- * edge; wider screens keep the logotype and the full link text. No width
- * scrolls the page sideways.
+ * Checks the site header: one row with the S mark, the "How It Works" link,
+ * and the account or login control at the right edge. The logotype shows from
+ * 480px up. No width scrolls the page sideways.
  */
 export async function expectHeaderRow(page: Page, account: Locator) {
   const header = page.getByRole("banner");
@@ -14,13 +13,9 @@ export async function expectHeaderRow(page: Page, account: Locator) {
   await expect(help).toHaveAttribute("href", "/how-it-works");
   await expect(account).toBeVisible();
   const width = await page.evaluate(() => window.innerWidth);
-  if (width <= 680) {
-    await expect(help).toHaveText("?", { useInnerText: true });
-    await expect(home.locator(".wordmark-text")).toBeHidden();
-  } else {
-    await expect(help).toHaveText("How It Works", { useInnerText: true });
-    await expect(home.locator(".wordmark-text")).toBeVisible();
-  }
+  await expect(help).toHaveText("How It Works", { useInnerText: true });
+  if (width < 480) await expect(home.locator(".wordmark-text")).toBeHidden();
+  else await expect(home.locator(".wordmark-text")).toBeVisible();
   const [homeBox, helpBox, accountBox] = await Promise.all(
     [home, help, account].map((item) => item.boundingBox()),
   );

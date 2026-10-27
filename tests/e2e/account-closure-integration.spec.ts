@@ -153,22 +153,9 @@ for (const withObligations of [false, true])
       );
       await page.goto(`${SITE}/account`);
       const connections = page.getByRole("region", { name: "Connections" });
-      const visibility = connections.getByLabel(
-        "Show my X account with my public membership",
-      );
-      await expect(visibility).toBeChecked();
+      await expect(connections.getByRole("checkbox")).toHaveCount(0);
       await expect(page.getByText(/Telegram/i)).toHaveCount(0);
       await expect(page.locator('a[href^="https://t.me/"]')).toHaveCount(0);
-      await visibility.focus();
-      await page.keyboard.press("Space");
-      await expect(visibility).not.toBeChecked();
-      await expect(connections.getByRole("status")).toHaveText(
-        "X visibility updated.",
-      );
-      // Saving refreshes the existing X row. Focus the newly rendered control.
-      await visibility.focus();
-      await page.keyboard.press("Space");
-      await expect(visibility).toBeChecked();
       await page.screenshot({
         path: info.outputPath("account-connections.png"),
         fullPage: true,
@@ -242,7 +229,7 @@ for (const withObligations of [false, true])
       expect(page.isClosed()).toBe(false);
       const reopened = await readState();
       expect(reopened.retained).toEqual(before.retained);
-      expect(reopened.member).toEqual({ public: 0, closed_at: null });
+      expect(reopened.member).toEqual({ public: 1, closed_at: null });
       expect(reopened.connections).toEqual([]);
       expect(reopened.preferences.enabled).toBe(0);
       await expectAccessible(page);

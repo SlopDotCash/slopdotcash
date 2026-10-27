@@ -333,11 +333,19 @@ Slop Points are the single contribution and participation unit governed by
 X-connection points (PRD section 11, Participation points). Keep every award
 recorded before that date unchanged; never delete, rewrite, or reissue one.
 Earned-point standings and rewards already exclude them. The X connection
-stays a consented profile link with no points.
+stays an optional OAuth-authorized public profile link with no points.
 Verified payout recognition is fixed per recipient/project/cycle, never per dollar
 or transfer. X control never confers GitHub, organization, or payment authority.
 Telegram is retired (PRD section 3). Preserve its historical records; do not
 restore a bot, connection, public profile link, or support route.
+Owner decision, 26 October 2026: active memberships and connected X profile
+links are public, without a separate visibility opt-out. Existing private
+memberships and already-connected X links become public at the next
+authenticated sign-in; explicit reopening and new X connections are public.
+Disclose visibility before sign-in or connection. Keep closed accounts private,
+removed links disconnected, and private cases, traces, wallet records, email
+consent and historical Points unchanged. Public reads perform no transition.
+
 Only accepted-work points for the project and period determine reward shares;
 never feed historical participation or payout-recognition bonuses into rewards. Preserve
 historical settlements and compatibility fields without exposing a separate

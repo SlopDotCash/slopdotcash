@@ -4,6 +4,10 @@ import {
   type prepareSolanaFunding,
   solanaFundingMessage,
 } from "../../contracts/solana/funding";
+import {
+  CLASSIC_TOKEN_PROGRAM,
+  TOKEN_2022_PROGRAM,
+} from "../../contracts/solana/token";
 import { decodeBase58Bytes } from "./base58";
 import { readBoundedJson } from "./browser-json";
 import type { EscrowDeployment } from "./escrow-policy.mjs";
@@ -33,7 +37,16 @@ function fundingConfig(deployment: EscrowDeployment) {
   };
 }
 function planMessage(deployment: EscrowDeployment, plan: SolanaFundingPlan) {
-  const msg = solanaFundingMessage(fundingConfig(deployment), plan);
+  if (
+    plan.tokenProgram !== undefined &&
+    plan.tokenProgram !== CLASSIC_TOKEN_PROGRAM &&
+    plan.tokenProgram !== TOKEN_2022_PROGRAM
+  )
+    throw new Error("Unsupported mint token program.");
+  const msg = solanaFundingMessage(
+    { ...fundingConfig(deployment), tokenProgram: plan.tokenProgram },
+    plan,
+  );
   const wire = decode(plan.transaction);
   if (
     wire.length !== 65 + msg.length ||

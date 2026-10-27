@@ -36,7 +36,6 @@ import {
 } from "./Presentation";
 
 export function HowItWorksPage() {
-  const protocolRoot = `${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/protocol`;
   return (
     <main className="shell evidence-page how-it-works">
       <section className="evidence-page-hero">
@@ -207,13 +206,6 @@ export function HowItWorksPage() {
           <p>
             Your points ÷ project points × funded pool = projected allocation.
           </p>
-          <details>
-            <summary>Exact calculation</summary>
-            <p>
-              A Large contribution (240 points) plus a standard review (30)
-              makes 270 points. Against 900 project points, the share is 30%.
-            </p>
-          </details>
         </div>
         <dl className="equation-card" aria-label="Example projected allocation">
           <div>
@@ -324,39 +316,6 @@ export function HowItWorksPage() {
           </p>
         </details>
       </section>
-      <details className="mechanism-sources how-details">
-        <summary>References</summary>
-        <ul>
-          <li>
-            <ExternalLinkAnchor href={`${protocolRoot}/scoring-v2.md`}>
-              Points rules
-            </ExternalLinkAnchor>
-          </li>
-          <li>
-            <ExternalLinkAnchor href={`${protocolRoot}/private-trace-v1.md`}>
-              Private trace policy
-            </ExternalLinkAnchor>
-          </li>
-          <li>
-            <Link href="/receipts">Public receipts</Link>
-          </li>
-          <li>
-            <Link href="/models">Models</Link>
-          </li>
-          <li>
-            <Link href="/cycles">Cycle archive</Link>
-          </li>
-          <li>
-            <Link href="/#leaderboard">Live leaderboard</Link>
-          </li>
-          <li>
-            <Link href="/sponsors">Sponsors</Link>
-          </li>
-          <li>
-            <Link href="/projects/new">Add your project</Link>
-          </li>
-        </ul>
-      </details>
     </main>
   );
 }
