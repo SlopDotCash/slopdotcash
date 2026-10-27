@@ -153,7 +153,16 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
       return route.fulfill({ json: { automatic } });
     },
   );
-  await openMonthlyAwards(page);
+  await page.goto("/projects/eliza");
+  await page.evaluate(() => {
+    history.pushState({}, "", "/projects/eliza/awards?keep=1");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page).toHaveURL(
+    /\/projects\/eliza\/funding\?keep=1#monthly-awards$/u,
+  );
+  await expect(page.locator("#monthly-awards")).toBeInViewport();
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
   await expect(
     page.getByRole("heading", { name: "Monthly awards", exact: true }),
   ).toBeVisible();
@@ -166,7 +175,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     page
       .getByRole("region", { name: "Monthly awards" })
       .getByRole("link", { name: "Sign in with GitHub" }),
-  ).toHaveAttribute("href", /next=.*funding/);
+  ).toHaveAttribute("href", /next=.*funding%23monthly-awards/);
   status = 403;
   await load.focus();
   await page.keyboard.press("Enter");
@@ -198,9 +207,11 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await expect(awards).toContainText("finalized at Dec 4, 2026, 00:00 UTC.");
   await expect(awards.getByLabel("Award for second-contributor")).toBeEnabled();
   await awards
-    .getByRole("button", { name: "Turn off automatic payment" })
+    .getByRole("button", { name: "Turn off automatic finalization" })
     .click();
-  await expect(awards).toContainText("Automatic monthly payment is off");
+  await expect(awards).toContainText(
+    "Automatic allocation finalization is off",
+  );
   await page.screenshot({
     path: info.outputPath("owner-monthly-allocations.png"),
     fullPage: true,

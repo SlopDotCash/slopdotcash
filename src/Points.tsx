@@ -61,6 +61,7 @@ import { useAction } from "./lib/use-action";
 import { useAllDirectTransfers } from "./lib/use-direct-transfers";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
+  AccountNav,
   DataNotice,
   formatDateTime,
   formatMicroUsdc,
@@ -895,12 +896,11 @@ export function AccountPage() {
   return (
     <main className="shell route-main account-page">
       <RoutePageHeader icon={<UserRound />} title="Account" />
+      <AccountNav current="account" />
       <nav className="account-sections" aria-label="Account sections">
         <a href="#profile">Profile</a>
         {me ? <a href="#connections">Connections</a> : null}
         <a href="#wallets">Wallets</a>
-        <a href="/earnings">Payouts</a>
-        <a href="/inbox">Inbox</a>
         {me ? <a href="#sessions">Sessions</a> : null}
         {accountSession.status === "signed-in" ? (
           <a href="#appeals">Appeals</a>
