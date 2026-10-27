@@ -16,14 +16,14 @@ test("a timed-out launcher stops its descendant server before returning failure"
   const descendant = `const fs = require("node:fs"); let count = 0; fs.writeFileSync(${JSON.stringify(heartbeat)}, "0"); fs.writeFileSync(${JSON.stringify(`${ready}.tmp`)}, String(process.pid)); fs.renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)}); setInterval(() => { fs.writeFileSync(${JSON.stringify(heartbeat)} + ".next", String(++count)); fs.renameSync(${JSON.stringify(heartbeat)} + ".next", ${JSON.stringify(heartbeat)}); }, 25);`;
   const launcher = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "inherit" }); setInterval(() => {}, 1000);`;
   let completed = false;
-  // Hosted Windows must cold-start both Node processes before the timeout.
+  // Both Node processes must start before the cleanup deadline is exercised.
   const phase = runE2ePhase({
     label: "timeout-regression",
     command: "node",
     args: ["-e", launcher],
     cwd: directory,
     env: process.env,
-    timeoutMs: process.platform === "win32" ? 5000 : 1500,
+    timeoutMs: 5000,
   }).then((status) => {
     completed = true;
     return status;
