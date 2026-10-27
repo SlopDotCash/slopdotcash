@@ -2515,6 +2515,12 @@ test("two contributors flag through the form, pause the project and notify moder
   await expect(second.locator("#start")).toContainText(
     "Do not install this project's skill or start work.",
   );
+  // The paused result ships with its next step (PRD section 7).
+  await expect(
+    second.locator("#start").getByRole("link", {
+      name: "Project owner: review setup",
+    }),
+  ).toHaveAttribute("href", `/projects/${project.id}/manage`);
   expect(await readPrivate(second, ownPath)).toMatchObject({
     restriction: "quarantined",
     pausedByFlags: true,
