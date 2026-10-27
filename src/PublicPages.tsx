@@ -2,25 +2,17 @@ import {
   ArrowRight,
   BookOpen,
   CalendarCheck,
-  ChevronRight,
-  Cpu,
   GitPullRequest,
   HandCoins,
   ListChecks,
-  ReceiptText,
   Search,
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import { useState } from "react";
 import { PENALTY_TABLE } from "../workers/slopbot/penalties";
-import chatgptMark from "./agent-logos/chatgpt.svg";
-import claudeMark from "./agent-logos/claude.svg";
-import grokMark from "./agent-logos/grok.svg";
-import metaMark from "./agent-logos/meta-ai.svg";
 import { Link } from "./Link";
 import { browserDeployment } from "./lib/browser-deployment";
-import { modelIdentityKey, summarizeModelOutcomes } from "./lib/model-outcomes";
+import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import {
@@ -37,14 +29,11 @@ import {
 } from "./lib/who-builds";
 import {
   DataNotice,
-  EmptyState,
-  EvidenceNav,
   ExternalLinkAnchor,
   formatDate,
   formatPointsFromThirds,
   monthlyPoolLabel,
   NetworkName,
-  Pager,
   PaymentLifecycle,
   paymentStateLabel,
   RoutePageHeader,
@@ -690,202 +679,10 @@ export function SponsorsPage({
             <Link href="/#leaderboard">Live leaderboard</Link>
           </li>
           <li>
-            <Link href="/receipts">Public receipts</Link>
-          </li>
-          <li>
             <Link href="/cycles">Cycle archive</Link>
           </li>
         </ul>
       </section>
-    </main>
-  );
-}
-
-const RECEIPTS_PAGE_SIZE = 25;
-
-function ModelMark({ model }: { model: string }) {
-  const key = model.toLowerCase();
-  const mark = key.startsWith("claude")
-    ? claudeMark
-    : key.startsWith("gpt") || key.startsWith("o1") || key.startsWith("o3")
-      ? chatgptMark
-      : key.startsWith("grok")
-        ? grokMark
-        : key.startsWith("muse") || key.startsWith("llama")
-          ? metaMark
-          : null;
-  return mark ? (
-    <img className="route-model-mark" src={mark} alt="" aria-hidden="true" />
-  ) : (
-    <Cpu className="route-model-mark" aria-hidden="true" />
-  );
-}
-
-export function ReceiptsPage({
-  state,
-  retry,
-}: {
-  state: DataState;
-  retry: () => void;
-}) {
-  const [query, setQuery] = useState(
-    () => new URLSearchParams(window.location.search).get("q") ?? "",
-  );
-  const [page, setPage] = useState(0);
-  const search = query.trim().toLowerCase();
-  const receipts =
-    state.status === "ready"
-      ? state.snapshot.attributions
-          .filter(
-            (
-              entry,
-            ): entry is typeof entry & { run: NonNullable<typeof entry.run> } =>
-              entry.run !== null,
-          )
-          .sort((left, right) =>
-            right.run.completedAt.localeCompare(left.run.completedAt),
-          )
-      : [];
-  const matching = receipts.filter((entry) =>
-    [
-      entry.actor?.login,
-      entry.sourceUrl,
-      entry.run.runId,
-      entry.run.repositoryId,
-      entry.identifier,
-      modelIdentityKey(entry.provider, entry.model).key,
-      entry.client,
-    ]
-      .join(" ")
-      .toLowerCase()
-      .includes(search),
-  );
-  // One page of receipts keeps the page short and its links large enough.
-  const pages = Math.max(1, Math.ceil(matching.length / RECEIPTS_PAGE_SIZE));
-  const current = Math.min(page, pages - 1);
-  const shown = matching.slice(
-    current * RECEIPTS_PAGE_SIZE,
-    (current + 1) * RECEIPTS_PAGE_SIZE,
-  );
-  return (
-    <main className="shell evidence-page receipt-page route-receipts">
-      <RoutePageHeader
-        title="Run receipts"
-        icon={<ReceiptText />}
-        lead="Model and usage are self-reported, not provider-verified."
-      >
-        <DataNotice retry={retry} state={state} />
-      </RoutePageHeader>
-      <EvidenceNav current="receipts" />
-      {state.status === "ready" && receipts.length > 0 ? (
-        <label className="receipt-search">
-          Find a receipt
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setPage(0);
-            }}
-            placeholder="Contributor, model, client or run ID"
-            disabled={state.status !== "ready"}
-          />
-        </label>
-      ) : null}
-      {state.status === "ready" && receipts.length > 0 ? (
-        <p className="receipt-count" role="status">
-          {matching.length} of {receipts.length} receipts
-        </p>
-      ) : null}
-      {state.status === "ready" && matching.length === 0 ? (
-        <EmptyState
-          text={
-            receipts.length === 0
-              ? "No receipts published yet."
-              : "No receipts match this search."
-          }
-        />
-      ) : null}
-      {state.status === "ready" && receipts.length === 0 ? (
-        <Link href="/#projects">Browse projects</Link>
-      ) : null}
-      <div className="receipt-list">
-        {shown.map((entry) => {
-          const run = entry.run;
-          const workLabel = new URL(entry.sourceUrl).pathname
-            .slice(1)
-            .replace(/\/(?:pull|issues)\//u, " #");
-          return (
-            <article className="receipt-record" key={run.runId}>
-              <div className="receipt-links">
-                <strong>
-                  {entry.actor ? (
-                    <Link
-                      href={`/contributors/${encodeURIComponent(entry.actor.login)}`}
-                    >
-                      {entry.actor.login}
-                    </Link>
-                  ) : (
-                    "Unknown contributor"
-                  )}
-                </strong>
-                <ExternalLinkAnchor href={entry.sourceUrl}>
-                  {workLabel}
-                </ExternalLinkAnchor>
-              </div>
-              <details>
-                <summary>
-                  <span>
-                    <ModelMark model={run.model} />
-                    {run.provider}/{run.model}
-                  </span>
-                  <time dateTime={run.completedAt}>
-                    {formatDate(run.completedAt)}
-                  </time>
-                  <ChevronRight aria-hidden="true" />
-                </summary>
-                <div className="receipt-details">
-                  <dl>
-                    <div>
-                      <dt>Run ID</dt>
-                      <dd>
-                        <code>{run.runId}</code>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Project</dt>
-                      <dd>{run.projectId}</dd>
-                    </div>
-                    <div>
-                      <dt>Client</dt>
-                      <dd>{run.client}</dd>
-                    </div>
-                    <div>
-                      <dt>Tokens</dt>
-                      <dd>
-                        {run.usage.confidence === "unavailable"
-                          ? "Unavailable"
-                          : new Intl.NumberFormat("en-US").format(
-                              run.usage.totalTokens,
-                            )}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Skill revision</dt>
-                      <dd>
-                        <code>{run.skillRevision}</code>
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-              </details>
-            </article>
-          );
-        })}
-      </div>
-      {pages > 1 ? (
-        <Pager onPage={setPage} page={current} pages={pages} />
-      ) : null}
     </main>
   );
 }

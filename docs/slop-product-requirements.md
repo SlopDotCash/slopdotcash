@@ -155,7 +155,9 @@ Support mobile, keyboard access, screen readers, reduced motion, and 200% zoom. 
 
 Keep loading, empty, stale, invalid, denied, unavailable, and failed states distinct. Each failure needs a useful next action.
 
-The public `/models` page is removed (owner decision, 27 October 2026). Keep exact model attribution on contribution records and receipts.
+The public `/models` page is removed (owner decision, 27 October 2026). Keep exact model attribution on contribution records.
+
+The public `/receipts` page and its navigation links are removed (owner decision, 27 October 2026). Do not display individual run receipt details or receipt-evidence bonus labels on the website. Keep the run and trace APIs, optional receipt collection, stored records, and scoring rules unchanged.
 
 ### User journeys
 
@@ -170,7 +172,7 @@ Use the existing routes and shared controls. These are acceptance requirements, 
 | Member            | GitHub login → Account → connections, wallets, sessions → Inbox/Payouts                                              | Preserve return destination and drafts; independent consent; revoke sessions; private recovery and account closure                                                               |
 | Moderator         | Admin → escalated dispute, appeal, or confirmed-malicious result → evidence and Slopbot triage → decision            | Current authority, saved reason, fresh scan; flag-only pauses reinstate automatically after a clean scan; preserve awards                                                        |
 | Security operator | Private vetting evidence → authorized reasoned grant → inspect → record result                                       | Exact retained bytes, explicit coverage gaps, audited access; "scan passed" only when every defined check ran (section 8)                                                        |
-| Visitor           | Projects, profiles, shared rankings, receipts, cycles, sponsors, How it works                        | Consistent amounts and periods; explain score, funding, and verification once; retain old URLs and raw downloads                                                                 |
+| Visitor           | Projects, profiles, shared rankings, cycles, sponsors, How it works                        | Consistent amounts and periods; explain score, funding, and verification once; retain old URLs and raw downloads                                                                 |
 
 ## 8. Security and private bounties
 
