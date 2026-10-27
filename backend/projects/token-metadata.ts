@@ -29,7 +29,7 @@ const DEFAULT_REWARD_RPC_URLS: Readonly<Record<RewardAssetNetwork, string>> =
   Object.freeze({
     base: "https://mainnet.base.org",
     ethereum: "https://ethereum-rpc.publicnode.com",
-    robinhood: "https://rpc.mainnet.chain.robinhood.com",
+    robinhood: "https://robinhood-rpc.publicnode.com",
     solana: "https://api.mainnet-beta.solana.com",
   });
 
