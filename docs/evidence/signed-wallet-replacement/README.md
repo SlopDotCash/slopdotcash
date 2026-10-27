@@ -75,6 +75,5 @@ winner reconciliation still apply. The notification regression likewise keeps
 its held notice for an uncertain old attempt after a signed replacement, rather
 than manufacturing a hold merely from unsigned registration.
 
-Small policy-only additions record the separate section 3.3 appeal decision and
-reconcile the scoring protocol's subscription sentence with the already approved
-PRD. They implement no appeal code, grade, import or publication change.
+The scoring protocol's subscription sentence is reconciled with the already
+approved PRD. It changes no grade, import or publication.
