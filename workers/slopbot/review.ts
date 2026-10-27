@@ -1265,17 +1265,24 @@ async function runReview(
   }
 
   const proof = grounded(verdict, context, deterministic);
-  let blockedClose: string | null = proof.ok ? null : proof.why;
+  // Keep the most direct reason, and do not buy confirmation when this
+  // verdict already fails a necessary condition of the closure predicate.
+  const initialUncertainty = !proof.ok
+    ? proof.why
+    : verdict.confidence < CLOSE_CONFIDENCE
+      ? "confidence below closure threshold"
+      : verdict.limitations.length > 0
+        ? "unresolved model limitations"
+        : null;
+  let blockedClose: string | null = initialUncertainty;
   let confirm: CallRecord | null = null;
   let close = false;
   // An uncertain finding goes to the maintainer first and never closes
   // (PRD section 5). Policy gates such as label-only modes are not uncertainty.
-  let uncertain =
-    verdict.confidence < CLOSE_CONFIDENCE ||
-    verdict.limitations.length > 0 ||
-    !proof.ok;
+  let uncertain = initialUncertainty !== null;
   if (scope === "security") {
-    if (mode === "close" && proof.ok) blockedClose = routing.reason;
+    if (mode === "close" && initialUncertainty === null)
+      blockedClose = routing.reason;
   } else if (
     (mode === "close" || category === "low_quality") &&
     !NEVER_CLOSE.has(category) &&
@@ -1283,11 +1290,7 @@ async function runReview(
     penaltyFor(category)?.action === "close"
   ) {
     const state = await closureState(env, job, context, routing.mayClose);
-    if (!proof.ok) {
-      blockedClose = proof.why;
-      uncertain = true;
-    } else if (verdict.confidence < CLOSE_CONFIDENCE)
-      blockedClose = "confidence below closure threshold";
+    if (initialUncertainty !== null) blockedClose = initialUncertainty;
     else if (category === "duplicate" && !context.relatedOpenItem) {
       blockedClose = "no verified matching open item by the same author";
       uncertain = true;
