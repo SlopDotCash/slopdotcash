@@ -9,6 +9,7 @@ import {
   verifyVaultFundingAction,
 } from "../../contracts/evm/adapter";
 import { ESCROW_NETWORKS, type EscrowDeployment } from "./escrow-policy.mjs";
+import { networkLabel } from "./network-names";
 import { ordinaryFee, type PayoutPolicy } from "./payments/contracts";
 import { parseVaultAmount } from "./payments/vault-amount";
 import type { PayoutWallet } from "./use-payout-wallets";
@@ -30,7 +31,7 @@ export function walletVaultConfig(
   deployment: EscrowDeployment,
   wallet: VaultConnection,
   payoutPolicy: PayoutPolicy = "ordinary",
-): EvmEscrowConfig {
+): EvmEscrowConfig & Pick<EscrowDeployment, "network"> {
   const network = ESCROW_NETWORKS[deployment.network];
   if (
     network.family !== "evm" ||
@@ -53,7 +54,7 @@ export function walletVaultConfig(
 }
 export async function assertVaultWalletAccount(
   wallet: VaultConnection,
-  config: EvmEscrowConfig,
+  config: EvmEscrowConfig & Pick<EscrowDeployment, "network">,
 ) {
   const request = wallet.evmRequest;
   if (!request) throw new Error("Choose an EVM wallet.");
@@ -71,7 +72,7 @@ export async function assertVaultWalletAccount(
     BigInt(chain) !== config.chainId
   )
     throw new Error(
-      `Switch your wallet to chain ${config.chainId}, then review again.`,
+      `Switch your wallet to ${networkLabel(config.network)}, then review again.`,
     );
 }
 
@@ -246,7 +247,7 @@ export async function checkVaultAction(
       log.topics[0]?.toLowerCase() === topic,
   );
   if (events.length !== 1)
-    throw new Error("The transaction has no unique matching vault event.");
+    throw new Error("This transaction does not match the request.");
   await verifyVaultFundingAction(
     config,
     transactionId,

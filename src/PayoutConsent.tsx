@@ -25,7 +25,7 @@ async function request(path: string, body: unknown) {
       response.status === 401
         ? "Sign in again, then review your payout wallet."
         : response.status === 409
-          ? "The wallet or binding changed, or the attester is still preparing it. Refresh payments and review again."
+          ? "The wallet changed or is still being prepared. Refresh payments and review again."
           : "Payout consent is unavailable. Your award stays reserved. Retry later.",
     );
   return (await readBoundedJson(response, 16_384, "payout consent")) as Record<
@@ -146,7 +146,7 @@ export function PayoutConsent({
             "Payout consent was not stored. Refresh and review again.",
           );
         setNotice(
-          "Wallet consent saved. Binding and payment still need finalized chain verification. Refresh payments to check progress.",
+          "Wallet consent saved. Payment is not yet verified. Refresh payments to check progress.",
         );
       } else {
         if (!wallet.solanaSign)
@@ -241,9 +241,8 @@ export function PayoutConsent({
           </dl>
           <p>
             {network.family === "evm"
-              ? "Sign a destination authorization. This does not transfer funds from your wallet."
-              : "Sign the prepared destination-binding transaction. The attester pays its network fee."}{" "}
-            Payment is verified separately after finalization.
+              ? "Sign to authorize this payout address. No funds move."
+              : "Sign the binding transaction. No funds move; Slop pays the network fee."}
           </p>
           {wallets.length === 0 && (
             <p>

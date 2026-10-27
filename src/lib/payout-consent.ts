@@ -36,7 +36,7 @@ export function verifyPreparedSolanaBinding(
     count > 32 ||
     prepared.slice(65, 129).some((b) => b !== 0)
   )
-    throw new Error("The prepared binding has an unexpected signer layout.");
+    throw new Error("The prepared binding could not be verified.");
   const payload = msg.slice(-96);
   const view = new DataView(
     payload.buffer,
@@ -45,7 +45,7 @@ export function verifyPreparedSolanaBinding(
   );
   const digest = (value: string) => {
     if (!/^[a-f0-9]{64}$/.test(value))
-      throw new Error("Invalid binding digest");
+      throw new Error("The prepared binding could not be verified.");
     return Uint8Array.from(value.match(/../g) as string[], (v) =>
       Number.parseInt(v, 16),
     );

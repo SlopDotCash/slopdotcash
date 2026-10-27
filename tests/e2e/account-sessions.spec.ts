@@ -94,9 +94,7 @@ test("Account waits for identity, revokes another session and signs out the curr
     .getByRole("button", { name: "Sign out here", exact: true })
     .click();
   await expect(page).toHaveURL(`${site}/login`);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Log in to slop.cash",
-  );
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Log in");
   expect(revoked).toEqual(["b".repeat(24), "a".repeat(24)]);
 });
 

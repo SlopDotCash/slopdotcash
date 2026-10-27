@@ -642,7 +642,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   const refusedCard = admin.locator(".admin-card", {
     has: admin.getByText(project.id, { exact: true }),
   });
-  await refusedCard.getByRole("button", { name: "Edit manifest" }).click();
+  await refusedCard.getByRole("button", { name: "Edit project" }).click();
   await refusedCard.getByLabel("Project status").selectOption("active");
   await refusedCard
     .getByLabel("Reason for this revision (public history)")
@@ -682,7 +682,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   const card = admin.locator(".admin-card", {
     has: admin.getByText(project.id, { exact: true }),
   });
-  await card.getByRole("button", { name: "Edit manifest" }).click();
+  await card.getByRole("button", { name: "Edit project" }).click();
   await card.getByLabel("Project status").selectOption("active");
   await card
     .getByLabel("Reason for this revision (public history)")
@@ -703,7 +703,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   await card
     .getByText("Advanced project settings (revision 1)", { exact: true })
     .click();
-  const manifestEditor = card.getByLabel("Other manifest fields");
+  const manifestEditor = card.getByLabel("Other fields");
   const pausedManifest = JSON.parse(await manifestEditor.inputValue());
   expect(pausedManifest).not.toHaveProperty("status");
   expect(pausedManifest).not.toHaveProperty("contribution");
@@ -731,7 +731,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     .getByLabel("Reason for this revision (public history)")
     .fill("Clarify paused project description");
   await card.getByRole("button", { name: "Close and keep draft" }).click();
-  await card.getByRole("button", { name: "Edit manifest" }).click();
+  await card.getByRole("button", { name: "Edit project" }).click();
   await expect(
     card.getByLabel("Reason for this revision (public history)"),
   ).toHaveValue("Clarify paused project description");
@@ -766,7 +766,7 @@ test("the applicant's inbox lists each decision and revision once and keeps the 
   await page.goto("/inbox", { waitUntil: "networkidle" });
   await expect(page.locator("h1")).toHaveText("Inbox");
   const revised = page.locator(".inbox-item", {
-    hasText: `The ${project.id} project manifest changed.`,
+    hasText: `The ${project.id} project settings changed.`,
   });
   await expect(revised).toHaveCount(1);
   await expect(revised).toContainText("Clarify paused project description");
@@ -849,7 +849,8 @@ test("moderators restrict a project and refuse reinstatement without canonical s
       .fill(evidence);
     await panel().getByRole("button", { name: "Preview action" }).click();
     const preview = panel().getByRole("group", {
-      name: "Preview: check it, then confirm",
+      name: "Preview",
+      exact: true,
     });
     await expect(preview).toContainText(project.id);
     return preview;
@@ -1225,7 +1226,8 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   await panel.getByLabel("Responsible GitHub accounts").fill(login);
   await panel.getByRole("button", { name: "Preview action" }).click();
   const preview = panel.getByRole("group", {
-    name: "Preview: check it, then confirm",
+    name: "Preview",
+    exact: true,
   });
   await expect(preview).toContainText("Banned → Banned");
   await expect(preview).toContainText(`Maintainer accounts banned@${login}`);
@@ -1338,7 +1340,8 @@ test("a moderator decides a confirmed malicious result and bans the project and 
     .fill(evidence);
   await accountPanel.getByRole("button", { name: "Preview action" }).click();
   const accountPreview = accountPanel.getByRole("group", {
-    name: "Preview: check it, then confirm",
+    name: "Preview",
+    exact: true,
   });
   await expect(accountPreview).toContainText(`Accounts reinstated@${login}`);
   await expect(accountPreview).toContainText("Banned → Banned");
@@ -1398,7 +1401,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   // installation, and the draft stays.
   const refused = page.locator("form").getByRole("alert");
   await expect(refused).toContainText(
-    `Install Slopbot on ${project.repository}, then try again.`,
+    `Install Slopbot on ${project.repository} to confirm your access.`,
   );
   await expect(
     refused.getByRole("link", { name: "Install Slopbot" }),
@@ -1660,7 +1663,7 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
   await expect(alert).toContainText("GitHub or Slopbot did not answer");
   expect(diagnostics.count(unavailable)).toBe(1);
   const reload = page.getByRole("button", {
-    name: "Load the current revision",
+    name: "Reload",
     exact: true,
   });
   await expect(reload).toHaveCount(0);
@@ -1889,7 +1892,7 @@ test("an owner initializes a legacy monthly project without shortening its accep
     await page
       .getByRole("region", { name: "Payouts", exact: true })
       .getByRole("link", {
-        name: "View vault funds and automatic payment",
+        name: "Vault funding",
         exact: true,
       })
       .click();
@@ -1983,9 +1986,7 @@ test("an applicant publishes an application stored before self-service setup wit
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await page.getByText("Your projects", { exact: true }).click();
   const entry = page.locator("#your-projects li", { hasText: project.name });
-  await expect(entry).toContainText(
-    "submitted 2026-10-01 before self-service setup",
-  );
+  await expect(entry).toContainText("submitted 2026-10-01");
   await setSlopbot(`${project.repository}/installed`);
   await entry.getByRole("button", { name: "Create this project" }).click();
   await expect(entry.locator(".project-setup-status h2")).toHaveText(
@@ -2306,7 +2307,10 @@ test("two contributors flag through the form, pause the project and notify moder
   await first.getByRole("button", { name: "Flag this project" }).click();
   await expect(
     first.getByRole("status").filter({ hasText: "Flag recorded" }),
-  ).toContainText("Your flag counts");
+  ).toBeVisible();
+  await expect(first.locator(".project-risk-flag")).toContainText(
+    "It counts until",
+  );
   const ownPath = `/api/v1/project-flags/${project.id}`;
   expect(await readPrivate(first, ownPath)).toMatchObject({
     restriction: "clear",
@@ -2340,7 +2344,7 @@ test("two contributors flag through the form, pause the project and notify moder
   ).toContainText("now paused");
   await expect(second.locator("main")).not.toContainText(firstEvidence);
   await expect(second.locator("#start")).toContainText(
-    "Do not install this project's skill or start work while the project is paused.",
+    "Do not install this project's skill or start work.",
   );
   expect(await readPrivate(second, ownPath)).toMatchObject({
     restriction: "quarantined",

@@ -185,7 +185,7 @@ export async function checkEvmCommitment(
       log.topics[0]?.toLowerCase() === EVM_ESCROW_EVENT_TOPICS.AwardCommitted,
   );
   if (events.length !== 1)
-    throw new Error("The transaction has no unique award commitment event.");
+    throw new Error("This transaction does not match the request.");
   const event = await verifyReserve(
     walletVaultConfig(plan.deployment, wallet),
     transactionId,

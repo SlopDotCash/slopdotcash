@@ -201,7 +201,7 @@ export function OwnerVaultSetup({
       const selectedClaim = existingOnly ? recoveryClaim : claim;
       if (!info || !selectedClaim)
         throw new Error(
-          "Confirm this wallet in Earnings, then reload the setup options.",
+          "Confirm this wallet in your account, then reload the setup options.",
         );
       const input = {
         network: network as EscrowDeployment["network"],
@@ -300,9 +300,7 @@ export function OwnerVaultSetup({
         remember({ ...ready, hash });
         setRecoveryHash(hash);
         setReview(null);
-        setNotice(
-          "Creation sent. Check registration after the transaction is finalized.",
-        );
+        setNotice("Creation sent. Check registration once it is finalized.");
       } catch (e) {
         if ((e as { code?: number })?.code === 4001) remember(null);
         throw e;
@@ -357,10 +355,7 @@ export function OwnerVaultSetup({
       aria-label={bounty ? "Set up bounty vault" : "Set up project vault"}
     >
       <h3>{bounty ? "Set up your bounty vault" : "Set up your vault"}</h3>
-      <p>
-        Create the vault from your wallet, then deposit funds. Your wallet owns
-        the vault.
-      </p>
+      <p>Your wallet creates and owns the vault.</p>
       {signInRequired ? (
         <p>
           <a
@@ -403,10 +398,7 @@ export function OwnerVaultSetup({
       ) : null}
       {!active && info ? (
         info.networks.length === 0 ? (
-          <p>
-            Vault creation is unavailable until a compatible factory or program
-            is reviewed for this project's network.
-          </p>
+          <p>Vault creation is not available on this network yet.</p>
         ) : (
           <>
             <label>
@@ -445,8 +437,10 @@ export function OwnerVaultSetup({
             ))}
             {wallet && !claim ? (
               <p>
-                <a href="/earnings">Confirm this wallet in Earnings</a>, then
-                reload the setup options.
+                <a href="/account#wallets">
+                  Confirm this wallet in your account
+                </a>
+                , then reload the setup options.
               </p>
             ) : null}
             {!bounty ? (
@@ -463,17 +457,11 @@ export function OwnerVaultSetup({
                   </select>
                 </label>
                 <p>
-                  Automatic monthly payment is On by default. Choose Off to opt
-                  out. The cap is {project.reward.monthlyCapDisplay} per month.
-                  You can change this setting later.
+                  Monthly cap: {project.reward.monthlyCapDisplay}. You can
+                  change this later.
                 </p>
               </>
-            ) : (
-              <p>
-                Each approved bounty pays 75% to the researcher and 25% to Slop.
-                You decide whether to award each report.
-              </p>
-            )}
+            ) : null}
             <button
               className="button"
               type="button"
@@ -504,7 +492,7 @@ export function OwnerVaultSetup({
               ) : (
                 <p>
                   To recover an existing vault,{" "}
-                  <a href="/earnings">confirm a wallet in Earnings</a> for this
+                  <a href="/account#wallets">confirm a wallet</a> for this
                   network, then reload the setup options.
                 </p>
               )
@@ -536,12 +524,13 @@ export function OwnerVaultSetup({
             )}
             {active.review.family === "solana" && active.review.transaction && (
               <>
-                <dt>Estimated network fee (SOL)</dt>
+                <dt>Estimated network fee</dt>
                 <dd>
                   {formatBaseUnits(
                     active.review.transaction.networkFeeLamports,
                     9,
-                  )}
+                  )}{" "}
+                  SOL
                 </dd>
               </>
             )}

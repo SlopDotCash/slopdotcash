@@ -131,18 +131,14 @@ export function InboxEmail() {
   return (
     <section aria-labelledby="inbox-email-heading">
       <h2 id="inbox-email-heading">Email preferences</h2>
-      <p>
-        Optional activity notices go only to your verified email address.
-        Account security and private security-case notices are separate.
-      </p>
+      <p>Security notices are sent separately.</p>
       {state.status === "loading" ? (
         <p role="status">Loading email preferences…</p>
       ) : null}
       {state.status === "signed-out" ? (
         <p>
           Your session expired.{" "}
-          <a href={loginHref("/inbox")}>Sign in with GitHub</a> to manage email
-          preferences.
+          <a href={loginHref("/inbox")}>Sign in with GitHub</a>.
         </p>
       ) : null}
       {state.status === "error" ? (
@@ -160,7 +156,7 @@ export function InboxEmail() {
           ) : (
             <p>
               {state.value.availability === "unverified"
-                ? "No verified email destination is available for this account. Slop verifies destinations privately and does not use your GitHub profile email, so retrying will not add one. Your notices still appear in this inbox."
+                ? "No verified email address is on file. Notices still appear in this inbox."
                 : "Activity email is temporarily unavailable."}
             </p>
           )}

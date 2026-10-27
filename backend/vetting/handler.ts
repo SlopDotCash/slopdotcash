@@ -405,8 +405,7 @@ export function vettingScanRequester(input: {
     if (!(await input.serviceAvailable()))
       return {
         state: "unavailable",
-        message:
-          "The security scan service is not available yet, so the scan cannot be queued. Check again later.",
+        message: "The scan service is unavailable. Check again later.",
       };
     let queued: Awaited<ReturnType<typeof queueAssessment>>;
     try {
@@ -417,7 +416,7 @@ export function vettingScanRequester(input: {
       return {
         state: "unavailable",
         message:
-          "Slop could not read the integration-branch head or the skill template, so the scan cannot be queued. Check again later.",
+          "Slop could not read the repository or skill template. Check again later.",
       };
     }
     return { state: queued === "conflict" ? "already_queued" : "queued" };

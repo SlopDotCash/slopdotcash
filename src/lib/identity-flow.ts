@@ -12,9 +12,7 @@ interface IdentityAuthorization {
   pollAfterSeconds: number;
 }
 function invalid(): never {
-  throw new Error(
-    "Identity service returned an invalid response. Start again.",
-  );
+  throw new Error("Sign-in failed. Start again.");
 }
 function record(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) invalid();
@@ -152,8 +150,7 @@ export async function requestIdentityAssertion(options: {
     assertion = body.assertion;
     break;
   }
-  if (!assertion)
-    throw new Error("GitHub sign-in expired. Please sign in again.");
+  if (!assertion) throw new Error("GitHub sign-in expired. Sign in again.");
   options.saveAuthorization?.(null);
   return assertion;
 }

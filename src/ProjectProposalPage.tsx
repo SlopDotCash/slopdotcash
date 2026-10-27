@@ -3,7 +3,6 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
-import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import {
   CONTRIBUTION_LABELS,
   SKILL_RULE_FIELDS,
@@ -246,8 +245,7 @@ function lengthError(
 function proposalErrors(p: Proposal): FieldErrors {
   const errors: FieldErrors = {};
   if (!validRepositoryPath(p.repository))
-    errors.repository =
-      "Use the owner/name form, for example SlopDotCash/slopdotcash. A pasted github.com link is converted for you.";
+    errors.repository = "Use owner/name, for example SlopDotCash/slopdotcash.";
   if (!NUMERIC_ID.test(p.repositoryNumericId))
     errors.repositoryNumericId =
       "Look up the repository, or enter its numeric GitHub ID.";
@@ -518,7 +516,6 @@ function ErrorSummary({
     <div className="form-error-summary" role="alert" tabIndex={-1}>
       <strong>
         Fix {entries.length} field{entries.length === 1 ? "" : "s"} to continue.
-        Your entries are kept.
       </strong>
       <ul>
         {entries.map(([field, message]) => (
@@ -585,7 +582,7 @@ function RepositoryPicker({
   if (session === "checking")
     return (
       <p className="repository-picker-status" role="status">
-        Checking whether you are signed in…
+        Checking sign-in…
       </p>
     );
   if (!login)
@@ -599,7 +596,7 @@ function RepositoryPicker({
         </a>
         <p className="repository-picker-status">
           {session === "error" ? "We couldn’t check your session. " : ""}
-          Sign in to choose your repository. You can keep drafting below.
+          Or enter the repository below.
         </p>
       </div>
     );
@@ -618,7 +615,7 @@ function RepositoryPicker({
           className="text-button"
           onClick={() => setAttempt((value) => value + 1)}
         >
-          Retry repositories
+          Retry
         </button>{" "}
         Or enter the repository below.
       </p>
@@ -626,8 +623,7 @@ function RepositoryPicker({
   if (list.repositories.length === 0)
     return (
       <p className="repository-picker-status" role="status">
-        @{login} owns no public repositories. For an organization repository,
-        enter it below.
+        @{login} owns no public repositories. Enter one below.
       </p>
     );
   const value = list.repositories.some((entry) => entry.repository === selected)
@@ -652,8 +648,7 @@ function RepositoryPicker({
         ))}
       </select>
       <small className="field-hint" id="field-ownedRepository-hint">
-        Signed in as @{login}. Choosing one looks it up on GitHub. For an
-        organization repository, enter it below.
+        For an organization repository, enter it below.
       </small>
     </div>
   );
@@ -690,16 +685,14 @@ function SubmitProject({
         </button>
       ) : projectSession.status === "checking" ? (
         <p className="proposal-note" role="status">
-          Checking whether you are signed in…
+          Checking sign-in…
         </p>
       ) : (
         <a className="button primary-button" href={loginHref("/projects/new")}>
-          Sign in with GitHub to create the project
+          Sign in with GitHub
         </a>
       )}
-      <p>
-        {login ? `Creating as @${login}.` : "Your draft stays on this device."}
-      </p>
+      {login ? <p>Creating as @{login}.</p> : null}
     </>
   );
 }
@@ -724,10 +717,8 @@ function ClosureConsent({
         Allow automatic closure by Slopbot
       </label>
       <p className="field-hint" id="automatic-closure-hint">
-        Optional. Only eligible Slop-skill pull requests can be closed, with
-        independent confirmation and an appeal. Repository rules and opt-outs
-        still apply. This permission does not enable production closure before
-        Slop's reviewed activation. You can turn it off here at any time.
+        Only Slop-skill pull requests can be closed, and authors can appeal. You
+        can turn this off at any time.
       </p>
     </div>
   );
@@ -783,15 +774,13 @@ function FundingFields({
       </fieldset>
       {choice.mode === "none" ? (
         <p className="field-hint">
-          The project works without funding. Contributors still earn points for
-          accepted work, and you can add a monthly amount later.
+          Contributors still earn points. You can add funding later.
         </p>
       ) : (
         <>
           {networkFixed ? (
             <p className="field-hint">
-              Paid in {symbol} on {network.name}. A project with a vault keeps
-              its network and asset.
+              Paid in {symbol} on {network.name} (fixed by the vault).
             </p>
           ) : (
             <>
@@ -834,7 +823,6 @@ function FundingFields({
                   />
                   <TextField
                     error={error("tokenSymbol")}
-                    hint="Slop reads the decimals from chain when you save."
                     label="Token symbol"
                     name="rewardAssetSymbol"
                     onChange={(value) => set("tokenSymbol", value)}
@@ -851,7 +839,7 @@ function FundingFields({
           )}
           <TextField
             error={error("monthlyAmount")}
-            hint={`Amount in ${symbol}. It stays a pledge until it is deposited in the project vault. A change applies from the next calendar month (UTC).`}
+            hint="A pledge until deposited in the vault. Changes apply from the next UTC month."
             inputMode="decimal"
             label={`Monthly amount (${symbol})`}
             name="monthlyPool"
@@ -1236,9 +1224,6 @@ export default function ProjectProposalPage() {
       const fill = (field: keyof typeof suggested, value: string) =>
         value === "" || value === previous[field] ? suggested[field] : value;
       suggestedText.current = suggested;
-      const suggestion = suggested.headline
-        ? "a suggested name and description"
-        : "a suggested name";
       setProposal((current) => ({
         ...current,
         name: fill("name", current.name),
@@ -1265,14 +1250,14 @@ export default function ProjectProposalPage() {
         state: "done",
         message:
           facts.license.state === "verified"
-            ? `Found ${facts.repository}. IDs, default branch, owner and ${facts.license.spdx} license facts are filled in, with ${suggestion}. Check them before you continue.`
-            : `Found ${facts.repository}. IDs, default branch and owner are filled in, with ${suggestion}. License stays unknown: ${facts.license.reason}`,
+            ? `Found ${facts.repository}. Check the filled-in details before you continue.`
+            : `Found ${facts.repository}. Check the filled-in details before you continue. License stays unknown: ${facts.license.reason}`,
       });
     } catch (error: unknown) {
       if (controller.signal.aborted) return;
       setLookup({
         state: "error",
-        message: `${errorMessage(error, "GitHub lookup failed.")} Nothing was filled in. Enter the facts by hand or try again.`,
+        message: `${errorMessage(error, "GitHub lookup failed.")} Nothing was filled in. Enter them below or try again.`,
       });
       setFactsOpen(true);
     }
@@ -1318,15 +1303,12 @@ export default function ProjectProposalPage() {
     <main className="shell route-main proposal-page">
       <p className="breadcrumb">
         <Link href="/">Projects</Link>
-        <span>/</span>Add a project
       </p>
       <section className="proposal-intro">
         <h1>Add a project</h1>
         <p>
-          Connect your repository, set contribution rules and optional rewards,
-          then install Slopbot. Your project goes live automatically once the
-          security scan passes. Questions? Email{" "}
-          <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>.
+          Your project goes live automatically after you install Slopbot and the
+          security scan passes.
         </p>
       </section>
       <OwnerProjects
@@ -1431,10 +1413,6 @@ export default function ProjectProposalPage() {
             />
             <dl className="proposal-facts">
               <div>
-                <dt>Repository ID</dt>
-                <dd>{p.repositoryNumericId || "Not looked up"}</dd>
-              </div>
-              <div>
                 <dt>Steward</dt>
                 <dd>
                   {p.stewardLogin
@@ -1444,11 +1422,7 @@ export default function ProjectProposalPage() {
               </div>
               <div>
                 <dt>License</dt>
-                <dd>
-                  {licenseKnown
-                    ? `${p.licenseSpdx} · LICENSE at ${p.licenseCommit.slice(0, 7)}`
-                    : "Unknown"}
-                </dd>
+                <dd>{licenseKnown ? p.licenseSpdx : "Unknown"}</dd>
               </div>
             </dl>
             <details
@@ -1456,7 +1430,7 @@ export default function ProjectProposalPage() {
               onToggle={(event) => setFactsOpen(event.currentTarget.open)}
               open={factsOpen || Object.keys(currentErrors).length > 0}
             >
-              <summary>Enter or correct repository facts</summary>
+              <summary>Edit repository details</summary>
               <TextField
                 error={shown("repositoryNumericId")}
                 inputMode="numeric"
@@ -1507,8 +1481,7 @@ export default function ProjectProposalPage() {
                 value={p.stewardNodeId}
               />
               <p className="field-hint">
-                License facts are optional. Leave all three empty to record the
-                license as unknown.
+                Optional. Leave all three empty if unknown.
               </p>
               <TextField
                 error={shown("licenseSpdx")}
@@ -1542,7 +1515,6 @@ export default function ProjectProposalPage() {
               label="Project name"
               name="name"
               onChange={set("name")}
-              placeholder="Example: Open Protein"
               value={p.name}
             />
             <TextField
@@ -1550,7 +1522,6 @@ export default function ProjectProposalPage() {
               label="Short description"
               name="headline"
               onChange={set("headline")}
-              placeholder="Reproducible protein-folding benchmarks."
               value={p.headline}
             />
             <TextField
@@ -1559,7 +1530,6 @@ export default function ProjectProposalPage() {
               multiline
               name="goal"
               onChange={set("goal")}
-              placeholder="What should this project achieve?"
               value={p.goal}
             />
             <TextField
@@ -1579,11 +1549,9 @@ export default function ProjectProposalPage() {
               className="proposal-skill-rules"
               open={SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))}
             >
-              <summary>Customize contributor instructions (optional)</summary>
+              <summary>Contributor instructions (optional)</summary>
               <p className="field-hint">
-                Slop generates this project's contributor and reviewer skills
-                from these rules and its standard template. They can narrow what
-                contributors do, but cannot weaken Slop's safety rules.
+                These cannot override Slop's safety rules.
               </p>
               {SKILL_RULE_FIELDS.map((field) => (
                 <TextField
@@ -1605,8 +1573,7 @@ export default function ProjectProposalPage() {
             >
               <summary>Ownership and contribution terms (optional)</summary>
               <p className="field-hint">
-                Unknown is a valid answer. Leave these as Unknown unless you
-                know them. Do not guess.
+                Leave as Unknown unless you know them.
               </p>
               <SelectField
                 error={shown("copyrightModel")}
@@ -1802,7 +1769,7 @@ export default function ProjectProposalPage() {
                   <div>
                     <dt>Referred by</dt>
                     <dd>
-                      @{referrer} · recorded with the project{" "}
+                      @{referrer}{" "}
                       <button
                         className="text-button"
                         onClick={clearReferrer}
@@ -1829,13 +1796,7 @@ export default function ProjectProposalPage() {
             {submission.status === "submitted" ? (
               <div className="proposal-submitted">
                 <h2>Project created</h2>
-                <p>
-                  {p.name || submission.projectId} is created. Complete the next
-                  step below and it goes live automatically.
-                  {submission.referrer
-                    ? ` Referred by @${submission.referrer}.`
-                    : ""}
-                </p>
+                <p>Complete the next step below to go live.</p>
                 <ProjectSetupStatusPanel
                   initial={submission.setup}
                   projectId={submission.projectId}
@@ -1876,7 +1837,7 @@ export default function ProjectProposalPage() {
       <div className="proposal-reset">
         {confirmClear ? (
           <>
-            <span>Clear every field in this draft?</span>
+            <span>Clear this draft?</span>
             <button
               className="button danger-button"
               onClick={clearDraft}
@@ -1908,7 +1869,6 @@ export default function ProjectProposalPage() {
 
 const CHANGE_LABELS: Record<string, string> = {
   name: "Project name",
-  eyebrow: "Eyebrow",
   headline: "Short description",
   description: "Goal",
   links: "Links",
@@ -1966,6 +1926,12 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+  // PRD section 8: an exempt project publishes skill input changes without a
+  // new scan, so the change list must not say that it pauses.
+  const [setupStatus, setSetupStatus] = useState<ProjectSetupStatus | null>(
+    null,
+  );
+  const scanExempt = setupStatus?.checks.scan.exempt === true;
   const [submission, setSubmission] = useState<
     | { state: "idle" | "publishing" }
     | { state: "error"; message: string; staleRevision: boolean }
@@ -2316,14 +2282,9 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     <main className="shell route-main manage-page">
       <p className="breadcrumb">
         <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-        <span>/</span>Manage project
       </p>
       <div className="manage-intro">
         <h1>Manage project</h1>
-        <p>
-          {project.name} · Changes publish when you save. Slop checks your
-          GitHub access to the repository first.
-        </p>
         {project.escrow && (
           <p>
             <Link href={`/projects/${project.slug}/awards`}>Review awards</Link>
@@ -2342,6 +2303,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
               ? submission.result.setup
               : undefined
           }
+          onSetup={setSetupStatus}
           projectId={project.id}
         />
       ) : null}
@@ -2367,7 +2329,6 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         />
         <TextField
           error={shown("criteria")}
-          hint="Used by the contributor and reviewer skills."
           label="Acceptance criteria"
           multiline
           name="criteria"
@@ -2384,7 +2345,9 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           open={SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))}
         >
           <summary>Contributor instructions</summary>
-          <p className="field-hint">These rules generate the project skills.</p>
+          <p className="field-hint">
+            These cannot override Slop's safety rules.
+          </p>
           {SKILL_RULE_FIELDS.map((field) => (
             <TextField
               error={shown(field)}
@@ -2428,10 +2391,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         !current.escrow &&
         !assetTouched ? (
           <div>
-            <p className="field-hint">
-              Keep this monthly amount and asset. Creating and funding the vault
-              remain separate wallet actions.
-            </p>
+            <p className="field-hint">Keeps this amount and asset.</p>
             <button
               className="button secondary-button"
               onClick={() => set("fundingMode")("monthly")}
@@ -2443,7 +2403,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         ) : null}
         <TextField
           error={shown("note")}
-          hint="Optional. Public in the revision history."
+          hint="Optional and public."
           label="Revision note"
           multiline
           name="note"
@@ -2458,30 +2418,38 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
                 ? "an unknown revision"
                 : `revision ${draftRevision}`}
               . The current revision is {base?.revision}. Review the changes
-              below before continuing.
+              below.
             </p>
             <button
               type="button"
               className="button secondary-button"
               onClick={() => setDraftRevision(base?.revision ?? null)}
             >
-              Use this draft with the current revision
+              Use this draft
             </button>
           </div>
         ) : null}
         <section aria-labelledby="update-changes" className="update-changes">
           <h2 id="update-changes">Changes</h2>
           {!changed ? (
-            <p>No manifest field has changed.</p>
+            <p>No changes yet.</p>
           ) : (
             <>
               <ul>
-                {changes.presentation.length > 0 ? (
+                {changes.presentation.length > 0 ||
+                (scanExempt && changes.executable.length > 0) ? (
                   <li>
-                    Publishes now: {changes.presentation.map(label).join(", ")}.
+                    Publishes now:{" "}
+                    {[
+                      ...changes.presentation,
+                      ...(scanExempt ? changes.executable : []),
+                    ]
+                      .map(label)
+                      .join(", ")}
+                    .
                   </li>
                 ) : null}
-                {changes.executable.length > 0 ? (
+                {!scanExempt && changes.executable.length > 0 ? (
                   <li>
                     Needs a new security scan:{" "}
                     {changes.executable.map(label).join(", ")}.{" "}
@@ -2519,7 +2487,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         {attempted && (!valid || !changed) ? (
           <p className="form-error" role="alert">
             {changed
-              ? "Fix the marked fields. Your entries are kept."
+              ? "Fix the marked fields."
               : "Change at least one field before you publish."}
           </p>
         ) : null}
@@ -2579,7 +2547,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
                   onClick={() => setReload((count) => count + 1)}
                   type="button"
                 >
-                  Load the current revision
+                  Reload
                 </button>
               )}
             </p>
@@ -2591,7 +2559,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           <p className="proposal-note">
             {saveFailed
               ? "This browser cannot save the draft."
-              : "Draft saved on this device until you publish it."}
+              : "Draft saved on this device."}
           </p>
         </div>
       </form>
@@ -2623,17 +2591,14 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>
           <p className="payout-status">
-            <a href={`/projects/${project.slug}/funding`}>
-              View vault funds and automatic payment
-            </a>
+            <a href={`/projects/${project.slug}/funding`}>Vault funding</a>
           </p>
         </section>
       ) : (
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>
           <p className="payout-status">
-            External award. Slop publishes contribution shares only and cannot
-            draft, approve or pay the award.
+            External award. Slop publishes contribution shares only.
           </p>
         </section>
       )}
@@ -2735,7 +2700,7 @@ function OwnerProjects({ refreshKey }: { refreshKey: string }) {
           {state.applications.map((application) => (
             <li key={application.id}>
               <strong>{application.manifest.name}</strong> · submitted{" "}
-              {application.submittedAt.slice(0, 10)} before self-service setup
+              {application.submittedAt.slice(0, 10)}
               {publishing?.id === application.id &&
               publishing.state === "done" ? (
                 <ProjectSetupStatusPanel
@@ -2788,7 +2753,11 @@ function OwnerProjects({ refreshKey }: { refreshKey: string }) {
           ))}
         </ul>
       )}
-      <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+      <button
+        className="button secondary-button button-small"
+        type="button"
+        onClick={() => setAttempt((value) => value + 1)}
+      >
         Refresh
       </button>
     </details>

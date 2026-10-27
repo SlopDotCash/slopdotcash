@@ -1212,8 +1212,7 @@ export class VettingEvidence {
           retained: true,
           state: closure.state,
           scanReady: false,
-          reason:
-            "Canonical captured-evidence files are retained. Runtime image and toolchain provenance pins are external and are not retained here. The assembly remains incomplete, authorizes no provider calls or publication, and does not independently assert a VM run identity.",
+          reason: "Runtime image and toolchain pins are not retained here.",
         };
       } catch {
         assembly = {
@@ -1221,7 +1220,7 @@ export class VettingEvidence {
           state: "unavailable",
           scanReady: false,
           reason:
-            "Canonical captured evidence is absent, invalid, mismatched, expired or unavailable. Runtime image and toolchain provenance are separate external inputs.",
+            "Captured evidence is missing, invalid, mismatched or expired.",
         };
       }
       result.push({

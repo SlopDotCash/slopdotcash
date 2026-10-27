@@ -140,7 +140,7 @@ export function ProjectEnforcementPanel({
     projectApiRequest("POST", path("enforcement"), request()).then(
       () =>
         onDone(
-          `${actionLabel(action, (preview?.maintainerBans.length ?? 0) > 0)} recorded for ${project.manifest.name}. Public lists and skill routes changed at once.`,
+          `${actionLabel(action, (preview?.maintainerBans.length ?? 0) > 0)} recorded for ${project.manifest.name}.`,
         ),
       (caught: unknown) => {
         setBusy(null);
@@ -196,18 +196,17 @@ export function ProjectEnforcementPanel({
       </dl>
       {enforcement.decisionRequired ? (
         <p className="form-error" role="status">
-          <CircleAlert aria-hidden="true" /> Moderator decision needed: a
-          confirmed malicious scan result banned this project. Ban the project
-          and its maintainer, or reinstate it after the owner's appeal and a
-          fresh clean scan.
+          <CircleAlert aria-hidden="true" /> Moderator decision needed:
+          confirmed malicious result. Ban the project and its maintainer, or
+          reinstate after the owner's appeal and a fresh clean scan.
         </p>
       ) : null}
       {enforcement.revisionPending ? (
         <p className="form-error" role="status">
           <CircleAlert aria-hidden="true" /> Revision pending: the restriction
-          is in force on every public route, but revision {project.revision} is
-          still {project.status} and {project.manifest.listingTier}. Delist the
-          project to append the paused, retired revision.
+          is in force, but revision {project.revision} is still {project.status}{" "}
+          and {project.manifest.listingTier}. Delist to append the paused,
+          retired revision.
         </p>
       ) : null}
       {enforcement.records.length > 0 ? (
@@ -260,7 +259,7 @@ export function ProjectEnforcementPanel({
         </p>
       ) : enforcement.moderation === "not-moderator" ? (
         <p className="admin-status">
-          Only a project moderator can quarantine, ban or reinstate a project.
+          Only a moderator can quarantine, ban or reinstate.
         </p>
       ) : (
         <form className="admin-actions" onSubmit={showPreview}>
@@ -293,12 +292,11 @@ export function ProjectEnforcementPanel({
               />
               <span>
                 {action === "reinstate_accounts" ? (
-                  "Enter the accounts cleared by the evidence, separated by commas. This leaves the project restriction and other account bans in place."
+                  "Accounts cleared by the evidence, separated by commas."
                 ) : (
                   <>
-                    Enter account names separated by commas. Select only
-                    accounts the evidence identifies as responsible. Leave empty
-                    to ban only the project.
+                    Accounts the evidence identifies as responsible, separated
+                    by commas. Leave empty to ban only the project.
                   </>
                 )}
               </span>
@@ -346,7 +344,7 @@ export function ProjectEnforcementPanel({
             </div>
           ) : (
             <fieldset className="admin-enforcement-preview">
-              <legend>Preview: check it, then confirm</legend>
+              <legend>Preview</legend>
               <dl className="admin-facts">
                 <div>
                   <dt>Project</dt>
@@ -395,10 +393,7 @@ export function ProjectEnforcementPanel({
                 {preview.maintainerBans.length > 0 ? (
                   <div>
                     <dt>Maintainer accounts banned</dt>
-                    <dd>
-                      {maintainerList(preview.maintainerBans)}. They cannot list
-                      or change projects while this ban holds.
-                    </dd>
+                    <dd>{maintainerList(preview.maintainerBans)}</dd>
                   </div>
                 ) : null}
                 {preview.accountReinstatements?.length ? (
@@ -413,9 +408,8 @@ export function ProjectEnforcementPanel({
               </dl>
               {preview.pendingReason ? (
                 <p className="form-error" role="status">
-                  <CircleAlert aria-hidden="true" /> The restriction applies at
-                  once, but the matching revision cannot be appended yet:{" "}
-                  {preview.pendingReason}
+                  <CircleAlert aria-hidden="true" /> Restriction applies now;
+                  revision not appended yet: {preview.pendingReason}
                 </p>
               ) : null}
               <div>
