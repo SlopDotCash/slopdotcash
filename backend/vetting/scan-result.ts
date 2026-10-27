@@ -94,6 +94,8 @@ export type VettingScanResult = {
     templateSha256: string;
     /** SHA-256 of the exact executable inventory the scan read. */
     inputManifestSha256: string;
+    /** Deterministic acquired input before execution evidence was appended. */
+    sourceInventorySha256?: string;
     dependencyLocks: { path: string; sha256: string }[];
   };
   scan: {
@@ -226,11 +228,16 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
     reject("projectId is invalid");
   if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1)
     reject("revision must be a positive integer");
+  const hasSourceInventory =
+    typeof body.assessed === "object" &&
+    body.assessed !== null &&
+    Object.hasOwn(body.assessed, "sourceInventorySha256");
   const assessed = object(body.assessed, "assessed", [
     "repository",
     "commitSha",
     "templateSha256",
     "inputManifestSha256",
+    ...(hasSourceInventory ? ["sourceInventorySha256"] : []),
     "dependencyLocks",
   ]);
   if (
@@ -342,6 +349,14 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
         assessed.inputManifestSha256,
         "assessed.inputManifestSha256",
       ),
+      ...(hasSourceInventory
+        ? {
+            sourceInventorySha256: digest(
+              assessed.sourceInventorySha256,
+              "assessed.sourceInventorySha256",
+            ),
+          }
+        : {}),
       dependencyLocks: list(
         assessed.dependencyLocks,
         "assessed.dependencyLocks",
@@ -551,6 +566,16 @@ export function isScanResult(
   result: RecordedVettingResult,
 ): result is VettingScanResult {
   return result.schemaVersion === VETTING_SCAN_SCHEMA;
+}
+
+/** Legacy native results lack a retained pre-execution binding and cannot reuse. */
+export function scanSourceInventory(result: VettingScanResult): string | null {
+  return (
+    result.assessed.sourceInventorySha256 ??
+    (result.execution === null && result.artifacts.length === 0
+      ? result.assessed.inputManifestSha256
+      : null)
+  );
 }
 
 /** The disposition rules of the result's own schema. */
