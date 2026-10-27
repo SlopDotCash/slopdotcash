@@ -2,7 +2,7 @@ import { expect, test } from "./fixtures";
 
 test("private receipt response cannot be assigned to a later matching session", async ({
   page,
-}) => {
+}, info) => {
   const foreignId = "ss_foreign_receipt";
   const foreignProject = "foreign-private-project";
   let privateReads = 0;
@@ -74,12 +74,16 @@ test("private receipt response cannot be assigned to a later matching session", 
   await expect(
     page.getByText(`Private report · ${foreignProject}`, { exact: true }),
   ).toHaveCount(0);
+  await page.screenshot({
+    path: info.outputPath("private-list-refusal.png"),
+    fullPage: true,
+  });
 });
 
 for (const mismatch of ["submissions", "cases"] as const) {
   test(`security page refuses ${mismatch} belonging to another response recipient`, async ({
     page,
-  }) => {
+  }, info) => {
     const foreignProject = "foreign-private-project";
     await page.route("**/api/v1/**", async (route) => {
       const path = new URL(route.request().url()).pathname;
@@ -166,9 +170,15 @@ for (const mismatch of ["submissions", "cases"] as const) {
       throw new Error(`Unexpected request: ${path}`);
     });
     await page.goto("/security", { waitUntil: "networkidle" });
-    await expect(page.getByRole("alert")).toContainText("Your account changed.");
+    await expect(page.getByRole("alert")).toContainText(
+      "Your account changed.",
+    );
     await expect(page.getByText(foreignProject, { exact: false })).toHaveCount(
       0,
     );
+    await page.screenshot({
+      path: info.outputPath("private-list-refusal.png"),
+      fullPage: true,
+    });
   });
 }
