@@ -90,6 +90,9 @@ The private v2 scan report binds both inventories and every execution report.
 The source bytes, final bytes, execution outputs and original dates remain
 unchanged on reuse. Retention checks prove the final inventory contains the
 complete source inventory followed by the exact retained execution items.
+Clean execution reports use the same bounded validator as fresh execution,
+bind the requested artifacts and recorded image, and preserve disabled
+internet access. Every requested artifact needs its own byte-identity coverage.
 Old text-only results retain their final-digest reuse path. An old native
 result without a retained source binding cannot reuse; it needs a fresh scan.
 Deploy the API reuse route before updating the scanner service. A missing

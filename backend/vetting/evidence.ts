@@ -13,6 +13,7 @@ import {
   parseAssemblyManifest,
 } from "../../workers/vetting/assembly-manifest";
 import { assertFilesystemReferences } from "../../workers/vetting/filesystem-capture";
+import { parseIsolatedArtifactEvidence } from "../../workers/vetting/isolated-evidence";
 import {
   type ApiError,
   apiErrorResponse,
@@ -824,6 +825,13 @@ export class VettingEvidence {
         const executionDigests = new Set<string>();
         const executionItems: { id: string; text: string; sha256: string }[] =
           [];
+        const requestedArtifacts = new Set(
+          result.artifacts
+            .filter((artifact) => artifact.requestedExecution)
+            .map((artifact) => artifact.sha256),
+        );
+        const coveredArtifacts = new Set<string>();
+        const executionRuns = new Set<string>();
         for (const sha of report.executionEvidenceSha256s) {
           const executionRow =
             typeof sha === "string" ? bySha.get(sha) : undefined;
@@ -841,17 +849,26 @@ export class VettingEvidence {
           if (result.disposition !== "clean") continue;
           const executionBytes = await this.bytes(executionRow, run);
           try {
-            const execution: unknown = JSON.parse(
-              new TextDecoder("utf-8", { fatal: true }).decode(executionBytes),
-            );
+            const execution = parseIsolatedArtifactEvidence(executionBytes, {
+              artifactSha256s: requestedArtifacts,
+              // The bounded scanner currently detonates Linux native binaries.
+              interpreter: "binary",
+            });
             if (
-              !isRecord(execution) ||
-              execution.schema !== "slop-isolated-artifact-v1" ||
-              typeof execution.runId !== "string" ||
-              typeof execution.stdoutBase64 !== "string" ||
-              typeof execution.stderrBase64 !== "string"
+              !result.execution ||
+              execution.imageSha256 !== result.execution.imageSha256 ||
+              execution.sourceSha === null ||
+              !execution.outputComplete ||
+              execution.exitCode !== 0 ||
+              executionRuns.has(execution.runId) ||
+              Date.parse(execution.startedAt) <
+                Date.parse(result.execution.startedAt) ||
+              Date.parse(execution.completedAt) >
+                Date.parse(result.execution.completedAt)
             )
               return false;
+            coveredArtifacts.add(execution.artifactSha256);
+            executionRuns.add(execution.runId);
             const output = (value: string) => {
               const binary = atob(value);
               if (binary.length > 65536 || btoa(binary) !== value)
@@ -875,6 +892,8 @@ export class VettingEvidence {
           }
         }
         if (result.disposition === "clean") {
+          if ([...requestedArtifacts].some((sha) => !coveredArtifacts.has(sha)))
+            return false;
           const sourceBytes = await this.bytes(sourceRow, run);
           const finalBytes = await this.bytes(finalRow, run);
           try {
@@ -907,6 +926,23 @@ export class VettingEvidence {
                 JSON.stringify([...source.items, ...executionItems]) ||
               !Array.isArray(source.artifacts) ||
               !Array.isArray(final.artifacts) ||
+              source.artifacts.length !== result.artifacts.length ||
+              source.artifacts.some(
+                (artifact, index) =>
+                  !isRecord(artifact) ||
+                  (
+                    [
+                      "sha256",
+                      "parentSha256",
+                      "origin",
+                      "path",
+                      "type",
+                    ] as const
+                  ).some(
+                    (field) =>
+                      artifact[field] !== result.artifacts[index]?.[field],
+                  ),
+              ) ||
               JSON.stringify(source.artifacts) !==
                 JSON.stringify(final.artifacts) ||
               !Array.isArray(source.visibilityGaps) ||
