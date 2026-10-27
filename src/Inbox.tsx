@@ -20,6 +20,7 @@ import {
 import { loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
+import { clearAllDrafts } from "./lib/intake-drafts";
 import {
   emailDeliveryLabel,
   MAX_NOTIFICATION_MARK,
@@ -29,6 +30,7 @@ import {
   notificationTitle,
   parseNotificationsResponse,
 } from "./lib/notifications";
+import { currentProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 import {
   AccountNav,
@@ -116,21 +118,69 @@ export default function InboxPage() {
   const { busy, error: actionError, run } = useAction();
   const [message, setMessage] = useState("");
   const generation = useRef(0);
+  const [recipient, setRecipient] = useState<string | null>(null);
+  const previousRecipient = useRef<string | null>(null);
+  const receive = useCallback(
+    (next: InboxState) => {
+      if (next.status === "ready" || next.status === "signed-out") {
+        const id =
+          next.status === "ready" ? next.value.recipientGithubId : null;
+        const changed =
+          previousRecipient.current !== null &&
+          previousRecipient.current !== id;
+        if (next.status === "signed-out" || changed) {
+          clearAllDrafts();
+          const url = new URL(window.location.href);
+          for (const key of ["case", "submission", "intake"])
+            url.searchParams.delete(key);
+          window.history.replaceState(window.history.state, "", url);
+          setCursor(null);
+          setPreviousPages([]);
+        }
+        previousRecipient.current = id;
+        setRecipient(id);
+        if (changed && next.status === "ready" && cursor !== null) {
+          setState({ status: "loading" });
+          return;
+        }
+      }
+      setState(next);
+    },
+    [cursor],
+  );
   const load = useCallback(() => {
     const current = ++generation.current;
     const controller = new AbortController();
     setState({ status: "loading" });
     loadInbox(controller.signal, cursor).then(
       (next) => {
-        if (generation.current === current) setState(next);
+        if (generation.current === current) receive(next);
       },
-      () => {
-        if (generation.current === current)
-          setState({ status: "error", message: UNAVAILABLE });
+      async () => {
+        if (generation.current !== current) return;
+        setState({ status: "error", message: UNAVAILABLE });
+        // Private reports remain reachable when notification delivery is down.
+        // Later successful lists supply their own authenticated recipient.
+        if (previousRecipient.current !== null) return;
+        try {
+          const session = await currentProjectSession();
+          if (generation.current !== current) return;
+          if (session === null) receive({ status: "signed-out" });
+          else {
+            previousRecipient.current = session.githubId;
+            setRecipient(session.githubId);
+          }
+        } catch {
+          if (generation.current === current)
+            setState({
+              status: "error",
+              message: "The inbox and private session could not load. Retry.",
+            });
+        }
       },
     );
     return () => controller.abort();
-  }, [cursor]);
+  }, [cursor, receive]);
   useEffect(() => load(), [load]);
 
   function act(action: () => Promise<"ok" | "signed-out">, done: string) {
@@ -138,13 +188,13 @@ export default function InboxPage() {
     return run(
       async () => {
         if ((await action()) === "signed-out") {
-          setState({ status: "signed-out" });
+          receive({ status: "signed-out" });
           return;
         }
         const current = ++generation.current;
         const next = await loadInbox(new AbortController().signal, cursor);
         if (generation.current === current) {
-          setState(next);
+          receive(next);
           setMessage(done);
         }
       },
@@ -178,9 +228,10 @@ export default function InboxPage() {
           </button>
         </div>
       ) : null}
-      {state.status === "ready" || state.status === "error" ? (
+      {/* Preserve editors during refresh; a new authenticated recipient gets a fresh private panel. */}
+      {recipient !== null ? (
         <Suspense fallback={<p role="status">Loading private reports…</p>}>
-          <SecurityInbox embedded />
+          <SecurityInbox embedded key={recipient} />
         </Suspense>
       ) : null}
       {state.status === "ready" ? (
