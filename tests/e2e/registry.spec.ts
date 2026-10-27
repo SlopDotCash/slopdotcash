@@ -679,7 +679,11 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   });
   await expect(vettingCard.locator(".admin-badge")).toHaveText("Quarantined");
   await vettingCard.getByText(/Revision 1 · Incomplete/u).click();
-  await expect(vettingCard).toContainText("vendor/addon.node (native-module)");
+  const quarantinedArtifact = vettingCard
+    .locator(".operations-artifact-list li")
+    .filter({ hasText: "vendor/addon.node" });
+  await expect(quarantinedArtifact).toContainText("native-module");
+  await expect(quarantinedArtifact).toContainText("quarantined");
   await expect(vettingCard).toContainText(
     "A pinned TLS client hid HTTP bodies",
   );
