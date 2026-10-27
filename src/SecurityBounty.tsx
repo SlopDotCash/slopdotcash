@@ -550,7 +550,13 @@ export function SecurityProgramPage({
   project: ProjectDefinition;
 }) {
   const [project, setProject] = useState(initialProject);
-  const session = useProjectSession();
+  const [sessionEpoch, setSessionEpoch] = useState(0);
+  const session = useProjectSession(sessionEpoch);
+  useEffect(() => {
+    const check = () => setSessionEpoch((value) => value + 1);
+    window.addEventListener("focus", check);
+    return () => window.removeEventListener("focus", check);
+  }, []);
   useEffect(() => setProject(initialProject), [initialProject]);
   const terms = project.securityBounty;
   if (terms === undefined)
