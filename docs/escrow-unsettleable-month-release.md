@@ -3,8 +3,11 @@
 Status: merged in PR #1271 (`7fdedd35`). The EVM V2 upgrade that contains it
 finalized on Base, Ethereum and Robinhood Chain on 26 October 2026
 (`contracts/DEPLOY-MAINNET.md`, "Bundled monthly reserve V2 upgrade"). The
-Solana program upgrade is pending. Each network still needs the testnet
-qualification in section 7 before use. Section 9 records the owner decisions.
+Solana program `7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ` contains it
+since its upgrade at finalized slot 461,493,344 from reviewed source
+`83827c04` (#1271; `contracts/DEPLOY-MAINNET.md`, "Current mainnet
+deployments"). Each network still needs the testnet qualification in
+section 7 before use. Section 9 records the owner decisions.
 
 Source: owner action list on issue #914, and the owner decision of 25 October
 2026: "Plan a contract fix: design a reviewed contract change that lets the
