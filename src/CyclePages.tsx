@@ -353,7 +353,7 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                 const phase =
                   contributor.state === "paid"
                     ? 2
-                    : contributor.state === "proposed"
+                    : cycle.approvedAt === null
                       ? 0
                       : 1;
                 const [label, key] = AMOUNT_PHASES[phase];
