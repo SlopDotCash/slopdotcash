@@ -1010,6 +1010,73 @@ test("the existing-project exemption is permanent but cannot clear reinstatement
         templateSha256: "e".repeat(64),
       })),
     ).toEqual({ state: "cleared", assessment: null, grandfathered: true });
+    // Migration 0075 exempts the project id permanently, not only its first
+    // repository identity. A later stored revision keeps that existing policy.
+    const changedRepository = {
+      ...existing,
+      authority: {
+        ...existing.authority,
+        repositoryId: "999999991",
+        repositoryNodeId: "R_replaced",
+      },
+    };
+    expect(
+      await registry.appendProjectRevision(
+        {
+          projectId: existing.id,
+          expectedRevision: 1,
+          manifest: changedRepository,
+          manifestText: JSON.stringify(changedRepository),
+          manifestSha256: "f".repeat(64),
+          reason: "Record a replacement repository identity",
+          actor: ADMIN,
+          at: NOW.toISOString(),
+        },
+        0,
+      ),
+    ).toBe("updated");
+    const replaced = await registry.getProject(existing.id);
+    if (!replaced) throw new Error("Missing revised exempt project");
+    const inspectReplacement = (reinstating = false) =>
+      clearance.manifestClearance(
+        replaced.id,
+        replaced.manifest,
+        replaced.revision,
+        async () => ({
+          commitSha: "d".repeat(40),
+          templateSha256: "e".repeat(64),
+        }),
+        reinstating,
+      );
+    expect(await inspectReplacement()).toEqual({
+      state: "cleared",
+      assessment: null,
+      grandfathered: true,
+    });
+    const content = (await clearance.revisionContents(existing.id)).at(-1);
+    if (!content) throw new Error("Missing revised exempt content");
+    expect(
+      await clearance.createAssessment({
+        id: "vet_00000000000000000000000000000099",
+        projectId: replaced.id,
+        revision: replaced.revision,
+        manifestSha256: replaced.manifestSha256,
+        contentSha256: content.contentSha256,
+        commitSha: "d".repeat(40),
+        templateSha256: "e".repeat(64),
+        requestedBy: ADMIN,
+        requestedAt: NOW.toISOString(),
+        requestReason: "Explicit investigation of an exempt project",
+      }),
+    ).toBe("created");
+    // Existing exemption semantics ignore pending normal scans. Flags and
+    // remedial reinstatement still require their separate fresh evidence.
+    expect(await inspectReplacement()).toEqual({
+      state: "cleared",
+      assessment: null,
+      grandfathered: true,
+    });
+    expect((await inspectReplacement(true)).state).not.toBe("cleared");
     expect(() =>
       database.sqlite.exec(
         "INSERT INTO vetting_grandfathered_projects VALUES ('later-scanned', '2026-10-24T00:00:00Z')",

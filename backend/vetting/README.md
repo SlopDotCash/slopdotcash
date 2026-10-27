@@ -28,13 +28,15 @@ fixed evidence terms in source.
 
 Each assessment remains permanently bound to its actual project revision,
 content digest, integration-branch commit and skill template. These fields never
-change when later content is admitted. The complete canonical retained evidence
-is checked on every clearance read; missing, corrupt, expired or unauthorized
-evidence fails closed. Successful bounded admission evidence is retained permanently under the
-27 October owner decision; other closed cases retain the 90-day rule.
+change when later content is admitted. When clearance relies on an assessment,
+its complete canonical retained evidence is checked on every read; missing,
+corrupt, expired or unauthorized evidence fails closed. Successful bounded
+admission evidence is retained permanently under the 27 October owner decision;
+other closed cases retain the 90-day rule.
 
-Owner decision #1467 section3.9 requires one successful admission scan when the
-project is added. The latest actual assessment in the uninterrupted history of
+Outside the permanent existing-project exemption, owner decision #1467
+section3.9 requires one successful admission scan when the project is added.
+The latest actual assessment in the uninterrupted history of
 the same immutable repository ID and node ID controls normal admission. Routine
 commits, dependencies, Markdown, skill inputs, template changes and presentation
 updates do not queue another scan or invalidate a clean admission. The public
@@ -51,6 +53,8 @@ current-content/current-pin evidence, cover the active flags, and respect all
 timing and authority gates. The scan-reuse pipeline remains available for an
 explicit eligible request, but reused evidence cannot lift a flag pause.
 
+For nonexempt admission and required reinstatement:
+
 | State | Meaning | Skills, discovery, activation |
 |---|---|---|
 | `unscanned` | No assessment for this repository identity | Blocked |
@@ -63,7 +67,10 @@ explicit eligible request, but reused evidence cannot lift a flag pause.
 
 The explicit permanent exemption in migration0075 remains separate, with no
 fabricated assessment. It cannot bypass flags, pauses, account restrictions or
-fresh reinstatement evidence, or transfer to another immutable repository.
+fresh reinstatement evidence. It remains bound to the recorded project ID,
+including after repository changes. Pending or incomplete normal investigations
+do not remove that exemption; confirmed malicious findings still ban the project
+until the required independent reinstatement decision.
 
 The signed `POST /api/v1/vetting/refresh` queues initial admission for a repository
 without an assessment and required fresh flag recovery. It does not schedule
