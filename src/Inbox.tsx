@@ -181,9 +181,20 @@ export default function InboxPage() {
         setReportOwner(recipient);
         setReports(body.submissions);
       })
-      .catch(() => {
-        if (current === reportsGeneration.current)
-          setReportsError("Private report status could not load.");
+      .catch(async () => {
+        if (current !== reportsGeneration.current) return;
+        try {
+          const session = await currentProjectSession();
+          if (current !== reportsGeneration.current) return;
+          if (session?.githubId !== recipient)
+            acceptRecipient(session?.githubId ?? null);
+          else setReportsError("Private report status could not load.");
+        } catch {
+          if (current === reportsGeneration.current) {
+            setRecipient(null);
+            setReportsError("Private report status could not load.");
+          }
+        }
       });
     return () => {
       reportsGeneration.current++;
@@ -377,7 +388,7 @@ function InboxList({
     .filter((n) => n.readAt === null)
     .map((n) => n.eventKey)
     .slice(0, MAX_NOTIFICATION_MARK);
-  const focused = visibleReports.find((report) => report.id === focusId);
+  const focused = reports.find((report) => report.id === focusId);
   const forNotice = (notice: Notification) =>
     notice.kind === "security_report_received"
       ? reports.find((report) => report.caseId === notice.subject)
