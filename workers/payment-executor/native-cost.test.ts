@@ -173,20 +173,17 @@ describe("optional EVM operation envelope", () => {
       maxPriorityFeePerGas: 1n,
     });
     const tx = parseTransaction(raw);
-    if (tx.gas === undefined || tx.maxFeePerGas === undefined)
+    const { gas, maxFeePerGas } = tx;
+    if (gas === undefined || maxFeePerGas === undefined)
       throw new Error("Missing signed gas envelope");
     const cap = { maxNativeCostWei: "20999999999" };
     expect(() =>
-      assertEvmNativeCost(
-        {},
-        { gas: tx.gas, maxFeePerGas: tx.maxFeePerGas, value: tx.value },
-        cap,
-      ),
+      assertEvmNativeCost({}, { gas, maxFeePerGas, value: tx.value }, cap),
     ).toThrow();
     expect(() =>
       assertEvmNativeCost(
         {},
-        { gas: tx.gas, maxFeePerGas: tx.maxFeePerGas },
+        { gas, maxFeePerGas },
         { maxNativeCostWei: "21000000000" },
       ),
     ).not.toThrow();
