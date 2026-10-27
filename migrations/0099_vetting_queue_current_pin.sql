@@ -15,7 +15,14 @@ WHEN NEW.state = 'pending' AND EXISTS (
   ) AND current.state = 'pending' AND current.revision = NEW.revision
     AND current.commit_sha = NEW.commit_sha
     AND current.template_sha256 = NEW.template_sha256
-    AND current.flag_ids = NEW.flag_ids
+    -- Older application versions do not sort the retained flag IDs.
+    AND NOT EXISTS (
+      SELECT value FROM json_each(current.flag_ids)
+      EXCEPT SELECT value FROM json_each(NEW.flag_ids)
+    ) AND NOT EXISTS (
+      SELECT value FROM json_each(NEW.flag_ids)
+      EXCEPT SELECT value FROM json_each(current.flag_ids)
+    )
 )
 BEGIN
   SELECT RAISE(ABORT, 'UNIQUE constraint failed: vetting_assessments.current_pending');

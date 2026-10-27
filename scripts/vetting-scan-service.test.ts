@@ -909,6 +909,26 @@ test("a two-flag pause is reinstated automatically after the service's clean fre
       .status,
   ).toBe(410);
 
+  // An older app can write the same flags in a different order during rollout.
+  // The database must refuse that duplicate before it supersedes this scan.
+  const pending = await vetting.pendingAssessments();
+  expect(() =>
+    sqlite
+      .query(
+        `INSERT INTO vetting_assessments
+         (id, project_id, revision, manifest_sha256, content_sha256, commit_sha,
+          template_sha256, requested_by_github_id, requested_by_github_login,
+          requested_at, request_reason, state, flag_ids)
+         SELECT ?, project_id, revision, manifest_sha256, content_sha256, commit_sha,
+                template_sha256, requested_by_github_id, requested_by_github_login,
+                requested_at, request_reason, state,
+                (SELECT json_group_array(value) FROM
+                  (SELECT value FROM json_each(a.flag_ids) ORDER BY value DESC))
+           FROM vetting_assessments a WHERE id = ?`,
+      )
+      .run(`vet_${"f".repeat(32)}`, pending[0].id),
+  ).toThrow(/vetting_assessments.current_pending/u);
+
   clock = new Date(NOW.getTime() + 120_000);
   const report = await runScanPass(config);
   const [{ assessmentId }] = report.assessments;
