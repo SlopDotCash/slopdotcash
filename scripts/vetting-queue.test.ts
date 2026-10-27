@@ -371,6 +371,28 @@ test("conflicting digests for a shared template path refuse acquisition", async 
   expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
 });
 
+test("shared template inputs still verify the second source URL", async () => {
+  mode = "normal";
+  const changed: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (
+        path.endsWith(`/${sharedTemplatePath}`) &&
+        !path.startsWith("/skill-templates/")
+      )
+        return new Response("changed renderer source bytes");
+      return connection.fetch!(input, init);
+    }) as typeof fetch,
+  };
+  const before = await readdir(root);
+  await expect(
+    acquireQueuedAssessment(changed, assessmentId, root),
+  ).rejects.toThrow("Template file bytes changed");
+  expect(await readdir(root)).toEqual(before);
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
+});
+
 test("changed revision/template bytes and wrong signer leave queue pending and no completed bundle", async () => {
   for (const selected of ["manifest", "template", "identity"] as const) {
     mode = selected;
