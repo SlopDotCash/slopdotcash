@@ -1,13 +1,18 @@
 /** Owner vault setup. Trust and RPCs come from the server; only the owner signs. */
 import {
   type EvmFactoryConfig,
+  EvmRpcUnavailable,
   type EvmVaultCreation,
   EvmVaultCreationFailed,
   prepareEvmVaultCreation,
+  verifyEvmFactory,
   verifyEvmVaultCreation,
 } from "../../contracts/evm/adapter";
 import type { ReviewedEvmFactory } from "../../contracts/evm/factories";
-import type { SolanaProgramConfig } from "../../contracts/solana/adapter";
+import {
+  type SolanaProgramConfig,
+  SolanaRpcUnavailable,
+} from "../../contracts/solana/adapter";
 import {
   prepareSolanaVaultCreation,
   SolanaVaultCreationFailed,
@@ -22,15 +27,18 @@ import {
   isBaseUnits,
 } from "../../src/lib/escrow-policy.mjs";
 import type { PayoutPolicy } from "../../src/lib/payments/contracts";
+import type {
+  GithubActor,
+  ProjectRecord,
+} from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type {
   VaultSetupInput,
   VaultSetupReview,
 } from "../../src/lib/vault-setup";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
-import { fail } from "../api-error";
 import type { D1TransactionalDatabase } from "../d1";
-import type { GithubActor, ProjectRecord } from "./contracts";
+import { fail } from "../http";
 
 export interface OwnerVaultSetup {
   networks(
@@ -48,6 +56,18 @@ export interface OwnerVaultSetup {
     input: VaultSetupInput,
     transactionId: string,
   ): Promise<EscrowDeployment | null>;
+}
+
+/**
+ * The RPC gave no usable answer, so the chain state is unknown. This is not a
+ * refusal of the factory or the transaction, and nothing needs review.
+ */
+function networkUnavailable(): never {
+  fail(
+    503,
+    "vault_network_unavailable",
+    "The network could not be read. Nothing needs review. Try again in a minute.",
+  );
 }
 
 /**
@@ -182,10 +202,16 @@ export function ownerVaultSetupService(deps: {
     }
     return reviewed;
   }
-  async function resolve(
+  /** `prepareEvm` checks one reviewed factory for this creation; a refusal
+   * skips to the next template. */
+  async function resolve<EvmPrepared>(
     project: ProjectRecord,
     actor: GithubActor,
     input: VaultSetupInput,
+    prepareEvm: (
+      config: EvmFactoryConfig,
+      creation: EvmVaultCreation,
+    ) => Promise<EvmPrepared>,
     registrationOnly = false,
   ) {
     const network = ESCROW_NETWORKS[input.network];
@@ -269,19 +295,22 @@ export function ownerVaultSetupService(deps: {
               }),
         };
         try {
-          const prepared = await prepareSolanaVaultCreation(
-            config,
-            creation,
-            registrationOnly,
-          );
+          const { tokenProgram, ...prepared } =
+            await prepareSolanaVaultCreation(
+              config,
+              creation,
+              registrationOnly,
+            );
           return {
             family: "solana" as const,
             template,
             config,
-            creation,
+            creation: { ...creation, tokenProgram },
             prepared,
           };
         } catch (error) {
+          // The request can be valid while the chain is unreadable.
+          if (error instanceof SolanaRpcUnavailable) networkUnavailable();
           // A finalized creation can predate the current infrastructure pin.
           // Try only retained reviewed configurations, never trust account fields
           // as a new review. Preserve the failure if none matches this vault.
@@ -312,13 +341,15 @@ export function ownerVaultSetupService(deps: {
         chainId: BigInt(network.chainId),
         rpcUrl: deps.rpcUrl(input.network),
       };
-      const prepared = await prepareEvmVaultCreation(config, creation).catch(
-        () => {
-          // A historical template may have been upgraded. Only a still-verifiable one is usable.
-          return null;
-        },
-      );
-      if (!prepared) continue;
+      let prepared: EvmPrepared;
+      try {
+        prepared = await prepareEvm(config, creation);
+      } catch (error) {
+        // An unread chain proves nothing about the template.
+        if (error instanceof EvmRpcUnavailable) networkUnavailable();
+        // A historical template may have been upgraded. Only a still-verifiable one is usable.
+        continue;
+      }
       if (
         [creation.owner, template.identityAuthority].some(
           (address) =>
@@ -355,7 +386,12 @@ export function ownerVaultSetupService(deps: {
       ];
     },
     async review(project, actor, input) {
-      const result = await resolve(project, actor, input);
+      const result = await resolve(
+        project,
+        actor,
+        input,
+        prepareEvmVaultCreation,
+      );
       if (result.family === "solana")
         return {
           payoutPolicy: input.payoutPolicy ?? "ordinary",
@@ -393,7 +429,17 @@ export function ownerVaultSetupService(deps: {
       };
     },
     async register(project, actor, input, transactionId) {
-      const result = await resolve(project, actor, input, true);
+      // Check the creation factory only. verifyEvmVaultCreation reads the
+      // created vault at its receipt block, so the latest-block vault lookup
+      // and the creation simulation of a review would repeat chain reads.
+      const result = await resolve(
+        project,
+        actor,
+        input,
+        (config) =>
+          verifyEvmFactory(config, "finalized", { forCreation: true }),
+        true,
+      );
       if (result.family === "solana") {
         try {
           const verified = await verifySolanaVaultCreation(
@@ -413,6 +459,7 @@ export function ownerVaultSetupService(deps: {
             deploymentTransaction: transactionId,
           };
         } catch (error) {
+          if (error instanceof SolanaRpcUnavailable) networkUnavailable();
           fail(
             422,
             error instanceof SolanaVaultCreationFailed
@@ -429,6 +476,8 @@ export function ownerVaultSetupService(deps: {
       try {
         vault = await verifyEvmVaultCreation(config, creation, transactionId);
       } catch (error) {
+        // The request can be valid while the chain is unreadable.
+        if (error instanceof EvmRpcUnavailable) networkUnavailable();
         fail(
           422,
           error instanceof EvmVaultCreationFailed

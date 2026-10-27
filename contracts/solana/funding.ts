@@ -5,12 +5,14 @@ import {
 import {
   readVaultTotals,
   type SolanaEscrowConfig,
+  solanaMintDetails,
   solanaPubkey,
   solanaRpc,
   solanaUint,
   solanaVaultAddress,
   verifySolanaDeployment,
 } from "./adapter";
+import { inspectTokenAccount } from "./token";
 import {
   ata,
   bytes,
@@ -33,7 +35,7 @@ export { SolanaFundingError };
 export type SolanaFundingDeployment = Pick<
   SolanaEscrowConfig,
   "programId" | "projectPda" | "vault" | "mint" | "owner" | "feeRecipient"
->;
+> & { tokenProgram?: string };
 
 export interface SolanaFundingIntent {
   operation: "deposit" | "withdraw";
@@ -41,8 +43,6 @@ export interface SolanaFundingIntent {
   gross: string;
   blockhash: string;
 }
-const decode = (value: string) =>
-  Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new SolanaFundingError("Invalid chain response");
@@ -62,6 +62,7 @@ function fundingInstructions(
 ): Instruction[] {
   bytes(intent.wallet);
   const gross = baseAmount(intent.gross);
+  const tokenProgram = config.tokenProgram ?? TOKEN;
   if (solanaVaultAddress(config.programId, config.projectPda) !== config.vault)
     throw new SolanaFundingError("The vault does not belong to this project.");
   if (intent.operation !== "deposit" && intent.operation !== "withdraw")
@@ -77,7 +78,7 @@ function fundingInstructions(
     {
       key:
         intent.operation === "deposit"
-          ? ata(config.mint, intent.wallet)
+          ? ata(config.mint, intent.wallet, tokenProgram)
           : config.vault,
       write: true,
     },
@@ -85,11 +86,11 @@ function fundingInstructions(
       key:
         intent.operation === "deposit"
           ? config.vault
-          : ata(config.mint, intent.wallet),
+          : ata(config.mint, intent.wallet, tokenProgram),
       write: true,
     },
   ];
-  accounts.push({ key: TOKEN, write: false });
+  accounts.push({ key: tokenProgram, write: false });
   const action = {
     program: config.programId,
     accounts,
@@ -97,7 +98,10 @@ function fundingInstructions(
   };
   return intent.operation === "deposit"
     ? [action]
-    : [createAta(intent.wallet, config.mint, config.owner), action];
+    : [
+        createAta(intent.wallet, config.mint, config.owner, tokenProgram),
+        action,
+      ];
 }
 export function solanaFundingMessage(
   config: SolanaFundingDeployment,
@@ -115,8 +119,9 @@ export async function prepareSolanaFunding(
   config: SolanaEscrowConfig,
   intent: Omit<SolanaFundingIntent, "blockhash">,
 ) {
-  const instructions = fundingInstructions(config, intent);
   await verifySolanaDeployment(config);
+  const { tokenProgram } = await solanaMintDetails(config, config.mint);
+  const instructions = fundingInstructions({ ...config, tokenProgram }, intent);
   const totals = await readVaultTotals(config);
   if (totals.asset !== config.mint)
     throw new SolanaFundingError("The vault asset changed.");
@@ -129,7 +134,7 @@ export async function prepareSolanaFunding(
   } else {
     const response = object(
       await solanaRpc(config, "getAccountInfo", [
-        ata(config.mint, intent.wallet),
+        ata(config.mint, intent.wallet, tokenProgram),
         { commitment: "finalized", encoding: "base64" },
       ]),
     );
@@ -137,19 +142,15 @@ export async function prepareSolanaFunding(
       throw new SolanaFundingError(
         "Your wallet has no token account for this deposit.",
       );
-    const source = object(response.value);
-    if (
-      source.owner !== TOKEN ||
-      !Array.isArray(source.data) ||
-      source.data[1] !== "base64" ||
-      typeof source.data[0] !== "string"
-    )
+    let data: Uint8Array;
+    try {
+      data = inspectTokenAccount(response.value, tokenProgram).bytes;
+    } catch {
       throw new SolanaFundingError(
         "The deposit token account could not be verified.",
       );
-    const data = decode(source.data[0]);
+    }
     if (
-      data.length !== 165 ||
       solanaPubkey(data, 0) !== config.mint ||
       solanaPubkey(data, 32) !== intent.wallet ||
       data[108] !== 1
@@ -171,6 +172,7 @@ export async function prepareSolanaFunding(
   return {
     ...intent,
     ...prepared,
+    tokenProgram,
     gross: gross.toString(),
     fee: fee.toString(),
     net: (gross - fee).toString(),
@@ -185,7 +187,8 @@ export async function checkSolanaFunding(
   intent: SolanaFundingIntent,
   transactionId: string,
 ) {
-  const msg = solanaFundingMessage(config, intent);
+  const { tokenProgram } = await solanaMintDetails(config, config.mint);
+  const msg = solanaFundingMessage({ ...config, tokenProgram }, intent);
   const checked = await checkSolanaWalletTransaction(
     config,
     intent.wallet,
@@ -229,18 +232,18 @@ export async function checkSolanaFunding(
   const gross = baseAmount(intent.gross);
   if (intent.operation === "deposit") {
     add(config.vault, gross);
-    add(ata(config.mint, intent.wallet), -gross);
+    add(ata(config.mint, intent.wallet, tokenProgram), -gross);
   } else {
     // The withdrawal fee stays in the vault until claim_fees. A program not yet
     // upgraded to rounded-up fees still takes floor(gross / 50).
-    const owner = ata(config.mint, config.owner);
+    const owner = ata(config.mint, config.owner, tokenProgram);
     const fee = gross - ((after.get(owner) ?? 0n) - (before.get(owner) ?? 0n));
     if (!acceptsPayoutFee(gross, fee))
       throw new SolanaFundingError(
         "The withdrawal fee is not 2% of the amount.",
       );
     add(config.vault, fee - gross);
-    add(ata(config.mint, config.owner), gross - fee);
+    add(ata(config.mint, config.owner, tokenProgram), gross - fee);
   }
   for (const [key, delta] of deltas) {
     if (
