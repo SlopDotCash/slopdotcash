@@ -162,23 +162,34 @@ export async function refreshVaultSnapshots<D extends SnapshotDeployment>(
   read: VaultTotalsReader<D>,
   now = new Date(),
 ): Promise<void> {
-  const failures: unknown[] = [];
-  for (const deployment of deployments) {
-    try {
-      const rpcUrl = rpcUrls[deployment.network];
-      if (!rpcUrl) throw new Error("Private RPC configuration unavailable");
-      await storeVaultSnapshot(
-        db,
-        deployment,
-        await read(deployment, rpcUrl),
-        now.toISOString(),
-      );
-    } catch (error) {
-      failures.push(error);
-    }
-  }
+  const failures: { index: number; error: unknown }[] = [];
+  let next = 0;
+  // Bound read-only RPC work; each vault keeps its own monotonic D1 write.
+  await Promise.all(
+    Array.from({ length: Math.min(4, deployments.length) }, async () => {
+      while (next < deployments.length) {
+        const index = next++;
+        const deployment = deployments[index];
+        try {
+          const rpcUrl = rpcUrls[deployment.network];
+          if (!rpcUrl) throw new Error("Private RPC configuration unavailable");
+          await storeVaultSnapshot(
+            db,
+            deployment,
+            await read(deployment, rpcUrl),
+            now.toISOString(),
+          );
+        } catch (error) {
+          failures.push({ index, error });
+        }
+      }
+    }),
+  );
   if (failures.length)
-    throw new AggregateError(failures, "Vault snapshot failures");
+    throw new AggregateError(
+      failures.sort((a, b) => a.index - b.index).map(({ error }) => error),
+      "Vault snapshot failures",
+    );
 }
 
 export async function projectVaultSnapshots(

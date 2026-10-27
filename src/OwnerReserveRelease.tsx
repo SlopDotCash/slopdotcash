@@ -9,6 +9,7 @@ import {
   sendMonthlyRelease,
 } from "./lib/monthly-release-actions";
 import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
+import { useAction } from "./lib/use-action";
 import { usePayoutWallets } from "./lib/use-payout-wallets";
 
 type Pending = { planId: string; hash: string | null };
@@ -49,26 +50,20 @@ export default function OwnerReserveRelease({
   const [plan, setPlan] = useState<ReadyMonthlyRelease | null>(null);
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [hash, setHash] = useState(initial.pending?.hash ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(initial.error);
+  const { busy, error, run: act } = useAction(initial.error);
   const [storageError, setStorageError] = useState(!!initial.error);
   const [notice, setNotice] = useState("");
   const family = view.deployment
     ? ESCROW_NETWORKS[view.deployment.network].family
     : null;
   const wallets = usePayoutWallets().filter((w) => w.family === family);
-  async function run(action: () => Promise<void>) {
-    setBusy(true);
-    setError("");
+  const run = (action: () => Promise<void>) => {
     setNotice("");
-    try {
-      await action();
-    } catch (reason) {
-      setError(errorMessage(reason, "The release is unavailable. Retry."));
-    } finally {
-      setBusy(false);
-    }
-  }
+    return act(action, (caught) =>
+      errorMessage(caught, "The release is unavailable. Retry."),
+    );
+  };
+
   function save(value: Pending) {
     sessionStorage.setItem(key, JSON.stringify(value));
     setPending(value);

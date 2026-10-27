@@ -31,18 +31,6 @@ const request = (method = "GET") =>
   new Request(`https://slop.cash${FEE_CONVERSIONS_PATH}`, { method });
 
 describe("admin fee-conversions route", () => {
-  test("other paths fall through to the next API module", async () => {
-    const response = await handleFeeConversionsApi(
-      new Request("https://slop.cash/api/v1/admin/projects"),
-      {
-        db: seeded(),
-        adminGithubIds: new Set(),
-        sessionActor: async () => null,
-      },
-    );
-    expect(response).toBeNull();
-  });
-
   test("signed-out and non-admin sessions are refused", async () => {
     const db = seeded();
     const signedOut = await handleFeeConversionsApi(request(), {

@@ -9,6 +9,7 @@ import { formatBaseUnits, type PayoutPolicy } from "./lib/payments/contracts";
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { sendSolanaWalletTransaction } from "./lib/solana-vault-actions";
+import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import {
   checkedVaultSetupReview,
@@ -93,7 +94,7 @@ export function OwnerVaultSetup({
     }
   });
   const [pending, setPending] = useState<Pending | null>(saved.pending);
-  const [error, setError] = useState(saved.error);
+  const { busy, error, setError, run: act } = useAction(saved.error);
   const [info, setInfo] = useState<{
     revision: number;
     networks: string[];
@@ -106,7 +107,6 @@ export function OwnerVaultSetup({
   const [review, setReview] = useState<Pending | null>(null);
   const createButton = useRef<HTMLButtonElement>(null);
   const hashInput = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
   const [failedCreation, setFailedCreation] = useState(false);
   const [notice, setNotice] = useState("");
   const [recoveryHash, setRecoveryHash] = useState(saved.pending?.hash ?? "");
@@ -158,21 +158,16 @@ export function OwnerVaultSetup({
       active = false;
     };
   }, [project.id, payoutPolicy, reload]);
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true);
-    setError("");
+  const run = (action: () => Promise<void>) => {
     setNotice("");
-    try {
-      await action();
-    } catch (e) {
+    return act(action, (caught) => {
       setFailedCreation(
-        (e as { code?: string })?.code === "vault_creation_failed",
+        (caught as { code?: string })?.code === "vault_creation_failed",
       );
-      setError(errorMessage(e, "The wallet request failed."));
-    } finally {
-      setBusy(false);
-    }
+      return errorMessage(caught, "The wallet request failed.");
+    });
   };
+
   const remember = (value: Pending | null) => {
     if (value) sessionStorage.setItem(key, JSON.stringify(value));
     else sessionStorage.removeItem(key);

@@ -1,4 +1,4 @@
-/** Types for the evidence-artifact functions consumed by leaderboard generation. */
+/** Types for artifact planning and verification consumed by ingestion. */
 
 export interface EvidenceRow {
   id: string;

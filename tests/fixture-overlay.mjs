@@ -62,3 +62,10 @@ export function copyFixtureSkills(target) {
         copyFileSync(join(kit, name), join(scripts, name));
   }
 }
+
+/** An independent copy of one project in the sole frozen fixture registry. */
+export function fixtureProject(id) {
+  const project = RAW_PROJECT_DEFINITIONS.find((entry) => entry.id === id);
+  if (!project) throw new Error(`Unknown fixture project: ${id}`);
+  return structuredClone(project);
+}

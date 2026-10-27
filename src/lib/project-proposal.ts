@@ -1,4 +1,4 @@
-import { decimalBaseUnits, formatBaseUnits } from "./base-units.mjs";
+import { formatBaseUnits } from "./base-units.mjs";
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 import {
   ESCROW_PAYOUT_FEE_BASIS_POINTS,
@@ -13,8 +13,9 @@ import {
 import {
   expectedRewardFeeBasisPoints,
   formatMonthlyCapDisplay,
-  MAX_MONTHLY_CAP_MINOR,
   MAX_PROJECT_ID_LENGTH,
+  monthlyAmountDisplay,
+  parseAssetAmount,
 } from "./project-schema.mjs";
 import { REWARD_ASSET_NETWORKS } from "./reward-asset.mjs";
 
@@ -87,25 +88,41 @@ export function slugify(value: string): string {
     .replace(/-$/u, "");
 }
 
-export function monthlyPoolValue(value: string): {
-  display: string;
-  minor: string;
-  valid: boolean;
-} {
-  if (!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/u.test(value)) {
-    return { display: "$0", minor: "0", valid: false };
+/** Validate with the same decimal parser as the API; new token precision is
+ * verified by the server before its staged manifest amount is stored. */
+export function monthlyPoolValue(
+  value: string,
+  token?: { symbol: string; decimals?: number },
+): { display: string; minor: string; valid: boolean; error?: string } {
+  try {
+    const minor = parseAssetAmount(value, token?.decimals ?? (token ? 36 : 6));
+    if (BigInt(minor) === 0n) throw new RangeError("Enter a positive amount.");
+    const display = token
+      ? token.decimals === undefined
+        ? `${value} ${token.symbol}`
+        : monthlyAmountDisplay(minor, {
+            kind: "token",
+            symbol: token.symbol,
+            decimals: token.decimals,
+          })
+      : formatMonthlyCapDisplay(minor);
+    return {
+      display,
+      minor: token && token.decimals === undefined ? "0" : minor,
+      valid: true,
+    };
+  } catch (error) {
+    return {
+      display: token ? `0 ${token.symbol}` : "$0",
+      minor: "0",
+      valid: false,
+      error: token
+        ? error instanceof Error
+          ? error.message
+          : "Enter a positive token amount."
+        : "Enter a positive amount with up to two decimals, at most 1 billion.",
+    };
   }
-  const [whole, fraction = ""] = value.split(".");
-  // USDC has six decimals; the pool amount has at most two.
-  const minor = decimalBaseUnits(whole, fraction, 6).toString();
-  if (BigInt(minor) > MAX_MONTHLY_CAP_MINOR) {
-    return { display: "$0", minor: "0", valid: false };
-  }
-  return {
-    display: formatMonthlyCapDisplay(minor),
-    minor,
-    valid: true,
-  };
 }
 
 /**

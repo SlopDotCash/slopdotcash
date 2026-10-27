@@ -40,149 +40,108 @@ const totals = (overrides: Partial<VaultTotals> = {}): VaultTotals => ({
 });
 const observed = "2026-10-18T10:05:00.000Z";
 
-describe("storeVaultSnapshot", () => {
-  test("stores a finalized read under the reviewed vault and asset", async () => {
-    const db = open();
-    expect(await storeVaultSnapshot(db, deployment, totals(), observed)).toBe(
-      "stored",
+test("refreshes both chain caches and preserves the last verified public totals after invalid reads", async () => {
+  const db = open();
+  const solana: SnapshotDeployment = {
+    projectId: "sol",
+    network: "solana-devnet",
+    chain: "solana",
+    vault: "Vau1t11111111111111111111111111111111111111",
+    projectPda: "Proj111111111111111111111111111111111111111",
+    asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  };
+  const solanaTotals = totals({
+    network: solana.network,
+    vault: "Proj111111111111111111111111111111111111111",
+    asset: solana.asset,
+    reservedPrincipal: null,
+    reservedFees: null,
+    accruedFees: null,
+    reserved: "100000000",
+  });
+  const readPublic = async (projectId: string) => {
+    const response = await handlePaymentsApi(
+      new Request(
+        `https://slop.cash/api/v1/payments/projects/${projectId}/vault`,
+      ),
+      { db, now: () => new Date(observed) },
     );
-    const row = await db
-      .prepare("SELECT * FROM vault_snapshots WHERE project_id='acme'")
-      .first<Record<string, unknown>>();
-    expect(row).toMatchObject({
-      asset_address: deployment.asset,
-      asset_decimals: 6,
-      total_deposited: "500000000",
-      reserved: null,
-      block_number: "1000",
-      block_time: "2026-10-18T10:00:00.000Z",
-      observed_at: observed,
-    });
-  });
-
-  test("rejects a read of another vault or asset, or a malformed counter", async () => {
-    const db = open();
-    for (const bad of [
-      totals({ vault: "0x3333333333333333333333333333333333333333" }),
-      totals({ asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" }),
-      totals({ network: "base-mainnet" }),
-      totals({ totalPaid: "1.5" }),
-      totals({ totalPaid: "340282366920938463463374607431768211456" }),
-      totals({ freeBalance: "-1" }),
-      totals({ decimals: 37 }),
-      totals({ blockTime: "not a time" }),
-    ])
-      await expect(
-        storeVaultSnapshot(db, deployment, bad, observed),
-      ).rejects.toThrow(/reviewed deployment/);
-    expect(
-      await db
-        .prepare("SELECT count(*) n FROM vault_snapshots")
-        .first<unknown>(),
-    ).toEqual({ n: 0 });
-  });
-
-  test("never rewinds: an older block is ignored and a decreasing counter fails", async () => {
-    const db = open();
-    await storeVaultSnapshot(db, deployment, totals(), observed);
-    expect(
-      await storeVaultSnapshot(
-        db,
-        deployment,
-        totals({ blockNumber: "999", totalDeposited: "1" }),
-        observed,
-      ),
-    ).toBe("older");
-    await expect(
-      storeVaultSnapshot(
-        db,
-        deployment,
-        totals({ blockNumber: "1001", totalPaid: "1" }),
-        observed,
-      ),
-    ).rejects.toThrow(/decreased/);
-    await expect(
-      storeVaultSnapshot(
-        db,
-        deployment,
-        totals({ blockNumber: "1001", decimals: 18 }),
-        observed,
-      ),
-    ).rejects.toThrow(/asset changed/);
-    await storeVaultSnapshot(
-      db,
-      deployment,
-      totals({ blockNumber: "1002", totalDeposited: "600000000" }),
-      "2026-10-18T10:10:00.000Z",
-    );
-    expect(
-      await db
-        .prepare("SELECT total_deposited,block_number FROM vault_snapshots")
-        .first<unknown>(),
-    ).toEqual({ total_deposited: "600000000", block_number: "1002" });
-  });
-
-  test("a Solana read names the project PDA and is stored under the token vault", async () => {
-    const db = open();
-    const solana: SnapshotDeployment = {
-      projectId: "sol",
-      network: "solana-devnet",
-      chain: "solana",
-      vault: "Vau1t11111111111111111111111111111111111111",
-      projectPda: "Proj111111111111111111111111111111111111111",
-      asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-    };
-    const read = totals({
-      network: "solana-devnet",
-      vault: "Proj111111111111111111111111111111111111111",
-      asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-      freeBalance: "300000000",
-      reservedPrincipal: null,
-      reservedFees: null,
-      accruedFees: null,
-      reserved: "100000000",
-    });
-    await storeVaultSnapshot(db, solana, read, observed);
-    expect(
-      await db
-        .prepare("SELECT vault,reserved,reserved_fees FROM vault_snapshots")
-        .first<unknown>(),
-    ).toEqual({
+    expect(response.status).toBe(200);
+    return ((await response.json()) as { snapshots: Record<string, unknown>[] })
+      .snapshots;
+  };
+  await refreshVaultSnapshots(
+    db,
+    [deployment, solana],
+    {
+      "base-sepolia": "http://rpc.invalid",
+      "solana-devnet": "http://rpc.invalid",
+    },
+    async (selected) => (selected.chain === "solana" ? solanaTotals : totals()),
+    new Date(observed),
+  );
+  expect(await readPublic("acme")).toMatchObject([
+    {
+      vault: deployment.vault,
+      assetAddress: deployment.asset,
+      totalDeposited: "500000000",
+      blockNumber: "1000",
+      observedAt: observed,
+    },
+  ]);
+  expect(await readPublic("sol")).toMatchObject([
+    {
       vault: solana.vault,
+      assetAddress: solana.asset,
       reserved: "100000000",
-      reserved_fees: null,
-    });
-    // Base58 is case-sensitive: another case is another account.
-    await expect(
-      storeVaultSnapshot(
-        db,
-        solana,
-        { ...read, asset: read.asset.toLowerCase() },
-        observed,
-      ),
-    ).rejects.toThrow(/reviewed deployment/);
-  });
-
-  test("one failing vault does not stop the others", async () => {
-    const db = open();
-    const other = { ...deployment, projectId: "beta" };
+      reservedFees: null,
+    },
+  ]);
+  for (const rejected of [
+    totals({ vault: "0x3333333333333333333333333333333333333333" }),
+    totals({ blockNumber: "1001", totalPaid: "1" }),
+    totals({ blockNumber: "1001", decimals: 18 }),
+  ]) {
     await expect(
       refreshVaultSnapshots(
         db,
-        [deployment, other],
-        { "base-sepolia": "http://rpc.invalid" },
-        async (d) => {
-          if (d.projectId === "acme") throw new Error("RPC down");
-          return totals();
+        [deployment],
+        {
+          "base-sepolia": "http://rpc.invalid",
         },
+        async () => rejected,
       ),
     ).rejects.toThrow(/Vault snapshot failures/);
-    expect(
-      await db
-        .prepare("SELECT project_id FROM vault_snapshots")
-        .first<unknown>(),
-    ).toEqual({ project_id: "beta" });
-  });
+    expect(await readPublic("acme")).toMatchObject([
+      {
+        totalPaid: "98000000",
+        assetDecimals: 6,
+        blockNumber: "1000",
+      },
+    ]);
+  }
+  await refreshVaultSnapshots(
+    db,
+    [deployment],
+    {
+      "base-sepolia": "http://rpc.invalid",
+    },
+    async () => totals({ blockNumber: "999", totalDeposited: "1" }),
+  );
+  expect(await readPublic("acme")).toMatchObject([
+    { totalDeposited: "500000000", blockNumber: "1000" },
+  ]);
+  await refreshVaultSnapshots(
+    db,
+    [deployment],
+    {
+      "base-sepolia": "http://rpc.invalid",
+    },
+    async () => totals({ blockNumber: "1002", totalDeposited: "600000000" }),
+  );
+  expect(await readPublic("acme")).toMatchObject([
+    { totalDeposited: "600000000", blockNumber: "1002" },
+  ]);
 });
 
 describe("GET /api/v1/payments/projects/:id/vault", () => {
@@ -437,4 +396,77 @@ test("concurrent initial refreshes preserve asset identity and report superseded
       .prepare("SELECT asset_decimals,block_number FROM vault_snapshots")
       .first<unknown>(),
   ).toEqual({ asset_decimals: 6, block_number: "1002" });
+});
+
+test("bounded refresh advances healthy vaults while earlier reads wait and reports every failure", async () => {
+  const { db, sqlite } = sqliteD1();
+  const deferred = () => {
+    let finish = () => {};
+    const promise = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return { promise, finish: () => finish() };
+  };
+  const gates = Array.from({ length: 4 }, deferred);
+  const lastStarted = deferred();
+  const started: number[] = [];
+  const errors = [
+    new Error("first vault unavailable"),
+    new Error("second vault unavailable"),
+  ];
+  let active = 0;
+  let peak = 0;
+  const refreshing = refreshVaultSnapshots(
+    db,
+    Array.from({ length: 8 }, (_, index) => ({
+      ...deployment,
+      projectId: `parallel-${index}`,
+    })),
+    { "base-sepolia": "http://rpc.invalid" },
+    async (selected) => {
+      const index = Number(selected.projectId.slice("parallel-".length));
+      started.push(index);
+      active += 1;
+      peak = Math.max(peak, active);
+      if (index === 7) lastStarted.finish();
+      try {
+        if (index < 4) await gates[index].promise;
+        if (index < 2) throw errors[index];
+        return totals();
+      } finally {
+        active -= 1;
+      }
+    },
+  );
+  try {
+    expect(started).toEqual([0, 1, 2, 3]);
+    gates[2].finish();
+    gates[3].finish();
+    await lastStarted.promise;
+    expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(peak).toBe(4);
+    // Reverse completion order must not change the aggregate's input order.
+    gates[1].finish();
+    gates[0].finish();
+    const failure = await refreshing.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    if (!(failure instanceof AggregateError))
+      throw new Error("The refresh did not report its failed vaults");
+    expect(failure.errors).toEqual(errors);
+    expect(
+      sqlite
+        .query("SELECT project_id FROM vault_snapshots ORDER BY project_id")
+        .all(),
+    ).toEqual(
+      Array.from({ length: 6 }, (_, index) => ({
+        project_id: `parallel-${index + 2}`,
+      })),
+    );
+  } finally {
+    for (const gate of gates) gate.finish();
+    await refreshing.catch(() => {});
+    sqlite.close();
+  }
 });

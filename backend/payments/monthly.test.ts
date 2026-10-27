@@ -2160,3 +2160,85 @@ test("a concurrent project revision change refuses a prepared reserve release", 
     "project_changed",
   );
 });
+
+test("account keeps an award visible when a reservation is indexed during its read", async () => {
+  const token = "d".repeat(43);
+  sqlite
+    .prepare(
+      "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('node-account-race',?,'first',?,0)",
+    )
+    .run(A, afterCutoff.toISOString());
+  sqlite
+    .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
+    .run(
+      await sha256Hex(token),
+      "node-account-race",
+      "2027-01-01T00:00:00.000Z",
+    );
+  vault("1000");
+  await coordinate(afterCutoff);
+  let indexed = false;
+  let projections = 0;
+  const racingDb: ProjectD1Database = {
+    ...db,
+    prepare(query) {
+      const isAccountProjection = query.includes(
+        "FROM payment_obligations o LEFT JOIN payment_outbox",
+      );
+      type Statement = ReturnType<ProjectD1Database["prepare"]>;
+      const wrap = (statement: Statement): Statement => ({
+        ...statement,
+        bind: (...values) => wrap(statement.bind(...values)),
+        async first<T>() {
+          const result = await statement.first<T>();
+          if (isAccountProjection) {
+            projections += 1;
+            if (!indexed) {
+              indexed = true;
+              // The real writer's reservation becomes visible after this read.
+              // The response must contain the award before or after that change.
+              sqlite
+                .prepare(
+                  "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at,paid_transaction) VALUES(?,?,?,?,?,?,?,6,'600','12',?,'reserved',?,NULL)",
+                )
+                .run(
+                  `0x${"6".repeat(64)}`,
+                  project.id,
+                  A,
+                  "base-sepolia",
+                  "base",
+                  deployment.vault,
+                  deployment.asset,
+                  escrowAwardOrigin(project.id, "2026-11", A),
+                  afterCutoff.toISOString(),
+                );
+            }
+          }
+          return result;
+        },
+      });
+      return wrap(db.prepare(query));
+    },
+  };
+  const account = async () => {
+    const response = await handlePaymentsApi(
+      new Request("https://slop.cash/api/v1/payments/me", {
+        headers: { cookie: `__Host-slop_points=${token}` },
+      }),
+      { db: racingDb, now: () => afterCutoff },
+    );
+    expect(response.status).toBe(200);
+    return (await response.json()) as PaymentsAccount;
+  };
+  const during = await account();
+  expect(during.monthlyAwards).toMatchObject([
+    { grossBase: "600", netBase: "588", state: "awaiting-reservation" },
+  ]);
+  expect(during.payments).toEqual([]);
+  const after = await account();
+  expect(after.monthlyAwards).toEqual([]);
+  expect(after.payments).toMatchObject([
+    { grossBase: "600", netBase: "588", state: "reserved" },
+  ]);
+  expect(projections).toBe(2);
+});

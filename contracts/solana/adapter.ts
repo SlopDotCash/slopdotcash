@@ -949,7 +949,9 @@ export {
   base58 as solanaBase58,
   decode as solanaBase64Bytes,
   digest as solanaDigest,
+  programAddress as solanaProgramAddress,
   pubkey as solanaPubkey,
+  publicKeyBytes as solanaPublicKeyBytes,
   rpc as solanaRpc,
   uint as solanaUint,
 };

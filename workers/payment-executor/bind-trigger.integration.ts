@@ -40,6 +40,7 @@ import { onRequest } from "../../functions/api/v1/[[path]]";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
+import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { paymentStack } from "./configure.mjs";
 import { type JournalStore, pendingStoredBindings } from "./core";
 import worker, { PaymentSignerJournal, runDestinationBindings } from "./index";
@@ -344,9 +345,7 @@ try {
     .toLowerCase()}`;
 
   // (2) An admin revision records the vault in the project manifest.
-  const fixture = JSON.parse(
-    readFileSync(`${root}tests/fixtures/projects/eliza.json`, "utf8"),
-  );
+  const fixture = fixtureProject("eliza");
   const deployment = {
     network: "base-mainnet" as const,
     vault,
