@@ -2,7 +2,56 @@ import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 import { copyText } from "./lib/copy-text";
 
-/** Keep the complete verification value available while making it easy to copy. */
+/** A compact copy action with the same label for sighted and screen-reader users. */
+export function CopyButton({
+  label,
+  text,
+  successMessage = "Copied.",
+}: {
+  label: string;
+  text: string;
+  successMessage?: string;
+}) {
+  const [feedback, setFeedback] = useState<"copied" | "failed" | null>(null);
+  const action = `Copy ${label}`;
+  return (
+    <span className="operations-copy">
+      <button
+        type="button"
+        className="text-button operations-copy-button"
+        aria-label={action}
+        title={feedback === "copied" ? successMessage : action}
+        onClick={() => {
+          setFeedback(null);
+          void copyText(text).then(
+            () => setFeedback("copied"),
+            () => setFeedback("failed"),
+          );
+        }}
+      >
+        {feedback === "copied" ? (
+          <Check aria-hidden="true" />
+        ) : (
+          <Copy aria-hidden="true" />
+        )}
+      </button>
+      {feedback ? (
+        <span
+          role="status"
+          className={
+            feedback === "failed" ? "operations-copy-error" : "visually-hidden"
+          }
+        >
+          {feedback === "copied"
+            ? successMessage
+            : "Copy failed. Select and copy the text."}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** Preserve the complete value alongside its inline copy action. */
 export function CopyIdentifier({
   label,
   value,
@@ -10,29 +59,10 @@ export function CopyIdentifier({
   label: string;
   value: string;
 }) {
-  const [feedback, setFeedback] = useState("");
   return (
     <span className="operations-identifier">
       <code>{value}</code>
-      <button
-        type="button"
-        className="text-button"
-        aria-label={`Copy ${label}`}
-        onClick={() => {
-          void copyText(value).then(
-            () => setFeedback("Copied."),
-            () => setFeedback("Copy failed. Select the value above."),
-          );
-        }}
-      >
-        {feedback === "Copied." ? (
-          <Check aria-hidden="true" />
-        ) : (
-          <Copy aria-hidden="true" />
-        )}
-        Copy
-      </button>
-      {feedback ? <span role="status">{feedback}</span> : null}
+      <CopyButton label={label} text={value} />
     </span>
   );
 }

@@ -95,8 +95,8 @@ export default function VettingEvidencePage() {
       <p className="operations-caution">
         <LockKeyhole aria-hidden="true" />
         <span>
-          Designated vetting operators only. Evidence may contain hostile code
-          and private data.
+          Private operator access. Evidence may contain hostile code or private
+          data.
         </span>
       </p>
       {session.status !== "signed-in" ? (
@@ -167,8 +167,8 @@ export default function VettingEvidencePage() {
                 <h2>Evidence inventory</h2>
                 <StatusBadge icon={<LockKeyhole />}>Private</StatusBadge>
               </header>
-              <details className="security-reference">
-                <summary>Run details</summary>
+              <details className="security-reference operations-disclosure">
+                <summary>Run details and retention</summary>
                 <dl className="operations-facts">
                   <div>
                     <dt>Run</dt>
@@ -199,6 +199,13 @@ export default function VettingEvidencePage() {
                     <dd>{run.policy.version}</dd>
                   </div>
                 </dl>
+                <p className="operations-retention">
+                  {run.permanentAdmissionEvidence
+                    ? "Admission evidence is retained permanently. Each read requires a short-lived operator grant."
+                    : run.expiresAt === null
+                      ? "Case open. Evidence is retained until 90 days after closure."
+                      : `Access expires: ${run.expiresAt}.`}
+                </p>
               </details>
               {run.assembly ? (
                 <p className="operations-caution">
@@ -213,13 +220,7 @@ export default function VettingEvidencePage() {
                   </span>
                 </p>
               ) : null}
-              <p className="operations-retention">
-                {run.permanentAdmissionEvidence
-                  ? "Admission evidence is retained permanently. Each read still requires a short-lived operator grant."
-                  : run.expiresAt === null
-                    ? "Case open. Evidence remains available until 90 days after closure."
-                    : `Access expires: ${run.expiresAt}.`}
-              </p>
+
               {run.objects.length === 0 ? (
                 <p>No retained objects.</p>
               ) : (
@@ -232,15 +233,31 @@ export default function VettingEvidencePage() {
                     return (
                       <li key={object.sha256}>
                         <button
-                          className="button secondary-button"
+                          className="evidence-object-choice"
                           type="button"
                           aria-label={`Select ${object.label}, ${object.sha256.slice(0, 12)}`}
                           aria-pressed={selected === key}
                           onClick={() => setSelected(key)}
                         >
-                          {object.label} · {object.kind} ·{" "}
-                          {object.sizeBytes.toLocaleString()} bytes ·{" "}
-                          {object.state} · {object.sha256.slice(0, 12)}
+                          <span className="evidence-object-main">
+                            <strong>{object.label}</strong>
+                            <span className="evidence-object-meta">
+                              {object.kind} ·{" "}
+                              {object.sizeBytes.toLocaleString()} bytes
+                            </span>
+                          </span>
+                          <span className="evidence-object-status">
+                            <StatusBadge
+                              tone={
+                                object.state === "stored-unverified"
+                                  ? "neutral"
+                                  : "warning"
+                              }
+                            >
+                              {object.state}
+                            </StatusBadge>
+                            <code>{object.sha256.slice(0, 12)}</code>
+                          </span>
                         </button>
                       </li>
                     );
@@ -329,7 +346,7 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
     );
   }
   return (
-    <article className="evidence-object">
+    <article className="evidence-object operations-detail-panel">
       <header className="operations-card-heading">
         <h3>{object.label}</h3>
         <StatusBadge tone="warning">{object.state}</StatusBadge>

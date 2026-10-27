@@ -1,4 +1,5 @@
 import { useState } from "react";
+import "./operations-design.css";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
@@ -177,13 +178,16 @@ export function SecurityProgramEditor({
     );
   }
   return (
-    <section className="owner-section" aria-labelledby="owner-security-title">
+    <section
+      className="owner-section security-program-editor"
+      aria-labelledby="owner-security-title"
+    >
       <h2 id="owner-security-title">Security bounty</h2>
       <div className="owner-form">
-        <p>
-          You decide each award. The researcher receives 75%; Slop receives 25%.
+        <p className="operations-muted">
+          You decide each award: 75% to the researcher, 25% to Slop. Changes
+          apply to future reports only.
         </p>
-        <p>Changes apply to later reports only.</p>
         {existing && (
           <p>
             <Link href={`/projects/${project.slug}/security`}>
