@@ -19,6 +19,7 @@ import {
   type VaultSetupReview,
 } from "./lib/vault-setup";
 import { sameWalletAddress } from "./lib/wallets";
+import { NetworkName, WalletConnection } from "./Presentation";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
 type Pending = {
@@ -396,40 +397,57 @@ export function OwnerVaultSetup({
           <p>Vault creation is not available on this network yet.</p>
         ) : (
           <>
-            <label>
-              Network{" "}
-              <select
-                value={network}
-                disabled={busy}
-                onChange={(e) => {
-                  setNetwork(e.target.value);
-                  setWallet(null);
-                  setReview(null);
-                }}
+            {info.networks.length === 1 ? (
+              <NetworkName
+                chain={
+                  ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS].chain
+                }
               >
-                {info.networks.map((n) => (
-                  <option key={n} value={n}>
-                    {networkLabel(n)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p>
-              {wallet
-                ? `Connected: ${wallet.address}`
-                : "Connect your confirmed owner wallet."}
-            </p>
-            {wallets.map((w) => (
+                {networkLabel(network)}
+              </NetworkName>
+            ) : (
+              <label>
+                Network{" "}
+                <select
+                  value={network}
+                  disabled={busy}
+                  onChange={(e) => {
+                    setNetwork(e.target.value);
+                    setWallet(null);
+                    setReview(null);
+                  }}
+                >
+                  {info.networks.map((n) => (
+                    <option key={n} value={n}>
+                      {networkLabel(n)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <WalletConnection
+              address={wallet?.address ?? null}
+              wallets={wallets}
+              disabled={busy}
+              legend="Connect your confirmed owner wallet"
+              empty={
+                <p>
+                  Open this page in your wallet app or install a compatible
+                  wallet.
+                </p>
+              }
+              onConnect={(provider) => void connect(provider)}
+            />
+            {wallet ? (
               <button
-                key={w.id}
                 className="button secondary-button"
                 type="button"
                 disabled={busy}
-                onClick={() => void connect(w)}
+                onClick={() => setWallet(null)}
               >
-                Connect {w.name}
+                Choose another wallet
               </button>
-            ))}
+            ) : null}
             {wallet && !claim ? (
               <p>
                 <a href="/account#wallets">
@@ -466,31 +484,32 @@ export function OwnerVaultSetup({
               Review vault creation
             </button>
             {!wallet ? (
-              recoveryClaim ? (
-                <>
+              <details className="owner-vault-recovery">
+                <summary>Recover an existing vault</summary>
+                {recoveryClaim ? (
+                  <>
+                    <p>
+                      Recover without reconnecting your confirmed wallet.
+                      {!bounty
+                        ? " Use the automatic monthly payment setting selected at creation."
+                        : null}
+                    </p>
+                    <button
+                      className="button secondary-button"
+                      type="button"
+                      disabled={busy || Boolean(saved.error)}
+                      onClick={() => void reviewCreation(true)}
+                    >
+                      Recover existing vault
+                    </button>
+                  </>
+                ) : (
                   <p>
-                    Recover a vault you already created without reconnecting
-                    your confirmed wallet.
-                    {!bounty
-                      ? " Select the automatic monthly payment setting that you used at creation."
-                      : null}
+                    <a href="/account#wallets">Confirm a wallet</a> for this
+                    network, then reload the setup options.
                   </p>
-                  <button
-                    className="button secondary-button"
-                    type="button"
-                    disabled={busy || Boolean(saved.error)}
-                    onClick={() => void reviewCreation(true)}
-                  >
-                    Recover existing vault
-                  </button>
-                </>
-              ) : (
-                <p>
-                  To recover an existing vault,{" "}
-                  <a href="/account#wallets">confirm a wallet</a> for this
-                  network, then reload the setup options.
-                </p>
-              )
+                )}
+              </details>
             ) : null}
           </>
         )

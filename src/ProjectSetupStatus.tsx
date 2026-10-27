@@ -82,11 +82,13 @@ export function ProjectSetupStatusPanel({
   projectId,
   initial,
   onSetup,
+  showProjectLink = true,
 }: {
   projectId: string;
   initial?: ProjectSetupStatus;
   /** Tells the page the current setup, such as the scan exemption. */
   onSetup?: (setup: ProjectSetupStatus) => void;
+  showProjectLink?: boolean;
 }) {
   const [setup, setSetup] = useState<ProjectSetupStatus | null>(
     initial ?? null,
@@ -149,9 +151,9 @@ export function ProjectSetupStatusPanel({
         <>
           {setup.state !== "ready" ? (
             <p role="status">{setup.nextAction.message}</p>
-          ) : (
+          ) : showProjectLink ? (
             <Link href={`/projects/${setup.slug}`}>View project</Link>
-          )}
+          ) : null}
           <div className="handoff-actions">
             {setup.nextAction.kind === "install_slopbot" &&
             setup.nextAction.href ? (

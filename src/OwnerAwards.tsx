@@ -6,7 +6,7 @@ import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
-import { formatBaseUnits } from "./lib/payments/contracts";
+import { formatBaseUnits, ordinaryFee } from "./lib/payments/contracts";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
@@ -259,6 +259,14 @@ export default function OwnerAwards({
     view?.run && view.deployment?.network === view.run.network
       ? view.deployment.network
       : null;
+  const currentDeployment = view?.deployment;
+  const authorizationDeployment = currentDeployment
+    ? project.escrow?.deployments.find(
+        (deployment) =>
+          deployment.network === currentDeployment.network &&
+          deployment.vault === currentDeployment.vault,
+      )
+    : null;
   return (
     <section
       id="monthly-awards"
@@ -330,7 +338,6 @@ export default function OwnerAwards({
           {notice && <p role="status">{notice}</p>}
           {view && (
             <div>
-              <h3>{view.period} awards</h3>
               {view.deployment ? (
                 <NetworkName
                   chain={ESCROW_NETWORKS[view.deployment.network].chain}
@@ -338,29 +345,62 @@ export default function OwnerAwards({
                   {networkLabel(view.deployment.network)}
                 </NetworkName>
               ) : null}
-              <p>
-                Automatic allocation finalization is{" "}
-                <strong>{view.automatic ? "on" : "off"}</strong>.{" "}
-                {view.automatic
-                  ? cutoffPassed
-                    ? "The cutoff has passed. Current allocations are finalized automatically."
-                    : view.cutoffAt
-                      ? `Unless you finalize earlier, the current allocations are finalized at ${formatDateTime(view.cutoffAt)}.`
-                      : "Automatic finalization starts later. Finalize this month yourself."
-                  : "Finalize each month yourself."}
-                {project.reward.paymentMode !== "enabled" &&
-                  " Payments are disabled for this project."}
-              </p>
-              <button
-                className="button secondary-button"
-                type="button"
-                disabled={busy}
-                onClick={() => void toggleAutomatic()}
-              >
-                {view.automatic
-                  ? "Turn off automatic finalization"
-                  : "Turn on automatic finalization"}
-              </button>
+              <div className="owner-award-finalization">
+                <p>
+                  Automatic finalization{" "}
+                  <StatusBadge tone={view.automatic ? "success" : "neutral"}>
+                    {view.automatic ? "On" : "Off"}
+                  </StatusBadge>
+                  <span>
+                    {view.run ? (
+                      "This month is finalized."
+                    ) : view.automatic ? (
+                      cutoffPassed ? (
+                        "Cutoff passed · allocations are fixed while finalization completes."
+                      ) : view.cutoffAt ? (
+                        <>
+                          Finalizes{" "}
+                          <time dateTime={view.cutoffAt}>
+                            {formatDateTime(view.cutoffAt)}
+                          </time>
+                          . You can finalize earlier.
+                        </>
+                      ) : (
+                        "Finalize this month manually."
+                      )
+                    ) : (
+                      "Finalize each month manually."
+                    )}
+                  </span>
+                </p>
+                <button
+                  className="button secondary-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void toggleAutomatic()}
+                >
+                  {view.automatic
+                    ? "Turn off automatic finalization"
+                    : "Turn on automatic finalization"}
+                </button>
+              </div>
+              {authorizationDeployment && (
+                <p className="owner-award-authorization">
+                  Vault authorization{" "}
+                  <a
+                    href={`#vault-monthly-${authorizationDeployment.network}-${authorizationDeployment.vault}`}
+                  >
+                    Review current setting and cap
+                  </a>
+                  <span>
+                    Owner wallet review required; separate from allocation
+                    finalization.
+                  </span>
+                </p>
+              )}
+              {project.reward.paymentMode !== "enabled" && (
+                <p role="status">Payments are disabled for this project.</p>
+              )}
               {!view.proposal ? (
                 <p>No allocation is proposed for this month yet.</p>
               ) : !view.run ? (
@@ -386,46 +426,71 @@ export default function OwnerAwards({
                     <ul className="owner-award-list" aria-label="Allocations">
                       {view.proposal.allocations.map((row) => {
                         const id = `allocation-${row.githubUserId}`;
+                        // Finalization uses saved allocations, not unsaved input.
+                        // Frozen awards below retain the fee returned by the API.
+                        const fee = ordinaryFee(BigInt(row.grossBase));
                         return (
                           <li key={row.githubUserId}>
-                            <h4>{row.login}</h4>
-                            <dl>
-                              <dt>Proposed</dt>
-                              <dd>{amount(row.proposedGrossBase)}</dd>
+                            <div className="owner-award-recipient">
+                              <h4>{row.login}</h4>
+                              <details>
+                                <summary>Allocation basis</summary>
+                                <dl>
+                                  <dt>Proposed gross</dt>
+                                  <dd>{amount(row.proposedGrossBase)}</dd>
+                                </dl>
+                              </details>
+                            </div>
+                            <dl className="owner-award-breakdown">
+                              <dt>Saved gross</dt>
+                              <dd>{amount(row.grossBase)}</dd>
+                              <dt>Contributor receives</dt>
+                              <dd>
+                                {amount(
+                                  (BigInt(row.grossBase) - fee).toString(),
+                                )}
+                              </dd>
+                              <dt>Fee</dt>
+                              <dd>{amount(fee.toString())}</dd>
                             </dl>
-                            <label htmlFor={id} className="visually-hidden">
-                              Award for {row.login}
-                              {decimals === null ? " (base units)" : ""}
-                            </label>
-                            <input
-                              id={id}
-                              inputMode="decimal"
-                              spellCheck={false}
-                              disabled={busy || cutoffPassed}
-                              value={
-                                drafts[row.githubUserId] ??
-                                editableUnits(row.grossBase, decimals)
-                              }
-                              onChange={(event) =>
-                                setDrafts({
-                                  ...drafts,
-                                  [row.githubUserId]: event.target.value,
-                                })
-                              }
-                            />
-                            <button
-                              className="button secondary-button"
-                              type="button"
-                              disabled={
-                                busy ||
-                                cutoffPassed ||
-                                drafts[row.githubUserId] === undefined
-                              }
-                              aria-label={`Save ${row.login}`}
-                              onClick={() => void save(row.githubUserId)}
-                            >
-                              Save
-                            </button>
+                            <div className="owner-award-edit">
+                              <label htmlFor={id}>
+                                <span aria-hidden="true">Gross award</span>
+                                <span className="visually-hidden">
+                                  Award for {row.login}
+                                  {decimals === null ? " (base units)" : ""}
+                                </span>
+                              </label>
+                              <input
+                                id={id}
+                                inputMode="decimal"
+                                spellCheck={false}
+                                disabled={busy || cutoffPassed}
+                                value={
+                                  drafts[row.githubUserId] ??
+                                  editableUnits(row.grossBase, decimals)
+                                }
+                                onChange={(event) =>
+                                  setDrafts({
+                                    ...drafts,
+                                    [row.githubUserId]: event.target.value,
+                                  })
+                                }
+                              />
+                              <button
+                                className="button secondary-button"
+                                type="button"
+                                disabled={
+                                  busy ||
+                                  cutoffPassed ||
+                                  drafts[row.githubUserId] === undefined
+                                }
+                                aria-label={`Save ${row.login}`}
+                                onClick={() => void save(row.githubUserId)}
+                              >
+                                Save
+                              </button>
+                            </div>
                           </li>
                         );
                       })}
@@ -469,14 +534,7 @@ export default function OwnerAwards({
                             <dt>Contributor receives</dt>
                             <dd>{amount(award.netBase)}</dd>
                             <dt>Fee</dt>
-                            <dd>
-                              {amount(
-                                (
-                                  BigInt(award.grossBase) -
-                                  BigInt(award.netBase)
-                                ).toString(),
-                              )}
-                            </dd>
+                            <dd>{amount(award.feeBase)}</dd>
                             <dt>Status</dt>
                             <dd>
                               <StatusBadge
