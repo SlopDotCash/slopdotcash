@@ -462,7 +462,9 @@ label {
 }
 
 .footer-grid {
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
   align-items: end;
   gap: 32px;
 }
@@ -475,6 +477,9 @@ label {
 }
 
 .footer-links {
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
   flex-direction: column;
   flex-wrap: nowrap;
   align-items: flex-end;
@@ -485,6 +490,8 @@ label {
 
 .footer-links a {
   width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   color: var(--on-accent);
 }
 

@@ -252,6 +252,7 @@ test.beforeAll(async () => {
 test.afterAll(() => anvil?.kill("SIGTERM"));
 
 test("depositor funds a real vault, recovers a submitted transaction and owner withdraws only free funds", async ({
+  diagnostics,
   page,
 }, info) => {
   let account = donor;
@@ -702,7 +703,15 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   );
   expect(sends).toHaveLength(5);
   reviewAvailable = false;
+  const unavailableReview = diagnostics.allowResponse(
+    503,
+    "GET",
+    "/api/v1/payments/projects/eliza/monthly/2026-09",
+  );
   await page.reload();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Review temporarily unavailable",
+  );
   await expect(ownerActions).toBeVisible();
   await ownerActions
     .getByRole("button", { name: "Connect MetaMask", exact: true })
@@ -712,7 +721,8 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       name: "Authorize this award in wallet",
     }),
   ).toHaveCount(0);
-  expect(reviewReads).toBe(1);
+  expect(reviewReads).toBe(2);
+  expect(diagnostics.count(unavailableReview)).toBe(1);
   await ownerActions.getByLabel("Commitment transaction hash").fill(sends[1]);
   await ownerActions.getByRole("button", { name: "Check commitment" }).click();
   await expect(ownerActions.getByRole("alert")).toContainText(

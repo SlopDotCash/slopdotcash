@@ -873,10 +873,6 @@ small {
   text-align: center;
 }
 
-.footer-grid {
-  display: grid;
-}
-
 .footer-brand-row {
   display: flex;
   flex-wrap: wrap;

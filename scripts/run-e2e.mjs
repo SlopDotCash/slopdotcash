@@ -51,7 +51,10 @@ function runSync(command, args) {
     killSignal: "SIGKILL",
   });
   if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (result.status !== 0)
+    throw new Error(
+      `${command} failed with status ${result.status ?? "unknown"}`,
+    );
 }
 
 function runPhase(label, server, port, args, extraEnv = {}) {
@@ -123,8 +126,7 @@ function sessionToken() {
 }
 
 /** Creates a fresh local D1 with every migration and two site sessions. */
-function prepareRegistryDatabase() {
-  const persistTo = mkdtempSync(join(tmpdir(), "slop-e2e-d1-"));
+function prepareRegistryDatabase(persistTo) {
   const local = ["--local", "--persist-to", persistTo];
   runSync("node", [
     wrangler,
@@ -232,22 +234,27 @@ function prepareRegistryDatabase() {
 }
 
 async function runRegistryPhase() {
-  const database = prepareRegistryDatabase();
+  const persistTo = mkdtempSync(join(tmpdir(), "slop-e2e-d1-"));
   const githubPort = basePort + 3;
-  const github = await startGitHubApiFixture(githubPort);
-  const notify = await startNotifyWorkerFixture(
-    packageRoot,
-    database.persistTo,
-    basePort + 4,
-  );
-  const slopbot = await startSlopbotWorkerFixture(
-    packageRoot,
-    `http://127.0.0.1:${githubPort}`,
-    basePort + 5,
-    database.persistTo,
-  );
+  let github, notify, slopbot;
+  let failed = false;
+  let failure;
+  let status;
   try {
-    return await runPhase(
+    const database = prepareRegistryDatabase(persistTo);
+    github = await startGitHubApiFixture(githubPort);
+    notify = await startNotifyWorkerFixture(
+      packageRoot,
+      persistTo,
+      basePort + 4,
+    );
+    slopbot = await startSlopbotWorkerFixture(
+      packageRoot,
+      `http://127.0.0.1:${githubPort}`,
+      basePort + 5,
+      persistTo,
+    );
+    status = await runPhase(
       "registry",
       "pages",
       String(basePort + 2),
@@ -279,12 +286,35 @@ async function runRegistryPhase() {
           : {}),
       },
     );
+  } catch (error) {
+    failed = true;
+    failure = error;
   } finally {
-    github.close();
-    notify.close();
-    slopbot.close();
-    rmSync(database.persistTo, { force: true, recursive: true });
+    const cleanup = await Promise.allSettled([
+      Promise.resolve().then(() => slopbot?.close()),
+      Promise.resolve().then(() => notify?.close()),
+      Promise.resolve().then(() => github?.close()),
+      Promise.resolve().then(() =>
+        rmSync(persistTo, { force: true, recursive: true }),
+      ),
+    ]);
+    const errors = cleanup
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+    if (errors.length) {
+      const cleanupError = new AggregateError(
+        errors,
+        "Registry fixture cleanup failed",
+      );
+      if (failed) console.error(cleanupError);
+      else {
+        failed = true;
+        failure = cleanupError;
+      }
+    }
   }
+  if (failed) throw failure;
+  return status;
 }
 
 /** Runs the preview and Pages phases inside the fixture workspace. */
