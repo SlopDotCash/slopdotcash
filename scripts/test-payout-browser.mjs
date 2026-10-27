@@ -112,7 +112,8 @@ try {
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Browser wallet Detected" })
-    .click();
+    .focus();
+  await page.keyboard.press("Enter");
   await page
     .getByText("EVM wallet confirmed.", { exact: false })
     .waitFor({ timeout: 60000 });
