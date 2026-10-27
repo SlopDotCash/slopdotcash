@@ -124,7 +124,7 @@ This flow needs `reportStorage`, wired to the existing private R2 bucket under
 `security-reports/`; it does not need a GitHub reporting grant, PVR readiness,
 or a new provider. Missing private storage refuses acceptance. The source
 receipt, frozen policy, case, submission metadata and reporter Inbox notice
-commit together after exact report bytes are stored and checked. The case
+commit together after the validated report is stored and its digest checked. The case
 uses `receivedAtSource: "slop-received"`, `verifiedBy: "slop"` and no advisory.
 No GitHub receipt is invented. GitHub-backed historical receipts are unchanged.
 
