@@ -60,9 +60,17 @@ to `"true"` after the explicit production qualification and activation review.
      objective `low_quality` closure;
    - no circuit breaker and no daily cap hit;
    - a confirming second verdict (Surplus, falling back to GPT-6.1 Sol);
+   - no unresolved limitations in either verdict;
    - an unchanged item just before acting.
 
    Otherwise the bot only comments and labels.
+
+   The prompt asks for limitations that affect the finding, its rule or its
+   evidence. It never claims that unrun tests passed. Missing tests still
+   block a finding that depends on their results. Unknown loader behavior or
+   effects of an empty file's path or existence remain limitations. This
+   clarification does not relax the confirmation predicate, qualify a model
+   or enable closure.
 7. An uncertain finding goes to the maintainer first (PRD section 5). A
    finding is uncertain when its confidence is below 0.9, its cited rules or
    evidence fail the verbatim check, or the second review does not confirm.
