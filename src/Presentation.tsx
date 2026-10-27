@@ -91,19 +91,6 @@ export function AccountNav({
   );
 }
 
-export function EvidenceNav({ current }: { current: "receipts" | "cycles" }) {
-  return (
-    <SectionNav
-      label="Public records"
-      current={current}
-      links={[
-        { id: "receipts", label: "Receipts", href: "/receipts" },
-        { id: "cycles", label: "Cycles", href: "/cycles" },
-      ]}
-    />
-  );
-}
-
 /** Page framing for inner routes; no global or homepage typography changes. */
 export function RoutePageHeader({
   title,

@@ -205,18 +205,6 @@ test("shared navigation preserves project drafts and account sign-in destination
     page.getByRole("heading", { name: "Account", exact: true }),
   ).toBeVisible();
 
-  await page.goto("/cycles");
-  const records = page.getByRole("navigation", { name: "Public records" });
-  await records.getByRole("link", { name: "Receipts" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Run receipts" }),
-  ).toBeVisible();
-  await page.waitForLoadState("networkidle");
-  await records.getByRole("link", { name: "Cycles" }).focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("heading", { name: "Payment cycles" }),
-  ).toBeVisible();
   await enlargeText(page.locator("body"));
   await expectAccessible(page);
   expect(
@@ -1411,6 +1399,9 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   for (const path of [
     "/models",
     "/models/",
+    "/receipts",
+    "/receipts/",
+    "/receipts?q=old-run",
     "/operator/traces",
     "/operator/traces/",
   ]) {
@@ -1418,6 +1409,10 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     expect(response.status(), path).toBe(404);
     expect(await response.text(), path).not.toContain('<div id="root"></div>');
   }
+
+  const sitemap = await request.get("/sitemap.xml");
+  expect(sitemap.status()).toBe(200);
+  expect(await sitemap.text()).not.toContain("/receipts");
 
   const [
     bootstrapResponse,
@@ -1602,67 +1597,6 @@ for (const scenario of [
   });
 }
 
-test("finds a receipt and opens its full evidence and GitHub contribution", async ({
-  page,
-  request,
-}) => {
-  const snapshot = await loadSnapshot(request);
-  const entry = snapshot.attributions.find((entry) => entry.run !== null);
-  await page.goto("/receipts", { waitUntil: "networkidle" });
-  if (!entry?.run) {
-    await expect(page.locator(".receipt-record")).toHaveCount(0);
-    return;
-  }
-  await page
-    .getByRole("searchbox", { name: "Find a receipt" })
-    .fill(entry.run.runId);
-  const record = page.locator(".receipt-record");
-  await expect(record).toHaveCount(1);
-  await record.locator("summary").focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    record.getByText(entry.run.runId, { exact: true }),
-  ).toBeVisible();
-  await expect(
-    record.getByText(entry.run.skillRevision, { exact: true }),
-  ).toBeVisible();
-  await expect(
-    record.getByRole("link", {
-      name: new URL(entry.sourceUrl).pathname
-        .slice(1)
-        .replace(/\/(?:pull|issues)\//u, " #"),
-    }),
-  ).toHaveAttribute("href", entry.sourceUrl);
-  await expect(
-    record.getByRole("link", {
-      name: new URL(entry.sourceUrl).pathname
-        .slice(1)
-        .replace(/\/(?:pull|issues)\//u, " #"),
-    }),
-  ).toBeVisible();
-  await page
-    .getByRole("searchbox", { name: "Find a receipt" })
-    .fill("no-matching-receipt-000000");
-  await expect(page.locator(".receipt-record")).toHaveCount(0);
-  await page.getByRole("searchbox", { name: "Find a receipt" }).fill("");
-  // Receipts show 25 per page; the count names every receipt.
-  const total = snapshot.attributions.filter(
-    (entry) => entry.run !== null,
-  ).length;
-  await expect(page.locator(".receipt-count")).toHaveText(
-    `${total} of ${total} receipts`,
-  );
-  await expect(page.locator(".receipt-record")).toHaveCount(
-    Math.min(total, 25),
-  );
-  if (total > 25) {
-    await page.getByRole("button", { name: "Next", exact: true }).click();
-    await expect(page.locator(".receipt-record")).toHaveCount(
-      Math.min(total - 25, 25),
-    );
-  }
-});
-
 // All routes retain desktop/mobile checks. Extra widths cover each shared
 // layout family instead of repeating each project's identical layout.
 const breakpointRoutes = new Set([
@@ -1674,7 +1608,7 @@ const breakpointRoutes = new Set([
 ]);
 for (const route of [
   "latest cycle",
-  "/receipts",
+  "/cycles",
   "/sponsors",
   "/how-it-works",
   "/account",
@@ -1694,6 +1628,7 @@ for (const route of [
       path = `/cycles/${cycle.projectId}/${cycle.cycleId}`;
     }
     await page.goto(path, { waitUntil: "networkidle" });
+    await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
     const project = PROJECTS.find(
       (candidate) => path === `/projects/${candidate.id}`,
     );
@@ -1911,13 +1846,23 @@ test("lands direct and lazy cross-route hash links on their section", async ({
 test("refuses retired and unknown paths and recovers to projects", async ({
   page,
 }) => {
-  for (const path of ["/models", "/models/", "/constructor", "/__proto__"]) {
+  for (const path of [
+    "/models",
+    "/models/",
+    "/receipts",
+    "/receipts/",
+    "/receipts?q=old-run",
+    "/constructor",
+    "/__proto__",
+  ]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", { name: "Page not found", exact: true }),
     ).toBeVisible();
     await expect(page).toHaveTitle("Page not found · Slop");
     await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+    await expect(page.locator(".receipt-record")).toHaveCount(0);
+    await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
     await page
       .getByRole("link", { name: "See open projects", exact: true })
       .click();
