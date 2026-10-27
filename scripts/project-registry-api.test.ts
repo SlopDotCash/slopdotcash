@@ -1090,6 +1090,65 @@ async function publicationRequests() {
 }
 
 describe("generated skill publication", () => {
+  test("discovery lists only active cleared projects", async () => {
+    // #1411 D3 / bootstrap SKILL.md: the index is for agent setup. A paused
+    // project may still be cleared (legacy exemption) and may serve skill
+    // bytes, but the installer refuses status !== active. Keep the index
+    // identical so agents do not select work they must then refuse.
+    const { publication } = await publicationRequests();
+    await listProject();
+    const paused = await persistence.getProject("open-registry");
+    if (paused === null) throw new Error("project was not listed");
+    expect(paused.status).toBe("paused");
+    const active = {
+      ...paused,
+      id: "active-registry",
+      status: "active" as const,
+      manifest: {
+        ...paused.manifest,
+        id: "active-registry",
+        slug: "active-registry",
+        status: "active" as const,
+        skill: {
+          ...paused.manifest.skill,
+          id: "contribute-to-active-registry",
+        },
+        reviewSkill: {
+          ...paused.manifest.reviewSkill,
+          id: "review-active-registry-contributions",
+        },
+        repositories: [
+          {
+            ...paused.manifest.repositories[0],
+            id: "example/active-registry",
+            aliases: ["example/active-registry"],
+          },
+        ],
+      },
+    };
+    const cleared = {
+      state: "cleared" as const,
+      assessment: null,
+      grandfathered: true as const,
+    };
+    const get = (path: string) =>
+      handleProjectArtifactRequest(new Request(`${ORIGIN}${path}`), {
+        ...publication,
+        listProjects: async () => [paused, active],
+        vettingClearance: async () => cleared,
+      }) as Promise<Response>;
+    const before = await (await get("/.well-known/slop/projects.json")).json();
+    expect(before.projects).toEqual([
+      expect.objectContaining({
+        project_id: "active-registry",
+        repository: "example/active-registry",
+        skill: "contribute-to-active-registry",
+      }),
+    ]);
+    // Skill bytes for a cleared paused project remain available for inspection.
+    expect((await get("/projects/open-registry/skill.md")).status).toBe(200);
+  });
+
   test("historical clean metadata cannot publish skills without canonical closure", async () => {
     const { get } = await publicationRequests();
     expect((await get("/projects/open-registry/skill.md")).status).toBe(404);
