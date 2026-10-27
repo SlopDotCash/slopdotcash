@@ -258,6 +258,30 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     ),
   ).toBe(true);
   const restoreAllocationText = await enlargeText(page.locator("body"));
+  // Keep the exact saved amount together at enlarged text sizes; wrapping
+  // the asset onto another line is fine, splitting the number is not.
+  expect(
+    await awards
+      .locator(".owner-award-breakdown")
+      .first()
+      .locator("dd")
+      .evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const text = node.firstChild;
+          if (!text) return 0;
+          const range = document.createRange();
+          range.setStart(text, 0);
+          const value = text.textContent ?? "";
+          range.setEnd(
+            text,
+            value.indexOf(" ") < 0 ? value.length : value.indexOf(" "),
+          );
+          return new Set(
+            [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+          ).size;
+        }),
+      ),
+  ).toEqual([1, 1, 1]);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,

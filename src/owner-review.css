@@ -185,10 +185,11 @@
   }
 }
 
-.owner-awards .owner-award-list .owner-award-breakdown,
-.owner-awards .owner-award-list[aria-label="Final awards"] dl {
+.owner-awards .owner-award-list > li .owner-award-breakdown,
+.owner-awards .owner-award-list[aria-label="Final awards"] > li dl {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* This is already a narrow column inside the owner row, even on desktop. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.6rem;
 }
 .owner-awards .owner-award-list dl > div {
@@ -202,13 +203,10 @@
   grid-column: 1 / -1;
 }
 @media (max-width: 700px) {
-  .owner-awards .owner-award-list .owner-award-breakdown,
-  .owner-awards .owner-award-list[aria-label="Final awards"] dl {
-    grid-template-columns: 1fr;
-  }
   .owner-awards .owner-award-list dl > div {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 0.5rem;
+    /* Keep each exact amount intact instead of splitting a narrow value column. */
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.2rem;
   }
 }
