@@ -1,6 +1,7 @@
 /** The canonical authenticated payout response restores every network together. */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, expectAccessible, test } from "./fixtures";
+
+test.beforeEach(({ diagnostics }) => diagnostics.allowPreviewApiMisses());
 
 const wallets = [
   ["solana", "Solana", "11111111111111111111111111111111"],
@@ -55,13 +56,7 @@ test("Account Wallets restores all saved networks and public records after reloa
     if (visit === 0) await page.reload({ waitUntil: "networkidle" });
   }
   expect(writes).toEqual([]);
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("all-wallet-networks.png"),
     fullPage: true,
@@ -69,8 +64,12 @@ test("Account Wallets restores all saved networks and public records after reloa
 });
 
 test("unavailable wallet readback retries without inventing an empty account", async ({
+  diagnostics,
   page,
 }) => {
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at |503 GET )http:\/\/[^ ]+\/api\/v1\/payments\/me$/u,
+  );
   let available = false;
   await page.route("**/api/v1/payments/me", (route) =>
     available
@@ -95,8 +94,12 @@ test("unavailable wallet readback retries without inventing an empty account", a
 });
 
 test("expired wallet sessions require sign-in with an Account return path", async ({
+  diagnostics,
   page,
 }) => {
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at |401 GET )http:\/\/[^ ]+\/api\/v1\/payments\/me$/u,
+  );
   await page.route("**/api/v1/payments/me", (route) =>
     route.fulfill({ status: 401, json: { error: "not_signed_in" } }),
   );

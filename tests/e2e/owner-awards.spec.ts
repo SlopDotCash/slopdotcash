@@ -1,15 +1,19 @@
 /** Browser coverage of private monthly allocations; the API rules are tested in backend/payments/monthly.test.ts. */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { expect, expectAccessible, test } from "./fixtures";
 
 test("owner edits monthly allocations privately, finalizes them and keeps sign-in context", async ({
+  diagnostics,
   page,
 }, info) => {
+  // The signed-out and the refused allocation reads below.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at |401 GET )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/monthly\/2026-11$/u,
+    /^(?:console Failed to load resource: the server responded with a status of 403 \(Forbidden\) at |403 GET )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/monthly\/2026-11$/u,
+  );
   const project = PROJECTS.find((item) => item.id === "eliza");
   if (!project) throw new Error("Missing project fixture");
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
@@ -174,13 +178,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     path: info.outputPath("owner-monthly-allocations.png"),
     fullPage: true,
   });
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -203,7 +201,6 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await expect(awards).toContainText(
     "No allocation is proposed for this month yet.",
   );
-  expect(errors).toEqual([]);
 });
 
 test("owner reserve repair keeps healthy and unknown states held and restores a submitted transaction after reload", async ({
@@ -211,8 +208,6 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
 }, info) => {
   const project = PROJECTS.find((item) => item.id === "eliza");
   if (!project) throw new Error("Missing project fixture");
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
   await page.clock.setFixedTime(new Date("2026-12-02T12:00:00Z"));
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
@@ -331,17 +326,10 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
     path: info.outputPath("owner-reserve-release.png"),
     fullPage: true,
   });
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  expect(errors).toEqual([]);
 });

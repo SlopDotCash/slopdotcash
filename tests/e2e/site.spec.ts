@@ -5,8 +5,7 @@
  */
 
 import { createHash } from "node:crypto";
-import AxeBuilder from "@axe-core/playwright";
-import { type APIRequestContext, test as base, expect } from "@playwright/test";
+import type { APIRequestContext } from "@playwright/test";
 import { preparePullRequestLedger } from "../../scripts/prepare-pr-ledger";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
@@ -22,52 +21,11 @@ import {
 } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { CONTRIBUTION } from "../project-application-manifest";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
-
-const test = base.extend<{ browserDiagnostics: undefined }>({
-  browserDiagnostics: [
-    async ({ baseURL, page }, use, testInfo) => {
-      const failures: string[] = [];
-      const origin = new URL(baseURL ?? "http://127.0.0.1:4466").origin;
-      page.on("console", (message) => {
-        if (message.type() === "error") failures.push(message.text());
-      });
-      page.on("pageerror", (error) => failures.push(error.message));
-      page.on("requestfailed", (request) => {
-        if (new URL(request.url()).origin === origin) {
-          failures.push(
-            `${request.failure()?.errorText ?? "failed"} ${request.url()}`,
-          );
-        }
-      });
-      page.on("response", (response) => {
-        if (
-          new URL(response.url()).origin === origin &&
-          response.status() >= 400
-        ) {
-          failures.push(`${response.status()} ${response.url()}`);
-        }
-      });
-      await use(undefined);
-      await testInfo.attach("browser-diagnostics", {
-        body: JSON.stringify({
-          sourceRevision: testInfo.config.metadata.sourceRevision,
-          url: page.url(),
-          failures,
-        }),
-        contentType: "application/json",
-      });
-      expect(
-        failures,
-        "browser console, request, and response failures",
-      ).toEqual([]);
-    },
-    { auto: true },
-  ],
-});
 
 // Preview serves frozen data; registry.spec.ts exercises these routes on D1.
 test.beforeEach(async ({ page }) => {
@@ -462,9 +420,7 @@ test("shows the frozen record for a cycle the live window still covers", {
     (candidate) => candidate.reward.kind === "monthly-pool",
   );
   if (!project) throw new Error("Monthly project fixture is unavailable");
-  await page.goto(`/cycles/${project.id}/2025-01`, {
-    waitUntil: "networkidle",
-  });
+  await page.goto(`/cycles/${project.id}/2025-01`);
   await expect(
     page.getByRole("link", { name: "project page" }),
   ).toHaveAttribute("href", `/projects/${project.slug}`);
@@ -593,7 +549,7 @@ test("renders contributor and cycle records from validated public data", {
           `Showing ${shown} of ${cycles.cycles.length} published cycles`,
         ),
       ).toBeVisible();
-      await page.reload({ waitUntil: "networkidle" });
+      await page.reload();
       await expect(page.getByLabel("Project", { exact: true })).toHaveValue(
         archived.projectId,
       );
@@ -633,9 +589,7 @@ test("renders contributor and cycle records from validated public data", {
     ).toBe(archived.files.sourceSnapshot.sha256);
   } else {
     const view = createProjectView(snapshot, "eliza");
-    await page.goto(`/cycles/eliza/${view.cycle.id}`, {
-      waitUntil: "networkidle",
-    });
+    await page.goto(`/cycles/eliza/${view.cycle.id}`);
     await expect(
       page.getByRole("heading", {
         name: `Eliza · ${new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${view.cycle.id}-01T00:00:00Z`))}`,
@@ -647,6 +601,7 @@ test("renders contributor and cycle records from validated public data", {
 test("makes the public project draft boundary unmistakable", async ({
   page,
 }) => {
+  // The form must finish loading before it is edited.
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(
     page.getByRole("link", { name: "View vault funds and automatic payment" }),
@@ -677,17 +632,11 @@ test("makes the public project draft boundary unmistakable", async ({
   await expect(page.getByLabel("Short description")).toHaveValue(
     nextProject.headline,
   );
-  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  await page.goto("/projects/eliza/manage");
   await expect(page.getByLabel("Short description")).toHaveValue(
     "Eliza-only draft",
   );
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
 });
 
 test("publishes criteria changes directly and stops a stale maintainer draft", async ({
@@ -775,6 +724,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
       },
     }),
   );
+  // The form must finish loading before it is edited and published.
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
     project.contribution?.approvedScope ?? "",
@@ -835,13 +785,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     for (const { child, size } of sizes) child.style.fontSize = `${size * 2}px`;
   });
   await expectReadableReview();
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await review.screenshot({
     path: test.info().outputPath("criteria-review-200-percent-text.png"),
   });
@@ -908,7 +852,7 @@ test("reaches and reads older inbox notifications without losing the page", asyn
       if (keys.includes(n.eventKey)) n.readAt = "2026-10-22T01:00:00.000Z";
     return route.fulfill({ json: { ok: true } });
   });
-  await page.goto("/inbox", { waitUntil: "networkidle" });
+  await page.goto("/inbox");
   await expect(page.locator(".inbox-item")).toHaveCount(100);
   await page
     .getByRole("button", { name: "Mark shown as read", exact: true })
@@ -935,11 +879,6 @@ test("reaches and reads older inbox notifications without losing the page", asyn
 test("the inbox keeps read, acknowledged and email outcomes distinct and puts email settings after the notices", async ({
   page,
 }) => {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
   const notice = (
     i: number,
     emailDelivery: string | undefined,
@@ -1027,13 +966,7 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
       : 0;
   });
   expect(order).toBeGreaterThan(0);
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("inbox-delivery-states.png"),
     fullPage: true,
@@ -1042,11 +975,10 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await page.route("**/api/v1/notifications/email", (route) =>
     route.fulfill({ json: { enabled: false, availability: "unavailable" } }),
   );
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload();
   await expect(
     preferences.getByRole("button", { name: "Retry email preferences" }),
   ).toBeVisible();
-  expect(errors).toEqual([]);
 });
 
 test("an admin leaves an unset reward asset unchanged until choosing it", async ({
@@ -1145,7 +1077,7 @@ test("project pages omit full standings and sponsor links keep their destination
     exact: true,
   });
   await expect(standings).toHaveCount(0);
-  await page.goto("/sponsors", { waitUntil: "networkidle" });
+  await page.goto("/sponsors");
   await expect(
     page.getByRole("link", { name: "Eliza", exact: true }),
   ).toHaveAttribute("href", "/projects/eliza/funding");
@@ -1161,7 +1093,7 @@ test("project pages omit full standings and sponsor links keep their destination
 test("current payment guidance separates award approval from vault payment", async ({
   page,
 }) => {
-  await page.goto("/how-it-works", { waitUntil: "networkidle" });
+  await page.goto("/how-it-works");
   await expect(
     page.getByRole("list", { name: "Award review stages" }),
   ).toBeVisible();
@@ -1355,13 +1287,7 @@ test("shows an explicit error for invalid data and retries", async ({
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(page.locator(".reward-card")).not.toContainText("$0");
-  const errorAccessibility = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(
-    errorAccessibility.violations,
-    "data error state accessibility violations",
-  ).toEqual([]);
+  await expectAccessible(page);
   const failedAttempts = attempts;
   expect(failedAttempts).toBeGreaterThan(1);
   failSnapshot = false;
@@ -1388,10 +1314,10 @@ for (const scenario of [
   // its own timeout and the matrix runs across workers.
   test.describe(`reflow ${scenario.name}`, () => {
     // A describe-level condition skips before any page fixture is created.
-    // The wide desktop project is the only 1440 px viewport.
+    // The desktop project is the only Chromium 1440 px viewport.
     test.skip(
       ({ viewport }) => viewport?.width !== 1440,
-      "Runs once on wide-desktop-chromium",
+      "Runs once on chromium-desktop",
     );
     for (const path of [
       "/models",
@@ -1436,13 +1362,7 @@ for (const scenario of [
         await expect(page.locator(":focus")).toHaveAttribute("href", "#main");
         await page.keyboard.press("Tab");
         await expect(page.locator(":focus")).toHaveAttribute("href", "/");
-        const accessibility = await new AxeBuilder({ page })
-          .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-          .analyze();
-        expect(
-          accessibility.violations,
-          `${scenario.name} ${path} accessibility`,
-        ).toEqual([]);
+        await expectAccessible(page);
         const geometry = await page.evaluate(() => ({
           viewport: innerWidth,
           page: document.documentElement.scrollWidth,
@@ -1538,10 +1458,9 @@ for (const route of [
   "/projects/eliza/manage",
   "/projects/new",
 ]) {
-  test(`keeps ${route} accessible and inside the viewport`, async ({
-    page,
-    request,
-  }) => {
+  test(`keeps ${route} accessible and inside the viewport`, {
+    tag: "@layout",
+  }, async ({ page, request }) => {
     let path = route;
     if (route === "latest cycle") {
       const [cycle] = (await loadCycles(request)).cycles;
@@ -1586,10 +1505,7 @@ for (const route of [
         await expect(page.getByRole("alert")).toHaveCount(0);
       }
     }
-    const results = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-      .analyze();
-    expect(results.violations, `${path} accessibility violations`).toEqual([]);
+    await expectAccessible(page);
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - window.innerWidth,
     );
@@ -1673,6 +1589,8 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   page,
 }, testInfo) => {
   await page.goto("/sponsors", { waitUntil: "networkidle" });
+  // The page's records must finish loading before keyboard navigation
+  // leaves it, or the move cancels the read.
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByText("$4,900", { exact: true })).toBeVisible();
   const audience = page
@@ -1725,7 +1643,7 @@ test("lands direct hash links on their section", async ({ page }) => {
     ["/how-it-works#faq", "faq"],
     ["/#leaderboard", "leaderboard"],
   ] as const) {
-    await page.goto(path, { waitUntil: "networkidle" });
+    await page.goto(path);
     await expect(page.locator(`#${id}`)).toBeInViewport();
     expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   }

@@ -1,10 +1,16 @@
 /** Agent setup always offers a prompt; only a cleared project gets its own. */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("project agent setup falls back to the general prompt until cleared", async ({
   page,
   context,
+  diagnostics,
 }, info) => {
+  diagnostics.allowPreviewApiMisses();
+  // The unavailable clearance list below.
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at |503 GET )http:\/\/[^ ]+\/\.well-known\/slop\/projects\.json$/u,
+  );
   let state: "unavailable" | "blocked" | "cleared" = "unavailable";
   await page.route("**/.well-known/slop/projects.json", (route) =>
     state === "unavailable"

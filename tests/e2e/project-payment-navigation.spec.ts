@@ -1,9 +1,10 @@
 /** Route identity must hold even between the render and passive effects. */
 import { join } from "node:path";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import type { DirectTransfer } from "../../src/lib/payments/contracts";
 import { cycleIndexFixture, snapshotFixture } from "../fixtures";
+import { expect, test } from "./fixtures";
 
 const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -127,11 +128,6 @@ for (const navigation of ["project links", "browser history"] as const) {
     page,
   }, info) => {
     await fixtures(page);
-    const errors: string[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
-    page.on("console", (message) => {
-      if (message.type() === "error") errors.push(message.text());
-    });
     const nextResponse = gate();
     let nextRequests = 0;
     let holdNext = false;
@@ -202,7 +198,6 @@ for (const navigation of ["project links", "browser history"] as const) {
         body: JSON.stringify(observed, null, 2),
         contentType: "application/json",
       });
-      expect(errors).toEqual([]);
       expect(
         observed.leaks,
         "A's amount must never acquire B's route or disclosure identity",
@@ -214,15 +209,14 @@ for (const navigation of ["project links", "browser history"] as const) {
 }
 
 test("a late previous payment request cannot overwrite a retried project", async ({
+  diagnostics,
   page,
 }, info) => {
+  // The synthetic outage below is the only failure the browser reports.
+  const outageReport =
+    /^console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at https:\/\/[^ ]+\/api\/v1\/payments\/projects\/[^/ ]+\/direct-transfers$/u;
+  diagnostics.allow(outageReport);
   await fixtures(page);
-  const pageErrors: string[] = [];
-  const consoleErrors: string[] = [];
-  page.on("pageerror", (error) => pageErrors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
-  });
   const previousResponse = gate();
   const previousFulfilled = gate();
   let previousRequests = 0;
@@ -314,13 +308,7 @@ test("a late previous payment request cannot overwrite a retried project", async
     expect(observed.leaks).toEqual([]);
     expect(previousRequests).toBeGreaterThan(0);
     expect(nextRequests).toBeGreaterThanOrEqual(3);
-    expect(pageErrors).toEqual([]);
-    expect(consoleErrors.length).toBeGreaterThan(0);
-    expect(new Set(consoleErrors)).toEqual(
-      new Set([
-        "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
-      ]),
-    );
+    expect(diagnostics.count(outageReport)).toBeGreaterThan(0);
   } finally {
     previousResponse.release();
   }

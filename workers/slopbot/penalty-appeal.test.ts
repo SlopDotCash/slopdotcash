@@ -38,7 +38,14 @@ const { privateKey } = generateKeyPairSync("rsa", {
   publicKeyEncoding: { type: "spki", format: "pem" },
 });
 
-afterEach(() => setSystemTime());
+// Each harness stubs fetch. Resetting it after every test, and restoring only
+// a harness's own stub, keeps a timed-out test from leaking its stub into the
+// next harness.
+const realFetch = globalThis.fetch;
+afterEach(() => {
+  setSystemTime();
+  globalThis.fetch = realFetch;
+});
 
 const AUTHOR = 42;
 const MAINTAINER = 43;
@@ -467,17 +474,17 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       return new Response(null, { status: 404 });
     },
   });
-  const nativeFetch = globalThis.fetch;
-  globalThis.fetch = ((
+  const stub = ((
     url: Parameters<typeof fetch>[0],
     init: Parameters<typeof fetch>[1],
   ) => {
     const u = new URL(url instanceof Request ? url.url : String(url));
-    if (u.origin === new URL(server.url).origin) return nativeFetch(url, init);
+    if (u.origin === new URL(server.url).origin) return realFetch(url, init);
     if (u.hostname !== "api.github.com")
       throw new Error(`unexpected network request to ${u.hostname}`);
-    return nativeFetch(new URL(u.pathname + u.search, server.url), init);
+    return realFetch(new URL(u.pathname + u.search, server.url), init);
   }) as typeof fetch;
+  globalThis.fetch = stub;
   const sent: Job[] = [];
   const env = {
     SLOPBOT_DB: db as unknown as D1TransactionalDatabase,
@@ -754,7 +761,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
     });
   } finally {
     console.log = log;
-    globalThis.fetch = nativeFetch;
+    if (globalThis.fetch === stub) globalThis.fetch = realFetch;
     server.stop(true);
     sqlite.close();
   }
