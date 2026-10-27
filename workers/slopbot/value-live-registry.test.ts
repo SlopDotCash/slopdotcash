@@ -237,10 +237,17 @@ for (const change of [
  * requests waited as `authority` and were retried hourly, oldest first, and
  * 3,689 later requests had never been read. Replay that shape from the first
  * November schedule: 30 deliveries for 12 PRs merged in October, 15 November
- * PRs whose source stays unavailable, and then a new November request.
+ * PRs whose source stays unavailable, and then a new November request. Just
+ * before it, the same PR has a delivery under an App installation that was
+ * removed (an uninstall and reinstall). That delivery always retries and must
+ * not hold back the valid one.
  */
 test("old and failing requests cannot starve new valuation requests", async () => {
   const { db, sqlite } = liveRegistration();
+  sqlite.run(
+    "INSERT INTO slopbot_installations(installation_id,account_id,account_login,account_type,created_at,removed_at) VALUES (3,77,'fresh-registration','Organization',?,?)",
+    [at, "2026-11-01T03:00:00.000Z"],
+  );
   const env = {
     SLOPBOT_DB: db,
     SLOPBOT_APP_ID: "1",
@@ -261,8 +268,13 @@ test("old and failing requests cannot starve new valuation requests", async () =
       at: Date.parse("2026-11-01T00:10:00Z") + i * 60_000,
       number: 201 + i,
     })),
+    { at: Date.parse("2026-11-01T03:01:00Z"), number: 300, installationId: 3 },
     { at: Date.parse("2026-11-01T03:02:00Z"), number: 300 },
-  ].map((delivery, i) => ({ ...delivery, deliveryId: `delivery-${i}` }));
+  ].map((delivery, i) => ({
+    installationId: job.installationId,
+    ...delivery,
+    deliveryId: `delivery-${i}`,
+  }));
   const reads = new Map<number, number[]>();
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -304,10 +316,10 @@ test("old and failing requests cannot starve new valuation requests", async () =
         pending < deliveries.length && deliveries[pending].at <= tick;
         pending++
       ) {
-        const { at: received, deliveryId, number } = deliveries[pending];
+        const { at: received, ...delivery } = deliveries[pending];
         setSystemTime(new Date(received));
-        await recordDelivery(db, deliveryId, "issue_comment");
-        await recordValueRequest(db, { ...job, deliveryId, number });
+        await recordDelivery(db, delivery.deliveryId, "issue_comment");
+        await recordValueRequest(db, { ...job, ...delivery });
       }
       setSystemTime(new Date(tick));
       await worker.scheduled({}, env);
@@ -321,10 +333,12 @@ test("old and failing requests cannot starve new valuation requests", async () =
            WHERE r.pull_request_number=? GROUP BY p.state,p.outcome`,
         )
         .all(number);
-    // The new request is read by the first schedule after it arrives.
+    // The new request is read by the first schedule after it arrives. The
+    // delivery under the removed installation keeps retrying on its own.
     expect(reads.get(300)).toEqual([Date.parse("2026-11-01T03:05:00Z")]);
     expect(state(300)).toEqual([
       { state: "completed", outcome: "open", deliveries: 1 },
+      { state: "waiting", outcome: "retry", deliveries: 1 },
     ]);
     // One read settles every waiting delivery for a PR closed before the start.
     for (let number = 101; number <= 112; number++) {
