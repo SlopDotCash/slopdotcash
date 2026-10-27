@@ -164,21 +164,33 @@ function digest(value: string): Uint8Array {
     Number.parseInt(pair, 16),
   );
 }
+/** The RPC did not answer: a refused connection, a timeout, an HTTP error
+ * such as 429, or an unreadable or failed JSON-RPC response. It proves
+ * nothing about chain state, so the caller can only try again later. */
+export class SolanaRpcUnavailable extends Error {}
 async function rpc(
   config: { rpcUrl: string },
   method: string,
   params: unknown[],
 ): Promise<unknown> {
-  const response = await fetch(config.rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) throw new Error(`RPC HTTP failure ${response.status}`);
-  const body = object(await response.json());
+  let body: Obj;
+  try {
+    const response = await fetch(config.rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok)
+      throw new SolanaRpcUnavailable(`RPC HTTP failure ${response.status}`);
+    body = object(await response.json());
+  } catch (error) {
+    if (error instanceof SolanaRpcUnavailable) throw error;
+    // Keep the cause; the URL and the response body are not in the message.
+    throw new SolanaRpcUnavailable("RPC failure", { cause: error });
+  }
   if (body.id !== 1 || body.error || !("result" in body))
-    throw new Error("RPC failure");
+    throw new SolanaRpcUnavailable("RPC failure");
   return body.result;
 }
 function account(
