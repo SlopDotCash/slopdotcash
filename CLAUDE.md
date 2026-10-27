@@ -274,11 +274,14 @@ authorize this template revision:
 3. an open, non-draft, same-repository PR head into `main` with the
    maintainer-controlled `slop-release-candidate` label applied after the exact
    current-head commit event; or
-4. the `main` ancestor that is the head of the newest successful push release
-   of `main` in GitHub Actions, while a later `main` commit changed the
-   template and no release has published it yet. Only that one release
-   qualifies, the next successful release ends it, and a revision listed in
-   `protocol/skill-revocations.json` is refused regardless.
+4. the `main` ancestor used by the latest verified production publication,
+   from a push or manual release of the canonical GitHub Actions workflow,
+   while a later `main` commit changed the template. Require a successful
+   production job with completed source, publication and served-byte checks;
+   select by its completion, including successful earlier rerun attempts.
+   Only that revision qualifies until the next verified publication. Missing,
+   ambiguous or unbounded proof refuses; current `protocol/skill-revocations.json`
+   still overrides this exception. Project clearance and rollback checks stay.
 
 Reject candidates behind or divergent from `main`, missing or extra files,
 working-tree provenance, stale label events, mutable redirects, and byte
