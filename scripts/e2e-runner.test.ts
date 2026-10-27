@@ -16,14 +16,15 @@ test("a timed-out launcher stops its descendant server before returning failure"
   const descendant = `const fs = require("node:fs"); let count = 0; fs.writeFileSync(${JSON.stringify(heartbeat)}, "0"); fs.writeFileSync(${JSON.stringify(`${ready}.tmp`)}, String(process.pid)); fs.renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)}); setInterval(() => { fs.writeFileSync(${JSON.stringify(heartbeat)} + ".next", String(++count)); fs.renameSync(${JSON.stringify(heartbeat)} + ".next", ${JSON.stringify(heartbeat)}); }, 25);`;
   const launcher = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "inherit" }); setInterval(() => {}, 1000);`;
   let completed = false;
-  // Both Node processes must start before the cleanup deadline is exercised.
+  // Include cold launcher startup before exercising descendant termination.
+  // Native Windows CI can spend the former five-second budget before ready.
   const phase = runE2ePhase({
     label: "timeout-regression",
     command: "node",
     args: ["-e", launcher],
     cwd: directory,
     env: process.env,
-    timeoutMs: 5000,
+    timeoutMs: 15_000,
   }).then((status) => {
     completed = true;
     return status;
@@ -72,7 +73,7 @@ test("a timed-out launcher stops its descendant server before returning failure"
     }
   }
   if (failed) throw failure;
-}, 20_000);
+}, 30_000);
 
 test("a completed phase preserves successful and failed child exit codes", async () => {
   for (const status of [0, 7]) {
