@@ -418,6 +418,13 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   diagnostics.allow(
     /^(?:console Failed to load resource: the server responded with a status of 422 .* at |422 POST )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/solana-funding$/u,
   );
+  // The commitment service refuses the donor wallet, the wrong transaction
+  // and the repeated review below; the count is checked at the end.
+  const refusedCommitment = diagnostics.allowResponse(
+    422,
+    "POST",
+    "/api/v1/payments/projects/eliza/monthly/2026-09/solana-commitment",
+  );
   let selected = donor;
   let reject = false;
   let interrupted = false;
@@ -839,6 +846,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
     "already committed",
   );
   expect(sends).toHaveLength(3);
+  expect(diagnostics.count(refusedCommitment)).toBe(3);
   await expectAccessible(page);
   expect(
     await page.evaluate(
