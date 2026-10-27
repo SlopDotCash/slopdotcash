@@ -11,7 +11,14 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
@@ -33,11 +40,26 @@ import { isScanResult } from "../backend/vetting/scan-result";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
-import { runScanPass, type ScanServiceConfig } from "../workers/vetting/run";
 import {
+  composeScanResult,
+  executionInventory,
+  inspectRepository,
+  readAcquiredObject,
+  readAcquiredSource,
+} from "../workers/vetting/bounded-scan";
+import { publishResult } from "../workers/vetting/publication";
+import { acquireQueuedAssessment } from "../workers/vetting/queue";
+import {
+  runScanPass,
+  type ScanServiceConfig,
+  TEMPLATE_PREFIX,
+} from "../workers/vetting/run";
+import {
+  reviewScan,
   SCAN_REVIEW_AREAS,
   type ScannerProfile,
 } from "../workers/vetting/scanners";
+import { signedVettingFetch } from "../workers/vetting/service";
 
 const ORIGIN = "https://slop.cash";
 const NOW = new Date("2026-10-18T12:00:00.000Z");
@@ -740,6 +762,361 @@ function emptyCommit(message: string) {
   clock = new Date(clock.getTime() + 1000);
 }
 
+/** An explicitly accepted native fixture: proves reuse routing, not malware detection. */
+async function retainedNativeFixture(legacy = false, incomplete = false) {
+  await mkdir(config.workDirectory, { recursive: true });
+  await mkdir(config.journalDirectory, { recursive: true });
+  const native = new Uint8Array(32);
+  native.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]);
+  native[18] = 0x3e;
+  await commit({ "bin/helper": native }, "Retain native fixture source");
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("Missing native fixture project");
+  expect(
+    await queueAutomaticScan(vettingDeps(), project, "Native fixture"),
+  ).toBe("queued");
+  const assignment = (await vetting.pendingAssessments())[0];
+  const acquired = await acquireQueuedAssessment(
+    config.connection,
+    assignment.id,
+    config.workDirectory,
+  );
+  const source = await readAcquiredSource(acquired.directory);
+  const queued = JSON.parse(
+    await readFile(join(acquired.directory, "queued-inputs.json"), "utf8"),
+  ) as {
+    inputs: { path: string; sha256: string }[];
+  };
+  const files = [...source.files];
+  for (const file of queued.inputs)
+    files.push({
+      path: `${TEMPLATE_PREFIX}/${file.path}`,
+      bytes: await readAcquiredObject(acquired.directory, file.sha256),
+    });
+  const inspection = inspectRepository({ files });
+  const sourceBytes = inspection.inventory;
+  const sourceSha = inspection.inventorySha256;
+  const executionReport = new TextEncoder().encode(
+    JSON.stringify({
+      schema: "slop-isolated-artifact-v1",
+      runId: "00000000-0000-4000-8000-000000000001",
+      startedAt: NOW.toISOString(),
+      completedAt: NOW.toISOString(),
+      imageSha256: "c".repeat(64),
+      sourceSha: "d".repeat(40),
+      artifactSha256: digest(native),
+      interpreter: "binary",
+      internetEnabled: false,
+      status: "exited",
+      exitCode: 0,
+      stdoutBase64: "",
+      stderrBase64: "",
+      outputComplete: true,
+    }),
+  );
+  const extension = executionInventory(inspection);
+  expect(
+    extension.add(
+      "execution:00000000-0000-4000-8000-000000000001",
+      JSON.stringify({
+        ...JSON.parse(new TextDecoder().decode(executionReport)),
+        stdout: "",
+        stderr: "",
+      }),
+    ),
+  ).toBe(true);
+  extension.finish([]);
+  // The fixture represents an independently accepted clean analysis. The
+  // scanner itself never changes quarantine merely because execution exited.
+  for (const artifact of incomplete ? [] : inspection.artifacts) {
+    artifact.state = "released";
+    artifact.analysis = "detonation-clean";
+    artifact.requestedExecution = true;
+  }
+  const primary = await reviewScan({
+    evidence: new TextDecoder().decode(inspection.inventory),
+    inputSha256: inspection.inventorySha256,
+    profile: config.primary,
+    fetch: config.connection.fetch,
+  });
+  const composed = composeScanResult({
+    queued: {
+      assessmentId: assignment.id,
+      ...assignment,
+      repository: "example/open-registry",
+    },
+    inspection,
+    policyVersion: config.policyVersion,
+    runId: "native-original",
+    startedAt: NOW.toISOString(),
+    completedAt: NOW.toISOString(),
+    primary,
+    execution: {
+      isolation: "sandbox",
+      imageSha256: "c".repeat(64),
+      runId: "original-execution",
+      reason: "Explicit native fixture",
+      startedAt: NOW.toISOString(),
+      completedAt: NOW.toISOString(),
+      secretsProvided: false,
+      egress: "default-deny",
+    },
+    executionEvidenceSha256s: [digest(executionReport)],
+    ...(legacy ? {} : { sourceInventorySha256: sourceSha }),
+  });
+  expect(composed.result.disposition).toBe(incomplete ? "incomplete" : "clean");
+  type Stored = { bytes: Uint8Array; kind: "trace" | "manifest" | "artifact" };
+  const objects: Stored[] = [
+    { bytes: composed.report, kind: "trace" },
+    { bytes: sourceBytes, kind: "manifest" },
+    { bytes: inspection.inventory, kind: "manifest" },
+    { bytes: executionReport, kind: "trace" },
+    ...files
+      .filter(
+        (file) =>
+          composed.result.assessed.dependencyLocks.some(
+            (lock) => lock.sha256 === digest(file.bytes),
+          ) ||
+          composed.result.artifacts.some(
+            (artifact) => artifact.sha256 === digest(file.bytes),
+          ),
+      )
+      .map((file) => ({ bytes: file.bytes, kind: "artifact" as const })),
+  ];
+  const unique = new Map(
+    objects.map((object) => [digest(object.bytes), object]),
+  );
+  const path = `/api/v1/vetting/evidence/${assignment.id}/native-original`;
+  const registered = await signedVettingFetch(config.connection, {
+    method: "POST",
+    path,
+    contentType: "application/json",
+    timeoutMs: 30000,
+    body: new TextEncoder().encode(
+      JSON.stringify({
+        traceSha256: digest(composed.report),
+        objects: [...unique].map(([sha256, object]) => ({
+          sha256,
+          sizeBytes: object.bytes.length,
+          kind: object.kind,
+          label: "Native cache fixture",
+          contentType:
+            object.kind === "artifact"
+              ? "application/octet-stream"
+              : "application/json",
+        })),
+      }),
+    ),
+  });
+  expect(registered.status).toBe(201);
+  for (const [sha, object] of unique) {
+    const uploaded = await signedVettingFetch(config.connection, {
+      method: "PUT",
+      path: `${path}/${sha}`,
+      contentType:
+        object.kind === "artifact"
+          ? "application/octet-stream"
+          : "application/json",
+      timeoutMs: 30000,
+      body: object.bytes,
+    });
+    expect(uploaded.status).toBe(200);
+  }
+  const body = JSON.stringify(composed.result);
+  expect(
+    await publishResult({
+      origin: ORIGIN,
+      body,
+      approvedSha256: digest(body),
+      signer: config.connection,
+      journalDirectory: config.journalDirectory,
+      at: clock,
+      fetch: config.connection.fetch,
+    }),
+  ).toMatchObject({ outcome: "accepted" });
+  await rm(acquired.directory, { recursive: true, force: true });
+  return {
+    result: composed.result,
+    sourceSha,
+    finalSha: inspection.inventorySha256,
+    executionSha: digest(executionReport),
+    nativeSha: digest(native),
+    reportSha: digest(composed.report),
+    native,
+  };
+}
+
+function refuseFreshNativeWork() {
+  provider.calls = [];
+  provider.up = false;
+  const transport = config.connection.fetch;
+  if (!transport) throw new Error("Missing transport");
+  const attempts: string[] = [];
+  config.connection.fetch = (async (input, init) => {
+    if (String(input).endsWith("/api/v1/vetting/sandbox")) {
+      attempts.push("sandbox");
+      return new Response(null, { status: 503 });
+    }
+    return transport(input, init);
+  }) as typeof fetch;
+  return attempts;
+}
+
+test("identical native inputs reuse original execution and reviews before calling the sandbox", async () => {
+  const original = await retainedNativeFixture();
+  expect(original.sourceSha).not.toBe(original.finalSha);
+  const attempts = refuseFreshNativeWork();
+  for (const message of [
+    "First identical native successor",
+    "Second identical native successor",
+  ]) {
+    emptyCommit(message);
+    const pass = await runScanPass(config);
+    expect(pass.assessments[0]).toMatchObject({
+      state: "published",
+      outcome: "accepted",
+    });
+    const current = await vetting.getAssessment(
+      pass.assessments[0].assessmentId,
+    );
+    expect(current?.result).toMatchObject({
+      reusedAssessmentId: original.result.assessmentId,
+      assessed: {
+        commitSha,
+        sourceInventorySha256: original.sourceSha,
+        inputManifestSha256: original.finalSha,
+      },
+      scan: original.result.scan,
+      execution: original.result.execution,
+      primaryReview: original.result.primaryReview,
+      artifacts: original.result.artifacts,
+    });
+    if (!current?.result) throw new Error("Missing reused result");
+    expect(await retained.evidence.retained(current.result)).toBe(true);
+  }
+  expect(attempts).toEqual([]);
+  expect(provider.calls).toEqual([]);
+});
+
+test("native reuse intake rechecks the source binding even without a valid lookup", async () => {
+  const original = await retainedNativeFixture();
+  emptyCommit("Native successor with altered source binding");
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("Missing project");
+  expect(
+    await queueAutomaticScan(vettingDeps(), project, "Altered source binding"),
+  ).toBe("queued");
+  const assignment = (await vetting.pendingAssessments())[0];
+  const result = {
+    ...original.result,
+    assessmentId: assignment.id,
+    revision: assignment.revision,
+    manifestSha256: assignment.manifestSha256,
+    reusedAssessmentId: original.result.assessmentId,
+    assessed: {
+      ...original.result.assessed,
+      commitSha,
+      sourceInventorySha256: "f".repeat(64),
+    },
+  };
+  const body = JSON.stringify(result);
+  expect(
+    await publishResult({
+      origin: ORIGIN,
+      body,
+      approvedSha256: digest(body),
+      signer: config.connection,
+      journalDirectory: config.journalDirectory,
+      at: clock,
+      fetch: config.connection.fetch,
+    }),
+  ).toMatchObject({ outcome: "rejected", httpStatus: 422 });
+  expect((await vetting.getAssessment(assignment.id))?.state).toBe("pending");
+});
+
+test("an incomplete retained native analysis is never reused as clean", async () => {
+  const original = await retainedNativeFixture(false, true);
+  expect(await retained.evidence.retained(original.result)).toBe(true);
+  const attempts = refuseFreshNativeWork();
+  emptyCommit("Same native bytes after incomplete analysis");
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({
+    state: "retry",
+    step: "isolated-execution",
+  });
+  expect(attempts).toEqual(["sandbox"]);
+  expect(provider.calls).toEqual([]);
+  expect(
+    (await vetting.getAssessment(original.result.assessmentId))?.state,
+  ).toBe("incomplete");
+});
+
+for (const change of ["bytes", "path", "legacy"] as const) {
+  test(`native reuse refuses ${change} without reusing an unrelated final inventory`, async () => {
+    const original = await retainedNativeFixture(change === "legacy");
+    const attempts = refuseFreshNativeWork();
+    if (change === "bytes") {
+      original.native[31] = 1;
+      await commit({ "bin/helper": original.native }, "Changed native bytes");
+    } else if (change === "path")
+      await commit({ "bin/second-helper": original.native }, "New native path");
+    else emptyCommit("Legacy native result lacks source binding");
+    const pass = await runScanPass(config);
+    expect(pass.assessments[0]).toMatchObject({
+      state: "retry",
+      step: "isolated-execution",
+    });
+    expect(attempts).toEqual(["sandbox"]);
+    expect(provider.calls).toEqual([]);
+  });
+}
+
+for (const kind of [
+  "sourceSha",
+  "finalSha",
+  "executionSha",
+  "reportSha",
+  "nativeSha",
+] as const) {
+  for (const damage of ["missing", "corrupt"] as const) {
+    test(`native reuse refuses ${damage} retained ${kind} evidence`, async () => {
+      const original = await retainedNativeFixture();
+      const row = sqlite
+        .query(
+          "SELECT object_key, size_bytes FROM vetting_evidence_objects WHERE assessment_id=? AND sha256=?",
+        )
+        .get(original.result.assessmentId, original[kind]) as {
+        object_key: string;
+        size_bytes: number;
+      };
+      if (damage === "missing") await retained.bucket.delete(row.object_key);
+      else {
+        const object = await retained.bucket.head(row.object_key);
+        if (!object) throw new Error("Missing fixture evidence");
+        await retained.bucket.put(
+          row.object_key,
+          new Uint8Array(row.size_bytes).fill(42),
+          // Deliberately bypass the fixture's immutable-write option to
+          // simulate storage corruption, not an application upload.
+          {
+            httpMetadata: { contentType: "application/json" },
+            customMetadata: object.customMetadata,
+          } as Parameters<typeof retained.bucket.put>[2],
+        );
+      }
+      const attempts = refuseFreshNativeWork();
+      emptyCommit(`Native successor with ${damage} ${kind}`);
+      const pass = await runScanPass(config);
+      expect(pass.assessments[0]).toMatchObject({
+        state: "retry",
+        step: "isolated-execution",
+      });
+      expect(attempts).toEqual(["sandbox"]);
+      expect(provider.calls).toEqual([]);
+    });
+  }
+}
+
 test("scan reuse does not disclose a cached result without a service signature", async () => {
   const first = await runScanPass(config);
   const transport = config.connection.fetch;
@@ -855,39 +1232,42 @@ for (const change of ["policy", "template"] as const) {
   });
 }
 
-test("scan reuse is revalidated at publication after a two-flag pause", async () => {
-  await runScanPass(config);
-  expect((await activate()).status).toBe(200);
-  provider.calls = [];
-  emptyCommit("Same bytes before pause");
-  const transport = config.connection.fetch;
-  if (!transport) throw new Error("Missing fixture transport");
-  let paused = false;
-  config.connection.fetch = (async (input, init) => {
-    const response = await transport(input, init);
-    if (String(input).endsWith("/api/v1/vetting/reuse") && response.ok) {
-      const value = await response.clone().json();
-      if (value.result !== null && !paused) {
-        paused = true;
-        expect((await flag("alice")).status).toBe(201);
-        expect((await flag("bob")).status).toBe(201);
+for (const originalKind of ["text", "native"] as const) {
+  test(`scan reuse of ${originalKind} is revalidated at publication after a two-flag pause`, async () => {
+    if (originalKind === "native") await retainedNativeFixture();
+    else await runScanPass(config);
+    expect((await activate()).status).toBe(200);
+    provider.calls = [];
+    emptyCommit("Same bytes before pause");
+    const transport = config.connection.fetch;
+    if (!transport) throw new Error("Missing fixture transport");
+    let paused = false;
+    config.connection.fetch = (async (input, init) => {
+      const response = await transport(input, init);
+      if (String(input).endsWith("/api/v1/vetting/reuse") && response.ok) {
+        const value = await response.clone().json();
+        if (value.result !== null && !paused) {
+          paused = true;
+          expect((await flag("alice")).status).toBe(201);
+          expect((await flag("bob")).status).toBe(201);
+        }
       }
-    }
-    return response;
-  }) as typeof fetch;
-  const pass = await runScanPass(config);
-  expect(paused).toBe(true);
-  expect(pass.assessments[0]).toMatchObject({
-    state: "published",
-    outcome: "rejected",
+      return response;
+    }) as typeof fetch;
+    const pass = await runScanPass(config);
+    expect(paused).toBe(true);
+    expect(pass.assessments[0]).toMatchObject({
+      state: "published",
+      outcome: "rejected",
+    });
+    expect(provider.calls).toEqual([]);
+    expect(await flags.activeFlags(clock)).toHaveLength(2);
+    expect(
+      projectRestriction("open-registry", await projects.listEnforcements())
+        .state,
+    ).toBe("quarantined");
   });
-  expect(provider.calls).toEqual([]);
-  expect(await flags.activeFlags(clock)).toHaveLength(2);
-  expect(
-    projectRestriction("open-registry", await projects.listEnforcements())
-      .state,
-  ).toBe("quarantined");
-});
+}
 
 test("scan reuse requires the original report to remain in private R2", async () => {
   const first = await runScanPass(config);
@@ -912,27 +1292,38 @@ test("scan reuse requires the original report to remain in private R2", async ()
   expect(next.assessments[0]).toMatchObject({ outcome: "accepted" });
 });
 
-test("scan reuse rejects a response rebound to a different commit before publishing or reviewing", async () => {
-  await runScanPass(config);
-  provider.calls = [];
-  emptyCommit("Same source with mismatched lookup response");
-  const transport = config.connection.fetch;
-  if (!transport) throw new Error("Missing fixture transport");
-  config.connection.fetch = (async (input, init) => {
-    const response = await transport(input, init);
-    if (!String(input).endsWith("/api/v1/vetting/reuse") || !response.ok)
-      return response;
-    const value = await response.json();
-    value.result.assessed.commitSha = "f".repeat(40);
-    return Response.json(value);
-  }) as typeof fetch;
-  const pass = await runScanPass(config);
-  expect(pass.assessments[0]).toMatchObject({ state: "retry", step: "reuse" });
-  expect(provider.calls).toEqual([]);
-  expect(
-    (await vetting.pendingAssessments()).map((row) => row.commitSha),
-  ).toContain(commitSha);
-});
+for (const field of [
+  "commitSha",
+  "sourceInventorySha256",
+  "inputManifestSha256",
+] as const) {
+  test(`scan reuse rejects a mismatched ${field} before publishing or reviewing`, async () => {
+    await runScanPass(config);
+    provider.calls = [];
+    emptyCommit("Same source with mismatched lookup response");
+    const transport = config.connection.fetch;
+    if (!transport) throw new Error("Missing fixture transport");
+    config.connection.fetch = (async (input, init) => {
+      const response = await transport(input, init);
+      if (!String(input).endsWith("/api/v1/vetting/reuse") || !response.ok)
+        return response;
+      const value = await response.json();
+      value.result.assessed[field] = "f".repeat(
+        field === "commitSha" ? 40 : 64,
+      );
+      return Response.json(value);
+    }) as typeof fetch;
+    const pass = await runScanPass(config);
+    expect(pass.assessments[0]).toMatchObject({
+      state: "retry",
+      step: "reuse",
+    });
+    expect(provider.calls).toEqual([]);
+    expect(
+      (await vetting.pendingAssessments()).map((row) => row.commitSha),
+    ).toContain(commitSha);
+  });
+}
 
 for (const status of [404, 503]) {
   test(`scan reuse lookup HTTP ${status} leaves pending work without a provider fallback`, async () => {

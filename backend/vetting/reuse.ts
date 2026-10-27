@@ -4,7 +4,11 @@ import {
   pausedByFlagsOnly,
 } from "../projects/enforcement";
 import type { VettingAssessment } from "./persistence";
-import { isScanResult, type VettingScanResult } from "./scan-result";
+import {
+  isScanResult,
+  scanSourceInventory,
+  type VettingScanResult,
+} from "./scan-result";
 
 export function reusableCleanScan(
   cached: VettingAssessment | null,
@@ -29,6 +33,8 @@ export function reusableCleanScan(
       result.assessed.repository.toLowerCase() &&
     prior.assessed.inputManifestSha256 ===
       result.assessed.inputManifestSha256 &&
+    scanSourceInventory(prior) !== null &&
+    scanSourceInventory(prior) === scanSourceInventory(result) &&
     prior.assessed.templateSha256 === result.assessed.templateSha256 &&
     prior.policyVersion === result.policyVersion &&
     prior.scan.runId === result.scan.runId &&

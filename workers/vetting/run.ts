@@ -27,6 +27,7 @@ import {
   isScanResult,
   parseRecordedVettingResult,
   recordedResultProblems,
+  scanSourceInventory,
   type VettingScanResult,
 } from "../../backend/vetting/scan-result";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
@@ -372,23 +373,17 @@ async function scanOne(
       return retry(assessmentId, "acquire", error);
     }
     const inspection = inspectRepository(inputs);
-    let isolated: Awaited<ReturnType<typeof inspectIsolatedArtifacts>>;
-    try {
-      isolated = await inspectIsolatedArtifacts({
-        connection,
-        files: inputs.files,
-        inspection,
-      });
-    } catch (error) {
-      return retry(assessmentId, "isolated-execution", error);
-    }
+    // Retain the exact deterministic input separately from the final inventory
+    // that includes execution IDs, timestamps and output. Neither is normalized.
+    const sourceInventory = inspection.inventory;
+    const sourceInventorySha256 = inspection.inventorySha256;
     let reused: VettingScanResult | null;
     try {
       reused = await reusableResult(
         config,
         assessment,
         inputs.repository,
-        inspection.inventorySha256,
+        sourceInventorySha256,
       );
     } catch (error) {
       return retry(assessmentId, "reuse", error);
@@ -413,6 +408,16 @@ async function scanOne(
         specialist: false,
         evidence: "retained",
       };
+    }
+    let isolated: Awaited<ReturnType<typeof inspectIsolatedArtifacts>>;
+    try {
+      isolated = await inspectIsolatedArtifacts({
+        connection,
+        files: inputs.files,
+        inspection,
+      });
+    } catch (error) {
+      return retry(assessmentId, "isolated-execution", error);
     }
     const executionEvidenceSha256s = await Promise.all(
       isolated.reports.map(sha256Hex),
@@ -443,6 +448,7 @@ async function scanOne(
         specialist,
         execution: isolated.execution,
         executionEvidenceSha256s,
+        sourceInventorySha256,
       });
     let composed = compose(null);
     let specialist = false;
@@ -465,6 +471,12 @@ async function scanOne(
         bytes: composed.report,
         kind: "trace",
         label: "Bounded scan report",
+        contentType: "application/json",
+      },
+      {
+        bytes: sourceInventory,
+        kind: "manifest",
+        label: "Acquired scan input inventory",
         contentType: "application/json",
       },
       {
@@ -568,7 +580,7 @@ async function reusableResult(
     result.assessed.repository.toLowerCase() !== repository.toLowerCase() ||
     result.assessed.commitSha !== assessment.commitSha ||
     result.assessed.templateSha256 !== assessment.templateSha256 ||
-    result.assessed.inputManifestSha256 !== inventorySha256 ||
+    scanSourceInventory(result) !== inventorySha256 ||
     result.policyVersion !== config.policyVersion ||
     recordedResultProblems(result).length > 0
   )
