@@ -336,6 +336,17 @@ production arrangement: the attester binds on its schedule
 (`SCHEDULED_BINDINGS`), the dispatcher has no schedule, and an independent
 [operator keeper](../operator-keeper/README.md) submits payments.
 
+The normal `development` release verifies the checked staging registry artifact
+before publishing its pinned attesters through `release-staging.mjs`. It checks every selected Worker's dedicated
+test-secret names before publishing any of them, retains its existing journal,
+and verifies the exact release tag before adding its `MonthlyReserveRelease`
+named binding to the staging Pages artifact. An unpinned test network gets no
+attester or release binding. The supported staging networks include Solana
+devnet; its registry deployment and `TEST_SOLANA_SIGNER_SEED` must exist before
+its service can release. Production bindings, signer powers, and the November
+start with the 72-hour cutoff are unchanged. This is release wiring, not proof
+of public-testnet reserve recovery or permission to upgrade a program.
+
 This command does not create resources or deploy. Generated configuration has
 `workers_dev: false`, `preview_urls: false`, no routes, and the SQLite Durable
 Object migration. It emits an attester, relayer, and five-minute scheduled dispatcher
