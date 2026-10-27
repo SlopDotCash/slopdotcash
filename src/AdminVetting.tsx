@@ -178,10 +178,14 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
   const gaps =
     result?.telemetry?.visibilityGaps ?? result?.visibilityGaps ?? [];
   return (
-    <details>
+    <details className="operations-disclosure assessment-details">
       <summary>
-        Revision {assessment.revision} · {STATE_TEXT[assessment.state]} ·{" "}
-        {time(assessment.completedAt ?? assessment.requestedAt)}
+        <span>
+          Revision {assessment.revision} · {STATE_TEXT[assessment.state]}
+        </span>
+        <time dateTime={assessment.completedAt ?? assessment.requestedAt}>
+          {time(assessment.completedAt ?? assessment.requestedAt)}
+        </time>
       </summary>
       <dl className="admin-facts">
         <div>
@@ -281,10 +285,22 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
       {result && result.findings.length > 0 ? (
         <>
           <h4>Findings</h4>
-          <ul>
+          <ul className="operations-findings">
             {result.findings.map((finding) => (
               <li key={`${finding.category}-${finding.summary}`}>
-                {finding.severity} · {finding.category}: {finding.summary}
+                <StatusBadge
+                  tone={
+                    finding.severity === "critical" ||
+                    finding.severity === "high"
+                      ? "danger"
+                      : "warning"
+                  }
+                >
+                  {finding.severity}
+                </StatusBadge>
+                <span>
+                  <strong>{finding.category}</strong> — {finding.summary}
+                </span>
               </li>
             ))}
           </ul>
@@ -293,11 +309,20 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
       {result && result.artifacts.length > 0 ? (
         <>
           <h4>Artifact quarantine</h4>
-          <ul>
+          <ul className="operations-artifact-list">
             {result.artifacts.map((artifact) => (
               <li key={`${artifact.sha256}-${artifact.path}`}>
-                {artifact.path} ({artifact.type}) · {artifact.state} ·{" "}
-                {artifact.analysis} · {artifact.sha256.slice(0, 12)}
+                <div className="operations-card-heading">
+                  <strong>{artifact.path}</strong>
+                  <StatusBadge>{artifact.state}</StatusBadge>
+                </div>
+                <p className="operations-muted">
+                  {artifact.type} · {artifact.analysis}
+                </p>
+                <CopyIdentifier
+                  label={`${artifact.path} digest`}
+                  value={artifact.sha256}
+                />
               </li>
             ))}
           </ul>

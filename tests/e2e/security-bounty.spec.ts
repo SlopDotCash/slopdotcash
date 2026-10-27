@@ -2187,7 +2187,12 @@ test("private settlement requires visibility consent and produces an unsigned re
   await page.getByRole("button", { name: "Copy unsigned request" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Request copied." }),
-  ).toBeVisible();
+  ).toHaveText("Request copied.");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    await page
+      .getByRole("textbox", { name: "Unsigned transaction request" })
+      .inputValue(),
+  );
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth + 1,
