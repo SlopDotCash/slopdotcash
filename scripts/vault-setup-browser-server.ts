@@ -250,6 +250,24 @@ Bun.serve({
       }
       // The prepared browser build points its boot inventory at this local URL.
       // Serve the real D1 registry handler there, not the static fixture snapshot.
+      if (
+        request.method === "GET" &&
+        url.pathname === `/api/v1/security-programs/${input.project.id}/intake`
+      ) {
+        // This local-chain fixture has no GitHub private-reporting service.
+        // Bounty management shares the Security page, so disclose that the
+        // unrelated report handoff is disabled instead of returning a 404.
+        return Response.json({
+          state: "disabled",
+          automatic: "off",
+          automaticConfigured: false,
+          checkedAt: now().toISOString(),
+          stale: false,
+          maxAgeSeconds: 300,
+          paidParticipation: "closed",
+          handoffUrl: null,
+        });
+      }
       const projectRequest =
         url.pathname === "/data/fixture-project-registry.json"
           ? new Request(`${origin}/api/v1/projects`, request)
