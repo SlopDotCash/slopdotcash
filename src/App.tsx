@@ -27,9 +27,9 @@ import {
   type PromotionCycle,
   projectPromotionEligible,
 } from "./lib/allocation-funding";
-import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { copyText } from "./lib/copy-text";
+import { directPaymentDisclosureUrl } from "./lib/direct-payment-disclosures";
 import { communityProjects, homeProjects } from "./lib/home-projects";
 import { networkLabel } from "./lib/network-names";
 import { formatAssetAmount } from "./lib/payments/contracts";
@@ -1089,20 +1089,27 @@ function ProjectPaymentHistory({
           </button>
         </p>
       ) : null}
-      {[...direct].map(([month, { amount, count, paidOn }]) => (
-        <p className="money-summary" key={month}>
-          <strong>{formatMicroUsdc(amount.toString())} paid directly</strong>
-          <span>
-            Paid {formatDate(paidOn)} for {formatCycleMonth(month)} work ·{" "}
-            {count} transfers ·{" "}
-            <ExternalLinkAnchor
-              href={`${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/disclosures/${project.id}-${month}-direct-payments.json`}
-            >
-              Disclosure
-            </ExternalLinkAnchor>
-          </span>
-        </p>
-      ))}
+      {[...direct].map(([month, { amount, count, paidOn }]) => {
+        const disclosure = directPaymentDisclosureUrl(project.id, month);
+        return (
+          <p className="money-summary" key={month}>
+            <strong>{formatMicroUsdc(amount.toString())} paid directly</strong>
+            <span>
+              Paid {formatDate(paidOn)} for {formatCycleMonth(month)} work ·{" "}
+              {count} transfers
+              {disclosure ? (
+                <>
+                  {" "}
+                  ·{" "}
+                  <ExternalLinkAnchor href={disclosure}>
+                    Disclosure
+                  </ExternalLinkAnchor>
+                </>
+              ) : null}
+            </span>
+          </p>
+        );
+      })}
       {cycles.length === 0 ? (
         <EmptyState text="No cycles have closed yet." />
       ) : (

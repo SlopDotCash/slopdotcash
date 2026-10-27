@@ -10,14 +10,16 @@ const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 ).site;
 const firstProject = "eliza";
-const nextProject = "slopdotcash";
+const nextProject = "asi";
 const firstAmount = "$111.11 paid directly";
 const nextAmount = "$222.22 paid directly";
 
 function payments(projectId: string) {
   const transfer: DirectTransfer = {
     projectId,
-    contributionMonth: projectId === firstProject ? "2026-07" : "2026-08",
+    // Both fixtures use retained August 2026 disclosure months so the
+    // Disclosure link stays present for identity-leak observations.
+    contributionMonth: "2026-08",
     githubUserId: "1",
     login: "synthetic-contributor",
     network: "base-sepolia",
@@ -102,7 +104,7 @@ async function watchPaymentIdentity(page: Page) {
           const row = link.closest(".money-summary");
           if (
             link.textContent === "Disclosure" &&
-            link.href.includes(`/disclosures/${nextProject}-2026-07-`) &&
+            link.href.includes(`/disclosures/${nextProject}-2026-08-`) &&
             row?.textContent?.includes(firstAmount)
           )
             leaks.push({ ...sample, mutatedRow: row.outerHTML });
@@ -170,7 +172,7 @@ for (const navigation of ["project links", "browser history"] as const) {
           .locator(`a.project-card[href="/projects/${nextProject}"]`)
           .click();
       }
-      await expect(page.locator(".breadcrumb")).toHaveText("Projects/Slop");
+      await expect(page.locator(".breadcrumb")).toHaveText("Projects/ASI");
       await expect.poll(() => nextRequests).toBeGreaterThan(beforeNavigation);
       await expect(page.getByText(firstAmount, { exact: true })).toHaveCount(0);
       await page.screenshot({
@@ -262,7 +264,7 @@ test("a late previous payment request cannot overwrite a retried project", async
     outage = true;
     await page.evaluate(() => window.history.go(-2));
     await canceled;
-    await expect(page.locator(".breadcrumb")).toHaveText("Projects/Slop");
+    await expect(page.locator(".breadcrumb")).toHaveText("Projects/ASI");
     const retry = page.getByRole("button", { name: "Retry direct payments" });
     await expect(retry).toBeVisible();
     await expect(page.getByText(nextAmount, { exact: true })).toHaveCount(0);
@@ -286,7 +288,7 @@ test("a late previous payment request cannot overwrite a retried project", async
       page.locator(".payment-history a").filter({ hasText: "Disclosure" }),
     ).toHaveAttribute(
       "href",
-      /disclosures\/slopdotcash-2026-08-direct-payments\.json$/,
+      /\/blob\/eae9fbab8403ec70d79c5397d16afb4928050b1d\/disclosures\/asi-2026-08-direct-payments\.json$/,
     );
     const observed = await page.evaluate(() => {
       const value = (
@@ -360,7 +362,7 @@ test("a flag draft does not follow browser history to another project", async ({
       .fill("Evidence for the first project only");
     hold = true;
     await page.evaluate(() => window.history.go(-2));
-    await expect(page.locator(".breadcrumb")).toHaveText("Projects/Slop");
+    await expect(page.locator(".breadcrumb")).toHaveText("Projects/ASI");
     await expect.poll(() => held).toBe(true);
     await expect(page.getByRole("textbox", { name: /^Evidence/u })).toHaveCount(
       0,

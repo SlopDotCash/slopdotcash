@@ -23,8 +23,9 @@ cycle tree stays honest about what it does and does not contain.
 
 The August 2026 disclosures for `asi` and `eliza` were removed on 18 October
 2026 with the projects listed before the D1 registry, together with their
-cycles, evaluations and preparations. They remain in Git history; the transfers
-themselves remain on chain.
+cycles, evaluations and preparations. They remain in Git history at
+`eae9fbab8403ec70d79c5397d16afb4928050b1d`; the transfers themselves remain on
+chain. Project payment pages link to that commit, not the branch tip.
 
 ## States
 
