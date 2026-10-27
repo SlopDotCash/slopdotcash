@@ -1415,12 +1415,31 @@ identity. A resolved appeal remains in history with no decision requested.
 Optional activity email uses the existing consent-bound queue; dispatch
 suppresses a resolved appeal or a recipient who is no longer a moderator.
 Private security appeals keep their separate notice and acknowledgment path.
+
 ## Historical merge sources
 
 The existing admin-only historical import route also accepts two multipart
 file parts: `envelope` with type `application/json`, and `bundle` containing
-complete Git objects. The total body limit remains 25 MiB. Use the JSON file
-part to preserve exact line endings. Existing JSON-only clients are unchanged.
+the complete commit graph and objects needed for the requested merges. The total
+body limit remains 25 MiB. Use the JSON file part to preserve exact line endings.
+Existing JSON-only clients are unchanged.
+
+`scripts/create-value-merge-bundle.ts` builds that object set from a local
+repository without checking out or executing its files:
+
+```bash
+bun scripts/create-value-merge-bundle.ts /absolute/repository /private/merge-inputs.json /private/merge.bundle
+```
+
+The inputs file contains the `mergeInput` projections of all jointly prepared
+sources. It is a local construction input, not authority for the server. The
+server independently derives the required objects from its fresh GitHub inputs.
+Every stored object still passes Git's strict format checks and the existing
+256 MiB expansion limit. Complete parent ancestry, snapshot trees, changed
+blobs, source-head files and merge attribute files are required. Missing data
+refuses the operation. Unrelated historical file bodies are not needed; Git
+links never cause a submodule fetch. The builder verifies a fresh bare copy
+before writing a new output and never overwrites an existing bundle.
 
 The bundle is allowed only for a joint assessment from one public repository.
 The publisher re-reads the live registry, App selection, full GitHub source and

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { verifyMergeObjectStore } from "../../scripts/value-merge-objects";
 import { collectVerifiedMergeResolutions } from "../../scripts/value-merge-resolution";
 import {
   MERGE_PROFILE,
@@ -63,22 +64,7 @@ export async function runMergeJob(root: string) {
   git("-C", repository, "bundle", "verify", BUNDLE);
   // unbundle does not follow URLs, refs or config supplied by the uploader.
   git("-C", repository, "bundle", "unbundle", BUNDLE);
-  git("-C", repository, "fsck", "--full", "--strict", "--no-reflogs");
-  let expanded = 0;
-  for (const size of git(
-    "-C",
-    repository,
-    "cat-file",
-    "--batch-all-objects",
-    "--batch-check=%(objectsize)",
-  )
-    .trim()
-    .split("\n")) {
-    if (!/^\d+$/u.test(size)) throw new Error("Invalid object inventory");
-    expanded += Number(size);
-    if (!Number.isSafeInteger(expanded) || expanded > 256 * 1024 * 1024)
-      throw new Error("Expanded object limit");
-  }
+  verifyMergeObjectStore(input.inputs, repository);
   const results = [];
   for (const source of input.inputs)
     results.push({
