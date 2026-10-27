@@ -86,6 +86,9 @@ export function ProfilePage({
             Retry profile
           </button>
         ) : null}
+        <p>
+          <Link href="/points">Find a contributor</Link>
+        </p>
       </main>
     );
   const globalLeaders = createGlobalLeaders(
@@ -151,6 +154,8 @@ export function ProfilePage({
           </ExternalLinkAnchor>
         ) : currentWallet.status === "loading" ? (
           <span>Checking wallet…</span>
+        ) : membership.own ? (
+          <Link href="/account#wallets">Add a payout wallet</Link>
         ) : null}
       </ContributorIdentity>
       <ProfilePoints

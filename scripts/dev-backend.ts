@@ -15,7 +15,6 @@ import { onRequest } from "../functions/api/v1/[[path]]";
 import { isLocalDevelopmentOrigin } from "../src/lib/deployment";
 import { MIGRATIONS, sqliteD1 } from "../tests/sqlite-d1";
 import identityWorker from "../workers/identity/index";
-import { localNotify } from "./dev-backend-notify";
 import {
   convertManifest,
   type GithubApp,
@@ -110,17 +109,8 @@ const apiEnv = {
   PAYMENTS_ALLOWED_ORIGIN: origin,
   TRACE_AUTH_SECRET: setting("TRACE_AUTH_SECRET") ?? secret(),
   SLOP_IDENTITY: { fetch: identity },
-  // Lets the Inbox email preference page work; no email is sent.
-  SLOP_NOTIFY: localNotify(
-    (githubId) =>
-      (
-        sqlite
-          .query("SELECT login FROM points_members WHERE github_id=?")
-          .get(githubId) as { login: string } | null
-      )?.login,
-  ),
   ADMIN_GITHUB_IDS: setting("ADMIN_GITHUB_IDS"),
-  // Optional: connects X. The X app's callback is `${origin}/api/v1/points/x/callback`.
+  // Optional local X OAuth; its callback remains on this local origin.
   X_CLIENT_ID: setting("X_CLIENT_ID"),
   X_CLIENT_SECRET: setting("X_CLIENT_SECRET"),
 };
