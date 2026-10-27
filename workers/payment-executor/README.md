@@ -352,6 +352,9 @@ Here one operation is the original signed nonce and its same-nonce competitors;
 another nonce after a finalized revert is a separate envelope. This field does
 not enforce a one-nonce binding policy or a cumulative retry allowance. A normal
 reviewed release must publish any new registry limit before the Worker uses it.
+This bounds the signed EIP-1559 envelope. Separate Base L1/operator charges
+remain covered by the keeper's existing native budget and receipt accounting;
+this field does not replace that accounting.
 
 | Network | `gasCeiling` | Why |
 | --- | --- | --- |
