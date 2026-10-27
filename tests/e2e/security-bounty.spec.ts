@@ -3074,7 +3074,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     await form.getByLabel("Gross award (USDC)").fill("4000");
     await actions
       .getByRole("combobox", { name: "Action", exact: true })
-      .selectOption("request-information");
+      .selectOption("remediation");
     await expect(actions.getByRole("form")).toHaveCount(1);
     await actions
       .getByRole("combobox", { name: "Action", exact: true })
