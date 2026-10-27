@@ -29,6 +29,7 @@ const args = process.argv.slice(2);
 const path = process.env.DISPATCH_STATE;
 const state = JSON.parse(fs.readFileSync(path, "utf8"));
 if(args[0] === "api") {
+ if(args.includes("--slurp") && args.includes("--jq")) process.exit(2);
  const route = args[1];
  const head = route.match(/commits\\/heads\\/(main|development)$/);
  if(head) process.stdout.write(state.heads[head[1]]);
@@ -38,7 +39,13 @@ if(args[0] === "api") {
  } else {
   const job = route.match(/actions\\/runs\\/(\\d+)\\/jobs/);
   if(!job) process.exit(7);
-  process.stdout.write(state.deployed.includes(Number(job[1])) ? "1" : "0");
+  const name = Number(job[1]) === 17
+    ? "Deploy trusted production bundle"
+    : "Deploy verified development to staging";
+  process.stdout.write(JSON.stringify([
+   { jobs: [{ name: "Other check", conclusion: "success" }] },
+   { jobs: [{ name, conclusion: state.deployed.includes(Number(job[1])) ? "success" : "skipped" }] }
+  ]));
  }
 } else if(args[0] === "run" && args[1] === "list") {
  const ref = args[args.indexOf("--branch") + 1];
@@ -119,4 +126,5 @@ test.skipIf(process.platform === "win32")(
       }
     }
   },
+  20_000,
 );
