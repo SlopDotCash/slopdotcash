@@ -976,32 +976,32 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await page.goto("/inbox", { waitUntil: "networkidle" });
   const item = (subject: string) =>
     page.locator(".inbox-item", { hasText: subject });
-  await expect(item("delivery-1").locator(".inbox-delivery")).toHaveText(
+  await expect(item("delivery-1").getByText(/^Email:/u)).toHaveText(
     "Email: sent",
   );
   await expect(
     item("delivery-1").getByText("Read", { exact: true }),
   ).toBeVisible();
-  await expect(item("delivery-2").locator(".inbox-delivery")).toHaveText(
+  await expect(item("delivery-2").getByText(/^Email:/u)).toHaveText(
     "Email: delivered",
   );
   await expect(
     item("delivery-2").getByText("Unread", { exact: true }),
   ).toBeVisible();
-  await expect(item("delivery-3").locator(".inbox-delivery")).toHaveText(
+  await expect(item("delivery-3").getByText(/^Email:/u)).toHaveText(
     "Email: failed",
   );
-  await expect(item("delivery-4").locator(".inbox-delivery")).toHaveText(
+  await expect(item("delivery-4").getByText(/^Email:/u)).toHaveText(
     "Email: uncertain",
   );
-  await expect(item("delivery-5").locator(".inbox-delivery")).toHaveText(
+  await expect(item("delivery-5").getByText(/^Email:/u)).toHaveText(
     "Email: queued",
   );
-  await expect(item("delivery-6").locator(".inbox-delivery")).toHaveCount(0);
+  await expect(item("delivery-6").getByText(/^Email:/u)).toHaveCount(0);
   // A private notice stays generic: the provider-accepted email does not
   // stand in for the explicit acknowledgment.
   const security = item("case-0001");
-  await expect(security.locator(".inbox-delivery")).toHaveText("Email: sent");
+  await expect(security.getByText(/^Email:/u)).toHaveText("Email: sent");
   await expect(
     security.getByRole("button", { name: /^Acknowledge:/u }),
   ).toBeVisible();
