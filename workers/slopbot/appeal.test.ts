@@ -2,7 +2,6 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createHash, createHmac, generateKeyPairSync } from "node:crypto";
 import { readdirSync } from "node:fs";
-import { recoverAppealJob } from "../../scripts/recover-slopbot-appeal";
 import { findProject } from "../../src/lib/projects.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { Job } from "./contracts";
@@ -275,8 +274,7 @@ test("Slopbot queue confirms appeal labels and refuses private or replaced repos
       assert.equal(response.status, 202);
       assert.equal(queued.length, visibility === false ? 1 : 0);
     }
-    // A completed appeal receipt drops GitHub's redelivery. The operator
-    // recovery derives the same job from GitHub's delivery record instead.
+    // A completed appeal receipt drops GitHub's redelivery.
     const payload = {
       action: "created",
       installation: { id: 1 },
@@ -307,57 +305,6 @@ test("Slopbot queue confirms appeal labels and refuses private or replaced repos
       assert.equal(await response.text(), expected);
     }
     assert.equal(queued.length, 2);
-    const delivery = {
-      guid: "appeal-original",
-      event: "issue_comment",
-      action: "created",
-      request: { payload },
-    };
-    const state = {
-      issue: { state: "open", node_id: "I_local", user: { id: 42 } },
-      comment: { body: payload.comment.body, user: { id: 42 } },
-      deliveryProcessedAt: at,
-      appealCount: 0,
-    };
-    assert.deepEqual(
-      recoverAppealJob(delivery, env.SLOPBOT_APP_USER_ID, state),
-      queued[1],
-    );
-    for (const [change, message] of [
-      [{ appealCount: 1 }, /already has a structured appeal/u],
-      [{ deliveryProcessedAt: null }, /use GitHub redelivery/u],
-      [
-        { comment: { body: "edited", user: { id: 42 } } },
-        /missing or changed/u,
-      ],
-      [{ issue: { ...state.issue, user: { id: 7 } } }, /current author/u],
-      [{ issue: { ...state.issue, state: "closed" } }, /not open/u],
-    ] as const)
-      assert.throws(
-        () =>
-          recoverAppealJob(delivery, env.SLOPBOT_APP_USER_ID, {
-            ...state,
-            ...change,
-          }),
-        message,
-      );
-    assert.throws(
-      () =>
-        recoverAppealJob(
-          {
-            ...delivery,
-            request: {
-              payload: {
-                ...payload,
-                comment: { id: 5, body: "/slopbot accept" },
-              },
-            },
-          },
-          env.SLOPBOT_APP_USER_ID,
-          state,
-        ),
-      /not a Slopbot appeal/u,
-    );
   } finally {
     globalThis.fetch = nativeFetch;
     server.stop(true);

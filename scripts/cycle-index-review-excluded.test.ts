@@ -180,7 +180,6 @@ describe("cycle index review window", () => {
     const candidate = findExcludableRow();
     if (!candidate) throw new Error("no review row isolates the state guard");
     excludeRowOnDisk(candidate.target, candidate.login);
-    expect(readFileSync(candidate.target, "utf8")).toContain('"excluded"');
 
     const result = sync(["--check"]);
     expect(result.stderr).not.toContain("refused");

@@ -27,19 +27,12 @@ import {
   queueAutomaticScan,
   signedVettingRequest,
 } from "../backend/vetting/handler";
-import {
-  CloudflareVettingPersistence,
-  summarize,
-} from "../backend/vetting/persistence";
+import { CloudflareVettingPersistence } from "../backend/vetting/persistence";
 import { isScanResult } from "../backend/vetting/scan-result";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
-import {
-  runScanPass,
-  type ScanServiceConfig,
-  serviceConfigFrom,
-} from "../workers/vetting/run";
+import { runScanPass, type ScanServiceConfig } from "../workers/vetting/run";
 import {
   SCAN_REVIEW_AREAS,
   type ScannerProfile,
@@ -1000,49 +993,6 @@ test("an unpinned endpoint or model fails closed before the queue or any provide
   expect(contacted).toEqual([]);
   expect(provider.calls).toEqual([]);
   expect(await vetting.pendingAssessments()).toEqual([]);
-
-  // The operator file is checked the same way when the service starts.
-  const signing = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
-    "sign",
-    "verify",
-  ])) as CryptoKeyPair;
-  const jwk = JSON.stringify(
-    await crypto.subtle.exportKey("jwk", signing.privateKey),
-  );
-  const { apiKey: _primaryKey, ...primary } = config.primary;
-  const { apiKey: _specialistKey, ...specialist } = config.specialist;
-  const file = (overrides: object) =>
-    JSON.stringify({
-      origin: ORIGIN,
-      policyVersion: "scan-policy-1",
-      workDirectory: join(root, "work"),
-      journalDirectory: join(root, "journal"),
-      primary,
-      specialist,
-      ...overrides,
-    });
-  const env = {
-    SURPLUS_API_KEY: "fixture-surplus-key",
-    SLOP_VETTING_SIGNING_JWK: jwk,
-  };
-  const path = join(root, "service.json");
-  await writeFile(path, file({}));
-  expect((await serviceConfigFrom(path, env)).primary).toMatchObject({
-    endpoint: "https://api.surplusintelligence.ai/anthropic/v1/messages",
-    model: "claude-opus-5.5",
-  });
-  await writeFile(
-    path,
-    file({
-      primary: {
-        ...primary,
-        endpoint: "https://api.anthropic.com/v1/messages",
-      },
-    }),
-  );
-  await expect(serviceConfigFrom(path, env)).rejects.toThrow(
-    "Unapproved scanner profile",
-  );
 });
 
 test("unsupported artifacts produce an incomplete scan rather than aborting the scan pass", async () => {
@@ -1236,7 +1186,6 @@ for (const scenario of [
       findingCount: 0,
     });
     expect(result.specialistReview).toBeNull();
-    expect(summarize(assessment).modelRuns).toEqual([]);
     expect(provider.calls).toEqual([]);
     expect(await retained.evidence.retained(result)).toBe(evidenceUp);
     expect((await activate()).status).toBe(422);

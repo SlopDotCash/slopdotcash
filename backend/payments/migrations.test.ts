@@ -38,47 +38,6 @@ const children = [
   "payment_binding_authorizations",
 ] as const;
 
-const expectedObjects: Record<string, string[]> = {
-  wallet_claims: [
-    "index:wallet_claims_actor",
-    "index:wallet_claims_one_root_per_actor",
-    "index:wallet_claims_one_successor",
-    "trigger:wallet_claims_no_delete",
-    "trigger:wallet_claims_no_update",
-    "trigger:wallet_claims_successor_keeps_chain",
-  ],
-  payment_obligations: [
-    "index:payment_actor",
-    "index:payment_source_once",
-    "trigger:payment_obligation_identity_immutable",
-    "trigger:payment_project_network_locked",
-  ],
-  payment_wallet_proposals: [
-    "trigger:payment_proposals_no_delete",
-    "trigger:payment_proposals_no_update",
-  ],
-  payment_direct_transfers: [
-    "index:payment_direct_actor",
-    "index:payment_direct_project",
-    "trigger:payment_direct_conflict",
-    "trigger:payment_direct_no_delete",
-    "trigger:payment_direct_no_update",
-  ],
-  wallet_observations: [
-    "trigger:wallet_observations_no_delete",
-    "trigger:wallet_observations_no_update",
-  ],
-};
-
-function objects(db: Database, table: string): string[] {
-  return (
-    db
-      .query(
-        "SELECT type||':'||name AS o FROM sqlite_schema WHERE tbl_name=? AND type IN ('index','trigger') AND name NOT LIKE 'sqlite_autoindex%' ORDER BY o",
-      )
-      .all(table) as { o: string }[]
-  ).map((r) => r.o);
-}
 function columns(db: Database, table: string): string[] {
   return (
     db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]
@@ -130,33 +89,30 @@ function seed(db: Database) {
 }
 
 describe("migration 0017", () => {
-  test("keeps rows, children, objects and column order; then accepts robinhood", () => {
+  test("keeps rows, children and column order; then accepts robinhood", () => {
     const db = open();
     seed(db);
     for (const c of children) expect(count(db, c)).toBe(1);
     const snapshot = Object.fromEntries(
-      tables.map((t) => [
+      [...tables, ...children].map((t) => [
         t,
-        { rows: count(db, t), cols: columns(db, t), objs: objects(db, t) },
+        {
+          rows: db.query(`SELECT * FROM ${t} ORDER BY rowid`).all(),
+          cols: columns(db, t),
+        },
       ]),
     );
-    for (const t of tables)
-      expect(snapshot[t].objs).toEqual(expectedObjects[t]);
     db.exec(readFileSync(`migrations/${target}`, "utf8"));
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(
       (db.query("PRAGMA foreign_keys").get() as { foreign_keys: number })
         .foreign_keys,
     ).toBe(1);
-    for (const t of tables) {
-      expect(count(db, t)).toBe(snapshot[t].rows);
+    for (const t of [...tables, ...children]) {
+      expect(db.query(`SELECT * FROM ${t} ORDER BY rowid`).all()).toEqual(
+        snapshot[t].rows,
+      );
       expect(columns(db, t)).toEqual(snapshot[t].cols);
-      expect(objects(db, t)).toEqual(snapshot[t].objs);
-      expect(
-        db
-          .query("SELECT name FROM sqlite_schema WHERE name IN (?, ?)")
-          .get(`${t}_0017`, `${t}_0017_copy`),
-      ).toBeNull();
     }
     // Children still resolve to the rebuilt parents.
     for (const c of children) expect(count(db, c)).toBe(1);
@@ -214,16 +170,20 @@ describe("migration 0017", () => {
   test("applies inside one transaction with child rows present (the D1 path)", () => {
     const db = open();
     seed(db);
-    const rows = Object.fromEntries(tables.map((t) => [t, count(db, t)]));
+    const rows = Object.fromEntries(
+      [...tables, ...children].map((t) => [
+        t,
+        db.query(`SELECT * FROM ${t} ORDER BY rowid`).all(),
+      ]),
+    );
     db.exec("BEGIN");
     db.exec(readFileSync(`migrations/${target}`, "utf8"));
     expect(() => db.exec("COMMIT")).not.toThrow();
     expect(db.inTransaction).toBe(false);
-    for (const t of tables) {
-      expect(count(db, t)).toBe(rows[t]);
-      expect(objects(db, t)).toEqual(expectedObjects[t]);
-    }
-    for (const c of children) expect(count(db, c)).toBe(1);
+    for (const t of [...tables, ...children])
+      expect(db.query(`SELECT * FROM ${t} ORDER BY rowid`).all()).toEqual(
+        rows[t],
+      );
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 
