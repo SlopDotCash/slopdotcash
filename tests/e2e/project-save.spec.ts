@@ -28,7 +28,11 @@ test("retains edits typed while a project revision is being published", async ({
     revision,
     status: "active",
     state: "ready",
-    nextAction: null,
+    nextAction: {
+      kind: "none",
+      message: "Project is ready.",
+      href: "/projects/eliza",
+    },
     checks: {
       authority: { state: "verified", message: "Maintainer verified." },
       installation: { state: "installed", message: "Slopbot installed." },
