@@ -177,7 +177,7 @@ try {
     .analyze();
   await page.setViewportSize({ width: 390, height: 844 });
   const history = page.getByRole("list", {
-    name: "Payment history",
+    name: "Awards and payments",
     exact: true,
   });
   const paidRow = history.getByRole("listitem").filter({
