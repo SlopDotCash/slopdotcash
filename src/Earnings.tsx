@@ -31,6 +31,7 @@ import {
   UNRESERVED_AWARD_STATES,
 } from "./lib/payments/contracts";
 import { apiRequest } from "./lib/project-api";
+import { findProject } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
@@ -177,8 +178,11 @@ function account(value: unknown): PaymentsAccount {
 
 export function EarningsPage({
   walletsOnly = false,
+  headingId,
 }: {
   walletsOnly?: boolean;
+  /** An enclosing settings disclosure supplies the wallet heading. */
+  headingId?: string;
 } = {}) {
   const wallets = usePayoutWallets();
   const [picker, setPicker] = useState<WalletFamily | null>(null);
@@ -377,15 +381,15 @@ export function EarningsPage({
       className={
         walletsOnly ? "earnings-page" : "shell route-main earnings-page"
       }
-      aria-labelledby={heading}
-      id={walletsOnly ? "wallets" : undefined}
+      aria-labelledby={headingId ?? heading}
+      id={walletsOnly && !headingId ? "wallets" : undefined}
     >
-      {walletsOnly ? (
+      {walletsOnly && headingId ? null : walletsOnly ? (
         <h2 id={heading}>Wallets</h2>
       ) : (
         <RoutePageHeader
           icon={<WalletIcon />}
-          title={<span id={heading}>Your payouts</span>}
+          title={<span id={heading}>Payouts</span>}
           actions={
             <a
               className="button secondary-button button-small"
@@ -437,7 +441,6 @@ export function EarningsPage({
                   <WalletIcon size={24} aria-hidden="true" />
                 )}
                 <span>{wallet.name}</span>
-                <small>Detected</small>
               </button>
             ))}
           {!wallets.some((wallet) => wallet.family === picker) && (
@@ -503,7 +506,6 @@ export function EarningsPage({
       {data && (
         <>
           {(error || loadError) && <p>Showing the last verified data.</p>}
-          {!walletsOnly && <ReferralClaims />}
           {walletsOnly ? (
             <>
               <section aria-label="Payout wallets" className="wallet-cards">
@@ -751,14 +753,17 @@ export function EarningsPage({
                               <a
                                 href={`/projects/${encodeURIComponent(award.projectId)}`}
                               >
-                                {award.projectId}
+                                {findProject(award.projectId)?.name ??
+                                  award.projectId}
                               </a>{" "}
                               ({formatCycleMonth(award.period)})
                             </td>
                             <td data-label="Network">
-                              <NetworkName chain={award.chain}>
-                                {networkLabel(award.network)}
-                              </NetworkName>
+                              {
+                                <NetworkName chain={award.chain}>
+                                  {networkLabel(award.network)}
+                                </NetworkName>
+                              }
                             </td>
                             <td data-label="Gross award">
                               {formatAssetAmount(award.grossBase, award)}
@@ -786,13 +791,16 @@ export function EarningsPage({
                               <a
                                 href={`/projects/${encodeURIComponent(payment.projectId)}`}
                               >
-                                {payment.projectId}
+                                {findProject(payment.projectId)?.name ??
+                                  payment.projectId}
                               </a>
                             </td>
                             <td data-label="Network">
-                              <NetworkName chain={payment.chain}>
-                                {networkLabel(payment.network)}
-                              </NetworkName>
+                              {
+                                <NetworkName chain={payment.chain}>
+                                  {networkLabel(payment.network)}
+                                </NetworkName>
+                              }
                             </td>
                             <td data-label="Gross award">
                               {formatAssetAmount(payment.grossBase, payment)}
@@ -891,12 +899,16 @@ export function EarningsPage({
                               <a
                                 href={`/projects/${encodeURIComponent(t.projectId)}`}
                               >
-                                {t.projectId}
+                                {findProject(t.projectId)?.name ?? t.projectId}
                               </a>
                             </td>
                             <td data-label="Month">{t.contributionMonth}</td>
                             <td data-label="Network">
-                              {networkLabel(t.network)}
+                              {
+                                <NetworkName chain={t.chain}>
+                                  {networkLabel(t.network)}
+                                </NetworkName>
+                              }
                             </td>
                             <td data-label="Received">
                               {usdcAmount(t.amountMicro)}
@@ -926,6 +938,7 @@ export function EarningsPage({
                   </section>
                 </section>
               )}
+              <ReferralClaims />
             </>
           )}
         </>

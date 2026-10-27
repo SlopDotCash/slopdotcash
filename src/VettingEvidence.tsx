@@ -243,56 +243,69 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
         <h3>{object.label}</h3>
         <StatusBadge tone="warning">{object.state}</StatusBadge>
       </header>
-      <dl className="operations-facts">
-        <div>
-          <dt>Type</dt>
-          <dd>
-            {object.kind} · {object.contentType}
-          </dd>
-        </div>
-        <div>
-          <dt>Size</dt>
-          <dd>{object.sizeBytes.toLocaleString()} bytes</dd>
-        </div>
-        <div>
-          <dt>SHA-256</dt>
-          <dd>
-            <CopyIdentifier
-              label={`${object.label} digest`}
-              value={object.sha256}
+      <details className="security-reference">
+        <summary>
+          {object.streamed || object.contentType === "application/octet-stream"
+            ? "Download evidence"
+            : "Read evidence"}
+        </summary>
+        <dl className="operations-facts">
+          <div>
+            <dt>Type</dt>
+            <dd>
+              {object.kind} · {object.contentType}
+            </dd>
+          </div>
+          <div>
+            <dt>Size</dt>
+            <dd>{object.sizeBytes.toLocaleString()} bytes</dd>
+          </div>
+          <div>
+            <dt>SHA-256</dt>
+            <dd>
+              <CopyIdentifier
+                label={`${object.label} digest`}
+                value={object.sha256}
+              />
+            </dd>
+          </div>
+        </dl>
+        <form className="evidence-inspection" onSubmit={inspect}>
+          <label className="form-field">
+            Reason to inspect {object.label}
+            <input
+              required
+              minLength={8}
+              maxLength={500}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
             />
-          </dd>
-        </div>
-      </dl>
-      <form className="evidence-inspection" onSubmit={inspect}>
-        <label className="form-field">
-          Reason to inspect {object.label}
-          <input
-            required
-            minLength={8}
-            maxLength={500}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
+          </label>
+          <button
+            className="button secondary-button"
+            type="submit"
+            disabled={busy || object.state !== "stored-unverified"}
+          >
+            {busy
+              ? "Verifying evidence…"
+              : object.streamed ||
+                  object.contentType === "application/octet-stream"
+                ? `Download ${object.label}`
+                : `Read ${object.label}`}
+          </button>
+        </form>
+        {error ? <p role="alert">{error}</p> : null}
+        {status ? <p role="status">{status}</p> : null}
+        {content !== null ? (
+          <textarea
+            className="admin-code evidence-content"
+            aria-label={`${object.label} verified content`}
+            readOnly
+            rows={12}
+            value={content}
           />
-        </label>
-        <button
-          className="button secondary-button"
-          type="submit"
-          disabled={busy || object.state !== "stored-unverified"}
-        >
-          {busy
-            ? "Verifying evidence…"
-            : object.streamed ||
-                object.contentType === "application/octet-stream"
-              ? `Download ${object.label}`
-              : `Read ${object.label}`}
-        </button>
-      </form>
-      {error ? <p role="alert">{error}</p> : null}
-      {status ? <p role="status">{status}</p> : null}
-      {content !== null ? (
-        <pre className="evidence-content">{content}</pre>
-      ) : null}
+        ) : null}
+      </details>
     </article>
   );
 }

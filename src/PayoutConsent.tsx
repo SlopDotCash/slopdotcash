@@ -1,3 +1,4 @@
+import { Wallet as WalletIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { evmBindingTypedData } from "../contracts/evm/adapter";
@@ -227,7 +228,7 @@ export function PayoutConsent({
           onClose={() => setOpen(false)}
         >
           <h2 id={headingId} tabIndex={-1} ref={reviewHeading}>
-            Review payout wallet consent
+            Authorize payout wallet
           </h2>
           <p>
             Receive your awards from this vault on{" "}
@@ -258,10 +259,15 @@ export function PayoutConsent({
               <button
                 key={wallet.id}
                 type="button"
-                className="button secondary-button"
+                className="wallet-picker-row"
                 disabled={busy}
                 onClick={() => void authorize(wallet)}
               >
+                {wallet.icon ? (
+                  <img src={wallet.icon} width={32} height={32} alt="" />
+                ) : (
+                  <WalletIcon size={24} aria-hidden="true" />
+                )}
                 {busy ? "Confirm in your wallet…" : `Sign with ${wallet.name}`}
               </button>
             ))}
