@@ -2708,12 +2708,14 @@ test("home advertises only open security terms with the 75/25 split @registry", 
 test("Slop receives a private report before GitHub and keeps it in Inbox @registry", async ({
   browser,
   request,
+  diagnostics,
 }) => {
   test.skip(
     process.env.SLOP_E2E_PRIVATE_INTAKE !== "1",
     "Durable private intake is not activated in this lane",
   );
   test.setTimeout(180_000);
+  diagnostics.allow(/net::ERR_FAILED.*security-submissions/u);
   // Independent viewport journeys use distinct seeded reporters. The real
   // same-actor workload cap remains covered by the API integration cases.
   const reporterRole = test.info().project.name.endsWith("-mobile")
@@ -2781,7 +2783,8 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       if (!interrupted) {
         interrupted = true;
         // Persist the real report, then lose only its response.
-        await route.fetch();
+        const accepted = await route.fetch();
+        expect(accepted.status()).toBe(201);
         await route.abort("failed");
       } else await route.continue();
     });
