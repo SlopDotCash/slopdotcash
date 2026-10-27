@@ -63,6 +63,7 @@ type Case = {
 };
 type Body = {
   error?: string;
+  authorityUnavailable?: boolean;
   replayed?: boolean;
   submission?: Submission;
   submissions?: Submission[];
@@ -352,6 +353,11 @@ function fixture() {
           approvers: { technical: [OTHER], financial: [FINANCE], dispute: [] },
         },
       }),
+    removePaidTerms: () => {
+      const next = { ...manifest };
+      delete next.securityBounty;
+      publish(next);
+    },
     fund: () => {
       publish({
         ...manifest,
@@ -805,6 +811,132 @@ describe("durable private report controls", () => {
     expect(revoked.body.report).toBeUndefined();
   });
 
+  test("an authority outage preserves owned receipts and each other report uses one fresh authorization", async () => {
+    const t = fixture();
+    const own = required(
+      (await t.create("owned-report", OWNER)).body.submission,
+    );
+    t.advance(1000);
+    const other = required((await t.create("other-report")).body.submission);
+    t.removePaidTerms();
+    const access = {
+      installation: "installed" as const,
+      installationId: 1,
+      permission: "admin" as const,
+      roleName: "admin",
+      repository: {
+        id: 123456789,
+        node_id: "R_example",
+        full_name: REPOSITORY,
+        private: false,
+        owner: {
+          id: 987654321,
+          node_id: "O_example",
+          login: "example",
+          type: "Organization" as const,
+        },
+      },
+    };
+    let reads = 0;
+    t.deps.repositoryAccess = async () => {
+      if (++reads === 2) throw new Error("Fixture authority outage");
+      return access;
+    };
+    const interrupted = await t.call(OWNER, "GET", "security-submissions");
+    expect(interrupted.status).toBe(200);
+    expect(interrupted.body.authorityUnavailable).toBe(true);
+    expect(interrupted.body.submissions?.map((row) => row.id)).toEqual([
+      own.id,
+    ]);
+
+    reads = 0;
+    t.deps.repositoryAccess = async () => {
+      if (++reads > 2) throw new Error("Unexpected repeated authorization");
+      return access;
+    };
+    const listed = await t.call(OWNER, "GET", "security-submissions");
+    expect(listed.status).toBe(200);
+    expect(listed.body.authorityUnavailable).toBe(false);
+    expect(listed.body.submissions?.map((row) => row.id)).toEqual([
+      other.id,
+      own.id,
+    ]);
+    expect(reads).toBe(2);
+
+    t.deps.repositoryAccess = async () => {
+      throw new Error("Fixture authority outage");
+    };
+    const unavailable = await t.call(
+      OWNER,
+      "GET",
+      `security-submissions/${other.id}`,
+    );
+    expect(unavailable.status).toBe(503);
+    expect(unavailable.body.report).toBeUndefined();
+    const retained = await t.call(
+      OWNER,
+      "GET",
+      `security-submissions/${own.id}`,
+    );
+    expect(retained.status).toBe(200);
+    expect(retained.body.report).toEqual(REPORT);
+
+    t.deps.repositoryAccess = async () => ({ ...access, permission: "read" });
+    const denied = await t.call(OWNER, "GET", "security-submissions");
+    expect(denied.status).toBe(200);
+    expect(denied.body.authorityUnavailable).toBe(false);
+    expect(denied.body.submissions?.map((row) => row.id)).toEqual([own.id]);
+    const revoked = await t.call(
+      OWNER,
+      "GET",
+      `security-submissions/${other.id}`,
+    );
+    expect(revoked.status).toBe(404);
+    expect(revoked.body.report).toBeUndefined();
+    const review = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${other.id}/review`,
+      {
+        expectedRevision: other.intake.revision,
+        decision: "forward",
+        reason: "Previously listed access cannot authorize this review.",
+      },
+    );
+    expect(review.status).toBe(404);
+  });
+
+  test("a candidate storage failure remains fatal instead of appearing as an authority outage", async () => {
+    const t = fixture();
+    await t.create("owned-report", OWNER);
+    const other = required((await t.create("other-report")).body.submission);
+    const db = t.deps.db;
+    t.deps.db = {
+      ...db,
+      prepare(sql) {
+        const statement = db.prepare(sql);
+        if (
+          sql !==
+          "SELECT * FROM security_submission_intake WHERE submission_id = ?"
+        )
+          return statement;
+        return {
+          ...statement,
+          bind(...values) {
+            if (values[0] === other.id)
+              throw new Error("Fixture candidate storage failure");
+            return statement.bind(...values);
+          },
+        };
+      },
+    };
+    const failed = await t.call(OWNER, "GET", "security-submissions");
+    expect(failed.status).toBe(500);
+    expect(failed.body.error).toBe("internal_error");
+    expect(failed.body.submissions).toBeUndefined();
+    expect(failed.body.authorityUnavailable).toBeUndefined();
+  });
+
   test.each(["report", "screen"] as const)(
     "one report cannot bypass the public work budget through repeated %s calls",
     async (action) => {
@@ -911,13 +1043,20 @@ describe("durable private report controls", () => {
     const accepted = await t.create();
     const submission = required(accepted.body.submission);
     t.failScreening(false);
-    t.beforeScreen(() => new Promise((resolve) => setTimeout(resolve, 16_000)));
+    const provider = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    let screeningFinished = false;
+    t.beforeScreen(async () => {
+      started.resolve();
+      await provider.promise;
+      screeningFinished = true;
+    });
     const pending: Promise<unknown>[] = [];
     t.deps.waitUntil = (task) => {
       pending.push(task);
     };
     const start = performance.now();
-    const retried = await t.call(
+    const retry = t.call(
       REPORTER,
       "POST",
       `security-submissions/${submission.id}/screen`,
@@ -925,9 +1064,34 @@ describe("durable private report controls", () => {
         expectedRevision: submission.intake.revision,
       },
     );
-    expect(retried.status).toBe(200);
-    expect(performance.now() - start).toBeLessThan(15_000);
-    await Promise.all(pending);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(
+        () =>
+          reject(new Error("Screening retry exceeded the browser deadline")),
+        15_000,
+      );
+    });
+    try {
+      await Promise.race([started.promise, deadline]);
+      const retried = await Promise.race([retry, deadline]);
+      expect(retried.status).toBe(200);
+      expect(performance.now() - start).toBeLessThan(15_000);
+      expect(screeningFinished).toBe(false);
+      expect(pending).toHaveLength(1);
+      const running = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${submission.id}`,
+      );
+      expect(required(running.body.submission).intake.state).toBe("running");
+      expect(running.body.report).toEqual(REPORT);
+    } finally {
+      clearTimeout(timeout);
+      provider.resolve();
+      await retry;
+      await Promise.all(pending);
+    }
     const refreshed = await t.call(
       REPORTER,
       "GET",
