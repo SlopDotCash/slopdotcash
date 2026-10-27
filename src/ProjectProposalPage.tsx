@@ -2681,11 +2681,11 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
                 0 ? (
                 <>
                   {" "}
-                  <Link
+                  <a
                     href={`/projects/${submission.result.project.manifest.slug}/funding`}
                   >
                     Set up vault
-                  </Link>
+                  </a>
                 </>
               ) : null}
             </p>
