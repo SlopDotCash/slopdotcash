@@ -2733,7 +2733,7 @@ test("home advertises only open security terms with the 75/25 split @registry", 
   await expect(section).toContainText("No paid security bounties are open.");
 });
 
-test("Slop receives a private report before GitHub and keeps it in Inbox @registry", async ({
+test("Slop receives a private report before GitHub and keeps it in Inbox @registry @private-intake", async ({
   browser,
   request,
   diagnostics,
