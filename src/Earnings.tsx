@@ -270,9 +270,8 @@ export function EarningsPage({
     };
     if (typeof claim.claimId !== "string")
       throw new Error("Wallet registration could not be verified.");
-    // A new claim replaces the saved one at once, and payouts go only to a
-    // confirmed current claim. A later failure reloads the account and says
-    // what changed.
+    // Registration is pending intent. The verified wallet remains active until
+    // the new wallet authorizes its claim; reload after any failed attempt.
     const saved = data?.wallets.find((w) => w.chain === chain);
     let authorizationAttempted = false;
     try {
@@ -311,7 +310,7 @@ export function EarningsPage({
       throw new Error(
         `${errorMessage(e, "Wallet confirmation failed.")} ${
           saved?.authorized
-            ? `Your new ${network} address ${address} is saved but not confirmed. Payouts to your earlier address ${saved.address} are paused. Connect your wallet again to confirm the new address, or to confirm the earlier address again.`
+            ? `Your new ${network} address ${address} is saved but not confirmed. Your verified address ${saved.address} remains active for payouts. Connect your new wallet again to confirm the replacement.`
             : `Your ${network} address ${address} is saved but not confirmed. Connect your wallet again to confirm it for automatic payments.`
         }`,
       );

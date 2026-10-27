@@ -239,7 +239,7 @@ export function ownerVaultSetupService(deps: {
       );
     const claim = await deps.db
       .prepare(
-        "SELECT w.wallet_address address FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry' AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
+        "SELECT w.wallet_address address FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry'",
       )
       .bind(input.claimId, actor.githubId, network.chain)
       .first<{ address: string }>();
