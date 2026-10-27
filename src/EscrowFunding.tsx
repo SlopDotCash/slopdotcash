@@ -1,6 +1,15 @@
-import { lazy, useCallback, useState } from "react";
+import {
+  CircleAlert,
+  Clock,
+  Hourglass,
+  LoaderCircle,
+  Percent,
+  RotateCcw,
+  ShieldCheck,
+} from "lucide-react";
+import { lazy, useCallback, useEffect, useState } from "react";
+import { Link } from "./Link";
 import { readBoundedJson } from "./lib/browser-json";
-import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { networkLabel } from "./lib/network-names";
 import {
@@ -8,13 +17,14 @@ import {
   isAssetDecimals,
   isBaseUnits,
   reservedGross,
+  VAULT_SNAPSHOT_STALE_MS,
   type VaultSnapshot,
 } from "./lib/payments/contracts";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { CANONICAL_UINT } from "./lib/record-validation.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
-import { formatDateTime } from "./Presentation";
+import { formatDateTime, NetworkName } from "./Presentation";
 
 const AutomaticMonthlyPayment = lazy(() =>
   import("./AutomaticMonthlyPayment").then((module) => ({
@@ -50,6 +60,9 @@ const CURRENT = [
   "accruedFees",
   "reserved",
 ] as const;
+/** The edge and browser caches keep one vault read for 60 seconds. */
+const RETURN_REFRESH_MS = 60_000;
+const MAX_TIMER_MS = 2_147_483_647;
 
 function validSnapshot(s: VaultSnapshot, projectId: string): boolean {
   return (
@@ -69,71 +82,153 @@ function validSnapshot(s: VaultSnapshot, projectId: string): boolean {
   );
 }
 
+/** Free and reserved funds as one bar (PRD section 6); the tiles carry the values. */
+function BalanceMeter({
+  free,
+  reserved,
+}: {
+  free: string | null;
+  reserved: string | null;
+}) {
+  if (free === null || reserved === null) return null;
+  const total = BigInt(free) + BigInt(reserved);
+  if (total === 0n) return null;
+  const freeShare = Number((BigInt(free) * 10_000n) / total);
+  return (
+    <div className="pr-bar vault-meter" aria-hidden="true">
+      {BigInt(free) > 0n ? (
+        <span className="vault-available" style={{ flexGrow: freeShare }} />
+      ) : null}
+      {BigInt(reserved) > 0n ? (
+        <span
+          className="vault-reserved"
+          style={{ flexGrow: 10_000 - freeShare }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function VaultTotals({
   snapshot,
-  staleAfterMs,
+  stale,
 }: {
   snapshot: VaultSnapshot;
-  staleAfterMs: number;
+  stale: boolean;
 }) {
   const value = (amount: string | null) =>
     amount === null ? "Not reported" : formatAssetAmount(amount, snapshot);
   const reservedAwards = reservedGross(snapshot);
-  const stale = vaultSnapshotStale(snapshot, staleAfterMs);
-  const network = Object.hasOwn(ESCROW_NETWORKS, snapshot.network)
-    ? networkLabel(snapshot.network)
-    : snapshot.network;
   return (
-    <>
+    <div className="vault-snapshot">
       {stale && (
-        <p role="alert">
-          These totals may be outdated · read{" "}
-          {formatDateTime(snapshot.observedAt)}.
+        <p className="setup-badge setup-badge--warning" role="alert">
+          <Clock aria-hidden="true" size={14} />
+          Outdated · read {formatDateTime(snapshot.observedAt)}
         </p>
       )}
-      <dl>
-        <dt>Deposited</dt>
-        <dd>{value(snapshot.totalDeposited)}</dd>
-        <dt>Paid out</dt>
-        <dd>{value(snapshot.totalPaid)}</dd>
-        <dt>Payout fees</dt>
-        <dd>{value(snapshot.totalPayoutFees)}</dd>
-        <dt>Withdrawn (gross)</dt>
-        <dd>{value(snapshot.totalGrossWithdrawn)}</dd>
-        <dt>Withdrawal fees</dt>
-        <dd>{value(snapshot.totalWithdrawalFees)}</dd>
-        <dt>Available</dt>
-        <dd>{value(snapshot.freeBalance)}</dd>
-        <dt>Reserved for awards</dt>
-        <dd>{value(reservedAwards)}</dd>
-        {snapshot.reservedFees !== null && (
-          <>
-            <dt>Reserved payout fees</dt>
-            <dd>{value(snapshot.reservedFees)}</dd>
-          </>
-        )}
+      <BalanceMeter free={snapshot.freeBalance} reserved={reservedAwards} />
+      <dl className="vault-stats">
+        <div className="vault-stat vault-stat--available">
+          <dt>
+            <span className="pr-dot vault-available" aria-hidden="true" />
+            Available
+          </dt>
+          <dd>{value(snapshot.freeBalance)}</dd>
+        </div>
+        <div className="vault-stat">
+          <dt>
+            <span className="pr-dot vault-reserved" aria-hidden="true" />
+            Reserved for awards
+          </dt>
+          <dd>{value(reservedAwards)}</dd>
+          {snapshot.reservedFees !== null && (
+            <dd className="vault-stat-note">
+              incl. {value(snapshot.reservedFees)} fees
+            </dd>
+          )}
+        </div>
+        <div className="vault-stat">
+          <dt>Deposited</dt>
+          <dd>{value(snapshot.totalDeposited)}</dd>
+        </div>
+        <div className="vault-stat">
+          <dt>Paid out</dt>
+          <dd>{value(snapshot.totalPaid)}</dd>
+          <dd className="vault-stat-note">
+            + {value(snapshot.totalPayoutFees)} fees
+          </dd>
+        </div>
+        <div className="vault-stat">
+          <dt>Withdrawn</dt>
+          <dd>{value(snapshot.totalGrossWithdrawn)}</dd>
+          <dd className="vault-stat-note">
+            incl. {value(snapshot.totalWithdrawalFees)} fees
+          </dd>
+        </div>
       </dl>
-      <p>
-        As of {formatDateTime(snapshot.blockTime)} · finalized block{" "}
-        {snapshot.blockNumber} on {network}.
+      <p className="vault-finality">
+        <ShieldCheck aria-hidden="true" size={15} />
+        <span>Finalized block {snapshot.blockNumber}</span>
+        <span>{formatDateTime(snapshot.blockTime)}</span>
+        <NetworkName chain={snapshot.chain}>
+          {networkLabel(snapshot.network)}
+        </NetworkName>
       </p>
-    </>
+    </div>
+  );
+}
+
+/** Tiles without values while the first read loads or no read exists. */
+function VaultTotalsPlaceholder() {
+  return (
+    <div className="vault-stats" aria-hidden="true">
+      {[
+        "Available",
+        "Reserved for awards",
+        "Deposited",
+        "Paid out",
+        "Withdrawn",
+      ].map((label, index) => (
+        <div
+          key={label}
+          className={`vault-stat vault-stat--placeholder${index === 0 ? " vault-stat--available" : ""}`}
+        >
+          <span>{label}</span>
+          <span>—</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
 type VaultTotalsState =
   | { status: "none" }
   | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; vault: VaultResponse };
+  | { status: "error"; message: string; retry: () => void }
+  | {
+      status: "ready";
+      vault: VaultResponse;
+      /** A newer read is loading; the last good read stays visible. */
+      refreshing: boolean;
+      /** The newer read failed; `vault` is the last good read (PRD section 9). */
+      refreshError: string | null;
+      retry: () => void;
+    };
 
-/** Loads the cached, finalized vault counters for a project with a deployed vault. */
+/**
+ * Loads the cached, finalized vault counters for a project with a deployed
+ * vault. The totals stay current without a refresh control: a new read runs
+ * when the oldest snapshot turns stale (then once per stale window, also after
+ * an empty or failed read) and when the reader returns to the page after the
+ * cache window. A refresh keeps the last good totals visible.
+ */
 export function useVaultTotals(
   project: ProjectDefinition,
   revision = 0,
 ): VaultTotalsState {
   const deployed = Boolean(project.escrow?.deployments.length);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: explicit refresh reloads the cached vault totals.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a finalized action reloads the cached vault totals.
   const load = useCallback(
     async (signal: AbortSignal) => {
       const response = await fetch(
@@ -148,6 +243,7 @@ export function useVaultTotals(
       )) as VaultResponse;
       if (
         !vault ||
+        vault.projectId !== project.id ||
         !Array.isArray(vault.snapshots) ||
         !Number.isSafeInteger(vault.staleAfterMs) ||
         Number.isNaN(Date.parse(vault.servedAt)) ||
@@ -158,15 +254,82 @@ export function useVaultTotals(
     },
     [project.id, revision],
   );
-  const [state] = usePublicResource(
+  const [state, retry] = usePublicResource(
     deployed,
     load,
     "Could not load vault totals.",
   );
+  const [lastGood, setLastGood] = useState<{
+    projectId: string;
+    vault: VaultResponse;
+  } | null>(null);
+  useEffect(() => {
+    if (state.status === "ready")
+      setLastGood({ projectId: state.vault.projectId, vault: state.vault });
+  }, [state]);
+  useEffect(() => {
+    if (
+      !deployed ||
+      state.status === "loading" ||
+      (state.status === "ready" && state.vault.projectId !== project.id)
+    )
+      return;
+    const settledAt = Date.now();
+    const vault = state.status === "ready" ? state.vault : null;
+    const staleAfterMs = vault?.staleAfterMs ?? VAULT_SNAPSHOT_STALE_MS;
+    const untilStale = Math.min(
+      ...(vault?.snapshots ?? []).map(
+        (snapshot) =>
+          Date.parse(snapshot.observedAt) + staleAfterMs - settledAt,
+      ),
+    );
+    const delay =
+      Number.isFinite(untilStale) && untilStale > 0
+        ? untilStale + 1_000
+        : Math.max(staleAfterMs, RETURN_REFRESH_MS);
+    const timer = window.setTimeout(
+      () => {
+        if (document.visibilityState !== "hidden") retry();
+      },
+      Math.min(delay, MAX_TIMER_MS),
+    );
+    const onReturn = () => {
+      if (
+        document.visibilityState === "visible" &&
+        Date.now() - settledAt >= RETURN_REFRESH_MS
+      )
+        retry();
+    };
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
+  }, [deployed, state, retry, project.id]);
   if (!deployed) return { status: "none" };
-  return state.status === "ready"
-    ? { status: "ready", vault: state.vault }
-    : state;
+  // A loader change takes effect after render; never relabel its prior result.
+  if (state.status === "ready" && state.vault.projectId !== project.id)
+    return { status: "loading" };
+  if (state.status === "ready")
+    return {
+      status: "ready",
+      vault: state.vault,
+      refreshing: false,
+      refreshError: null,
+      retry,
+    };
+  const previous = lastGood?.projectId === project.id ? lastGood.vault : null;
+  if (previous)
+    return {
+      status: "ready",
+      vault: previous,
+      refreshing: state.status === "loading",
+      refreshError: state.status === "error" ? state.message : null,
+      retry,
+    };
+  return state.status === "error" ? { ...state, retry } : state;
 }
 
 export { reservedGross };
@@ -176,6 +339,73 @@ export function vaultSnapshotStale(
   staleAfterMs: number,
 ): boolean {
   return Date.now() - Date.parse(snapshot.observedAt) > staleAfterMs;
+}
+
+function RetryButton({ retry }: { retry: () => void }) {
+  return (
+    <button onClick={retry} type="button">
+      <RotateCcw aria-hidden="true" size={15} /> Retry
+    </button>
+  );
+}
+
+/** Loading, empty, error, stale and ready totals, each shown differently. */
+function VaultTotalsView({
+  totals,
+}: {
+  totals: Exclude<VaultTotalsState, { status: "none" }>;
+}) {
+  if (totals.status === "error")
+    return (
+      <p className="data-notice data-error" role="alert">
+        <CircleAlert aria-hidden="true" size={15} />
+        {totals.message}
+        <RetryButton retry={totals.retry} />
+      </p>
+    );
+  const refreshError = totals.status === "ready" &&
+    totals.refreshError !== null && (
+      <p className="data-notice data-error" role="alert">
+        <CircleAlert aria-hidden="true" size={15} />
+        {totals.refreshError}
+        <RetryButton retry={totals.retry} />
+      </p>
+    );
+  if (totals.status === "loading" || totals.vault.snapshots.length === 0)
+    return (
+      <div className="vault-totals">
+        {refreshError}
+        <p className="setup-badge setup-badge--pending" role="status">
+          {totals.status === "loading" ? (
+            <>
+              <LoaderCircle aria-hidden="true" size={14} />
+              Loading vault totals…
+            </>
+          ) : (
+            <>
+              <Hourglass aria-hidden="true" size={14} />
+              Totals not read yet
+            </>
+          )}
+        </p>
+        <VaultTotalsPlaceholder />
+      </div>
+    );
+  return (
+    <div className="vault-totals" aria-busy={totals.refreshing || undefined}>
+      {refreshError}
+      {totals.vault.snapshots.map((snapshot) => (
+        <VaultTotals
+          key={`${snapshot.network}:${snapshot.vault}`}
+          snapshot={snapshot}
+          stale={
+            totals.refreshError !== null ||
+            vaultSnapshotStale(snapshot, totals.vault.staleAfterMs)
+          }
+        />
+      ))}
+    </div>
+  );
 }
 
 export function EscrowFunding({
@@ -190,21 +420,28 @@ export function EscrowFunding({
     useState<VaultConnection | null>(null);
   const [revision, setRevision] = useState(0);
   const totals = useVaultTotals(project, revision);
-  const deployed = totals.status !== "none";
-  const withdrawalFee = project.escrow
-    ? project.escrow.withdrawalFeeBasisPoints / 100
-    : null;
+  const chain = project.escrow?.chain ?? "solana";
   return (
     <section className="section project-funding" aria-label="Project escrow">
-      <h2>
-        Project vault · {NETWORK_NAMES[project.escrow?.chain ?? "solana"]}
-      </h2>
-      <p>
-        Fees: 2% of each award
-        {withdrawalFee !== null && `, ${withdrawalFee}% of withdrawals`}.
-        Reserved awards cannot be withdrawn.
-      </p>
-      {!deployed ? (
+      <header className="vault-header">
+        <h2>
+          Project vault ·{" "}
+          <NetworkName chain={chain}>{NETWORK_NAMES[chain]}</NetworkName>
+        </h2>
+        {project.escrow ? (
+          <ul className="vault-fees" aria-label="Fees">
+            <li className="setup-badge setup-badge--pending">
+              <Percent aria-hidden="true" size={14} />
+              Award fee {project.escrow.feeBasisPoints / 100}%
+            </li>
+            <li className="setup-badge setup-badge--pending">
+              <Percent aria-hidden="true" size={14} />
+              Withdrawal fee {project.escrow.withdrawalFeeBasisPoints / 100}%
+            </li>
+          </ul>
+        ) : null}
+      </header>
+      {totals.status === "none" ? (
         <OwnerVaultSetup
           project={project}
           onRegistered={(updated, wallet, notice) => {
@@ -216,22 +453,16 @@ export function EscrowFunding({
       ) : (
         <>
           {registrationNotice && <p role="status">{registrationNotice}</p>}
-          <p>Deposit below. Direct token transfers are not credited.</p>
-          {totals.status === "error" ? (
-            <p role="alert">{totals.message}</p>
-          ) : totals.status !== "ready" ? (
-            <p role="status">Loading vault totals…</p>
-          ) : totals.vault.snapshots.length === 0 ? (
-            <p role="status">Vault totals are not available yet.</p>
-          ) : (
-            totals.vault.snapshots.map((snapshot) => (
-              <VaultTotals
-                key={`${snapshot.network}:${snapshot.vault}`}
-                snapshot={snapshot}
-                staleAfterMs={totals.vault.staleAfterMs}
-              />
-            ))
-          )}
+          <VaultTotalsView totals={totals} />
+          {project.escrow?.deployments.map((deployment) => (
+            <VaultActions
+              key={`${deployment.network}:${deployment.vault}`}
+              deployment={deployment}
+              connectedWallet={connectedWallet ?? undefined}
+              projectId={project.id}
+              onFinalized={() => setRevision((value) => value + 1)}
+            />
+          ))}
           {project.reward.kind === "monthly-pool"
             ? project.escrow?.deployments.map((deployment) => (
                 <AutomaticMonthlyPayment
@@ -242,24 +473,11 @@ export function EscrowFunding({
                 />
               ))
             : null}
-          {project.escrow?.deployments.map((deployment) => (
-            <VaultActions
-              key={`${deployment.network}:${deployment.vault}`}
-              deployment={deployment}
-              connectedWallet={connectedWallet ?? undefined}
-              projectId={project.id}
-              onFinalized={() => setRevision((value) => value + 1)}
-            />
-          ))}
-          <button
-            className="button secondary-button"
-            type="button"
-            onClick={() => setRevision((value) => value + 1)}
-          >
-            Refresh vault totals
-          </button>
         </>
       )}
+      <Link className="button secondary-button" href="/earnings">
+        View your payouts
+      </Link>
     </section>
   );
 }
