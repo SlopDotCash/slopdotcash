@@ -469,3 +469,51 @@ for (const change of [
     );
   });
 }
+
+test("an unrecognized imported merge keeps an unchanged promotion held", async () => {
+  const f = unchangedPromotion();
+  const proof = await collectNoChangePromotion(
+    f.client,
+    repository.id,
+    f.promotion.evidence,
+  );
+  if (!proof) throw new Error("Missing promotion proof");
+  f.promotion.evidence.noChangePromotion = proof;
+  const unknownMerge = "9".repeat(40);
+  f.promotion.evidence.commits.push({
+    ...f.promotion.evidence.commits[0],
+    sha: unknownMerge,
+    parents: [{ sha: "7".repeat(40) }, { sha: "8".repeat(40) }],
+  });
+  const result = await prepareWorkUnitEvidence(
+    [f.promotion, f.original],
+    [repository],
+  );
+  expect(result.limitations).toContain(
+    `${f.promotion.evidence.pull.node_id}: unchanged promotion needs one complete original PR for ${unknownMerge}`,
+  );
+});
+
+test("a recognized imported merge preserves the original claims without promotion credit", async () => {
+  const f = unchangedPromotion();
+  const proof = await collectNoChangePromotion(
+    f.client,
+    repository.id,
+    f.promotion.evidence,
+  );
+  if (!proof || !f.original.evidence.mergeCommitEvidence)
+    throw new Error("Missing promotion fixture");
+  f.promotion.evidence.noChangePromotion = proof;
+  const parents = [{ sha: "7".repeat(40) }, { sha: "8".repeat(40) }];
+  f.original.evidence.mergeCommitEvidence.parents = parents;
+  f.promotion.evidence.commits[0].parents = parents;
+  f.promotion.evidence.files = [];
+  f.promotion.evidence.pull.changed_files = 0;
+  const original = await prepareWorkUnitEvidence([f.original], [repository]);
+  const result = await prepareWorkUnitEvidence(
+    [f.promotion, f.original],
+    [repository],
+  );
+  expect(result.limitations).toEqual([]);
+  expect(result.claims).toEqual(original.claims);
+});
