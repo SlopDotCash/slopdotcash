@@ -643,3 +643,13 @@
     white-space: normal;
   }
 }
+
+/* Scope precedes the form at every viewport, including the desktop terms grid. */
+.security-program .security-program-terms {
+  grid-template-columns: minmax(0, 1fr);
+}
+.security-program .security-intake-card {
+  width: 100%;
+  max-width: 52rem;
+  justify-self: center;
+}
