@@ -333,6 +333,26 @@ EVM signing limits gas to the deployment record's `gasCeiling`, copied from the
 network registry, and max gas price to 10 gwei; a record without a ceiling is
 refused.
 
+An EVM deployment may additionally set `maxNativeCostWei` through its normal
+owner-authorized immutable project revision. It is a canonical positive
+uint256 decimal string. The signer refuses an envelope when
+`gasLimit * maxFeePerGas` exceeds this limit; the existing gas and 10-gwei
+ceilings still apply. Omission preserves the existing limits. The field does
+not apply to Solana and is never copied from another project's factory template.
+
+Each newly signed operation retains the limit under which it was admitted.
+Raising or removing the current setting cannot loosen that operation's bound;
+a tighter current setting also governs new signatures and broadcasts. Fee
+replacements and same-nonce binding cancellations use the same operation bound.
+Canonical historical receipts remain reconcilable under their original policy.
+This is a per-operation envelope limit, not a daily, lifetime, wallet or combined
+qualification budget. Separate operator accounting must still bound the total
+across all qualifying transactions and preserve every uncertain attempt.
+Here one operation is the original signed nonce and its same-nonce competitors;
+another nonce after a finalized revert is a separate envelope. This field does
+not enforce a one-nonce binding policy or a cumulative retry allowance. A normal
+reviewed release must publish any new registry limit before the Worker uses it.
+
 | Network | `gasCeiling` | Why |
 | --- | --- | --- |
 | Base (`base-sepolia`, `base-mainnet`) | 500,000 | Plain L2 execution gas |

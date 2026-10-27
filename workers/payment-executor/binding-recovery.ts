@@ -9,6 +9,7 @@ import {
 import { evmRpc, isCanonicalEvmReceipt } from "../../contracts/evm/adapter";
 import {
   type Attempt,
+  assertEvmNativeCost,
   type ExecutorEnvironment,
   PENDING_BINDINGS,
   preflightEvmDeployment,
@@ -137,6 +138,19 @@ export async function reconcileBindingWinner(
   )
     throw new Error("Stored binding identity differs");
   decodeFunctionData({ abi: storedBindingAbi, data: original.data });
+  if (original.gas === undefined || original.maxFeePerGas === undefined)
+    throw new Error("Stored binding gas envelope unavailable");
+  // Current configuration cannot invalidate finalized history. Only a limit
+  // retained with the original attempt applies to historical signed bytes.
+  assertEvmNativeCost(
+    {},
+    {
+      gas: original.gas,
+      maxFeePerGas: original.maxFeePerGas,
+      value: original.value,
+    },
+    attempt,
+  );
   const rpc = (method: string, params: unknown[]) =>
     evmRpc(deployment, method, params);
   const finalized = (await rpc("eth_getBlockByNumber", [
@@ -257,6 +271,11 @@ export async function reconcileBindingWinner(
         s: signatureScalar(tx.s),
         yParity: Number(parity),
       },
+    );
+    assertEvmNativeCost(
+      {},
+      { gas: 21_000n, maxFeePerGas: quantity(tx.maxFeePerGas) },
+      attempt,
     );
     if (
       !same(keccak256(serialized), input.winnerTransactionId) ||
