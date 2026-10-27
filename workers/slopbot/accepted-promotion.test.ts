@@ -1,7 +1,18 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import type { TargetRepository } from "../../src/lib/repositories.mjs";
+import {
+  fixture as binaryFixture,
+  repository as binaryRepository,
+  collect as collectBinaryFixture,
+} from "../../tests/value-binary-fixture";
 import type { ValueEvidence } from "./value-evidence";
+import {
+  collectNoChangePromotion,
+  NO_CHANGE_PROMOTION_CONTEXT,
+} from "./value-no-change-promotion";
 import { retainedCopyBindings } from "./value-retained-copy";
+import { validateEvidenceAssessment } from "./value-review";
 import {
   prepareWorkUnitEvidence,
   type WorkUnitSource,
@@ -172,6 +183,205 @@ function fixture() {
   return { original, promotion, integration };
 }
 
+function unchangedPromotion() {
+  const { original, promotion } = fixture();
+  const promotedBase = "5".repeat(40);
+  promotion.policy.sha = promotedBase;
+  Object.assign(promotion.evidence.pull, {
+    base: { sha: promotedBase, ref: "staging" },
+    merged_at: "2026-10-02T10:00:00Z",
+    merge_commit_sha: integrated,
+    user: { node_id: "U_promoter", login: "promoter", type: "User" },
+  });
+  promotion.evidence.mergeCommitEvidence = {
+    sha: integrated,
+    html_url: `https://github.com/${repository.id}/commit/${integrated}`,
+    parents: [{ sha: promotedBase }, { sha: accepted }],
+    stats: { additions: 0, deletions: 0, total: 0 },
+    files: [],
+  };
+  promotion.evidence.limitations = [NO_CHANGE_PROMOTION_CONTEXT];
+  promotion.evidence.implementationActorNodeIds = ["U_promoter"];
+  const blob = createHash("sha1").update("blob 1\0x").digest("hex");
+  const bytes = Buffer.concat([
+    Buffer.from("100644 fix.ts\0"),
+    Buffer.from(blob, "hex"),
+  ]);
+  const treeSha = createHash("sha1")
+    .update(`tree ${bytes.length}\0`)
+    .update(bytes)
+    .digest("hex");
+  const responses = new Map<string, unknown>(
+    [promotedBase, accepted, integrated].map((sha) => [
+      `/repos/${repository.id}/git/commits/${sha}`,
+      { sha, tree: { sha: treeSha } },
+    ]),
+  );
+  responses.set(`/repos/${repository.id}/git/trees/${treeSha}`, {
+    sha: treeSha,
+    truncated: false,
+    tree: [{ path: "fix.ts", mode: "100644", type: "blob", sha: blob }],
+  });
+  const client = {
+    async get<T>(path: string): Promise<T | null> {
+      return (responses.get(path) as T | undefined) ?? null;
+    },
+  };
+  return { original, promotion, client, responses, treeSha };
+}
+
+test("collection holds a proven no-change promotion even on the configured branch with the same author", async () => {
+  const f = binaryFixture({ textOnly: true, direct: true });
+  const base = f.pull.base.sha;
+  const head = f.pull.head.sha;
+  const merge = f.pull.merge_commit_sha;
+  const content = new Map([
+    ["fix.ts", new TextEncoder().encode("export const fixed = true;\n")],
+  ]);
+  f.bind(base, content, []);
+  f.bind(head, content, [base]);
+  f.bind(merge, content, [base, head]);
+  f.pull.user.node_id = "U_author";
+  const get = f.client.get.bind(f.client);
+  f.client.get = async <T>(path: string): Promise<T | null> => {
+    if (path.startsWith(`/repos/${binaryRepository.id}/commits/${merge}?`)) {
+      const result = await get<Record<string, unknown>>(path);
+      return {
+        ...result,
+        stats: { additions: 0, deletions: 0, total: 0 },
+        files: [],
+      } as T;
+    }
+    return get<T>(path);
+  };
+  const result = await collectBinaryFixture(f);
+  expect(result.noChangePromotion).toMatchObject({
+    baseSha: base,
+    headSha: head,
+    mergeSha: merge,
+  });
+  expect(result.limitations).toEqual([NO_CHANGE_PROMOTION_CONTEXT]);
+});
+
+test("an unchanged branch promotion preserves original credit only after complete joint source verification", async () => {
+  const f = unchangedPromotion();
+  const proof = await collectNoChangePromotion(
+    f.client,
+    repository.id,
+    f.promotion.evidence,
+  );
+  expect(proof).not.toBeNull();
+  if (!proof) throw new Error("Missing promotion proof");
+  f.promotion.evidence.noChangePromotion = proof;
+  const standalone = {
+    status: "assessed",
+    tier: "small",
+    rationale: "The original repair is accepted.",
+    dimensions: Object.fromEntries(
+      [
+        "alignment",
+        "impact",
+        "complexity",
+        "verification",
+        "maintenance",
+        "overlap",
+      ].map((name) => [
+        name,
+        "The complete original source supports this repair.",
+      ]),
+    ),
+    evidenceUrls: f.original.evidence.evidenceUrls,
+    relatedPullRequests: [],
+    limitations: [],
+    reviews: [],
+  };
+  expect(
+    validateEvidenceAssessment(standalone, f.original.evidence),
+  ).not.toBeNull();
+  expect(
+    validateEvidenceAssessment(standalone, f.promotion.evidence),
+  ).toBeNull();
+  const alone = await prepareWorkUnitEvidence([f.promotion], [repository]);
+  expect(alone.limitations.join("\n")).toContain(
+    "unchanged promotion needs one complete original PR",
+  );
+  const joint = await prepareWorkUnitEvidence(
+    [f.promotion, f.original],
+    [repository],
+  );
+  expect(joint.limitations).toEqual([]);
+  expect(joint.claims).toHaveLength(1);
+  expect(joint.claims[0]).toMatchObject({
+    commitSha: implemented,
+    creditPullRequestId: "PR_original",
+    implementationActorNodeIds: [actor.node_id],
+  });
+  expect(joint.claims[0].carrierPullRequestIds).not.toContain(
+    "PR_closed_promotion",
+  );
+  expect(f.promotion.evidence.limitations).toEqual([
+    NO_CHANGE_PROMOTION_CONTEXT,
+  ]);
+});
+
+for (const change of [
+  "changed-tree",
+  "truncated-tree",
+  "corrupt-tree",
+] as const) {
+  test(`an empty reported merge cannot prove an unchanged promotion with ${change}`, async () => {
+    const f = unchangedPromotion();
+    if (change === "changed-tree")
+      f.responses.set(`/repos/${repository.id}/git/commits/${accepted}`, {
+        sha: accepted,
+        tree: { sha: "a".repeat(40) },
+      });
+    else {
+      const path = `/repos/${repository.id}/git/trees/${f.treeSha}`;
+      const tree = f.responses.get(path) as {
+        truncated: boolean;
+        tree: { sha: string }[];
+      };
+      if (change === "truncated-tree") tree.truncated = true;
+      else tree.tree[0].sha = "a".repeat(40);
+    }
+    expect(
+      await collectNoChangePromotion(
+        f.client,
+        repository.id,
+        f.promotion.evidence,
+      ),
+    ).toBeNull();
+  });
+}
+
+test("a promotion cannot use an incomplete or later original, or apply its proof to changed accepted files", async () => {
+  for (const change of ["incomplete", "later", "changed"] as const) {
+    const f = unchangedPromotion();
+    const proof = await collectNoChangePromotion(
+      f.client,
+      repository.id,
+      f.promotion.evidence,
+    );
+    if (!proof) throw new Error("Missing promotion proof");
+    f.promotion.evidence.noChangePromotion = proof;
+    if (change === "incomplete")
+      f.original.evidence.limitations.push("Missing source");
+    if (change === "later")
+      f.original.evidence.pull.merged_at = "2026-10-03T10:00:00Z";
+    if (change === "changed") {
+      const merge = f.promotion.evidence.mergeCommitEvidence;
+      if (!merge) throw new Error("Missing accepted merge");
+      merge.files.push(file);
+    }
+    const result = await prepareWorkUnitEvidence(
+      [f.promotion, f.original],
+      [repository],
+    );
+    expect(result.limitations.length).toBeGreaterThan(0);
+  }
+});
+
 test("a closed promotion of previously accepted same-author commits adds no attribution hold or credit", async () => {
   const { original, promotion, integration } = fixture();
   const before = structuredClone([original, promotion, integration]);
@@ -257,5 +467,95 @@ for (const change of [
     expect(result.limitations).toContain(
       "PR_closed_promotion: matching copied edits require authenticated retention acknowledgement",
     );
+  });
+}
+
+test("an unrecognized imported merge keeps an unchanged promotion held", async () => {
+  const f = unchangedPromotion();
+  const proof = await collectNoChangePromotion(
+    f.client,
+    repository.id,
+    f.promotion.evidence,
+  );
+  if (!proof) throw new Error("Missing promotion proof");
+  f.promotion.evidence.noChangePromotion = proof;
+  const unknownMerge = "9".repeat(40);
+  f.promotion.evidence.commits.push({
+    ...f.promotion.evidence.commits[0],
+    sha: unknownMerge,
+    parents: [{ sha: "7".repeat(40) }, { sha: "8".repeat(40) }],
+  });
+  const result = await prepareWorkUnitEvidence(
+    [f.promotion, f.original],
+    [repository],
+  );
+  expect(result.limitations).toContain(
+    `${f.promotion.evidence.pull.node_id}: unchanged promotion needs one complete original PR for ${unknownMerge}`,
+  );
+});
+
+test("a recognized imported merge preserves the original claims without promotion credit", async () => {
+  const f = unchangedPromotion();
+  const proof = await collectNoChangePromotion(
+    f.client,
+    repository.id,
+    f.promotion.evidence,
+  );
+  if (!proof || !f.original.evidence.mergeCommitEvidence)
+    throw new Error("Missing promotion fixture");
+  f.promotion.evidence.noChangePromotion = proof;
+  const parents = [{ sha: "7".repeat(40) }, { sha: "8".repeat(40) }];
+  f.original.evidence.mergeCommitEvidence.parents = parents;
+  f.promotion.evidence.commits[0].parents = parents;
+  f.promotion.evidence.files = [];
+  f.promotion.evidence.pull.changed_files = 0;
+  const original = await prepareWorkUnitEvidence([f.original], [repository]);
+  const result = await prepareWorkUnitEvidence(
+    [f.promotion, f.original],
+    [repository],
+  );
+  expect(result.limitations).toEqual([]);
+  expect(result.claims).toEqual(original.claims);
+});
+
+for (const hasResolution of [false, true]) {
+  test(`a recognized imported merge with ${hasResolution ? "changed" : "empty"} resolution adds no promotion credit`, async () => {
+    const f = unchangedPromotion();
+    const proof = await collectNoChangePromotion(
+      f.client,
+      repository.id,
+      f.promotion.evidence,
+    );
+    if (!proof || !f.original.evidence.mergeCommitEvidence)
+      throw new Error("Missing promotion fixture");
+    f.promotion.evidence.noChangePromotion = proof;
+    const parents = [{ sha: base }, { sha: implemented }];
+    f.original.evidence.mergeCommitEvidence.parents = parents;
+    f.promotion.evidence.commits[0].parents = parents;
+    const patch = hasResolution ? file.patch : "";
+    f.promotion.evidence.mergeResolutions = [
+      {
+        commitSha: accepted,
+        parents: [base, implemented],
+        gitVersion: "git version 2.56.0",
+        automaticTree: "a".repeat(40),
+        resolvedTree: (hasResolution ? "b" : "a").repeat(40),
+        hadConflicts: hasResolution,
+        patch,
+        patchSha256: createHash("sha256").update(patch).digest("hex"),
+        paths: hasResolution ? [file.filename] : [],
+      },
+    ];
+    if (!hasResolution) {
+      f.promotion.evidence.files = [];
+      f.promotion.evidence.pull.changed_files = 0;
+    }
+    const original = await prepareWorkUnitEvidence([f.original], [repository]);
+    const result = await prepareWorkUnitEvidence(
+      [f.promotion, f.original],
+      [repository],
+    );
+    expect(result.limitations).toEqual([]);
+    expect(result.claims).toEqual(original.claims);
   });
 }

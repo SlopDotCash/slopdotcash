@@ -15,6 +15,10 @@ import {
 } from "./value-evidence";
 import type { ValueMergeRecipe } from "./value-merge-profile";
 import { mergeResolutionMatches } from "./value-merge-resolution";
+import {
+  NO_CHANGE_PROMOTION_CONTEXT,
+  noChangePromotionMatches,
+} from "./value-no-change-promotion";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { valueSourceDigest } from "./value-review";
 
@@ -106,8 +110,12 @@ export async function prepareWorkUnitEvidence(
       );
     ids.add(pull.node_id);
     projects.add(repository.projectId);
+    const noChangePromotion = noChangePromotionMatches(evidence);
+    if (evidence.noChangePromotion && !noChangePromotion)
+      limitations.add(`${pull.node_id}: invalid unchanged promotion proof`);
     for (const limitation of evidence.limitations)
-      limitations.add(`${pull.node_id}: ${limitation}`);
+      if (!(noChangePromotion && limitation === NO_CHANGE_PROMOTION_CONTEXT))
+        limitations.add(`${pull.node_id}: ${limitation}`);
     for (const limitation of await binarySourceLimitations(evidence))
       limitations.add(`${pull.node_id}: ${limitation}`);
     sourceDigests.push({
@@ -120,6 +128,26 @@ export async function prepareWorkUnitEvidence(
     const acceptedAt = pull.merged_at ?? indirect?.observedOnBranchAt;
     if (acceptedAt === undefined) continue;
     const mergedAt = Date.parse(acceptedAt);
+    // Admission covers every imported commit, including merge commits that
+    // do not generate ordinary implementation claims below.
+    if (noChangePromotion) {
+      for (const commit of evidence.commits) {
+        const originals = sources.filter(
+          ({ evidence: original }) =>
+            original.repositoryNodeId === evidence.repositoryNodeId &&
+            original.pull.node_id !== pull.node_id &&
+            original.pull.merge_commit_sha === commit.sha &&
+            original.mergeCommitEvidence?.sha === commit.sha &&
+            original.pull.merged_at !== null &&
+            Date.parse(original.pull.merged_at) < mergedAt &&
+            original.limitations.length === 0,
+        );
+        if (originals.length !== 1)
+          limitations.add(
+            `${pull.node_id}: unchanged promotion needs one complete original PR for ${commit.sha}`,
+          );
+      }
+    }
     const acceptedFiles = indirect?.integrationFiles ?? evidence.files;
     const changedPaths = new Set(
       acceptedFiles.flatMap((file) => [
@@ -234,10 +262,17 @@ export async function prepareWorkUnitEvidence(
           origin.pull.node_id !== pull.node_id &&
           origin.pull.merge_commit_sha === commit.sha &&
           origin.mergeCommitEvidence?.sha === commit.sha &&
-          origin.mergeCommitEvidence.parents.length === 1 &&
+          (noChangePromotion ||
+            origin.mergeCommitEvidence.parents.length === 1) &&
           origin.pull.merged_at !== null &&
           Date.parse(origin.pull.merged_at) < mergedAt,
       );
+      if (noChangePromotion && origins.length !== 1) {
+        limitations.add(
+          `${pull.node_id}: unchanged promotion needs one complete original PR for ${commit.sha}`,
+        );
+        continue;
+      }
       if (
         origins.length > 0 ||
         evidence.acceptedRange?.parentSha === commit.sha
