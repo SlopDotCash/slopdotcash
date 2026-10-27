@@ -16,6 +16,7 @@ import {
 } from "./analysis";
 import { parseReportInput, type ReportInput } from "./github-advisories";
 import {
+  type CaseRow,
   caseInsertStatement,
   caseRoles,
   eventStatement,
@@ -153,14 +154,32 @@ function intakeView(
       submission.advisory_ghsa === null,
   };
 }
-async function rolesFor(
+async function accessFor(
   deps: SecurityApiDependencies,
   row: StoredIntake,
   actor: GithubActor,
 ) {
   const record = await loadCase(deps, row.case_id);
   if (!record) fail(404, "not_found", "Report not found");
-  return caseRoles(deps, record, actor);
+  return { record, roles: await caseRoles(deps, record, actor) };
+}
+function decorateStoredSubmission(
+  row: SubmissionRow,
+  stored: StoredIntake,
+  record: CaseRow,
+  roles: Set<Role>,
+  now: Date,
+) {
+  const view = intakeView(stored, roles, row, now);
+  view.canRevise =
+    (view.canRevise || record.receipt_state === "needs-information") &&
+    roles.has("reporter") &&
+    ["draft", "failed"].includes(row.state) &&
+    ["received", "needs-information", "triaging"].includes(
+      record.receipt_state,
+    ) &&
+    !["approved", "reserved"].includes(record.award_state);
+  return { ...submissionView(row), intake: view };
 }
 export async function decorateSubmission(
   deps: SecurityApiDependencies,
@@ -169,21 +188,8 @@ export async function decorateSubmission(
 ) {
   const stored = await storedIntake(deps, row.id);
   if (!stored) return { ...submissionView(row), intake: null };
-  const roles = await rolesFor(deps, stored, actor);
-  const view = intakeView(stored, roles, row, deps.now());
-  const record = await loadCase(deps, stored.case_id);
-  view.canRevise =
-    (view.canRevise || record?.receipt_state === "needs-information") &&
-    roles.has("reporter") &&
-    ["draft", "failed"].includes(row.state) &&
-    Boolean(
-      record &&
-        ["received", "needs-information", "triaging"].includes(
-          record.receipt_state,
-        ) &&
-        !["approved", "reserved"].includes(record.award_state),
-    );
-  return { ...submissionView(row), intake: view };
+  const { record, roles } = await accessFor(deps, stored, actor);
+  return decorateStoredSubmission(row, stored, record, roles, deps.now());
 }
 export async function storedIntakeViewForCase(
   deps: SecurityApiDependencies,
@@ -785,26 +791,44 @@ export async function listStoredSubmissions(
       .bind(actor.githubId, actor.githubId, ...projects)
       .all<SubmissionRow>()
   ).results;
-  const rows = [...own];
+  const rows = await Promise.all(
+    own.map(async (row) => ({
+      createdAt: row.created_at,
+      submission: await decorateSubmission(deps, row, actor),
+    })),
+  );
   for (const candidate of candidates) {
-    const stored = (await storedIntake(deps, candidate.id)) as StoredIntake;
-    const roles = await rolesFor(deps, stored, actor);
-    if (
-      roles.has("security-maintainer") ||
-      roles.has("triager") ||
-      roles.has("dispute")
-    )
-      rows.push(candidate);
+    try {
+      const stored = await storedIntake(deps, candidate.id);
+      if (!stored) fail(404, "not_found", "Report not found");
+      const { record, roles } = await accessFor(deps, stored, actor);
+      if (
+        roles.has("security-maintainer") ||
+        roles.has("triager") ||
+        roles.has("dispute")
+      )
+        rows.push({
+          createdAt: candidate.created_at,
+          submission: decorateStoredSubmission(
+            candidate,
+            stored,
+            record,
+            roles,
+            deps.now(),
+          ),
+        });
+    } catch (error) {
+      if (!reportingAuthorityUnavailable(error)) throw error;
+      authorityUnavailable = true;
+    }
   }
-  rows.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return json(200, {
     automatic: deps.intake?.mode === "on",
     storedIntake:
       Boolean(deps.reportStorage) && deps.reportIntakeEnabled !== false,
     authorityUnavailable,
-    submissions: await Promise.all(
-      rows.map((row) => decorateSubmission(deps, row, actor)),
-    ),
+    submissions: rows.map((row) => row.submission),
   });
 }
 async function authorizedStored(
@@ -817,7 +841,7 @@ async function authorizedStored(
   if (!stored) fail(404, "not_found", "Report not found");
   const row = await loadSubmission(deps, id);
   if (!row) fail(404, "not_found", "Report not found");
-  const roles = await rolesFor(deps, stored, actor);
+  const { roles } = await accessFor(deps, stored, actor);
   if (
     !["reporter", "security-maintainer", "triager", "dispute"].some((role) =>
       roles.has(role as Role),
