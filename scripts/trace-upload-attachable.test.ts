@@ -240,6 +240,65 @@ async function runWithTraceA(t: ReturnType<typeof api>) {
   return runId;
 }
 
+test("uploaded traces cannot be read through removed routes, even by an operator", async () => {
+  const t = api();
+  const runId = await runWithTraceA(t);
+  const digest = await sha256Hex(TRACE_A);
+  t.deps.operatorGithubIds = new Set([ACTOR]);
+  t.deps.operatorSession = async () => ({
+    githubId: ACTOR,
+    githubLogin: "contributor",
+  });
+  const bearer = async (role: "contributor" | "operator") =>
+    signApiToken(
+      {
+        iss: "slop.cash",
+        aud: "private-trace-api",
+        sub: `github:${ACTOR}`,
+        githubId: ACTOR,
+        githubLogin: "contributor",
+        roles: [role],
+        iat: Math.floor(T0 / 1000),
+        exp: Math.floor(T0 / 1000) + 300,
+        jti: `removed-trace-route-${role}`,
+      },
+      SECRET,
+    );
+  const callers: { origin: string; headers: Record<string, string> }[] = [
+    { origin: "https://api.slop.cash", headers: {} },
+    {
+      origin: "https://api.slop.cash",
+      headers: { authorization: `Bearer ${await bearer("contributor")}` },
+    },
+    {
+      origin: "https://api.slop.cash",
+      headers: { authorization: `Bearer ${await bearer("operator")}` },
+    },
+    {
+      origin: "https://slop.cash",
+      headers: { cookie: "slop_session=fixture", origin: "https://slop.cash" },
+    },
+  ];
+  for (const caller of callers) {
+    for (const method of ["GET", "POST"]) {
+      const path = `operator/traces/${digest}${method === "POST" ? "/grant" : ""}`;
+      const response = await handleTraceApi(
+        new Request(`${caller.origin}/api/v1/${path}`, {
+          method,
+          headers: caller.headers,
+        }),
+        t.deps,
+      );
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "not_found" });
+    }
+  }
+  // Removing reads neither deletes the object nor blocks normal run completion.
+  expect(await t.retained(TRACE_A)).toBe(true);
+  expect((await t.finalize(runId)).status).toBe(200);
+  expect(await t.retained(TRACE_A)).toBe(true);
+});
+
 test("a second trace for a run is refused at the intent, and its bytes are never written", async () => {
   const t = api();
   const runId = await runWithTraceA(t);
