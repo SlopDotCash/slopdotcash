@@ -560,9 +560,11 @@ test("maintainers can verify or reject a manually linked private report @registr
   await verify
     .getByRole("button", { name: "Verify report", exact: true })
     .click();
-  await expect(detail.getByRole("status").first()).toHaveText(
-    "Verify the GitHub report: saved.",
-  );
+  await expect(
+    detail
+      .getByRole("status")
+      .filter({ hasText: "Verify the GitHub report: saved." }),
+  ).toBeVisible();
   const verified = await api(
     request,
     "GET",
@@ -589,9 +591,11 @@ test("maintainers can verify or reject a manually linked private report @registr
   await reject
     .getByRole("button", { name: "Reject link", exact: true })
     .click();
-  await expect(rejectedDetail.getByRole("status").first()).toHaveText(
-    "Reject this link: saved.",
-  );
+  await expect(
+    rejectedDetail
+      .getByRole("status")
+      .filter({ hasText: "Reject this link: saved." }),
+  ).toBeVisible();
   const rejected = await api(
     request,
     "GET",
@@ -1562,9 +1566,11 @@ test("private security bounty programs keep cases restricted from intake to awar
       .getByLabel("Private reason")
       .fill("The reporter has no control over the payer or the decision.");
     await form.getByRole("button", { name: "Record review" }).click();
-    await expect(detail.getByRole("status")).toContainText(
-      "Related-party award review: saved.",
-    );
+    await expect(
+      detail
+        .getByRole("status")
+        .filter({ hasText: "Related-party award review: saved." }),
+    ).toBeVisible();
     await expect(detail).toContainText("Approved by an independent reviewer");
     await expectAccessible(page);
     await page.screenshot({
@@ -1812,9 +1818,11 @@ test("private security bounty programs keep cases restricted from intake to awar
     });
     await acknowledge.focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("status")).toHaveText(
-      "Security notice acknowledged.",
-    );
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "Security notice acknowledged." }),
+    ).toBeVisible();
     await expect(
       page.getByText("Acknowledged", { exact: true }).first(),
     ).toBeVisible();
@@ -1904,7 +1912,12 @@ test("private security bounty programs keep cases restricted from intake to awar
       .getByRole("button", { name: "Save disclosure decision" })
       .focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("status")).toContainText("Disclosure: saved.");
+    await expect(
+      page
+        .locator(`[aria-labelledby="case-${caseA}"]`)
+        .getByRole("status")
+        .filter({ hasText: "Disclosure: saved." }),
+    ).toBeVisible();
     await page.getByText("Case details and history", { exact: true }).click();
     await expect(page.locator(".security-history")).toContainText(digest);
     await expect(page.locator(".security-history")).toContainText(
@@ -2029,9 +2042,11 @@ test("private security bounty programs keep cases restricted from intake to awar
       .selectOption("recognition");
     await detail.getByLabel("Show my name publicly").selectOption("opt-in");
     await detail.getByRole("button", { name: "Save my choice" }).click();
-    await expect(detail.getByRole("status")).toContainText(
-      "Public recognition: saved.",
-    );
+    await expect(
+      detail
+        .getByRole("status")
+        .filter({ hasText: "Public recognition: saved." }),
+    ).toBeVisible();
     await expectAccessible(page);
     await page.screenshot({
       path: test.info().outputPath("reporter-case.png"),
