@@ -110,6 +110,9 @@ const apiEnv = {
   TRACE_AUTH_SECRET: setting("TRACE_AUTH_SECRET") ?? secret(),
   SLOP_IDENTITY: { fetch: identity },
   ADMIN_GITHUB_IDS: setting("ADMIN_GITHUB_IDS"),
+  // Optional local X OAuth; its callback remains on this local origin.
+  X_CLIENT_ID: setting("X_CLIENT_ID"),
+  X_CLIENT_SECRET: setting("X_CLIENT_SECRET"),
 };
 
 const server = Bun.serve({
