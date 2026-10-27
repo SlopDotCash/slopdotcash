@@ -2,6 +2,7 @@
  * The bounded malicious-code scan service (PRD section 8; issue #909). One
  * pass asks Slop to queue changed content, reads the signed queue, and for
  * each pending assessment: acquires the exact queued inputs, inspects them,
+ * reuses an original retained clean scan of identical inspected content or
  * runs the primary model review, runs the specialist review only when the
  * result is ambiguous or high risk, retains the private evidence and
  * publishes the result once.
@@ -21,7 +22,16 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { MAX_VETTING_RESULT_BYTES } from "../../backend/vetting/result";
+import {
+  isScanResult,
+  parseRecordedVettingResult,
+  recordedResultProblems,
+  scanSourceInventory,
+  type VettingScanResult,
+} from "../../backend/vetting/scan-result";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   composeAcquisitionRefusal,
   composeScanResult,
@@ -40,6 +50,7 @@ import {
   acquireQueuedAssessment,
   type QueueConnection,
   QueuedAcquisitionRefusal,
+  type QueuedAssessment,
   readPendingAssessments,
 } from "./queue";
 import {
@@ -91,7 +102,7 @@ export type ScanServiceConfig = {
   connection: QueueConnection;
   /** Read-only GitHub credential, used only while acquiring public source. */
   githubToken?: string;
-  /** Surplus `claude-opus-5.5`: every scan (owner decision D16). */
+  /** Surplus `claude-opus-5.5`: every fresh scan (owner decision D16). */
   primary: ScannerProfile;
   /** Surplus `gpt-6.1-sol`: only ambiguous or high-risk results. */
   specialist: ScannerProfile;
@@ -120,6 +131,7 @@ export type AssessmentOutcome =
       step:
         | "acquire"
         | "isolated-execution"
+        | "reuse"
         | "primary-review"
         | "specialist-review"
         | "evidence";
@@ -160,7 +172,7 @@ async function signedRequest(
  */
 function retry(
   assessmentId: string,
-  step: "acquire" | "isolated-execution",
+  step: "acquire" | "isolated-execution" | "reuse",
   error: unknown,
 ): AssessmentOutcome {
   return {
@@ -361,6 +373,42 @@ async function scanOne(
       return retry(assessmentId, "acquire", error);
     }
     const inspection = inspectRepository(inputs);
+    // Retain the exact deterministic input separately from the final inventory
+    // that includes execution IDs, timestamps and output. Neither is normalized.
+    const sourceInventory = inspection.inventory;
+    const sourceInventorySha256 = inspection.inventorySha256;
+    let reused: VettingScanResult | null;
+    try {
+      reused = await reusableResult(
+        config,
+        assessment,
+        inputs.repository,
+        sourceInventorySha256,
+      );
+    } catch (error) {
+      return retry(assessmentId, "reuse", error);
+    }
+    if (reused) {
+      const body = JSON.stringify(reused);
+      const receipt = await publishResult({
+        origin: connection.origin,
+        body,
+        approvedSha256: await sha256Hex(encoder.encode(body)),
+        signer: connection,
+        journalDirectory: config.journalDirectory,
+        journal: config.journal,
+        at: connection.now?.(),
+        fetch: connection.fetch,
+      });
+      return {
+        assessmentId,
+        state: "published",
+        disposition: "clean",
+        outcome: receipt.outcome,
+        specialist: false,
+        evidence: "retained",
+      };
+    }
     let isolated: Awaited<ReturnType<typeof inspectIsolatedArtifacts>>;
     try {
       isolated = await inspectIsolatedArtifacts({
@@ -400,6 +448,7 @@ async function scanOne(
         specialist,
         execution: isolated.execution,
         executionEvidenceSha256s,
+        sourceInventorySha256,
       });
     let composed = compose(null);
     let specialist = false;
@@ -422,6 +471,12 @@ async function scanOne(
         bytes: composed.report,
         kind: "trace",
         label: "Bounded scan report",
+        contentType: "application/json",
+      },
+      {
+        bytes: sourceInventory,
+        kind: "manifest",
+        label: "Acquired scan input inventory",
         contentType: "application/json",
       },
       {
@@ -472,6 +527,65 @@ async function scanOne(
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+/** Lookup only the final inspected inventory, never a commit or path shortcut. */
+async function reusableResult(
+  config: ScanServiceConfig,
+  assessment: QueuedAssessment,
+  repository: string,
+  inventorySha256: string,
+): Promise<VettingScanResult | null> {
+  const response = await signedRequest(
+    config.connection,
+    "POST",
+    "/api/v1/vetting/reuse",
+    encoder.encode(
+      JSON.stringify({
+        assessmentId: assessment.assessmentId,
+        inputManifestSha256: inventorySha256,
+        policyVersion: config.policyVersion,
+      }),
+    ),
+    "application/json",
+  );
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error("Scan reuse lookup failed");
+  }
+  const value = (await readBoundedJson(
+    response,
+    // Transport adds a fixed schema/result wrapper; the result's own limit
+    // remains the normal publication limit checked below.
+    MAX_VETTING_RESULT_BYTES + 128,
+    "scan reuse",
+  )) as { schemaVersion?: unknown; result?: unknown };
+  if (value?.schemaVersion !== "slop-vetting-reuse-v1")
+    throw new Error("Invalid scan reuse response");
+  if (value.result === null) return null;
+  if (
+    encoder.encode(JSON.stringify(value.result)).byteLength >
+    MAX_VETTING_RESULT_BYTES
+  )
+    throw new Error("Scan reuse result exceeds the publication limit");
+  const result = parseRecordedVettingResult(value.result);
+  if (
+    !isScanResult(result) ||
+    result.disposition !== "clean" ||
+    result.reusedAssessmentId === null ||
+    result.assessmentId !== assessment.assessmentId ||
+    result.projectId !== assessment.projectId ||
+    result.revision !== assessment.revision ||
+    result.manifestSha256 !== assessment.manifestSha256 ||
+    result.assessed.repository.toLowerCase() !== repository.toLowerCase() ||
+    result.assessed.commitSha !== assessment.commitSha ||
+    result.assessed.templateSha256 !== assessment.templateSha256 ||
+    scanSourceInventory(result) !== inventorySha256 ||
+    result.policyVersion !== config.policyVersion ||
+    recordedResultProblems(result).length > 0
+  )
+    throw new Error("Scan reuse response does not match the queued inventory");
+  return result;
 }
 
 /** One scan pass. Assessments run one at a time, in queue order. */

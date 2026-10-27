@@ -65,12 +65,40 @@ The flow for one queued assessment:
 2. reads the signed queue;
 3. for each pending assessment, in queue order, acquires the exact inputs
    (`acquireQueuedAssessment`), inspects the repository source and the queued
-   skill template, runs the primary review and, only when
+   skill template. Before fresh execution, it asks the signed private
+   `POST /api/v1/vetting/reuse` route about the deterministic acquired-input
+   inventory digest. An original clean scan with retained evidence of the same
+   project, repository, source inventory, template and policy can supply the
+   result for the new queued revision and commit. Reused scans cannot form a reuse chain;
+   contributor-flag pauses require a fresh scan. A cache miss completes the
+   required isolated inspection, then runs the primary review and, only when
    `composeScanResult` reports `needsSpecialist`, the specialist review;
 4. registers and uploads the private report, the reviewed inventory, every
    dependency lock and every named artifact under the scan run through the
    signed evidence routes;
 5. publishes the result once with `publishResult`.
+
+A reused result preserves the original run, review and report evidence rather
+than claiming another provider call. Its normal result publication revalidates
+the original scan, current restrictions and retained evidence, so a flag pause
+or lost evidence between lookup and publication still refuses clearance. A
+failed or malformed lookup leaves the assessment pending without calling the
+provider. Reuse never normalizes source content or changes inventory budgets.
+New results retain `assessed.sourceInventorySha256` separately from
+`assessed.inputManifestSha256`, the exact final inventory the model reviewed.
+The private v2 scan report binds both inventories and every execution report.
+The source bytes, final bytes, execution outputs and original dates remain
+unchanged on reuse. Retention checks prove the final inventory contains the
+complete source inventory followed by the exact retained execution items.
+Clean execution reports use the same bounded validator as fresh execution,
+bind the requested artifacts and recorded image, and preserve disabled
+internet access. Every requested artifact needs its own byte-identity coverage.
+Old text-only results retain their final-digest reuse path. An old native
+result without a retained source binding cannot reuse; it needs a fresh scan.
+Deploy the API reuse route before updating the scanner service. A missing
+route (404), unavailable service (503), or invalid lookup response leaves the
+assignment pending at the reuse step; the scanner does not bypass the lookup
+or spend provider tokens as a deployment fallback.
 
 A service failure publishes nothing: an unavailable source or a failed
 primary or specialist review leaves the assessment pending, and the next pass
@@ -164,11 +192,14 @@ The inventory digest covers executable content and the digests of retained
 binary, archive and quarantined artifacts. Documentation that is not an agent
 instruction file does not change it. A later commit whose
 executable inventory, skill template and scan policy are byte-identical to a
-clean scan may cite that result; the intake checks that the cited original is
-a clean, non-reused scan of the same repository, inventory, template, policy,
-run and report. The controller does not produce such citations today: each
-queued assessment gets a new scan. Any change to executable content produces
-a new digest and a new scan.
+clean scan may cite that result. Before isolated inspection, the controller
+uses the signed lookup; lookup and intake check that the cited original is
+a clean, non-reused scan of the same project, repository, source inventory,
+template, policy, run and report, with all original evidence retained. The
+final review inventory remains separately bound, including original native
+execution evidence. A flag-only pause
+cannot reuse that scan. Any change to executable content produces a new
+digest and a new scan.
 
 The signed service calls `POST /api/v1/vetting/refresh` before reading the
 queue. Slop then queues, for the project steward, a scan of every listed
