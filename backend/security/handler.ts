@@ -742,7 +742,7 @@ function nextStep(
     // Without a reviewed private payment rail nobody can act yet.
     if (settlementState === null && !railAvailable)
       return {
-        text: "The award is approved and reserved. Payment waits for the program's reviewed private payment rail.",
+        text: "The award is approved and reserved. Payment is not available yet.",
         dueAt: row.payment_deadline,
       };
     if (settlementState === null)

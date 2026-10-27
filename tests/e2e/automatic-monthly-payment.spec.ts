@@ -95,7 +95,7 @@ test("automatic monthly payment starts checked and only the vault owner can sign
   );
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   const monthly = page.getByRole("region", {
-    name: "Automatic monthly payment · base-sepolia",
+    name: "Automatic monthly payment · Base Sepolia (test)",
   });
   const connect = monthly.getByRole("button", {
     name: "Connect MetaMask",

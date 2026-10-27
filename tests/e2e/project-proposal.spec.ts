@@ -245,9 +245,11 @@ test("drafts a project through the setup steps and creates it without an admin",
     "Found example/open-protein",
   );
   const facts = page.locator(".proposal-facts");
-  await expect(facts).toContainText("123456789");
+  await expect(page.getByLabel("Repository numeric ID")).toHaveValue(
+    "123456789",
+  );
   await expect(facts).toContainText("@example · organization");
-  await expect(facts).toContainText("MIT · LICENSE at ccccccc");
+  await expect(facts).toContainText("MIT");
   await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
   // Repository facts must not survive a different repository, including after
   // restoring a saved draft. The lookup response remains an explicit fixture.
@@ -255,8 +257,8 @@ test("drafts a project through the setup steps and creates it without an admin",
   await page
     .getByLabel("Public GitHub repository")
     .fill("example/another-repository");
-  await expect(facts).not.toContainText("123456789");
-  await expect(facts).not.toContainText("MIT · LICENSE at ccccccc");
+  await expect(page.getByLabel("Repository numeric ID")).toHaveValue("");
+  await expect(facts).not.toContainText("MIT");
   await expect(page.getByLabel("Integration branch")).toHaveValue("main");
   await page
     .getByLabel("Public GitHub repository")
@@ -338,9 +340,9 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(
     page.getByRole("heading", { name: "Project created" }),
   ).toBeVisible();
-  await expect(page.locator(".proposal-submitted")).toContainText(
-    "Referred by @example-referrer.",
-  );
+  await expect(
+    page.getByRole("article", { name: "Listing preview" }),
+  ).toContainText("@example-referrer");
   await expect(
     page.getByRole("heading", {
       name: "Setup status: Waiting for the security scan",
@@ -474,7 +476,7 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
   await routeGitHub(page, { repository: 403 });
   await page.getByRole("button", { name: "Look up on GitHub" }).click();
   await expect(page.locator(".lookup-status")).toContainText(
-    "GitHub limited lookups. Try again later or enter the facts by hand.",
+    "GitHub limited lookups. Nothing was filled in.",
   );
   await expect(page.getByLabel("Repository numeric ID")).toHaveValue("");
 
@@ -716,7 +718,9 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
   await expect(page.getByLabel("Public GitHub repository")).toHaveValue(
     "example/open-protein",
   );
-  await expect(page.locator(".proposal-facts")).toContainText("123456789");
+  await expect(page.getByLabel("Repository numeric ID")).toHaveValue(
+    "123456789",
+  );
   await page.getByRole("button", { name: "Next: Contribution rules" }).click();
   await expect(page.getByLabel("Project name")).toHaveValue("open-protein");
   await expect(page.getByLabel("Short description")).toHaveValue(description);

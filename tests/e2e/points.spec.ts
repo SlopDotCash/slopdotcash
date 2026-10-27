@@ -17,14 +17,10 @@ test(
     // The period states the snapshot's exact bounds and source coverage.
     const coverage = page.locator(".points-coverage");
     await expect(coverage).toHaveText(
-      /^(This month ranks .+ UTC to .+ UTC\. )?Snapshot window: .+ UTC to .+ UTC \(\d+ days\)\. Source: [\d,]+ merged pull requests and [\d,]+ closed issues across [\d,]+ repositories\.$/u,
+      /^(This month ranks .+ UTC to .+ UTC\. )?Snapshot window: .+ UTC to .+ UTC\. Source: [\d,]+ merged pull requests and [\d,]+ closed issues across [\d,]+ repositories\.$/u,
     );
-    await page
-      .getByRole("button", { name: "Recorded history", exact: true })
-      .click();
-    await expect(coverage).toContainText(
-      /Recorded history adds [\d,]+ closed cycles?\.$/u,
-    );
+    await page.getByRole("button", { name: "Lifetime", exact: true }).click();
+    await expect(coverage).toContainText(/Includes [\d,]+ closed cycles?\.$/u);
     await expect(page.getByRole("table")).toBeVisible({ timeout: 30000 });
     await expect(
       page.getByRole("columnheader", { name: "Points", exact: true }),
@@ -38,14 +34,14 @@ test(
       page.getByRole("columnheader", { name: "Money received", exact: true }),
     ).toHaveAttribute("aria-sort", "descending");
     await expect(
-      page.getByRole("button", { name: "Recorded history", exact: true }),
+      page.getByRole("button", { name: "Lifetime", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "Points", exact: true }).click();
     await expect(page.getByLabel("Cohort", { exact: true })).toHaveCount(0);
     // The earlier combined link still opens recorded history.
     await page.goto("/points?period=new");
     await expect(
-      page.getByRole("button", { name: "Recorded history", exact: true }),
+      page.getByRole("button", { name: "Lifetime", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await page.goto("/points?sort=points&period=lifetime");
     const people = page.getByRole("region", { name: "People", exact: true });
@@ -69,9 +65,7 @@ test(
       });
     }
 
-    await page
-      .getByRole("button", { name: "Recorded history", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Lifetime", exact: true }).click();
     const first = page.getByRole("table").getByRole("row").nth(1);
     const login = await first.getByRole("link").innerText();
     await page.getByLabel("Find a contributor").fill(login);

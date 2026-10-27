@@ -17,7 +17,6 @@ const PUBLISHED_PROJECT_REGISTRY_URL = "/data/project-registry.json";
 /** Pages show the published registry with this label when the live read fails. */
 export interface StaleProjectRegistry {
   syncedAt: string;
-  reason: string;
 }
 
 declare global {

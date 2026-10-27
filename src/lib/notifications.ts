@@ -159,13 +159,13 @@ export function notificationTitle(n: Notification): string {
     case "application_rejected":
       return `${n.subject} was not added to Slop.`;
     case "project_ready":
-      return `The ${n.subject} project is ready and open to contributor work.`;
+      return `The ${n.subject} project is open to contributors.`;
     case "project_scan_failed":
       return `The security scan of ${n.subject} could not finish. Contributor work stays closed until a scan passes.`;
     case "project_installation_lost":
       return `Slopbot is no longer installed on a ${n.subject} repository. Install it again so reviews continue.`;
     case "project_revision":
-      return `The ${n.subject} project manifest changed.`;
+      return `The ${n.subject} project settings changed.`;
     case "award_reserved":
       return `An award from ${n.subject} is reserved for you.`;
     case "payment_paid":
@@ -193,7 +193,7 @@ export function notificationTitle(n: Notification): string {
     case "slopbot_appeal_review":
       return "A contribution appeal needs your decision on GitHub.";
     case "slopbot_appeal_resolved":
-      return "The contribution appeal was resolved. No decision is needed.";
+      return "The contribution appeal was resolved.";
     case "slopbot_scam_review":
       return `Slopbot closed a ${n.subject} contribution as a scam. Review the author's account.`;
     case "security_case":

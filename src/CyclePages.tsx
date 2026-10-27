@@ -79,10 +79,9 @@ export function CyclePage({
       <NotFound title={`No ${formatCycleMonth(cycleId)} cycle record`}>
         <p>
           {collected
-            ? `${project.name} has no record for this month.`
-            : "Activity for this project has not been collected yet."}{" "}
-          See the <Link href={`/projects/${project.slug}`}>project page</Link>{" "}
-          for payments.
+            ? ""
+            : "Activity for this project has not been collected yet. "}
+          See the <Link href={`/projects/${project.slug}`}>project page</Link>.
         </p>
       </NotFound>
     );
@@ -169,7 +168,7 @@ export function CyclePage({
           record.reward.fundingBasis &&
           (record.reward.fundingBasis.fundingState !== "committed" ||
             record.reward.fundingBasis.committedMinor === "0") ? (
-            <p>No committed funding in this cycle’s frozen record.</p>
+            <p>No funding committed for this cycle.</p>
           ) : null}
         </div>
       </section>
@@ -177,7 +176,7 @@ export function CyclePage({
         <p className="cycle-line-summary">
           Shared pool{" "}
           {formatMicroUsdc(record.reward.lines.sharedPool.suggestedMinor)} +
-          additive review{" "}
+          review budget{" "}
           {formatMicroUsdc(record.reward.lines.reviewBudget.suggestedMinor)}{" "}
           suggested.
         </p>
@@ -197,14 +196,11 @@ export function CyclePage({
         </div>
       ) : null}
       {record?.kind === "external-prize-share" ? (
-        <p>External prize shares; this cycle does not enter Slop settlement.</p>
+        <p>External prize shares. Not paid through Slop.</p>
       ) : record?.state === "closed-no-awards" ? (
         <p>Closed without awards. No payment is due.</p>
       ) : record?.state === "wound-up" ? (
-        <p>
-          The vault was returned. Approved awards are held without funded
-          backing.
-        </p>
+        <p>The vault was returned. Approved awards are held unfunded.</p>
       ) : (
         <ol className="cycle-status-grid" aria-label="Cycle progress">
           {[
@@ -212,13 +208,13 @@ export function CyclePage({
             ownerCutoff
               ? [
                   "Owner changes",
-                  `Owner changes ${ownerCutoff.getTime() <= Date.now() ? "closed" : "close"} ${formatDateTime(ownerCutoff.toISOString())}`,
+                  `${ownerCutoff.getTime() <= Date.now() ? "Closed" : "Closes"} ${formatDateTime(ownerCutoff.toISOString())}`,
                 ]
               : [
                   "Review",
                   record?.reviewEndsAt
-                    ? `Review ${reviewClosed ? "ended" : "ends"} ${formatDate(record.reviewEndsAt)}`
-                    : "Review has not started",
+                    ? `${reviewClosed ? "Ended" : "Ends"} ${formatDate(record.reviewEndsAt)}`
+                    : "Not started",
                 ],
             [
               "Approval",
@@ -229,7 +225,7 @@ export function CyclePage({
                   : "Not approved",
             ],
             [
-              "Settlement",
+              "Payment",
               record?.settledAt
                 ? `Paid ${formatDate(record.settledAt)}`
                 : record?.state === "settlement-planned"
@@ -371,7 +367,7 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
 
 function CycleArtifacts({ cycle }: { cycle: CycleIndexEntry }) {
   const files = [
-    ["Frozen source", cycle.files.sourceSnapshot],
+    ["Source data", cycle.files.sourceSnapshot],
     ["Proposal", cycle.files.proposal],
     ["Approved allocation", cycle.files.allocation],
     ["Payment plan", cycle.files.executionPlan],
@@ -383,7 +379,7 @@ function CycleArtifacts({ cycle }: { cycle: CycleIndexEntry }) {
         <h2>Evidence</h2>
       </div>
       <details>
-        <summary>Original records and checksums</summary>
+        <summary>Original records</summary>
         <div className="artifact-links">
           {files
             .filter((entry) => entry[1] !== null)
@@ -392,7 +388,6 @@ function CycleArtifacts({ cycle }: { cycle: CycleIndexEntry }) {
                 <ExternalLinkAnchor href={file.url} key={label}>
                   <span>
                     <strong>{label}</strong>
-                    <small>{file.sha256}</small>
                   </span>
                   <ExternalLink aria-hidden="true" size={17} />
                 </ExternalLinkAnchor>
@@ -480,15 +475,16 @@ export function CycleArchivePage({
     <main className="shell evidence-page">
       <section className="evidence-page-hero">
         <h1>Payment cycles</h1>
-        <p>
-          Frozen records of proposed awards, approvals and verified payments.
-        </p>
         {state.status === "loading" ? (
           <p role="status">Loading cycle history…</p>
         ) : state.status === "error" ? (
           <div role="alert">
-            Cycle history unavailable: {state.message}{" "}
-            <button type="button" onClick={retry}>
+            Cycle history unavailable.{" "}
+            <button
+              className="button secondary-button button-small"
+              type="button"
+              onClick={retry}
+            >
               Retry
             </button>
           </div>
@@ -527,7 +523,7 @@ export function CycleArchivePage({
             </label>
           ))}
           <p role="status">
-            Showing {cycles.length} of {all.length} published cycles
+            {cycles.length} of {all.length} cycles
           </p>
         </div>
       ) : null}

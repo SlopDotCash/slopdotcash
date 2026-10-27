@@ -161,7 +161,7 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
       ).toBeVisible();
       await keyboardTo(
         page,
-        page.getByRole("link", { name: "cycle archive", exact: true }),
+        page.getByRole("link", { name: "project settings", exact: true }),
       );
       await audit(page, info, "funding-200-percent-text");
     }

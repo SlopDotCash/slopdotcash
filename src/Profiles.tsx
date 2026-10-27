@@ -167,15 +167,23 @@ export function ProfileActivity({
       {directState.status === "error" ? (
         <p role="status">
           Payment records unavailable.{" "}
-          <button type="button" onClick={retryDirect}>
+          <button
+            className="button secondary-button button-small"
+            type="button"
+            onClick={retryDirect}
+          >
             Retry payment records
           </button>
         </p>
       ) : null}
       {state.status === "error" ? (
         <p role="status">
-          PR counts are unavailable: {state.message}.{" "}
-          <button type="button" onClick={retry}>
+          PR counts are unavailable.{" "}
+          <button
+            className="button secondary-button button-small"
+            type="button"
+            onClick={retry}
+          >
             Retry profile
           </button>
         </p>
@@ -348,14 +356,12 @@ function PointsRevisionHistory({
   const ordered = [...revisions].reverse();
   return (
     <details className="points-revisions">
-      <summary>Points decision history ({revisions.length})</summary>
-      <p>Each entry replaces the prior amount for that contribution.</p>
+      <summary>Points history ({revisions.length})</summary>
       <ol className="points-history">
         {(expanded ? ordered : ordered.slice(0, 10)).map((revision) => {
           const previous = revision.previous
             ? byId.get(revision.previous)
             : undefined;
-          const delta = revision.award.amount - (previous?.award.amount ?? 0);
           return (
             <li key={revision.id}>
               <ExternalLinkAnchor href={revision.award.sourceUrl}>
@@ -363,15 +369,10 @@ function PointsRevisionHistory({
               </ExternalLinkAnchor>
               <p>
                 {previous?.award.amount.toLocaleString() ?? "0"} →{" "}
-                {revision.award.amount.toLocaleString()} Points · Change:{" "}
-                {delta > 0 ? "+" : ""}
-                {delta.toLocaleString()}
+                {revision.award.amount.toLocaleString()} Points
                 {revision.award.provisional ? " · Provisional" : ""}
               </p>
-              <p>
-                {revision.decision?.reason ??
-                  "This earlier record does not include a separate decision reason."}
-              </p>
+              <p>{revision.decision?.reason ?? "No reason recorded."}</p>
               <dl>
                 <dt>Work occurred</dt>
                 <dd>
@@ -386,7 +387,7 @@ function PointsRevisionHistory({
                       {formatDateTime(revision.decision.effectiveAt)}
                     </time>
                   ) : (
-                    "Not recorded in this earlier revision"
+                    "Not recorded"
                   )}
                 </dd>
                 <dt>Recorded</dt>
@@ -395,28 +396,6 @@ function PointsRevisionHistory({
                     {formatDateTime(revision.recordedAt)}
                   </time>
                 </dd>
-                <dt>Rule</dt>
-                <dd>{revision.sourceRule}</dd>
-                <dt>Revision</dt>
-                <dd>
-                  <code>{revision.id}</code>
-                </dd>
-                <dt>Predecessor</dt>
-                <dd>
-                  {revision.previous ? (
-                    <code>{revision.previous}</code>
-                  ) : (
-                    "First record"
-                  )}
-                </dd>
-                {revision.decision ? (
-                  <>
-                    <dt>Decision source</dt>
-                    <dd>
-                      <code>{revision.decision.sourceId}</code>
-                    </dd>
-                  </>
-                ) : null}
               </dl>
             </li>
           );
@@ -633,7 +612,7 @@ function IssueOutcomes({
                 value={repository}
                 onChange={(event) => setRepository(event.target.value)}
               >
-                <option value="">All tracked repositories</option>
+                <option value="">All repositories</option>
                 {repositories.map((name) => (
                   <option key={name} value={name}>
                     {name}
@@ -647,7 +626,7 @@ function IssueOutcomes({
                 value={period}
                 onChange={(event) => setPeriod(event.target.value)}
               >
-                <option value="">Recorded history</option>
+                <option value="">Lifetime</option>
                 {periods.map((month) => (
                   <option key={month} value={month}>
                     {month}
@@ -679,33 +658,6 @@ function IssueOutcomes({
                 </div>
               ))}
             </dl>
-            <p className="points-meta">
-              {period
-                ? "Final state at month end for issues opened or transitioned in this month."
-                : "Latest recorded GitHub state."}{" "}
-              Duplicate, unknown, unavailable and incomplete outcomes are
-              excluded from the rate.
-            </p>
-            {counts.incomplete ? (
-              <p>
-                {counts.incomplete.toLocaleString()} issues have a current
-                GitHub state that their visible history does not explain, for
-                example when GitHub hides events by an account that is no longer
-                available.
-              </p>
-            ) : null}
-            {counts.transferred ? (
-              <p>
-                {counts.transferred.toLocaleString()} issues have a transfer in
-                their recorded history.
-              </p>
-            ) : null}
-            {counts.corrected ? (
-              <p>
-                {counts.corrected.toLocaleString()} histories include a later
-                source correction.
-              </p>
-            ) : null}
             <details
               onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
             >
@@ -746,14 +698,12 @@ function IssueOutcomes({
               ) : null}
             </details>
             <p className="points-meta">
-              Coverage: accessible issues in the tracked repositories, plus
-              retained records first captured from{" "}
-              {formatDate(index.issues.firstObservedAt)}. Records deleted before
-              capture may be absent.
+              Covers tracked repositories since{" "}
+              {formatDate(index.issues.firstObservedAt)}.
             </p>
           </>
         ) : (
-          <p>Issue history is unavailable in this census.</p>
+          <p>Issue history unavailable.</p>
         )
       ) : null}
     </details>
