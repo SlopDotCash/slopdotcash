@@ -3137,11 +3137,6 @@ small {
   gap: 24px;
 }
 
-.funding-records-note {
-  color: var(--muted);
-  font-size: 14px;
-}
-
 @media (max-width: 680px) {
   .proposal-steps {
     grid-template-columns: minmax(0, 1fr);
@@ -3162,8 +3157,7 @@ small {
 }
 
 .proposal-intro p a,
-.payout-status a,
-.funding-records-note a {
+.payout-status a {
   color: var(--ink);
   font-weight: 700;
   text-decoration: underline;
@@ -3260,10 +3254,6 @@ small {
 .wallet-picker-close:focus-visible {
   outline: 2px solid var(--orange);
   outline-offset: 3px;
-}
-.wallet-picker-note {
-  margin-bottom: 0;
-  font-size: 0.875rem;
 }
 /* Narrow or zoomed viewports: keep the dialog border inside the viewport and
    return padding to the content. */

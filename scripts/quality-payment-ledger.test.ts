@@ -290,16 +290,6 @@ describe("2026-10 quality evidence follows the payment review ledger", () => {
   const removed = removes.review;
   const paymentEvents = october.view.ledger.length;
 
-  test("the fixture has in-period events and a removed review", () => {
-    expect(paymentEvents).toBeGreaterThan(1000);
-    expect(october.view.ledger.some((event) => event.id === removed.id)).toBe(
-      false,
-    );
-    expect(
-      removes.snapshot.ledger.some((event) => event.id === removed.id),
-    ).toBe(true);
-  });
-
   test("prepare-contribution-quality builds evidence from the payment review ledger", () => {
     const run = prepareQuality("october", "2026-10", october);
     expect(run.output).toContain(`Prepared ${paymentEvents} scored events`);

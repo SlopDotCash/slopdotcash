@@ -9,8 +9,8 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import { runOnce } from "./index";
-import { sqliteD1 } from "./sqlite-d1";
 
 const [fixturePath, asOf] = process.argv.slice(2);
 if (!fixturePath) {

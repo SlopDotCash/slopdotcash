@@ -308,11 +308,15 @@ async function runFixturePhases() {
     timeoutMs: 60 * 60_000,
   });
   return status.finally(() => {
-    // CI uploads diagnostics from this checkout, not the temporary copy.
-    for (const folder of ["playwright-report", "test-results"]) {
-      const source = join(workspace, folder);
-      if (existsSync(source))
-        cpSync(source, join(packageRoot, folder), { recursive: true });
+    try {
+      // CI uploads diagnostics from this checkout, not the temporary copy.
+      for (const folder of ["playwright-report", "test-results"]) {
+        const source = join(workspace, folder);
+        if (existsSync(source))
+          cpSync(source, join(packageRoot, folder), { recursive: true });
+      }
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
     }
   });
 }

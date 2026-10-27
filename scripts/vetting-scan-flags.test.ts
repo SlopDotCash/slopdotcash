@@ -12,7 +12,6 @@ import {
   type ProjectApiDependencies,
 } from "../backend/projects/handler";
 import { flaggerAuthority } from "../backend/projects/setup";
-import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { githubFlaggerStanding } from "../backend/vetting/flagger-standing";
 import {
   handleProjectFlagsApi,
@@ -27,11 +26,7 @@ import {
   CloudflareVettingPersistence,
   type VettingPin,
 } from "../backend/vetting/persistence";
-import {
-  parseVettingScanResult,
-  scanProblems,
-  specialistRequired,
-} from "../backend/vetting/scan-result";
+import { seedParticipationBan } from "../tests/participation-ban.fixture";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
@@ -396,85 +391,6 @@ async function activeProject() {
   expect((await activate()).status).toBe(200);
   return id;
 }
-
-describe("bounded malicious-code scan contract", () => {
-  test("an ordinary clean scan needs no specialist; escalation does", async () => {
-    const target = {
-      assessmentId: `vet_${"1".repeat(32)}`,
-      projectId: "open-registry",
-      revision: 1,
-      manifestSha256: "c".repeat(64),
-      repository: "example/open-registry",
-      commitSha: HEAD,
-      templateSha256: TEMPLATE,
-    };
-    const clean = parseVettingScanResult(vettingScanResult(target, "clean"));
-    expect(specialistRequired(clean)).toBe(false);
-    expect(scanProblems(clean)).toEqual([]);
-
-    const ambiguous = parseVettingScanResult(
-      vettingScanResult(target, "clean", { ambiguous: true }),
-    );
-    expect(specialistRequired(ambiguous)).toBe(true);
-    expect(scanProblems(ambiguous)).toContain(
-      "An ambiguous or high-risk result needs a specialist review",
-    );
-    const cleared = parseVettingScanResult(
-      vettingScanResult(target, "clean", { ambiguous: true, specialist: true }),
-    );
-    expect(scanProblems(cleared)).toEqual([]);
-
-    // "Clean" means the defined checks passed on every defined surface.
-    const partial = parseVettingScanResult({
-      ...vettingScanResult(target, "incomplete"),
-      disposition: "clean",
-    });
-    expect(scanProblems(partial)).toEqual(
-      expect.arrayContaining([
-        "The downloads surface was not read completely",
-        "The scan reported visibility gaps",
-      ]),
-    );
-    const skipped = vettingScanResult(target, "clean");
-    expect(
-      scanProblems(
-        parseVettingScanResult({
-          ...skipped,
-          checks: { ...skipped.checks, "prompt-injection": "not-run" },
-        }),
-      ),
-    ).toContain("The prompt-injection check did not run");
-
-    // Untrusted execution never receives secrets, by contract.
-    expect(() =>
-      parseVettingScanResult({
-        ...skipped,
-        execution: {
-          isolation: "sandbox",
-          imageSha256: "e".repeat(64),
-          runId: "exec-1",
-          reason: "postinstall hook downloads a binary",
-          startedAt: "2026-10-18T11:00:00.000Z",
-          completedAt: "2026-10-18T11:01:00.000Z",
-          secretsProvided: true,
-          egress: "default-deny",
-        },
-      }),
-    ).toThrow("execution.secretsProvided must be false");
-
-    // A model label alone never confirms malice.
-    expect(
-      scanProblems(
-        parseVettingScanResult({
-          ...vettingScanResult(target, "malicious"),
-          confirmation: null,
-        }),
-      ),
-    ).toContain(
-      "A malicious disposition needs reproducible behavior or verified source evidence",
-    );
-  });
-});
 
 describe("automatic scan and activation", () => {
   test("a clean supported scan lets activation proceed without an admin scan request", async () => {

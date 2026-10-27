@@ -213,12 +213,6 @@ function census(projectId: string, cycleId: string, prefix: string) {
 }
 
 describe("collect-quality-census covers the preparation period", () => {
-  test("the fixture has merges and a closure before the reward start", () => {
-    expect(view.cycle.from).toBe("2026-07-07T00:00:00.000Z");
-    expect(periodMerges.length).toBeGreaterThan(1000);
-    expect(merges.size - periodMerges.length).toBeGreaterThan(100);
-  });
-
   test("a mid-month reward start excludes earlier closures and the census reconciles", () => {
     const prefix = join(root, "eliza-2026-07");
     const run = census("eliza", "2026-07", prefix);

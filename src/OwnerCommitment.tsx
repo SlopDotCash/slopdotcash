@@ -21,8 +21,10 @@ import {
   sendSolanaCommitment,
   verifySolanaCommitmentPlan,
 } from "./lib/solana-commitment-actions";
+import { useAction } from "./lib/use-action";
 import { usePayoutWallets } from "./lib/use-payout-wallets";
 import { isWalletAddress } from "./lib/wallets";
+import { WalletConnection } from "./Presentation";
 
 type Pending = {
   plan: OwnerCommitmentPlan;
@@ -120,8 +122,6 @@ export default function OwnerCommitment({
     decimals: number;
     freeBalance: string;
   } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(saved.error);
   const [notice, setNotice] = useState("");
   const [recoveryHash, setRecoveryHash] = useState("");
   const wallets = usePayoutWallets().filter((entry) => entry.family === family);
@@ -130,17 +130,12 @@ export default function OwnerCommitment({
     else sessionStorage.removeItem(key);
     setPending(value);
   };
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true);
-    setError("");
+  const { busy, error, run: act } = useAction(saved.error);
+  const run = (action: () => Promise<void>) => {
     setNotice("");
-    try {
-      await action();
-    } catch (reason) {
-      setError(errorMessage(reason, "The commitment could not be verified."));
-    } finally {
-      setBusy(false);
-    }
+    return act(action, (caught) =>
+      errorMessage(caught, "The commitment could not be verified."),
+    );
   };
   const inspect = () =>
     run(async () => {
@@ -259,51 +254,36 @@ export default function OwnerCommitment({
           I checked wallet activity; clear the unreadable local record
         </button>
       )}
-      {!wallet ? (
-        <fieldset disabled={busy || storageError}>
-          <legend>
-            {pending ? "Reconnect the owner wallet" : "Choose the owner wallet"}
-          </legend>
-          {wallets.length ? (
-            wallets.map((provider) => (
-              <button
-                className="button secondary-button"
-                key={provider.id}
-                type="button"
-                onClick={() =>
-                  void run(async () => {
-                    const connection = await provider.connect();
-                    if (
-                      pending &&
-                      (solana
-                        ? connection.address !== pending.wallet
-                        : connection.address.toLowerCase() !==
-                          pending.wallet.toLowerCase())
-                    )
-                      throw new Error(
-                        `Reconnect the submitting wallet: ${pending.wallet}`,
-                      );
-                    setWallet(connection);
-                    setReview(null);
-                  })
-                }
-              >
-                Connect {provider.name}
-              </button>
-            ))
-          ) : (
-            <p>
-              {solana
-                ? "Install or enable a Solana wallet extension, then reload."
-                : "Open this page in an EVM wallet browser or enable its browser extension."}
-            </p>
-          )}
-        </fieldset>
-      ) : (
-        <p>
-          Connected: <code>{wallet.address}</code>
-        </p>
-      )}
+      <WalletConnection
+        address={wallet?.address ?? null}
+        wallets={wallets}
+        disabled={busy || storageError}
+        legend={
+          pending ? "Reconnect the owner wallet" : "Choose the owner wallet"
+        }
+        empty={
+          solana
+            ? "Install or enable a Solana wallet extension, then reload."
+            : "Open this page in an EVM wallet browser or enable its browser extension."
+        }
+        onConnect={(provider) =>
+          void run(async () => {
+            const connection = await provider.connect();
+            if (
+              pending &&
+              (solana
+                ? connection.address !== pending.wallet
+                : connection.address.toLowerCase() !==
+                  pending.wallet.toLowerCase())
+            )
+              throw new Error(
+                `Reconnect the submitting wallet: ${pending.wallet}`,
+              );
+            setWallet(connection);
+            setReview(null);
+          })
+        }
+      />
       {pending ? (
         <div>
           <p>Commitment awaiting verification. Do not send it again.</p>

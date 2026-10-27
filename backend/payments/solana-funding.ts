@@ -11,17 +11,7 @@ import {
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { parseVaultAmount } from "../../src/lib/payments/vault-amount";
 import { isWalletAddress } from "../../src/lib/wallets";
-
-function json(status: number, body: unknown) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "content-type": "application/json",
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
-    },
-  });
-}
+import { json } from "../http";
 
 /** The caller controls access and resolves only its own registry scope. */
 export async function handleSolanaFunding(

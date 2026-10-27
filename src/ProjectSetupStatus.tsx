@@ -7,7 +7,7 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "./Link";
 import { errorMessage } from "./lib/errors";
 import { checkProjectSetup } from "./lib/project-api";
@@ -91,26 +91,42 @@ export function ProjectSetupStatusPanel({
   }, [onSetup, setup]);
   const [busy, setBusy] = useState(initial === undefined);
   const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
   const check = useCallback(
     (requestScan = false) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
       setBusy(true);
       setError(null);
-      checkProjectSetup(projectId, requestScan).then(
-        (body) => {
-          setSetup(body.setup);
+      void checkProjectSetup(projectId, requestScan)
+        .then(
+          (body) => setSetup(body.setup),
+          (caught: unknown) =>
+            setError(errorMessage(caught, "The setup check did not finish.")),
+        )
+        .finally(() => {
+          inFlight.current = false;
           setBusy(false);
-        },
-        (caught: unknown) => {
-          setError(errorMessage(caught, "The setup check did not finish."));
-          setBusy(false);
-        },
-      );
+        });
     },
     [projectId],
   );
   useEffect(() => {
     if (initial === undefined) check();
   }, [check, initial]);
+  useEffect(() => {
+    if (!setup || setup.state === "ready" || setup.state === "restricted")
+      return;
+    const refresh = () => {
+      if (!busy && document.visibilityState === "visible") check();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [busy, check, setup]);
   return (
     <section
       aria-labelledby={`setup-${projectId}`}

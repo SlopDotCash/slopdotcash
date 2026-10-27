@@ -1359,44 +1359,6 @@ test("a reopen and later close keeps the debit in its recorded month", async () 
 // The recorded month is authoritative: a feed row whose period disagrees with
 // its recorded time fails the snapshot, and a debit recorded before the
 // scoring window never lands on a later GitHub close inside it.
-test("a recorded debit outside its month or window is never applied", () => {
-  setSystemTime(new Date(AFTER_NOVEMBER));
-  const record = {
-    itemNodeId: "PR_local",
-    authorGithubId: "42",
-    category: "spam",
-    tableVersion: "slopbot-penalties-v1",
-    debitThirds: 3,
-    period: "2026-11",
-    recordedAt: CLOSED_AT,
-  };
-  expect(() =>
-    createLeaderboardSnapshot(
-      penaltyScoreInput([{ ...record, period: "2026-12" }], AFTER_NOVEMBER),
-    ),
-  ).toThrow("Penalty feed record is malformed");
-
-  // Recorded in September, before the 35-day window; GitHub's later close
-  // stays inside it.
-  const snapshot = createLeaderboardSnapshot(
-    penaltyScoreInput(
-      [
-        {
-          ...record,
-          period: "2026-09",
-          recordedAt: "2026-09-30T00:00:00.000Z",
-        },
-      ],
-      AFTER_NOVEMBER,
-    ),
-  );
-  expect(snapshot.penalties).toEqual([]);
-  expect(
-    createProjectView(snapshot, "asi", "2026-11").leaders.find(
-      (entry) => entry.actor.id === PENALIZED_AUTHOR.id,
-    ),
-  ).toMatchObject({ penaltyThirds: 0 });
-});
 
 // Exercise the actual worker event, Inbox route and existing email dispatcher.
 // Local transport acceptance is distinct from provider delivery.

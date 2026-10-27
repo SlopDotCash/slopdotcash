@@ -650,7 +650,6 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   );
   await page.goto("/projects/eliza/awards");
   await page.getByLabel("Contribution month").fill("2026-09");
-  await page.getByRole("button", { name: "Load awards", exact: true }).click();
   await page
     .getByRole("button", { name: "Reserve award for local-contributor" })
     .click();
