@@ -230,7 +230,12 @@ for (const withObligations of [false, true])
         })
         .click();
       const reopenWindow = await reopenPopup;
-      await expect(profile).toContainText("Your account is open again.");
+      await expect(
+        page
+          .getByRole("status")
+          .filter({ hasText: "Your account is open again." }),
+      ).toBeVisible();
+      await expect(profile).toHaveCount(0);
       await expect.poll(() => reopenWindow.isClosed()).toBe(true);
       expect(page.isClosed()).toBe(false);
       const reopened = await readState();
