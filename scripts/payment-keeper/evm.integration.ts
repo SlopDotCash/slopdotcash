@@ -1371,7 +1371,7 @@ try {
         "current native envelope refuses replacement before signing and preserves the original",
         "fee read outage still rebroadcasts the latest verified attempt",
       ],
-      payments: 6,
+      payments: await paid(),
       signatures,
       journal: "retained privately; no raw signed bytes in report",
     }),
