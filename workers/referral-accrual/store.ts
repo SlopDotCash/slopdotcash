@@ -231,10 +231,9 @@ export class D1AccrualStore implements AccrualStore, PostStore {
   async claimWallet(githubId: string) {
     const row = await this.db
       .prepare(
-        `SELECT w.id, w.wallet_address FROM wallet_claims w
+        `SELECT w.id, w.wallet_address FROM effective_payment_wallet_claims w
            JOIN payment_wallet_authorizations a ON a.claim_id = w.id
           WHERE w.github_user_id = ? AND w.chain = ?
-            AND NOT EXISTS (SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id = w.id)
           LIMIT 1`,
       )
       .bind(githubId, CLAIM_CHAIN)

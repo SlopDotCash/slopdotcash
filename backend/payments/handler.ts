@@ -73,8 +73,6 @@ export interface PaymentsDependencies {
   now?: () => Date;
   /** Additional trusted deployment origins; never sourced from request input. */
   allowedOrigins?: readonly string[];
-  /** Trusted numeric GitHub operator allowlist; never request-supplied. */
-  operatorIds?: readonly string[];
   /**
    * Reviewed escrow deployments; never request-supplied. A function is called
    * only for a binding request: Pages reads the D1 project registry for its
@@ -612,40 +610,6 @@ export async function handlePaymentsApi(
         throw error;
       }
     }
-    if (path === "/admin/wallet-proposals" && request.method === "POST") {
-      if (!deps.operatorIds?.includes(member.githubId))
-        return json(403, { error: "operator_required" });
-      const body = (await readBoundedJson(
-        request,
-        4096,
-        "wallet proposal",
-      )) as Record<string, unknown>;
-      if (
-        typeof body.githubUserId !== "string" ||
-        !/^[1-9]\d*$/.test(body.githubUserId) ||
-        !isWalletChain(body.chain) ||
-        typeof body.address !== "string" ||
-        !isWalletAddress(body.chain, body.address) ||
-        typeof body.reason !== "string" ||
-        !body.reason.trim()
-      )
-        return json(400, { error: "invalid_proposal" });
-      const id = crypto.randomUUID();
-      await deps.db
-        .prepare("INSERT INTO payment_wallet_proposals VALUES(?,?,?,?,?,?,?)")
-        .bind(
-          id,
-          body.githubUserId,
-          body.chain,
-          body.address,
-          member.githubId,
-          body.reason,
-          now,
-        )
-        .run();
-      return json(201, { id, state: "pending_contributor_authorization" });
-    }
-
     if (path === "/wallets/register" && request.method === "POST") {
       const body = (await readBoundedJson(
         request,
@@ -762,7 +726,7 @@ export async function handlePaymentsApi(
           ),
         deps.db
           .prepare(
-            "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND o.state='reserved' AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id) ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'",
+            "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND o.state='reserved' ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'",
           )
           .bind(now, body.claimId, member.githubId),
       ]);
@@ -770,7 +734,7 @@ export async function handlePaymentsApi(
         throw new Error("Authorization failed");
       const authorized = await deps.db
         .prepare(
-          "SELECT a.claim_id FROM payment_wallet_authorizations a JOIN wallet_claims w ON w.id=a.claim_id WHERE a.claim_id=? AND a.github_user_id=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
+          "SELECT a.claim_id FROM payment_wallet_authorizations a JOIN effective_payment_wallet_claims w ON w.id=a.claim_id WHERE a.claim_id=? AND a.github_user_id=?",
         )
         .bind(body.claimId, member.githubId)
         .first();
@@ -848,7 +812,7 @@ export async function handlePaymentsApi(
       const chainId = BigInt(deployments[0].chainId as string);
       const wallet = await deps.db
         .prepare(
-          `SELECT w.id,w.wallet_address,w.record_sha256 FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry' AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)`,
+          `SELECT w.id,w.wallet_address,w.record_sha256 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry'`,
         )
         .bind(body.claimId, member.githubId, deployments[0].chain)
         .first<{ id: string; wallet_address: string; record_sha256: string }>();
@@ -958,7 +922,7 @@ export async function handlePaymentsApi(
       if (!deps.solanaAttester && !deps.securityPayments)
         return json(503, { error: "identity_attester_unavailable" });
       const bindingQuery =
-        "SELECT o.id obligationId,o.network,o.vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination,t.id idempotencyKey FROM payment_obligations o JOIN wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id JOIN payment_attempts t ON t.obligation_id=o.id AND t.claim_id=w.id WHERE o.id=? AND o.github_user_id=? AND o.chain='solana' AND o.state='reserved' AND w.source='d1_registry' AND t.state IN ('prepared','unknown','submitted') AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id) ORDER BY t.created_at LIMIT 1";
+        "SELECT o.id obligationId,o.network,o.vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination,t.id idempotencyKey FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id JOIN payment_attempts t ON t.obligation_id=o.id AND t.claim_id=w.id WHERE o.id=? AND o.github_user_id=? AND o.chain='solana' AND o.state='reserved' AND w.source='d1_registry' AND t.state IN ('prepared','unknown','submitted') ORDER BY t.created_at LIMIT 1";
       let attester = deps.solanaAttester;
       let privateBinding = false;
       let payment = await deps.db
@@ -1062,7 +1026,7 @@ export async function handlePaymentsApi(
       // indexed. Read both, and the rest of this account, in one SQLite snapshot.
       const accountRows = await deps.db
         .prepare(`SELECT
-          (SELECT json_group_array(json_object('chain',w.chain,'claimId',w.id,'address',w.wallet_address,'authorized',json(CASE WHEN a.claim_id IS NULL THEN 'false' ELSE 'true' END))) items FROM wallet_claims w LEFT JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.github_user_id=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)) AS wallets,
+          (SELECT json_group_array(json_object('chain',w.chain,'claimId',w.id,'address',w.wallet_address,'authorized',json(CASE WHEN a.claim_id IS NULL THEN 'false' ELSE 'true' END))) items FROM effective_payment_wallet_claims w LEFT JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.github_user_id=?) AS wallets,
           (SELECT json_group_array(json_object('id',o.id,'vault',o.vault,'projectId',project_id,'network',network,'chain',chain,'assetAddress',asset_address,'assetDecimals',asset_decimals,'grossBase',gross_base,'feeBase',fee_base,'state',o.state,'transactionId',paid_transaction,'submittedTransactionId',(SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id=o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),'deliveryState',CASE WHEN o.state='paid' THEN 'paid' WHEN q.state='submitted' THEN 'submitted' WHEN q.state='held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END)) items FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id=o.id WHERE github_user_id=?) AS payments,
           (SELECT json_group_array(json_object('projectId',project_id,'period',period,'network',network,'assetAddress',asset,'assetDecimals',decimals,'grossBase',gross,'feeBase',fee,'netBase',net,'state',state)) items FROM (SELECT r.project_id,r.period,r.network,json_extract(r.snapshot,'$.asset') asset,COALESCE((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id=r.project_id AND v.network=r.network AND v.vault=r.vault AND lower(v.asset_address)=lower(json_extract(r.snapshot,'$.asset'))),CASE WHEN lower(json_extract(b.manifest,'$.rewardAsset.address'))=lower(json_extract(r.snapshot,'$.asset')) THEN json_extract(b.manifest,'$.rewardAsset.decimals') END) decimals,json_extract(a.value,'$.grossBase') gross,json_extract(a.value,'$.feeBase') fee,json_extract(a.value,'$.netBase') net,CASE WHEN EXISTS(SELECT 1 FROM payment_obligations c WHERE c.network=r.network AND c.vault=r.vault AND c.source_digest=json_extract(a.value,'$.sourceDigest')) THEN 'conflict' WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END state FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period, json_each(r.snapshot,'$.awards') a WHERE json_extract(a.value,'$.githubUserId')=? AND NOT EXISTS(SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id=r.project_id AND e.period=r.period AND e.source_digest=json_extract(a.value,'$.sourceDigest')) AND NOT EXISTS(SELECT 1 FROM payment_obligations o WHERE o.network=r.network AND o.vault=r.vault AND o.source_digest=json_extract(a.value,'$.sourceDigest') AND o.github_user_id=json_extract(a.value,'$.githubUserId') AND o.gross_base=json_extract(a.value,'$.grossBase')) ORDER BY r.period DESC,r.project_id)) AS monthlyAwards,
           (${directTransferQuery("github_user_id")}) AS directTransfers,

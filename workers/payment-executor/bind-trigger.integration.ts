@@ -759,11 +759,9 @@ try {
   await send(vault, "claimFees()", [], payer);
   assert.equal(await balance(asset, fee), 200_000n);
 
-  // Failure: a signed binding whose contributor stops being a candidate.
-  // Carol's binding is signed and its broadcast is lost; she then changes
-  // wallets, so the old claim is no longer current. The old raw/hash/nonce
-  // stays held when the cancellation fee exceeds the existing cap. The
-  // delayed original must still reconcile without obsolete rebroadcast.
+  // A signed replacement supersedes Carol's pending binding. The old raw/hash/nonce
+  // stays held when cancellation exceeds the cap; delayed original receipts
+  // still reconcile. An unsigned registration alone must not obsolete it.
   const carolWallet = privateKeyToAccount(`0x${"0".repeat(63)}2`);
   const carolAward = evmAwardId(8453n, vault, `0x${"3".padStart(64, "0")}`);
   await send(
@@ -847,14 +845,39 @@ try {
       80_000_000_000n,
   );
   assert.equal((await pendingStoredBindings(journal)).length, 1);
-  // Carol registers another wallet and has not confirmed it yet.
+  const replacementWallet = privateKeyToAccount(`0x${"0".repeat(63)}3`);
+  const replacement = (await (
+    await account("carol", "/wallets/register", {
+      chain: "base",
+      address: replacementWallet.address.toLowerCase(),
+    })
+  ).json()) as { claimId: string };
+  // A pending registration still permits retry of the same signed old binding.
+  const beforeUnsignedRetry = bindingBroadcasts;
+  const unsignedJournal = JSON.stringify(await journal.get(carolHeld[0].key));
+  await bindingHeld();
+  assert(bindingBroadcasts > beforeUnsignedRetry);
+  assert.equal(
+    JSON.stringify(await journal.get(carolHeld[0].key)),
+    unsignedJournal,
+  );
+  assert.equal(
+    await journal.get(`binding-cancel:${carolHeld[0].transactionId}`),
+    undefined,
+  );
+  const replacementChallenge = (await (
+    await account("carol", "/wallets/challenge", {
+      claimId: replacement.claimId,
+    })
+  ).json()) as { challengeId: string; message: string };
   assert.equal(
     (
-      await account("carol", "/wallets/register", {
-        chain: "base",
-        address: privateKeyToAccount(
-          `0x${"0".repeat(63)}3`,
-        ).address.toLowerCase(),
+      await account("carol", "/wallets/authorize", {
+        claimId: replacement.claimId,
+        challengeId: replacementChallenge.challengeId,
+        signature: await replacementWallet.signMessage({
+          message: replacementChallenge.message,
+        }),
       })
     ).status,
     200,
