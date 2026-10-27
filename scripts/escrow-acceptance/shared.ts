@@ -35,6 +35,7 @@ import {
   CONTRIBUTION_FIELDS,
   PROJECT_SKILL_TEMPLATES,
 } from "../../src/lib/project-schema.mjs";
+import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { sha256Hex } from "../../workers/identity/crypto";
@@ -581,20 +582,7 @@ function acceptanceManifest(
   deployment: EscrowDeployment,
   status: "paused" | "active" = "paused",
 ) {
-  const fixture = JSON.parse(
-    readFileSync(
-      resolve(
-        import.meta.dir,
-        "..",
-        "..",
-        "tests",
-        "fixtures",
-        "projects",
-        "slopdotcash.json",
-      ),
-      "utf8",
-    ),
-  );
+  const fixture = fixtureProject("slopdotcash");
   const chain = ESCROW_NETWORKS[deployment.network].chain;
   return assertProjectDefinition({
     ...fixture,

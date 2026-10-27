@@ -227,10 +227,16 @@ export default function OwnerMonthlyFinalization({
         exact monthly allocation. This step reserves funds; it is not a
         completed payout.
       </p>
+      <p>
+        Vault: <code>{expected.deployment.vault}</code>
+        <br />
+        Asset: <code>{expected.deployment.asset}</code>
+      </p>
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
       {storageError && (
         <button
+          className="button secondary-button"
           type="button"
           disabled={busy}
           onClick={() =>
@@ -292,6 +298,7 @@ export default function OwnerMonthlyFinalization({
             </label>
           )}
           <button
+            className="button secondary-button"
             type="button"
             disabled={busy || !wallet}
             onClick={() => void check()}
@@ -302,6 +309,7 @@ export default function OwnerMonthlyFinalization({
             <details>
               <summary>Wallet confirms nothing was sent</summary>
               <button
+                className="button secondary-button"
                 type="button"
                 disabled={busy}
                 onClick={() =>
@@ -325,6 +333,7 @@ export default function OwnerMonthlyFinalization({
             </p>
           )}
           <button
+            className="button secondary-button"
             type="button"
             disabled={busy || !wallet || storageError || !available}
             onClick={() =>
@@ -338,6 +347,7 @@ export default function OwnerMonthlyFinalization({
           </button>
           {review && (
             <button
+              className="button primary-button"
               type="button"
               disabled={busy || storageError || !available}
               onClick={() => void send()}
