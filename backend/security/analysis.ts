@@ -299,8 +299,14 @@ export function surplusSecurityAnalyzer(options: {
     if (!response.ok) throw new Error("Provider unavailable");
     // Surplus marks an answer its deadline cut short, even when the JSON
     // and stop reason look complete.
-    const truncated = response.headers.get("x-si-truncated") === "1";
     const body = record(await response.json());
+    const surplus = body.surplus;
+    const truncated =
+      response.headers.get("x-si-truncated") === "1" ||
+      (typeof surplus === "object" &&
+        surplus !== null &&
+        "truncated" in surplus &&
+        surplus.truncated === true);
     // A refusal, a cut-off answer or any other stop is not a proposal.
     if (
       truncated ||
