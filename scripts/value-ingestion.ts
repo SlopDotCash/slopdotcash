@@ -2,6 +2,7 @@ import { canonicalActorAvatarUrl } from "../src/lib/leaderboard";
 /** Read only: no model calls, score publication or payment authority. */
 import type {
   GitHubActor,
+  HeldWorkUnit,
   LeaderboardInput,
   MergedPullRequestOutcome,
   PenaltyFeedRecord,
@@ -364,7 +365,11 @@ export async function loadValueInputs(
     "id" | "url" | "number" | "headRefOid" | "updatedAt"
   > & { mergedAt: string | null; closedAt?: string | null })[],
   transport: Fetch = fetch,
+  unavailableJointSources?: (
+    ids: readonly string[],
+  ) => Promise<readonly string[]>,
 ) {
+  const heldWorkUnits: HeldWorkUnit[] = [];
   const valueDecisions = new Map<
     string,
     NonNullable<LeaderboardInput["valueDecisions"]> extends ReadonlyMap<
@@ -374,10 +379,14 @@ export async function loadValueInputs(
       ? V
       : never
   >();
-  const jointValueDecisions = new Map<
-    string,
-    Awaited<ReturnType<typeof consumeWorkUnitHistory>>
-  >();
+  type JointDecision =
+    NonNullable<LeaderboardInput["jointValueDecisions"]> extends ReadonlyMap<
+      string,
+      infer V
+    >
+      ? V
+      : never;
+  const jointValueDecisions = new Map<string, JointDecision>();
   const valueActors = new Map<string, GitHubActor>();
   const publicRepositories = new Map<string, PublicMergeRepository>();
   const census = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
@@ -385,10 +394,7 @@ export async function loadValueInputs(
     throw new Error("Value census repeats a source");
   const sourceCache = new Map<string, WorkUnitSource>();
   const observedGroups = new Map<string, string | null>();
-  const groups = new Map<
-    string,
-    Awaited<ReturnType<typeof consumeWorkUnitHistory>>
-  >();
+  const groups = new Map<string, JointDecision>();
 
   async function repositoryIdentity(repositoryId: string) {
     const repository = findRegisteredRepositoryById(repositoryId);
@@ -571,6 +577,37 @@ export async function loadValueInputs(
       }
       let decision = groups.get(graph.current.row.record_digest);
       if (!decision) {
+        // Only probe members outside the complete live census. NOT_FOUND is
+        // classified by the caller; transport, permission and partial responses throw.
+        const references = bindings
+          .filter((member) => !census.has(member.pullRequestNodeId))
+          .map((member) => member.pullRequestNodeId);
+        const unavailable =
+          references.length && unavailableJointSources
+            ? await unavailableJointSources(references)
+            : [];
+        if (unavailable.length) {
+          if (unavailable.some((id) => !references.includes(id)))
+            throw new Error("Unavailable joint source was not requested");
+          decision = {
+            status: "unresolved" as const,
+            sourceUnavailable: true,
+            history: graph.history,
+            throughSequence: graph.throughSequence,
+            latestDigest: graph.current.row.record_digest,
+          };
+          heldWorkUnits.push({
+            recordDigest: graph.current.row.record_digest,
+            sourceNodeIds: bindings
+              .map((member) => member.pullRequestNodeId)
+              .sort(),
+            unavailableNodeIds: [...new Set(unavailable)].sort(),
+          });
+          groups.set(graph.current.row.record_digest, decision);
+          for (const member of bindings)
+            jointValueDecisions.set(member.pullRequestNodeId, decision);
+          continue;
+        }
         const members: WorkUnitSource[] = [];
         const legacyDigests = new Map<string, string | null>();
         for (const member of bindings) {
@@ -649,7 +686,7 @@ export async function loadValueInputs(
     if (decision.status === "assessed")
       await hydrateActors(new Set(decision.implementationActorNodeIds));
   }
-  return { valueDecisions, jointValueDecisions, valueActors };
+  return { valueDecisions, jointValueDecisions, valueActors, heldWorkUnits };
 }
 
 const ACCOUNT_BAN_FEED = "https://slop.cash/api/v1/project-account-bans";
