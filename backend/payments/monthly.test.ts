@@ -2029,6 +2029,50 @@ describe("monthly attestation input", () => {
         ["first", "conflict"],
         ["second", "reserved"],
       ]);
+      // The contributor must see the same conflict as the owner. A valid
+      // historical floor-fee reservation still replaces its monthly award.
+      for (const [user, login] of [
+        [A, "first"],
+        [B, "second"],
+      ]) {
+        const token = user.padEnd(43, "c");
+        sqlite
+          .prepare(
+            "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)",
+          )
+          .run(`node-${user}`, user, login, afterCutoff.toISOString());
+        sqlite
+          .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
+          .run(
+            await sha256Hex(token),
+            `node-${user}`,
+            "2027-01-01T00:00:00.000Z",
+          );
+        const response = await handlePaymentsApi(
+          new Request("https://slop.cash/api/v1/payments/me", {
+            headers: { cookie: `__Host-slop_points=${token}` },
+          }),
+          { db, now: () => clock },
+        );
+        expect(response.status).toBe(200);
+        const account = (await response.json()) as PaymentsAccount;
+        if (user === A)
+          expect(account.monthlyAwards).toMatchObject([
+            {
+              projectId: project.id,
+              grossBase: "600",
+              feeBase: "12",
+              netBase: "588",
+              state: "conflict",
+            },
+          ]);
+        else {
+          expect(account.monthlyAwards).toEqual([]);
+          expect(account.payments).toMatchObject([
+            { grossBase: "399", feeBase: "7", netBase: "392" },
+          ]);
+        }
+      }
       const expected = {
         network: "base-sepolia",
         manifestSha256: project.manifestSha256,
