@@ -255,6 +255,80 @@ function preexistingHunks(
   return [...prior].sort();
 }
 
+/** A closed promotion can contain only squash commits already accepted from
+ * this same author. Their original PRs remain the credit authority; carrying
+ * those immutable commits is not a new claim to copied implementation work.
+ */
+function alreadyAcceptedPromotion(
+  original: WorkUnitSource,
+  sources: readonly WorkUnitSource[],
+): boolean {
+  const evidence = original.evidence;
+  const closedAt = Date.parse(evidence.pull.closed_at ?? "");
+  if (
+    evidence.pull.merged_at !== null ||
+    evidence.indirectAcceptance ||
+    evidence.pull.user.type !== "User" ||
+    evidence.limitations.length ||
+    !Number.isFinite(closedAt) ||
+    !evidence.commits.length ||
+    new Set(evidence.commits.map((commit) => commit.sha)).size !==
+      evidence.commits.length ||
+    evidence.commits.length !== evidence.pull.commits ||
+    evidence.commitAttribution.length !== evidence.commits.length ||
+    evidence.commits.at(-1)?.sha !== evidence.pull.head.sha
+  )
+    return false;
+
+  const edits = (files: readonly FileChange[]) => {
+    if (
+      !files.length ||
+      new Set(files.map((file) => file.filename)).size !== files.length
+    )
+      return null;
+    const identities = files.map(retainedEditIdentity);
+    return identities.includes(null) ? null : JSON.stringify(identities.sort());
+  };
+  return evidence.commits.every((commit) => {
+    const attribution = evidence.commitAttribution.filter(
+      (entry) => entry.sha === commit.sha,
+    );
+    if (
+      commit.parents.length !== 1 ||
+      attribution.length !== 1 ||
+      attribution[0].limitations.length ||
+      !attribution[0].files ||
+      !attribution[0].changedPaths ||
+      attribution[0].changedPaths.length !== attribution[0].files.length ||
+      !attribution[0].files.every((file) =>
+        attribution[0].changedPaths?.includes(file.filename),
+      )
+    )
+      return false;
+    const identity = edits(attribution[0].files);
+    if (identity === null) return false;
+    const accepted = sources.filter(({ evidence: prior }) => {
+      const mergedAt = Date.parse(prior.pull.merged_at ?? "");
+      const merge = prior.mergeCommitEvidence;
+      return (
+        prior.pull.node_id !== evidence.pull.node_id &&
+        prior.repositoryNodeId === evidence.repositoryNodeId &&
+        prior.pull.user.type === "User" &&
+        prior.pull.user.node_id === evidence.pull.user.node_id &&
+        prior.limitations.length === 0 &&
+        Number.isFinite(mergedAt) &&
+        mergedAt < closedAt &&
+        prior.pull.merge_commit_sha === commit.sha &&
+        merge?.sha === commit.sha &&
+        merge.parents.length === 1 &&
+        edits(merge.files) === identity &&
+        edits(prior.files) === identity
+      );
+    });
+    return accepted.length === 1;
+  });
+}
+
 export async function retainedCopyBindings(sources: readonly WorkUnitSource[]) {
   const bindings = new Map<
     string,
@@ -269,6 +343,7 @@ export async function retainedCopyBindings(sources: readonly WorkUnitSource[]) {
   >();
   const limitations = new Set<string>();
   for (const original of sources) {
+    if (alreadyAcceptedPromotion(original, sources)) continue;
     const integrations = await retainedCopySources(original, sources);
     const evidence = original.evidence;
     // An exact edit match plus a GitHub PR relationship is an ownership

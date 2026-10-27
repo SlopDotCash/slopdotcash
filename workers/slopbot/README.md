@@ -364,6 +364,13 @@ forms, for example a link with a title, can still give a hint from the label,
 so the GitHub merge record is the authority. No acknowledgement text or
 historical capture is rewritten.
 
+An abandoned promotion needs no new retention acknowledgement when every
+commit is an exact squash already accepted from the same author, before the
+promotion closed, and each complete original PR is supplied. Preparation keeps
+those original claims and adds no implementation claim for the closed
+promotion. Missing origins, changed authors or edits, and newly introduced
+commits retain the acknowledgement requirement and any source limitations.
+
 Historical resolution evidence must
 remain source-bound and pass the joint record's freshness and publication gates.
 Do not strip limitations or substitute a full first-parent merge diff to make
