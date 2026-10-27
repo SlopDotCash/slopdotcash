@@ -479,6 +479,7 @@ test("penalty history paginates retained reversals without changing the active f
       active.records.map((r: { item_node_id: string }) => r.item_node_id),
     ).toEqual(["PR_debit"]);
     expect(active.records[0]).not.toHaveProperty("reversed_at");
+    f.revision("paused");
     const first = await (
       await f.get(`/v1/penalties?project=${projectId}&history=1`)
     ).json();
