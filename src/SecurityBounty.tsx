@@ -1718,6 +1718,7 @@ function SubmissionsPanel({
   const [submissions, setSubmissions] = useState<Submission[] | null>(null);
   const [authorityUnavailable, setAuthorityUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const generation = useRef(0);
   useEffect(() => {
     if (submissions === null) return;
     onKnownCases(
@@ -1734,26 +1735,34 @@ function SubmissionsPanel({
     );
   }, [submissions, onLinkFallback, onKnownCases, focusId]);
   const load = useCallback(() => {
+    const current = ++generation.current;
     setError(null);
     projectApiRequest<{
+      recipientGithubId: string;
       automatic: boolean;
       submissions: Submission[];
       authorityUnavailable?: boolean;
-    }>("GET", "security-submissions").then(
-      (body) => {
+    }>("GET", "security-submissions")
+      .then((body) => {
+        if (current !== generation.current) return;
+        if (body.recipientGithubId !== session.session.githubId)
+          throw new Error("Your account changed. Reload your private reports.");
         // Report text is kept only while its submission can still be sent.
         pruneDrafts(body.submissions);
         setSubmissions(body.submissions);
         setAuthorityUnavailable(body.authorityUnavailable === true);
         onAvailability(body.automatic === true);
-      },
-      (caught: unknown) => {
+      })
+      .catch((caught: unknown) => {
+        if (current !== generation.current) return;
         // The manual path stays available whenever the list cannot load.
         onAvailability(false);
         setError(errorMessage(caught));
-      },
-    );
-  }, [onAvailability]);
+      });
+    return () => {
+      generation.current++;
+    };
+  }, [onAvailability, session.session.githubId]);
   useEffect(load, [load]);
   if (error && submissions === null)
     return (
@@ -3197,6 +3206,19 @@ export function SecurityInbox() {
         </button>
       </div>
     );
+  } else if (list.value.viewer.githubId !== session.session.githubId) {
+    body = (
+      <div className="form-error" role="alert">
+        Your account changed. Reload this page to view your private cases.
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => window.location.reload()}
+        >
+          Reload private cases
+        </button>
+      </div>
+    );
   } else {
     const maintained = new Set(
       list.value.programs
@@ -3207,6 +3229,7 @@ export function SecurityInbox() {
       <>
         {note ? <p role="status">{note}</p> : null}
         <SubmissionsPanel
+          key={session.session.githubId}
           session={session}
           focusId={returned.submission}
           grantError={returned.error}

@@ -119,6 +119,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
     if (path === "security-submissions")
       return route.fulfill({
         json: {
+          recipientGithubId: actor,
           automatic: false,
           authorityUnavailable,
           submissions: actor === "42" ? [submission] : [],
