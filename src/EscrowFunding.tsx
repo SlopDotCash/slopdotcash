@@ -363,9 +363,18 @@ function VaultTotalsView({
         <RetryButton retry={totals.retry} />
       </p>
     );
+  const refreshError = totals.status === "ready" &&
+    totals.refreshError !== null && (
+      <p className="data-notice data-error" role="alert">
+        <CircleAlert aria-hidden="true" size={15} />
+        {totals.refreshError}
+        <RetryButton retry={totals.retry} />
+      </p>
+    );
   if (totals.status === "loading" || totals.vault.snapshots.length === 0)
     return (
       <div className="vault-totals">
+        {refreshError}
         <p className="setup-badge setup-badge--pending" role="status">
           {totals.status === "loading" ? (
             <>
@@ -384,13 +393,7 @@ function VaultTotalsView({
     );
   return (
     <div className="vault-totals" aria-busy={totals.refreshing || undefined}>
-      {totals.refreshError !== null && (
-        <p className="data-notice data-error" role="alert">
-          <CircleAlert aria-hidden="true" size={15} />
-          {totals.refreshError}
-          <RetryButton retry={totals.retry} />
-        </p>
-      )}
+      {refreshError}
       {totals.vault.snapshots.map((snapshot) => (
         <VaultTotals
           key={`${snapshot.network}:${snapshot.vault}`}
