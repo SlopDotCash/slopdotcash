@@ -160,7 +160,7 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
   ).toBeVisible();
   expect(authorized()).toBe(1);
   await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("cell", { name: /^Held/ })).toBeVisible();
+  await expect(page.locator(".payout-pill", { hasText: "Held" })).toBeVisible();
 });
 
 for (const fault of ["account", "domain", "reject"] as const) {
@@ -180,7 +180,9 @@ for (const fault of ["account", "domain", "reject"] as const) {
           : "rejected",
     );
     expect(authorized()).toBe(0);
-    await expect(page.getByRole("cell", { name: /^Held/ })).toBeVisible();
+    await expect(
+      page.locator(".payout-pill", { hasText: "Held" }),
+    ).toBeVisible();
   });
 }
 

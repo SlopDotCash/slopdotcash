@@ -25,7 +25,7 @@ async function request(path: string, body: unknown) {
       response.status === 401
         ? "Sign in again, then review your payout wallet."
         : response.status === 409
-          ? "The wallet changed or is still being prepared. Refresh payments and review again."
+          ? "The wallet changed or is still being prepared. Reload this page and review again."
           : "Payout consent is unavailable. Your award stays reserved. Retry later.",
     );
   return (await readBoundedJson(response, 16_384, "payout consent")) as Record<
@@ -146,7 +146,7 @@ export function PayoutConsent({
             "Payout consent was not stored. Refresh and review again.",
           );
         setNotice(
-          "Wallet consent saved. Payment is not yet verified. Refresh payments to check progress.",
+          "Wallet consent saved. Payment is not yet verified. Reload this page to check progress.",
         );
       } else {
         if (!wallet.solanaSign)
@@ -158,7 +158,7 @@ export function PayoutConsent({
         });
         if (typeof prepared.transaction !== "string")
           throw new Error(
-            "The binding is already pending or unavailable. Refresh payments before trying again.",
+            "The binding is already pending or unavailable. Reload this page before trying again.",
           );
         const bytes = Uint8Array.from(atob(prepared.transaction), (c) =>
           c.charCodeAt(0),
@@ -185,10 +185,10 @@ export function PayoutConsent({
         });
         if (typeof result.transactionId !== "string")
           throw new Error(
-            "Binding submission could not be verified. Refresh payments before retrying.",
+            "Binding submission could not be verified. Reload this page before retrying.",
           );
         setNotice(
-          "Binding submitted; payment is not yet verified. Refresh payments to check progress.",
+          "Binding submitted; payment is not yet verified. Reload this page to check progress.",
         );
       }
       setOpen(false);

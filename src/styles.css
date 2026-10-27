@@ -2330,42 +2330,6 @@ small {
     white-space: nowrap;
   }
 
-  /* Payment history shows one card per row with its column names. */
-  .earnings-page .points-table table {
-    min-width: 0;
-  }
-  .earnings-page .points-table thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-  .earnings-page .points-table tr {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 10px 16px;
-    padding-block: 16px;
-    border-bottom: 1px solid var(--line);
-  }
-  .earnings-page .points-table td {
-    min-width: 0;
-    padding: 0;
-    border: 0;
-    text-align: left;
-    white-space: normal;
-  }
-  .earnings-page .points-table td::before {
-    display: block;
-    color: var(--muted);
-    font-size: 12px;
-    /* The column header already names the cell for screen readers. */
-    content: attr(data-label) / "";
-  }
-  .earnings-page .points-table td:first-child,
-  .earnings-page .points-table td:last-child {
-    grid-column: 1 / -1;
-  }
 }
 
 .points-social-link {
@@ -2468,14 +2432,121 @@ small {
   gap: 0.75rem;
 }
 
-.earnings-page .points-table caption {
-  text-align: left;
-  padding-block: 1rem;
+/* Payouts: one line each, with icons for the network and transaction. */
+.payout-rows {
+  display: grid;
+  margin: 12px 0 32px;
+  padding: 0;
+  list-style: none;
 }
-.earnings-page .points-table th,
-.earnings-page .points-table td {
-  white-space: normal;
-  min-width: 7rem;
+
+.payout-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto 32px;
+  align-items: center;
+  gap: 8px 14px;
+  padding-block: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.payout-row:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.payout-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+
+.payout-main small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.payout-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.payout-value strong {
+  font-family: var(--brand-font-data);
+  font-size: 18px;
+}
+
+.payout-unit {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.payout-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--brand-color-raised);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.payout-pill[data-tone="success"] {
+  background: color-mix(in srgb, var(--green) 18%, transparent);
+  color: var(--green);
+}
+
+.payout-pill[data-tone="warning"] {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning);
+}
+
+.payout-pill[data-tone="danger"] {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+}
+
+.payout-tx {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--muted);
+}
+
+a.payout-tx:hover {
+  background: var(--brand-color-raised);
+  color: var(--ink);
+}
+
+.payout-row > .payout-consent {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+@media (max-width: 520px) {
+  .payout-row {
+    grid-template-columns: 32px minmax(0, 1fr) 32px;
+  }
+
+  .payout-tx {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .payout-pill {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
 }
 
 .receipt-page {
