@@ -235,7 +235,8 @@ if (
   const sha = process.env.GITHUB_SHA;
   const provider = (args) =>
     spawnSync(
-      process.execPath,
+      // This entry point runs under Bun; Wrangler requires the installed Node runtime.
+      "node",
       ["node_modules/wrangler/bin/wrangler.js", ...args],
       { encoding: "utf8", timeout: 120_000 },
     );
