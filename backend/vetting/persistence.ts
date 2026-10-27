@@ -171,6 +171,25 @@ export function summarize(assessment: VettingAssessment): AssessmentSummary {
   };
 }
 
+/** The request reason of a refresh that replaces an unavailable queued template. */
+export const TEMPLATE_REPLACEMENT_REASON =
+  "Automatic replacement of an unavailable queued template";
+
+/** True when `next` only re-queues `previous` at a released template. */
+function replacesTemplate(
+  next: VettingAssessment,
+  previous: VettingAssessment,
+): boolean {
+  return (
+    next.requestReason === TEMPLATE_REPLACEMENT_REASON &&
+    next.revision === previous.revision &&
+    next.manifestSha256 === previous.manifestSha256 &&
+    next.contentSha256 === previous.contentSha256 &&
+    next.commitSha === previous.commitSha &&
+    next.templateSha256 !== previous.templateSha256
+  );
+}
+
 function newest<T>(items: T[], match: (item: T) => boolean): T | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1)
     if (match(items[index])) return items[index];
@@ -785,6 +804,13 @@ export class CloudflareVettingPersistence {
         const covered = new Set(
           JSON.parse(exempt.covered_assessment_ids) as string[],
         );
+        // A template retry continues the covered request that it replaced.
+        for (let index = 1; index < assessments.length; index += 1)
+          if (
+            covered.has(assessments[index - 1].id) &&
+            replacesTemplate(assessments[index], assessments[index - 1])
+          )
+            covered.add(assessments[index].id);
         if (assessments.every((assessment) => covered.has(assessment.id)))
           return {
             state: "cleared",
