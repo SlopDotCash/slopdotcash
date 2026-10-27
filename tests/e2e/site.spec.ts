@@ -17,6 +17,7 @@ import {
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { archivedPaidCycleIndex } from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -98,8 +99,13 @@ test("project setup shares one sign-in read with its owner inventory", async ({
     route.fulfill({ json: { repositories: [] } }),
   );
   await page.goto("/projects/new", { waitUntil: "networkidle" });
-  await page.getByText("Your projects", { exact: true }).click();
-  await expect(page.getByText("You have no projects yet.")).toBeVisible();
+  await expect(page.getByText("Your projects", { exact: true })).toHaveCount(0);
+  await page
+    .getByText("Choose from your GitHub repositories", { exact: true })
+    .click();
+  await expect(
+    page.getByText("@example owns no public repositories. Enter one below."),
+  ).toBeVisible();
   await page.screenshot({
     path: test.info().outputPath("project-setup.png"),
     fullPage: true,
@@ -725,12 +731,32 @@ test("renders contributor and cycle records from validated public data", {
         exact: true,
       }),
     ).toBeVisible();
+    const history = page.locator("details.cycle-history");
+    if (await history.count()) {
+      await expect(history).not.toHaveAttribute("open", "");
+      await history.locator(":scope > summary").focus();
+      await page.keyboard.press("Enter");
+      await expect(history).toHaveAttribute("open", "");
+    }
     await expect(
       page.getByRole("heading", { name: "Contributors", exact: true }),
     ).toBeVisible();
-    await expect(page.locator(".archived-leader-row")).toHaveCount(
+    const contributors = page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    });
+    await expect(contributors.locator("tbody tr")).toHaveCount(
       archived.contributors.length,
     );
+    for (const contributor of archived.contributors)
+      await expect(
+        contributors.getByRole("link", {
+          name: contributor.actor.login,
+          exact: true,
+        }),
+      ).toHaveAttribute(
+        "href",
+        `/contributors/${encodeURIComponent(contributor.actor.login)}`,
+      );
     await expect(
       page.getByRole("heading", { name: "Evidence", exact: true }),
     ).toHaveCount(0);
@@ -758,6 +784,43 @@ test("renders contributor and cycle records from validated public data", {
       }),
     ).toBeVisible();
   }
+});
+
+test("shows the suggested amount for a walletless cycle still under review", async ({
+  page,
+}) => {
+  const index = archivedPaidCycleIndex();
+  const cycle = index.cycles[0];
+  cycle.state = "review";
+  cycle.approvedAt = null;
+  cycle.settledAt = null;
+  cycle.reward.approvedMinor = "0";
+  cycle.reward.paidMinor = "0";
+  cycle.reward.feeMinor = "0";
+  cycle.files.allocation = null;
+  cycle.files.executionPlan = null;
+  cycle.files.settlement = null;
+  const contributor = cycle.contributors[0];
+  contributor.state = "unclaimed";
+  contributor.wallet = null;
+  contributor.approvedMinor = "0";
+  contributor.paidMinor = "0";
+  assertCycleIndex(index);
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    route.fulfill({ json: index }),
+  );
+  await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
+    waitUntil: "networkidle",
+  });
+  const row = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("link", { name: contributor.actor.login }) });
+  await expect(row).toContainText("Awaiting wallet");
+  await expect(row.locator(".cycle-current-amount")).toHaveText("Suggested $1");
+  await row.getByText("Amount history", { exact: true }).click();
+  await expect(row.locator(".cycle-amount-history")).toContainText(
+    "Approved$0",
+  );
 });
 
 test("makes the public project draft boundary unmistakable", async ({
@@ -1721,19 +1784,20 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   // The page's records must finish loading before keyboard navigation
   // leaves it, or the move cancels the read.
   await page.reload({ waitUntil: "networkidle" });
-  await expect(page.getByText("$4,900", { exact: true })).toBeVisible();
+  await expect(page.getByText("$4,900", { exact: true })).not.toBeVisible();
   const audience = page
     .locator("summary")
     .filter({ hasText: "Audience report ·" });
   await audience.focus();
   await page.keyboard.press("Enter");
   await expect(audience.locator("..")).toHaveAttribute("open", "");
-  const rules = page.getByText("Funding rules", {
+  const rules = page.getByText("Funding rules and fees", {
     exact: true,
   });
   await rules.focus();
   await page.keyboard.press("Enter");
   await expect(rules.locator("..")).toHaveAttribute("open", "");
+  await expect(page.getByText("$4,900", { exact: true })).toBeVisible();
   const pools = page.getByRole("list", {
     name: "Project funding pools",
     exact: true,

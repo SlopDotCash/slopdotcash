@@ -153,22 +153,24 @@ test("large private evidence downloads with a single-use browser grant @registry
     `/vetting-evidence?assessmentId=${assessment}&runId=${runId}`,
     { waitUntil: "networkidle" },
   );
-  await page
-    .getByRole("button", { name: "Inspect evidence inventory" })
-    .click();
   await expect(
     page.getByText(
       "Case open. Evidence remains available until 90 days after closure.",
       { exact: false },
     ),
   ).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: `Select Synthetic VM disk overlay, ${sha.slice(0, 12)}`,
+      exact: true,
+    })
+    .click();
   const item = page.getByRole("article").filter({
     has: page.getByRole("heading", {
       name: "Synthetic VM disk overlay",
       exact: true,
     }),
   });
-  await item.getByText("Download evidence", { exact: true }).click();
   await item
     .getByRole("textbox")
     .fill("Inspect the complete synthetic disk overlay without execution");

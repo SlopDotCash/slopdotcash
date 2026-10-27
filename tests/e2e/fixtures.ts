@@ -60,6 +60,20 @@ export type Diagnostics = {
 /** A first-party request that the page or the browser canceled. */
 export const CANCELED = /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) /u;
 
+/** Follow the owner entry point and open its retained Security settings. */
+export async function openProjectSecuritySettings(page: Page) {
+  const label = "Manage security program and private bounty funds";
+  const link = page.getByRole("link", { name: label, exact: true });
+  if (await link.count()) await link.click();
+  await expect(page).toHaveURL(
+    /\/projects\/[^/]+\/security(?:\?[^#]*)?#security-settings$/u,
+  );
+  const settings = page.locator("details#security-settings");
+  if ((await settings.getAttribute("open")) === null)
+    await settings.locator("summary").click();
+  await expect(settings).toHaveAttribute("open", "");
+}
+
 /** Match historical cycles to a test's deliberately scoped runtime registry. */
 export async function serveProjectCycleIndex(
   page: Page,
