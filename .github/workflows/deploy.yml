@@ -1597,6 +1597,7 @@ jobs:
           # Publish after migrations, retaining journals and verifying exact tags.
           bun workers/payment-executor/release-mainnets.mjs publish "$attester_dir"
 
+          printf 'Worker/service publication completed for %s; Pages publication is pending the final live-main check.\n' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           live_main="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
               https://github.com/SlopDotCash/slopdotcash.git refs/heads/main |
@@ -1609,18 +1610,11 @@ jobs:
           git -C "$GITHUB_WORKSPACE" fetch --force --no-tags --depth=1 origin \
             "$live_main:refs/remotes/origin/slop-live-main"
           if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_main" -- .; then
-            # A newer main push owns publication: its run queues behind this
-            # job in slop-production. Stop without publishing stale input.
-            # Anything but a fast-forward of the tested commit fails closed.
-            advance="$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$live_main" --jq .status)"
-            if [ "$advance" != "ahead" ]; then
-              echo "::error::Live main $live_main is not a fast-forward of tested $GITHUB_SHA ($advance)."
-              exit 1
-            fi
-            echo "::notice::Live main advanced to $live_main before the Pages deployment; superseded $GITHUB_SHA is not published by this run."
-            printf 'Superseded: main advanced to %s before the Pages deployment; this run did not publish %s.\n' "$live_main" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
-            printf 'superseded=true\n' >> "$GITHUB_OUTPUT"
-            exit 0
+            # Worker/service writes have happened. A changed main is now a
+            # partial rollout failure, never a successful superseded no-op.
+            echo "::error::Partial publication: live main changed to $live_main after Worker/service publication of $GITHUB_SHA; Pages was not published."
+            printf 'Partial publication: Worker/services from %s were published, but main changed to %s. Pages was not published; this release failed and requires reconciliation.\n' "$GITHUB_SHA" "$live_main" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
 
           # Use the same immutable-source publication directory as staging.
