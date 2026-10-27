@@ -23,7 +23,7 @@ test("a timed-out launcher stops its descendant server before returning failure"
         args: ["-e", launcher],
         cwd: directory,
         env: process.env,
-        // Hosted Windows starts two Node processes through its antivirus.
+        // Hosted Windows needs more time to start two Node processes.
         // Give them time to run; the same post-timeout liveness checks apply.
         timeoutMs: process.platform === "win32" ? 5000 : 1500,
       }),
@@ -35,7 +35,7 @@ test("a timed-out launcher stops its descendant server before returning failure"
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 test("a completed phase preserves successful and failed child exit codes", async () => {
   for (const status of [0, 7]) {
