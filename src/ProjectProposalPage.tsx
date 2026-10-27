@@ -2035,6 +2035,10 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         : -1
       : null,
   );
+  // The draft the user last typed, including edits made while a publish
+  // request is in flight. Compared on success so those edits survive.
+  const latestDraft = useRef(draft);
+  latestDraft.current = draft;
   const [saveFailed, setSaveFailed] = useState(false);
   useEffect(() => {
     try {
@@ -2248,6 +2252,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   async function publish() {
     setAttempted(true);
     if (!valid || !changed || base === null || staleDraft) return;
+    const submittedDraft = draft;
     setSubmission({ state: "publishing" });
     try {
       const result = await publishProjectRevision(
@@ -2266,8 +2271,12 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         project: result.project.manifest,
       });
       setSubmission({ state: "published", result });
-      setDraft(null);
-      setDraftRevision(null);
+      // Edits typed while the request was in flight are not part of what was
+      // published; keep them as the new draft, rebased on the new revision.
+      // Only clear when nothing changed since the request went out.
+      const editedDuringSave = latestDraft.current !== submittedDraft;
+      setDraft(editedDuringSave ? latestDraft.current : null);
+      setDraftRevision(editedDuringSave ? result.project.revision : null);
       setAttempted(false);
     } catch (error) {
       setSubmission({
