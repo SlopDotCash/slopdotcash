@@ -28,7 +28,7 @@ import {
 } from "./review";
 import { dispatchSpendAlert } from "./spend-alerts";
 import {
-  consumePendingValueRequest,
+  consumePendingValueRequests,
   type ValueConsumerEnv,
 } from "./value-consumer";
 import { valueHistory } from "./value-journal";
@@ -467,7 +467,7 @@ export default {
     // An email outage must not stop assessment. Notice claims and ambiguous
     // receipts remain durable, while the scheduled invocation reports failure.
     const outcomes = await Promise.allSettled([
-      consumePendingValueRequest(env),
+      consumePendingValueRequests(env),
       ...(env.SLOP_NOTIFY
         ? [
             dispatchSpendAlert(env.SLOPBOT_DB, env.SLOP_NOTIFY),
