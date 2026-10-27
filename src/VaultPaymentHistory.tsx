@@ -1,5 +1,5 @@
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
-import { formatAssetAmount, transactionUrl } from "./lib/payments/contracts";
+import { knownAssetSymbol, transactionUrl } from "./lib/payments/contracts";
 import { findProject } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import {
@@ -7,6 +7,7 @@ import {
   useVaultPayments,
 } from "./lib/use-vault-payments";
 import { ExternalLinkAnchor, formatCycleMonth } from "./Presentation";
+import { PayoutAmount } from "./PayoutRows";
 
 /** Only finalized ordinary payments; each asset keeps its own base units. */
 export function VaultPaymentHistory({ scope }: { scope: PublicPaymentScope }) {
@@ -58,7 +59,18 @@ export function VaultPaymentHistory({ scope }: { scope: PublicPaymentScope }) {
                   </div>
                   <div>
                     <dt>Net paid</dt>
-                    <dd>{formatAssetAmount(payment.netBase, payment)}</dd>
+                    <dd>
+                      <PayoutAmount
+                        base={payment.netBase}
+                        decimals={payment.assetDecimals}
+                        symbol={knownAssetSymbol(
+                          payment.network,
+                          payment.assetAddress,
+                          payment.assetDecimals,
+                        )}
+                        address={payment.assetAddress}
+                      />
+                    </dd>
                   </div>
                   <div>
                     <dt>Transaction</dt>
