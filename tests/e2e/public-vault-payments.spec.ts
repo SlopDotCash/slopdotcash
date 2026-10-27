@@ -160,6 +160,11 @@ test("finalized project payments show net assets and source months on cycles and
     viewport: window.innerWidth,
   }));
   expect(width.page).toBeLessThanOrEqual(width.viewport);
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement)
+      document.activeElement.blur();
+    window.scrollTo(0, 0);
+  });
   await page.screenshot({
     path: info.outputPath("cycle-vault-payments.png"),
     fullPage: true,

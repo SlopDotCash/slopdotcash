@@ -57,7 +57,7 @@ export function useVaultPayments(scope: PublicPaymentScope) {
       let after = 0;
       let through: number | null = null;
       let total: number | null = null;
-      for (let page = 0; page < 100; page++) {
+      for (;;) {
         const query =
           through === null ? "" : `?after=${after}&through=${through}`;
         const response = await fetchWithDeadline(
@@ -83,7 +83,8 @@ export function useVaultPayments(scope: PublicPaymentScope) {
           (through !== null && value.through !== through) ||
           (total !== null && value.total !== total) ||
           (value.next !== null &&
-            (!Number.isSafeInteger(value.next) ||
+            (value.payments.length === 0 ||
+              !Number.isSafeInteger(value.next) ||
               value.next <= after ||
               value.next > value.through))
         )
@@ -96,6 +97,11 @@ export function useVaultPayments(scope: PublicPaymentScope) {
           ids.add(payment.id);
           payments.push(payment);
         }
+        if (
+          payments.length > total ||
+          (value.next !== null && payments.length >= total)
+        )
+          throw new Error("Project payment history count does not match");
         if (value.next === null) {
           if (payments.length !== total)
             throw new Error("Incomplete project payment history");
@@ -103,7 +109,6 @@ export function useVaultPayments(scope: PublicPaymentScope) {
         }
         after = value.next;
       }
-      throw new Error("Project payment history exceeds the read limit");
     },
     [path],
   );
