@@ -716,6 +716,7 @@ function JoinPoints({
     setBusy(true);
     setMessage("");
     let authorized = false;
+    let authorizationOrigin: string | undefined;
     try {
       const assertion = await requestIdentityAssertion({
         origin: identityPublicOrigin(
@@ -743,6 +744,7 @@ function JoinPoints({
               },
         authorize: (url) => {
           authorized = true;
+          authorizationOrigin = new URL(url).origin;
           if (sameTab) window.location.assign(url);
           else popup?.location.replace(url);
         },
@@ -791,6 +793,10 @@ function JoinPoints({
           };
         },
       });
+      // An isolated cross-origin popup must close itself. Tell only the
+      // validated identity origin after it has verified this sign-in.
+      if (authorizationOrigin)
+        popup?.postMessage("slop:identity-complete", authorizationOrigin);
       const joined = await requestJson("/api/v1/points/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
