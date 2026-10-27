@@ -6,7 +6,6 @@
 
 import {
   readTokenMint,
-  TOKEN_PROGRAM,
   type TokenMintReading,
 } from "../../contracts/solana/token-extensions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
@@ -167,10 +166,6 @@ async function solanaMetadata(
         : "The account is not a token mint",
     );
   }
-  // Vault creation, funding and the monthly commitment use the classic Token program
-  // only, so owner setup refuses a Token-2022 mint until they support it.
-  if (mint.program !== TOKEN_PROGRAM)
-    throw new TokenMetadataError("The mint is not a classic SPL Token mint");
   return { decimals: mint.decimals, symbol: null };
 }
 

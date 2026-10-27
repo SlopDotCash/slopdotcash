@@ -47,7 +47,8 @@ stop_validator
 # that already committed sources, and a vault holding less than its counters owe.
 read -ra legacy_accounts <<<"$(node integration/legacy-project.mjs)"
 read -ra monthly_accounts <<<"$(node integration/monthly-preload.mjs)"
-start_validator "${legacy_accounts[@]}" "${monthly_accounts[@]}"
+read -ra token_accounts <<<"$(node integration/token-2022-preload.mjs)"
+start_validator "${legacy_accounts[@]}" "${monthly_accounts[@]}" "${token_accounts[@]}"
 bun build adapter.ts --target=node --outfile=.local/adapter.mjs
 bun build monthly-reserve.ts --target=node --outfile=.local/monthly-reserve.mjs
 bun build ../../workers/payment-executor/monthly-release.ts --target=node --outfile=.local/monthly-release-service.mjs
@@ -61,4 +62,4 @@ bun build ../../workers/payments/scanner.ts ../../backend/payments/ledger.ts ../
 bun build ../../workers/payment-executor/core.ts --target=node --outfile=.local/executor-core.mjs
 bun build ../../workers/payments/index.ts --target=node --outfile=.local/payments-worker.mjs
 bun build ../../backend/payments/dispatch.ts --target=node --outfile=.local/dispatch.mjs
-bash scripts/run-test-stage.sh lifecycle node --test --test-force-exit --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs
+bash scripts/run-test-stage.sh lifecycle node --test --test-force-exit --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs integration/token-2022.e2e.mjs

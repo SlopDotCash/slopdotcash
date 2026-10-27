@@ -16,6 +16,7 @@ import {
   solanaAwardId,
   solanaBase58,
   solanaDigest,
+  solanaMintDetails,
   solanaPubkey,
   solanaRpc,
   solanaUint,
@@ -33,7 +34,6 @@ import {
   message,
   pda,
   SYSTEM,
-  TOKEN,
 } from "../../contracts/solana/transactions";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
@@ -147,6 +147,7 @@ export async function readSolanaAccount(
 }
 interface Context {
   config: SolanaEscrowConfig;
+  tokenProgram: string;
   project: Uint8Array;
   obligation: Uint8Array;
   awardAddress: string;
@@ -242,7 +243,16 @@ async function readAward(
     BINDING_SIZE,
     "33d3ccb9a84434b0",
   );
-  return { config, project, obligation, awardAddress, bindingAddress, binding };
+  const { tokenProgram } = await solanaMintDetails(config, config.mint);
+  return {
+    config,
+    tokenProgram,
+    project,
+    obligation,
+    awardAddress,
+    bindingAddress,
+    binding,
+  };
 }
 interface Attempt {
   obligationId: string;
@@ -647,8 +657,11 @@ async function payBoundAward(
       { key: ctx.bindingAddress, write: true },
       { key: ctx.config.mint, write: false },
       { key: ctx.config.vault, write: true },
-      { key: ata(ctx.config.mint, input.destination), write: true },
-      { key: TOKEN, write: false },
+      {
+        key: ata(ctx.config.mint, input.destination, ctx.tokenProgram),
+        write: true,
+      },
+      { key: ctx.tokenProgram, write: false },
       { key: veto, write: false },
     ],
     data: instructionData("pay", le(version)),
@@ -659,7 +672,12 @@ async function payBoundAward(
     input,
     role,
     [
-      createAta(env.SOLANA_SIGNER.address, ctx.config.mint, input.destination),
+      createAta(
+        env.SOLANA_SIGNER.address,
+        ctx.config.mint,
+        input.destination,
+        ctx.tokenProgram,
+      ),
       ix,
     ],
     refresh,

@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { Network } from "./config";
+import type { SolanaAccountProof } from "./solana-accounts";
 import {
   type ExpiryCoverage,
   type ExpiryCoverageStore,
@@ -39,6 +40,7 @@ export interface NativeAttempt {
   conversion_id: string | null;
   actual_wei: string | null;
   solana_blockhash_slot: number | null;
+  solana_account_proof: string | null;
   settled_day: string | null;
   receipt_block_hash: string | null;
 }
@@ -95,7 +97,11 @@ export class NativeGasJournal {
   /** Solana has no account nonce; allocate a journal sequence under the revision fence.
    * Reserve the whole approved transaction ceiling until a finalized receipt.
    */
-  async reserveSolana(intentHash: string, blockhashSlot?: number) {
+  async reserveSolana(
+    intentHash: string,
+    blockhashSlot?: number,
+    accountProof?: SolanaAccountProof,
+  ) {
     if (this.network !== "solana")
       throw new Error("Solana reservation needs its own network journal");
     const rows = await this.rows();
@@ -107,6 +113,7 @@ export class NativeGasJournal {
       intentHash,
       maximumWei: this.limits.perTransaction,
       solanaBlockhashSlot: blockhashSlot,
+      solanaAccountProof: accountProof,
     });
   }
 
@@ -116,7 +123,16 @@ export class NativeGasJournal {
     maximumWei: string;
     replaces?: string;
     solanaBlockhashSlot?: number;
+    solanaAccountProof?: SolanaAccountProof;
   }) {
+    if (
+      input.solanaAccountProof &&
+      (this.network !== "solana" ||
+        input.solanaAccountProof.messageHash !== input.intentHash)
+    )
+      throw new Error(
+        "Solana account evidence differs from its reserved intent",
+      );
     const revision = await this.db
       .prepare("SELECT gas_revision FROM fee_converter_locks WHERE network=?")
       .bind(this.network)
@@ -176,8 +192,8 @@ export class NativeGasJournal {
     const id = crypto.randomUUID();
     const result = await this.db
       .prepare(`INSERT INTO fee_native_gas
-      (id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,per_day_wei,state,created_at,solana_blockhash_slot)
-      SELECT ?,?,?,?,?,?,?,?,?,'reserved',?,? WHERE ${LEASE}
+      (id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,per_day_wei,state,created_at,solana_blockhash_slot,solana_account_proof)
+      SELECT ?,?,?,?,?,?,?,?,?,'reserved',?,?,? WHERE ${LEASE}
       AND (SELECT gas_revision FROM fee_converter_locks WHERE network=?)=?`)
       .bind(
         id,
@@ -191,6 +207,9 @@ export class NativeGasJournal {
         this.limits.perDay,
         this.now().toISOString(),
         input.solanaBlockhashSlot ?? null,
+        input.solanaAccountProof
+          ? JSON.stringify(input.solanaAccountProof)
+          : null,
         ...this.lease(),
         this.network,
         revision.gas_revision,
