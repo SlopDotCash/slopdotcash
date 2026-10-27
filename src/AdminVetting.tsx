@@ -79,6 +79,13 @@ const LABELS: Record<Clearance["state"], string> = {
   banned: "Banned",
 };
 
+/** PRD section 8: the existing-project exemption is never a passed scan. */
+function clearanceLabel(clearance: Clearance): string {
+  return clearance.state === "cleared" && clearance.assessment === null
+    ? "Exempt"
+    : LABELS[clearance.state];
+}
+
 const STATE_TEXT: Record<AssessmentState, string> = {
   pending: "Queued",
   incomplete: "Incomplete",
@@ -177,7 +184,7 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
           <dd>{assessment.commitSha}</dd>
         </div>
         <div>
-          <dt>Skill template digest</dt>
+          <dt>Skill template</dt>
           <dd>{assessment.templateSha256}</dd>
         </div>
         <div>
@@ -203,7 +210,6 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
               >
                 Open restricted evidence console
               </a>
-              <p>Separate designated-operator access is required.</p>
             </dd>
           </div>
         ) : null}
@@ -219,7 +225,7 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
                 .map(([threat, check]) => `${threat}: ${check}`)
                 .join(", ")}
               {result.reusedAssessmentId
-                ? ` · Reused clean scan ${result.reusedAssessmentId} of identical executable content`
+                ? ` · Reused clean scan ${result.reusedAssessmentId} (identical content)`
                 : ""}
             </dd>
           </div>
@@ -304,10 +310,6 @@ export function VettingSection({ projectId }: { projectId: string }) {
       <div className="admin-section-heading">
         <h2 id="admin-vetting">Security vetting</h2>
       </div>
-      <p className="admin-status">
-        Incomplete scans quarantine a revision; confirmed malicious results ban
-        it.
-      </p>
       {note ? (
         <p className="admin-status" role="status">
           {note}
@@ -333,7 +335,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
             </p>
           ) : null}
           {!state.value.projects.some((project) => project.id === projectId) ? (
-            <p className="admin-status">No projects are listed yet.</p>
+            <p className="admin-status">No vetting record yet.</p>
           ) : (
             state.value.projects
               .filter((project) => project.id === projectId)
@@ -358,7 +360,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
                       <span
                         className={`admin-badge admin-badge-vetting-${clearance.state}`}
                       >
-                        {LABELS[clearance.state]}
+                        {clearanceLabel(clearance)}
                       </span>
                     </header>
                     <dl className="admin-facts">
@@ -377,9 +379,9 @@ export function VettingSection({ projectId }: { projectId: string }) {
                             : clearance.state === "unverified"
                               ? clearance.reason
                               : clearance.assessment === null
-                                ? "Grandfathered: registered before security scans"
+                                ? "Existing-project exemption"
                                 : clearance.state === "stale"
-                                  ? `No scan of the live branch head ${clearance.live.commitSha} with skill template ${clearance.live.templateSha256}. The last scan covered ${clearance.assessment.commitSha}.`
+                                  ? `Live head ${clearance.live.commitSha} (template ${clearance.live.templateSha256}) is not scanned. Last scan: ${clearance.assessment.commitSha}.`
                                   : `Scan of revision ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`}
                         </dd>
                       </div>
@@ -397,8 +399,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
                     {clearance.state === "banned" ? (
                       <p className="form-error">
                         <CircleAlert aria-hidden="true" /> Confirmed malicious.
-                        Skills, discovery and activation are blocked. A new scan
-                        cannot lift a ban.
+                        A new scan cannot lift the ban.
                       </p>
                     ) : null}
                     {state.value.service.queueRegistrationAvailable &&
@@ -441,9 +442,9 @@ export function VettingSection({ projectId }: { projectId: string }) {
                             ))}
                         </ul>
                         <p className="admin-status">
-                          Two distinct flags pause the project without approval.
-                          A clean fresh scan reinstates a flag-only pause;
-                          decide only after a confirmed malicious result.
+                          Two flags pause the project; a clean fresh scan
+                          reinstates it. Decide only after a confirmed malicious
+                          result.
                         </p>
                       </>
                     ) : null}
@@ -488,8 +489,8 @@ export function ActivationClearance({
         const project = body.projects.find((entry) => entry.id === projectId);
         setClearance(
           !project || project.revision !== revision
-            ? "Project revision changed. Reload to see the current revision."
-            : `Revision ${revision}: ${LABELS[project.clearance.state]}.`,
+            ? "Revision changed. Reload the page."
+            : `Revision ${revision}: ${clearanceLabel(project.clearance)}.`,
         );
       },
       (error) => {

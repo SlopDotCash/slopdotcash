@@ -129,16 +129,11 @@ export default function InboxPage() {
   return (
     <main className="shell route-main inbox-page">
       <h1>Inbox</h1>
-      <p>
-        Changes to your projects, restrictions and appeals, awards, payments and
-        payout wallets.
-      </p>
       {state.status === "loading" ? (
         <p role="status">Loading your inbox…</p>
       ) : null}
       {state.status === "signed-out" ? (
         <div className="sign-in-panel">
-          <p>Sign in with GitHub to read your inbox.</p>
           <a className="button primary-button" href={loginHref("/inbox")}>
             Sign in with GitHub
           </a>
@@ -231,18 +226,14 @@ function InboxList({
     <>
       <div className="inbox-summary">
         <p>
-          {response.unread === 0
-            ? "All notifications are read."
-            : `${response.unread} unread`}
+          {response.unread === 0 ? "All read." : `${response.unread} unread`}
         </p>
         {unreadKeys.length > 0 ? (
           <button
             className="button secondary-button"
             type="button"
             disabled={busy}
-            onClick={() =>
-              onMark(unreadKeys, "All shown notifications are read.")
-            }
+            onClick={() => onMark(unreadKeys, "Marked as read.")}
           >
             Mark shown as read
           </button>

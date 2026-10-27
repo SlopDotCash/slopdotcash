@@ -77,7 +77,7 @@ function TraceDownloadForm() {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       setReason("");
       setStatus(
-        "Exact bytes verified. Download requested. Check your browser downloads. Keep the file private and do not execute its contents.",
+        "Exact bytes verified. Download requested. Keep the file private; do not execute it.",
       );
     } catch (caught) {
       if (controller.signal.aborted) return;
@@ -127,8 +127,8 @@ function TraceDownloadForm() {
         />
       </label>
       <p id="trace-access-help">
-        Slop records your reason and each access. One-use access expires after
-        60 seconds. A failed transfer needs a new grant.
+        Your reason and each access are recorded. Access is one-use and expires
+        after 60 seconds.
       </p>
       <button className="button primary-button" type="submit" disabled={busy}>
         {busy ? "Downloading private trace…" : "Download private trace"}
@@ -148,16 +148,12 @@ export default function OperatorTracesPage() {
   return (
     <main className="shell route-main admin-page">
       <h1>Private traces</h1>
-      <p>
-        Only designated trace operators can download a contributor trace. Admin,
-        project-owner and moderator roles do not grant access. This page does
-        not display or store trace contents.
-      </p>
+      <p>Designated trace operators only.</p>
       {state.status !== "signed-in" ? (
         <SignInPanel
           state={state}
           next="/operator/traces"
-          purpose="Sign in with your designated operator GitHub account."
+          purpose="Sign in with your operator account."
         />
       ) : state.session.traceOperator === true ? (
         <TraceDownloadForm key={state.session.githubId} />

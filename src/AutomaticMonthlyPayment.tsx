@@ -16,6 +16,7 @@ import {
   sendEvmMonthlySetting,
   sendSolanaMonthlySetting,
 } from "./lib/monthly-commitment-actions";
+import { networkLabel } from "./lib/network-names";
 import {
   formatAssetAmount,
   formatBaseUnits,
@@ -189,9 +190,7 @@ export function AutomaticMonthlyPayment({
       } catch (caught) {
         if ((caught as { code?: unknown } | null)?.code === 4001) {
           remember(null);
-          throw new Error(
-            "You declined the wallet request. Nothing was submitted by this action.",
-          );
+          throw new Error("You declined the wallet request. Nothing was sent.");
         }
         if (requested)
           throw new Error(
@@ -227,7 +226,7 @@ export function AutomaticMonthlyPayment({
       setReview(null);
       if (result === "failed") {
         setNotice(
-          "The transaction failed on the finalized chain. The monthly payment setting did not change. Review it again before another attempt.",
+          "The transaction failed. The setting did not change. Review again before retrying.",
         );
         return;
       }
@@ -259,15 +258,13 @@ export function AutomaticMonthlyPayment({
   return (
     <section
       className="admin-card vault-actions"
-      aria-label={`Automatic monthly payment · ${deployment.network}`}
+      aria-label={`Automatic monthly payment · ${networkLabel(deployment.network)}`}
     >
-      <h3>Automatic monthly payment · {deployment.network}</h3>
+      <h3>Automatic monthly payment · {networkLabel(deployment.network)}</h3>
       <p>
-        Automatic monthly payment lets the month&apos;s signed allocation be
-        committed from this vault after each calendar month (UTC), up to the
-        project&apos;s monthly amount. Only the vault owner{" "}
-        <code>{deployment.owner}</code> can change it, and can turn it off at
-        any time. Awards already committed stay committed.
+        Commits each month&apos;s awards from this vault after the month ends
+        (UTC), up to the monthly amount. Only the vault owner{" "}
+        <code>{deployment.owner}</code> can change it.
       </p>
       {error && (
         <p role="alert" className="form-error">
@@ -357,10 +354,7 @@ export function AutomaticMonthlyPayment({
           {!pending.hash ? (
             <details>
               <summary>Wallet confirms nothing was sent</summary>
-              <p>
-                Only clear this request after checking your wallet activity. If
-                it was sent, enter its hash instead.
-              </p>
+              <p>If it was sent, enter its hash instead.</p>
               <button
                 type="button"
                 disabled={busy}
@@ -405,13 +399,13 @@ export function AutomaticMonthlyPayment({
           {review ? (
             <section aria-label="Review monthly payment setting">
               <dl>
-                <dt>Current setting (finalized chain)</dt>
+                <dt>Current setting</dt>
                 <dd>{describe(review.current, review.decimals)}</dd>
                 <dt>After signing</dt>
                 <dd>{describe(review.target, review.decimals)}</dd>
                 {review.solanaPlan?.transaction && (
                   <>
-                    <dt>Estimated network fee (SOL)</dt>
+                    <dt>Estimated network fee</dt>
                     <dd>
                       {formatBaseUnits(
                         review.solanaPlan.transaction.networkFeeLamports,
@@ -426,8 +420,8 @@ export function AutomaticMonthlyPayment({
                 <>
                   <p>
                     {review.target.enabled
-                      ? "Each month's commitment is limited to this cap and to the vault's free funds. This moves no funds now. Your wallet also charges network gas."
-                      : "No new monthly allocation can be committed from this vault while it is off. Awards already committed stay committed. Your wallet also charges network gas."}
+                      ? "Each month's commitment is limited to this cap and the vault's free funds. No funds move now."
+                      : "While off, no new monthly awards are committed. Committed awards stay committed."}
                   </p>
                   <button
                     type="button"

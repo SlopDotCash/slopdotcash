@@ -74,7 +74,7 @@ const uuidV4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 const conflictMessage =
-  "This wallet announced conflicting details. Reload the page and check your wallet extensions before you connect.";
+  "Conflicting wallet details. Reload and check your wallet extensions.";
 
 function evmWallet(
   id: string,
@@ -340,7 +340,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                   )
                 )
                   throw new Error(
-                    "Your wallet changed the confirmation message. Please use a wallet that signs the exact message.",
+                    "Your wallet changed the message. Use a wallet that signs it exactly.",
                   );
                 return btoa(String.fromCharCode(...result.signature));
               },

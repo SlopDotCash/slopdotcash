@@ -151,7 +151,7 @@ export function setupAuthority(
   if (access.access.installation !== "installed")
     return {
       state: "denied",
-      message: `Slop reads your access to ${repository} through Slopbot. Install Slopbot on ${repository}, then try again.`,
+      message: `Install Slopbot on ${repository} to confirm your access.`,
     };
   if (writes(access.access))
     return {
@@ -230,7 +230,7 @@ function scanCheck(
       return {
         state: "stale",
         message:
-          "The integration branch or the skill template changed after the last scan, so a new scan is needed.",
+          "The repository or skill template changed since the last scan.",
       };
     case "quarantined":
       return {
@@ -321,7 +321,7 @@ export function projectSetupStatus(input: {
     state = "action_required";
     nextAction = action(
       "install_slopbot",
-      `${installation.message} Install it on this repository; Slopbot is free, and Slop reads your access through it.`,
+      `${installation.message} Install it to continue. It is free.`,
       SLOPBOT_INSTALL_URL,
     );
   } else if (authority.state === "retry") {
@@ -334,7 +334,7 @@ export function projectSetupStatus(input: {
     state = "ready";
     nextAction = action(
       "none",
-      "Ready. Contributors can find this project and its skills.",
+      "Contributors can find this project and its skills.",
     );
   } else if (scan.state === "queued") {
     state = "waiting";

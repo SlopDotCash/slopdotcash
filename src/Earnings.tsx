@@ -8,7 +8,6 @@ import {
   ESCROW_CHAINS,
   ESCROW_NETWORKS,
   type EscrowChain,
-  EVM_CHAINS,
 } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import {
@@ -57,9 +56,7 @@ async function request(path: string, body?: unknown, signal?: AbortSignal) {
       throw new Error(
         "Your wallet changed. Refresh and confirm the current address.",
       );
-    throw new Error(
-      "Payments could not load. Your awards are unchanged. Retry.",
-    );
+    throw new Error("Payments could not load. Retry.");
   }
   return readBoundedJson(response, 1_048_576, "payment account");
 }
@@ -270,7 +267,7 @@ export function EarningsPage({
     });
     if (mounted.current) {
       setMessage(
-        `${NETWORK_NAMES[chain]} wallet confirmed. Eligible unpaid awards will be sent automatically. A changed wallet is used immediately after any earlier payment is reconciled.`,
+        `${NETWORK_NAMES[chain]} wallet confirmed. Eligible unpaid awards are sent automatically.`,
       );
       refresh();
     }
@@ -338,13 +335,9 @@ export function EarningsPage({
         <h1 id={heading}>Your payouts</h1>
       )}
       {walletsOnly ? (
-        <p>
-          Connect and confirm a wallet for payouts. An address recorded without
-          wallet confirmation is not ready for payouts.
-        </p>
+        <p>Confirm a wallet to receive payouts.</p>
       ) : (
         <p>
-          Payouts after the 2% fee deduction.{" "}
           <a href="/account#wallets">Manage payout wallets</a>
         </p>
       )}
@@ -368,13 +361,6 @@ export function EarningsPage({
             <X size={20} aria-hidden="true" />
           </button>
         </div>
-        <p>
-          Choose a wallet for your {picker ? NETWORK_NAMES[picker] : ""}{" "}
-          payouts.
-        </p>
-        {picker && EVM_CHAINS.includes(picker) ? (
-          <p>Wallet confirmation does not require switching networks.</p>
-        ) : null}
         <div className="wallet-picker-list">
           {wallets
             .filter((wallet) => picker && wallet.family === chainFamily(picker))
@@ -398,9 +384,7 @@ export function EarningsPage({
             (wallet) => picker && wallet.family === chainFamily(picker),
           ) && (
             <>
-              <p>
-                No wallet detected. Install a wallet, then reload this page.
-              </p>
+              <p>No wallet found. Install one, then reload.</p>
               <a
                 className="wallet-picker-row"
                 href="https://metamask.io/download"
@@ -428,17 +412,10 @@ export function EarningsPage({
             </>
           )}
         </div>
-        <p className="wallet-picker-note">
-          Each network can use a different wallet.
-        </p>
       </dialog>
       {loading && <p role="status">Checking your payouts…</p>}
       {signedOut && !loading && (
         <div>
-          <p>
-            Sign in with GitHub to{" "}
-            {walletsOnly ? "manage payout wallets" : "view your payouts"}.
-          </p>
           <a
             className="button"
             href={
@@ -454,7 +431,11 @@ export function EarningsPage({
       {error && (
         <div role="alert">
           <p>{error}</p>
-          <button type="button" onClick={refresh}>
+          <button
+            className="button secondary-button button-small"
+            type="button"
+            onClick={refresh}
+          >
             Retry
           </button>
         </div>
@@ -462,7 +443,7 @@ export function EarningsPage({
       {message && <p role="status">{message}</p>}
       {data && (
         <>
-          {error && <p>Showing the last verified account response.</p>}
+          {error && <p>Showing the last verified data.</p>}
           {!walletsOnly && <ReferralClaims />}
           {walletsOnly ? (
             <>
@@ -524,12 +505,7 @@ export function EarningsPage({
                             View public record
                           </a>
                         </p>
-                      ) : (
-                        <p>
-                          Add a {NETWORK_NAMES[chain]} wallet to receive awards
-                          on this network.
-                        </p>
-                      )}
+                      ) : null}
                       {!wallet?.authorized &&
                         data.walletObservations
                           .filter(
@@ -552,15 +528,12 @@ export function EarningsPage({
                               <span className="wallet-address">
                                 {o.address}
                               </span>{" "}
-                              on {formatDate(o.observedAt)}. Connect and confirm
-                              a wallet to receive payments.
+                              on {formatDate(o.observedAt)}.
                             </p>
                           ))}
                       {wallet && (
                         <p>
-                          {wallet.authorized
-                            ? "Confirmed for automatic payments"
-                            : "Confirm this wallet to enable automatic payments"}
+                          {wallet.authorized ? "Confirmed" : "Not confirmed"}
                         </p>
                       )}
                       <button
@@ -588,9 +561,8 @@ export function EarningsPage({
                             Register a different {NETWORK_NAMES[chain]} address?
                           </h3>
                           <p>
-                            Your wallet returned a different account from your
-                            saved {NETWORK_NAMES[chain]} address. Nothing has
-                            been registered yet.
+                            Your wallet returned a different account. Nothing is
+                            registered yet.
                           </p>
                           <dl>
                             <div>
@@ -615,8 +587,7 @@ export function EarningsPage({
                               Your GitHub identity and this address become a
                               public, permanent record.
                             </strong>{" "}
-                            The new address appends a successor record; the
-                            earlier record stays public.
+                            The earlier address stays public.
                           </p>
                           <div className="wallet-change-actions">
                             <button
@@ -641,9 +612,8 @@ export function EarningsPage({
                 })}
               </section>
               <p>
-                Payments publish your destination on chain. Wallet confirmation
-                authorizes that address to receive your awards; it does not
-                transfer funds from your wallet.
+                Payments publish your address on chain. Confirming a wallet
+                moves no funds.
               </p>
             </>
           ) : (
@@ -660,10 +630,7 @@ export function EarningsPage({
                 </button>
                 {data.payments.length === 0 &&
                 data.monthlyAwards.length === 0 ? (
-                  <p>
-                    No approved awards yet. Projected rewards appear on project
-                    pages.
-                  </p>
+                  <p>No approved awards yet.</p>
                 ) : (
                   <section
                     className="points-table"
@@ -671,8 +638,7 @@ export function EarningsPage({
                     // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the payment history on narrow screens.
                     tabIndex={0}
                   >
-                    <table>
-                      <caption>Approved awards and verified payments</caption>
+                    <table aria-labelledby={`${heading}-payments`}>
                       <thead>
                         <tr>
                           <th>Project</th>
@@ -686,7 +652,7 @@ export function EarningsPage({
                       <tbody>
                         {data.monthlyAwards.map((award) => (
                           <tr key={`${award.projectId}/${award.period}`}>
-                            <td>
+                            <td data-label="Project">
                               <a
                                 href={`/projects/${encodeURIComponent(award.projectId)}`}
                               >
@@ -694,47 +660,56 @@ export function EarningsPage({
                               </a>{" "}
                               ({formatCycleMonth(award.period)})
                             </td>
-                            <td>{networkLabel(award.network)}</td>
-                            <td>{formatAssetAmount(award.grossBase, award)}</td>
-                            <td>{formatAssetAmount(award.feeBase, award)}</td>
-                            <td>{formatAssetAmount(award.netBase, award)}</td>
-                            <td>
+                            <td data-label="Network">
+                              {networkLabel(award.network)}
+                            </td>
+                            <td data-label="Gross award">
+                              {formatAssetAmount(award.grossBase, award)}
+                            </td>
+                            <td data-label="Fee">
+                              {formatAssetAmount(award.feeBase, award)}
+                            </td>
+                            <td data-label="You receive">
+                              {formatAssetAmount(award.netBase, award)}
+                            </td>
+                            <td data-label="Status">
                               {award.state === "underfunded"
-                                ? "Approved, underfunded: waiting for the project to add funds"
+                                ? "Approved, underfunded"
                                 : award.state === "conflict"
-                                  ? "Approved, but the vault holds a different award under its source: it cannot be reserved"
-                                  : "Approved, funded: the project vault reserves it next"}
+                                  ? "Approved, conflict: cannot be reserved"
+                                  : "Approved, awaiting reservation"}
                             </td>
                           </tr>
                         ))}
                         {data.payments.map((payment) => (
                           <tr key={payment.id}>
-                            <td>
+                            <td data-label="Project">
                               <a
                                 href={`/projects/${encodeURIComponent(payment.projectId)}`}
                               >
                                 {payment.projectId}
                               </a>
                             </td>
-                            <td>{networkLabel(payment.network)}</td>
-                            <td>
+                            <td data-label="Network">
+                              {networkLabel(payment.network)}
+                            </td>
+                            <td data-label="Gross award">
                               {formatAssetAmount(payment.grossBase, payment)}
                             </td>
-                            <td>
+                            <td data-label="Fee">
                               {formatAssetAmount(payment.feeBase, payment)}
                             </td>
-                            <td>
+                            <td data-label="You receive">
                               {formatAssetAmount(payment.netBase, payment)}
                             </td>
-                            <td>
+                            <td data-label="Status">
                               {
                                 {
-                                  paid: "Paid, verified on chain",
+                                  paid: "Paid",
                                   needs_wallet: `Awaiting wallet: add or confirm your ${NETWORK_NAMES[payment.chain]} wallet`,
                                   ready: "Payment queued",
-                                  submitted:
-                                    "Submitted, waiting for chain verification",
-                                  held: "Held, funds remain reserved",
+                                  submitted: "Submitted",
+                                  held: "Held",
                                 }[payment.deliveryState]
                               }
                               <PayoutConsent
@@ -761,7 +736,7 @@ export function EarningsPage({
                                     target="_blank"
                                     rel="noreferrer"
                                   >
-                                    View verified transaction
+                                    View transaction
                                   </a>
                                 </p>
                               )}
@@ -776,15 +751,13 @@ export function EarningsPage({
               {data.directTransfers.length > 0 && (
                 <section aria-labelledby={`${heading}-direct`}>
                   <h2 id={`${heading}-direct`}>Direct transfers</h2>
-                  <p>Sent directly by the project creator. No fee.</p>
                   <section
                     className="points-table"
                     aria-label="Direct payment details; scroll horizontally for all columns"
                     // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the payment history on narrow screens.
                     tabIndex={0}
                   >
-                    <table>
-                      <caption>Direct transfers by contribution month</caption>
+                    <table aria-labelledby={`${heading}-direct`}>
                       <thead>
                         <tr>
                           <th>Project</th>
@@ -797,17 +770,21 @@ export function EarningsPage({
                       <tbody>
                         {data.directTransfers.map((t) => (
                           <tr key={`${t.network}:${t.transactionId}`}>
-                            <td>
+                            <td data-label="Project">
                               <a
                                 href={`/projects/${encodeURIComponent(t.projectId)}`}
                               >
                                 {t.projectId}
                               </a>
                             </td>
-                            <td>{t.contributionMonth}</td>
-                            <td>{networkLabel(t.network)}</td>
-                            <td>{usdcAmount(t.amountMicro)}</td>
-                            <td>
+                            <td data-label="Month">{t.contributionMonth}</td>
+                            <td data-label="Network">
+                              {networkLabel(t.network)}
+                            </td>
+                            <td data-label="Received">
+                              {usdcAmount(t.amountMicro)}
+                            </td>
+                            <td data-label="Transaction">
                               {transactionUrl(t.network, t.transactionId) ? (
                                 <a
                                   href={
