@@ -55,6 +55,17 @@ a {
   text-decoration: none;
 }
 
+/* WCAG 1.4.1: links in running text are underlined, not only colored. */
+main :is(p, li, dd, td) > a:not([class]) {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 4px;
+}
+
+main :is(p, li, dd, td) > a:not([class]):hover {
+  text-decoration-color: var(--orange);
+}
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -2363,6 +2374,72 @@ small {
   white-space: nowrap;
 }
 
+@media (max-width: 680px) {
+  /* Standings fit a phone, so Points and Money received stay on screen. */
+  .points-panel .points-table table {
+    min-width: 0;
+  }
+  .points-panel .points-table th,
+  .points-panel .points-table td {
+    padding-inline: 4px;
+  }
+  .points-panel .points-table th:first-child,
+  .points-panel .points-table td:first-child {
+    padding-left: 0;
+  }
+  /* Headers wrap only between words: "Money received" takes two lines. */
+  .points-panel .points-table th,
+  .points-panel .points-table th:last-child {
+    overflow-wrap: normal;
+    white-space: normal;
+  }
+  .points-panel .points-rank {
+    width: 2rem;
+    font-size: 16px;
+  }
+  .points-panel .points-table .points-value {
+    font-size: 14px;
+    white-space: nowrap;
+  }
+
+  /* Payment history shows one card per row with its column names. */
+  .earnings-page .points-table table {
+    min-width: 0;
+  }
+  .earnings-page .points-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .earnings-page .points-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px 16px;
+    padding-block: 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .earnings-page .points-table td {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    text-align: left;
+    white-space: normal;
+  }
+  .earnings-page .points-table td::before {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    /* The column header already names the cell for screen readers. */
+    content: attr(data-label) / "";
+  }
+  .earnings-page .points-table td:first-child,
+  .earnings-page .points-table td:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
 .points-social-link {
   display: inline-block;
   margin: 0.4rem;
@@ -2534,6 +2611,11 @@ small {
 }
 .receipt-links strong {
   font-size: 16px;
+}
+.receipt-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
 }
 .receipt-links > a {
   font-size: 15px;
@@ -3532,7 +3614,13 @@ small {
 
 .admin-page {
   display: grid;
+  /* Rows keep their own height; the 70vh page minimum never stretches them. */
+  align-content: start;
   gap: 28px;
+}
+
+.sign-in-panel {
+  justify-items: start;
 }
 
 .admin-intro h1 {
@@ -4001,14 +4089,6 @@ html:has(.security-page) {
   display: inline-block;
   white-space: nowrap;
   font-size: clamp(28px, 3.4vw, 44px);
-}
-.standings-scroll-hint {
-  display: none;
-}
-@media (max-width: 640px) {
-  .standings-scroll-hint {
-    display: block;
-  }
 }
 
 .admin-project-summary {

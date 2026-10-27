@@ -137,7 +137,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await page.keyboard.press("Enter");
   await expect(
     page.getByRole("link", {
-      name: "Sign in with GitHub to manage this project’s awards",
+      name: "Sign in with GitHub",
     }),
   ).toHaveAttribute("href", /next=.*awards/);
   status = 403;
@@ -147,7 +147,6 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await load.click();
   const awards = page.getByRole("region", { name: "Monthly awards" });
   await expect(awards).toContainText("1.23456789 TEST");
-  await expect(awards).toContainText("never the changes");
   await expect(awards).not.toContainText("reason");
   await awards.getByLabel("Award for second-contributor").fill("1.5");
   await awards
@@ -184,14 +183,10 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  await awards
-    .getByRole("button", { name: "Finalize these awards now" })
-    .click();
+  await awards.getByRole("button", { name: "Finalize awards" }).click();
   await expect(awards).toContainText("Finalized by you");
   await expect(awards).toContainText("Dec 2, 2026, 00:00 UTC");
-  await expect(awards).toContainText(
-    "Underfunded: waiting for free vault funds",
-  );
+  await expect(awards).toContainText("Underfunded");
   await expect(awards.getByLabel("Award for second-contributor")).toHaveCount(
     0,
   );

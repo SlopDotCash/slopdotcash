@@ -141,9 +141,7 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
   await expect(review).toContainText(vault);
   await expect(review).toContainText(recipient.address);
   await expect(review).toContainText("Base");
-  await expect(
-    page.getByText("Paid, verified on chain", { exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("payout-consent-review.png"),
@@ -161,12 +159,8 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
     page.getByRole("status").filter({ hasText: "Wallet consent saved" }),
   ).toBeVisible();
   expect(authorized()).toBe(1);
-  await expect(
-    page.getByText("Paid, verified on chain", { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("cell", { name: /^Held, funds remain reserved/ }),
-  ).toBeVisible();
+  await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("cell", { name: /^Held/ })).toBeVisible();
 });
 
 for (const fault of ["account", "domain", "reject"] as const) {
@@ -186,9 +180,7 @@ for (const fault of ["account", "domain", "reject"] as const) {
           : "rejected",
     );
     expect(authorized()).toBe(0);
-    await expect(
-      page.getByRole("cell", { name: /^Held, funds remain reserved/ }),
-    ).toBeVisible();
+    await expect(page.getByRole("cell", { name: /^Held/ })).toBeVisible();
   });
 }
 
@@ -375,9 +367,7 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
     page.getByRole("status").filter({ hasText: "Binding submitted" }),
   ).toBeVisible();
   expect(completed).toBe(1);
-  await expect(
-    page.getByText("Paid, verified on chain", { exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
 });
 
 test("payout consent remains readable with enlarged text and Escape restores the initiating control", async ({

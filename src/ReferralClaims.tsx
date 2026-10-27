@@ -132,7 +132,11 @@ export function ReferralClaims() {
     return error ? (
       <div role="alert">
         <p>{error}</p>
-        <button type="button" onClick={reload}>
+        <button
+          className="button secondary-button button-small"
+          type="button"
+          onClick={reload}
+        >
           Retry
         </button>
       </div>
@@ -216,19 +220,13 @@ export function ReferralClaims() {
       className="referral-claims"
     >
       <h2 id="referral-rewards-heading">Referral rewards</h2>
-      <p>Program tokens are separate from Points and project awards.</p>
-      <p>Totals cover filed months. New rewards are added after month-end.</p>
       {error && <p role="alert">{error}</p>}
       {data.status === "unknown" && (
-        <p role="status">
-          The claim record is not available yet. Amounts stay unknown until
-          verification succeeds.
-        </p>
+        <p role="status">The claim record is not available yet.</p>
       )}
       {data.status === "stale" && (
         <p role="status">
-          This claim record is stale. The last verified amounts are shown.
-          Claims wait for a successful background refresh.
+          This claim record is stale. Showing the last verified amounts.
         </p>
       )}
       <dl>
@@ -242,35 +240,19 @@ export function ReferralClaims() {
         <dd>{amount(data.claimedBase)}</dd>
       </dl>
       {data.program && <p>Network: {networkLabel(data.program.network)}.</p>}
-      {data.observedAt && (
-        <p>
-          Updated {formatDateTime(data.observedAt)}.{" "}
-          {data.finalizedAt && (
-            <>Chain evidence through {formatDateTime(data.finalizedAt)}.</>
-          )}
-        </p>
-      )}
-      {data.paused && (
-        <p role="status">
-          Claims are paused. A pending root’s wait is frozen until the owner
-          resumes it.
-        </p>
-      )}
-      {data.ended && (
-        <p role="status">
-          The owner has closed this distribution. Claims are unavailable.
-        </p>
-      )}
+      {data.observedAt && <p>Updated {formatDateTime(data.observedAt)}.</p>}
+      {data.paused && <p role="status">Claims are paused.</p>}
+      {data.ended && <p role="status">Claims are closed.</p>}
       {data.latestVoided && (
         <p role="status">
-          The latest root was voided. Only rewards in a previous valid root can
-          be claimed.
+          The latest monthly update was voided. Only earlier rewards can be
+          claimed.
         </p>
       )}
       {data.pendingUntil && (
         <p>
-          The next root’s wait ends {formatDateTime(data.pendingUntil)}. A
-          background check must verify it before claims open.
+          New rewards can be claimed after {formatDateTime(data.pendingUntil)},
+          once verified.
         </p>
       )}
       {data.wallet ? (
@@ -281,8 +263,7 @@ export function ReferralClaims() {
       ) : (
         <p>
           <a href="/account#wallets">Confirm a Robinhood wallet in Account</a>.
-          Rewards enter a later monthly root after confirmation. The first
-          address included stays fixed for this program.
+          The first wallet included stays fixed.
         </p>
       )}
       {message && <p role="status">{message}</p>}
@@ -357,9 +338,6 @@ export function ReferralClaims() {
           <p>
             Destination:{" "}
             <code className="referral-address">{review.data.wallet}</code>
-          </p>
-          <p>
-            Your wallet pays the network fee. No token approval is required.
           </p>
           <p>
             Contract:

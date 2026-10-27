@@ -258,9 +258,7 @@ export function VaultActions({
       } catch (caught) {
         if ((caught as { code?: unknown } | null)?.code === 4001) {
           remember(null);
-          throw new Error(
-            "You declined the wallet request. Nothing was submitted by this action.",
-          );
+          throw new Error("You declined the wallet request. Nothing was sent.");
         }
         if (requested)
           throw new Error(
@@ -302,7 +300,7 @@ export function VaultActions({
       setReview(null);
       if (result === "failed")
         setNotice(
-          "The transaction failed on the finalized chain. Review the amount and wallet before another attempt.",
+          "The transaction failed. Review the amount and wallet, then retry.",
         );
       else if (result === "approval-confirmed")
         setNotice(
@@ -427,10 +425,7 @@ export function VaultActions({
           {!pending.hash ? (
             <details>
               <summary>Wallet confirms nothing was sent</summary>
-              <p>
-                Only clear this request after checking your wallet activity. If
-                it was sent, enter its hash instead.
-              </p>
+              <p>If it was sent, enter its hash instead.</p>
               <button
                 type="button"
                 disabled={busy}
@@ -452,7 +447,6 @@ export function VaultActions({
       ) : wallet && !storageError ? (
         <>
           <fieldset className="admin-fieldset" disabled={busy}>
-            <legend>Vault action</legend>
             <fieldset className="vault-operation">
               <legend>Action</legend>
               {(isOwner
@@ -516,10 +510,10 @@ export function VaultActions({
                 </dd>
                 {review.solanaPlan && (
                   <>
-                    <dt>Estimated network fee (SOL)</dt>
+                    <dt>Estimated network fee</dt>
                     <dd>
                       {formatBaseUnits(review.solanaPlan.networkFeeLamports, 9)}{" "}
-                      SOL, plus any token-account rent shown by your wallet
+                      SOL, plus any token-account rent
                     </dd>
                   </>
                 )}
@@ -538,22 +532,16 @@ export function VaultActions({
                 <p>
                   This deposit joins the project's free funds. Only its owner
                   can award or withdraw them, less a 2% withdrawal fee.
-                  Depositors have no refund right. Your wallet also charges
-                  network gas.
+                  Depositors have no refund right.
                 </p>
               ) : (
                 <p>
-                  Reserved awards are excluded. The 2% withdrawal fee is
-                  deducted from this amount; the remainder goes only to{" "}
-                  <code>{deployment.owner}</code>. Your wallet also charges
-                  network gas.
+                  Reserved awards cannot be withdrawn. Funds go only to{" "}
+                  <code>{deployment.owner}</code>.
                 </p>
               )}
               {review.resetAllowance ? (
-                <p>
-                  This token has an existing allowance. Reset it to zero before
-                  approving this exact amount.
-                </p>
+                <p>Reset the existing token allowance to zero first.</p>
               ) : null}
               <button
                 type="button"

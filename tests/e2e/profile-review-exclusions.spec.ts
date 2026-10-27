@@ -348,9 +348,7 @@ test("the current directory vetoes a renamed or recycled review-only login", asy
     waitUntil: "networkidle",
   });
   await expect(
-    page.getByText(
-      "Current contributor identity could not be verified. Contribution and wallet records are not shown.",
-    ),
+    page.getByText("This contributor could not be verified."),
   ).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Review credit exclusions" }),
@@ -372,9 +370,7 @@ test("the current directory vetoes a renamed or recycled review-only login", asy
   );
   await page.reload({ waitUntil: "networkidle" });
   await expect(
-    page.getByText(
-      "Current contributor identity could not be verified. Contribution and wallet records are not shown.",
-    ),
+    page.getByText("This contributor could not be verified."),
   ).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Review credit exclusions" }),

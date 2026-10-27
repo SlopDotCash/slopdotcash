@@ -254,7 +254,7 @@ export async function securitySettlementView(db: Database, caseId: string) {
     transactionId: row.paid_transaction,
     submittedTransactionId: row.submitted_transaction,
     privacyNotice:
-      "The case stays private. Chain transactions reveal the vault, GitHub actor number, destination, time and amounts. Never include report data in a transaction.",
+      "Chain transactions reveal the vault, GitHub actor number, destination, time and amounts. Never include report data in a transaction.",
     ownerRequest:
       row.state === null
         ? chainFamily(deployment.chain) === "evm"

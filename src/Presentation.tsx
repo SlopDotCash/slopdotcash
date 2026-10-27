@@ -25,7 +25,7 @@ export function DataNotice({
     return (
       <div className="data-notice data-error" role="alert">
         <CircleAlert aria-hidden="true" size={18} />
-        <span>Live totals unavailable: {state.message}</span>
+        <span>Data could not load.</span>
         <button onClick={retry} type="button">
           <RotateCcw aria-hidden="true" size={15} /> Retry
         </button>
@@ -37,8 +37,7 @@ export function DataNotice({
     return (
       <p className="data-notice data-stale" role="status">
         Points may be outdated · updated{" "}
-        {formatDateTime(state.snapshot.generatedAt)}. Refresh failed:{" "}
-        {state.refreshError}
+        {formatDateTime(state.snapshot.generatedAt)}.
         <button onClick={retry} type="button">
           <RotateCcw aria-hidden="true" size={15} /> Retry
         </button>
@@ -125,6 +124,45 @@ export function formatMicroUsdc(value: string): string {
 
 export function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
+}
+
+/** Previous and next controls for one zero-based page of a long list. */
+export function Pager({
+  page,
+  pages,
+  onPage,
+  noun,
+}: {
+  page: number;
+  pages: number;
+  onPage: (page: number) => void;
+  /** Names the list in the button labels when a page has two lists. */
+  noun?: string;
+}) {
+  const suffix = noun ? ` ${noun}` : "";
+  return (
+    <div className="points-controls points-pagination">
+      <button
+        className="button secondary-button button-small"
+        disabled={page === 0}
+        onClick={() => onPage(page - 1)}
+        type="button"
+      >
+        Previous{suffix}
+      </button>
+      <span>
+        Page {page + 1} of {pages}
+      </span>
+      <button
+        className="button secondary-button button-small"
+        disabled={page + 1 >= pages}
+        onClick={() => onPage(page + 1)}
+        type="button"
+      >
+        Next{suffix}
+      </button>
+    </div>
+  );
 }
 
 export function ExternalLinkAnchor({
@@ -325,27 +363,19 @@ export function PaymentLifecycle() {
       <ol className="payment-stages" aria-label="Award review stages">
         <li>
           <strong>Projected</strong>
-          <span>An estimate from accepted work, not an approved award.</span>
+          <span>An estimate, not an approved award.</span>
         </li>
         <li>
           <strong>Under review</strong>
-          <span>
-            A closed month&apos;s allocations, adjustable by the owner until the
-            monthly cutoff.
-          </span>
+          <span>The owner can adjust it until the monthly cutoff.</span>
         </li>
         <li>
           <strong>Approved</strong>
-          <span>
-            The owner approved the amount. Funding and payment are separate.
-          </span>
+          <span>The owner approved the amount.</span>
         </li>
         <li>
           <strong>Excluded</strong>
-          <span>
-            A recorded decision, such as a payout exclusion or ban, keeps the
-            award out of payment.
-          </span>
+          <span>A payout exclusion or ban keeps it out of payment.</span>
         </li>
       </ol>
       <div className="payment-branches">
@@ -361,7 +391,7 @@ export function PaymentLifecycle() {
           </div>
           <div>
             <dt>Funded, ready</dt>
-            <dd>Funds and the wallet binding are ready for execution.</dd>
+            <dd>Funds and wallet are ready to pay.</dd>
           </div>
           <div>
             <dt>Submitted</dt>
@@ -379,11 +409,6 @@ export function PaymentLifecycle() {
             </dd>
           </div>
         </dl>
-        <p>
-          Awaiting wallet is a payment state, not a separate award: the award
-          stays approved while it waits for you to add or confirm a payout
-          wallet.
-        </p>
       </div>
     </>
   );

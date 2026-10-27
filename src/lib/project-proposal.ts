@@ -230,7 +230,7 @@ async function projectGithubRequest<T>(
   try {
     value = await readBoundedJson(response, 2 * 1024 * 1024, "GitHub lookup");
   } catch {
-    throw new Error(`The GitHub lookup returned HTTP ${response.status}.`);
+    throw new Error("GitHub lookup failed.");
   }
   if (!response.ok) {
     const message = (value as { message?: unknown } | null)?.message;
@@ -239,7 +239,7 @@ async function projectGithubRequest<T>(
         ? "Sign in with GitHub to look up repositories."
         : typeof message === "string"
           ? message
-          : `The GitHub lookup returned HTTP ${response.status}.`,
+          : "GitHub lookup failed.",
     );
   }
   return value as T;
@@ -258,7 +258,7 @@ export async function listOwnedRepositories(
     signal,
   );
   if (!Array.isArray(body.repositories))
-    throw new Error("The GitHub lookup returned an unexpected response.");
+    throw new Error("GitHub lookup failed.");
   return body.repositories as OwnedRepository[];
 }
 
@@ -275,6 +275,6 @@ export async function lookupGitHubRepository(
     signal,
   );
   if (!body.repository || typeof body.repository !== "object")
-    throw new Error("The GitHub lookup returned an unexpected response.");
+    throw new Error("GitHub lookup failed.");
   return body.repository as RepositoryLookup;
 }
