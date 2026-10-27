@@ -1853,6 +1853,7 @@ export default function ProjectProposalPage() {
             <span>Clear this draft?</span>
             <button
               className="button danger-button"
+              disabled={submission.status === "submitting"}
               onClick={clearDraft}
               type="button"
             >
@@ -1869,6 +1870,7 @@ export default function ProjectProposalPage() {
         ) : (
           <button
             className="button ghost-button"
+            disabled={submission.status === "submitting"}
             onClick={() => setConfirmClear(true)}
             type="button"
           >
