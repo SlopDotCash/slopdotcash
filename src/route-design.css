@@ -172,7 +172,6 @@
 
 /* Education and discovery share density, not homepage layout rules. */
 .route-guide,
-.route-models,
 .route-sponsors,
 .route-cycle-archive {
   padding-block: 3rem 4rem;
@@ -286,33 +285,6 @@
   margin-top: 0.6rem;
   color: #b9b5aa;
 }
-.route-models .model-outcomes-section {
-  margin-block: 1.6rem;
-}
-.route-models .model-outcomes-section h2 {
-  font-size: 1.2rem;
-  margin-bottom: 1rem;
-}
-.route-models .model-outcome-list > li {
-  padding: 0.85rem 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0.4rem 1.5rem;
-}
-.route-models .model-outcome-list h3 {
-  margin: 0;
-  display: flex;
-  gap: 0.65rem;
-  align-items: center;
-  font-size: 0.9rem;
-}
-.route-model-name {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.route-model-name > span {
-  color: #aaa69b;
-}
 .route-model-mark {
   display: inline-block;
   flex-shrink: 0;
@@ -325,46 +297,6 @@
 img.route-model-mark {
   filter: invert(82%) sepia(14%) saturate(399%) hue-rotate(353deg)
     brightness(89%);
-}
-.route-models .model-outcome-metrics {
-  align-content: center;
-  gap: 0.35rem 1rem;
-  font-size: 0.8rem;
-  color: #b9b5aa;
-}
-.route-models .model-outcome-metrics strong {
-  color: #efece4;
-}
-.route-models .model-outcome-bar {
-  grid-column: 1 / -1;
-  margin: 0.45rem 0 0;
-  height: 5px;
-  border-radius: 4px;
-  overflow: hidden;
-}
-.route-models .model-outcome-bar > span {
-  background: #ff7c3b;
-}
-.route-models .model-outcome-details {
-  grid-column: 1 / -1;
-  margin: 0;
-}
-.route-models .model-outcome-details > summary {
-  padding-block: 0.5rem;
-  font-size: 0.78rem;
-  min-height: 2rem;
-  color: #b9b5aa;
-}
-.route-models .model-outcome-details[open] {
-  background: #1b1a15;
-  padding: 0.6rem;
-  border-radius: 0.5rem;
-}
-.route-models .model-outcomes-summary {
-  padding: 0.8rem 1rem;
-  border-left: 3px solid #ff7c3b;
-  background: #1b1a15;
-  border-radius: 0.3rem;
 }
 .route-receipts .receipt-record {
   padding: 0.9rem 0;
@@ -537,7 +469,6 @@ img.route-model-mark {
   margin-bottom: 1.5rem;
 }
 .route-guide .empty-state,
-.route-models .empty-state,
 .route-receipts .empty-state,
 .route-cycle .empty-state,
 .route-project .empty-state {
@@ -568,7 +499,6 @@ img.route-model-mark {
     align-items: flex-start;
   }
   .route-guide,
-  .route-models,
   .route-sponsors,
   .route-cycle-archive {
     padding-block: 2rem 3rem;
@@ -594,18 +524,6 @@ img.route-model-mark {
   }
   .route-sponsor-grid {
     grid-template-columns: 1fr;
-  }
-  .route-models .model-outcome-list > li {
-    grid-template-columns: 1fr;
-    gap: 0.4rem;
-  }
-  img.route-model-mark {
-    filter: invert(82%) sepia(14%) saturate(399%) hue-rotate(353deg)
-      brightness(89%);
-  }
-  .route-models .model-outcome-metrics {
-    font-size: 0.76rem;
-    gap: 0.3rem 0.6rem;
   }
   .route-receipts .receipt-record summary {
     grid-template-columns: minmax(0, 1fr) 1rem;

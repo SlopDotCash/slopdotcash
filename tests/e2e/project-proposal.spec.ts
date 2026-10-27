@@ -370,11 +370,20 @@ test("drafts a project through the setup steps and creates it without an admin",
     }),
   ).toBeVisible();
   const setupPanel = page.locator(".project-setup-status");
-  await expect(setupPanel.locator(".setup-badge")).toContainText([
-    "Confirmed",
-    "Installed",
-    "Queued",
-  ]);
+  for (const [label, status] of [
+    ["GitHub access", "Confirmed"],
+    ["Slopbot", "Installed"],
+    ["Security scan", "Queued"],
+  ]) {
+    const value = setupPanel
+      .locator("dl > div")
+      .filter({
+        has: page.locator("dt", { hasText: new RegExp(`^${label}$`) }),
+      })
+      .locator("dd");
+    await expect(value).toHaveText(status);
+    await expect(value).toBeVisible();
+  }
   const details = setupPanel.locator("details");
   await expect(details).not.toHaveAttribute("open", "");
   await details.locator("summary").focus();
