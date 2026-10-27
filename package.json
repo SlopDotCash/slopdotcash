@@ -42,6 +42,7 @@
     "test:fee-converter:solana": "bun workers/fee-converter/solana-local.integration.ts",
     "test:installer:e2e": "bun test ./tests/integration/installer.e2e.ts --timeout 0",
     "test:e2e": "node scripts/run-e2e.mjs",
+    "test:local-signin": "node tests/local-signin.browser.mjs",
     "test:e2e:record": "node scripts/record-evidence.mjs --local",
     "test:e2e:record:production": "node scripts/record-evidence.mjs --production",
     "lint": "bun x @biomejs/biome check --write --unsafe .",

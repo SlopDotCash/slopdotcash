@@ -1,6 +1,7 @@
 /**
  * Real Vite local-mode regression for blocked-popup sign-in return paths.
- * Run: SLOP_PYTHON=<PyYAML interpreter> node tests/local-signin.browser.mjs
+ * Run: SLOP_PYTHON=<PyYAML interpreter> bun run test:local-signin
+ * CI runs this once in the preview-1 browser lane after installing Chromium.
  * OAuth is the same explicit protocol double used by login.spec.ts; no real
  * GitHub credentials or production service is used. The ordinary E2E suite
  * separately covers production popup behavior.
@@ -85,6 +86,7 @@ try {
         window.open = () => null;
       });
       let signedIn = false;
+      const unexpectedRequests = [];
       const member = {
         actor: { id: "U_local_return", login: "local-return" },
         joinedAt: "2026-10-01T00:00:00Z",
@@ -93,12 +95,29 @@ try {
       };
       await context.route(`${origin}/api/v1/**`, async (route) => {
         const path = new URL(route.request().url()).pathname;
-        if (path === "/api/v1/payments/me")
+        const method = route.request().method();
+        if (path === "/api/v1/payments/me" && method === "GET")
           return route.fulfill({
             status: 401,
             json: { error: "unauthorized" },
           });
-        let json = null;
+        const allowed = new Set([
+          "GET /api/v1/projects",
+          "GET /api/v1/project-session",
+          "GET /api/v1/project-appeals",
+          "POST /api/v1/points/join",
+          "GET /api/v1/points/me",
+          "GET /api/v1/points/x/me",
+          "GET /api/v1/points/sessions",
+        ]);
+        if (!allowed.has(`${method} ${path}`)) {
+          unexpectedRequests.push(`${method} ${path}`);
+          return route.fulfill({
+            status: 501,
+            json: { error: "unexpected_fixture_route" },
+          });
+        }
+        let json;
         if (path === "/api/v1/projects") json = registry;
         else if (path === "/api/v1/project-session")
           json = {
@@ -126,12 +145,23 @@ try {
       };
       await context.route(`${origin}/v1/oauth/**`, (route) => {
         const path = new URL(route.request().url()).pathname;
-        if (path === "/v1/oauth/start") return route.fulfill({ json: flow });
-        if (path === "/v1/oauth/authorize")
+        if (path === "/v1/oauth/start" && route.request().method() === "POST")
+          return route.fulfill({ json: flow });
+        if (
+          path === "/v1/oauth/authorize" &&
+          route.request().method() === "GET"
+        )
           return route.fulfill({
             contentType: "text/html",
             body: '<title>Local OAuth fixture</title><a href="/login">Return to Slop</a>',
           });
+        if (path !== "/v1/oauth/poll" || route.request().method() !== "POST") {
+          unexpectedRequests.push(`${route.request().method()} ${path}`);
+          return route.fulfill({
+            status: 501,
+            json: { error: "unexpected_fixture_route" },
+          });
+        }
         return route.fulfill({
           json: {
             status: "complete",
@@ -184,6 +214,12 @@ try {
           await wallets.waitFor({ state: "visible" });
           assert.equal(await wallets.getAttribute("open"), "");
         }
+        await page.waitForLoadState("networkidle");
+        assert.deepEqual(
+          unexpectedRequests,
+          [],
+          "Only explicit API fixtures may answer requests",
+        );
       } catch (caught) {
         error = String(caught);
       }
@@ -206,7 +242,16 @@ try {
   }
 } finally {
   await browser?.close();
-  server.kill("SIGTERM");
+  if (server.exitCode === null && server.signalCode === null) {
+    const exited = once(server, "exit");
+    const killTimer = setTimeout(() => server.kill("SIGKILL"), 5000);
+    server.kill("SIGTERM");
+    try {
+      await exited;
+    } finally {
+      clearTimeout(killTimer);
+    }
+  }
   await writeFile(join(output, "vite.log"), serverLog);
   await writeFile(
     join(output, "results.json"),
