@@ -765,7 +765,6 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   );
   await page.goto("/projects/eliza/awards");
   await page.getByLabel("Contribution month").fill("2026-09");
-  await page.getByRole("button", { name: "Load awards", exact: true }).click();
   await page
     .getByRole("button", { name: "Reserve award for local-contributor" })
     .click();

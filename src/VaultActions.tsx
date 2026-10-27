@@ -26,8 +26,10 @@ import {
   type SolanaFundingPlan,
   sendSolanaVaultAction,
 } from "./lib/solana-vault-actions";
+import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
+import { WalletConnection } from "./Presentation";
 
 type Step = "approve" | "reset" | "send";
 type Pending = {
@@ -101,7 +103,6 @@ export function VaultActions({
     }
   });
   const [pending, setPending] = useState<Pending | null>(saved.pending);
-  const [error, setError] = useState(saved.error);
   const [storageError, setStorageError] = useState(Boolean(saved.error));
   const [wallet, setWallet] = useState<VaultConnection | null>(
     connectedWallet ?? null,
@@ -111,7 +112,6 @@ export function VaultActions({
   );
   const [amount, setAmount] = useState(saved.pending?.amount ?? "");
   const [review, setReview] = useState<Review | null>(null);
-  const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [recoveryHash, setRecoveryHash] = useState("");
   const wallets = usePayoutWallets().filter((entry) =>
@@ -124,17 +124,12 @@ export function VaultActions({
     else sessionStorage.removeItem(key);
     setPending(value);
   };
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true);
-    setError("");
+  const { busy, error, run: act } = useAction(saved.error);
+  const run = (action: () => Promise<void>) => {
     setNotice("");
-    try {
-      await action();
-    } catch (caught) {
-      setError(errorMessage(caught, "The wallet request failed."));
-    } finally {
-      setBusy(false);
-    }
+    return act(action, (caught) =>
+      errorMessage(caught, "The wallet request failed."),
+    );
   };
   const connect = (provider: PayoutWallet) =>
     run(async () => {
@@ -354,39 +349,25 @@ export function VaultActions({
           I checked wallet activity; clear the unreadable local record
         </button>
       ) : null}
-      {!wallet ? (
-        <fieldset disabled={busy || storageError} className="admin-fieldset">
-          <legend>
-            {pending
-              ? "Reconnect to check this transaction"
-              : "Choose a wallet"}
-          </legend>
-          {wallets.length ? (
-            wallets.map((provider) => (
-              <button
-                key={provider.id}
-                type="button"
-                className="button secondary-button"
-                onClick={() => void connect(provider)}
-              >
-                Connect {provider.name}
-              </button>
-            ))
-          ) : (
-            <p>
-              {solana
-                ? "No Solana wallet with transaction support was found."
-                : "No EVM wallet was found."}{" "}
-              Open this page in your wallet's browser or enable its browser
-              extension.
-            </p>
-          )}
-        </fieldset>
-      ) : (
-        <p>
-          Connected: <code>{wallet.address}</code>
-        </p>
-      )}
+      <WalletConnection
+        address={wallet?.address ?? null}
+        wallets={wallets}
+        disabled={busy || storageError}
+        className="admin-fieldset"
+        legend={
+          pending ? "Reconnect to check this transaction" : "Choose a wallet"
+        }
+        empty={
+          <>
+            {solana
+              ? "No Solana wallet with transaction support was found."
+              : "No EVM wallet was found."}{" "}
+            Open this page in your wallet's browser or enable its browser
+            extension.
+          </>
+        }
+        onConnect={(provider) => void connect(provider)}
+      />
       {pending ? (
         <div>
           <p>

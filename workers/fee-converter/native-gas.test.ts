@@ -15,18 +15,15 @@ import {
   concat,
   message as solanaMessage,
 } from "../../contracts/solana/transactions";
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
 import type { ConversionRow } from "./core";
 import { createEvmClient } from "./evm";
 import { runOnce } from "./index";
 import { NativeGasJournal, type NativeGasLimits } from "./native-gas";
-import {
-  parseTransaction as parseSolanaWire,
-  solanaNativeCost,
-} from "./solana";
+import { parseTransaction as parseSolanaWire } from "./solana";
 import { LOOKUP_TABLE_PROGRAM, resolveSolanaAccounts } from "./solana-accounts";
 import { proveSolanaExpiry, type RecoveryRpc } from "./solana-expiry";
-import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore, LOCK_MS } from "./store";
 
 const token = `0x${"2".repeat(40)}`;
@@ -364,12 +361,12 @@ test("unavailable receipts retain gas until the canonical cost is recovered", as
     fetch: rpcFetch,
     now: h.now,
   });
-  await client.reconcileNativeGas!();
+  await client.reconcileNativeGas?.();
   expect((await h.journal.rows())[0].actual_wei).toBeNull();
   await expect(h.reserve(h.tx(1))).rejects.toThrow("Native daily budget");
 
   receiptAvailable = true;
-  await client.reconcileNativeGas!();
+  await client.reconcileNativeGas?.();
   const [settled] = await h.journal.rows();
   expect(settled.actual_wei).toBe("2100000");
   expect(settled.receipt_block_hash).toBe(hash(16));
@@ -377,7 +374,7 @@ test("unavailable receipts retain gas until the canonical cost is recovered", as
   // Only 900,000 wei remain: 840,000 fits, another 63,000 does not.
   await h.reserve(h.tx(1, 40n));
   await expect(h.reserve(h.tx(2, 3n))).rejects.toThrow("Native daily budget");
-  await client.reconcileNativeGas!();
+  await client.reconcileNativeGas?.();
   expect((await h.journal.rows())[0]).toEqual(settled);
 });
 
@@ -493,13 +490,13 @@ test.each(["complete", "changed-fee", "missing-signature"])(
       fetch: rpcFetch,
     });
     if (evidence === "complete") {
-      await client.reconcileNativeGas!();
+      await client.reconcileNativeGas?.();
       const attempts = await h.journal.rows();
       expect(attempts[0].maximum_wei).toBe("2100000");
       expect(attempts[0].actual_wei).toBeNull();
       await expect(h.reserve(h.tx(1))).rejects.toThrow("Native daily budget");
     } else {
-      await expect(client.reconcileNativeGas!()).rejects.toThrow();
+      await expect(client.reconcileNativeGas?.()).rejects.toThrow();
       expect(await h.journal.rows()).toHaveLength(0);
       expect(await h.journal.unaccounted()).toHaveLength(1);
     }
@@ -708,10 +705,10 @@ test.each([
       outcome === "base-missing-data" ||
       outcome === "base-missing-operator"
     ) {
-      await expect(client.reconcileNativeGas!()).rejects.toThrow();
+      await expect(client.reconcileNativeGas?.()).rejects.toThrow();
       expect((await h.journal.rows())[0].actual_wei).toBeNull();
     } else {
-      await client.reconcileNativeGas!();
+      await client.reconcileNativeGas?.();
       expect((await h.journal.rows())[0].actual_wei).toBe(
         (tx.gas! * 2n + (base ? 400n : 0n)).toString(),
       );
@@ -794,42 +791,8 @@ test("Solana signed costs share the atomic journal while unknown sends retain th
   ).rejects.toThrow("reserved Solana intent");
 });
 
-test("wrapped SOL fee principal is excluded from account-creation operating cost", () => {
-  const wrapped = "So11111111111111111111111111111111111111112";
-  const cost = solanaNativeCost(
-    {
-      fee: 5000,
-      preBalances: [100000000, 0],
-      postBalances: [98506560, 201488440],
-      preTokenBalances: [],
-      postTokenBalances: [
-        {
-          accountIndex: 1,
-          mint: wrapped,
-          uiTokenAmount: { amount: "200000000" },
-        },
-      ],
-    },
-    [1],
-  );
-  expect(cost).toBe(1493440n);
-  // A failed transaction rolls back account creation, but still burns its fee.
-  expect(
-    solanaNativeCost(
-      {
-        fee: 5000,
-        preBalances: [100000000, 0],
-        postBalances: [99995000, 0],
-        preTokenBalances: [],
-        postTokenBalances: [],
-      },
-      [1],
-    ),
-  ).toBe(5000n);
-});
-
 test("Solana migration preserves existing EVM liabilities and immutable receipt evidence", () => {
-  const { sqlite } = sqliteD1(":memory:", false);
+  const { sqlite } = sqliteD1([]);
   const dir = new URL("../../migrations/", import.meta.url);
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))

@@ -38,24 +38,13 @@ env:
   NODE_VERSION: "24.15.0"
 
 jobs:
-  source:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    outputs:
-      sha: ${{ steps.source.outputs.sha }}
-    steps:
-      - id: source
-        run: echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-
   prepare:
     name: Prepare checked browser bundle
-    needs: source
     outputs:
       registry_sha256: ${{ steps.registry.outputs.registry_sha256 }}
       revisions_sha256: ${{ steps.registry.outputs.revisions_sha256 }}
     env:
-      RELEASE_SHA: ${{ needs.source.outputs.sha }}
+      RELEASE_SHA: ${{ github.sha }}
       VITE_SLOP_ENVIRONMENT: ${{ (github.ref == 'refs/heads/development' || github.base_ref == 'development') && 'staging' || 'production' }}
     runs-on: ubuntu-24.04
     concurrency:
@@ -70,7 +59,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
           submodules: false
@@ -260,7 +249,7 @@ jobs:
       - name: Upload checked registry snapshot
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: slop-registry-${{ needs.source.outputs.sha }}
+          name: slop-registry-${{ github.sha }}
           path: |
             src/lib/project-registry.generated.mjs
             src/lib/project-revisions.generated.json
@@ -270,7 +259,7 @@ jobs:
       - name: Upload Cloudflare Pages bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: slop-source-${{ needs.source.outputs.sha }}
+          name: slop-source-${{ github.sha }}
           path: dist
           include-hidden-files: true
           if-no-files-found: error
@@ -280,16 +269,15 @@ jobs:
   # lanes start as soon as the bundle exists. The quality gate needs both.
   check:
     name: Unit, integration and installer checks
-    needs: source
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      RELEASE_SHA: ${{ needs.source.outputs.sha }}
+      RELEASE_SHA: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
           submodules: false
@@ -323,7 +311,7 @@ jobs:
 
   browsers:
     name: Browser ${{ matrix.lane }}
-    needs: [source, prepare]
+    needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -356,13 +344,13 @@ jobs:
       - name: Checkout exact checked source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
           submodules: false
       - name: Verify browser checkout
         env:
-          RELEASE_SHA: ${{ needs.source.outputs.sha }}
+          RELEASE_SHA: ${{ github.sha }}
         run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -387,7 +375,7 @@ jobs:
             --requirement "$RUNNER_TEMP/slop-python-requirements.txt"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: slop-source-${{ needs.source.outputs.sha }}
+          name: slop-source-${{ github.sha }}
           path: dist
       - name: Install Playwright system dependencies
         run: |
@@ -468,7 +456,7 @@ jobs:
       needs.quality.result == 'success' &&
       github.ref == 'refs/heads/development' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    needs: [source, quality]
+    needs: quality
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -495,7 +483,7 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: slop-source-${{ needs.source.outputs.sha }}
+          name: slop-source-${{ github.sha }}
           path: dist
       - name: Require staging credentials
         env:
@@ -612,9 +600,9 @@ jobs:
       needs.quality.result == 'success' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
-    needs: [source, prepare, quality]
+    needs: [prepare, quality]
     env:
-      RELEASE_SHA: ${{ needs.source.outputs.sha }}
+      RELEASE_SHA: ${{ github.sha }}
     permissions:
       contents: read
     runs-on: ubuntu-24.04
@@ -678,7 +666,7 @@ jobs:
       - name: Download verified Pages bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: slop-source-${{ needs.source.outputs.sha }}
+          name: slop-source-${{ github.sha }}
           path: dist
 
       - name: Verify downloaded Pages bundle
@@ -687,7 +675,7 @@ jobs:
       - name: Download checked registry snapshot
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: slop-registry-${{ needs.source.outputs.sha }}
+          name: slop-registry-${{ github.sha }}
           path: src/lib
 
       - name: Verify downloaded registry snapshot

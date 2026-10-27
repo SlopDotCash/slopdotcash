@@ -1,5 +1,7 @@
 # Whole-codebase simplification review — 26 October 2026
 
+Completed implementation removes **24,297 net lines** of source and tests, including 62 non-contract unit/partial suites. The final measured initial homepage JavaScript is **517,645 bytes**, down **33.18%** from 774,729 bytes. All selected findings below are implemented, including the two follow-up findings from validation. Required security, consent and payment distinctions are preserved.
+
 ## Scope, authority and review method
 
 The requested result is a complete engineering review followed by implementation of justified reductions. The reviewed starting point is `426950e7c168be4ff3917e24730ce93e177b4532` from `origin/development`. Work is isolated on `codex/codebase-simplification`; the original checkout is unchanged. The owner's direct request authorizes structural, UI, copy and test cleanup for this task, including removal of non-contract unit tests. It does not authorize production deployment, financial transactions, new economic rules, or deletion of historical records.
@@ -855,3 +857,156 @@ Rust unit blocks retained in `contracts/solana/programs/slop-escrow/src/{lib,tok
 The report is complete before implementation begins. Each selected finding must be implemented or explicitly rejected with a concrete reason. Required final checks include frozen dependency install, source-record checks, typechecking, lint/format, build, meaningful integration/installer tests and real-browser E2E for changed flows. Browser acceptance includes desktop/mobile, keyboard, zoom, accessibility and request/console evidence. No provider inference result, live wallet payment, production release or agent-client compatibility may be claimed from a local fixture.
 
 Implementation results and precise validation outcomes will be appended here. Deployment, DNS, TLS and served-production-byte evidence are N/A — this is not a release. External agent-client/provider/chain acceptance remains separate and must be reported honestly where not run.
+
+
+### R-10 — Remove orphaned exports found after test pruning
+
+A second reference scan after deleting unit-only consumers found three runtime exports with no callers: `writeNewJsonFile` in `scripts/write-new-file.ts`, `currentProjectPolicy` in `scripts/project-revision-policy.mjs` (plus its declaration), and `MODEL_DISCLOSURE_PREFIX` in the canonical `live-report.mjs`. Remove those unused wrappers/constant; keep the used immutable writer and full policy enumeration. The last change alters one canonical template line and therefore legitimately changes its next template digest; it does not alter the live-report behavior or relax attribution. Repeat installer verification. The scan also found `assertSolanaTestCluster`, `BASE_PLATFORM_FEE_RECIPIENT`, and `OperatorKeeper`, but further reference checks proved real Solana acceptance, contract-test and Wrangler binding consumers, so they remain.
+
+
+### R-11 — Finish the existing route lazy-loading boundary
+
+After the first measured route extraction, the home page still loads the Solana wallet-action chunk despite rendering no wallet action. The follow-up import trace finds ProfilePage and CyclePages used only as routes; Earnings used only for payout/account views (but eagerly imported in both App and Points); and EscrowFunding eagerly importing its three owner/wallet controls even when App imports only its read-only totals helpers. Extend FE-10 using React's existing lazy/Suspense mechanism: lazy-load the route-only profile/cycle views, Earnings at both consumers, and AutomaticMonthlyPayment/OwnerVaultSetup/VaultActions inside EscrowFunding. Keep shared useProfiles, balance totals and eligibility logic eager where the home page actually needs them. No new router, dependency or source file is required. Verify direct navigation and wallet/owner browser flows, then repeat the identical initial-JavaScript measurement.
+
+
+## Implemented result
+
+The implementation removes 24,297 net source/test lines excluding this report. The initial audit remains above so each choice can be reviewed against its evidence. All selected changes were implemented; the keep decisions preserve required product behavior, explicit authority and immutable history. No contract, migration, project registry snapshot, points journal or instruction mirror was modified.
+
+### Root and backend disposition
+
+| Finding | Result |
+| --- | --- |
+| R-01 | Removed six mirrored skill files and the synchronization script/commands; imports and generated renderer paths use the canonical template, with old immutable paths recognized by bootstrap. |
+| R-02/R-03 | Removed the dead Python packager and generic recursive-delete script; clean now has a fixed dist target and native bounded retries. |
+| R-04 | Removed the SHA passthrough CI job; independent jobs read github.sha and retain their checkout comparisons, real quality dependencies and release protections. |
+| R-05 | Updated README to describe the actual integration gate and direct template editing. |
+| R-06 through R-09 | Kept separate authority/runtime boundaries, contract network entrypoints, required fallback/uncertainty behavior, and accessible operational text. |
+| R-10 | Removed three unreferenced exports. This changes one canonical template constant; generated template digests must change accordingly. |
+| R-11 | Deferred route-only profiles/cycles, Earnings at both consumers, and owner/wallet funding controls using existing lazy/Suspense support. |
+| B-01/B-02 | Combined three file-comparison modules and made inference persistence private to its sole consumer. Comparison function bodies were preserved. |
+| B-03/B-04 | Reused shared cookie and JSON response helpers. Payment JSON now also inherits the shared private-response security headers. |
+| B-05 | Consolidated SQLite adapters and moved fixture-only security/archive helpers out of service directories. |
+| B-09/B-10/B-11 | Corrected stale role/intake comments and added fixed diagnostics to failed public history reads. |
+| B-26 | All independent scheduled work runs even if a sibling fails. The invocation still rejects. A migrated-D1 regression proves an appeal is queued/checkpointed once despite an unrelated dispatcher-table failure. |
+
+# Test cleanup implementation and validation
+
+- Removed 62 non-contract unit/partial suites (13,539 lines of deleted files), including two redundant scanner fragments discovered during mixed-suite pruning.
+- Kept 62 substantive non-contract Bun integration suites, 31 browser specs, all smart-contract tests, full installer lifecycle, local-chain scenarios and Miniflare workflows.
+- Net non-contract Bun test source: 49,672 → 34,393 lines (15,279 fewer). Removed standalone config/calendar/Merkle/parser/encoding/pure scoring assertions from mixed suites; removed orphan helpers rather than renaming unused code.
+- Removed the synthetic earnings-table browser spec and three copy/value-only browser tests. Preserved actual interactions, state transitions, recovery, accessibility, download and amount assertions.
+- Replaced duplicate fee/referral SQLite wrappers with shared `tests/sqlite-d1.ts`, with full migrations as the default. Moved GitHub advisory fake and participation-ban fixture to `tests/`; archive normalizer to installer test directory. Removed now-unused deployment mock fixture.
+- Shared current-working-tree source copying between CLI and browser fixture creation. This fixes tests silently reading committed HEAD instead of uncommitted candidate edits. Scratch browser trees are now removed after copying diagnostics; failed construction also cleans its scratch tree.
+- Parameterized ten security payment scenarios in one runner and run at most two at a time. Each receives a distinct available port through `SLOP_SECURITY_ANVIL_PORT`. Independent native binding-recovery workflow remains included. Every failure remains an error exit; no retry hides it.
+- Updated test aliases, TypeScript fixture inclusion, documentation pointers and escrow CI path filters. No security gate or production service activation changed.
+
+## Validation
+
+- Pinned Foundry v1.7.1 downloaded from the official Foundry GitHub release; release SHA-256 check passed. Executables at `/tmp/slop-foundry-v1.7.1`.
+- `bun run test:security-payments`: exit 0; all ten real local Anvil scenarios plus native workerd/D1/Durable Object recovery workflow passed. Log `/tmp/slop-security-parallel-fixed.log`.
+- First parallel experiment exposed the inherited shared default Anvil port; fixed by unique ports without relaxing any assertion. The failed experiment is not acceptance evidence.
+- Broad Bun run: 680 passed, one secure-sandbox test skipped, one module-load error due to a missed canonical terms-preflight import. Fixed the import; six affected suites then passed 25/25. Logs `/tmp/slop-retained-tests.log`, `/tmp/slop-final-target-tests.log`. Root runs final complete verification after source freeze.
+- Current TypeScript project check passed.
+- Frontend agent reports updated owner-awards browser flow passed 4/4 desktop/mobile tests (`/tmp/slop-frontend-owner-awards.log`). Initial reads require no load-button click; explicit Refresh retains recovery coverage.
+- Full installer lifecycle passed 35/35 in root's validation after relocation.
+
+## Honest limits
+
+No mainnet funds, real provider calls, deployment, production activation or external account/client qualification occurs in these cleanup checks. Local synthetic provider responses prove transport/authorization/failure controls only. A secure-sandbox case remains dedicated to its existing configured secure environment, not falsely reported as locally passed.
+
+
+## Frontend implementation and validation
+
+All ten frontend findings selected in the original report and the documented R11 follow-up are implemented. No new UI dependency, chart framework, raster asset or global router was introduced. The work retains existing project authority, consent, private-report, wallet-signature, recovery and finalized-payment boundaries.
+
+| Finding | Final implementation | Evidence / result |
+| --- | --- | --- |
+| FE-01 | Moved `SignInPanel` from `Admin.tsx` to `Presentation.tsx`; Admin, SecurityBounty and OperatorTraces reuse it. | Unrelated security/operator views no longer import the Admin page merely for sign-in UI. Checking, errors, purpose and return location remain. |
+| FE-02 | Moved `loginHref` from Points to existing `lib/browser-deployment.ts`; all callers import the helper directly. | Product-origin selection and encoded return destination remain unchanged. Strict typecheck passes. |
+| FE-03 | Agent shortcut clicks call the existing `copyPrompt` action instead of silently swallowing clipboard failure. | Before/after clipboard-denial reproduction: `Copy agent prompt` becomes `Copy unavailable; select agent prompt`. Screenshots and videos retained below. |
+| FE-04 | Pending setup rechecks on browser focus/visibility return. A synchronous in-flight ref prevents duplicate focus/visibility calls before React renders. | Preserves explicit scan requests, restrictions and manual recovery. Independent backend review identified the simultaneous-event race; fixed before final QA. |
+| FE-05 | Monthly awards load on route entry and valid month changes. The existing action is now Refresh awards. | Desktop/mobile owner edit/finalize and reserve-recovery workflows passed. Requests retain `/monthly/YYYY-MM` and no-store; no unnecessary cache-busting URL was added. Invalid month input gives a useful message. Abort cleanup prevents a superseded read from replacing the current month. |
+| FE-06 | VaultActions, AutomaticMonthlyPayment and OwnerCommitment reuse `useAction`; hook accepts a recovered initial error. | Caller-specific errors and notice clearing remain. Pending storage, wallet matching, signing, fee calculation and reconciliation code are unchanged. |
+| FE-07 | Added one shared presentational `WalletConnection` to Presentation and used it in those three wallet flows. | Feature-specific provider filtering and callbacks remain. Owner choice, disabled state, empty-wallet message, connected address and connection errors remain explicit. |
+| FE-08 | Removed unreferenced `.funding-records-note`, `.wallet-picker-note` and the dead link selector. | Kept dynamically built avatar, status, agent-logo and PR-bar classes. Parser audit found no justification for a blanket stylesheet purge. |
+| FE-09 | Removed repeated footer domain text and its unused typography rule. | Existing SVG brand mark and four useful community/contact links remain. Before/after desktop/mobile footer screenshots inspected. |
+| FE-10 | Extracted How it works, sponsors, receipts and models into one coherent lazy `PublicPages.tsx` feature. Shared payment/vault labels live in Presentation. | App falls from 2,763 to 1,631 lines; PublicPages has 1,153 lines. This is lazy route separation, not a claimed net line deletion. Actual initial browser JavaScript falls by 39,412 bytes (5.09%) before R11. |
+
+### Independent review fixes included
+
+The backend reviewer found two concrete regressions in the initial implementation: a monthly refresh could retain another month's action error/success notice, and focus plus visibility events could start duplicate setup checks. Both were fixed. Monthly reads clear the action error and notice; setup uses a synchronous in-flight lock. The review found no changes to wallet authorization/signing behavior.
+
+### Local verification
+
+- Strict TypeScript check passed after all frontend changes.
+- Focused Biome checks passed for all changed frontend modules.
+- Real Chromium owner-awards suite: desktop and 320px mobile; four tests passed in 13.8 seconds. It exercises private allocation edits, expected-sequence submission, early/automatic finalization state, sign-in return context, healthy/unknown reserve holds and submitted-transaction recovery after reload.
+- Before and after captures visit home, How it works, sponsors, models and receipts at 1440×1000 and 320×800. All final route runs reached network idle with zero page exceptions, console errors, failed requests or HTTP error responses.
+- Home axe checks found zero WCAG A/AA violations on desktop/mobile before and after. Keyboard first focus is Skip to content. Desktop 200% CSS zoom retains document width 1440 at viewport width 1440.
+- The extra 320px-mobile-at-200%-CSS-zoom image clips in both versions because its effective width is below the application's supported 320px minimum. This exploratory capture is preserved and not described as a pass. Native 320px mobile layouts are captured separately.
+- Measured initial homepage JavaScript response bodies: 774,729 bytes before, 735,317 bytes after. All measurements use the same frozen registry and public data; no compression assumption is involved.
+- The clipboard failure reproduction prevents the external app navigation, denies `navigator.clipboard.writeText`, then clicks the first agent shortcut. Before: no visible error. After: the existing Copy control states that copying is unavailable and text can be selected.
+
+### Evidence locations
+
+- Full evidence inventory and limitations: `/tmp/slop-review-evidence/frontend/README.md`.
+- Before screenshots, axe/console/network/asset records and walkthrough videos: `/tmp/slop-review-evidence/frontend/before-final/`.
+- After screenshots, axe/console/network/asset records and walkthrough videos: `/tmp/slop-review-evidence/frontend/after-final/`.
+- Raw before results: `/tmp/slop-review-evidence/frontend/before-final/results.json`.
+- Raw after results: `/tmp/slop-review-evidence/frontend/after-final/results.json`.
+- Clipboard result/width measurements: `/tmp/slop-review-evidence/frontend/clipboard-results.json`.
+- Clipboard images: `before-final/clipboard-denied.png`, `after-final/clipboard-denied.png`; corresponding videos are under each `clipboard-video/` directory.
+- Tested source hashes: `/tmp/slop-review-evidence/frontend/source-sha256.json`.
+- Functional browser run: `/tmp/slop-frontend-owner-awards.log`; Playwright HTML/JSON artifacts in `/var/folders/jw/kl71l64x5f9d3glwbgvlw44w0000gn/T/slop-e2e-fixture-wUaeKo/playwright-report/pages/` and `test-results/pages/`.
+- Before fixture source: `/private/var/folders/jw/kl71l64x5f9d3glwbgvlw44w0000gn/T/slop-e2e-fixture-0qNEAO`.
+- After fixture source: `/var/folders/jw/kl71l64x5f9d3glwbgvlw44w0000gn/T/slop-e2e-fixture-wUaeKo`.
+
+The principal ten changed frontend modules matched the after fixture byte-for-byte when captures completed. Root subsequently ran safe formatting/import sorting and is responsible for final committed-head verification. These captures prove local fixture behavior, not deployment, live provider qualification, production financial activity or every requested external agent client. No such activity was claimed or performed.
+
+
+### R11 follow-up: complete route-only lazy boundaries
+
+The report documented R11 before implementation. `App.tsx` now lazy-loads ProfilePage, both CyclePages views and EarningsPage. `Points.tsx` also lazy-loads EarningsPage so the account embed cannot pull wallet UI onto the home page. `EscrowFunding.tsx` keeps its small totals helpers available but lazy-loads AutomaticMonthlyPayment, OwnerVaultSetup and VaultActions. The existing root Suspense and ErrorBoundary handle loading/failure; no new routes, providers, signing behavior or files were added.
+
+Typecheck and focused Biome pass. Fresh fixture build: `/var/folders/jw/kl71l64x5f9d3glwbgvlw44w0000gn/T/slop-e2e-fixture-YNuQK0`. Same browser measurement: initial homepage JavaScript is now **517,628 bytes**, down **257,101 bytes (33.19%)** from the 774,729-byte baseline, and down a further 217,689 bytes from the first implementation.
+
+R11 browser validation: owner-awards and payout-consent scenarios passed 16 cases across desktop/mobile; wallet readback passed 6 cases; profile and cycle route behavior passed 4 cases. The initial combined run's six wallet-readback cases failed only at diagnostics because the external preview run omitted `SLOP_E2E_SERVER=preview`, so expected unavailable preview API responses were treated as real Pages failures. Re-running those six with the correct preview lane passed (4.2 seconds); no application change or weakened assertion was made. The 16 other combined cases passed initially. The four profile/cycle tests passed in 10.7 seconds.
+
+R11 home/How/sponsors/models/receipts captures: zero console errors, page errors, request failures and HTTP errors; zero home axe violations at both widths. Results, new screenshots and videos: `/tmp/slop-review-evidence/frontend/after-r11/`. Logs: `/tmp/slop-frontend-r11-functional.log`, `/tmp/slop-frontend-r11-wallet-readback.log`, `/tmp/slop-frontend-r11-records.log`. Current hashes: `/tmp/slop-review-evidence/frontend/source-sha256-r11.json`. R11 artifacts are also copied to the durable task folder `/Users/shawwalters/.codex/visualizations/2026/10/27/01a17b8b-c2b7-7f22-9204-b99ae13eca9d/codebase-review/frontend/after-r11/`.
+
+
+### R12 follow-up: preserve fragment navigation across lazy routes
+
+The report documented R12 before implementation. The existing bounded hash-scroll observer now restarts for the current destination URL, so both direct entry and client navigation wait for asynchronously mounted fragment targets. Its ten-second bound and reader-input cancellation are unchanged. App passes its destination URL to this existing hook; no second observer system or router was added.
+
+The existing site hash-navigation test now takes the actual ProfilePage “How reviews score” link. It withholds the PublicPages JavaScript until the loading state is visible, then releases it and checks that #points is in the viewport and aligned within one pixel of its expected top. It then repeats the original direct #faq and #leaderboard checks. The fixture uses one existing excluded review with the chosen existing contributor as reviewer; the complete snapshot still passes its validator.
+
+Before the fix the browser test failed on both widths: desktop left the target 974px below the top; mobile left it outside the viewport. After the fix desktop and mobile passed (2/2, 18.8s). A first strict geometry assertion was corrected to tolerate subpixel negative zero; no application code was changed for that test-only issue. Typecheck and focused Biome pass. No-op test initialization was replaced by a definite assignment fulfilled synchronously by the Promise constructor.
+
+Before-failure artifacts and videos: `/tmp/slop-review-evidence/frontend/r12-before/`. After-success artifacts, videos and target screenshots: `/tmp/slop-review-evidence/frontend/r12-after/`. They are copied into the durable frontend evidence directory with the same names. Logs: `slop-r12-before-final.log`, `slop-r12-after-final.log`. `r12-javascript.json` records final initial-home JavaScript **517,645 bytes**, down **257,084 bytes (33.18%)** from baseline. `source-sha256-r12.json` records the exact App/Link/test bytes, all matched to the tested fixture before final report handoff.
+
+R12 tested fixture: `/var/folders/jw/kl71l64x5f9d3glwbgvlw44w0000gn/T/slop-e2e-fixture-oxT8vr`. Root remains responsible for the full final committed-head checks.
+
+
+### Verification at the combined source boundary
+
+The first combined `bun run verify` completed successfully: 677 tests passed, the existing secure-sandbox-only test was skipped, the five local integration drivers completed, and the application built. Format checking, source-record checks, dependency audit, and strict typechecking passed. The route-only R-11 follow-up is verified separately before final delivery. Final committed-source execution results are retained in the linked validation record below.
+
+Final before/after UI captures have also been copied to `/Users/shawwalters/.codex/visualizations/2026/10/27/01a17b8b-c2b7-7f22-9204-b99ae13eca9d/codebase-review/frontend/`, outside Git. The early exploratory baseline test run overlapped test deletions and is not a valid failure baseline; no claim of pre-existing application failure is based on that run. The scheduler and clipboard before/after reproductions are independent, valid local comparisons.
+
+
+### R-12 — Preserve in-app fragment navigation across lazy routes
+
+Post-change review identified a reachable lazy-navigation race: ProfilePage links to `/how-it-works#points`, but Link's one immediate scroll can run before the deferred PublicPages chunk renders, and the existing hash-settlement observer initializes only on AppContent mount. Extend that existing bounded observer to restart for in-app location/fragment changes while preserving its ten-second limit and cancellation on reader input. Add a browser regression that delays the destination chunk, follows the actual profile link and verifies the Points section becomes the scroll target. Keep direct-link behavior and do not add another scrolling subsystem.
+
+
+### R-12 implementation and verification
+
+The existing hash observer now accepts the current href and restarts when the rendered destination changes. Before the fix, a delayed PublicPages chunk left the actual profile-to-Points link misaligned (desktop section top 974 pixels; mobile section outside the viewport). The extended existing browser test now exercises that real link, releases the deferred chunk and verifies alignment within one pixel, then repeats direct FAQ and leaderboard links. Both desktop and mobile pass; before-failure and after-success screenshots/videos are retained. The ten-second bound and stop-on-reader-input behavior remain. Final initial JavaScript is 517,645 bytes (33.18% below baseline).
+
+### Final validation record
+
+The final immutable source revision, complete repository and browser results, conditional skips, commands and tool versions are recorded in [the local validation record](/Users/shawwalters/.codex/visualizations/2026/10/27/01a17b8b-c2b7-7f22-9204-b99ae13eca9d/codebase-review/validation.md). This evidence lives outside Git; no captured browser trace, provider input, credential or private session is committed. The detailed before/after frontend inventory is [here](/Users/shawwalters/.codex/visualizations/2026/10/27/01a17b8b-c2b7-7f22-9204-b99ae13eca9d/codebase-review/frontend/README.md).
+
+The unchanged EVM contracts also passed all 146 tests across 14 suites, including fuzz/invariant campaigns. The local parallel payment runner passed all ten Anvil scenarios and the native binding-recovery workflow. External provider, client, production, DNS/TLS and mainnet acceptance are not claimed by these local checks; no such systems were changed.

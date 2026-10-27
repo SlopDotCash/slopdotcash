@@ -6,19 +6,14 @@
 
 import { createHash } from "node:crypto";
 import type { APIRequestContext } from "@playwright/test";
-import { preparePullRequestLedger } from "../../scripts/prepare-pr-ledger";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { communityProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
-  assertPublishableLeaderboardSnapshot,
   type LeaderboardSnapshot,
 } from "../../src/lib/leaderboard";
-import {
-  createProjectView,
-  projectCycleHasOpened,
-} from "../../src/lib/project-view";
+import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -60,161 +55,6 @@ async function loadCycles(request: APIRequestContext): Promise<CycleIndex> {
   assertCycleIndex(value);
   return value;
 }
-
-test("equal contributors share cycle ranks", async ({ page, request }) => {
-  // The local preview is not an allowed origin for the unrelated wallet API.
-  await page.route(
-    `${deployment.api}/api/v1/wallet-claims/actors/*/current`,
-    (route) => route.fulfill({ json: null }),
-  );
-  const snapshot = await loadSnapshot(request);
-  const publishedTie = snapshot.leaders.findIndex(
-    (leader, index) =>
-      index > 0 &&
-      leader.scoreThirds === snapshot.leaders[index - 1].scoreThirds,
-  );
-  if (publishedTie < 0)
-    throw new Error("Public snapshot has no tied contributor scores");
-  for (const leader of snapshot.leaders) {
-    expect(leader.rank).toBe(
-      snapshot.leaders.filter((entry) => entry.scoreThirds > leader.scoreThirds)
-        .length + 1,
-    );
-  }
-  const publishedIds = snapshot.leaders.map((leader) => leader.actor.id);
-  const scoreGroups = [
-    ...new Set(snapshot.leaders.map((leader) => leader.scoreThirds)),
-  ];
-  expect(publishedIds).toEqual(
-    scoreGroups.flatMap((score) =>
-      snapshot.leaders
-        .filter((leader) => leader.scoreThirds === score)
-        .map((leader) => leader.actor.id)
-        .sort(),
-    ),
-  );
-
-  const renamed = structuredClone(snapshot);
-  const tiedIds = snapshot.leaders
-    .slice(publishedTie - 1, publishedTie + 1)
-    .map((leader) => leader.actor.id)
-    .sort();
-  const logins = new Map([
-    [tiedIds[0], "rank-order-z"],
-    [tiedIds[1], "rank-order-a"],
-  ]);
-  const objects: unknown[] = [renamed];
-  while (objects.length > 0) {
-    const value = objects.pop();
-    if (value === null || typeof value !== "object") continue;
-    const record = value as Record<string, unknown>;
-    const login =
-      typeof record.id === "string" ? logins.get(record.id) : undefined;
-    if (login && typeof record.login === "string") {
-      record.login = login;
-      record.url = `https://github.com/${login}`;
-    }
-    objects.push(...Object.values(record));
-  }
-  const compareStrings = (left: string, right: string) =>
-    left < right ? -1 : left > right ? 1 : 0;
-  renamed.leaders.sort(
-    (left, right) =>
-      right.scoreThirds - left.scoreThirds ||
-      compareStrings(
-        left.actor.login.toLowerCase(),
-        right.actor.login.toLowerCase(),
-      ) ||
-      compareStrings(left.actor.login, right.actor.login) ||
-      compareStrings(left.actor.id, right.actor.id),
-  );
-  renamed.leaders.forEach((leader, index) => {
-    leader.rank = index + 1;
-  });
-  const originalRenamed = structuredClone(renamed);
-  assertLeaderboardSnapshot(renamed);
-  expect(() => assertPublishableLeaderboardSnapshot(renamed)).toThrow(
-    "actor ID ordering",
-  );
-  const adapted = preparePullRequestLedger(renamed);
-  assertPublishableLeaderboardSnapshot(adapted);
-  expect(adapted.leaders.map((leader) => leader.actor.id)).toEqual(
-    publishedIds,
-  );
-  expect(adapted.leaders.map((leader) => leader.rank)).toEqual(
-    snapshot.leaders.map((leader) => leader.rank),
-  );
-  expect(renamed).toEqual(originalRenamed);
-  const views = PROJECTS.filter(
-    (project) =>
-      projectCycleHasOpened(snapshot, project.id) &&
-      project.repositories.every((repository) =>
-        snapshot.repositories.some((entry) => entry.id === repository.id),
-      ),
-  ).map((project) => createProjectView(snapshot, project.id));
-  // The following row proves that ranks skip past the tie, so the selected
-  // tie must have a lower-scored contributor after it in the same view.
-  const tie = views
-    .flatMap((entry) =>
-      entry.leaders.map((leader, index) => ({ view: entry, leader, index })),
-    )
-    .find(
-      ({ view: entry, leader, index }) =>
-        index > 0 &&
-        leader.scoreThirds === entry.leaders[index - 1].scoreThirds &&
-        leader.adjustedWeight !== entry.leaders[index - 1].adjustedWeight &&
-        entry.leaders.some(
-          (candidate) => candidate.scoreThirds < leader.scoreThirds,
-        ),
-    );
-  if (!tie)
-    throw new Error(
-      "Public snapshot has no weighted score tie above another contributor",
-    );
-  const { view } = tie;
-  const tiedScore = tie.leader.scoreThirds;
-  const expectedRank =
-    view.leaders.filter((leader) => leader.scoreThirds > tiedScore).length + 1;
-  const tiedLeaders = view.leaders.filter(
-    (leader) => leader.scoreThirds === tiedScore,
-  );
-  // The open cycle page carries the allocation table.
-  await page.goto(`/cycles/${view.project.id}/${view.cycle.id}`);
-  await expect(page.locator(".project-leader-row .rank-cell")).toHaveText(
-    [...view.leaders]
-      .sort(
-        (left, right) =>
-          right.scoreThirds - left.scoreThirds ||
-          left.actor.id.localeCompare(right.actor.id),
-      )
-      .map(
-        (leader) =>
-          `#${view.leaders.filter((entry) => entry.scoreThirds > leader.scoreThirds).length + 1}`,
-      ),
-  );
-  for (const leader of tiedLeaders) {
-    const row = page.locator(".project-leader-row").filter({
-      has: page.locator(
-        `a[href="/contributors/${encodeURIComponent(leader.actor.login)}"]`,
-      ),
-    });
-    await expect(row).toBeVisible();
-    await expect(row.locator(".rank-cell")).toHaveText(`#${expectedRank}`);
-  }
-  const followingLeader = view.leaders
-    .filter((leader) => leader.scoreThirds < tiedScore)
-    .sort((left, right) => right.scoreThirds - left.scoreThirds)[0];
-  if (!followingLeader)
-    throw new Error("Public snapshot has no contributor after the score tie");
-  const followingRow = page.locator(".project-leader-row").filter({
-    has: page.locator(
-      `a[href="/contributors/${encodeURIComponent(followingLeader.actor.login)}"]`,
-    ),
-  });
-  await expect(followingRow.locator(".rank-cell")).toHaveText(
-    `#${expectedRank + tiedLeaders.length}`,
-  );
-});
 
 test("discovers projects and one points-ranked homepage leaderboard", async ({
   page,
@@ -1093,41 +933,6 @@ test("project pages omit full standings and sponsor links keep their destination
   });
 });
 
-test("current payment guidance separates award approval from vault payment", async ({
-  page,
-}) => {
-  await page.goto("/how-it-works");
-  await expect(
-    page.getByRole("list", { name: "Award review stages" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Funded, awaiting wallet", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Funded, ready", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("An unsigned transfer plan exists.", { exact: false }),
-  ).toHaveCount(0);
-  await page.getByText("How do I get paid?", { exact: true }).click();
-  await expect(
-    page.getByText("Wallet confirmation requires your signature.", {
-      exact: false,
-    }),
-  ).toBeVisible();
-  await page.screenshot({
-    path: test.info().outputPath("current-vault-payment-states.png"),
-    fullPage: true,
-  });
-  // Sponsors links the one explanation instead of repeating it.
-  await page.goto("/sponsors", { waitUntil: "networkidle" });
-  await page.getByText("Funding rules", { exact: true }).click();
-  await expect(
-    page.getByRole("link", { name: "Payment stages", exact: true }),
-  ).toHaveAttribute("href", "/how-it-works");
-  await expect(
-    page.getByRole("list", { name: "Award review stages" }),
-  ).toHaveCount(0);
-});
-
 test("serves byte-consistent bootstrap and read-only site artifacts", {
   tag: ["@pages", "@pages-only"],
 }, async ({ baseURL, request }) => {
@@ -1655,7 +1460,58 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await expect(page).toHaveURL(/\/sponsors$/u);
 });
 
-test("lands direct hash links on their section", async ({ page }) => {
+test("lands direct and lazy cross-route hash links on their section", async ({
+  page,
+  request,
+}, info) => {
+  const snapshot = await loadSnapshot(request);
+  const actor = snapshot.leaders[0]?.actor;
+  const exclusion = snapshot.reviewExclusions?.[0];
+  if (!actor || !exclusion)
+    throw new Error(
+      "The profile fixture needs a contributor and a review exclusion",
+    );
+  exclusion.reviewer = actor;
+  assertLeaderboardSnapshot(snapshot);
+  await page.route("**/data/leaderboard.json?**", (route) =>
+    route.fulfill({ json: snapshot }),
+  );
+  await page.route("**/api/v1/wallet-claims/actors/*/current", (route) =>
+    route.fulfill({ json: null }),
+  );
+  let releaseChunk!: () => void;
+  const chunkReady = new Promise<void>((resolve) => {
+    releaseChunk = resolve;
+  });
+  await page.route(/\/assets\/PublicPages-[^/]+\.js$/u, async (route) => {
+    await chunkReady;
+    await route.continue();
+  });
+  try {
+    await page.goto(`/contributors/${encodeURIComponent(actor.login)}`, {
+      waitUntil: "networkidle",
+    });
+    await page
+      .getByRole("link", { name: "How reviews score", exact: true })
+      .click();
+    await expect(
+      page.getByText("Loading page…", { exact: true }),
+    ).toBeVisible();
+    releaseChunk();
+    await expect(page.locator("#points")).toBeInViewport();
+    await expect
+      .poll(() =>
+        page
+          .locator("#points")
+          .evaluate((element) => Math.abs(element.getBoundingClientRect().top)),
+      )
+      .toBeLessThan(1);
+    await page.screenshot({
+      path: info.outputPath("lazy-fragment-target.png"),
+    });
+  } finally {
+    releaseChunk();
+  }
   for (const [path, id] of [
     ["/how-it-works#faq", "faq"],
     ["/#leaderboard", "leaderboard"],

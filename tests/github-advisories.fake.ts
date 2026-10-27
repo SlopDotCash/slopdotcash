@@ -9,7 +9,7 @@ import {
   githubAdvisoryClient,
   type IntakeInstallationCheck,
   type PrivateAdvisoryClient,
-} from "./github-advisories";
+} from "../backend/security/github-advisories";
 
 export type CreateFault =
   | "ok"

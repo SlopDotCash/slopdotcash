@@ -15,8 +15,11 @@ import {
 import { githubLinkDestinations } from "./value-commit-hints";
 import {
   needsFullValueComparison,
+  needsRemovedValueComparison,
   recoverFullValueComparisons,
-} from "./value-full-file";
+  recoverRemovedValueComparisons,
+  recoverUnchangedValueRenames,
+} from "./value-file-comparisons";
 import {
   collectIndirectValueAcceptance,
   type IndirectValueAcceptance,
@@ -28,11 +31,6 @@ import {
   valueDeletionCount,
   valuePatch,
 } from "./value-patch";
-import {
-  needsRemovedValueComparison,
-  recoverRemovedValueComparisons,
-} from "./value-removed-file";
-import { recoverUnchangedValueRenames } from "./value-rename";
 import {
   collectRetainedMergeReferences,
   type RetainedMergeReference,

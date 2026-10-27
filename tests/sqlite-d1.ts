@@ -49,7 +49,7 @@ function migratedCopy(migrations: string[]): Database {
 }
 
 export function sqliteD1(
-  migrations: string[],
+  migrations: string[] = MIGRATIONS,
   file = ":memory:",
 ): {
   db: ProjectD1Database;

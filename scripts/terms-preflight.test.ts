@@ -20,7 +20,10 @@ type TermsPreflight = {
 
 // The shared skill script has no declaration file; type only what this test uses.
 const { preflight }: TermsPreflight = await import(
-  new URL("./skill-kit/terms-preflight.mjs", import.meta.url).href
+  new URL(
+    "../skills/project-contributor-template/scripts/terms-preflight.mjs",
+    import.meta.url,
+  ).href
 );
 
 const PROJECT_ID = "open-registry";

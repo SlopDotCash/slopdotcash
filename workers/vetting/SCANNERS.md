@@ -69,10 +69,11 @@ records private. The worker has no signing key and no result-publication route.
 ## Validation and remaining gates
 
 ```sh
-bun test scripts/vetting-scanners.test.ts
+bun test scripts/vetting-scan-service.test.ts
 ```
 
-These workflows use a real local HTTP server with synthetic provider responses.
+The retained scan-service workflow uses real project and vetting handlers,
+SQLite migrations, local workerd R2 and a local HTTP server with synthetic provider responses.
 They check independent request bodies, input and model identity, disagreement,
 partial coverage, unavailable providers, source-linked findings, usage retention
 and readiness before outbound calls. They do not prove an actual Astra or Opus

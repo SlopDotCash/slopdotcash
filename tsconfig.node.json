@@ -10,16 +10,7 @@
     "types": ["node", "bun-types"]
   },
   "include": [
-    "tests/fixtures.ts",
-    "tests/account-closure-fixture.ts",
-    "tests/fixture-checkout.ts",
-    "tests/project-application-manifest.ts",
-    "tests/sqlite-d1.ts",
-    "tests/slopbot-reopen-fixture.ts",
-    "tests/monthly-allocation-fixture.ts",
-    "tests/penalty-score-fixture.ts",
-    "tests/vetting-fixtures.ts",
-    "tests/vetting-evidence-fixture.ts",
+    "tests/*.ts",
     "src/lib/payments/**/*.ts",
     "contracts/evm/adapter.ts",
     "contracts/evm/factories.ts",
@@ -106,5 +97,6 @@
     "src/lib/reviewer-leaders.ts",
     "src/lib/profiles.ts",
     "src/lib/deployment.ts"
-  ]
+  ],
+  "exclude": ["tests/registry-preload.ts"]
 }
