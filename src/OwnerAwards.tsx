@@ -263,7 +263,6 @@ export default function OwnerAwards({
     <section
       id="monthly-awards"
       className="section owner-awards"
-      id="monthly-awards"
       aria-labelledby="monthly-awards-heading"
     >
       <h2 id="monthly-awards-heading">

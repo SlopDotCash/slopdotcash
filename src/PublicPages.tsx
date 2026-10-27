@@ -774,7 +774,6 @@ export function ReceiptsPage({
         icon={<ReceiptText />}
         lead="Model and usage are self-reported, not provider-verified."
       >
-        <EvidenceNav current="receipts" />
         <DataNotice retry={retry} state={state} />
       </RoutePageHeader>
       <EvidenceNav current="receipts" />
