@@ -2818,7 +2818,10 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     await classification
       .getByText("Additional classification", { exact: false })
       .click();
-    const severity = page.getByLabel("Severity (optional)", { exact: true });
+    const severity = page.getByRole("combobox", {
+      name: "Severity (optional)",
+      exact: true,
+    });
     const cvss = page.getByLabel(
       "CVSS vector (optional, instead of severity)",
       { exact: true },
