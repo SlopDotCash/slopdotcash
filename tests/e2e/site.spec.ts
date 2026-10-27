@@ -323,6 +323,7 @@ test("security sign-in returns directly to the selected project", async ({
         state: "ready",
         automatic: "ready",
         automaticConfigured: true,
+        storedIntake: true,
         checkedAt: new Date().toISOString(),
         maxAgeSeconds: 300,
         paidParticipation: "open",
