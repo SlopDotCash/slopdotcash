@@ -1105,7 +1105,8 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   await moderatorPanel
     .getByLabel("Evidence reference (link or case id)")
     .fill(evidence);
-  await moderatorPanel.getByRole("button", { name: "Preview action" }).click();
+  await moderatorPanel.getByRole("button", { name: "Preview action" }).focus();
+  await moderator.keyboard.press("Enter");
   await moderator.screenshot({
     path: test.info().outputPath("kept-appeal-request-preview.png"),
     fullPage: true,
@@ -1115,7 +1116,8 @@ test("moderators restrict a project and refuse reinstatement without canonical s
       name: "Confirm: Request reinstatement",
       exact: true,
     })
-    .click();
+    .focus();
+  await moderator.keyboard.press("Enter");
   await expect(moderator.getByRole("status").first()).toContainText(
     "Request reinstatement recorded",
   );
@@ -1125,6 +1127,10 @@ test("moderators restrict a project and refuse reinstatement without canonical s
       exact: true,
     }),
   ).toHaveCount(1);
+  await moderator.screenshot({
+    path: test.info().outputPath("kept-appeal-requested.png"),
+    fullPage: true,
+  });
   await queueScan(
     moderator,
     project.id,
@@ -1169,12 +1175,13 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     410,
   );
 
-  // The independent moderator was asked to review the appeal in the inbox.
+  // The applicant's first request notified this independent moderator. The
+  // moderator's own new request does not notify its author a second time.
   await moderator.goto("/inbox", { waitUntil: "networkidle" });
   const review = moderator.locator(".inbox-item", {
     hasText: `A reinstatement request for ${project.id} needs your independent review.`,
   });
-  await expect(review).toHaveCount(2);
+  await expect(review).toHaveCount(1);
   for (const notice of await review.all())
     await expect(
       notice.getByRole("link", { name: "Open admin" }),
