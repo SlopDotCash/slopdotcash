@@ -16,14 +16,17 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   buildBindCalldata,
   buildCommitAwardCalldata,
+  buildCommitMonthlyLeafCalldata,
   buildCreateVaultCalldata,
   buildDepositCalldata,
+  buildReserveMonthlyCalldata,
   buildSetMonthlyCommitmentCalldata,
-  evmAllocationRoot,
   evmAwardId,
   evmBindingTypedData,
-  evmMonthlyDigest,
+  evmMonthlyReserveDigest,
+  evmMonthlySumTree,
   evmVaultKey,
+  prepareEvmMonthlyReservation,
 } from "../../contracts/evm/adapter";
 import {
   captureUpgrade,
@@ -326,8 +329,25 @@ try {
     grossMicro: "1000000",
     sourceDigest: `0x${hash(`keeper-month:${actor}`)}`,
   }));
-  const allocationRoot = evmAllocationRoot(entries);
-  const digest = evmMonthlyDigest(11155111n, vault, "2026-11", allocationRoot);
+  const prepared = await prepareEvmMonthlyReservation(
+    {
+      ...deployment,
+      chainId: 11155111n,
+      request: chain,
+      payoutPolicy: "ordinary",
+    },
+    "2026-11",
+    `0x${hash("local frozen fixture")}`,
+    entries,
+  );
+  assert(prepared);
+  const allocationRoot = prepared.reservation.allocationRoot;
+  const digest = evmMonthlyReserveDigest(
+    11155111n,
+    vault,
+    "2026-11",
+    prepared.reservation,
+  );
   const authorization: MonthlyAuthorization = {
     plan: {
       family: "evm",
@@ -339,6 +359,7 @@ try {
       },
       deployment,
       allocationRoot,
+      evmReservation: prepared.reservation,
       messageHex: digest.slice(2),
       totalGrossBase: "2000000",
       entries,
@@ -438,7 +459,7 @@ try {
   }
   const dry = await tick(false);
   assert(
-    dry.some((item) => item.state === "published-not-executed"),
+    dry.some((item) => item.state === "resume-only"),
     JSON.stringify(dry),
   );
   assert.equal(signatures, 0);
@@ -446,12 +467,32 @@ try {
   await mine();
   const off = await tick();
   assert(
-    off.some((item) => item.state === "waiting"),
+    off.some(
+      (item) =>
+        item.state === "execution-checked" && item.transactionId === null,
+    ),
     JSON.stringify(off),
   );
   assert.equal(signatures, 0);
   await send(owner, vault, buildSetMonthlyCommitmentCalldata("2000000", true));
   await mine();
+  await send(
+    owner,
+    vault,
+    buildReserveMonthlyCalldata(
+      "2026-11",
+      prepared.reservation,
+      `0x${authorization.signatureHex}`,
+    ),
+  );
+  const tree = evmMonthlySumTree(entries);
+  await send(
+    owner,
+    vault,
+    buildCommitMonthlyLeafCalldata("2026-11", entries[0], 0, tree.proofs[0]),
+  );
+  await mine();
+  // One remaining leaf exercises keeper signing, interruption, journal recovery and budgets.
   if (cloudflare) {
     const failure = await cloudflare.tick(config, true, now, {
       failAfterSign: true,
@@ -475,7 +516,7 @@ try {
     assert.equal(
       (
         await queryOne<{ n: number }>(
-          "SELECT count(*) n FROM journal WHERE key LIKE 'monthly:%' OR key LIKE 'nonce:%'",
+          "SELECT count(*) n FROM journal WHERE key LIKE 'nonce:%' OR (key LIKE 'monthly:%' AND json_extract(value,'$.rawTransaction') IS NOT NULL)",
         )
       )?.n,
       0,
@@ -500,7 +541,7 @@ try {
   );
   assert.equal(signatures, signedBeforeAttempt + 1);
   const saved = await queryOne<{ value: string }>(
-    "SELECT value FROM journal WHERE key LIKE 'monthly:%'",
+    "SELECT value FROM journal WHERE key LIKE 'monthly:%' AND json_extract(value,'$.rawTransaction') IS NOT NULL",
   );
   assert(saved);
   if (cloudflare) {
@@ -564,7 +605,7 @@ try {
   assert.equal(
     (
       await queryOne<{ value: string }>(
-        "SELECT value FROM journal WHERE key LIKE 'monthly:%'",
+        "SELECT value FROM journal WHERE key LIKE 'monthly:%' AND json_extract(value,'$.rawTransaction') IS NOT NULL",
       )
     )?.value,
     saved.value,

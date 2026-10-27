@@ -134,8 +134,7 @@
           "writable": true
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "token_program"
         }
       ],
       "args": []
@@ -344,7 +343,9 @@
       "accounts": [
         {
           "name": "payer",
-          "docs": ["Anyone; pays the period account's rent."],
+          "docs": [
+            "The owner authorizes the exact allocation and pays the period account's rent."
+          ],
           "writable": true,
           "signer": true
         },
@@ -672,8 +673,7 @@
           }
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "token_program"
         }
       ],
       "args": [
@@ -714,8 +714,7 @@
         {
           "name": "mint",
           "docs": [
-            "Any classic SPL Token mint, with any decimals. `Account<Mint>` requires the classic",
-            "token program as owner, so Token-2022 mints are rejected."
+            "Classic SPL or the approved metadata-only Token-2022 subset."
           ]
         },
         {
@@ -735,8 +734,7 @@
           }
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "token_program"
         },
         {
           "name": "system_program",
@@ -923,8 +921,7 @@
           "writable": true
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "token_program"
         },
         {
           "name": "veto",
@@ -1342,8 +1339,7 @@
           "writable": true
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "token_program"
         }
       ],
       "args": [
@@ -1493,7 +1489,7 @@
     {
       "code": 6007,
       "name": "WrongMint",
-      "msg": "Mint is not a classic SPL token mint"
+      "msg": "Mint or token program is not supported"
     },
     {
       "code": 6008,
@@ -1639,6 +1635,11 @@
       "code": 6036,
       "name": "MonthlyReserveChanged",
       "msg": "The month's unsettled gross changed after the release was signed"
+    },
+    {
+      "code": 6037,
+      "name": "UnsupportedTokenExtension",
+      "msg": "Token extension or authority is outside the approved metadata-only policy"
     }
   ],
   "types": [
