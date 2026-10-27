@@ -157,7 +157,7 @@ Keep loading, empty, stale, invalid, denied, unavailable, and failed states dist
 
 The public `/models` page is removed (owner decision, 27 October 2026). Keep exact model attribution on contribution records.
 
-The public `/receipts` page and its navigation links are removed (owner decision, 27 October 2026). Do not display individual run receipt details or receipt-evidence bonus labels on the website. Keep the run and trace APIs, optional receipt collection, stored records, and scoring rules unchanged.
+The public `/receipts` page and its navigation links are removed (owner decision, 27 October 2026). Do not display individual run receipt details or receipt-evidence bonus labels on the website. Keep the run and trace APIs, optional receipt collection, stored records, and scoring rules unchanged. Monthly project cycle pages also omit the Evidence section and its original-record download links. Keep the cycle records, existing data URLs, contributor allocations, and payment status unchanged.
 
 ### User journeys
 

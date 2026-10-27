@@ -1305,47 +1305,6 @@ small {
   grid-template-columns: minmax(180px, 1.3fr) repeat(4, minmax(100px, 0.7fr));
 }
 
-.artifact-links {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.artifact-links a {
-  display: flex;
-  min-height: 76px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.artifact-links a:hover {
-  background: rgba(255, 90, 25, 0.055);
-}
-
-.artifact-links span {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.artifact-links strong {
-  font-size: 14px;
-}
-
-.artifact-links small {
-  overflow: hidden;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  text-overflow: ellipsis;
-}
-
 .proposal-steps {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1611,10 +1570,6 @@ small {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .artifact-links {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .project-leader-head,
   .project-leader-row {
     grid-template-columns: 55px minmax(170px, 1.4fr) 0.5fr 0.8fr;
@@ -1831,10 +1786,6 @@ small {
 
   .cycle-number {
     max-width: 400px;
-  }
-
-  .artifact-links {
-    grid-template-columns: 1fr;
   }
 
   .simple-heading {
@@ -2534,12 +2485,6 @@ a.payout-tx:hover {
 }
 .cycle-status-grid li[aria-current="step"] {
   border-top: 3px solid var(--orange-hover);
-}
-.cycle-artifacts summary {
-  margin-bottom: 20px;
-}
-.cycle-artifacts .artifact-links small {
-  overflow-wrap: anywhere;
 }
 @media (max-width: 680px) {
   .cycle-record {
