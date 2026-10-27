@@ -33,6 +33,7 @@ import {
   stale,
 } from "./Presentation";
 import { CycleAllocation } from "./ProjectLeaderboard";
+import { VaultPaymentHistory } from "./VaultPaymentHistory";
 
 export function CyclePage({
   project,
@@ -479,6 +480,7 @@ export function CycleArchivePage({
           </p>
         ) : null}
       </RoutePageHeader>
+      <VaultPaymentHistory scope={{ all: true }} />
       {all.length > 0 ? (
         <div className="points-controls cycle-filters">
           {offered.map((key) => (
