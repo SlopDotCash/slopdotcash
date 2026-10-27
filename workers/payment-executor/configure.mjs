@@ -54,6 +54,7 @@ export function paymentStack({
   stack = "test",
   environment = "isolated",
   topology = "relayer",
+  singleNonceBindings = false,
   scope = "ordinary",
   network,
   databaseId,
@@ -212,6 +213,15 @@ export function paymentStack({
     d1_databases: [paymentsDatabase],
   };
   const family = policy.family;
+  if (typeof singleNonceBindings !== "boolean")
+    throw new Error("Invalid single-nonce binding configuration");
+  if (
+    singleNonceBindings &&
+    (!staging || stack !== "test" || topology !== "keeper" || family !== "evm")
+  )
+    throw new Error(
+      "Single-nonce bindings require the staging EVM keeper topology",
+    );
   const configs = {};
   for (const role of roles) {
     const signer = role !== "dispatcher";
@@ -279,7 +289,12 @@ export function paymentStack({
               ? { MONTHLY_PAYMENT_SCHEDULE: monthlySchedule }
               : {}),
             ...(role === "attester" && topology === "keeper"
-              ? { SCHEDULED_BINDINGS: "on" }
+              ? {
+                  SCHEDULED_BINDINGS: "on",
+                  ...(singleNonceBindings
+                    ? { TEST_BINDING_NONCE_LIMIT: "1" }
+                    : {}),
+                }
               : {}),
           }
         : {
