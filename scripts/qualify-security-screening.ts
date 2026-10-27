@@ -97,7 +97,7 @@ export async function qualifySecurityScreening(
     requests,
     outcome: dryRun
       ? "dry-run; no provider calls"
-      : "synthetic report routed for human review",
+      : "synthetic report classified legitimate",
   };
 }
 

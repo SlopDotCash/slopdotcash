@@ -68,6 +68,34 @@ const MAX_REPORT_BYTES = 256 * 1024;
 const LOST_SCREEN_MS = 15 * 60 * 1000;
 const encoder = new TextEncoder();
 
+/** Rolling admission precedes object writes and paid calls, including retries. */
+async function admitPublicWork(
+  deps: SecurityApiDependencies,
+  actorId: string,
+  id = `iw_${deps.randomId().replaceAll("-", "")}`,
+) {
+  const now = deps.now().getTime();
+  const cutoff = now - 3_600_000;
+  const result = await deps.db.batch([
+    deps.db
+      .prepare(
+        "DELETE FROM security_intake_rate_admissions WHERE actor_github_id=? AND admitted_at<=?",
+      )
+      .bind(actorId, cutoff),
+    deps.db
+      .prepare(
+        "INSERT INTO security_intake_rate_admissions(id,actor_github_id,admitted_at) SELECT ?,?,? WHERE (SELECT COUNT(*) FROM security_intake_rate_admissions WHERE actor_github_id=?) + (SELECT COUNT(*) FROM security_submission_intake i JOIN security_submissions s ON s.id=i.submission_id WHERE s.reporter_github_id=? AND i.received_at>? AND NOT EXISTS(SELECT 1 FROM security_intake_rate_admissions a WHERE a.id=i.submission_id)) < 10",
+      )
+      .bind(id, actorId, now, actorId, actorId, new Date(cutoff).toISOString()),
+  ]);
+  if (result[1].meta?.changes !== 1)
+    fail(
+      429,
+      "intake_rate_limited",
+      "Please wait before requesting more private report work.",
+    );
+}
+
 export async function storedIntake(
   deps: Pick<SecurityApiDependencies, "db">,
   id: string,
@@ -456,6 +484,7 @@ export async function screenLegacyReport(
   deps: SecurityApiDependencies,
   projectId: string,
   report: ReportInput,
+  actorId: string,
 ) {
   if (!deps.analyzer?.screen)
     fail(
@@ -470,6 +499,7 @@ export async function screenLegacyReport(
   const scope = current
     ? JSON.parse(current.manifest).securityBounty?.scope
     : null;
+  await admitPublicWork(deps, actorId);
   let proposal: SecurityScreeningProposal;
   try {
     proposal = await deps.analyzer.screen(
@@ -542,21 +572,6 @@ export async function acceptStoredReport(
   }
   const context = await reportingContext(deps, projectId);
   const at = deps.now().toISOString();
-  const recent = await deps.db
-    .prepare(
-      "SELECT COUNT(*) AS count FROM security_submission_intake i JOIN security_submissions s ON s.id=i.submission_id WHERE s.reporter_github_id=? AND i.received_at>?",
-    )
-    .bind(
-      actor.githubId,
-      new Date(deps.now().getTime() - 3600000).toISOString(),
-    )
-    .first<{ count: number }>();
-  if ((recent?.count ?? 0) >= 10)
-    fail(
-      429,
-      "intake_rate_limited",
-      "Please wait before filing another private report.",
-    );
   const banned = await deps.db
     .prepare(`SELECT 1 AS banned WHERE EXISTS(${PARTICIPATION_BAN_QUERY})`)
     .bind(actor.githubId)
@@ -568,6 +583,7 @@ export async function acceptStoredReport(
       "This account cannot submit a new report.",
     );
   const id = `ss_${deps.randomId().replaceAll("-", "")}`;
+  await admitPublicWork(deps, actor.githubId, id);
   const caseId = `sc_${deps.randomId().replaceAll("-", "")}`;
   const marker = Array.from(crypto.getRandomValues(new Uint8Array(16)), (x) =>
     x.toString(16).padStart(2, "0"),
@@ -575,12 +591,8 @@ export async function acceptStoredReport(
   const stored = await storeReport(deps, id, 1, report);
   const frozen = await termsAtReceipt(deps, projectId, at);
   const guard = {
-    sql: `NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND (SELECT COUNT(*) FROM security_submission_intake i JOIN security_submissions s ON s.id=i.submission_id WHERE s.reporter_github_id=? AND i.received_at>?) < 10`,
-    values: [
-      actor.githubId,
-      actor.githubId,
-      new Date(deps.now().getTime() - 3600000).toISOString(),
-    ],
+    sql: `NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+    values: [actor.githubId],
   };
   const statements = [
     caseInsertStatement(deps, {
@@ -710,9 +722,9 @@ export async function acceptStoredReport(
         "This account cannot submit a new report.",
       );
     fail(
-      429,
-      "intake_rate_limited",
-      "Please wait before filing another private report.",
+      503,
+      "intake_unavailable",
+      "The private receipt could not be saved. Retry later.",
     );
   }
   await scheduleScreen(deps, id);
@@ -869,7 +881,9 @@ export async function actStoredIntake(
         "screening_not_retryable",
         "This report is not waiting for automatic screening.",
       );
-    await screenStoredReport(deps, id);
+    if (!intakeQualified(stored) && screeningRecoverable(stored, deps.now()))
+      await admitPublicWork(deps, actor.githubId);
+    await scheduleScreen(deps, id);
   } else if (action === "review") {
     exactKeys(body, ["expectedRevision", "decision", "reason"]);
     if (!roles.has("security-maintainer"))
@@ -935,6 +949,7 @@ export async function actStoredIntake(
       fail(409, "report_not_editable", "The report already has a decision.");
     const report = parseReportInput(body.report);
     const version = stored.report_version + 1;
+    await admitPublicWork(deps, actor.githubId);
     const object = await storeReport(deps, id, version, report);
     const result = await deps.db.batch([
       deps.db

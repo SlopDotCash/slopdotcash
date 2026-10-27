@@ -986,8 +986,6 @@ async function sendSubmission(
       "Forward the saved report without replacement text.",
     );
   const report = storedReport ?? parseReportInput(body.report);
-  if (!storedReport && deps.reportStorage)
-    await screenLegacyReport(deps, row.project_id, report);
   const terms = await programTerms(deps, row.project_id);
   if (terms.intake.repository.toLowerCase() !== row.repository.toLowerCase())
     fail(409, "intake_changed", "The program's intake changed; start again");
@@ -998,6 +996,8 @@ async function sendSubmission(
       "intake_unavailable",
       "Private reporting could not be verified; your draft is kept",
     );
+  if (!storedReport && deps.reportStorage)
+    await screenLegacyReport(deps, row.project_id, report, actor.githubId);
   // The send is recorded before GitHub is called; a lost answer is uncertain.
   let sending: SubmissionRow | null;
   try {
