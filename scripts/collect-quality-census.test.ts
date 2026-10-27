@@ -15,14 +15,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
+import { gunzipSync } from "node:zlib";
 import type { LeaderboardSnapshot, ScoreEvent } from "../src/lib/leaderboard";
 import { createPaymentProjectView } from "../src/lib/project-view";
 import { sha256 } from "./source-correction";
 
-const SNAPSHOT_BYTES = readFileSync(
-  "tests/fixtures/history/cycles/eliza/2026-07/source-snapshot.json",
-  "utf8",
-);
+const SNAPSHOT_BYTES = gunzipSync(
+  readFileSync(
+    "tests/fixtures/history/cycles/eliza/2026-07/source-snapshot.json.gz",
+  ),
+).toString("utf8");
 const snapshot = JSON.parse(SNAPSHOT_BYTES) as LeaderboardSnapshot;
 const root = mkdtempSync(join(tmpdir(), "quality-census-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));

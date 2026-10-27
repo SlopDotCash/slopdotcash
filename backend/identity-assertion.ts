@@ -11,8 +11,8 @@ export type ConsumedIdentity = {
 const MAX_IDENTITY_RESPONSE_BYTES = 16 * 1024;
 
 /**
- * "expired" when the identity Worker refuses the assertion, and "invalid"
- * when it answers for another audience or without a GitHub account.
+ * "expired" when the identity Worker rejects the assertion with 401, and
+ * "invalid" when it answers for another audience or without a GitHub account.
  */
 export async function consumeIdentityAssertion(
   identity: { fetch(request: Request): Promise<Response> },
@@ -29,7 +29,8 @@ export async function consumeIdentityAssertion(
       body: JSON.stringify({ audience }),
     }),
   );
-  if (!response.ok) return "expired";
+  if (response.status === 401) return "expired";
+  if (!response.ok) throw new Error("Identity service unavailable");
   const body = await readBoundedJson(
     response,
     MAX_IDENTITY_RESPONSE_BYTES,
