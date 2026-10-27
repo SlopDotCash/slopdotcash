@@ -11,10 +11,19 @@ export type SavedFlow = { flow: unknown; reopen: boolean; search: string };
 
 export function saveLocalFlow(flow: unknown, reopen: boolean): void {
   try {
-    sessionStorage.setItem(
-      KEY,
-      JSON.stringify({ flow, reopen, search: window.location.search }),
-    );
+    let search = window.location.search;
+    const parameters = new URLSearchParams(search);
+    if (
+      !parameters.has("next") &&
+      window.location.pathname.replace(/\/+$/u, "") !== "/login"
+    ) {
+      parameters.set(
+        "next",
+        `${window.location.pathname}${search}${window.location.hash}`,
+      );
+      search = `?${parameters}`;
+    }
+    sessionStorage.setItem(KEY, JSON.stringify({ flow, reopen, search }));
   } catch {
     // The flow then fails to resume; the person starts sign-in again.
   }

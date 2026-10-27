@@ -416,6 +416,11 @@ jobs:
         env:
           BROWSER_SHARD: ${{ matrix.shard }}
         run: node scripts/run-e2e.mjs --shard="$BROWSER_SHARD"
+      - name: Verify local sign-in return paths
+        if: matrix.lane == 'preview-1'
+        # This DEV-mode flow needs Vite, not the production preview bundle.
+        # Chromium and the pinned Python dependency are installed above.
+        run: bun run test:local-signin
       - name: Verify automatic private intake
         if: matrix.lane == 'registry-1'
         env:
