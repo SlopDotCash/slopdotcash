@@ -7,9 +7,10 @@ import { solanaBase58 } from "../contracts/solana/adapter";
 
 /**
  * The reward-asset reader is the owner-setup surface: a maintainer submits a mint
- * address and Slop stores its decimals. It now admits classic SPL Token and the
- * approved metadata-only Token-2022 subset, and refuses every other owner, layout
- * and extension.
+ * address and Slop stores its decimals. Vault creation, funding and the monthly
+ * commitment use the classic Token program only, so owner setup admits classic SPL
+ * Token and refuses every Token-2022 mint, including the approved metadata-only
+ * subset, until those paths support it. Every other owner and layout is refused.
  */
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
@@ -99,46 +100,28 @@ describe("reward token metadata", () => {
     });
   });
 
-  test("reads the approved metadata-only Token-2022 mint", async () => {
-    expect(await read(TOKEN_2022, token2022Mint(9)).metadata).toEqual({
-      decimals: 9,
-      symbol: null,
-    });
-  });
-
-  test("owner setup accepts revoked Token-2022 authorities with retained public-key bytes", async () => {
-    // SPL's pack_coption_key(None) clears the four-byte tag only. Revoking a
-    // previously active authority therefore leaves its old key in the body.
-    for (const mint of [classicMint(6), token2022Mint(6)]) {
-      mint.fill(9, 4, 36);
-      mint.fill(7, 50, 82);
-      expect(await read(TOKEN_2022, mint).metadata).toEqual({
-        decimals: 6,
-        symbol: null,
-      });
-    }
-  });
-
-  test("owner setup refuses active authorities on base Token-2022 mints", async () => {
-    for (const [offset, role] of [
-      [0, "mint"],
-      [46, "freeze"],
-    ] as const) {
-      const mint = classicMint(6);
-      mint[offset] = 1;
-      mint.fill(9, offset + 4, offset + 36);
-      await expect(read(TOKEN_2022, mint).metadata).rejects.toThrow(
-        `Token-2022 ${role} authority is not disabled`,
-      );
-      expect(await read(TOKEN, mint).metadata).toEqual({
-        decimals: 6,
-        symbol: null,
-      });
-    }
-    expect(await read(TOKEN_2022, classicMint(6)).metadata).toEqual({
+  test("keeps classic SPL mints with active authorities", async () => {
+    const mint = classicMint(6);
+    mint[0] = 1;
+    mint.fill(9, 4, 36);
+    mint[46] = 1;
+    mint.fill(7, 50, 82);
+    expect(await read(TOKEN, mint).metadata).toEqual({
       decimals: 6,
       symbol: null,
     });
+  });
+
+  test("refuses the approved Token-2022 subset until vaults support it", async () => {
+    // Vault creation would otherwise plan a classic `initialize` that the program
+    // refuses, and funding and the monthly commitment would use the classic program.
+    for (const mint of [token2022Mint(9), classicMint(6)]) {
+      const { metadata } = read(TOKEN_2022, mint);
+      await expect(metadata).rejects.toThrow(
+        "The mint is not a classic SPL Token mint",
+      );
+      await expect(metadata).rejects.toBeInstanceOf(TokenMetadataError);
+    }
   });
 
   test("refuses a Token-2022 mint outside the subset", async () => {
@@ -153,9 +136,6 @@ describe("reward token metadata", () => {
     await expect(read(TOKEN_2022, extra).metadata).rejects.toThrow(
       "Unsupported Token-2022 extension 1",
     );
-    // A base mint carries no extension under either program, so it is inside the subset.
-    const baseOnly = await read(TOKEN_2022, classicMint(6)).metadata;
-    expect(baseOnly.decimals).toBe(6);
     await expect(
       read(TOKEN_2022, classicMint(6, 120)).metadata,
     ).rejects.toThrow("Truncated Token-2022 account");

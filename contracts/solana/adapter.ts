@@ -10,6 +10,7 @@ import type { VaultTotals } from "../vault-totals";
 import {
   readTokenAccount,
   readTokenMint,
+  TOKEN_PROGRAM,
   type TokenMintReading,
 } from "./token-extensions";
 
@@ -211,12 +212,20 @@ async function liveMint(
   if (response.value === null) throw new Error("Mint account missing");
   return readTokenMint(response.value, decodeBase58Bytes(mint));
 }
-/** Reads the mint's decimals at finalized commitment. */
+/**
+ * Reads a classic SPL mint's decimals at finalized commitment. Vault creation, funding
+ * and the monthly commitment build classic Token program instructions, and the program
+ * refuses a Token-2022 mint at `initialize`, so these paths refuse Token-2022 until the
+ * program and those builders support it.
+ */
 export async function solanaMintDecimals(
   config: { rpcUrl: string },
   mint: string,
 ): Promise<number> {
-  return (await liveMint(config, mint)).decimals;
+  const reading = await liveMint(config, mint);
+  if (reading.program !== TOKEN_PROGRAM)
+    throw new Error("Not a classic SPL Token account");
+  return reading.decimals;
 }
 
 /** Verify finalized program bytes, loader, upgrade authority and singleton Config. */

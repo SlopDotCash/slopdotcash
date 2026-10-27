@@ -5,6 +5,7 @@ import {
   readVaultTotals,
   solanaBase58,
   solanaConfigAddress,
+  solanaMintDecimals,
   solanaVaultAddress,
 } from "./adapter";
 
@@ -335,6 +336,33 @@ describe("readVaultTotals", () => {
     });
     await expect(readVaultTotals(config)).rejects.toThrow(
       "Account layout mismatch",
+    );
+  });
+});
+
+describe("solanaMintDecimals", () => {
+  // Vault creation, funding and the monthly commitment read decimals here and build
+  // classic Token program instructions, so a Token-2022 mint must stop them.
+  test("refuses a Token-2022 mint that the classic owner paths cannot use", async () => {
+    const answer = (owner: string, data: Uint8Array) => {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.method).toBe("getAccountInfo");
+        expect(body.params[0]).toBe(MINT);
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { context: { slot: 1 }, value: encoded(owner, data) },
+          }),
+        );
+      }) as typeof fetch;
+    };
+    answer(TOKEN, mintAccount(9));
+    expect(await solanaMintDecimals(config, MINT)).toBe(9);
+    answer(TOKEN_2022, token2022Mint(6));
+    await expect(solanaMintDecimals(config, MINT)).rejects.toThrow(
+      "Not a classic SPL Token account",
     );
   });
 });

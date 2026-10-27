@@ -13,7 +13,10 @@ classic token program. The TypeScript adapter nevertheless admits the approved
 metadata-only Token-2022 subset for finalized reads and payout verification
 (PRD section 6, owner decision 26 October 2026); the program keeps refusing a
 Token-2022 mint at `initialize` until a separately reviewed program upgrade
-lands. Classic SPL has no transfer fee and no rebasing, so the
+lands. Until that upgrade and Token-2022 instruction builders land, owner setup
+(`backend/projects/token-metadata.ts`) and `solanaMintDecimals`, which vault
+creation, funding and the monthly commitment use, also refuse a Token-2022
+mint. Classic SPL has no transfer fee and no rebasing, so the
 vault always receives the exact amount sent. Deployment policy must pin the
 approved mint and network domain. The program cannot determine GitHub authority
 or whether a mint is the asset the project intends. A reviewed project manifest
