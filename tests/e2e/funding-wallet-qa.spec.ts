@@ -419,3 +419,63 @@ test("vault totals stay current without a refresh button and keep each state dis
   await doubleTextSize(page);
   await audit(page, info, "vault-totals-200-percent-text");
 });
+
+test("project navigation never reuses another project's vault balance", async ({
+  diagnostics,
+  page,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allowCanceledBackgroundReads();
+  const first = baseVaultProject();
+  const other = PROJECTS.find(
+    (entry) => entry.id !== first.id && entry.reward.kind === "monthly-pool",
+  );
+  if (!other) throw new Error("Missing second project fixture");
+  const second = {
+    ...other,
+    reward: first.reward,
+    rewardAsset: first.rewardAsset,
+    escrow: first.escrow,
+  };
+  diagnostics.allowResponse(
+    503,
+    "GET",
+    `/api/v1/payments/projects/${second.id}/vault`,
+  );
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({
+        json: { schemaVersion: "1", projects: [first, second] },
+      }),
+  );
+  await serveProjectCycleIndex(page, [first.id, second.id]);
+  await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
+    route.fulfill({
+      json: {
+        projectId: first.id,
+        snapshots: [vaultSnapshot("123000000", Date.now())],
+        staleAfterMs: 1_800_000,
+        servedAt: new Date().toISOString(),
+      },
+    }),
+  );
+  await page.route(`**/api/v1/payments/projects/${second.id}/vault`, (route) =>
+    route.fulfill({ status: 503, json: { error: "unavailable" } }),
+  );
+  await page.goto(`/projects/${first.slug}`);
+  const funding = page.getByRole("region", {
+    name: "Project funding",
+    exact: true,
+  });
+  await expect(funding).toContainText("123 USDC");
+  // Exercise the router without remounting the application, as Link does.
+  await page.evaluate((slug) => {
+    history.pushState({}, "", `/projects/${slug}`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, second.slug);
+  await expect(funding.getByRole("alert")).toHaveText(
+    "Vault totals unavailable",
+  );
+  await expect(funding).not.toContainText("123 USDC");
+});
