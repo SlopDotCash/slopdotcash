@@ -46,6 +46,7 @@ import {
   verifyEvmBindingSignature,
   verifyPaymentWalletSignature,
 } from "./possession";
+import { publicVaultPayments } from "./public-records";
 import { handleSolanaFunding } from "./solana-funding";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
@@ -358,6 +359,55 @@ export async function handlePaymentsApi(
           .reduce((sum, t) => sum + BigInt(t.amountMicro), 0n)
           .toString(),
       });
+    }
+    const vaultPaymentsRoute =
+      /^\/(?:((?:projects|actors))\/([a-z0-9][a-z0-9-]*)\/)?vault-payments$/.exec(
+        path,
+      );
+    if (vaultPaymentsRoute && request.method === "GET") {
+      const [, kind, value] = vaultPaymentsRoute;
+      if (kind === "actors" && !/^[1-9]\d{0,15}$/u.test(value))
+        return json(400, { error: "invalid_actor" });
+      if (kind === "actors") {
+        const privateMember = await deps.db
+          .prepare(
+            "SELECT 1 private FROM points_members WHERE github_id=? AND (public!=1 OR closed_at IS NOT NULL)",
+          )
+          .bind(value)
+          .first();
+        if (privateMember) return json(404, { error: "not_found" });
+      }
+      const query = new URL(request.url).searchParams;
+      const cursor = (key: string) => {
+        const raw = query.get(key);
+        return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
+          ? Number(raw)
+          : Number.NaN;
+      };
+      if (
+        [...query.keys()].some((key) => !["after", "through"].includes(key)) ||
+        (query.has("after") && !query.has("through"))
+      )
+        return json(400, { error: "invalid_payment_cursor" });
+      try {
+        return json(
+          200,
+          await publicVaultPayments(
+            deps.db,
+            kind === "projects"
+              ? { projectId: value }
+              : kind === "actors"
+                ? { githubUserId: value }
+                : null,
+            query.has("after") ? cursor("after") : 0,
+            query.has("through") ? cursor("through") : null,
+          ),
+        );
+      } catch (error) {
+        if (error instanceof RangeError)
+          return json(400, { error: "invalid_payment_cursor" });
+        throw error;
+      }
     }
     const member = await sessionGithubActor(request, deps.db, now);
     if (!member)

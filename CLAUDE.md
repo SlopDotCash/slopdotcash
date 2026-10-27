@@ -194,9 +194,15 @@ self-service setup: verify current GitHub authority, complete project terms,
 install Slopbot, and obtain malicious-code clearance before automatic activation.
 PRD section 8 permanently exempts the existing projects captured by migration
 `0075_vetting_grandfathered_projects.sql` from normal scan clearance, including
-future executable changes. Later projects require scans. Record exemption
-explicitly, never as a passed scan; flags, pauses, confirmed-malicious bans
-and fresh-scan reinstatement requirements still apply.
+future executable changes. Later projects require one successful admission scan of their immutable GitHub
+repository. Routine commits, dependencies, Markdown, skill and presentation
+changes keep that admission; do not claim the later content was scanned. Keep successful bounded admission-scan evidence permanently, including original evidence used by a reused result (owner decision, 27 October 2026). Other scanner cases keep their existing retention rules.
+Keep the original complete assessment and retained evidence. Another repository
+cannot inherit a nonexempt admission. Explicit security investigations control
+nonexempt admission (owner decision, 27 October 2026, PRD section 8). Record the
+existing-project exemption explicitly, never as a passed scan; its project-ID
+scope is unchanged. Flags, pauses, confirmed-malicious bans and fresh-scan
+reinstatement requirements still apply.
 Funding is optional and has a separate readiness state. Owners publish immutable
 revisions; admins handle restrictions and disputes, not routine approval.
 Two distinct contributor flags pause the project. A clean fresh scan reinstates
@@ -260,35 +266,36 @@ not actual model qualification (owner decision, 25 October 2026).
 ## Installer and attribution
 
 The public checksum detects corruption only. The trust root of a project
-skill is the pair (template revision on `main`, D1 revision digest) (PRD
-section 4). GitHub is the independent trust root for the template revision. The
-project registry API publishes the digest of the approved D1 revision; the
-installer refuses bytes that do not match the rendering of that pair. The D1
-digest binds the maintainer-authored fields to an approved revision; disclose
-that those fields come from Slop's registry. The generated installer may
-authorize this template revision:
+skill is the pair (immutable canonical GitHub template commit, approved D1
+revision digest) (PRD section 4). The installer resolves the requested full
+40-character commit through the fixed canonical repository API and checks the
+complete file tree against immutable GitHub bytes. The registry API publishes
+the approved D1 revision digest; the installer refuses bytes that do not match
+the rendering of that pair. Disclose that maintainer-authored fields come from
+Slop's registry. These checks prove source identity, not maintainer approval.
 
-1. current `main`;
-2. a `main` ancestor whose complete canonical template tree is byte-identical
-   to current `main`; or
-3. an open, non-draft, same-repository PR head into `main` with the
-   maintainer-controlled `slop-release-candidate` label applied after the exact
-   current-head commit event; or
-4. the `main` ancestor used by the latest verified production publication,
-   from a push or manual release of the canonical GitHub Actions workflow,
-   while a later `main` commit changed the template. Require a successful
-   production job with completed source, publication and served-byte checks;
-   select by its completion, including successful earlier rerun attempts.
-   Only that revision qualifies until the next verified publication. Missing,
-   ambiguous or unbounded proof refuses; current `protocol/skill-revocations.json`
-   still overrides this exception. Project clearance and rollback checks stay.
+Owner decision, 27 October 2026: any such committed template revision may be
+installed, including an unreleased, divergent, older or previously revoked
+revision. There is no template freshness, main ancestry, release-label or
+revocation gate. Explicit template selection may move backward; ordinary
+updates must still not decrease the D1 revision. Explicit rollback rechecks
+canonical bytes, the approved registry digest and current project installation
+clearance before activating a retained version.
 
-Reject candidates behind or divergent from `main`, missing or extra files,
-working-tree provenance, stale label events, mutable redirects, and byte
-mismatches. Preserve immutable sibling version directories, the process-bound
-kernel lock, atomic relative-symlink activation, prior verified versions, and
-explicit rollback reauthorization. Tests may inject only deterministic
-`file://` authorities through the generator’s test option.
+Installed skills verify their local provenance, complete file tree, hashes and
+receipt schema for `authorize` and `start`, without a live GitHub or registry
+authorization call. A local checkout alone does not qualify as an installation.
+Project status and clearance still gate installation, updates and rollback;
+repository access, safe work selection and submission rules still apply.
+Offline behavior requires a template containing this change: existing installs
+need one verified update after publication. Historical template bytes are never
+rewritten and may retain their original online behavior.
+
+Reject missing or extra files, working-tree provenance, mutable redirects and
+byte mismatches. Preserve immutable sibling version directories, the
+process-bound kernel lock, atomic relative-symlink activation and prior verified
+versions. Tests may inject only deterministic `file://` authorities through the
+generator's test option.
 
 Every contribution discloses exact provider, model, and client. Ordinary GitHub
 submission does not require a measured run, device key, policy acknowledgement,

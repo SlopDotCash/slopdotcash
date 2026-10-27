@@ -259,12 +259,12 @@ async function artifact(
   if (vetting.state === "unverified")
     return text(
       503,
-      "Slop cannot confirm that this project's current commit passed security vetting. Try again.\n",
+      "Slop cannot confirm this repository's retained admission evidence. Try again.\n",
     );
   if (vetting.state !== "cleared")
     return text(
       404,
-      "This project revision has not passed security vetting. Slop serves no skill for an unscanned, queued, quarantined, stale or banned revision, or for a branch head or skill template that no clean scan covered.\n",
+      "This repository has no usable admission clearance. Slop serves no skill while admission or a required security investigation is unscanned, queued, quarantined, stale or banned.\n",
     );
   const files = await buildProjectPublication({
     template: template.index,

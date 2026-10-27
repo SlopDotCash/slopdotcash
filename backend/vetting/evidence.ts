@@ -34,6 +34,7 @@ import {
   verifiedPart,
   verifyParts,
 } from "./evidence-chunks";
+import { PERMANENT_ADMISSION_EVIDENCE_SQL } from "./evidence-retention";
 import type { VettingResult } from "./result";
 import {
   isScanResult,
@@ -72,10 +73,11 @@ export const EVIDENCE_OPERATOR_GITHUB_IDS: readonly string[] = [
  * deployment configuration. Each run stores a copy of the terms it used.
  */
 export const EVIDENCE_POLICY = {
-  version: "slop-scanner-evidence-2026-10-26",
+  version: "slop-scanner-evidence-2026-10-27",
   policyAuthorityGithubId: EVIDENCE_POLICY_AUTHORITY_GITHUB_ID,
   operatorGithubIds: [...EVIDENCE_OPERATOR_GITHUB_IDS],
   postClosureRetentionSeconds: 90 * 86400,
+  admissionEvidenceRetention: "permanent",
   readGrantDurationSeconds: 900,
   maxObjectBytes: MAX_EVIDENCE_OBJECT_BYTES,
   maxRunBytes: EVIDENCE_RUN_BYTES,
@@ -83,7 +85,7 @@ export const EVIDENCE_POLICY = {
   accessPolicyReference:
     "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6379712530",
   retentionPolicyReference:
-    "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6379714982",
+    "https://github.com/SlopDotCash/slopdotcash/issues/1467#issuecomment-6438784205",
   recoveryPolicyReference:
     "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6380038965",
 } as const;
@@ -122,6 +124,7 @@ type Run = {
   assembly_sha256: string | null;
   manifest_sha256: string;
   manifest: string;
+  permanent_admission?: number;
   policy: string;
   created_at: string;
   expires_at: string | null;
@@ -198,7 +201,12 @@ export class VettingEvidence {
   async run(assessment: string, run: string): Promise<Run> {
     const row = await this.deps.db
       .prepare(
-        "SELECT r.*, c.closed_at AS case_closed_at FROM vetting_evidence_runs r LEFT JOIN vetting_evidence_case_closures c ON c.assessment_id=r.assessment_id WHERE r.assessment_id=? AND r.run_id=?",
+        `SELECT r.*, c.closed_at AS case_closed_at,
+          CASE WHEN ${PERMANENT_ADMISSION_EVIDENCE_SQL} THEN 1 ELSE 0 END AS permanent_admission
+         FROM vetting_evidence_runs r
+         JOIN vetting_assessments a ON a.id=r.assessment_id
+         LEFT JOIN vetting_evidence_case_closures c ON c.assessment_id=r.assessment_id
+         WHERE r.assessment_id=? AND r.run_id=?`,
       )
       .bind(assessment, run)
       .first<Run & { case_closed_at: string | null }>();
@@ -206,7 +214,7 @@ export class VettingEvidence {
     // The old upload-based expiry remains in the immutable manifest history.
     // The approved case lifecycle now determines access for retained evidence.
     row.expires_at =
-      row.case_closed_at === null
+      row.permanent_admission === 1 || row.case_closed_at === null
         ? null
         : new Date(
             Date.parse(row.case_closed_at) + 90 * 86400_000,
@@ -1416,6 +1424,7 @@ export class VettingEvidence {
         manifestSha256: run.manifest_sha256,
         createdAt: run.created_at,
         expiresAt: run.expires_at,
+        permanentAdmissionEvidence: run.permanent_admission === 1,
         policy: JSON.parse(run.policy),
         objects,
       });

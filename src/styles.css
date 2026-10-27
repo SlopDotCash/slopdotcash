@@ -1305,47 +1305,6 @@ small {
   grid-template-columns: minmax(180px, 1.3fr) repeat(4, minmax(100px, 0.7fr));
 }
 
-.artifact-links {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.artifact-links a {
-  display: flex;
-  min-height: 76px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.artifact-links a:hover {
-  background: rgba(255, 90, 25, 0.055);
-}
-
-.artifact-links span {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.artifact-links strong {
-  font-size: 14px;
-}
-
-.artifact-links small {
-  overflow: hidden;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  text-overflow: ellipsis;
-}
-
 .proposal-steps {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1611,10 +1570,6 @@ small {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .artifact-links {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .project-leader-head,
   .project-leader-row {
     grid-template-columns: 55px minmax(170px, 1.4fr) 0.5fr 0.8fr;
@@ -1831,10 +1786,6 @@ small {
 
   .cycle-number {
     max-width: 400px;
-  }
-
-  .artifact-links {
-    grid-template-columns: 1fr;
   }
 
   .simple-heading {
@@ -2485,119 +2436,6 @@ a.payout-tx:hover {
   }
 }
 
-.receipt-page {
-  padding-block: 48px 80px;
-}
-.receipt-search {
-  display: grid;
-  gap: 8px;
-  max-width: 560px;
-  font-size: 14px;
-  font-weight: 600;
-}
-.receipt-search input {
-  width: 100%;
-  min-width: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-}
-.receipt-count {
-  color: var(--muted);
-  font-size: 15px;
-}
-.receipt-list {
-  border-top: 1px solid var(--line);
-}
-.receipt-record {
-  padding-block: 18px;
-  border-bottom: 1px solid var(--line);
-}
-.receipt-links {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 18px;
-  overflow-wrap: anywhere;
-}
-.receipt-links strong {
-  font-size: 16px;
-}
-.receipt-links a {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-}
-.receipt-links > a {
-  font-size: 15px;
-}
-.receipt-record summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 18px;
-  gap: 6px 18px;
-  align-items: center;
-  padding-top: 8px;
-  cursor: pointer;
-  list-style: none;
-  font-size: 15px;
-  color: var(--muted);
-}
-.receipt-record summary::-webkit-details-marker {
-  display: none;
-}
-.receipt-record summary > span {
-  overflow-wrap: anywhere;
-}
-.receipt-record summary time {
-  font-variant-numeric: tabular-nums;
-}
-.receipt-record summary > svg {
-  width: 18px;
-}
-.receipt-record details[open] summary > svg {
-  transform: rotate(90deg);
-}
-.receipt-details {
-  max-width: 880px;
-  padding-top: 20px;
-}
-.receipt-details dl {
-  margin: 0;
-  display: grid;
-  gap: 10px;
-}
-.receipt-details dl > div {
-  display: grid;
-  grid-template-columns: minmax(90px, 1fr) minmax(0, 3fr);
-  gap: 16px;
-}
-.receipt-details dt {
-  color: var(--muted);
-  font-size: 15px;
-}
-.receipt-details dd {
-  margin: 0;
-  font-size: 15px;
-  overflow-wrap: anywhere;
-  font-variant-numeric: tabular-nums;
-}
-@media (max-width: 480px) {
-  .receipt-record summary {
-    grid-template-columns: minmax(0, 1fr) 18px;
-    gap: 6px 10px;
-  }
-  .receipt-record summary time {
-    grid-column: 1;
-    grid-row: 2;
-  }
-  .receipt-record summary > svg {
-    grid-column: 2;
-    grid-row: 1 / 3;
-  }
-}
-
 .how-it-works .mechanism-flow {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -2647,12 +2485,6 @@ a.payout-tx:hover {
 }
 .cycle-status-grid li[aria-current="step"] {
   border-top: 3px solid var(--orange-hover);
-}
-.cycle-artifacts summary {
-  margin-bottom: 20px;
-}
-.cycle-artifacts .artifact-links small {
-  overflow-wrap: anywhere;
 }
 @media (max-width: 680px) {
   .cycle-record {

@@ -3,9 +3,9 @@ import { CopyIdentifier } from "./Operations";
 import { StatusBadge, formatNullableUtc as time } from "./Presentation";
 /**
  * The admin view of community project security vetting (PRD VET-01 to
- * VET-08). It shows each project's revision-bound clearance, the restricted
+ * VET-08). It shows each project's admission clearance, the restricted
  * scan results and quarantine records, active contributor flags, and queues a
- * scan of the current revision. Routine scans queue automatically; the
+ * scan of the current revision. Admission and flag-recovery scans queue automatically; the
  * scanner service is external, and when it is not configured the view says
  * so and offers no scan control.
  */
@@ -84,7 +84,9 @@ const LABELS: Record<Clearance["state"], string> = {
 function clearanceLabel(clearance: Clearance): string {
   return clearance.state === "cleared" && clearance.assessment === null
     ? "Exempt"
-    : LABELS[clearance.state];
+    : clearance.state === "cleared" && clearance.basis === "admission"
+      ? "Admitted"
+      : LABELS[clearance.state];
 }
 
 const STATE_TEXT: Record<AssessmentState, string> = {
@@ -121,31 +123,39 @@ function QueueScan({
     });
   };
   return (
-    <div className="admin-actions">
-      <label>
-        Reason for the scan
-        <textarea
-          maxLength={1000}
-          onChange={(event) => setReason(event.target.value)}
-          value={reason}
-        />
-      </label>
-      {error ? (
-        <p className="form-error" role="alert">
-          <CircleAlert aria-hidden="true" /> {error}
-        </p>
-      ) : null}
-      <div>
-        <button
-          className="button secondary-button"
-          disabled={busy}
-          onClick={queue}
-          type="button"
-        >
-          {busy ? "Queuing…" : `Queue scan of revision ${project.revision}`}
-        </button>
-      </div>
-    </div>
+    <details className="admin-actions">
+      <summary>Queue scan of revision {project.revision}</summary>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          queue();
+        }}
+      >
+        <label>
+          Reason for the scan
+          <textarea
+            maxLength={1000}
+            required
+            onChange={(event) => setReason(event.target.value)}
+            value={reason}
+          />
+        </label>
+        {error ? (
+          <p className="form-error" role="alert">
+            <CircleAlert aria-hidden="true" /> {error}
+          </p>
+        ) : null}
+        <div>
+          <button
+            className="button secondary-button"
+            disabled={busy}
+            type="submit"
+          >
+            {busy ? "Queuing…" : `Queue scan of revision ${project.revision}`}
+          </button>
+        </div>
+      </form>
+    </details>
   );
 }
 
@@ -228,13 +238,22 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
           <div>
             <dt>Scan coverage</dt>
             <dd>
-              {Object.entries(result.coverage)
-                .map(([surface, entry]) => `${surface}: ${entry.state}`)
-                .join(", ")}
-              <br />
-              {Object.entries(result.checks)
-                .map(([threat, check]) => `${threat}: ${check}`)
-                .join(", ")}
+              <ul className="scan-coverage-list" aria-label="Scanned surfaces">
+                {Object.entries(result.coverage).map(([surface, entry]) => (
+                  <li key={surface}>
+                    <span>{surface}</span>{" "}
+                    <StatusBadge>{entry.state}</StatusBadge>{" "}
+                    <span>{entry.items} items</span>
+                  </li>
+                ))}
+              </ul>
+              <ul className="scan-coverage-list" aria-label="Scan checks">
+                {Object.entries(result.checks).map(([threat, check]) => (
+                  <li key={threat}>
+                    <span>{threat}</span> <StatusBadge>{check}</StatusBadge>
+                  </li>
+                ))}
+              </ul>
               {result.reusedAssessmentId
                 ? ` · Reused clean scan ${result.reusedAssessmentId} (identical content)`
                 : ""}
@@ -367,7 +386,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
                     key={project.id}
                   >
                     <header>
-                      <h3>{project.name}</h3>
+                      <span>Current clearance</span>
                       <StatusBadge
                         className="admin-badge"
                         tone={
@@ -394,14 +413,14 @@ export function VettingSection({ projectId }: { projectId: string }) {
                         <dt>Decided by</dt>
                         <dd>
                           {clearance.state === "unscanned"
-                            ? "No scan of this content yet"
+                            ? "No admission scan for this repository yet"
                             : clearance.state === "unverified"
                               ? clearance.reason
                               : clearance.assessment === null
                                 ? "Existing-project exemption"
                                 : clearance.state === "stale"
                                   ? `Live head ${clearance.live.commitSha} (template ${clearance.live.templateSha256}) is not scanned. Last scan: ${clearance.assessment.commitSha}.`
-                                  : `Scan of revision ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`}
+                                  : `${clearance.state === "cleared" && clearance.basis === "admission" ? "Admission scan" : "Scan"} of revision ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`}
                         </dd>
                       </div>
                       {"assessment" in clearance &&
@@ -436,8 +455,15 @@ export function VettingSection({ projectId }: { projectId: string }) {
                     {(state.value.flags ?? []).some(
                       (flag) => flag.projectId === project.id,
                     ) ? (
-                      <>
-                        <h4>Active contributor flags</h4>
+                      <details className="admin-reference">
+                        <summary>
+                          Active contributor flags ·{" "}
+                          {
+                            (state.value.flags ?? []).filter(
+                              (flag) => flag.projectId === project.id,
+                            ).length
+                          }
+                        </summary>
                         <ul>
                           {(state.value.flags ?? [])
                             .filter((flag) => flag.projectId === project.id)
@@ -465,7 +491,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
                           reinstates it. Decide only after a confirmed malicious
                           result.
                         </p>
-                      </>
+                      </details>
                     ) : null}
                     {history.length > 0 ? (
                       <>

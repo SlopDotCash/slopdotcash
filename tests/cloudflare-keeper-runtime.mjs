@@ -6,25 +6,33 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export async function cloudflareKeeperRuntime(directory, privateKey, observer) {
-  const child = spawn("node", [fileURLToPath(import.meta.url), "--serve"], {
-    cwd: fileURLToPath(new URL("..", import.meta.url)),
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-  let output = "";
-  const origin = await new Promise((resolve, reject) => {
-    child.stdout.on("data", (chunk) => {
-      output += chunk;
-      const match = output.match(/KEEPER_FIXTURE=(http:\/\/127\.0\.0\.1:\d+)/);
-      if (match) resolve(match[1]);
+  async function start() {
+    const child = spawn("node", [fileURLToPath(import.meta.url), "--serve"], {
+      cwd: fileURLToPath(new URL("..", import.meta.url)),
+      stdio: ["ignore", "pipe", "inherit"],
+      // The abrupt-restart test kills only this fixture and its Workerd child.
+      detached: true,
     });
-    child.once("error", reject);
-    child.once("exit", (code) =>
-      reject(new Error(`Workerd fixture exited ${code}`)),
-    );
-  });
+    let output = "";
+    const origin = await new Promise((resolve, reject) => {
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+        const match = output.match(
+          /KEEPER_FIXTURE=(http:\/\/127\.0\.0\.1:\d+)/,
+        );
+        if (match) resolve(match[1]);
+      });
+      child.once("error", reject);
+      child.once("exit", (code) =>
+        reject(new Error(`Workerd fixture exited ${code}`)),
+      );
+    });
+    return { child, origin };
+  }
+  let runtime = await start();
   let latest;
   async function request(path, body) {
-    const response = await fetch(`${origin}${path}`, {
+    const response = await fetch(`${runtime.origin}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body ?? {}),
@@ -68,10 +76,23 @@ export async function cloudflareKeeperRuntime(directory, privateKey, observer) {
     async restart() {
       await request("/restart", latest);
     },
+    async crashAndRestart() {
+      const previousPid = runtime.child.pid;
+      if (!previousPid) throw new Error("Fixture process is not running");
+      const exited = once(runtime.child, "exit");
+      process.kill(-previousPid, "SIGKILL");
+      const [code, signal] = await exited;
+      if (code !== null || signal !== "SIGKILL")
+        throw new Error("Fixture did not terminate abruptly");
+      runtime = await start();
+      // Same compiled entrypoint, directory, bindings, namespace and signer.
+      await request("/configure", latest);
+      return { previousPid, currentPid: runtime.child.pid };
+    },
     request,
     async close() {
       await request("/close").catch(() => {});
-      if (child.exitCode === null) await once(child, "exit");
+      if (runtime.child.exitCode === null) await once(runtime.child, "exit");
     },
   };
 }

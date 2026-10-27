@@ -17,6 +17,7 @@ import {
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { archivedPaidCycleIndex } from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -98,8 +99,13 @@ test("project setup shares one sign-in read with its owner inventory", async ({
     route.fulfill({ json: { repositories: [] } }),
   );
   await page.goto("/projects/new", { waitUntil: "networkidle" });
-  await page.getByText("Your projects", { exact: true }).click();
-  await expect(page.getByText("You have no projects yet.")).toBeVisible();
+  await expect(page.getByText("Your projects", { exact: true })).toHaveCount(0);
+  await page
+    .getByText("Choose from your GitHub repositories", { exact: true })
+    .click();
+  await expect(
+    page.getByText("@example owns no public repositories. Enter one below."),
+  ).toBeVisible();
   await page.screenshot({
     path: test.info().outputPath("project-setup.png"),
     fullPage: true,
@@ -205,18 +211,6 @@ test("shared navigation preserves project drafts and account sign-in destination
     page.getByRole("heading", { name: "Account", exact: true }),
   ).toBeVisible();
 
-  await page.goto("/cycles");
-  const records = page.getByRole("navigation", { name: "Public records" });
-  await records.getByRole("link", { name: "Receipts" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Run receipts" }),
-  ).toBeVisible();
-  await page.waitForLoadState("networkidle");
-  await records.getByRole("link", { name: "Cycles" }).focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("heading", { name: "Payment cycles" }),
-  ).toBeVisible();
   await enlargeText(page.locator("body"));
   await expectAccessible(page);
   expect(
@@ -737,18 +731,43 @@ test("renders contributor and cycle records from validated public data", {
         exact: true,
       }),
     ).toBeVisible();
-    const records = page.getByText("Original records", {
-      exact: true,
+    const history = page.locator("details.cycle-history");
+    if (await history.count()) {
+      await expect(history).not.toHaveAttribute("open", "");
+      await history.locator(":scope > summary").focus();
+      await page.keyboard.press("Enter");
+      await expect(history).toHaveAttribute("open", "");
+    }
+    await expect(
+      page.getByRole("heading", { name: "Contributors", exact: true }),
+    ).toBeVisible();
+    const contributors = page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
     });
-    await records.focus();
-    await page.keyboard.press("Enter");
-    const frozen = page.getByRole("link", {
-      name: /Source data/u,
-    });
-    await expect(frozen).toHaveAttribute(
-      "href",
-      archived.files.sourceSnapshot.url,
+    await expect(contributors.locator("tbody tr")).toHaveCount(
+      archived.contributors.length,
     );
+    for (const contributor of archived.contributors)
+      await expect(
+        contributors.getByRole("link", {
+          name: contributor.actor.login,
+          exact: true,
+        }),
+      ).toHaveAttribute(
+        "href",
+        `/contributors/${encodeURIComponent(contributor.actor.login)}`,
+      );
+    await expect(
+      page.getByRole("heading", { name: "Evidence", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Original records", { exact: true }),
+    ).toHaveCount(0);
+    for (const file of Object.values(archived.files)) {
+      if (file)
+        await expect(page.locator(`a[href="${file.url}"]`)).toHaveCount(0);
+    }
+    // The UI omits evidence links; the canonical download remains intact.
     const download = await request.get(archived.files.sourceSnapshot.url);
     expect(download.ok()).toBe(true);
     expect(
@@ -765,6 +784,43 @@ test("renders contributor and cycle records from validated public data", {
       }),
     ).toBeVisible();
   }
+});
+
+test("shows the suggested amount for a walletless cycle still under review", async ({
+  page,
+}) => {
+  const index = archivedPaidCycleIndex();
+  const cycle = index.cycles[0];
+  cycle.state = "review";
+  cycle.approvedAt = null;
+  cycle.settledAt = null;
+  cycle.reward.approvedMinor = "0";
+  cycle.reward.paidMinor = "0";
+  cycle.reward.feeMinor = "0";
+  cycle.files.allocation = null;
+  cycle.files.executionPlan = null;
+  cycle.files.settlement = null;
+  const contributor = cycle.contributors[0];
+  contributor.state = "unclaimed";
+  contributor.wallet = null;
+  contributor.approvedMinor = "0";
+  contributor.paidMinor = "0";
+  assertCycleIndex(index);
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    route.fulfill({ json: index }),
+  );
+  await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
+    waitUntil: "networkidle",
+  });
+  const row = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("link", { name: contributor.actor.login }) });
+  await expect(row).toContainText("Awaiting wallet");
+  await expect(row.locator(".cycle-current-amount")).toHaveText("Suggested $1");
+  await row.getByText("Amount history", { exact: true }).click();
+  await expect(row.locator(".cycle-amount-history")).toContainText(
+    "Approved$0",
+  );
 });
 
 test("makes the public project draft boundary unmistakable", async ({
@@ -1013,6 +1069,26 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     "Publishes now: Contribution rules.",
   );
   await expect(exemptChanges).not.toContainText("Needs a new security scan");
+  // A normal successful admission has the same routine-edit permission,
+  // without relabelling it as the older existing-project exemption.
+  Object.assign(setup.checks.scan, {
+    state: "cleared",
+    exempt: undefined,
+    message: "Repository admission passed at revision 1.",
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByText("Exempt", { exact: true })).toHaveCount(0);
+  await openOwnerSettings(page, "Contribution rules");
+  await page.getByLabel("Acceptance criteria").fill(scope);
+  const admittedChanges = page.getByRole("region", { name: "Changes" });
+  await expect(admittedChanges).toContainText(
+    "Publishes now: Contribution rules.",
+  );
+  await expect(admittedChanges).not.toContainText("Needs a new security scan");
+  await page.screenshot({
+    path: test.info().outputPath("admitted-owner-edit.png"),
+    fullPage: true,
+  });
 });
 
 test("reaches and reads older inbox notifications without losing the page", async ({
@@ -1236,9 +1312,11 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   );
   await retry.click();
   await expect(preferences).toContainText("example@example.com");
-  await expect(
-    preferences.getByRole("button", { name: "Turn on activity email" }),
-  ).toBeVisible();
+  const activityEmail = preferences.getByRole("switch", {
+    name: "Activity email",
+  });
+  await expect(activityEmail).toBeEnabled();
+  await expect(activityEmail).not.toBeChecked();
   await expectAccessible(page);
   expect(paymentReads).toEqual([]);
 });
@@ -1411,6 +1489,9 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   for (const path of [
     "/models",
     "/models/",
+    "/receipts",
+    "/receipts/",
+    "/receipts?q=old-run",
     "/operator/traces",
     "/operator/traces/",
   ]) {
@@ -1418,6 +1499,10 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     expect(response.status(), path).toBe(404);
     expect(await response.text(), path).not.toContain('<div id="root"></div>');
   }
+
+  const sitemap = await request.get("/sitemap.xml");
+  expect(sitemap.status()).toBe(200);
+  expect(await sitemap.text()).not.toContain("/receipts");
 
   const [
     bootstrapResponse,
@@ -1602,67 +1687,6 @@ for (const scenario of [
   });
 }
 
-test("finds a receipt and opens its full evidence and GitHub contribution", async ({
-  page,
-  request,
-}) => {
-  const snapshot = await loadSnapshot(request);
-  const entry = snapshot.attributions.find((entry) => entry.run !== null);
-  await page.goto("/receipts", { waitUntil: "networkidle" });
-  if (!entry?.run) {
-    await expect(page.locator(".receipt-record")).toHaveCount(0);
-    return;
-  }
-  await page
-    .getByRole("searchbox", { name: "Find a receipt" })
-    .fill(entry.run.runId);
-  const record = page.locator(".receipt-record");
-  await expect(record).toHaveCount(1);
-  await record.locator("summary").focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    record.getByText(entry.run.runId, { exact: true }),
-  ).toBeVisible();
-  await expect(
-    record.getByText(entry.run.skillRevision, { exact: true }),
-  ).toBeVisible();
-  await expect(
-    record.getByRole("link", {
-      name: new URL(entry.sourceUrl).pathname
-        .slice(1)
-        .replace(/\/(?:pull|issues)\//u, " #"),
-    }),
-  ).toHaveAttribute("href", entry.sourceUrl);
-  await expect(
-    record.getByRole("link", {
-      name: new URL(entry.sourceUrl).pathname
-        .slice(1)
-        .replace(/\/(?:pull|issues)\//u, " #"),
-    }),
-  ).toBeVisible();
-  await page
-    .getByRole("searchbox", { name: "Find a receipt" })
-    .fill("no-matching-receipt-000000");
-  await expect(page.locator(".receipt-record")).toHaveCount(0);
-  await page.getByRole("searchbox", { name: "Find a receipt" }).fill("");
-  // Receipts show 25 per page; the count names every receipt.
-  const total = snapshot.attributions.filter(
-    (entry) => entry.run !== null,
-  ).length;
-  await expect(page.locator(".receipt-count")).toHaveText(
-    `${total} of ${total} receipts`,
-  );
-  await expect(page.locator(".receipt-record")).toHaveCount(
-    Math.min(total, 25),
-  );
-  if (total > 25) {
-    await page.getByRole("button", { name: "Next", exact: true }).click();
-    await expect(page.locator(".receipt-record")).toHaveCount(
-      Math.min(total - 25, 25),
-    );
-  }
-});
-
 // All routes retain desktop/mobile checks. Extra widths cover each shared
 // layout family instead of repeating each project's identical layout.
 const breakpointRoutes = new Set([
@@ -1674,7 +1698,7 @@ const breakpointRoutes = new Set([
 ]);
 for (const route of [
   "latest cycle",
-  "/receipts",
+  "/cycles",
   "/sponsors",
   "/how-it-works",
   "/account",
@@ -1694,6 +1718,7 @@ for (const route of [
       path = `/cycles/${cycle.projectId}/${cycle.cycleId}`;
     }
     await page.goto(path, { waitUntil: "networkidle" });
+    await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
     const project = PROJECTS.find(
       (candidate) => path === `/projects/${candidate.id}`,
     );
@@ -1761,19 +1786,20 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   // The page's records must finish loading before keyboard navigation
   // leaves it, or the move cancels the read.
   await page.reload({ waitUntil: "networkidle" });
-  await expect(page.getByText("$4,900", { exact: true })).toBeVisible();
+  await expect(page.getByText("$4,900", { exact: true })).not.toBeVisible();
   const audience = page
     .locator("summary")
     .filter({ hasText: "Audience report ·" });
   await audience.focus();
   await page.keyboard.press("Enter");
   await expect(audience.locator("..")).toHaveAttribute("open", "");
-  const rules = page.getByText("Funding rules", {
+  const rules = page.getByText("Funding rules and fees", {
     exact: true,
   });
   await rules.focus();
   await page.keyboard.press("Enter");
   await expect(rules.locator("..")).toHaveAttribute("open", "");
+  await expect(page.getByText("$4,900", { exact: true })).toBeVisible();
   const pools = page.getByRole("list", {
     name: "Project funding pools",
     exact: true,
@@ -1911,13 +1937,23 @@ test("lands direct and lazy cross-route hash links on their section", async ({
 test("refuses retired and unknown paths and recovers to projects", async ({
   page,
 }) => {
-  for (const path of ["/models", "/models/", "/constructor", "/__proto__"]) {
+  for (const path of [
+    "/models",
+    "/models/",
+    "/receipts",
+    "/receipts/",
+    "/receipts?q=old-run",
+    "/constructor",
+    "/__proto__",
+  ]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", { name: "Page not found", exact: true }),
     ).toBeVisible();
     await expect(page).toHaveTitle("Page not found · Slop");
     await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+    await expect(page.locator(".receipt-record")).toHaveCount(0);
+    await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
     await page
       .getByRole("link", { name: "See open projects", exact: true })
       .click();

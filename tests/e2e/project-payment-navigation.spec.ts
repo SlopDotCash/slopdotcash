@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import type { DirectTransfer } from "../../src/lib/payments/contracts";
 import { cycleIndexFixture, snapshotFixture } from "../fixtures";
-import { expect, test } from "./fixtures";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -72,6 +72,47 @@ async function fixtures(page: Page) {
     route.fulfill({ path: join(process.cwd(), "public/slop-mark.svg") }),
   );
 }
+
+test("project history previews recent payments and retains every older record", async ({
+  page,
+}, info) => {
+  await fixtures(page);
+  const transfers = ["02", "03", "04", "05", "06"].map((month, index) => ({
+    ...payments(firstProject).transfers[0],
+    contributionMonth: `2026-${month}`,
+    amountMicro: String((index + 1) * 1000000),
+    transactionId: `synthetic-history-${month}`,
+    blockTime: `2026-${month}-28T00:00:00.000Z`,
+  }));
+  await page.route("**/api/v1/payments/projects/*/direct-transfers", (route) =>
+    route.fulfill({ json: { transfers, totalMicro: "15000000" } }),
+  );
+  await page.goto(`${site}/projects/${firstProject}`);
+  const history = page.locator(".payment-history");
+  const rows = history.locator(".money-summary");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first()).toContainText("$5 paid directly");
+  const expand = history.getByRole("button", {
+    name: "Show complete payment history",
+  });
+  await expand.focus();
+  await page.keyboard.press("Enter");
+  await expect(rows).toHaveCount(5);
+  await expect(rows.last()).toContainText("$1 paid directly");
+  await expect(
+    rows.last().getByRole("link", { name: "Disclosure" }),
+  ).toHaveAttribute(
+    "href",
+    `${site}/api/v1/payments/projects/${firstProject}/direct-transfers`,
+  );
+  await expectAccessible(page, { include: ".payment-history" });
+  await page.screenshot({
+    path: info.outputPath("project-history-expanded.png"),
+    fullPage: true,
+  });
+  await history.getByRole("button", { name: "Show recent history" }).click();
+  await expect(rows).toHaveCount(3);
+});
 
 async function watchPaymentIdentity(page: Page) {
   await page.evaluate(

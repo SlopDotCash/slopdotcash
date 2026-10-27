@@ -1,4 +1,3 @@
-import { ShieldCheck } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import { projectApiRequest } from "./lib/project-api";
@@ -35,17 +34,9 @@ export function AccountAppeals() {
       active = false;
     };
   }, [reload]);
-  if (!error && appeals?.length === 0) {
-    return (
-      <section
-        id="appeals"
-        className="account-clear"
-        aria-label="Account restrictions"
-      >
-        <ShieldCheck aria-hidden="true" size={18} /> No account restrictions.
-      </section>
-    );
-  }
+  const restricted = appeals ?? [];
+  // Nothing to appeal: show the section only for a restriction or a failed read.
+  if (!error && appeals?.length === 0) return null;
   return (
     <section id="appeals" aria-labelledby="account-appeals-heading">
       <h2 id="account-appeals-heading">Appeals</h2>
@@ -65,7 +56,7 @@ export function AccountAppeals() {
       ) : (
         <>
           <p>A ban stops new participation. Funded awards are kept.</p>
-          {appeals.map((appeal) => (
+          {restricted.map((appeal) => (
             <AccountAppealForm
               key={appeal.projectId}
               appeal={appeal}

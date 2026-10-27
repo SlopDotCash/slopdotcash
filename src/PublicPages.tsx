@@ -2,25 +2,17 @@ import {
   ArrowRight,
   BookOpen,
   CalendarCheck,
-  ChevronRight,
-  Cpu,
   GitPullRequest,
   HandCoins,
   ListChecks,
-  ReceiptText,
   Search,
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import { useState } from "react";
 import { PENALTY_TABLE } from "../workers/slopbot/penalties";
-import chatgptMark from "./agent-logos/chatgpt.svg";
-import claudeMark from "./agent-logos/claude.svg";
-import grokMark from "./agent-logos/grok.svg";
-import metaMark from "./agent-logos/meta-ai.svg";
 import { Link } from "./Link";
 import { browserDeployment } from "./lib/browser-deployment";
-import { modelIdentityKey, summarizeModelOutcomes } from "./lib/model-outcomes";
+import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import {
@@ -37,14 +29,11 @@ import {
 } from "./lib/who-builds";
 import {
   DataNotice,
-  EmptyState,
-  EvidenceNav,
   ExternalLinkAnchor,
   formatDate,
   formatPointsFromThirds,
   monthlyPoolLabel,
   NetworkName,
-  Pager,
   PaymentLifecycle,
   paymentStateLabel,
   RoutePageHeader,
@@ -380,6 +369,7 @@ function WhoBuildsOnSlop({
         What the {count.format(all.size)} contributors on the leaderboard as of{" "}
         {dateLabel} did elsewhere on GitHub in 2026.
       </p>
+      <DataNotice retry={retry} state={state} />
       <div className="money-summary model-outcomes-summary">
         <span>
           <strong>{percent(all.aiPrimary, all.classifiable)}</strong> build AI
@@ -392,123 +382,127 @@ function WhoBuildsOnSlop({
           outside AI repository this year ({count.format(all.aiExternalPr)} of{" "}
           {count.format(all.size)})
         </span>
-        <span>
-          <strong>{count.format(outside.externalPrsExMass)}</strong> merged pull
-          requests across {count.format(outside.externalReposExMass)} outside
-          repositories since 1 January 2026
-        </span>
-        <span>
-          <strong>{count.format(outside.aiRepoMedianStars)}</strong> stars is
-          the median outside AI repository they work in;{" "}
-          {percentOfRatio(outside.aiRepoShareUnder10)} have fewer than ten
-        </span>
       </div>
-      <div className="who-builds-grid">
-        <section
-          className="who-builds-block"
-          aria-labelledby="who-builds-focus-heading"
-        >
-          <h3 id="who-builds-focus-heading">What they build elsewhere</h3>
+      <details className="audience-data">
+        <summary>Research details</summary>
+        <div className="money-summary model-outcomes-summary">
+          <span>
+            <strong>{count.format(outside.externalPrsExMass)}</strong> merged
+            pull requests across {count.format(outside.externalReposExMass)}{" "}
+            outside repositories since 1 January 2026
+          </span>
+          <span>
+            <strong>{count.format(outside.aiRepoMedianStars)}</strong> stars is
+            the median outside AI repository they work in;{" "}
+            {percentOfRatio(outside.aiRepoShareUnder10)} have fewer than ten
+          </span>
+        </div>
+        <div className="who-builds-grid">
           <section
-            className="plain-table-wrap"
-            aria-label="Focus areas outside Slop"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
-            tabIndex={0}
+            className="who-builds-block"
+            aria-labelledby="who-builds-focus-heading"
           >
-            <table className="plain-table who-builds-table">
-              <thead>
-                <tr>
-                  <th scope="col">Primary focus</th>
-                  <th scope="col" className="who-builds-number">
-                    People
-                  </th>
-                  <th scope="col" className="who-builds-number">
-                    Repos
-                  </th>
-                  <th scope="col" className="who-builds-number">
-                    Merged PRs
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {focusAreas.map((area) => (
-                  <tr key={area.area}>
-                    <th scope="row">{area.area}</th>
-                    <td className="who-builds-number">
-                      {count.format(area.primaryContributors)}
-                    </td>
-                    <td className="who-builds-number">
-                      {count.format(area.repos)}
-                    </td>
-                    <td className="who-builds-number">
-                      {count.format(area.prs)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-        </section>
-        <section
-          className="who-builds-block"
-          aria-labelledby="who-builds-known-heading"
-        >
-          <h3 id="who-builds-known-heading">
-            Well-known repositories they merged into this year
-          </h3>
-          <section
-            className="plain-table-wrap"
-            aria-label="Well-known repositories outside Slop"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
-            tabIndex={0}
-          >
-            <table className="plain-table who-builds-table">
-              <thead>
-                <tr>
-                  <th scope="col">Repository</th>
-                  <th scope="col" className="who-builds-number">
-                    Stars
-                  </th>
-                  <th scope="col" className="who-builds-number">
-                    Merged PRs
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {knownRepositories.map((row) => (
-                  <tr key={row.repo}>
-                    <th scope="row">
-                      <ExternalLinkAnchor href={repositoryUrl(row.repo)}>
-                        {row.repo}
-                      </ExternalLinkAnchor>
+            <h3 id="who-builds-focus-heading">What they build elsewhere</h3>
+            <section
+              className="plain-table-wrap"
+              aria-label="Focus areas outside Slop"
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+              tabIndex={0}
+            >
+              <table className="plain-table who-builds-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Primary focus</th>
+                    <th scope="col" className="who-builds-number">
+                      People
                     </th>
-                    <td className="who-builds-number">
-                      {compact.format(row.stars)}
-                    </td>
-                    <td className="who-builds-number">
-                      {count.format(row.prs)}
-                    </td>
+                    <th scope="col" className="who-builds-number">
+                      Repos
+                    </th>
+                    <th scope="col" className="who-builds-number">
+                      Merged PRs
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {focusAreas.map((area) => (
+                    <tr key={area.area}>
+                      <th scope="row">{area.area}</th>
+                      <td className="who-builds-number">
+                        {count.format(area.primaryContributors)}
+                      </td>
+                      <td className="who-builds-number">
+                        {count.format(area.repos)}
+                      </td>
+                      <td className="who-builds-number">
+                        {count.format(area.prs)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
           </section>
-        </section>
-      </div>
-      <DataNotice retry={retry} state={state} />
-      {footprint && models && footprint.scoredEvents > 0 ? (
-        <p className="model-outcomes-note">
-          Inside Slop, live: {count.format(footprint.contributors)} contributors
-          scored in the last {footprint.windowDays} days, and{" "}
-          {percent(
-            models.totals.mergedPullRequestsWithModel,
-            models.totals.mergedPullRequests,
-          )}{" "}
-          of merged pull requests name the model that did the work (
-          {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
-          {count.format(models.totals.mergedPullRequests)}).
-        </p>
-      ) : null}
+          <section
+            className="who-builds-block"
+            aria-labelledby="who-builds-known-heading"
+          >
+            <h3 id="who-builds-known-heading">
+              Well-known repositories they merged into this year
+            </h3>
+            <section
+              className="plain-table-wrap"
+              aria-label="Well-known repositories outside Slop"
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+              tabIndex={0}
+            >
+              <table className="plain-table who-builds-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Repository</th>
+                    <th scope="col" className="who-builds-number">
+                      Stars
+                    </th>
+                    <th scope="col" className="who-builds-number">
+                      Merged PRs
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {knownRepositories.map((row) => (
+                    <tr key={row.repo}>
+                      <th scope="row">
+                        <ExternalLinkAnchor href={repositoryUrl(row.repo)}>
+                          {row.repo}
+                        </ExternalLinkAnchor>
+                      </th>
+                      <td className="who-builds-number">
+                        {compact.format(row.stars)}
+                      </td>
+                      <td className="who-builds-number">
+                        {count.format(row.prs)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          </section>
+        </div>
+        {footprint && models && footprint.scoredEvents > 0 ? (
+          <p className="model-outcomes-note">
+            Inside Slop, live: {count.format(footprint.contributors)}{" "}
+            contributors scored in the last {footprint.windowDays} days, and{" "}
+            {percent(
+              models.totals.mergedPullRequestsWithModel,
+              models.totals.mergedPullRequests,
+            )}{" "}
+            of merged pull requests name the model that did the work (
+            {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
+            {count.format(models.totals.mergedPullRequests)}).
+          </p>
+        ) : null}
+      </details>
       <p className="who-builds-sources">
         Public GitHub data since 1 January 2026{massNote}.{" "}
         <ExternalLinkAnchor href={pinnedFile(pin.snapshotPath)}>
@@ -544,7 +538,12 @@ export function SponsorsPage({
         lead="Deposit into a project’s vault. Funded awards pay monthly when payments are enabled."
       />
       <section className="custody-proof sponsor-pools">
-        <h2>Projects</h2>
+        <div className="section-heading">
+          <h2>Projects</h2>
+          <Link className="text-button" href="/projects/new">
+            Add a project
+          </Link>
+        </div>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
           {PROJECTS.map((project) => {
             return (
@@ -592,50 +591,37 @@ export function SponsorsPage({
           })}
         </ul>
       </section>
-      <section className="worked-example sponsor-fee">
-        <div>
-          <h2>Fees</h2>
-          <p>
-            Payouts deduct a 2% fee: a 100 USDC award pays 98 USDC to the
-            contributor and 2 USDC in fees.
-          </p>
-          {hasExternalPrize ? (
-            <p>
-              External prize shares use the terms published for that project.
-              The prize sponsor controls eligibility and payment.
-            </p>
-          ) : null}
-        </div>
-        <dl
-          className="equation-card"
-          aria-label="Example: $5,000 in gross escrow awards"
-        >
-          <div>
-            <dt>Example gross awards</dt>
-            <dd>$5,000</dd>
-          </div>
-          <div>
-            <dt>Slop fee, deducted</dt>
-            <dd>$100</dd>
-          </div>
-          <div>
-            <dt>Contributors receive</dt>
-            <dd>$4,900</dd>
-          </div>
-        </dl>
-      </section>
-      <section className="worked-example sponsor-start">
-        <div>
-          <h2>Add your own project.</h2>
-        </div>
-        <ul>
-          <li>
-            <Link href="/projects/new">Add a project</Link>
-          </li>
-        </ul>
-      </section>
       <details className="sponsor-details">
-        <summary>Funding rules</summary>
+        <summary>Funding rules and fees</summary>
+        <section className="worked-example sponsor-fee">
+          <div>
+            <h2>Fees</h2>
+            <p>Ordinary awards deduct 2% in the award asset.</p>
+            {hasExternalPrize ? (
+              <p>
+                External prize shares use the terms published for that project.
+                The prize sponsor controls eligibility and payment.
+              </p>
+            ) : null}
+          </div>
+          <dl
+            className="equation-card"
+            aria-label="Example: $5,000 in gross escrow awards"
+          >
+            <div>
+              <dt>Example gross awards</dt>
+              <dd>$5,000</dd>
+            </div>
+            <div>
+              <dt>Slop fee, deducted</dt>
+              <dd>$100</dd>
+            </div>
+            <div>
+              <dt>Contributors receive</dt>
+              <dd>$4,900</dd>
+            </div>
+          </dl>
+        </section>
         <section className="worked-example sponsor-controls">
           <div>
             <h2>What you decide</h2>
@@ -690,202 +676,10 @@ export function SponsorsPage({
             <Link href="/#leaderboard">Live leaderboard</Link>
           </li>
           <li>
-            <Link href="/receipts">Public receipts</Link>
-          </li>
-          <li>
             <Link href="/cycles">Cycle archive</Link>
           </li>
         </ul>
       </section>
-    </main>
-  );
-}
-
-const RECEIPTS_PAGE_SIZE = 25;
-
-function ModelMark({ model }: { model: string }) {
-  const key = model.toLowerCase();
-  const mark = key.startsWith("claude")
-    ? claudeMark
-    : key.startsWith("gpt") || key.startsWith("o1") || key.startsWith("o3")
-      ? chatgptMark
-      : key.startsWith("grok")
-        ? grokMark
-        : key.startsWith("muse") || key.startsWith("llama")
-          ? metaMark
-          : null;
-  return mark ? (
-    <img className="route-model-mark" src={mark} alt="" aria-hidden="true" />
-  ) : (
-    <Cpu className="route-model-mark" aria-hidden="true" />
-  );
-}
-
-export function ReceiptsPage({
-  state,
-  retry,
-}: {
-  state: DataState;
-  retry: () => void;
-}) {
-  const [query, setQuery] = useState(
-    () => new URLSearchParams(window.location.search).get("q") ?? "",
-  );
-  const [page, setPage] = useState(0);
-  const search = query.trim().toLowerCase();
-  const receipts =
-    state.status === "ready"
-      ? state.snapshot.attributions
-          .filter(
-            (
-              entry,
-            ): entry is typeof entry & { run: NonNullable<typeof entry.run> } =>
-              entry.run !== null,
-          )
-          .sort((left, right) =>
-            right.run.completedAt.localeCompare(left.run.completedAt),
-          )
-      : [];
-  const matching = receipts.filter((entry) =>
-    [
-      entry.actor?.login,
-      entry.sourceUrl,
-      entry.run.runId,
-      entry.run.repositoryId,
-      entry.identifier,
-      modelIdentityKey(entry.provider, entry.model).key,
-      entry.client,
-    ]
-      .join(" ")
-      .toLowerCase()
-      .includes(search),
-  );
-  // One page of receipts keeps the page short and its links large enough.
-  const pages = Math.max(1, Math.ceil(matching.length / RECEIPTS_PAGE_SIZE));
-  const current = Math.min(page, pages - 1);
-  const shown = matching.slice(
-    current * RECEIPTS_PAGE_SIZE,
-    (current + 1) * RECEIPTS_PAGE_SIZE,
-  );
-  return (
-    <main className="shell evidence-page receipt-page route-receipts">
-      <RoutePageHeader
-        title="Run receipts"
-        icon={<ReceiptText />}
-        lead="Model and usage are self-reported, not provider-verified."
-      >
-        <DataNotice retry={retry} state={state} />
-      </RoutePageHeader>
-      <EvidenceNav current="receipts" />
-      {state.status === "ready" && receipts.length > 0 ? (
-        <label className="receipt-search">
-          Find a receipt
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setPage(0);
-            }}
-            placeholder="Contributor, model, client or run ID"
-            disabled={state.status !== "ready"}
-          />
-        </label>
-      ) : null}
-      {state.status === "ready" && receipts.length > 0 ? (
-        <p className="receipt-count" role="status">
-          {matching.length} of {receipts.length} receipts
-        </p>
-      ) : null}
-      {state.status === "ready" && matching.length === 0 ? (
-        <EmptyState
-          text={
-            receipts.length === 0
-              ? "No receipts published yet."
-              : "No receipts match this search."
-          }
-        />
-      ) : null}
-      {state.status === "ready" && receipts.length === 0 ? (
-        <Link href="/#projects">Browse projects</Link>
-      ) : null}
-      <div className="receipt-list">
-        {shown.map((entry) => {
-          const run = entry.run;
-          const workLabel = new URL(entry.sourceUrl).pathname
-            .slice(1)
-            .replace(/\/(?:pull|issues)\//u, " #");
-          return (
-            <article className="receipt-record" key={run.runId}>
-              <div className="receipt-links">
-                <strong>
-                  {entry.actor ? (
-                    <Link
-                      href={`/contributors/${encodeURIComponent(entry.actor.login)}`}
-                    >
-                      {entry.actor.login}
-                    </Link>
-                  ) : (
-                    "Unknown contributor"
-                  )}
-                </strong>
-                <ExternalLinkAnchor href={entry.sourceUrl}>
-                  {workLabel}
-                </ExternalLinkAnchor>
-              </div>
-              <details>
-                <summary>
-                  <span>
-                    <ModelMark model={run.model} />
-                    {run.provider}/{run.model}
-                  </span>
-                  <time dateTime={run.completedAt}>
-                    {formatDate(run.completedAt)}
-                  </time>
-                  <ChevronRight aria-hidden="true" />
-                </summary>
-                <div className="receipt-details">
-                  <dl>
-                    <div>
-                      <dt>Run ID</dt>
-                      <dd>
-                        <code>{run.runId}</code>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Project</dt>
-                      <dd>{run.projectId}</dd>
-                    </div>
-                    <div>
-                      <dt>Client</dt>
-                      <dd>{run.client}</dd>
-                    </div>
-                    <div>
-                      <dt>Tokens</dt>
-                      <dd>
-                        {run.usage.confidence === "unavailable"
-                          ? "Unavailable"
-                          : new Intl.NumberFormat("en-US").format(
-                              run.usage.totalTokens,
-                            )}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Skill revision</dt>
-                      <dd>
-                        <code>{run.skillRevision}</code>
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-              </details>
-            </article>
-          );
-        })}
-      </div>
-      {pages > 1 ? (
-        <Pager onPage={setPage} page={current} pages={pages} />
-      ) : null}
     </main>
   );
 }

@@ -36,11 +36,6 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import {
-  createSkillAuthorizationProgram,
-  pythonRuntimeProbe,
-} from "./skill-authority.mjs";
-
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const skillDirectory = resolve(scriptDirectory, "..");
 const PROJECT = JSON.parse(
@@ -142,8 +137,8 @@ Commands:
   preview  Show local reads, writes, network access, and public receipt fields
   doctor   Verify repository, skill provenance, declarations, and local runners
   status   List this project's local active and completed measured runs
-  authorize Revalidate installed source immediately before a GitHub write
-  start    Authorize current skill source and capture an optional usage baseline
+  authorize Show local installed source without a live authorization check
+  start    Capture an optional usage baseline from the installed skill
   trace    Permanently upload this run's private trace and finalize it
   opened   After the pull request exists, sign in with GitHub and record its
            pull_request_opened event; uploads no trace, usage, or source
@@ -994,7 +989,7 @@ function requireRepository(repositoryRoot) {
   return root;
 }
 
-function resolveSkillProvenance() {
+function resolveSkillProvenance(requireInstalled = false) {
   const skillBytes = readFileSync(join(skillDirectory, "SKILL.md"));
   const digest = sha256(skillBytes);
   const provenancePath = join(skillDirectory, "PROVENANCE.json");
@@ -1067,6 +1062,11 @@ function resolveSkillProvenance() {
       skillSha256: digest,
     };
   }
+  if (requireInstalled) {
+    fail(
+      "Install the verified skill before using offline authorize or start; a local checkout is not installation provenance",
+    );
+  }
   const repositoryRoot = git(skillDirectory, ["rev-parse", "--show-toplevel"]);
   const sourceRemote = git(repositoryRoot, ["remote", "get-url", "origin"])
     .replace(/^git@github\.com:/u, "https://github.com/")
@@ -1095,111 +1095,12 @@ function resolveSkillProvenance() {
   };
 }
 
-/** Fresh authority applies to this operation only; historical run records are untouched. */
-export function authorizeSkill(
-  provenance = resolveSkillProvenance(),
-  testAuthority,
-) {
-  const files = Object.fromEntries(
-    listRegularFiles(skillDirectory)
-      .filter(
-        (path) => path !== "PROVENANCE.json" && path !== AUTHORIZATION_RECEIPT,
-      )
-      .map((path) => [
-        path,
-        readFileSync(join(skillDirectory, path)).toString("base64"),
-      ]),
-  );
-  const environment = executionEnvironmentWithGitHub();
-  const requiresHttpsTrust =
-    !testAuthority ||
-    [testAuthority.apiOrigin, testAuthority.rawOrigin].some(
-      (value) => new URL(value).protocol === "https:",
-    );
-  const pythonProbe = pythonRuntimeProbe(requiresHttpsTrust);
-  const python = ["python3", "python"].find(
-    (candidate) =>
-      spawnSync(candidate, ["-c", pythonProbe], {
-        encoding: "utf8",
-        env: environment,
-        stdio: "ignore",
-        timeout: 10_000,
-      }).status === 0,
-  );
-  if (!python) {
-    fail(
-      requiresHttpsTrust
-        ? "Python 3 with a usable HTTPS CA trust store is required for fresh skill authorization"
-        : "Python 3 is required for fresh skill authorization",
-    );
-  }
-  const result = spawnSync(
-    python,
-    [
-      "-c",
-      'import io,json,sys; p=json.load(sys.stdin); sys.stdin=io.StringIO(json.dumps(p["request"])); exec(p["program"])',
-    ],
-    {
-      input: JSON.stringify({
-        program: createSkillAuthorizationProgram(testAuthority),
-        request: {
-          revision: provenance.revision,
-          sourcePath: PROJECT.skillSourcePath,
-          files,
-          // A generated skill re-renders from its template and this approved
-          // registry revision before it is authorized again.
-          ...(PROJECT.registry
-            ? {
-                registry: {
-                  projectId: PROJECT.projectId,
-                  revision: PROJECT.registry.revision,
-                  manifestSha256: PROJECT.registry.manifestSha256,
-                },
-              }
-            : {}),
-        },
-      }),
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024,
-      timeout: 10 * 60_000,
-      env: environment,
-    },
-  );
-  if (result.status !== 0 || result.signal || result.error) {
-    fail(
-      `Installed skill ${provenance.revision} is not freshly authorized: ${result.stderr?.trim() || result.error?.message || "verification did not complete"}. Read the verified update instructions with: curl --fail --silent --show-error https://slop.cash/projects/${PROJECT.projectId}/manual.md . Local work and historical receipts are unchanged.`,
-    );
-  }
-  const value = JSON.parse(result.stdout);
-  if (value.revision !== provenance.revision || !value.authorization)
-    fail("Skill authority returned an invalid revision");
-  return value;
-}
-
-function executionEnvironmentWithGitHub() {
-  // Proxy-only hosts reach GitHub through the standard proxy variables; the
-  // authority check honours them, so pass exactly those and nothing else.
-  const allowed = [
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "NO_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "no_proxy",
-  ];
+/** Installed skills run from local provenance without a live policy gate. */
+export function authorizeSkill() {
+  const provenance = resolveSkillProvenance(true);
   return {
-    ...executionEnvironment(),
-    ...Object.fromEntries(
-      allowed.flatMap((name) =>
-        typeof process.env[name] === "string"
-          ? [[name, process.env[name]]]
-          : [],
-      ),
-    ),
+    revision: provenance.revision,
+    authorization: { kind: "source", revision: provenance.revision },
   };
 }
 
@@ -1228,40 +1129,46 @@ function validateAuthorizationReceipt(revision) {
     receipt?.revision !== revision ||
     !receipt.authorization ||
     typeof receipt.authorization !== "object" ||
-    Array.isArray(receipt.authorization) ||
-    !/^[0-9a-f]{40}$/u.test(receipt.authorization.develop)
+    Array.isArray(receipt.authorization)
   ) {
     fail("installed skill authorization receipt has an invalid identity");
   }
   const authorization = receipt.authorization;
   const expectedAuthorization =
-    authorization.kind === "develop" &&
-    Object.keys(authorization).sort().join("\0") === "develop\0kind"
-      ? { kind: "develop", develop: authorization.develop }
-      : authorization.kind === "candidate" &&
-          Object.keys(authorization).sort().join("\0") ===
-            "develop\0kind\0pull" &&
-          Number.isSafeInteger(authorization.pull) &&
-          authorization.pull > 0
-        ? {
-            kind: "candidate",
-            develop: authorization.develop,
-            pull: authorization.pull,
-          }
-        : authorization.kind === "release" &&
+    authorization.kind === "source" &&
+    authorization.revision === revision &&
+    Object.keys(authorization).sort().join("\0") === "kind\0revision"
+      ? { kind: "source", revision }
+      : authorization.kind === "develop" &&
+          /^[0-9a-f]{40}$/u.test(authorization.develop) &&
+          Object.keys(authorization).sort().join("\0") === "develop\0kind"
+        ? { kind: "develop", develop: authorization.develop }
+        : authorization.kind === "candidate" &&
+            /^[0-9a-f]{40}$/u.test(authorization.develop) &&
             Object.keys(authorization).sort().join("\0") ===
-              "attempt\0develop\0kind\0run" &&
-            Number.isSafeInteger(authorization.run) &&
-            authorization.run > 0 &&
-            Number.isSafeInteger(authorization.attempt) &&
-            authorization.attempt > 0
+              "develop\0kind\0pull" &&
+            Number.isSafeInteger(authorization.pull) &&
+            authorization.pull > 0
           ? {
-              kind: "release",
+              kind: "candidate",
               develop: authorization.develop,
-              run: authorization.run,
-              attempt: authorization.attempt,
+              pull: authorization.pull,
             }
-          : null;
+          : authorization.kind === "release" &&
+              /^[0-9a-f]{40}$/u.test(authorization.develop) &&
+              Object.keys(authorization).sort().join("\0") ===
+                "attempt\0develop\0kind\0run" &&
+              Number.isSafeInteger(authorization.run) &&
+              authorization.run > 0 &&
+              Number.isSafeInteger(authorization.attempt) &&
+              authorization.attempt > 0
+            ? {
+                kind: "release",
+                develop: authorization.develop,
+                run: authorization.run,
+                attempt: authorization.attempt,
+              }
+            : null;
   const expectedReceipt = expectedAuthorization
     ? {
         schemaVersion: "1",
@@ -2685,7 +2592,7 @@ function previewRun(options) {
       "Bun or npm package cache and diagnostic logs only with --allow-package-execution; none with --usage-unavailable",
     ],
     network: [
-      "Required for start and authorize: api.github.com and raw.githubusercontent.com verify the complete installed skill and current source authority; no source bytes are uploaded",
+      "Start and authorize use local installed provenance; neither requires a live GitHub source authorization check",
       `With --allow-package-execution, resolve exact ccusage@${CCUSAGE_VERSION} during doctor and measured runs; fetch it from the package registry only when it is not already cached`,
       `Only with start --verify-policy, fetch current project terms from https://slop.cash/projects/${PROJECT.projectId}/terms.json and any digest-bound LICENSE, inbound terms, or prize rules from github.com, raw.githubusercontent.com, or proximityprize.org as named by that policy`,
       `Verify the server-authoritative private-request intake gate at ${PRIVATE_REQUEST_INTAKE_STATUS}; trace upload remains blocked unless it reports enabled`,
@@ -2811,9 +2718,8 @@ function statusRun(options) {
 }
 
 function startRun(options, testOptions) {
-  const provenance = resolveSkillProvenance();
+  const provenance = resolveSkillProvenance(true);
   const repositoryRoot = requireRepository(options.repoRoot);
-  authorizeSkill(provenance, testOptions?.testSkillAuthority);
   const usageAdapter = usageAdapterFor(options.client);
   const runId = createRunId();
   const state = validateActiveRecord({
@@ -3069,14 +2975,11 @@ export async function main(args = process.argv.slice(2), testOptions) {
   else if (options.action === "doctor") doctorRun(options);
   else if (options.action === "status") statusRun(options);
   else if (options.action === "authorize") {
-    const result = authorizeSkill(
-      resolveSkillProvenance(),
-      testOptions?.testSkillAuthority,
-    );
+    const result = authorizeSkill();
     renderResult(
       {
         ...result,
-        message: `Skill ${result.revision} is currently authorized. Recheck immediately before each GitHub write.`,
+        message: `Skill ${result.revision} is installed and ready to use. No live authorization check is required.`,
       },
       options.json,
     );

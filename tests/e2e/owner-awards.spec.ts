@@ -185,33 +185,68 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   const awards = page.getByRole("region", { name: "Monthly awards" });
   await expect(awards).toContainText("1.23456789 TEST");
   await expect(awards).not.toContainText("reason");
+  const firstBreakdown = awards
+    .getByRole("list", { name: "Allocations", exact: true })
+    .locator("li")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "first-contributor",
+        exact: true,
+      }),
+    });
+  await expect(firstBreakdown).toContainText("1.209876532 TEST");
+  await expect(firstBreakdown).toContainText("0.024691358 TEST");
+  const basis = firstBreakdown.locator("details");
+  await expect(
+    basis.getByText("Proposed gross", { exact: true }),
+  ).not.toBeVisible();
+  await basis.getByText("Allocation basis", { exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    basis.getByText("Proposed gross", { exact: true }),
+  ).toBeVisible();
+  await expect(basis).toContainText("1.23456789 TEST");
+  await basis.getByText("Allocation basis", { exact: true }).focus();
+  await page.keyboard.press("Enter");
+  const secondBreakdown = awards
+    .getByRole("list", { name: "Allocations", exact: true })
+    .locator("li")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "second-contributor",
+        exact: true,
+      }),
+    });
+  await expect(secondBreakdown).toContainText("1.96 TEST");
+  await expect(secondBreakdown).toContainText("0.04 TEST");
   await awards.getByLabel("Award for second-contributor").fill("1.5");
   await awards
     .getByRole("button", { name: "Save second-contributor", exact: true })
     .click();
   await expect(page.getByText("Allocation saved privately.")).toBeVisible();
+  await expect(secondBreakdown).toContainText("1.47 TEST");
+  await expect(secondBreakdown).toContainText("0.03 TEST");
   expect(changes).toEqual([
     { githubUserId: "2", grossBase: "1500000000", expectedSequence: 0 },
   ]);
   // After the cutoff, with the automatic default on, allocations are fixed.
   cutoffAt = "2026-12-01T00:00:00.000Z";
   await load.click();
-  await expect(awards).toContainText("The cutoff has passed");
+  await expect(awards).toContainText("Cutoff passed");
   await expect(
     awards.getByLabel("Award for second-contributor"),
   ).toBeDisabled();
   cutoffAt = "2026-12-04T00:00:00.000Z";
   await load.click();
-  await expect(awards).toContainText("Unless you finalize earlier");
+  await expect(awards).toContainText("You can finalize earlier");
   // The cutoff is a calendar UTC instant, shown in UTC for every viewer.
-  await expect(awards).toContainText("finalized at Dec 4, 2026, 00:00 UTC.");
+  await expect(awards).toContainText("Finalizes Dec 4, 2026, 00:00 UTC.");
   await expect(awards.getByLabel("Award for second-contributor")).toBeEnabled();
   await awards
     .getByRole("button", { name: "Turn off automatic finalization" })
     .click();
-  await expect(awards).toContainText(
-    "Automatic allocation finalization is off",
-  );
+  await expect(awards).toContainText("Finalize each month manually.");
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: info.outputPath("owner-monthly-allocations.png"),
     fullPage: true,
@@ -222,6 +257,18 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+  const restoreAllocationText = await enlargeText(page.locator("body"));
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: info.outputPath("owner-monthly-allocations-zoom.png"),
+    fullPage: true,
+  });
+  await restoreAllocationText();
   await awards.getByRole("button", { name: "Finalize awards" }).click();
   await expect(awards).toContainText("Finalized by you");
   await expect(awards).toContainText("Dec 2, 2026, 00:00 UTC");
@@ -257,6 +304,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     "No allocation is proposed for this month yet.",
   );
   await expectAccessible(page);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: info.outputPath("owner-monthly-awards-zoom.png"),
     fullPage: true,
@@ -379,6 +427,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
       ),
     ),
   ).toBeNull();
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: info.outputPath("owner-reserve-release.png"),
     fullPage: true,

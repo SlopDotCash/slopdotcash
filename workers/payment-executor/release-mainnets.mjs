@@ -18,6 +18,21 @@ const run = async (provider, args) => {
   return result.stdout;
 };
 
+async function readSecretInventory(provider, path, network) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const output = await run(provider, ["secret", "list", "--config", path]);
+    try {
+      return JSON.parse(output);
+    } catch {
+      // A successful CLI exit can still contain truncated output. Retry only
+      // this read; a command failure or a complete wrong inventory refuses.
+    }
+  }
+  throw new Error(
+    `${network} attester secret inventory did not return valid JSON after 3 reads`,
+  );
+}
+
 // Preflight enabled networks and existing services that must stop execution.
 export async function prepareMainnetRelease({
   directory,
@@ -44,8 +59,10 @@ export async function prepareMainnetRelease({
     await writeFile(path, bytes);
     let release = true;
     if (entry.enabled && entry.pinCount) {
-      const inventory = JSON.parse(
-        await run(provider, ["secret", "list", "--config", path]),
+      const inventory = await readSecretInventory(
+        provider,
+        path,
+        entry.network,
       );
       if (
         !Array.isArray(inventory) ||
@@ -218,7 +235,8 @@ if (
   const sha = process.env.GITHUB_SHA;
   const provider = (args) =>
     spawnSync(
-      process.execPath,
+      // This entry point runs under Bun; Wrangler requires the installed Node runtime.
+      "node",
       ["node_modules/wrangler/bin/wrangler.js", ...args],
       { encoding: "utf8", timeout: 120_000 },
     );

@@ -773,9 +773,15 @@ function ProjectsSection({
       : [];
   return (
     <section aria-labelledby="admin-projects" className="admin-section">
-      <div className="admin-section-heading">
-        <h2 id="admin-projects">Projects</h2>
-      </div>
+      {!selectedProject ? (
+        <div className="admin-section-heading">
+          <h2 id="admin-projects">Projects</h2>
+        </div>
+      ) : (
+        <h2 id="admin-projects" className="visually-hidden">
+          Selected project
+        </h2>
+      )}
       {!selectedProject && state.status === "ready" ? (
         <MetricGrid className="operations-summary">
           <MetricTile label="Registered" value={state.projects.length} />

@@ -91,19 +91,6 @@ export function AccountNav({
   );
 }
 
-export function EvidenceNav({ current }: { current: "receipts" | "cycles" }) {
-  return (
-    <SectionNav
-      label="Public records"
-      current={current}
-      links={[
-        { id: "receipts", label: "Receipts", href: "/receipts" },
-        { id: "cycles", label: "Cycles", href: "/cycles" },
-      ]}
-    />
-  );
-}
-
 /** Page framing for inner routes; no global or homepage typography changes. */
 export function RoutePageHeader({
   title,
@@ -566,24 +553,60 @@ export function ContributorIdentity({
 /** Current vault lifecycle shared by contributor and sponsor guidance (PAY-01). */
 export function PaymentLifecycle() {
   return (
-    <ol className="payment-stages" aria-label="Award review stages">
-      <li>
-        <strong>Projected</strong>
-        <span>An estimate, not an approved award.</span>
-      </li>
-      <li>
-        <strong>Under review</strong>
-        <span>The owner can adjust it until the monthly cutoff.</span>
-      </li>
-      <li>
-        <strong>Approved</strong>
-        <span>The owner approved the amount.</span>
-      </li>
-      <li>
-        <strong>Excluded</strong>
-        <span>A payout exclusion or ban keeps it out of payment.</span>
-      </li>
-    </ol>
+    <div className="payment-lifecycle">
+      <ol
+        className="payment-stages"
+        aria-label="Ordinary award and payment milestones"
+      >
+        <li>
+          <strong>Projected</strong>
+          <span>An estimate, not an approved award.</span>
+        </li>
+        <li>
+          <strong>Under review</strong>
+          <span>The amount may change before the monthly cutoff.</span>
+        </li>
+        <li>
+          <strong>Approved</strong>
+          <span>The award amount is approved.</span>
+        </li>
+        <li>
+          <strong>Paid</strong>
+          <span>The finalized payment matches the award.</span>
+        </li>
+      </ol>
+      <details className="payment-exceptions">
+        <summary>Payment states and exceptions</summary>
+        <dl>
+          <div>
+            <dt>Ready</dt>
+            <dd>The funded award can be sent.</dd>
+          </div>
+          <div>
+            <dt>Submitted</dt>
+            <dd>Sent; finality is not yet verified.</dd>
+          </div>
+          <div>
+            <dt>Underfunded</dt>
+            <dd>The allocation is not fully funded.</dd>
+          </div>
+          <div>
+            <dt>Awaiting wallet</dt>
+            <dd>The recipient needs a verified payout destination.</dd>
+          </div>
+          <div>
+            <dt>Held</dt>
+            <dd>Payment is paused while a hold is resolved.</dd>
+          </div>
+          <div>
+            <dt>Excluded</dt>
+            <dd>
+              Not included in this allocation. Funded awards remain payable.
+            </dd>
+          </div>
+        </dl>
+      </details>
+    </div>
   );
 }
 

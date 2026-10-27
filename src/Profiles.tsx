@@ -23,6 +23,7 @@ import {
   formatDate,
   formatMicroUsdc,
 } from "./Presentation";
+import { VaultPaymentHistory } from "./VaultPaymentHistory";
 
 async function loadProfiles(signal: AbortSignal) {
   const response = await fetchWithDeadline("/data/profiles.json", {
@@ -148,7 +149,7 @@ export function ProfileActivity({
         {summary}
         <div>
           <strong>{paid === null ? paidMissing : dollars(paid)}</strong>
-          <span>paid · USDC</span>
+          <span>direct and archived payments · USDC</span>
         </div>
       </div>
       {directState.status === "error" ? (
@@ -185,6 +186,7 @@ export function ProfileActivity({
         direct={direct}
         total={paid === null ? paidMissing : `${dollars(paid)} USDC`}
       />
+      <VaultPaymentHistory scope={githubUserId ? { githubUserId } : null} />
     </section>
   );
 }
