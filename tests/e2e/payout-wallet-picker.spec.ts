@@ -826,6 +826,12 @@ for (const rejectedSignature of [2, 3]) {
     expect(
       writes.filter((write) => write.path === "wallets/authorize"),
     ).toHaveLength(3);
+    expect(
+      writes.filter(
+        (write) =>
+          write.path === "wallets/register" && write.body.chain === "base",
+      ),
+    ).toHaveLength(1);
   });
 }
 
@@ -935,109 +941,5 @@ for (const scenario of [
       path: info.outputPath(`wallet-change-${scenario.width}.png`),
       fullPage: true,
     });
-  });
-}
-
-for (const rejectedSignature of [2, 3]) {
-  test(`signature ${rejectedSignature} rejection survives partial progress refresh and retry`, async ({
-    page,
-  }) => {
-    const saved: SavedWallet[] = [];
-    const registrations: string[] = [];
-    let selected = "base";
-    await page.route("**/api/v1/payments/**", async (route) => {
-      const path = new URL(route.request().url()).pathname.split(
-        "/payments/",
-      )[1];
-      if (path === "me") {
-        await route.fulfill({
-          json: {
-            githubUserId: "123",
-            wallets: saved,
-            payments: [],
-            monthlyAwards: [],
-            balances: [],
-            directTransfers: [],
-            walletObservations: [],
-          },
-        });
-        return;
-      }
-      const body = route.request().postDataJSON();
-      if (path === "wallets/register") {
-        selected = body.chain;
-        registrations.push(selected);
-      }
-      if (path === "wallets/authorize")
-        saved.push({
-          chain: selected as SavedWallet["chain"],
-          claimId: selected,
-          address: evmAddress,
-          authorized: true,
-        });
-      await route.fulfill({
-        json:
-          path === "wallets/register"
-            ? { claimId: selected }
-            : path === "wallets/challenge"
-              ? {
-                  chain: selected,
-                  address: evmAddress,
-                  challengeId: selected,
-                  message: "Confirm fixture wallet",
-                }
-              : {},
-      });
-    });
-    await providers(page);
-    await page.addInitScript(
-      ({ rejectedSignature }) => {
-        let signatures = 0;
-        window.addEventListener("eip6963:announceProvider", (event) => {
-          const { provider, info } = (event as CustomEvent).detail;
-          if (info.name !== "MetaMask" || provider.partialFailureFixture)
-            return;
-          provider.partialFailureFixture = true;
-          const request = provider.request.bind(provider);
-          provider.request = (args: { method: string }) => {
-            if (
-              args.method === "personal_sign" &&
-              ++signatures === rejectedSignature
-            )
-              throw new Error("Fixture signature rejected.");
-            return request(args);
-          };
-        });
-      },
-      { rejectedSignature },
-    );
-    await page.goto("/account#wallets");
-    await (await openPicker(page, "EVM"))
-      .getByRole("button", { name: "MetaMask Detected", exact: true })
-      .click();
-    await expect(
-      page.getByRole("article", { name: "EVM wallet" }),
-    ).toContainText(evmAddress);
-    await expect(page.locator("#wallets").getByRole("alert")).toContainText(
-      "Fixture signature rejected",
-    );
-    expect(saved).toHaveLength(rejectedSignature - 1);
-    await page
-      .getByRole("button", { name: "Change EVM wallet", exact: true })
-      .click();
-    await page
-      .getByRole("dialog", { name: "Connect an EVM wallet" })
-      .getByRole("button", { name: "MetaMask Detected", exact: true })
-      .click();
-    await expect(
-      page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
-    ).toBeVisible();
-    expect(saved.map((wallet) => wallet.chain)).toEqual([
-      "base",
-      "robinhood",
-      "ethereum",
-    ]);
-    expect(registrations.filter((chain) => chain === "base")).toHaveLength(1);
-    await expect(page.locator("#wallets").getByRole("alert")).toHaveCount(0);
   });
 }
