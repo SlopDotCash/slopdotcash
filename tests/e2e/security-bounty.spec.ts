@@ -3484,9 +3484,9 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       fullPage: true,
     });
     await form.getByRole("button", { name: "Record award decision" }).click();
-    await expect(page.getByRole("status").first()).toContainText(
-      "Award: saved.",
-    );
+    await expect(
+      detail.getByRole("status").filter({ hasText: "Award: saved." }),
+    ).toBeVisible();
     await expect(detail).toContainText(
       "3,000 USDC to the researcher · 1,000 USDC to Slop · 4,000 USDC gross",
     );
