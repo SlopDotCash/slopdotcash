@@ -494,7 +494,7 @@ async function main(): Promise<void> {
   const snapshot = preparePullRequestLedger(parsed);
   await mkdir(dirname(output), { recursive: true });
   const temporary = `${output}.tmp-${process.pid}`;
-  await writeFile(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, {
+  await writeFile(temporary, `${JSON.stringify(snapshot)}\n`, {
     flag: "wx",
   });
   await rename(temporary, output);
