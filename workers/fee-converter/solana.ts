@@ -1097,6 +1097,10 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     reconcileNativeGas: reconcileNative,
     async balance(token) {
       const mint = await admittedMint(token);
+      // A reviewed route debits only the canonical associated account. A
+      // claim_fees caller may pay another token account the fee wallet owns;
+      // that holding stays in the wallet and never inflates the swap amount.
+      const holding = ata(token, wallet, mint.tokenProgram);
       const result = await rpc<{
         value: { pubkey: string; account: unknown }[];
       }>("getTokenAccountsByOwner", [
@@ -1117,6 +1121,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           throw new Error(
             "Fee token holding differs from admitted mint or wallet",
           );
+        if (entry.pubkey !== holding) return sum;
         return (
           sum +
           new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(64, true)
