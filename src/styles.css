@@ -4143,6 +4143,11 @@ html:has(.security-page) {
   gap: 0.5rem;
 }
 
+.owner-awards-page input[type="month"] {
+  min-width: 0;
+  width: 100%;
+}
+
 .owner-award-list {
   display: grid;
   gap: 1.5rem;
