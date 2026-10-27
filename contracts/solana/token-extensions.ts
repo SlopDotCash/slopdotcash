@@ -134,7 +134,8 @@ export function readTokenMint(
       throw new Error("Classic mint layout mismatch");
     return { program, raw: bytes, decimals: bytes[44], extensions: [] };
   }
-  // COption tags at 0 (mint authority) and 46 (freeze authority) must be absent.
+  // Only the COption tags determine whether an authority is present. SPL leaves
+  // the old public-key bytes intact when SetAuthority revokes an authority.
   for (const [offset, message] of [
     [0, "Token-2022 mint authority is not disabled"],
     [46, "Token-2022 freeze authority is not disabled"],
@@ -143,8 +144,7 @@ export function readTokenMint(
       bytes[offset] !== 0 ||
       bytes[offset + 1] !== 0 ||
       bytes[offset + 2] !== 0 ||
-      bytes[offset + 3] !== 0 ||
-      bytes.subarray(offset + 4, offset + 36).some((byte) => byte !== 0)
+      bytes[offset + 3] !== 0
     )
       throw new Error(message);
   // A base Token-2022 mint has no extension, but the same authority rule applies.

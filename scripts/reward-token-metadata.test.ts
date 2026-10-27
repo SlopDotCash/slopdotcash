@@ -106,6 +106,19 @@ describe("reward token metadata", () => {
     });
   });
 
+  test("owner setup accepts revoked Token-2022 authorities with retained public-key bytes", async () => {
+    // SPL's pack_coption_key(None) clears the four-byte tag only. Revoking a
+    // previously active authority therefore leaves its old key in the body.
+    for (const mint of [classicMint(6), token2022Mint(6)]) {
+      mint.fill(9, 4, 36);
+      mint.fill(7, 50, 82);
+      expect(await read(TOKEN_2022, mint).metadata).toEqual({
+        decimals: 6,
+        symbol: null,
+      });
+    }
+  });
+
   test("owner setup refuses active authorities on base Token-2022 mints", async () => {
     for (const [offset, role] of [
       [0, "mint"],
