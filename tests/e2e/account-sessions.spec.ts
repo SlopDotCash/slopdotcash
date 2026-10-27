@@ -229,6 +229,7 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
   ).toBeVisible();
   await expectAccessible(page);
   const recovery = page.locator("#recovery");
+  await recovery.locator("summary").filter({ hasText: /^Close account$/u }).click();
   await recovery
     .getByLabel("Type your GitHub username, appeal-test, to confirm")
     .fill("appeal-test");
