@@ -748,7 +748,23 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
             cache: "no-store",
             referrerPolicy: "no-referrer",
           });
-          if (!response.ok) throw new Error(identityFailure(response.status));
+          if (!response.ok) {
+            // A local backend without a GitHub App sends the developer to setup.
+            if (
+              localBackendOrigin !== null &&
+              response.status === 503 &&
+              (
+                (await readBoundedJson(response, 16384, "sign-in").catch(
+                  () => null,
+                )) as { error?: unknown } | null
+              )?.error === "github_app_missing"
+            ) {
+              popup?.close();
+              window.location.assign(`${localBackendOrigin}/__dev/setup`);
+              throw new Error("Set up the local GitHub App to continue.");
+            }
+            throw new Error(identityFailure(response.status));
+          }
           const body = await readBoundedJson(response, 16384, "sign-in");
           if (!body || typeof body !== "object" || Array.isArray(body))
             throw new Error("Sign-in failed. Start again.");
@@ -803,19 +819,6 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       if (active.current === c) setBusy(false);
     }
   }
-  async function signout() {
-    try {
-      await requestJson("/api/v1/points/signout", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      });
-      clearAllDrafts();
-      setMe(null);
-    } catch {
-      setMessage("Could not sign out. Retry.");
-    }
-  }
   if (!productOrigin()) {
     const destination = new URL("/login", browserDeployment.site);
     const next = returnPath();
@@ -834,51 +837,31 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       </section>
     );
   }
+  // The header account menu offers the profile link and sign out.
+  if (me) return null;
   return (
     <section className="points-panel">
-      {showHeading ? (
-        <h2>{me ? `@${me.actor.login}` : "Sign in to Slop"}</h2>
-      ) : null}
-      {!me && session === "error" ? (
+      {showHeading ? <h2>Sign in to Slop</h2> : null}
+      {session === "error" ? (
         <p role="status">Could not check your session. Sign in again.</p>
       ) : null}
-      {!me ? (
-        <p>
-          Signing in makes your Slop membership and any connected X profile link
-          public.
-        </p>
-      ) : null}
-      {me ? (
-        <div className="account-session-actions">
-          <a
-            className="button secondary-button"
-            href={`/contributors/${encodeURIComponent(me.actor.login)}`}
-          >
-            Your profile
-          </a>
-          <button
-            className="button ghost-button"
-            type="button"
-            onClick={() => void signout()}
-          >
-            Sign out
-          </button>
-        </div>
-      ) : (
-        <button
-          className="button primary-button"
-          type="button"
-          disabled={busy || session === "loading"}
-          onClick={() => void start(closedAccount)}
-        >
-          <GithubIcon aria-hidden="true" />
-          {busy
-            ? "Waiting for GitHub…"
-            : closedAccount
-              ? "Reopen account with GitHub"
-              : "Continue with GitHub"}
-        </button>
-      )}
+      <p>
+        Signing in makes your Slop membership and any connected X profile link
+        public.
+      </p>
+      <button
+        className="button primary-button"
+        type="button"
+        disabled={busy || session === "loading"}
+        onClick={() => void start(closedAccount)}
+      >
+        <GithubIcon aria-hidden="true" />
+        {busy
+          ? "Waiting for GitHub…"
+          : closedAccount
+            ? "Reopen account with GitHub"
+            : "Continue with GitHub"}
+      </button>
       <p role="status">{message}</p>
     </section>
   );
@@ -929,15 +912,7 @@ export function AccountPage() {
     <main className="shell route-main account-page">
       <RoutePageHeader icon={<UserRound />} title="Account" />
       <AccountNav current="account" />
-      {signedIn ? (
-        <nav className="account-sections" aria-label="Account sections">
-          <a href="#profile">Profile</a>
-          <a href="#wallets">Wallets</a>
-          <a href="#notifications">Notifications</a>
-          <a href="#security">Security</a>
-        </nav>
-      ) : null}
-      {!walletEntry || signedIn ? (
+      {!me && (!walletEntry || signedIn) ? (
         <div id="profile">
           <JoinPoints />
         </div>
