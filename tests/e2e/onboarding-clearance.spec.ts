@@ -180,3 +180,151 @@ test("home agent setup stays usable when discovery is unavailable", async ({
     page.getByRole("heading", { name: "Agent setup unavailable" }),
   ).toHaveCount(0);
 });
+
+test("history navigation never carries another project's clearance into agent setup", async ({
+  page,
+  diagnostics,
+}, info) => {
+  diagnostics.allowPreviewApiMisses();
+  let holdClearance = false;
+  let releaseClearance = () => {};
+  const pendingClearance = new Promise<void>((resolve) => {
+    releaseClearance = resolve;
+  });
+  await page.route("**/.well-known/slop/projects.json", async (route) => {
+    if (holdClearance) await pendingClearance;
+    await route.fulfill({
+      json: { schemaVersion: "1", projects: [{ project_id: "eliza" }] },
+    });
+  });
+  await page.goto("/projects/asi", { waitUntil: "networkidle" });
+  await expect(
+    page.getByText("This project is not cleared for agents.", { exact: false }),
+  ).toBeVisible();
+  const homeSnapshot = page
+    .waitForResponse((response) =>
+      new URL(response.url()).pathname.endsWith("/data/leaderboard.json"),
+    )
+    .then((response) => response.finished());
+  await page
+    .getByRole("main")
+    .getByRole("link", { name: "Projects", exact: true })
+    .click();
+  expect(await homeSnapshot).toBeNull();
+  const elizaSnapshot = page
+    .waitForResponse((response) =>
+      new URL(response.url()).pathname.endsWith("/data/leaderboard.json"),
+    )
+    .then((response) => response.finished());
+  await page.locator('a.project-card[href="/projects/eliza"]').click();
+  expect(await elizaSnapshot).toBeNull();
+  await expect(
+    page.getByRole("status", { name: "Agent prompt" }),
+  ).toContainText("elizaOS/eliza");
+  await expect(page.getByRole("region", { name: "Open work" })).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
+  // Observe every committed mutation, including prompt nodes removed before
+  // the next browser assertion. An end-state check misses the stale render.
+  await page.evaluate(() => {
+    type Observation = {
+      prompt: boolean;
+      work: boolean;
+      changedPrompt: boolean;
+    };
+    const observed = window as Window & {
+      clearanceObservations?: Observation[];
+      clearanceObserver?: MutationObserver;
+    };
+    observed.clearanceObservations = [];
+    observed.clearanceObserver = new MutationObserver((records) => {
+      if (location.pathname !== "/projects/asi") return;
+      const changed = records.flatMap((record) => {
+        const element =
+          record.target instanceof Element
+            ? record.target
+            : record.target.parentElement;
+        if (element?.closest('[aria-label="Agent prompt"]'))
+          return [
+            record.oldValue ?? "",
+            ...Array.from(record.addedNodes, (node) => node.textContent ?? ""),
+            ...Array.from(
+              record.removedNodes,
+              (node) => node.textContent ?? "",
+            ),
+          ];
+        return [];
+      });
+      observed.clearanceObservations?.push({
+        prompt: Boolean(
+          document
+            .querySelector('[aria-label="Agent prompt"]')
+            ?.textContent?.includes("SlopDotCash/asi"),
+        ),
+        work: document.querySelector("#open-work-heading") !== null,
+        changedPrompt: changed.some((text) => text.includes("SlopDotCash/asi")),
+      });
+    });
+    observed.clearanceObserver.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      characterDataOldValue: true,
+    });
+  });
+  holdClearance = true;
+  let observations: {
+    prompt: boolean;
+    work: boolean;
+    changedPrompt: boolean;
+  }[] = [];
+  try {
+    await page.evaluate(() => history.go(-2));
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("ASI");
+    await expect(page.getByText("Checking project clearance…")).toBeVisible();
+    await expect(page.getByRole("region", { name: "Open work" })).toHaveCount(
+      0,
+    );
+    await expect(
+      page.getByRole("status", { name: "Agent prompt" }),
+    ).not.toContainText("SlopDotCash/asi");
+    observations = await page.evaluate(() => {
+      const observed = window as Window & {
+        clearanceObservations?: {
+          prompt: boolean;
+          work: boolean;
+          changedPrompt: boolean;
+        }[];
+        clearanceObserver?: MutationObserver;
+      };
+      observed.clearanceObserver?.disconnect();
+      return observed.clearanceObservations ?? [];
+    });
+    await info.attach("pending-project-clearance-mutations", {
+      body: JSON.stringify(observations),
+      contentType: "application/json",
+    });
+    await page.screenshot({ path: info.outputPath("clearance-pending.png") });
+  } finally {
+    releaseClearance();
+  }
+  await expect(
+    page.getByText("This project is not cleared for agents.", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Open work" })).toHaveCount(0);
+  await expect(
+    page.getByRole("status", { name: "Agent prompt" }),
+  ).not.toContainText("SlopDotCash/asi");
+  await page.waitForLoadState("networkidle");
+  await page.screenshot({ path: info.outputPath("clearance-blocked.png") });
+  expect(await page.evaluate(() => performance.timeOrigin)).toBe(
+    documentTimeOrigin,
+  );
+  expect(observations.length).toBeGreaterThan(0);
+  expect(
+    observations.filter(
+      ({ prompt, work, changedPrompt }) => prompt || work || changedPrompt,
+    ),
+    "an uncleared project must never render its own prompt or open work",
+  ).toEqual([]);
+});
