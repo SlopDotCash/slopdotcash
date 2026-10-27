@@ -30,6 +30,27 @@ export type AssessmentSummary = {
  */
 export type VettingPin = { commitSha: string; templateSha256: string };
 
+/** Audited normal-admission waiver; no code was represented as scanned. */
+export type AdmissionExemption = {
+  id: string;
+  kind: "owner-approved-admission";
+  projectId: string;
+  revision: number;
+  manifestSha256: string;
+  repositoryId: string;
+  repositoryNodeId: string;
+  stewardId: string;
+  stewardNodeId: string;
+  grantedBy: { githubId: string; githubLogin: string };
+  grantedAt: string;
+  reason: string;
+  decisionReference: string;
+  revokedAt: string | null;
+  revokedBy: { githubId: string; githubLogin: string } | null;
+  revocationReason: string | null;
+  revocationDecisionReference: string | null;
+};
+
 /**
  * What a repository may do. Only "cleared" lets Slop serve skills, list the
  * project for discovery, or activate it. Normal clearance is admission evidence
@@ -52,4 +73,17 @@ export type VettingClearance =
       reviewedMaliciousAssessmentIds?: string[];
     }
   | { state: "cleared"; assessment: null; grandfathered: true }
+  | {
+      state: "cleared";
+      assessment: null;
+      exemption: Pick<
+        AdmissionExemption,
+        | "id"
+        | "kind"
+        | "grantedAt"
+        | "grantedBy"
+        | "repositoryId"
+        | "repositoryNodeId"
+      >;
+    }
   | { state: "banned"; assessment: AssessmentSummary };

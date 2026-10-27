@@ -396,6 +396,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   if (flagsResponse !== null) return flagsResponse;
   const vettingResponse = await handleVettingApi(request, {
     sandbox: env.VETTING_SANDBOX,
+    repositoryAccess,
     refreshSetup: (projectId) =>
       refreshProjectSetup(request, projectDependencies, projectId),
     evidence,

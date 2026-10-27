@@ -1,9 +1,9 @@
 /**
  * Community project security vetting API (PRD VET-01 to VET-08, MVP-12).
  *
- * Slop queues scans of exact project revisions automatically when their
- * executable content changes (the signed refresh), after a flag pause, or
- * when an admin asks. The external scanner service reads the queue and posts
+ * Slop queues an initial repository-admission scan, a fresh scan after a
+ * contributor-flag pause, or an explicit administrator investigation.
+ * Routine changes retain valid admission for the same repository. The external scanner service reads the queue and posts
  * bounded malicious-code scan results; its routes need an Ed25519 signature
  * from a key in VETTING_RESULT_PUBLIC_KEYS. Without a configured key every
  * vetting route that depends on the service reports it unavailable, and no
@@ -21,6 +21,7 @@ import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
   type ApiError,
   apiErrorResponse,
+  exactKeys,
   fail,
   isSameOriginJsonWrite,
   json as jsonResponse,
@@ -29,8 +30,18 @@ import {
 } from "../http";
 import type { ProjectPersistence } from "../projects/contracts";
 import { type EdgeCache, purgeProjectCache } from "../projects/edge-cache";
-import { pausedByFlagsOnly, projectRestriction } from "../projects/enforcement";
-import type { ScanRequester } from "../projects/setup";
+import {
+  pausedByFlagsOnly,
+  projectRestriction,
+  publicRestrictionOf,
+} from "../projects/enforcement";
+import {
+  manifestMatchesRepository,
+  type RepositoryAccessReader,
+  readRepositoryAccess,
+  type ScanRequester,
+  setupAuthority,
+} from "../projects/setup";
 import { isRecord, readJsonObject, readLimitedBody } from "../trace/validation";
 import type { VettingEvidence } from "./evidence";
 import type { ProjectFlagStore } from "./flags";
@@ -65,6 +76,8 @@ export type VettingApiDependencies = {
   >;
   /** Contributor flags, shown to administrators beside each project. */
   flags?: Pick<ProjectFlagStore, "activeFlags">;
+  /** Fresh repository identity and authority for explicit admission exemptions. */
+  repositoryAccess?: RepositoryAccessReader;
   /** Raw 32-byte Ed25519 public keys of the vetting service, base64. */
   resultPublicKeys: string | undefined;
   /** Configured administrators and project moderators; never inferred from scan content. */
@@ -256,9 +269,233 @@ async function adminOverview(
               : "The vetting service key is unavailable. New scans cannot be queued, acquired or recorded. Existing decisions still require current retained evidence.",
           },
     assessments: assessments.map(adminAssessment),
+    exemptions: await deps.vetting.listAdmissionExemptions(),
     // Moderators read flag evidence here; a flag needs no approval to count.
     flags: (await deps.flags?.activeFlags(deps.now())) ?? [],
   });
+}
+
+function exemptionReason(body: Record<string, unknown>): {
+  reason: string;
+  decisionReference: string;
+} {
+  if (body.confirmation !== true)
+    fail(
+      400,
+      "confirmation_required",
+      "Confirm the explicit human owner decision.",
+    );
+  const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+  const decisionReference =
+    typeof body.decisionReference === "string"
+      ? body.decisionReference.trim()
+      : "";
+  if (
+    reason.length < 1 ||
+    reason.length > 1000 ||
+    decisionReference.length < 1 ||
+    decisionReference.length > 500
+  )
+    fail(
+      400,
+      "invalid_request",
+      "Provide a reason (1–1000 characters) and owner decision reference (1–500 characters).",
+    );
+  return { reason, decisionReference };
+}
+async function exemptionChanged(
+  request: Request,
+  deps: VettingApiDependencies,
+  projectId: string,
+) {
+  await purgeProjectCache(
+    deps.cache,
+    new URL(request.url).origin,
+    await deps.projects.enforcementGeneration(),
+  );
+  if (!deps.refreshSetup) return null;
+  try {
+    return await deps.refreshSetup(projectId);
+  } catch {
+    return {
+      state: "retry",
+      message: "The exemption was recorded. Recheck project setup.",
+    };
+  }
+}
+async function grantExemption(
+  request: Request,
+  deps: VettingApiDependencies,
+): Promise<Response> {
+  const session = await requireAdmin(request, deps);
+  const body = await readJsonObject(request);
+  exactKeys(body, [
+    "projectId",
+    "revision",
+    "reason",
+    "decisionReference",
+    "confirmation",
+  ]);
+  const reason = exemptionReason(body);
+  if (
+    typeof body.projectId !== "string" ||
+    !PROJECT_ID.test(body.projectId) ||
+    !Number.isSafeInteger(body.revision) ||
+    Number(body.revision) < 1
+  )
+    fail(
+      400,
+      "invalid_request",
+      "Provide the project and its current revision.",
+    );
+  const project = await deps.projects.getProject(body.projectId);
+  if (!project) fail(404, "not_found", "Project not found.");
+  if (project.revision !== body.revision)
+    fail(
+      409,
+      "stale_revision",
+      "The project changed. Review its current revision.",
+    );
+  if (project.manifest.repositories.length !== 1)
+    fail(
+      409,
+      "unsupported_repository",
+      "An exemption covers one immutable repository.",
+    );
+  const actor = {
+    githubId: session.githubId,
+    githubLogin: session.githubLogin,
+  };
+  const checked = await readRepositoryAccess(
+    deps.repositoryAccess,
+    project.manifest,
+    actor,
+  );
+  const authority = setupAuthority(
+    checked,
+    actor,
+    project.manifest.repositories[0].id,
+  );
+  if (authority.state === "retry")
+    fail(503, "github_unavailable", authority.message);
+  if (authority.state !== "verified")
+    fail(
+      403,
+      "forbidden",
+      "The approving administrator needs current repository authority.",
+    );
+  if (
+    checked.state !== "read" ||
+    checked.access.installation !== "installed" ||
+    !checked.access.repository
+  )
+    fail(
+      503,
+      "github_unavailable",
+      "Current immutable repository identity is unavailable.",
+    );
+  if (!manifestMatchesRepository(project.manifest, checked.access.repository))
+    fail(
+      409,
+      "repository_mismatch",
+      "The repository identity no longer matches the registered project.",
+    );
+  const generation = await deps.projects.enforcementGeneration();
+  if (
+    publicRestrictionOf(project, await deps.projects.listEnforcements())
+      .state !== "clear" ||
+    project.manifest.listingTier === "retired"
+  )
+    fail(
+      409,
+      "project_restricted",
+      "An admission exemption cannot override a project restriction.",
+    );
+  if (await deps.vetting.hasUnreviewedMalicious(project.id))
+    fail(
+      409,
+      "project_malicious",
+      "An admission exemption cannot override a malicious finding.",
+    );
+  const existing = (await deps.vetting.listAdmissionExemptions()).find(
+    (x) =>
+      x.projectId === project.id &&
+      x.repositoryId === project.manifest.authority.repositoryId &&
+      x.repositoryNodeId === project.manifest.authority.repositoryNodeId &&
+      x.stewardId === project.manifest.steward.github.actorId &&
+      x.stewardNodeId === project.manifest.steward.github.nodeId &&
+      !x.revokedAt,
+  );
+  if (existing)
+    return json(200, {
+      exemption: existing,
+      replayed: true,
+      clearance: await deps.vetting.manifestClearance(
+        project.id,
+        project.manifest,
+        project.revision,
+        () => deps.livePin(project.manifest),
+      ),
+    });
+  const id = `vex_${deps.randomId().replaceAll("-", "")}`;
+  const saved = await deps.vetting.grantAdmissionExemption({
+    id,
+    projectId: project.id,
+    revision: project.revision,
+    manifestSha256: project.manifestSha256,
+    repositoryId: project.manifest.authority.repositoryId,
+    repositoryNodeId: project.manifest.authority.repositoryNodeId,
+    stewardId: project.manifest.steward.github.actorId,
+    stewardNodeId: project.manifest.steward.github.nodeId,
+    actor,
+    at: deps.now().toISOString(),
+    ...reason,
+    enforcementGeneration: generation,
+  });
+  if (!saved)
+    fail(
+      409,
+      "stale_revision",
+      "The project, its restrictions or exemption changed. Reload before granting.",
+    );
+  const exemption = await deps.vetting.admissionExemption(id);
+  const setup = await exemptionChanged(request, deps, project.id);
+  return json(201, {
+    exemption,
+    setup,
+    clearance: await deps.vetting.manifestClearance(
+      project.id,
+      project.manifest,
+      project.revision,
+      () => deps.livePin(project.manifest),
+    ),
+  });
+}
+async function revokeExemption(
+  request: Request,
+  deps: VettingApiDependencies,
+  id: string,
+): Promise<Response> {
+  const session = await requireAdmin(request, deps);
+  const body = await readJsonObject(request);
+  exactKeys(body, ["reason", "decisionReference", "confirmation"]);
+  const reason = exemptionReason(body);
+  if (!/^vex_[A-Za-z0-9_-]{4,76}$/u.test(id))
+    fail(404, "not_found", "Exemption not found.");
+  const existing = await deps.vetting.admissionExemption(id);
+  if (!existing) fail(404, "not_found", "Exemption not found.");
+  if (existing.revokedAt)
+    return json(200, { exemption: existing, replayed: true });
+  await deps.vetting.revokeAdmissionExemption(
+    id,
+    { githubId: session.githubId, githubLogin: session.githubLogin },
+    deps.now().toISOString(),
+    reason.reason,
+    reason.decisionReference,
+  );
+  const exemption = await deps.vetting.admissionExemption(id);
+  const setup = await exemptionChanged(request, deps, existing.projectId);
+  return json(200, { exemption, setup });
 }
 
 async function requestAssessment(
@@ -784,9 +1021,18 @@ export async function handleVettingApi(
     // Admin writes ride the session cookie, so they must come from this site.
     if (admin && request.method !== "GET" && !isSameOriginJsonWrite(request))
       fail(403, "origin_forbidden", "Requests must come from this site");
+    if (
+      request.method === "POST" &&
+      parts.length === 5 &&
+      parts[2] === "exemptions" &&
+      parts[4] === "revoke"
+    )
+      return await revokeExemption(request, deps, parts[3]);
     switch (route) {
       case "GET admin/vetting":
         return await adminOverview(request, deps);
+      case "POST admin/vetting/exemptions":
+        return await grantExemption(request, deps);
       case "POST admin/vetting/assessments":
         return await requestAssessment(request, deps);
       case "GET vetting/sandbox":

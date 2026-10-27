@@ -2,8 +2,8 @@
  * Self-service project setup (PRD section 4, owner decisions of 22 and 24
  * October 2026). A project starts without routine admin approval once
  * Slopbot is installed on the repository, the installation reads write,
- * maintain or admin access for its owner, and a security scan of the exact
- * revision is clean. This module derives the one
+ * maintain or admin access for its owner, and retained admission clearance
+ * or an explicit recorded exemption is available. This module derives the one
  * setup status an owner sees, and the checks behind it. Funding is reported
  * separately because a project works without it.
  */
@@ -209,8 +209,14 @@ function scanCheck(
         ? {
             state: "cleared",
             exempt: true,
+            exemptionKind:
+              "exemption" in clearance
+                ? "owner-approved-admission"
+                : "existing-project",
             message:
-              "Existing project, permanently exempt from scan clearance.",
+              "exemption" in clearance
+                ? "Owner-approved admission exemption. No passed scan is claimed."
+                : "Existing project, permanently exempt from scan clearance.",
           }
         : {
             state: "cleared",
