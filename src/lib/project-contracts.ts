@@ -158,6 +158,8 @@ export type AdminProject = ProjectRecord & {
 export interface ProjectEnforcementState {
   state: RestrictionState;
   appeal: AppealState;
+  /** The current project request, separate from kept or account-only appeals. */
+  projectAppeal: AppealState;
   since: string | null;
   restrictedBy: GithubActor[];
   nextSequence: number;
