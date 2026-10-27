@@ -1248,7 +1248,7 @@ function ProjectPaymentHistory({
         >
           {showHistory
             ? "Show recent history"
-            : "Show complete payment history"}
+            : `Show complete ${externalPrize ? "cycle" : "payment"} history`}
         </button>
       ) : null}
     </section>
