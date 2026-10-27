@@ -1462,6 +1462,53 @@ function describePageSize(variables: GraphqlVariables): string {
   return typeof current === "number" ? `; page size ${current}` : "";
 }
 
+/** Only a missing requested PR in the scalar census can trigger recollection. */
+function missingReviewCensusNodes(
+  document: string,
+  variables: GraphqlVariables,
+  envelope: JsonRecord,
+): boolean {
+  if (document !== REVIEWED_PULL_REQUEST_REFERENCES_QUERY) return false;
+  const ids = variables.ids;
+  const data = envelope.data;
+  const errors = envelope.errors;
+  if (
+    !Array.isArray(ids) ||
+    ids.length === 0 ||
+    ids.some((id) => typeof id !== "string") ||
+    !data ||
+    typeof data !== "object" ||
+    Array.isArray(data) ||
+    !Array.isArray(errors) ||
+    errors.length === 0
+  )
+    return false;
+  const nodes = (data as JsonRecord).nodes;
+  if (!Array.isArray(nodes) || nodes.length !== ids.length) return false;
+  const missing = new Set<number>();
+  for (const error of errors) {
+    if (!error || typeof error !== "object" || Array.isArray(error))
+      return false;
+    const { type, path, message } = error as JsonRecord;
+    if (
+      type !== "NOT_FOUND" ||
+      !Array.isArray(path) ||
+      path.length !== 2 ||
+      path[0] !== "nodes" ||
+      !Number.isSafeInteger(path[1]) ||
+      (path[1] as number) < 0 ||
+      (path[1] as number) >= ids.length ||
+      nodes[path[1] as number] !== null ||
+      missing.has(path[1] as number) ||
+      message !==
+        `Could not resolve to a node with the global id of '${ids[path[1] as number]}'.`
+    )
+      return false;
+    missing.add(path[1] as number);
+  }
+  return nodes.every((node, index) => node !== null || missing.has(index));
+}
+
 export class GitHubGraphqlClient implements GraphqlExecutor {
   readonly #token: string;
   readonly #fetch: FetchLike;
@@ -1680,12 +1727,30 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       );
     }
     if (Array.isArray(envelope.errors) && envelope.errors.length > 0) {
+      if (
+        !restPath &&
+        missingReviewCensusNodes(document, activeVariables, envelope)
+      ) {
+        const data = asRecord(envelope.data, "GitHub GraphQL response.data");
+        this.#recordRateLimit(parseRateLimit(data.rateLimit), apiLabel);
+        throw new ReviewCensusChangedError(
+          "Requested pull requests disappeared during the review census; recollect every source before publication",
+        );
+      }
       const errors = envelope.errors.map(sanitizeGraphqlError).join("; ");
       throw new Error(`${apiLabel} rejected the leaderboard query: ${errors}`);
     }
     if (restPath) return envelope;
     const data = asRecord(envelope.data, "GitHub GraphQL response.data");
     const rateLimit = parseRateLimit(data.rateLimit);
+    this.#recordRateLimit(rateLimit, apiLabel);
+    return data;
+  }
+
+  #recordRateLimit(
+    rateLimit: Omit<RateLimitSnapshot, "consumedDuringRun">,
+    apiLabel: string,
+  ): void {
     this.#startingRemaining =
       this.#startingRemaining ?? rateLimit.remaining + rateLimit.cost;
     this.#consumedCost += rateLimit.cost;
@@ -1706,7 +1771,6 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         `${apiLabel} safety budget exceeded (${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve})`,
       );
     }
-    return data;
   }
 
   getRequestCount(): number {
