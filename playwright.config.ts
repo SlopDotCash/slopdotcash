@@ -80,7 +80,9 @@ if (
 )
   throw new Error("SLOP_E2E_VETTING_PUBLIC_KEY must be a base64 Ed25519 key");
 const registryArguments = registryPersistTo
-  ? ` --persist-to ${JSON.stringify(registryPersistTo)}${
+  ? // Positive local registry workflows must explicitly select test networks;
+    // the release configuration intentionally has no network enabled by default.
+    ` --persist-to ${JSON.stringify(registryPersistTo)} --binding 'PAYMENT_NETWORKS=["base-sepolia","solana-devnet"]'${
       registryAdmins ? ` --binding ADMIN_GITHUB_IDS=${registryAdmins}` : ""
     }${
       registryModerators
