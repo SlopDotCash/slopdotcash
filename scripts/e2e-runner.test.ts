@@ -10,7 +10,10 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 test("a timed-out launcher stops its descendant server before returning failure", async () => {
   const directory = mkdtempSync(join(tmpdir(), "slop-phase-tree-"));
   const heartbeat = join(directory, "heartbeat");
-  const descendant = `const fs = require("node:fs"); let count = 0; setInterval(() => fs.writeFileSync(${JSON.stringify(heartbeat)}, String(++count)), 25);`;
+  // SIGKILL can interrupt a truncate-and-write, leaving an empty heartbeat.
+  // Rename a complete sample so the test observes process liveness rather
+  // than which filesystem syscall was interrupted at the deadline.
+  const descendant = `const fs = require("node:fs"); const heartbeat = ${JSON.stringify(heartbeat)}; let count = 0; setInterval(() => { fs.writeFileSync(heartbeat + ".next", String(++count)); fs.renameSync(heartbeat + ".next", heartbeat); }, 25);`;
   const launcher = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "inherit" }); setInterval(() => {}, 1000);`;
   try {
     expect(
