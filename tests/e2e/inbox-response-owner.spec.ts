@@ -64,7 +64,7 @@ test("private receipt response cannot be assigned to a later matching session", 
     }
     throw new Error(`Unexpected request: ${path}`);
   });
-  await page.goto(`/inbox?submission=${foreignId}`, {
+  await page.goto(`/inbox?view=notifications&submission=${foreignId}`, {
     waitUntil: "networkidle",
   });
   expect(privateReads).toBe(1);

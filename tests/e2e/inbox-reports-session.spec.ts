@@ -171,7 +171,7 @@ test("Reports view retains sign-in and account-error recovery", async ({
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
-    page.getByText("You have no private security cases.", { exact: true }),
+    page.getByText("You have no private reports yet.", { exact: true }),
   ).toBeVisible();
 });
 
