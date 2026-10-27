@@ -33,6 +33,7 @@ import {
   type AuthorityFixtureOptions,
   aheadComparison,
   createInstallAuthorityFixture,
+  releaseEvidence,
 } from "../../tests/install-authority-fixture";
 
 const packageRoot = resolve(import.meta.dirname, "..", "..");
@@ -334,6 +335,43 @@ function freshCandidateTimeline(revision: string): unknown[] {
       label: { name: "slop-release-candidate" },
     },
   ];
+}
+
+const releaseRunsPath =
+  "/repos/SlopDotCash/slopdotcash/actions/workflows/deploy.yml/runs?branch=main&per_page=100&page=1";
+const releaseJobsPath = (run: number, attempt = 1) =>
+  `/repos/SlopDotCash/slopdotcash/actions/runs/${run}/attempts/${attempt}/jobs?per_page=100&page=1`;
+
+function releaseHistory(
+  first: Record<string, Buffer>,
+  second: Record<string, Buffer>,
+  current: Record<string, Buffer>,
+  releases: ReturnType<typeof releaseEvidence>[],
+): AuthorityFixtureOptions {
+  return {
+    developHead: revisionC,
+    revisions: {
+      [revisionA]: { files: first },
+      [revisionB]: { files: second },
+      [revisionC]: { files: current },
+    },
+    comparisons: {
+      [`${revisionA}...${revisionC}`]: aheadComparison(revisionA, revisionC),
+      [`${revisionB}...${revisionC}`]: aheadComparison(revisionB, revisionC),
+    },
+    responseOverrides: {
+      [releaseRunsPath]: {
+        total_count: releases.length,
+        workflow_runs: releases.map(({ run }) => run),
+      },
+      ...Object.fromEntries(
+        releases.map(({ run, jobs }) => [
+          releaseJobsPath(run.id, run.run_attempt),
+          jobs,
+        ]),
+      ),
+    },
+  };
 }
 
 afterEach(() => {
@@ -854,6 +892,395 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
         ).toBe(false);
       }
     }
+  });
+
+  it("keeps the latest released ancestor authorized until a newer release carries the template change", () => {
+    const root = freshRoot("latest-release");
+    const installRoot = join(root, "install");
+    const files = baseFiles("released-template");
+    files["project.json"] = readFileSync(
+      join(
+        packageRoot,
+        "tests/fixtures/skills/contribute-to-eliza/project.json",
+      ),
+    );
+    for (const name of ["run-receipt.mjs", "skill-authority.mjs"])
+      files[`scripts/${name}`] = readFileSync(
+        join(packageRoot, "skills/project-contributor-template/scripts", name),
+      );
+    const changed = {
+      ...files,
+      "references/revision.txt": Buffer.from("unreleased template change\n"),
+    };
+    const artifact = writeArtifact(root, revisionA, files);
+    const authorityWithLatestRelease = (
+      revision: string,
+    ): AuthorityFixtureOptions => ({
+      developHead: revisionB,
+      latestRelease: { revision, run: 40453260922 },
+      comparisons: {
+        [`${revisionA}...${revisionB}`]: aheadComparison(revisionA, revisionB),
+      },
+      revisions: {
+        [revisionA]: { files },
+        [revisionB]: { files: changed },
+      },
+    });
+
+    // main already carries a template change that no release has published,
+    // so the archive production still serves is the latest released ancestor.
+    let authority = configureAuthority(
+      root,
+      authorityWithLatestRelease(revisionA),
+    );
+    const installed = run(command(artifact, authority), installRoot);
+    expect(installed.status, installed.stderr).toBe(0);
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(versionPath(installRoot, revisionA), ".slop-authorization.json"),
+          "utf8",
+        ),
+      ),
+    ).toEqual({
+      schemaVersion: "1",
+      repository: "SlopDotCash/slopdotcash",
+      revision: revisionA,
+      authorization: {
+        kind: "release",
+        develop: revisionB,
+        run: 40453260922,
+        attempt: 1,
+      },
+    });
+    const entry = pathToFileURL(
+      join(versionPath(installRoot, revisionA), "scripts", "run-receipt.mjs"),
+    ).href;
+    const authorize = (testSkillAuthority: typeof authority) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import { main } from ${JSON.stringify(entry)}; await main(["authorize", "--json"], { testSkillAuthority: ${JSON.stringify(testSkillAuthority)} });`,
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, XDG_CONFIG_HOME: join(root, "state") },
+          timeout: 20_000,
+        },
+      );
+    const fresh = authorize(authority);
+    expect(fresh.status, fresh.stderr).toBe(0);
+    expect(JSON.parse(fresh.stdout)).toMatchObject({
+      revision: revisionA,
+      authorization: { kind: "release", develop: revisionB },
+    });
+
+    // The release carrying the change succeeds: the stale ancestor is no
+    // longer what production serves, so it is refused until reinstalled.
+    authority = configureAuthority(root, authorityWithLatestRelease(revisionB));
+    const superseded = authorize(authority);
+    expect(superseded.status).not.toBe(0);
+    expect(superseded.stderr).toContain("bytes differ from current main");
+    const stale = run(command(artifact, authority), installRoot);
+    expect(stale.status).not.toBe(0);
+    expect(stale.stderr).toContain("bytes differ from current main");
+    expect(currentLink(installRoot)).toBe(
+      `.contribute-to-eliza-versions/${revisionA}`,
+    );
+  });
+
+  it("selects the newest verified manual publication rather than an older push", () => {
+    const root = freshRoot("manual-release");
+    const files = baseFiles("release-a");
+    const next = {
+      ...files,
+      "references/revision.txt": Buffer.from("release-b\n"),
+    };
+    const current = {
+      ...files,
+      "references/revision.txt": Buffer.from("unreleased-c\n"),
+    };
+    const a = releaseEvidence(revisionA, 100);
+    const b = releaseEvidence(revisionB, 200, {
+      event: "workflow_dispatch",
+      createdAt: "2026-10-27T02:00:00Z",
+      completedAt: "2026-10-27T02:01:00Z",
+    });
+    const authority = configureAuthority(
+      root,
+      releaseHistory(files, next, current, [b, a]),
+    );
+    const stale = run(
+      command(writeArtifact(root, revisionA, files), authority),
+      join(root, "stale"),
+    );
+    expect(stale.status).not.toBe(0);
+    expect(stale.stderr).toContain("bytes differ from current main");
+    const latest = run(
+      command(writeArtifact(root, revisionB, next), authority),
+      join(root, "latest"),
+    );
+    expect(latest.status, latest.stderr).toBe(0);
+  });
+
+  it.each(["job", "publication", "metadata", "bytes"] as const)(
+    "refuses workflow success without successful %s proof",
+    (missing) => {
+      const root = freshRoot(`release-${missing}`);
+      const files = baseFiles("release-a");
+      const proof = releaseEvidence(revisionA, 100);
+      if (missing === "job") proof.jobs.jobs[0].conclusion = "skipped";
+      else {
+        const name = {
+          publication: "Deploy private identity and Cloudflare Pages",
+          metadata: "Verify Cloudflare deployment commit metadata",
+          bytes: "Verify published skill and leaderboard",
+        }[missing];
+        const step = proof.jobs.jobs[0].steps.find((row) => row.name === name);
+        if (!step) throw new Error("Missing publication fixture step");
+        step.conclusion = "skipped";
+      }
+      const authority = configureAuthority(
+        root,
+        releaseHistory(
+          files,
+          files,
+          { ...files, "references/revision.txt": Buffer.from("changed\n") },
+          [proof],
+        ),
+      );
+      const installed = run(
+        command(writeArtifact(root, revisionA, files), authority),
+        join(root, "install"),
+      );
+      expect(installed.status).not.toBe(0);
+      expect(installed.stderr).toContain("bytes differ from current main");
+    },
+  );
+
+  it("orders verified publications by completion instead of run creation", () => {
+    const root = freshRoot("release-completion");
+    const files = baseFiles("release-a");
+    const next = {
+      ...files,
+      "references/revision.txt": Buffer.from("release-b\n"),
+    };
+    const current = {
+      ...files,
+      "references/revision.txt": Buffer.from("changed\n"),
+    };
+    const a = releaseEvidence(revisionA, 200, {
+      createdAt: "2026-10-27T02:00:00Z",
+      completedAt: "2026-10-27T02:01:00Z",
+    });
+    const b = releaseEvidence(revisionB, 100, {
+      createdAt: "2026-10-27T01:00:00Z",
+      completedAt: "2026-10-27T03:01:00Z",
+    });
+    const authority = configureAuthority(
+      root,
+      releaseHistory(files, next, current, [a, b]),
+    );
+    expect(
+      run(
+        command(writeArtifact(root, revisionA, files), authority),
+        join(root, "stale"),
+      ).status,
+    ).not.toBe(0);
+    const latest = run(
+      command(writeArtifact(root, revisionB, next), authority),
+      join(root, "latest"),
+    );
+    expect(latest.status, latest.stderr).toBe(0);
+  });
+
+  it("does not prune a running release whose metadata predates its verified production job", () => {
+    const root = freshRoot("running-release");
+    const files = baseFiles("release-a");
+    const next = {
+      ...files,
+      "references/revision.txt": Buffer.from("release-b\n"),
+    };
+    const current = {
+      ...files,
+      "references/revision.txt": Buffer.from("changed\n"),
+    };
+    const a = releaseEvidence(revisionA, 100, {
+      completedAt: "2026-10-27T03:00:00Z",
+    });
+    const b = releaseEvidence(revisionB, 200, {
+      createdAt: "2026-10-27T02:00:00Z",
+      completedAt: "2026-10-27T04:00:00Z",
+      updatedAt: "2026-10-27T02:30:00Z",
+    });
+    b.run.status = "in_progress";
+    const authority = configureAuthority(
+      root,
+      releaseHistory(files, next, current, [a, b]),
+    );
+    expect(
+      run(
+        command(writeArtifact(root, revisionA, files), authority),
+        join(root, "stale"),
+      ).status,
+    ).not.toBe(0);
+    const installed = run(
+      command(writeArtifact(root, revisionB, next), authority),
+      join(root, "latest"),
+    );
+    expect(installed.status, installed.stderr).toBe(0);
+  });
+
+  it("retains a verified earlier attempt when a rerun fails without publication", () => {
+    const root = freshRoot("failed-rerun");
+    const files = baseFiles("release-a");
+    const first = releaseEvidence(revisionA, 100);
+    const rerun = releaseEvidence(revisionA, 100, {
+      attempt: 2,
+      updatedAt: "2026-10-27T03:00:00Z",
+    });
+    rerun.run.conclusion = "failure";
+    rerun.jobs.jobs[0].conclusion = "skipped";
+    const options = releaseHistory(
+      files,
+      files,
+      { ...files, "references/revision.txt": Buffer.from("changed\n") },
+      [rerun],
+    );
+    options.responseOverrides = {
+      ...options.responseOverrides,
+      [releaseJobsPath(100, 1)]: first.jobs,
+    };
+    const authority = configureAuthority(root, options);
+    const installed = run(
+      command(writeArtifact(root, revisionA, files), authority),
+      join(root, "install"),
+    );
+    expect(installed.status, installed.stderr).toBe(0);
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(
+            versionPath(join(root, "install"), revisionA),
+            ".slop-authorization.json",
+          ),
+          "utf8",
+        ),
+      ).authorization,
+    ).toMatchObject({ run: 100, attempt: 1 });
+  });
+
+  it("refuses revoked grace and ambiguous or incomplete release evidence", () => {
+    const files = baseFiles("release-a");
+    const current = {
+      ...files,
+      "references/revision.txt": Buffer.from("changed\n"),
+    };
+    for (const fault of ["revoked", "tied", "incomplete", "bounded"] as const) {
+      const root = freshRoot(`release-${fault}`);
+      const a = releaseEvidence(revisionA, 100);
+      const b = releaseEvidence(revisionB, 200);
+      const options = releaseHistory(
+        files,
+        files,
+        current,
+        fault === "tied" ? [a, b] : [a],
+      );
+      const overrides = options.responseOverrides ?? {};
+      if (fault === "revoked")
+        overrides[
+          `/repos/SlopDotCash/slopdotcash/contents/protocol/skill-revocations.json?ref=${revisionC}`
+        ] = {
+          encoding: "base64",
+          content: Buffer.from(JSON.stringify([revisionA])).toString("base64"),
+        };
+      if (fault === "incomplete")
+        overrides[releaseRunsPath] = { total_count: 2, workflow_runs: [a.run] };
+      if (fault === "bounded")
+        overrides[releaseRunsPath] = {
+          total_count: 1001,
+          workflow_runs: [a.run],
+        };
+      options.responseOverrides = overrides;
+      const installed = run(
+        command(
+          writeArtifact(root, revisionA, files),
+          configureAuthority(root, options),
+        ),
+        join(root, "install"),
+      );
+      expect(installed.status).not.toBe(0);
+      expect(installed.stderr).toMatch(/revoked|ambiguous|incomplete|bound/u);
+    }
+  });
+
+  it("authorizes an installed release with a Windows-sized argument bound", () => {
+    const root = freshRoot("bounded-authorization-command");
+    const installRoot = join(root, "install");
+    const files = baseFiles("release-a");
+    files["project.json"] = readFileSync(
+      join(
+        packageRoot,
+        "tests/fixtures/skills/contribute-to-eliza/project.json",
+      ),
+    );
+    for (const name of ["run-receipt.mjs", "skill-authority.mjs"])
+      files[`scripts/${name}`] = readFileSync(
+        join(packageRoot, "skills/project-contributor-template/scripts", name),
+      );
+    const current = {
+      ...files,
+      "references/revision.txt": Buffer.from("changed\n"),
+    };
+    const authority = configureAuthority(
+      root,
+      releaseHistory(files, files, current, [releaseEvidence(revisionA, 100)]),
+    );
+    const installed = run(
+      command(writeArtifact(root, revisionA, files), authority),
+      installRoot,
+    );
+    expect(installed.status, installed.stderr).toBe(0);
+    const bin = join(root, "bounded-python");
+    mkdirSync(bin);
+    const marker = join(root, "bounded-python-used");
+    if (process.platform !== "win32") {
+      const python = testPython();
+      writeExecutable(
+        join(bin, "python3"),
+        `#!${python}\nimport os, sys\nif len(" ".join(sys.argv)) > 32000: sys.exit(86)\nopen(${JSON.stringify(marker)}, "w").write("bounded")\nos.execv(${JSON.stringify(python)}, [${JSON.stringify(python)}] + sys.argv[1:])\n`,
+      );
+    }
+    const entry = pathToFileURL(
+      join(versionPath(installRoot, revisionA), "scripts/run-receipt.mjs"),
+    ).href;
+    const checked = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `import { main } from ${JSON.stringify(entry)}; await main(["authorize", "--json"], { testSkillAuthority: ${JSON.stringify(authority)} });`,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}${delimiter}${process.env.PATH}`,
+          XDG_CONFIG_HOME: join(root, "state"),
+        },
+        timeout: 20_000,
+      },
+    );
+    expect(checked.status, checked.stderr).toBe(0);
+    expect(JSON.parse(checked.stdout).authorization).toMatchObject({
+      kind: "release",
+      run: 100,
+      attempt: 1,
+    });
+    if (process.platform !== "win32")
+      expect(readFileSync(marker, "utf8")).toBe("bounded");
   });
 
   it("revalidates an installed run and write gate without invalidating historical receipts", () => {

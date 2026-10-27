@@ -23,9 +23,76 @@ export interface AuthorityFixtureOptions {
   skillPath?: string;
   comparisons?: Record<string, unknown>;
   developHead: string;
+  /**
+   * A verified production release; individual history/job responses can be
+   * overridden for the installed-workflow counterexamples.
+   */
+  latestRelease?: { revision: string; run: number };
   revisions: Record<string, AuthorityRevision>;
   responseOverrides?: Record<string, unknown>;
   timelines?: Record<number, unknown[]>;
+}
+
+export function releaseEvidence(
+  revision: string,
+  id: number,
+  options: {
+    event?: "push" | "workflow_dispatch";
+    attempt?: number;
+    createdAt?: string;
+    completedAt?: string;
+    updatedAt?: string;
+  } = {},
+) {
+  const attempt = options.attempt ?? 1;
+  const created = options.createdAt ?? "2026-10-27T01:00:00Z";
+  const completed = options.completedAt ?? "2026-10-27T01:01:00Z";
+  return {
+    run: {
+      id,
+      head_sha: revision,
+      head_branch: "main",
+      path: ".github/workflows/deploy.yml",
+      event: options.event ?? "push",
+      status: "completed",
+      conclusion: "success",
+      run_attempt: attempt,
+      created_at: created,
+      updated_at: options.updatedAt ?? completed,
+      head_repository: { full_name: REPOSITORY },
+    },
+    jobs: {
+      total_count: 1,
+      jobs: [
+        {
+          id: id + 1,
+          run_id: id,
+          run_attempt: attempt,
+          head_sha: revision,
+          name: "Deploy trusted production bundle",
+          status: "completed",
+          conclusion: "success",
+          started_at: created,
+          completed_at: completed,
+          steps: [
+            "Verify deployment checkout",
+            "Verify downloaded Pages bundle",
+            "Require live release-input equivalence",
+            "Deploy private identity and Cloudflare Pages",
+            "Verify Cloudflare deployment commit metadata",
+            "Verify published skill and leaderboard",
+          ].map((name, index) => ({
+            name,
+            number: index + 1,
+            status: "completed",
+            conclusion: "success",
+            started_at: created,
+            completed_at: created,
+          })),
+        },
+      ],
+    },
+  };
 }
 
 interface ContentsEntry {
@@ -118,12 +185,25 @@ export function createInstallAuthorityFixture(
   mkdirSync(apiRoot, { recursive: true });
   mkdirSync(rawRoot, { recursive: true });
 
+  const release = options.latestRelease
+    ? releaseEvidence(options.latestRelease.revision, options.latestRelease.run)
+    : null;
+
   const responses: Record<string, unknown> = {
     [`/repos/${REPOSITORY}/git/ref/heads/main`]: {
       object: { sha: options.developHead, type: "commit" },
       ref: "refs/heads/main",
     },
+    [`/repos/${REPOSITORY}/actions/workflows/deploy.yml/runs?branch=main&per_page=100&page=1`]:
+      {
+        total_count: release ? 1 : 0,
+        workflow_runs: release ? [release.run] : [],
+      },
   };
+  if (release)
+    responses[
+      `/repos/${REPOSITORY}/actions/runs/${release.run.id}/attempts/1/jobs?per_page=100&page=1`
+    ] = release.jobs;
   for (const [revision, configuration] of Object.entries(options.revisions)) {
     responses[
       `/repos/${REPOSITORY}/actions/workflows/deploy.yml/runs?head_sha=${revision}&status=success&per_page=100`
