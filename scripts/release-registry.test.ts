@@ -22,6 +22,10 @@ import {
 } from "../backend/projects/handler";
 import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
 import { sqliteD1 } from "../tests/sqlite-d1";
+import {
+  renderProjectRegistry,
+  renderProjectRevisions,
+} from "./sync-project-registry.mjs";
 
 const source = resolve(import.meta.dir, "..");
 const registry = "src/lib/project-registry.generated.mjs";
@@ -186,6 +190,29 @@ test("release carries the checked D1 registry and history into canonical atteste
         await cp(join(source, path), join(folder, path), { recursive: true });
       }
     }
+    // The real release snapshot may already contain registered vaults. Model
+    // the stale deployment with this fixture's own pre-registration revision.
+    if (!initial) throw new Error("Missing initial fixture project");
+    await writeFile(
+      join(deploy, registry),
+      await renderProjectRegistry([initial]),
+    );
+    await writeFile(
+      join(deploy, revisions),
+      renderProjectRevisions(
+        [
+          {
+            projectId: initial.id,
+            revision: 1,
+            manifest: initial,
+            manifestSha256: sha256(JSON.stringify(initial)),
+            reason: "Controlled registry revision",
+            createdAt: "2026-10-25T10:00:00.000Z",
+          },
+        ],
+        [initial],
+      ),
+    );
     const sync = await run(
       prepare,
       [process.execPath, "scripts/sync-project-registry.mjs"],
