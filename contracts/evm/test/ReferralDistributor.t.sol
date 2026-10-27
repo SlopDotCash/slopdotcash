@@ -119,24 +119,14 @@ contract ReferralDistributorTest is ReferralBase {
     }
 
     // ------------------------------------------------------------------
-    // R-1: a posted root pays nothing until CLAIM_DELAY, then pays each
-    // leaf its cumulative amount exactly once.
-    // ------------------------------------------------------------------
-    function test_R1_claimAfterDelay() public {
+    // R-1: posting immediately enables exact cumulative claims without advancing time.
+    function test_R1_claimImmediately() public {
         (bytes32 root, bytes32[] memory aliceProof, bytes32[] memory bobProof) = tree2(100 * ONE, 250 * ONE);
+        uint64 posted = uint64(block.timestamp);
         post(0, root, 350 * ONE);
-        require(distributor.hasPendingRoot(), "pending");
-        require(distributor.claimable(ALICE, 100 * ONE, aliceProof) == 0, "nothing before the delay");
-        vm.prank(ALICE);
-        vm.expectRevert(ReferralDistributor.NoActiveRoot.selector);
-        distributor.claim(100 * ONE, aliceProof);
-        vm.warp(block.timestamp + DELAY - 1);
-        vm.prank(ALICE);
-        vm.expectRevert(ReferralDistributor.NoActiveRoot.selector);
-        distributor.claim(100 * ONE, aliceProof);
-        vm.warp(block.timestamp + 1);
-        require(!distributor.hasPendingRoot(), "live");
-        require(distributor.claimable(ALICE, 100 * ONE, aliceProof) == 100 * ONE, "claimable after the delay");
+        require(distributor.CLAIM_DELAY() == 0 && !distributor.hasPendingRoot(), "no waiting window");
+        require(distributor.claimableAt(0) == posted, "eligible at posting");
+        require(distributor.claimable(ALICE, 100 * ONE, aliceProof) == 100 * ONE, "immediately claimable");
         vm.expectEmit(true, true, false, true);
         emit Claimed(ALICE, 0, 100 * ONE, 100 * ONE);
         claimAs(ALICE, 100 * ONE, aliceProof);
@@ -176,11 +166,11 @@ contract ReferralDistributorTest is ReferralBase {
     }
 
     // ------------------------------------------------------------------
-    // R-3: the owner can void a root inside the window; the previous live
+    // R-3: the owner can void a root before its first claim; the previous live
     // root stays claimable, the voided epoch keeps its index, and the next
     // post carries the corrected totals.
     // ------------------------------------------------------------------
-    function test_R3_voidInsideWindow() public {
+    function test_R3_voidBeforeFirstClaim() public {
         (bytes32 root0, bytes32[] memory aliceProof0,) = tree2(100 * ONE, 250 * ONE);
         post(0, root0, 350 * ONE);
         vm.warp(block.timestamp + DELAY);
@@ -200,7 +190,7 @@ contract ReferralDistributorTest is ReferralBase {
         vm.prank(OWNER);
         vm.expectRevert(ReferralDistributor.AlreadyVoided.selector);
         distributor.voidRoot(1);
-        // Nothing from the voided root is ever claimable, even after its delay.
+        // Nothing from the voided root is ever claimable, even after time passes.
         vm.warp(block.timestamp + DELAY);
         vm.prank(ALICE);
         vm.expectRevert(ReferralDistributor.InvalidProof.selector);
@@ -218,12 +208,12 @@ contract ReferralDistributorTest is ReferralBase {
     }
 
     // ------------------------------------------------------------------
-    // R-4: a root cannot be voided once its window has closed.
+    // R-4: a successful claim seals the entire root against voiding.
     // ------------------------------------------------------------------
-    function test_R4_voidAfterWindowRefused() public {
-        (bytes32 root,,) = tree2(100 * ONE, 250 * ONE);
+    function test_R4_voidAfterClaimRefused() public {
+        (bytes32 root, bytes32[] memory proof,) = tree2(100 * ONE, 250 * ONE);
         post(0, root, 350 * ONE);
-        vm.warp(block.timestamp + DELAY);
+        claimAs(ALICE, 100 * ONE, proof);
         vm.prank(OWNER);
         vm.expectRevert(ReferralDistributor.WindowClosed.selector);
         distributor.voidRoot(0);
@@ -278,21 +268,21 @@ contract ReferralDistributorTest is ReferralBase {
         vm.prank(POSTER);
         poor.postRoot(2, r, 10 * ONE);
         vm.prank(POSTER);
-        vm.expectRevert(ReferralDistributor.RootPending.selector);
+        vm.expectRevert(abi.encodeWithSelector(ReferralDistributor.TooSoon.selector, uint64(block.timestamp) + DELAY));
         poor.postRoot(3, r, 10 * ONE);
     }
 
     // ------------------------------------------------------------------
-    // R-6: only one root is pending at a time, and indexes are strict.
+    // R-6: post spacing and indexes remain enforced with immediate claims.
     // ------------------------------------------------------------------
-    function test_R6_onePendingRootAndStrictIndexes() public {
+    function test_R6_postSpacingAndStrictIndexes() public {
         (bytes32 root,,) = tree2(1, 1);
         vm.prank(POSTER);
         vm.expectRevert(abi.encodeWithSelector(ReferralDistributor.EpochOutOfOrder.selector, 0));
         distributor.postRoot(1, root, 2);
         post(0, root, 2);
         vm.prank(POSTER);
-        vm.expectRevert(ReferralDistributor.RootPending.selector);
+        vm.expectRevert(abi.encodeWithSelector(ReferralDistributor.TooSoon.selector, uint64(block.timestamp) + DELAY));
         distributor.postRoot(1, root, 2);
         vm.warp(block.timestamp + DELAY);
         post(1, root, 2);
@@ -351,21 +341,14 @@ contract ReferralDistributorTest is ReferralBase {
     }
 
     // ------------------------------------------------------------------
-    // R-8: pause blocks posts, claims and rescue, and freezes the objection
-    // window of a pending root, so the owner can still void it after any
-    // length of pause and claimants keep the time that was left.
-    // ------------------------------------------------------------------
-    function test_R8_pauseBlocksPostsAndClaimsAndFreezesTheWindow() public {
+    // R-8: pause blocks claims/posts/rescue and preserves cancellation of an unclaimed root.
+    function test_R8_pauseDoesNotDelayClaimsAndUnclaimedRootCanBeVoided() public {
         (bytes32 root, bytes32[] memory aliceProof,) = tree2(100 * ONE, 250 * ONE);
         post(0, root, 350 * ONE);
-        vm.warp(block.timestamp + 6 days);
+        uint64 posted = distributor.claimableAt(0);
         vm.prank(OWNER);
         distributor.pause();
-        vm.prank(OWNER);
-        vm.expectRevert(ReferralDistributor.InvalidInput.selector);
-        distributor.pause();
-        vm.warp(block.timestamp + 30 days);
-        require(distributor.hasPendingRoot(), "still pending while paused");
+        vm.warp(block.timestamp + 400 days);
         vm.prank(ALICE);
         vm.expectRevert(ReferralDistributor.IsPaused.selector);
         distributor.claim(100 * ONE, aliceProof);
@@ -375,32 +358,14 @@ contract ReferralDistributorTest is ReferralBase {
         vm.prank(OWNER);
         vm.expectRevert(ReferralDistributor.IsPaused.selector);
         distributor.rescue(OWNER);
-        vm.prank(OWNER);
-        distributor.unpause();
-        // One day of the window was left at the pause; it is still left now.
-        require(distributor.claimableAt(0) == uint64(block.timestamp) + 1 days, "window resumed where it stopped");
-        vm.prank(ALICE);
-        vm.expectRevert(ReferralDistributor.NoActiveRoot.selector);
-        distributor.claim(100 * ONE, aliceProof);
+        require(distributor.claimableAt(0) == posted, "pause adds no claim delay");
         vm.prank(OWNER);
         distributor.voidRoot(0);
-        vm.warp(block.timestamp + 1 days);
-        vm.prank(ALICE);
-        vm.expectRevert(ReferralDistributor.NoActiveRoot.selector);
-        distributor.claim(100 * ONE, aliceProof);
-        // A second pending root can be voided during a pause, however long.
-        post(1, root, 350 * ONE);
-        vm.prank(OWNER);
-        distributor.pause();
-        vm.warp(block.timestamp + 400 days);
-        vm.prank(OWNER);
-        distributor.voidRoot(1);
         vm.prank(OWNER);
         distributor.unpause();
-        post(2, root, 350 * ONE);
-        vm.warp(block.timestamp + DELAY);
+        post(1, root, 350 * ONE);
         claimAs(ALICE, 100 * ONE, aliceProof);
-        require(token.balanceOf(ALICE) == 100 * ONE, "claims resume");
+        require(token.balanceOf(ALICE) == 100 * ONE, "immediate claim after unpause");
     }
 
     // ------------------------------------------------------------------
@@ -415,22 +380,23 @@ contract ReferralDistributorTest is ReferralBase {
         (bytes32 root,,) = tree2(100 * ONE, 250 * ONE);
         vm.warp(block.timestamp + 300 days);
         post(0, root, 350 * ONE);
-        // Rescue waits while the root is pending, and the clock restarts when
-        // the root goes live: 365 days after deployment is not enough.
+        // The immediately live root restarts the full rescue delay.
         vm.prank(OWNER);
-        vm.expectRevert(ReferralDistributor.RootPending.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(ReferralDistributor.RescueTooEarly.selector, uint64(block.timestamp) + 365 days)
+        );
         distributor.rescue(OWNER);
         uint64 liveAt = distributor.claimableAt(0);
         vm.warp(deployed + 365 days);
         vm.prank(OWNER);
         vm.expectRevert(abi.encodeWithSelector(ReferralDistributor.RescueTooEarly.selector, liveAt + 365 days));
         distributor.rescue(OWNER);
-        // A voided post does not move the clock; an unpause does.
+        // A void cannot shorten the clock of an immediately eligible root; an unpause restarts it.
         vm.warp(liveAt + 100 days);
         post(1, root, 350 * ONE);
         vm.prank(OWNER);
         distributor.voidRoot(1);
-        require(distributor.rescueAvailableAt() == liveAt + 365 days, "voided post ignored");
+        require(distributor.rescueAvailableAt() == uint64(block.timestamp) + 365 days, "void keeps latest live clock");
         vm.prank(OWNER);
         distributor.pause();
         vm.warp(block.timestamp + 1 days);
@@ -621,26 +587,36 @@ contract ReferralDistributorTest is ReferralBase {
     }
 
     // ------------------------------------------------------------------
-    // R-17 (review A-6, A-7): claims against the live root keep working while
-    // a newer root is pending, and currentRoot() reports the live one before
-    // any transaction promotes it.
-    // ------------------------------------------------------------------
-    function test_R17_previousRootStaysLiveWhileTheNextIsPending() public {
+    // R-17: the latest root supersedes the old proof immediately; a void restores the old root.
+    function test_R17_latestRootImmediateAndVoidRestoresPrevious() public {
         (bytes32 root0, bytes32[] memory aliceProof0,) = tree2(100 * ONE, 250 * ONE);
         post(0, root0, 350 * ONE);
         vm.warp(block.timestamp + DELAY);
         (bytes32 live, uint256 total, uint256 index) = distributor.currentRoot();
         require(live == root0 && total == 350 * ONE && index == 0, "live before promotion");
-        require(distributor.activeRoot() == bytes32(0), "getter is lazy until a transaction");
-        (bytes32 root1, bytes32[] memory aliceProof1,) = tree2(160 * ONE, 250 * ONE);
+        (bytes32 root1,,) = tree2(160 * ONE, 250 * ONE);
         post(1, root1, 410 * ONE);
-        claimAs(ALICE, 100 * ONE, aliceProof0);
         vm.prank(ALICE);
         vm.expectRevert(ReferralDistributor.InvalidProof.selector);
-        distributor.claim(160 * ONE, aliceProof1);
-        vm.warp(block.timestamp + DELAY);
-        claimAs(ALICE, 160 * ONE, aliceProof1);
-        require(token.balanceOf(ALICE) == 160 * ONE, "topped up");
+        distributor.claim(100 * ONE, aliceProof0);
+        vm.prank(OWNER);
+        distributor.voidRoot(1);
+        claimAs(ALICE, 100 * ONE, aliceProof0);
+        require(token.balanceOf(ALICE) == 100 * ONE, "old root restored without repayment");
+    }
+
+    function test_failedClaimDoesNotSealVoiding() public {
+        (bytes32 root, bytes32[] memory proof,) = tree2(100 * ONE, 250 * ONE);
+        post(0, root, 350 * ONE);
+        token.setFailNext(true);
+        vm.prank(ALICE);
+        vm.expectRevert(ReferralDistributor.TransferFailed.selector);
+        distributor.claim(100 * ONE, proof);
+        require(distributor.totalClaimed() == 0 && distributor.claimed(ALICE) == 0, "failed transfer rolled back");
+        vm.prank(OWNER);
+        distributor.voidRoot(0);
+        (bytes32 current,,) = distributor.currentRoot();
+        require(current == bytes32(0), "unclaimed first root voided");
     }
 
     // ------------------------------------------------------------------
