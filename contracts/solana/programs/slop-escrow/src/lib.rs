@@ -2,9 +2,13 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::sysvar::instructions::{
     load_current_index_checked, load_instruction_at_checked,
 };
-use anchor_spl::associated_token::get_associated_token_address;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, TransferChecked};
+use anchor_spl::associated_token::get_associated_token_address_with_program_id;
+use anchor_spl::token_interface::{
+    self as token, Mint, TokenAccount, TokenInterface, TransferChecked,
+};
+mod token_policy;
 use solana_sha256_hasher::hashv;
+use token_policy::{admitted_mint, admitted_token_account};
 declare_id!("7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ");
 /// Zero-delay deployment is supported. Historical projects retain their recorded delay.
 const MIN_BINDING_DELAY: i64 = 0;
@@ -639,7 +643,11 @@ pub mod slop_escrow {
         require!(
             ctx.accounts.destination.owner == destination
                 && ctx.accounts.destination.key()
-                    == get_associated_token_address(&destination, &ctx.accounts.mint.key()),
+                    == get_associated_token_address_with_program_id(
+                        &destination,
+                        &ctx.accounts.mint.key(),
+                        &ctx.accounts.token_program.key(),
+                    ),
             EscrowError::WrongDestination
         );
         let (purpose, bump) = ([p.purpose as u8], [p.bump]);
@@ -778,7 +786,7 @@ pub fn award_id_for(project: &Pubkey, source_digest: &[u8; 32]) -> [u8; 32] {
 #[allow(clippy::too_many_arguments)]
 fn commit_with_fee(
     p: &mut Account<Project>,
-    vault: &Account<TokenAccount>,
+    vault: &InterfaceAccount<TokenAccount>,
     origin: &mut Account<Origin>,
     a: &mut Account<Obligation>,
     award_id: [u8; 32],
@@ -1060,10 +1068,10 @@ fn add(a: u64, b: u64) -> Result<u64> {
     a.checked_add(b).ok_or(error!(EscrowError::Arithmetic))
 }
 fn send<'info>(
-    program: &Program<'info, Token>,
-    source: &Account<'info, TokenAccount>,
-    destination: &Account<'info, TokenAccount>,
-    mint: &Account<'info, Mint>,
+    program: &Interface<'info, TokenInterface>,
+    source: &InterfaceAccount<'info, TokenAccount>,
+    destination: &InterfaceAccount<'info, TokenAccount>,
+    mint: &InterfaceAccount<'info, Mint>,
     project: &Account<'info, Project>,
     seeds: &[&[u8]],
     amount: u64,
@@ -1108,12 +1116,12 @@ pub struct Initialize<'info> {
     /// never share a vault.
     #[account(init,payer=owner,space=8+Project::INIT_SPACE,seeds=[b"project",owner.key().as_ref(),&project_id,&[purpose as u8]],bump)]
     pub project: Box<Account<'info, Project>>,
-    /// Any classic SPL Token mint, with any decimals. `Account<Mint>` requires the classic
-    /// token program as owner, so Token-2022 mints are rejected.
-    pub mint: Account<'info, Mint>,
-    #[account(init,payer=owner,seeds=[b"vault",project.key().as_ref()],bump,token::mint=mint,token::authority=project)]
-    pub vault: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    /// Classic SPL or the approved metadata-only Token-2022 subset.
+    #[account(constraint=*mint.to_account_info().owner==token_program.key() @ EscrowError::WrongMint, constraint=admitted_mint(&mint.to_account_info())?)]
+    pub mint: InterfaceAccount<'info, Mint>,
+    #[account(init,payer=owner,seeds=[b"vault",project.key().as_ref()],bump,token::mint=mint,token::authority=project,token::token_program=token_program,constraint=admitted_token_account(&vault.to_account_info())?)]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
     #[account(seeds=[b"config"],bump=config.bump)]
     pub config: Box<Account<'info, Config>>,
@@ -1123,12 +1131,13 @@ pub struct Deposit<'info> {
     pub depositor: Signer<'info>,
     #[account(mut,has_one=mint)]
     pub project: Box<Account<'info, Project>>,
-    pub mint: Account<'info, Mint>,
-    #[account(mut,token::mint=mint,token::authority=depositor)]
-    pub source: Account<'info, TokenAccount>,
-    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump,token::mint=mint,token::authority=project)]
-    pub vault: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    #[account(constraint=*mint.to_account_info().owner==token_program.key() @ EscrowError::WrongMint, constraint=admitted_mint(&mint.to_account_info())?)]
+    pub mint: InterfaceAccount<'info, Mint>,
+    #[account(mut,token::mint=mint,token::authority=depositor,token::token_program=token_program,constraint=admitted_token_account(&source.to_account_info())?)]
+    pub source: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump,token::mint=mint,token::authority=project,token::token_program=token_program,constraint=admitted_token_account(&vault.to_account_info())?)]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 #[derive(Accounts)]
 #[instruction(award_id:[u8;32], source_digest:[u8;32])]
@@ -1137,8 +1146,8 @@ pub struct Commit<'info> {
     pub owner: Signer<'info>,
     #[account(mut,has_one=owner)]
     pub project: Box<Account<'info, Project>>,
-    #[account(seeds=[b"vault",project.key().as_ref()],bump,constraint=vault.mint==project.mint,token::authority=project)]
-    pub vault: Account<'info, TokenAccount>,
+    #[account(seeds=[b"vault",project.key().as_ref()],bump,constraint=vault.mint==project.mint,token::authority=project,constraint=admitted_token_account(&vault.to_account_info())?)]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
     #[account(init,payer=owner,space=8+Origin::INIT_SPACE,seeds=[b"origin",project.key().as_ref(),&source_digest],bump)]
     pub origin: Account<'info, Origin>,
     #[account(init,payer=owner,space=8+Obligation::INIT_SPACE,seeds=[b"award",project.key().as_ref(),&award_id],bump)]
@@ -1159,8 +1168,8 @@ pub struct CommitMonthly<'info> {
     pub payer: Signer<'info>,
     #[account(mut)]
     pub project: Box<Account<'info, Project>>,
-    #[account(seeds=[b"vault",project.key().as_ref()],bump,constraint=vault.mint==project.mint,token::authority=project)]
-    pub vault: Account<'info, TokenAccount>,
+    #[account(seeds=[b"vault",project.key().as_ref()],bump,constraint=vault.mint==project.mint,token::authority=project,constraint=admitted_token_account(&vault.to_account_info())?)]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
     /// One per project and period, so a period commits once.
     #[account(init,payer=payer,space=8+MonthlyAllocation::INIT_SPACE,seeds=[b"month",project.key().as_ref(),&period.to_le_bytes()],bump)]
     pub month: Box<Account<'info, MonthlyAllocation>>,
@@ -1177,8 +1186,8 @@ pub struct CommitMonthlyAward<'info> {
     pub payer: Signer<'info>,
     #[account(mut)]
     pub project: Box<Account<'info, Project>>,
-    #[account(seeds=[b"vault",project.key().as_ref()],bump,constraint=vault.mint==project.mint,token::authority=project)]
-    pub vault: Account<'info, TokenAccount>,
+    #[account(seeds=[b"vault",project.key().as_ref()],bump,constraint=vault.mint==project.mint,token::authority=project,constraint=admitted_token_account(&vault.to_account_info())?)]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
     #[account(mut,has_one=project,seeds=[b"month",project.key().as_ref(),&period.to_le_bytes()],bump)]
     pub month: Box<Account<'info, MonthlyAllocation>>,
     #[account(init,payer=payer,space=8+Origin::INIT_SPACE,seeds=[b"origin",project.key().as_ref(),&source_digest],bump)]
@@ -1269,13 +1278,14 @@ pub struct Pay<'info> {
     pub obligation: Box<Account<'info, Obligation>>,
     #[account(mut,seeds=[b"wallet",project.key().as_ref(),&obligation.actor_id.to_le_bytes()],bump,constraint=binding.actor_id==obligation.actor_id,constraint=binding.network==project.network)]
     pub binding: Box<Account<'info, WalletBinding>>,
-    pub mint: Account<'info, Mint>,
-    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump,token::mint=mint,token::authority=project)]
-    pub vault: Account<'info, TokenAccount>,
+    #[account(constraint=*mint.to_account_info().owner==token_program.key() @ EscrowError::WrongMint, constraint=admitted_mint(&mint.to_account_info())?)]
+    pub mint: InterfaceAccount<'info, Mint>,
+    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump,token::mint=mint,token::authority=project,token::token_program=token_program,constraint=admitted_token_account(&vault.to_account_info())?)]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
     /// The handler requires this to be the associated token account of whichever binding pays.
-    #[account(mut,token::mint=mint,constraint=destination.key()!=vault.key())]
-    pub destination: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    #[account(mut,token::mint=mint,constraint=destination.key()!=vault.key(),token::token_program=token_program,constraint=admitted_token_account(&destination.to_account_info())?)]
+    pub destination: InterfaceAccount<'info, TokenAccount>,
+    pub token_program: Interface<'info, TokenInterface>,
     /// CHECK: must be the empty veto address for this project, actor and latest binding version.
     #[account(seeds=[b"veto",project.key().as_ref(),&obligation.actor_id.to_le_bytes(),&binding.version.to_le_bytes()],bump)]
     pub veto: UncheckedAccount<'info>,
@@ -1312,12 +1322,13 @@ pub struct Withdraw<'info> {
     pub owner: Signer<'info>,
     #[account(mut,has_one=owner,has_one=mint)]
     pub project: Box<Account<'info, Project>>,
-    pub mint: Account<'info, Mint>,
-    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump,token::mint=mint,token::authority=project)]
-    pub vault: Account<'info, TokenAccount>,
-    #[account(mut,token::mint=mint,token::authority=owner,constraint=destination.key()!=vault.key())]
-    pub destination: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    #[account(constraint=*mint.to_account_info().owner==token_program.key() @ EscrowError::WrongMint, constraint=admitted_mint(&mint.to_account_info())?)]
+    pub mint: InterfaceAccount<'info, Mint>,
+    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump,token::mint=mint,token::authority=project,token::token_program=token_program,constraint=admitted_token_account(&vault.to_account_info())?)]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut,token::mint=mint,token::authority=owner,constraint=destination.key()!=vault.key(),token::token_program=token_program,constraint=admitted_token_account(&destination.to_account_info())?)]
+    pub destination: InterfaceAccount<'info, TokenAccount>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 #[derive(Accounts)]
 pub struct MigrateProject<'info> {
@@ -1332,13 +1343,14 @@ pub struct MigrateProject<'info> {
 pub struct ClaimFees<'info> {
     #[account(mut,has_one=mint)]
     pub project: Box<Account<'info, Project>>,
-    pub mint: Account<'info, Mint>,
-    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump,token::mint=mint,token::authority=project)]
-    pub vault: Account<'info, TokenAccount>,
+    #[account(constraint=*mint.to_account_info().owner==token_program.key() @ EscrowError::WrongMint, constraint=admitted_mint(&mint.to_account_info())?)]
+    pub mint: InterfaceAccount<'info, Mint>,
+    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump,token::mint=mint,token::authority=project,token::token_program=token_program,constraint=admitted_token_account(&vault.to_account_info())?)]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
     /// Any token account of the mint that the fee recipient owns.
-    #[account(mut,token::mint=mint,constraint=fee_account.owner==project.fee_recipient,constraint=fee_account.key()!=vault.key())]
-    pub fee_account: Account<'info, TokenAccount>,
-    pub token_program: Program<'info, Token>,
+    #[account(mut,token::mint=mint,constraint=fee_account.owner==project.fee_recipient,constraint=fee_account.key()!=vault.key(),token::token_program=token_program,constraint=admitted_token_account(&fee_account.to_account_info())?)]
+    pub fee_account: InterfaceAccount<'info, TokenAccount>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 #[account]
 #[derive(InitSpace)]
@@ -1572,7 +1584,7 @@ pub enum EscrowError {
     StaleBinding,
     #[msg("Network domain does not match project")]
     WrongNetwork,
-    #[msg("Mint is not a classic SPL token mint")]
+    #[msg("Mint or token program is not supported")]
     WrongMint,
     #[msg("Award ID is not bound to this project and source")]
     InvalidAward,
@@ -1632,6 +1644,8 @@ pub enum EscrowError {
     InvalidFreeze,
     #[msg("The month's unsettled gross changed after the release was signed")]
     MonthlyReserveChanged,
+    #[msg("Token extension or authority is outside the approved metadata-only policy")]
+    UnsupportedTokenExtension,
 }
 
 #[account]
