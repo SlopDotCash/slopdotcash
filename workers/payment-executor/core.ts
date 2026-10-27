@@ -38,6 +38,7 @@ import {
   ESCROW_NETWORKS,
   type EscrowChain,
   isEscrowChain,
+  isMaxNativeCostWei,
 } from "../../src/lib/escrow-policy.mjs";
 import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
 import type { PaymentDeployment } from "../payments/index";
@@ -124,6 +125,8 @@ type Deployment = Pick<
   chainId: string;
   /** Reviewed executor gas ceiling in gas units, copied from the registry into the deployment record. */
   gasCeiling: string;
+  /** Optional per-operation native gas cost bound. Existing sends retain their original bound. */
+  maxNativeCostWei?: string;
   factory: string;
   factoryCodeSha256: string;
   registrar: string;
@@ -149,6 +152,44 @@ export interface Attempt {
   transactionId: Hex;
   /** Stable vault/actor budget for the optional one-nonce test qualification. */
   bindingNonceBudgetKey?: string;
+  /** Immutable bound admitted before this operation's first signature. */
+  maxNativeCostWei?: string;
+}
+/** The tighter current/original limit governs new sends; absent preserves prior policy. */
+export function assertEvmNativeCost(
+  config: { maxNativeCostWei?: string },
+  transaction: { gas: bigint; maxFeePerGas: bigint; value?: bigint },
+  attempt?: Pick<Attempt, "maxNativeCostWei">,
+) {
+  const limits = [config.maxNativeCostWei, attempt?.maxNativeCostWei].filter(
+    (value) => value !== undefined,
+  );
+  for (const limit of limits)
+    if (!isMaxNativeCostWei(limit))
+      throw new Error("Invalid EVM native cost limit");
+  const cost =
+    transaction.gas * transaction.maxFeePerGas + (transaction.value ?? 0n);
+  if (
+    transaction.gas < 0n ||
+    transaction.maxFeePerGas < 0n ||
+    (transaction.value ?? 0n) < 0n ||
+    limits.some((limit) => cost > BigInt(limit))
+  )
+    throw new Error("EVM transaction exceeds native cost limit");
+}
+function assertSignedNativeCost(
+  config: { maxNativeCostWei?: string },
+  raw: Hex,
+  attempt?: Pick<Attempt, "maxNativeCostWei">,
+) {
+  const signed = parseTransaction(raw);
+  if (signed.gas === undefined || signed.maxFeePerGas === undefined)
+    throw new Error("Signed EVM gas envelope unavailable");
+  assertEvmNativeCost(
+    config,
+    { gas: signed.gas, maxFeePerGas: signed.maxFeePerGas, value: signed.value },
+    attempt,
+  );
 }
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
@@ -315,6 +356,11 @@ export async function preflightEvmDeployment(
   const selected = selectReviewedEvmDeployment(env, input);
   if (!/^[1-9][0-9]{0,9}$/.test(selected.gasCeiling ?? ""))
     throw new Error("Reviewed gas ceiling required");
+  if (
+    selected.maxNativeCostWei !== undefined &&
+    !isMaxNativeCostWei(selected.maxNativeCostWei)
+  )
+    throw new Error("Invalid EVM native cost limit");
   const rpcUrls = JSON.parse(env.PAYMENT_RPC_URLS) as Record<string, string>;
   const rpcUrl = rpcUrls[input.network];
   if (typeof rpcUrl !== "string")
@@ -621,6 +667,7 @@ async function signAndSubmit(
       10n;
     if (gas > BigInt(config.gasCeiling))
       throw new Error("Gas exceeds narrow operation policy");
+    assertEvmNativeCost(config, { gas, maxFeePerGas: maxFee });
     const nonceKey = `nonce:${config.chainId}:${env.SIGNER.address.toLowerCase()}`;
     attempt = await env.JOURNAL.transaction(async (store) => {
       if (await store.get(`retired:${input.network}:${input.idempotencyKey}`))
@@ -653,6 +700,7 @@ async function signAndSubmit(
         data: data as Hex,
         value: 0n,
       });
+      assertSignedNativeCost(config, rawTransaction);
       const next = {
         ...(input.obligationId
           ? { obligationId: input.obligationId }
@@ -663,6 +711,9 @@ async function signAndSubmit(
         rawTransaction,
         transactionId: transactionHash(rawTransaction),
         ...(bindingNonceBudgetKey ? { bindingNonceBudgetKey } : {}),
+        ...(config.maxNativeCostWei === undefined
+          ? {}
+          : { maxNativeCostWei: config.maxNativeCostWei }),
       };
       if (bindingNonceBudgetKey)
         await store.put(bindingNonceBudgetKey, {
@@ -698,7 +749,7 @@ async function signAndSubmit(
   await beforeBroadcast?.(attempt);
   if (env.FEE_BUMP)
     return replaceUnderpricedAttempt(env, env.FEE_BUMP, config, key, attempt);
-  await broadcast(config, attempt);
+  await broadcast(config, attempt, attempt);
   return { transactionId: attempt.transactionId };
 }
 
@@ -706,7 +757,9 @@ async function signAndSubmit(
 async function broadcast(
   config: Deployment,
   signed: { rawTransaction: Hex; transactionId: Hex },
+  original?: Attempt,
 ) {
+  assertSignedNativeCost(config, signed.rawTransaction, original);
   try {
     const sent = await rpc(config, "eth_sendRawTransaction", [
       signed.rawTransaction,
@@ -796,6 +849,7 @@ async function verifiedReplacements(
   record: FeeReplacements,
 ) {
   const original = parseTransaction(attempt.rawTransaction);
+  assertSignedNativeCost({}, attempt.rawTransaction, attempt);
   if (
     !attempt.rawTransaction.startsWith("0x02") ||
     typeof original.nonce !== "number" ||
@@ -817,6 +871,8 @@ async function verifiedReplacements(
   };
   for (const item of record.replacements) {
     const signed = parseTransaction(item.rawTransaction);
+    // Historical envelopes use the bound recorded at admission, not a later config change.
+    assertSignedNativeCost({}, item.rawTransaction, attempt);
     const expected = nextReplacementFees(fees, latest);
     if (
       !item.rawTransaction.startsWith("0x02") ||
@@ -881,7 +937,7 @@ async function replaceUnderpricedAttempt(
   } = await verifiedReplacements(env, config, attempt, record);
   // Report a wait after the latest verified bytes were offered again.
   const waiting = async (reason: string): Promise<never> => {
-    await broadcast(config, latest).catch(() => undefined);
+    await broadcast(config, latest, attempt).catch(() => undefined);
     throw new Error(reason);
   };
   let baseFee: bigint;
@@ -901,7 +957,7 @@ async function replaceUnderpricedAttempt(
     baseFee <= latest.maxFeePerGas ||
     now.getTime() - Date.parse(latest.signedAt) < FEE_BUMP_POLICY.waitMs
   ) {
-    await broadcast(config, latest);
+    await broadcast(config, latest, attempt);
     return { transactionId: latest.transactionId };
   }
   const fees = nextReplacementFees(originalFees, latest);
@@ -909,6 +965,21 @@ async function replaceUnderpricedAttempt(
     return waiting(
       "Fee replacement cap reached; journaled attempts wait for a lower network fee",
     );
+  if (
+    (config.maxNativeCostWei !== undefined ||
+      attempt.maxNativeCostWei !== undefined) &&
+    fees.maxFeePerGas < baseFee
+  )
+    return waiting("Current base fee exceeds the permitted replacement fee");
+  try {
+    assertEvmNativeCost(
+      config,
+      { gas: original.gas as bigint, ...fees, value: original.value },
+      attempt,
+    );
+  } catch {
+    return waiting("Fee replacement exceeds the operation's native cost limit");
+  }
   if ((original.gas as bigint) > BigInt(config.gasCeiling))
     return waiting(
       "Registry gas ceiling is now below the journaled gas limit; no fee replacement is signed",
@@ -949,6 +1020,7 @@ async function replaceUnderpricedAttempt(
         },
         attempt.transactionId,
       );
+      assertSignedNativeCost(config, rawTransaction, attempt);
       const next = {
         rawTransaction,
         transactionId: transactionHash(rawTransaction),
@@ -967,7 +1039,7 @@ async function replaceUnderpricedAttempt(
       `Fee replacement waits: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  await broadcast(config, replacement);
+  await broadcast(config, replacement, attempt);
   return { transactionId: replacement.transactionId };
 }
 
@@ -1893,6 +1965,11 @@ async function cancelObsoleteStoredBinding(
       quote > bump(original.maxFeePerGas) ? quote : bump(original.maxFeePerGas);
     if (maxFee > 10_000_000_000n || priority > maxFee)
       throw new Error("Cancellation exceeds signer gas fee policy");
+    assertEvmNativeCost(
+      deployment,
+      { gas: 21_000n, maxFeePerGas: maxFee },
+      attempt,
+    );
     if (
       (await rpc(deployment, "eth_getCode", [env.SIGNER.address, "latest"])) !==
       "0x"
@@ -1920,6 +1997,7 @@ async function cancelObsoleteStoredBinding(
         value: 0n,
         data: "0x",
       });
+      assertSignedNativeCost(deployment, rawTransaction, attempt);
       const next = {
         original: attempt,
         reason,
@@ -1932,6 +2010,7 @@ async function cancelObsoleteStoredBinding(
     });
   }
   const signed = parseTransaction(cancellation.rawTransaction);
+  assertSignedNativeCost(deployment, cancellation.rawTransaction, attempt);
   if (
     JSON.stringify(cancellation.original) !== JSON.stringify(attempt) ||
     !cancellation.rawTransaction.startsWith("0x02") ||
