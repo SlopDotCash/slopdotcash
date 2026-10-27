@@ -203,6 +203,10 @@
   grid-column: 1 / -1;
 }
 @media (max-width: 700px) {
+  .owner-awards .route-metrics .route-metric > dd:first-of-type {
+    /* Leave room for the exact allocation total at enlarged text sizes. */
+    font-size: 1rem;
+  }
   .owner-awards .owner-award-list dl > div {
     display: grid;
     /* Keep each exact amount intact instead of splitting a narrow value column. */
