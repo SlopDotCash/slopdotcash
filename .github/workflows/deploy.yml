@@ -1023,6 +1023,7 @@ jobs:
           // until their feature is enabled; any other name still fails closed.
           const optional = [
             "PAYMENT_RPC_URLS",
+            "REWARD_RPC_SOLANA",
             "GITHUB_INTAKE_APP_CLIENT_ID",
             "GITHUB_INTAKE_APP_CLIENT_SECRET",
             "GITHUB_INTAKE_APP_ID",
