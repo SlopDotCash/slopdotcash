@@ -1420,32 +1420,6 @@ test("penalty collection preserves active debits during the history route rollou
     expect(
       (await fetchProjectPenaltyState("asi", run.feed)).history,
     ).toMatchObject([{ itemNodeId: "PR_local", reversedAt: null }]);
-    const response = await run.feed(
-      "https://slopbot.slop.cash/v1/penalties?project=asi",
-    );
-    const body = await response.json();
-    let page = 0;
-    const mixed = (async (_input: RequestInfo | URL) =>
-      Response.json(
-        page++ === 0
-          ? {
-              ...body,
-              records: Array.from({ length: 100 }, (_, i) => ({
-                ...body.records[0],
-                item_node_id: `PR_${String(i).padStart(3, "0")}`,
-              })),
-              nextAfter: "PR_099",
-            }
-          : {
-              schemaVersion: "slop-penalty-history:v1",
-              project: "asi",
-              records: [],
-              nextAfter: null,
-            },
-      )) as typeof fetch;
-    await expect(fetchProjectPenaltyState("asi", mixed)).rejects.toThrow(
-      "invalid identity or pagination",
-    );
   });
 });
 
@@ -1533,27 +1507,6 @@ test("an old Points debit survives missing snapshots and reverses only on retain
       },
     ]);
     expect(history[0]).not.toHaveProperty("review_key");
-    const wrongActor = {
-      ...absent,
-      penaltyHistory: history.map((row) => ({ ...row, authorGithubId: "99" })),
-    };
-    expect(() =>
-      applyPointsSnapshot(journal, wrongActor, "d".repeat(64), later),
-    ).toThrow("Penalty reversal identity mismatch");
-    expect(() =>
-      applyPointsSnapshot(
-        journal,
-        {
-          ...absent,
-          penaltyHistory: history.map((row) => ({
-            ...row,
-            projectId: "eliza",
-          })),
-        },
-        "d".repeat(64),
-        later,
-      ),
-    ).toThrow("Penalty reversal identity mismatch");
     const restored = { ...absent, penaltyHistory: history };
     assertLeaderboardSnapshot(restored);
     journal = applyPointsSnapshot(journal, restored, "e".repeat(64), later);

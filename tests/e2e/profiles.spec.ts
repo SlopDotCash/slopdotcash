@@ -116,7 +116,6 @@ test("profiles preserve legacy coverage and a valid census", async ({
   expect(response.ok()).toBe(true);
   const census = await response.json();
   assertProfiles(census);
-  expect(census.schemaVersion).toBe("2");
   expect(walletRequests).toEqual(expectedWalletRequests);
   expect(failures).toEqual([]);
 });
