@@ -4,10 +4,9 @@
  * reviewed factory and the same role keys as section 21:
  *
  * - bounty: a 100-unit private bounty pays 75 and 25 with no other fee;
- * - monthly: the owner's monthly commitment switch and cap, the 72-hour
- *   cutoff window, a changed allocation, a manual award and payment before
- *   the automatic commitment, and the permissionless commitment through the
- *   production executor, with no double reservation or payment;
+ * - monthly: the owner's monthly commitment switch and cap, closed-month
+ *   finalization, a changed allocation, and an owner-signed root followed by
+ *   permissionless leaf materialization and payment, with no double reserve;
  * - walletless-lifecycle: no payment without a wallet, wrong-network and
  *   stale-version rejection, replacement, owner cancellation (refused while
  *   the deployed binding delay is zero; exercised on a review-window factory
@@ -868,7 +867,7 @@ export async function runEvmExtended(
         list,
         await attest(period, signedList),
       );
-    const anyone = keys.depositor.address;
+    const rootCaller = keys.owner.address;
     const setMonthly = (key: string, value: bigint, enabled: boolean) =>
       send(
         entry,
@@ -892,7 +891,7 @@ export async function runEvmExtended(
       entry.checks.offAtCreation = {
         monthlyEnabled: false,
         revert: await refuse(
-          anyone,
+          rootCaller,
           vault,
           await commitData(periods.open, full),
         ),
@@ -916,7 +915,7 @@ export async function runEvmExtended(
       }),
     );
     await setMonthly("monthly:on", cap, true);
-    // The 72-hour cutoff: only the period whose window is open accepts.
+    // Inspect the deployed calendar rule; historical factories retain their old window.
     if (!entry.checks.window) {
       const [opensAt, closesAt] = await chain.read<readonly [bigint, bigint]>(
         vault,
@@ -925,28 +924,36 @@ export async function runEvmExtended(
         [Number(periods.open.replace("-", ""))],
       );
       const [year, month] = periods.open.split("-").map(Number);
-      const expectedOpen = BigInt(Date.UTC(year, month, 1) / 1000 + 72 * 3600);
-      const expectedClose = BigInt(
-        Date.UTC(year, month + 1, 1) / 1000 + 72 * 3600,
+      const ownerFinalization = closesAt === (1n << 64n) - 1n;
+      const expectedOpen = BigInt(
+        Date.UTC(year, month, 1) / 1000 + (ownerFinalization ? 0 : 72 * 3600),
       );
+      const expectedClose = ownerFinalization
+        ? (1n << 64n) - 1n
+        : BigInt(Date.UTC(year, month + 1, 1) / 1000 + 72 * 3600);
       expectEqual("window opens", opensAt, expectedOpen);
       expectEqual("window closes", closesAt, expectedClose);
       entry.checks.window = {
         period: periods.open,
         opensAt: new Date(Number(opensAt) * 1000).toISOString(),
-        closesAt: new Date(Number(closesAt) * 1000).toISOString(),
+        closesAt: ownerFinalization
+          ? null
+          : new Date(Number(closesAt) * 1000).toISOString(),
+        ownerFinalization,
         nextPeriod: periods.next,
         nextPeriodRevert: await refuse(
-          anyone,
+          rootCaller,
           vault,
           await commitData(periods.next, full),
         ),
         closedPeriod: periods.closed,
-        closedPeriodRevert: await refuse(
-          anyone,
-          vault,
-          await commitData(periods.closed, full),
-        ),
+        closedPeriodRevert: ownerFinalization
+          ? null
+          : await refuse(
+              rootCaller,
+              vault,
+              await commitData(periods.closed, full),
+            ),
       };
       const window = entry.checks.window as Record<string, string>;
       expectEqual(
@@ -954,11 +961,29 @@ export async function runEvmExtended(
         window.nextPeriodRevert,
         "MonthlyWindowClosed",
       );
-      expectEqual(
-        "closed period",
-        window.closedPeriodRevert,
-        "MonthlyWindowClosed",
-      );
+      if (ownerFinalization) {
+        await chain.rpc("eth_estimateGas", [
+          {
+            from: keys.owner.address,
+            to: vault,
+            data: await commitData(periods.closed, full),
+          },
+        ]);
+        expectEqual(
+          "non-owner root",
+          await refuse(
+            keys.depositor.address,
+            vault,
+            await commitData(periods.open, full),
+          ),
+          "Unauthorized",
+        );
+      } else
+        expectEqual(
+          "closed period",
+          window.closedPeriodRevert,
+          "MonthlyWindowClosed",
+        );
     }
     // An allocation changed after signing no longer matches the attestation.
     const edited = entries([
@@ -970,7 +995,7 @@ export async function runEvmExtended(
       entry,
       "edited-allocation-refused",
       "InvalidAttestation",
-      anyone,
+      rootCaller,
       vault,
       await commitData(periods.open, edited, full),
     );
@@ -980,7 +1005,7 @@ export async function runEvmExtended(
       entry,
       "over-cap-refused",
       "MonthlyCapExceeded",
-      anyone,
+      rootCaller,
       vault,
       await commitData(periods.open, full),
     );
@@ -991,7 +1016,7 @@ export async function runEvmExtended(
       entry,
       "opted-out-refused",
       "MonthlyDisabled",
-      anyone,
+      rootCaller,
       vault,
       await commitData(periods.open, full),
     );
@@ -1014,7 +1039,7 @@ export async function runEvmExtended(
       entry,
       "changed-manual-award-refused",
       "DuplicateAward",
-      anyone,
+      rootCaller,
       vault,
       await commitData(
         periods.open,
@@ -1180,7 +1205,18 @@ export async function runEvmExtended(
         ]
           .slice(0, 4)
           .join(" | ");
-      // Admission, then the leaves, each after the previous step is final.
+      await send(
+        entry,
+        "monthly:reserve",
+        keys.owner,
+        vault,
+        buildReserveMonthlyCalldata(
+          period,
+          reservation,
+          `0x${authorization.signatureHex}`,
+        ),
+      );
+      // The owner admits the root; the keeper materializes its leaves after finality.
       await ready(async () => {
         const results = await keeper.tick();
         const state = await readEvmMonthlyReserve(await config(), period);
@@ -1191,7 +1227,6 @@ export async function runEvmExtended(
       });
       const reserveKey = `monthly:v2:${network}:${vault}:${period}`;
       const sent: [string, string][] = [
-        ["monthly:reserve", reserveKey],
         ...authorization.plan.entries.map(
           (_, index) =>
             [
@@ -1200,7 +1235,14 @@ export async function runEvmExtended(
             ] as [string, string],
         ),
       ];
-      const receipts: Record<string, Receipt> = {};
+      const ownerReceipt = await chain.receipt(
+        entry.steps["monthly:reserve"].transactionId,
+      );
+      if (ownerReceipt?.status !== "0x1")
+        throw new Error("Owner reserve transaction failed");
+      const receipts: Record<string, Receipt> = {
+        "monthly:reserve": ownerReceipt,
+      };
       for (const [label, key] of sent) {
         const attempt = await keeper.journal<{ transactionId: string }>(key);
         const receipt = attempt && (await chain.receipt(attempt.transactionId));
@@ -1372,7 +1414,7 @@ export async function runEvmExtended(
           })),
           signaturesUnchanged: true,
           reserveRevert: await refuse(
-            anyone,
+            rootCaller,
             vault,
             buildReserveMonthlyCalldata(
               period,
@@ -1381,12 +1423,12 @@ export async function runEvmExtended(
             ),
           ),
           legacyRevert: await refuse(
-            anyone,
+            rootCaller,
             vault,
             await commitData(periods.open, full),
           ),
           leafRevert: await refuse(
-            anyone,
+            rootCaller,
             vault,
             buildCommitMonthlyLeafCalldata(
               period,
@@ -1486,48 +1528,16 @@ export async function runEvmExtended(
           VAULT,
           "freeBalance",
         );
-        let transactionId =
-          entry.steps["monthly:permissionless-commit"]?.transactionId;
-        let path = "permissionless";
-        if (!transactionId) {
-          const submitted = await submit();
-          if (submitted.ok) {
-            transactionId = String(submitted.body.transactionId);
-            path = "executor";
-          } else {
-            // The executor refuses a commitment above its reviewed gas ceiling.
-            // The contract accepts the same signed allocation from anyone.
-            const data = (await commitData(periods.open, full)) as Hex;
-            const estimate = BigInt(
-              (await chain.rpc("eth_estimateGas", [
-                { from: keys.relayer.address, to: vault, data },
-              ])) as string,
-            );
-            const ceiling = BigInt(
-              (ctx.policy as { gasCeiling?: string }).gasCeiling ?? "0",
-            );
-            entry.checks.executorRefusal = {
-              response: submitted.body,
-              gasEstimate: text(estimate),
-              executorGasLimit: text((estimate * 12n) / 10n),
-              gasCeiling: text(ceiling),
-            };
-            await persist();
-            if ((estimate * 12n) / 10n <= ceiling)
-              throw new Waiting(
-                `monthly executor refused: ${JSON.stringify(submitted.body)}`,
-              );
-            transactionId = (
-              await send(
-                entry,
-                "monthly:permissionless-commit",
-                keys.relayer,
-                vault,
-                data,
-              )
-            ).transactionHash;
-          }
-        } else path = "permissionless";
+        const transactionId = (
+          await send(
+            entry,
+            "monthly:owner-commit",
+            keys.owner,
+            vault,
+            await commitData(periods.open, full),
+          )
+        ).transactionHash;
+        const path = "owner";
         let receipt: Receipt | null = null;
         await ready(async () => {
           receipt = await chain.receipt(String(transactionId));
@@ -1565,13 +1575,10 @@ export async function runEvmExtended(
         );
         entry.steps["monthly:commitment"] = {
           transactionId: String(transactionId),
-          from: keys.relayer.address.toLowerCase(),
+          from: keys.owner.address.toLowerCase(),
           status: "success",
           block: text(BigInt(mined.blockNumber)),
-          note:
-            path === "executor"
-              ? "Submitted by the production executor (/v1/commit-monthly, submitEvmMonthly) with the identity authority's attestation"
-              : "The production executor refused the commitment (gas above its reviewed ceiling, see executorRefusal); the relayer key submitted the same attested allocation permissionlessly",
+          note: "Owner authorized the exact attested monthly allocation; the executor only resumes existing commitments",
         };
         entry.checks.commitment = {
           path,
@@ -1611,7 +1618,7 @@ export async function runEvmExtended(
           executor: again,
           relayerNonceUnchanged: true,
           revert: await refuse(
-            anyone,
+            rootCaller,
             vault,
             await commitData(periods.open, full),
           ),

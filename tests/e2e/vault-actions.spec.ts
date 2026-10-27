@@ -2010,7 +2010,10 @@ test("owner funds a separate bounty vault with private balances and no monthly r
 test("owner reserves an old monthly allocation and recovers a lost wallet reply", async ({
   page,
 }, info) => {
-  const period = "2026-07";
+  const period = "2026-11";
+  await rpc("evm_setNextBlockTimestamp", [
+    Math.floor(Date.UTC(2027, 2, 1) / 1000),
+  ]);
   const snapshotSha256 = "e".repeat(64);
   const manifestSha256 = "b".repeat(64);
   await rpc("eth_sendTransaction", [
@@ -2180,7 +2183,7 @@ test("owner reserves an old monthly allocation and recovers a lost wallet reply"
         period: requested,
         manifestSha256,
         automatic: true,
-        finalizationOpensAt: "2026-08-01T00:00:00Z",
+        finalizationOpensAt: "2026-12-01T00:00:00Z",
         deployment,
         asset: {
           network: deployment.network,
@@ -2193,7 +2196,7 @@ test("owner reserves an old monthly allocation and recovers a lost wallet reply"
           requested === period
             ? {
                 trigger: "owner",
-                frozenAt: "2026-10-26T00:00:00Z",
+                frozenAt: "2027-03-01T00:00:00Z",
                 snapshotSha256,
                 totalGrossBase: "1000000",
                 network: deployment.network,

@@ -223,7 +223,7 @@ own evidence directory. Each scenario creates its own vault (EVM) or project
 | --- | --- |
 | `bounty` | In a bounty vault, a 100-unit private award pays 75 to the researcher and 25 to the fee recipient, in exact base units, with no other fee. An ordinary award and an amount that is not divisible by four are refused. Nothing is left to withdraw. |
 | `walletless-lifecycle` | An award without a wallet cannot pay. A wallet signature for another network or another vault is refused. A replacement wallet activates at once, a stale version cannot bind or pay, and the owner cannot cancel at the deployed zero binding delay. A recovered wallet is paid in the next transaction; the earlier wallets get nothing. With a review-window deployment, the owner cancels (EVM) or vetoes (Solana) a binding, the cancelled version cannot pay, and a new version is paid. |
-| `monthly` | Monthly commitment is off at vault creation. A zero cap is refused. Only the open period is accepted (the 72-hour cutoff). An allocation changed after signing, a total over the owner's cap, and an opted-out vault are refused. The owner commits and pays one award by hand first. Then the project-operated keeper reserves and commits the allocation through V2 (`keeper-v2`), or the production executor submits the legacy commitment (`/v1/commit-monthly`, `executor-v1`); see below. The manual award is counted once (EVM) or released (Solana), a changed manual award fails closed, a second commitment is refused, and no award is paid twice. |
+| `monthly` | Monthly commitment is off at vault creation. A zero cap is refused. The current contract accepts any closed calendar month without expiry; a future month is refused. Historical factories retain their original window until upgraded. An allocation changed after signing, a total over the owner's cap, and an opted-out vault are refused. The owner commits and pays one award by hand first. Then the owner signs the exact monthly root. The project-operated keeper materializes its V2 leaves (`keeper-v2`), or the production executor reconciles the owner’s legacy commitment (`executor-v1`); see below. The manual award is counted once (EVM) or released (Solana), a changed manual award fails closed, a second commitment is refused, and no award is paid twice. |
 | `interrupted-send` | The production payments Worker cron pays through the production executor. A loopback fault proxy forwards the first payment broadcast to the node, discards the answer, and fails the next status lookup. The signer instances restart. The cron recovers the journaled attempt: one attempt, one transaction, one payment. |
 | `failed-recipient` | One of three recipients rejects the token (blocked on EVM, frozen token account on Solana). The other two are paid in the same cron run. The failed award stays reserved and is paid with the same attempt after the block ends. |
 | `frozen-fee-destination` | While the fee recipient rejects the token, the fee claim fails, a mined claim reverts, and a waiting payout still pays. After the block ends, one claim moves every accrued fee. |
@@ -239,7 +239,7 @@ logic that the factory creates (`monthlyReserveVersion()` of
   `prepareEvmMonthlyReservation` returns, and the run publishes it in the
   payments database. The project-operated keeper (`scripts/payment-keeper`,
   `runKeeper`) reads it through the unchanged public registry and payment
-  routes. The keeper sends `reserveMonthly`, then one `commitMonthlyLeaf` per
+  routes. The owner sends `reserveMonthly`; the keeper sends one `commitMonthlyLeaf` per
   unfunded award, and pays each award after its wallet is bound. The relayer
   key, or `ESCROW_ACCEPTANCE_KEEPER_KEY` when set, is the keeper's gas signer; it must have no vault or factory role. The manual award stays
   out of the reserve. A keeper rerun signs nothing, and a second
@@ -248,15 +248,15 @@ logic that the factory creates (`monthlyReserveVersion()` of
   `ESCROW_ACCEPTANCE_MONTHLY_SCHEDULE` names the deployment's
   `MONTHLY_PAYMENT_SCHEDULE` with an earlier first period. Without it, a
   public test network run waits, with no transaction, until the 2026-11
-  window opens at 2026-12-04T00:00Z. With it, the run commits the period
-  whose contract window is open now and records a deviation: that is
-  prelaunch automation qualification, not the 2026-12-04 calendar
-  observation. The keeper's gas budget is the network's
+  month closes at 2026-12-01T00:00Z. With an earlier schedule, the run
+  qualifies a closed prelaunch month; it does not claim a live November
+  observation. Historical factories still enforce their original windows. The keeper's gas budget is the network's
   reviewed gas ceiling at 10 gwei per transaction and 40 such transactions
   per day.
 - `executor-v1`: the factory has no V2 reserve (the factories now on the
-  public test networks). The production executor submits the legacy
-  `commitMonthly` (`/v1/commit-monthly`), as before.
+  public test networks). The owner submits the legacy `commitMonthly`;
+  the production executor verifies the existing commitment on repeat without
+  signing another transaction.
 
 The `key-recovery` scenario on EVM changes the factory identity authority for
 every vault of that factory while it runs. Run no other acceptance run against
