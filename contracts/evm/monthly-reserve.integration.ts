@@ -10,7 +10,10 @@ import { fileURLToPath } from "node:url";
 import { encodeFunctionData, parseAbi } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import { handlePaymentsApi } from "../../backend/payments/handler";
-import { coordinateMonthlyPayments } from "../../backend/payments/monthly";
+import {
+  coordinateMonthlyPayments,
+  monthlyOwnerService,
+} from "../../backend/payments/monthly";
 import type { MonthlyAttestationPlan } from "../../backend/payments/monthly-attestation";
 import { publishMonthlyAuthorizations } from "../../backend/payments/monthly-publication";
 import { storeVaultSnapshot } from "../../backend/payments/vault-snapshots";
@@ -19,6 +22,10 @@ import { onRequest } from "../../functions/api/v1/[[path]]";
 import { runKeeper } from "../../scripts/payment-keeper/keeper";
 import { openKeeperStore } from "../../scripts/payment-keeper/store";
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
+import {
+  checkMonthlyFinalization,
+  sendMonthlyFinalization,
+} from "../../src/lib/monthly-finalization-actions";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
@@ -866,7 +873,7 @@ try {
   });
   const network = "base-sepolia" as const;
   const now = new Date("2026-12-04T01:00:00Z");
-  const schedule = { firstPeriod: period, cutoffSecondsAfterPeriodEnd: 259200 };
+  const schedule = { firstPeriod: period };
   const fixture = await createMonthlyAllocationFixture({
     deployment: {
       network,
@@ -903,6 +910,20 @@ try {
     await readVaultTotals({ ...config, network }),
     now.toISOString(),
   );
+  const ownerAllocations = monthlyOwnerService({
+    ...fixture,
+    networks: () => [network],
+    schedule: () => schedule,
+    now: () => now,
+    verifyAuthority: async () => {},
+  });
+  const finalizedAllocation = await ownerAllocations.finalize(
+    projectId,
+    period,
+    { githubId: "900000071", githubLogin: "owner" },
+    0,
+  );
+  assert.equal(finalizedAllocation.run?.funded, true);
   const coordinated = await coordinateMonthlyPayments({
     db: fixture.db,
     projects: fixture,
@@ -911,7 +932,8 @@ try {
     now,
   });
   assert.deepEqual(coordinated.failures, []);
-  assert.deepEqual(coordinated.created, [`${projectId}/${period}`]);
+  assert.deepEqual(coordinated.created, []);
+  assert.deepEqual(coordinated.frozen, []);
   const frozen = fixture.sqlite
     .prepare("SELECT snapshot_sha256,snapshot FROM monthly_payment_runs")
     .get() as { snapshot_sha256: string; snapshot: string };
@@ -1160,7 +1182,7 @@ try {
     String(
       await rpc("eth_estimateGas", [
         {
-          from: gas.address,
+          from: owner.address,
           to: vault,
           data: buildCommitMonthlyCalldata(period, entries, legacySignature),
         },
@@ -1178,7 +1200,7 @@ try {
   await send(
     vault,
     buildReserveMonthlyCalldata(period, first.reservation, firstSignature),
-    gas.address,
+    owner.address,
     false,
   );
   assert.equal(await value(vault, "freeBalance()"), beforeRace);
@@ -1254,14 +1276,14 @@ try {
   await send(
     vault,
     buildReserveMonthlyCalldata(period, next.reservation, legacySignature),
-    gas.address,
+    owner.address,
     false,
   );
   await send(vault, buildWithdrawCalldata("50000001"));
   await send(
     vault,
     buildReserveMonthlyCalldata(period, next.reservation, signature),
-    gas.address,
+    owner.address,
     false,
   );
   assert.equal(
@@ -1295,8 +1317,37 @@ try {
     SIGNER: gas,
     JOURNAL: execution.store,
   };
-  await submitEvmMonthly(env, authorization);
+  const refusedServiceRoot = await submitEvmMonthly(env, authorization);
+  assert.equal(
+    refusedServiceRoot.notAdmitted,
+    true,
+    "a service gas key cannot authorize a month",
+  );
+  const ownerWallet = {
+    address: owner.address,
+    sign: async () => {
+      throw new Error("No personal signature expected");
+    },
+    evmRequest: rpc,
+  };
+  let retainedBeforeSend = false;
+  const ownerTransaction = await sendMonthlyFinalization(
+    { authorization },
+    ownerWallet,
+    () => {
+      retainedBeforeSend = true;
+    },
+  );
+  assert(retainedBeforeSend, "wallet intent must be retained before sending");
   await finalized();
+  assert.equal(
+    await checkMonthlyFinalization(
+      { authorization },
+      ownerWallet,
+      ownerTransaction,
+    ),
+    "finalized",
+  );
   assert.deepEqual(await publishMonthlyAuthorizations(publication), {
     published: [],
     failures: [],
@@ -1352,7 +1403,7 @@ try {
   await send(
     vault,
     buildReserveMonthlyCalldata(period, next.reservation, signature),
-    gas.address,
+    owner.address,
     false,
   );
   const laterManual = {
@@ -1521,7 +1572,11 @@ try {
       await authority.sign({ hash: emptyMessage as `0x${string}` })
     ).slice(2),
   };
-  await submitEvmMonthly(env, emptyAuthorization);
+  await sendMonthlyFinalization(
+    { authorization: emptyAuthorization },
+    ownerWallet,
+    () => {},
+  );
   await finalized();
   assert.equal(
     (await submitEvmMonthly(env, emptyAuthorization, false)).complete,
@@ -1536,7 +1591,7 @@ try {
       empty.reservation,
       `0x${emptyAuthorization.signatureHex}`,
     ),
-    gas.address,
+    owner.address,
     false,
   );
   const gasUsed: bigint[] = [];
@@ -1677,6 +1732,7 @@ try {
   const raceJournal = journal();
   const raceEnv: ExecutorEnvironment = {
     ...env,
+    SIGNER: owner,
     PAYMENT_DEPLOYMENTS: JSON.stringify([
       {
         ...raceConfig,
@@ -1693,7 +1749,7 @@ try {
   const pendingLegacy = await submitEvmMonthly(raceEnv, legacyRace);
   assert(pendingLegacy.transactionId);
   const beforeReplacementNonce = await rpc("eth_getTransactionCount", [
-    gas.address,
+    owner.address,
     "pending",
   ]);
   const pendingSuccessor = await submitEvmMonthly(raceEnv, successor);
@@ -1703,7 +1759,7 @@ try {
     "successor resumes the original exact signed transaction",
   );
   assert.equal(
-    await rpc("eth_getTransactionCount", [gas.address, "pending"]),
+    await rpc("eth_getTransactionCount", [owner.address, "pending"]),
     beforeReplacementNonce,
     "successor consumes no new nonce",
   );
@@ -1732,7 +1788,7 @@ try {
     execFileSync("cast", ["calldata", "executeIdentityAuthorityRotation()"], {
       encoding: "utf8",
     }).trim(),
-    gas.address,
+    owner.address,
   );
   await finalized();
   raceConfig.identityAuthority = recipient.address.toLowerCase();

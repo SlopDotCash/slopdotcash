@@ -1,4 +1,5 @@
 import { evmBindingTypedData } from "../../contracts/evm/adapter";
+import { verifyMonthlyOwnerAuthorization } from "../../contracts/monthly-authorization";
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import {
   checkSolanaCommitment,
@@ -10,6 +11,11 @@ import {
   prepareSolanaMonthlyCommitment,
   readSolanaMonthlyCommitment,
 } from "../../contracts/solana/monthly-commitment";
+import {
+  checkSolanaMonthlyFinalization,
+  prepareSolanaMonthlyFinalization,
+  type SolanaMonthlyOwnerPlan,
+} from "../../contracts/solana/monthly-finalization";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   type DeploymentTier,
@@ -30,6 +36,7 @@ import {
   VAULT_SNAPSHOT_STALE_MS,
 } from "../../src/lib/payments/contracts";
 import { isWalletAddress, isWalletChain } from "../../src/lib/wallets";
+import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import { cookieValue, isSameOriginJsonWrite, json } from "../http";
 import { sessionGithubActor } from "../points/handler";
@@ -39,6 +46,7 @@ import {
   type MonthlyOwnerService,
   MonthlyPaymentError,
 } from "./monthly";
+import type { MonthlyAttestationRequest } from "./monthly-attestation";
 import { readMonthlyAuthorization } from "./monthly-publication";
 import {
   buildPaymentWalletMessage,
@@ -69,6 +77,10 @@ export interface PaymentsDependencies {
   tier?: DeploymentTier;
   /** The owner's private monthly allocations; absent where they are not served. */
   monthly?: MonthlyOwnerService;
+  /** Signs and retains one already owner-finalized allocation; never submits it. */
+  refreshMonthlyAuthorization?(
+    request: MonthlyAttestationRequest,
+  ): Promise<MonthlyAuthorization>;
   db: D1Database;
   now?: () => Date;
   /** Additional trusted deployment origins; never sourced from request input. */
@@ -370,6 +382,123 @@ export async function handlePaymentsApi(
           ? "session_expired"
           : "not_signed_in",
       });
+    const finalizationRoute =
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))\/finalization$/.exec(
+        path,
+      );
+    if (finalizationRoute && request.method === "POST") {
+      const [, projectId, period] = finalizationRoute;
+      const body = (await readBoundedJson(
+        request,
+        4 * 1024 * 1024,
+        "Monthly finalization",
+      )) as Record<string, unknown>;
+      if (
+        !body ||
+        typeof body.network !== "string" ||
+        typeof body.wallet !== "string" ||
+        (body.step !== "review" && body.step !== "check")
+      )
+        return json(400, { error: "invalid_monthly_finalization" });
+      try {
+        if (body.step === "review") {
+          if (!deps.monthly || !deps.refreshMonthlyAuthorization)
+            return json(503, { error: "monthly_authorization_unavailable" });
+          const current = await deps.monthly.view(projectId, period, member);
+          const deployment = current.deployment;
+          if (
+            !current.run?.funded ||
+            !deployment ||
+            deployment.network !== body.network ||
+            current.run.snapshotSha256 !== body.snapshotSha256 ||
+            current.manifestSha256 !== body.manifestSha256
+          )
+            return json(409, { error: "monthly_finalization_changed" });
+          const solana =
+            ESCROW_NETWORKS[deployment.network].family === "solana";
+          if (
+            solana
+              ? body.wallet !== deployment.owner
+              : body.wallet.toLowerCase() !== deployment.owner.toLowerCase()
+          )
+            return json(403, { error: "monthly_owner_wallet_required" });
+          const authorization = await deps.refreshMonthlyAuthorization({
+            projectId,
+            period,
+            network: deployment.network,
+            snapshotSha256: current.run.snapshotSha256,
+          });
+          await verifyMonthlyOwnerAuthorization(authorization, {
+            projectId,
+            period,
+            snapshotSha256: current.run.snapshotSha256,
+            deployment,
+          });
+          let transaction: SolanaMonthlyOwnerPlan | undefined;
+          if (solana) {
+            if (!deps.solanaFundingConfig)
+              return json(503, { error: "monthly_finalization_unavailable" });
+            const config = await deps.solanaFundingConfig(
+              projectId,
+              deployment.network,
+              deployment.vault,
+            );
+            transaction = await prepareSolanaMonthlyFinalization(
+              config,
+              authorization,
+              body.wallet,
+            );
+          }
+          const rechecked = await deps.monthly.view(projectId, period, member);
+          if (
+            rechecked.manifestSha256 !== current.manifestSha256 ||
+            rechecked.run?.snapshotSha256 !== current.run.snapshotSha256
+          )
+            return json(409, { error: "monthly_finalization_changed" });
+          return json(200, {
+            authorization,
+            ...(transaction ? { transaction } : {}),
+          });
+        }
+        // Recovery verifies retained signed bytes, without re-authorizing a
+        // new allocation or requiring the actor to still own the project.
+        const authorization = body.authorization as MonthlyAuthorization;
+        if (
+          !deps.solanaFundingConfig ||
+          authorization?.plan?.request.projectId !== projectId ||
+          authorization.plan.request.period !== period ||
+          authorization.plan.request.network !== body.network ||
+          authorization.plan.family !== "solana" ||
+          typeof body.blockhash !== "string" ||
+          typeof body.transactionId !== "string"
+        )
+          return json(400, { error: "invalid_monthly_finalization_check" });
+        const config = await deps.solanaFundingConfig(
+          projectId,
+          body.network,
+          authorization.plan.deployment.vault,
+        );
+        const status = await checkSolanaMonthlyFinalization(
+          config,
+          authorization,
+          body.wallet,
+          body.blockhash,
+          body.transactionId,
+        );
+        return json(200, { status });
+      } catch (error) {
+        if (error instanceof MonthlyPaymentError)
+          return json(error.status, {
+            error: error.code,
+            message: error.message,
+          });
+        return json(409, {
+          error: "monthly_finalization_unavailable",
+          message:
+            "The monthly finalization could not be verified. Retry the review or retained transaction check.",
+        });
+      }
+    }
     const solanaCommitmentRoute =
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))\/solana-commitment$/.exec(
         path,
@@ -1061,12 +1190,14 @@ export async function handlePaymentsApi(
       // An award moves from monthlyAwards to payments when its reservation is
       // indexed. Read both, and the rest of this account, in one SQLite snapshot.
       const accountRows = await deps.db
-        .prepare(`SELECT
+        .prepare(
+          `SELECT
           (SELECT json_group_array(json_object('chain',w.chain,'claimId',w.id,'address',w.wallet_address,'authorized',json(CASE WHEN a.claim_id IS NULL THEN 'false' ELSE 'true' END))) items FROM wallet_claims w LEFT JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.github_user_id=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)) AS wallets,
           (SELECT json_group_array(json_object('id',o.id,'vault',o.vault,'projectId',project_id,'network',network,'chain',chain,'assetAddress',asset_address,'assetDecimals',asset_decimals,'grossBase',gross_base,'feeBase',fee_base,'state',o.state,'transactionId',paid_transaction,'submittedTransactionId',(SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id=o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),'deliveryState',CASE WHEN o.state='paid' THEN 'paid' WHEN q.state='submitted' THEN 'submitted' WHEN q.state='held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END)) items FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id=o.id WHERE github_user_id=?) AS payments,
           (SELECT json_group_array(json_object('projectId',project_id,'period',period,'network',network,'assetAddress',asset,'assetDecimals',decimals,'grossBase',gross,'feeBase',fee,'netBase',net,'state',state)) items FROM (SELECT r.project_id,r.period,r.network,json_extract(r.snapshot,'$.asset') asset,COALESCE((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id=r.project_id AND v.network=r.network AND v.vault=r.vault AND lower(v.asset_address)=lower(json_extract(r.snapshot,'$.asset'))),CASE WHEN lower(json_extract(b.manifest,'$.rewardAsset.address'))=lower(json_extract(r.snapshot,'$.asset')) THEN json_extract(b.manifest,'$.rewardAsset.decimals') END) decimals,json_extract(a.value,'$.grossBase') gross,json_extract(a.value,'$.feeBase') fee,json_extract(a.value,'$.netBase') net,CASE WHEN EXISTS(SELECT 1 FROM payment_obligations c WHERE c.network=r.network AND c.vault=r.vault AND c.source_digest=json_extract(a.value,'$.sourceDigest')) THEN 'conflict' WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END state FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period, json_each(r.snapshot,'$.awards') a WHERE json_extract(a.value,'$.githubUserId')=? AND NOT EXISTS(SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id=r.project_id AND e.period=r.period AND e.source_digest=json_extract(a.value,'$.sourceDigest')) AND NOT EXISTS(SELECT 1 FROM payment_obligations o WHERE o.network=r.network AND o.vault=r.vault AND o.source_digest=json_extract(a.value,'$.sourceDigest') AND o.github_user_id=json_extract(a.value,'$.githubUserId') AND o.gross_base=json_extract(a.value,'$.grossBase')) ORDER BY r.period DESC,r.project_id)) AS monthlyAwards,
           (${directTransferQuery("github_user_id")}) AS directTransfers,
-          (SELECT json_group_array(json_object('chain',chain,'address',address,'proofLevel',proof_level,'sourceUrl',source_url,'observedAt',observed_at)) items FROM (SELECT * FROM wallet_observations WHERE github_user_id=? ORDER BY observed_at DESC)) AS walletObservations`)
+          (SELECT json_group_array(json_object('chain',chain,'address',address,'proofLevel',proof_level,'sourceUrl',source_url,'observedAt',observed_at)) items FROM (SELECT * FROM wallet_observations WHERE github_user_id=? ORDER BY observed_at DESC)) AS walletObservations`,
+        )
         .bind(...Array(5).fill(member.githubId))
         .first<
           Record<

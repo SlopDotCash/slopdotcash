@@ -17,7 +17,7 @@ import {
 } from "../../src/lib/escrow-policy.mjs";
 import {
   type MonthlySchedule,
-  monthlyCutoff,
+  monthlyFinalizationDate,
   PRD_MONTHLY_SCHEDULE,
   parseMonthlySchedule,
   periodEnd,
@@ -437,7 +437,6 @@ export async function runKeeper(
             period = periodEnd(period).toISOString().slice(0, 7)
           ) {
             const key = `authorization:${scope}:${period}`;
-            let fresh = false;
             let authorization =
               await deps.store.journal.get<MonthlyAuthorization>(key);
             try {
@@ -457,7 +456,6 @@ export async function runKeeper(
                   );
                 await retainAuthorization(deps.store, key, value);
                 authorization = value;
-                fresh = true;
               }
             } catch (error) {
               result.push({
@@ -468,21 +466,11 @@ export async function runKeeper(
               });
             }
             if (!authorization) continue;
-            const cutoff = monthlyCutoff(schedule, period);
-            const closes = monthlyCutoff(
-              schedule,
-              periodEnd(period).toISOString().slice(0, 7),
-            );
-            const admit =
-              fresh &&
-              project.status === "active" &&
-              !body.restrictions.some(
-                (entry) => entry.projectId === project.id,
-              ) &&
-              !!cutoff &&
-              !!closes &&
-              now >= cutoff &&
-              now < closes;
+            const opens = monthlyFinalizationDate(schedule, period);
+            if (!opens || now < opens) continue;
+            // An independent keeper cannot originate a new monthly root on
+            // behalf of the vault owner. Resume only an admitted reservation.
+            const admit = false;
             if (!execute) {
               result.push({
                 ...item,

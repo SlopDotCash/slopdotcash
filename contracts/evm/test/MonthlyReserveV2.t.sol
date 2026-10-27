@@ -29,8 +29,8 @@ contract MonthlyReserveV2Test {
     uint32 internal constant PERIOD = 202611;
     uint32 internal constant NEXT_PERIOD = 202612;
     /// @dev 00:00 UTC on 4 December 2026 and on 4 January 2027.
-    uint64 internal constant NOVEMBER_OPENS = 1_796_342_400;
-    uint64 internal constant NOVEMBER_CLOSES = 1_799_020_800;
+    uint64 internal constant NOVEMBER_OPENS = 1_796_083_200;
+    uint64 internal constant DECEMBER_OPENS = 1_798_761_600;
 
     TestDollar internal usdc;
     EscrowFactory internal factory;
@@ -92,7 +92,7 @@ contract MonthlyReserveV2Test {
 
     function reserve(ProjectEscrow target, uint32 period, ProjectEscrow.MonthlyReservation memory r) internal {
         bytes memory signature = sign(target, period, r);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         target.reserveMonthly(period, r, signature);
     }
 
@@ -194,6 +194,19 @@ contract MonthlyReserveV2Test {
         require(vault.pendingMonthlyGross() == pending && vault.reservedPrincipal() == principal, "unchanged");
     }
 
+    function test_anAttestationCannotAuthorizeANonOwnerReserve() public {
+        ProjectEscrow.MonthlyAward[] memory e = entries(2, 0);
+        ProjectEscrow.MonthlyReservation memory r = plan(vault, e, sum(e));
+        bytes memory signature = sign(vault, PERIOD, r);
+        uint128 before = vault.freeBalance();
+        vm.prank(SUBMITTER);
+        vm.expectRevert(ProjectEscrow.Unauthorized.selector);
+        vault.reserveMonthly(PERIOD, r, signature);
+        require(vault.freeBalance() == before && vault.monthlyRoots(PERIOD) == bytes32(0), "outsider reserved funds");
+        reserve(vault, PERIOD, r);
+        require(vault.monthlyRoots(PERIOD) == r.allocationRoot, "owner reservation missing");
+    }
+
     function test_aStaleSourceSequenceFailsBeforeFundsMove() public {
         ProjectEscrow.MonthlyAward[] memory e = entries(2, 0);
         ProjectEscrow.MonthlyReservation memory r = plan(vault, e, sum(e));
@@ -203,7 +216,7 @@ contract MonthlyReserveV2Test {
         vm.prank(OWNER);
         vault.commitAward(id, 7, 5e6, source);
         uint128 free = vault.freeBalance();
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlySourceChanged.selector);
         vault.reserveMonthly(PERIOD, r, signature);
         require(vault.freeBalance() == free && vault.monthlyRoots(PERIOD) == bytes32(0), "nothing reserved");
@@ -223,14 +236,16 @@ contract MonthlyReserveV2Test {
         ProjectEscrow.MonthlyReservation memory again = plan(vault, e, sum(e));
         bytes memory signature = sign(vault, PERIOD, again);
         vm.expectRevert(ProjectEscrow.MonthlyAlreadyCommitted.selector);
+        vm.prank(OWNER);
         vault.reserveMonthly(PERIOD, again, signature);
         // A count must agree with a positive remainder.
         ProjectEscrow.MonthlyReservation memory mismatched = ProjectEscrow.MonthlyReservation(
             keccak256("all funded"), keccak256("sealed"), 900e6, 1e6, 0, vault.ordinarySourceSequence()
         );
         signature = sign(vault, NEXT_PERIOD, mismatched);
-        vm.warp(NOVEMBER_CLOSES);
+        vm.warp(DECEMBER_OPENS);
         vm.expectRevert(ProjectEscrow.InvalidInput.selector);
+        vm.prank(OWNER);
         vault.reserveMonthly(NEXT_PERIOD, mismatched, signature);
     }
 
@@ -239,6 +254,7 @@ contract MonthlyReserveV2Test {
         ProjectEscrow.MonthlyReservation memory r = plan(vault, e, CAP + 1);
         bytes memory signature = sign(vault, PERIOD, r);
         vm.expectRevert(ProjectEscrow.MonthlyCapExceeded.selector);
+        vm.prank(OWNER);
         vault.reserveMonthly(PERIOD, r, signature);
         r.wholeGross = CAP;
         reserve(vault, PERIOD, r);
@@ -250,7 +266,7 @@ contract MonthlyReserveV2Test {
         uint128 free = vault.freeBalance();
         vm.prank(OWNER);
         vault.setMonthlyCommitment(CAP, false);
-        vm.warp(NOVEMBER_CLOSES + 30 days);
+        vm.warp(DECEMBER_OPENS + 30 days);
 
         // The removed time-based bypass must not enable reuse of a funded source.
         (bool bypass,) = address(vault).call(abi.encodeWithSignature("expireMonthlyReserve(uint32)", PERIOD));
@@ -296,7 +312,7 @@ contract MonthlyReserveV2Test {
             ProjectEscrow target = newVault(keccak256(abi.encode("stuck", k)));
             uint32 period = stuck[k];
             uint32 next = period % 100 == 12 ? period + 89 : period + 1;
-            (uint64 opensAt, uint64 closesAt) = target.monthlyWindow(period);
+            (uint64 opensAt,) = target.monthlyWindow(period);
             vm.warp(opensAt);
             reserve(
                 target,
@@ -306,9 +322,9 @@ contract MonthlyReserveV2Test {
                 )
             );
             (uint64 nextOpens, uint64 nextCloses) = target.monthlyWindow(next);
-            require(nextOpens == closesAt && nextCloses <= closesAt + 30 days, "expiry comes too late for next");
+            require(nextOpens > opensAt && nextCloses == type(uint64).max, "later month remains eligible");
             // The next month can use free funds while the earlier reserve stays funded.
-            vm.warp(nextCloses - 1);
+            vm.warp(nextOpens + 365 days);
             ProjectEscrow.MonthlyAward[] memory e = entries(3, k);
             reserve(target, next, plan(target, e, sum(e)));
             require(target.pendingMonthlyGross() == CAP + sum(e), "both reserves held");
@@ -333,11 +349,11 @@ contract MonthlyReserveV2Test {
                 keccak256("random"), keccak256("random root"), CAP, CAP, 1, vault.ordinarySourceSequence()
             )
         );
-        vm.warp(NOVEMBER_CLOSES);
+        vm.warp(DECEMBER_OPENS);
         ProjectEscrow.MonthlyAward[] memory e = entries(2, 7);
         (uint8 v, bytes32 r, bytes32 s) =
             vm.sign(AUTHORITY_KEY, vault.monthlyDigest(NEXT_PERIOD, vault.allocationRoot(e)));
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vault.commitMonthly(NEXT_PERIOD, e, abi.encodePacked(r, s, v));
         require(vault.freeBalance() == 10_000e6 - CAP - sum(e), "legacy month funded from free balance");
         require(vault.pendingMonthlyGross() == CAP, "stuck reserve unchanged");
@@ -376,7 +392,7 @@ contract MonthlyReserveV2Test {
         vm.expectRevert(ProjectEscrow.MonthlyLeavesPending.selector);
         vault.commitAward(id, 7, 1e6, manual);
         // Time alone never releases the reserve.
-        vm.warp(NOVEMBER_CLOSES + 365 days);
+        vm.warp(DECEMBER_OPENS + 365 days);
         bytes memory signature = signRelease(vault, AUTHORITY_KEY, PERIOD, CAP, CAP);
         // Only the owner, with the identity authority's signature over this exact state.
         vm.prank(SUBMITTER);

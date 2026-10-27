@@ -152,8 +152,8 @@ contract OpusHandler {
         ghostWithdrawalFees += (gross + 49) / 50;
     }
 
-    /// @dev Anyone commits a signed two-award allocation for the next open period, within the owner's cap.
-    function commitMonthly(uint256 actorSeed, uint256 gross, address caller) external {
+    /// @dev The owner finalizes a signed two-award allocation within the monthly cap.
+    function commitMonthly(uint256 actorSeed, uint256 gross) external {
         uint128 free = escrow.freeBalance();
         if (free < 2) return;
         _openPeriod();
@@ -166,7 +166,7 @@ contract OpusHandler {
         }
         (uint8 v, bytes32 r, bytes32 s) =
             vm.sign(authorityKey, escrow.monthlyDigest(period, escrow.allocationRoot(entries)));
-        vm.prank(caller);
+        vm.prank(owner);
         escrow.commitMonthly(period, entries, abi.encodePacked(r, s, v));
         for (uint256 i; i < 2; ++i) {
             ids.push(escrow.awardId(entries[i].sourceDigest));
@@ -175,8 +175,8 @@ contract OpusHandler {
         period = period % 100 == 12 ? period + 89 : period + 1;
     }
 
-    /// @dev Anyone reserves a signed V2 remainder of one to six leaves for the next open period.
-    function reserveMonthly(uint256 actorSeed, uint256 gross, uint256 width, address caller) external {
+    /// @dev The owner reserves a signed V2 remainder of one to six leaves.
+    function reserveMonthly(uint256 actorSeed, uint256 gross, uint256 width) external {
         uint256 n = 1 + (width % 6);
         uint128 free = escrow.freeBalance();
         if (free < n) return;
@@ -199,7 +199,7 @@ contract OpusHandler {
             escrow.ordinarySourceSequence()
         );
         (uint8 v, bytes32 rr, bytes32 s) = vm.sign(authorityKey, escrow.monthlyReserveDigest(period, r));
-        vm.prank(caller);
+        vm.prank(owner);
         escrow.reserveMonthly(period, r, abi.encodePacked(rr, s, v));
         reservePeriod[reserveCount++] = period;
         ghostUnsettled += root.total;
@@ -214,7 +214,7 @@ contract OpusHandler {
         uint256 i = leafSeed % entries.length;
         if (leafCommitted[r][i]) return;
         (, ProjectEscrow.AllocationNode[] memory proof) = MonthlyTree.build(entries, i);
-        vm.prank(caller);
+        vm.prank(owner);
         escrow.commitMonthlyLeaf(reservePeriod[r], entries[i], uint32(i), proof);
         leafCommitted[r][i] = true;
         ids.push(escrow.awardId(entries[i].sourceDigest));

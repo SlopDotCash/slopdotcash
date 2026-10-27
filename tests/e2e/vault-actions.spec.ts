@@ -11,7 +11,9 @@ import { mnemonicToAccount } from "viem/accounts";
 import {
   buildCreateVaultCalldata,
   EVM_ESCROW_EVENT_TOPICS,
+  evmMonthlyReserveDigest,
   evmVaultKey,
+  prepareEvmMonthlyReservation,
   readEvmMonthlyCommitment,
   verifyEvmDeployment,
   verifyEvmFactory,
@@ -2003,4 +2005,269 @@ test("owner funds a separate bounty vault with private balances and no monthly r
       contentType: "text/plain",
     });
   }
+});
+
+test("owner reserves an old monthly allocation and recovers a lost wallet reply", async ({
+  page,
+}, info) => {
+  const period = "2026-07";
+  const snapshotSha256 = "e".repeat(64);
+  const manifestSha256 = "b".repeat(64);
+  await rpc("eth_sendTransaction", [
+    {
+      from: owner,
+      to: deployment.asset,
+      gas: "0x100000",
+      data: encodeFunctionData({
+        abi,
+        functionName: "mint",
+        args: [owner as `0x${string}`, 3000000n],
+      }),
+    },
+  ]);
+  const setup = parseAbi([
+    "function approve(address,uint256) returns (bool)",
+    "function deposit(uint128)",
+    "function setMonthlyCommitment(uint128,bool)",
+  ]);
+  for (const [to, data] of [
+    [
+      deployment.asset,
+      encodeFunctionData({
+        abi: setup,
+        functionName: "approve",
+        args: [deployment.vault as `0x${string}`, 3000000n],
+      }),
+    ],
+    [
+      deployment.vault,
+      encodeFunctionData({
+        abi: setup,
+        functionName: "deposit",
+        args: [3000000n],
+      }),
+    ],
+    [
+      deployment.vault,
+      encodeFunctionData({
+        abi: setup,
+        functionName: "setMonthlyCommitment",
+        args: [1000000n, true],
+      }),
+    ],
+  ]) {
+    const hash = await rpc("eth_sendTransaction", [
+      { from: owner, to, data, gas: "0x100000" },
+    ]);
+    await expect
+      .poll(
+        async () => (await rpc("eth_getTransactionReceipt", [hash]))?.status,
+      )
+      .toBe("0x1");
+  }
+  await rpc("anvil_mine", ["0x40"]);
+  if (
+    !deployment.factory ||
+    !deployment.factoryCodeSha256 ||
+    !deployment.registrar
+  )
+    throw new Error("Missing fixture factory");
+  const reserved = await prepareEvmMonthlyReservation(
+    {
+      ...deployment,
+      factory: deployment.factory,
+      factoryCodeSha256: deployment.factoryCodeSha256,
+      registrar: deployment.registrar,
+      chainId: 84532n,
+      request: rpc,
+      payoutPolicy: "ordinary",
+    },
+    period,
+    `0x${snapshotSha256}`,
+    [
+      {
+        githubUserId: "99123",
+        grossMicro: "1000000",
+        sourceDigest: `0x${"9".repeat(64)}`,
+      },
+    ],
+  );
+  if (!reserved) throw new Error("Missing fixture reservation");
+  const digest = evmMonthlyReserveDigest(
+    84532n,
+    deployment.vault,
+    period,
+    reserved.reservation,
+  );
+  const signer = mnemonicToAccount(
+    "test test test test test test test test test test test junk",
+    { addressIndex: 1 },
+  );
+  const authorization = {
+    plan: {
+      request: {
+        projectId: project.id,
+        period,
+        network: deployment.network,
+        snapshotSha256,
+      },
+      deployment,
+      allocationRoot: reserved.reservation.allocationRoot,
+      family: "evm",
+      totalGrossBase: "1000000",
+      evmReservation: reserved.reservation,
+      entries: reserved.entries,
+      messageHex: digest.slice(2),
+    },
+    signatureHex: (await signer.sign({ hash: digest as `0x${string}` })).slice(
+      2,
+    ),
+  };
+  const sent: string[] = [];
+  await page.exposeFunction(
+    "monthlyOwnerWallet",
+    async (method: string, params: unknown[]) => {
+      if (method === "eth_accounts" || method === "eth_requestAccounts")
+        return [owner];
+      const result = await rpc(method, params);
+      if (method === "eth_sendTransaction") {
+        sent.push(result);
+        return { lostReply: true };
+      }
+      return result;
+    },
+  );
+  await page.addInitScript(() =>
+    Object.assign(window, {
+      ethereum: {
+        isMetaMask: true,
+        request: async ({
+          method,
+          params = [],
+        }: {
+          method: string;
+          params?: unknown[];
+        }) => {
+          const result = await (
+            window as unknown as {
+              monthlyOwnerWallet(
+                method: string,
+                params: unknown[],
+              ): Promise<unknown>;
+            }
+          ).monthlyOwnerWallet(method, params);
+          if ((result as { lostReply?: boolean })?.lostReply)
+            throw new Error("Wallet reply lost after submission");
+          return result;
+        },
+      },
+    }),
+  );
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+  );
+  await page.route("**/api/v1/projects/eliza", (route) =>
+    route.fulfill({ json: { project, revision: 1 } }),
+  );
+  await serveProjectCycleIndex(page, [project.id]);
+  await page.route("**/api/v1/payments/projects/eliza/monthly/*", (route) => {
+    const requested = new URL(route.request().url()).pathname.split("/").at(-1);
+    return route.fulfill({
+      json: {
+        projectId: project.id,
+        period: requested,
+        manifestSha256,
+        automatic: true,
+        finalizationOpensAt: "2026-08-01T00:00:00Z",
+        deployment,
+        asset: {
+          network: deployment.network,
+          assetAddress: deployment.asset,
+          assetDecimals: 6,
+          symbol: "TEST",
+        },
+        proposal: null,
+        run:
+          requested === period
+            ? {
+                trigger: "owner",
+                frozenAt: "2026-10-26T00:00:00Z",
+                snapshotSha256,
+                totalGrossBase: "1000000",
+                network: deployment.network,
+                vault: deployment.vault,
+                funded: true,
+                awards: [
+                  {
+                    githubUserId: "99123",
+                    login: "old-month-contributor",
+                    grossBase: "1000000",
+                    feeBase: "20000",
+                    netBase: "980000",
+                    state: "awaiting-reservation",
+                  },
+                ],
+              }
+            : null,
+      },
+    });
+  });
+  await page.route(
+    `**/api/v1/payments/projects/eliza/monthly/${period}/finalization`,
+    (route) => {
+      expect(route.request().postDataJSON()).toEqual({
+        step: "review",
+        network: deployment.network,
+        wallet: owner,
+        snapshotSha256,
+        manifestSha256,
+      });
+      return route.fulfill({ json: { authorization } });
+    },
+  );
+  await page.goto("/projects/eliza/awards");
+  await page.getByLabel("Contribution month").fill(period);
+  await page.getByRole("button", { name: "Refresh awards" }).click();
+  const reservation = page.getByRole("region", {
+    name: `Authorize ${period} monthly reservation`,
+    exact: true,
+  });
+  await expect(reservation).toBeVisible();
+  await reservation.getByRole("button", { name: /MetaMask/ }).click();
+  await reservation
+    .getByRole("button", { name: "Review monthly reservation", exact: true })
+    .click();
+  await expect(
+    reservation.getByRole("button", {
+      name: "Authorize monthly reservation in wallet",
+    }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: info.outputPath("monthly-owner-review.png"),
+    fullPage: true,
+  });
+  await reservation
+    .getByRole("button", { name: "Authorize monthly reservation in wallet" })
+    .click();
+  await expect.poll(() => sent.length).toBe(1);
+  await expect(reservation).toContainText("Reservation awaiting verification");
+  await page.reload();
+  await expect(reservation).toBeVisible();
+  await reservation.getByRole("button", { name: /MetaMask/ }).click();
+  await reservation.getByLabel("Monthly reservation transaction").fill(sent[0]);
+  await rpc("anvil_mine", ["0x40"]);
+  await reservation
+    .getByRole("button", { name: "Check monthly reservation", exact: true })
+    .click();
+  await expect(reservation.getByRole("status")).toContainText(
+    "reserved on the finalized chain",
+  );
+  expect(sent).toHaveLength(1);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("monthly-owner-finalized.png"),
+    fullPage: true,
+  });
 });

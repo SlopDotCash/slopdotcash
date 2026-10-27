@@ -16,10 +16,6 @@ interface IERC20 {
 uint64 constant MIN_BINDING_DELAY = 0;
 uint64 constant MAX_BINDING_DELAY = 30 days;
 
-/// @dev A monthly allocation for calendar UTC month M can be committed from MONTHLY_CUTOFF_DELAY after M ends
-/// until MONTHLY_CUTOFF_DELAY after the next month ends (owner decision D1: 00:00 UTC on the 4th).
-uint64 constant MONTHLY_CUTOFF_DELAY = 72 hours;
-
 /// @notice What a vault holds funds for. One owner can hold one vault per project, token and purpose, so
 /// ordinary awards and private bounties never share a balance (owner decision D13).
 enum Purpose {
@@ -35,8 +31,8 @@ enum Purpose {
 /// cancellation is effective only if mined first. It cannot guarantee recovery from a compromised
 /// identity authority that also controls the destination key. Factory authority rotation has no mandatory delay. Fees accrue separately, so a blocked fee recipient cannot stop payouts.
 /// Anyone may deposit; deposits join one free balance that only the owner commits or refunds to itself. An
-/// ordinary vault also accepts one monthly allocation per calendar month from anyone, when the owner has
-/// turned it on, the identity authority signed it, and its total is within the owner's monthly cap.
+/// ordinary vault accepts one allocation per closed calendar month from its owner, when monthly commitments
+/// are on, the identity authority signed it, and its total is within the owner's monthly cap.
 /// The payout fee and the unused-fund withdrawal fee are both 2% (ceil(gross / 50)), so awarding
 /// free funds to oneself costs the same as withdrawing them (#907); each fee rounds up once per award or
 /// withdrawal, so splitting an amount never lowers the fee. Tokens must have exact transfers: a fee-on-transfer deposit or payout reverts. Decimals are stored for display only; amounts are
@@ -386,18 +382,15 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         return level[0];
     }
 
-    /// @notice When a period's allocation may be committed: from MONTHLY_CUTOFF_DELAY after the month ends
-    /// until MONTHLY_CUTOFF_DELAY after the next month ends. The period is YYYYMM in UTC, year 2000 to 9999.
-    /// Only one period is open at a time, so a stolen authority key can commit at most one cap per month.
+    /// @notice A closed calendar month is eligible for explicit owner finalization without an expiry.
+    /// The second return value preserves the historical read ABI; no automatic cutoff exists.
     function monthlyWindow(uint32 period) public pure returns (uint64 opensAt, uint64 closesAt) {
         uint256 year = period / 100;
         uint256 month = period % 100;
         if (year < 2000 || year > 9999 || month == 0 || month > 12) revert InvalidInput();
         (uint256 nextYear, uint256 nextMonth) = month == 12 ? (year + 1, uint256(1)) : (year, month + 1);
-        (uint256 afterYear, uint256 afterMonth) =
-            nextMonth == 12 ? (nextYear + 1, uint256(1)) : (nextYear, nextMonth + 1);
-        opensAt = uint64(monthStart(nextYear, nextMonth)) + MONTHLY_CUTOFF_DELAY;
-        closesAt = uint64(monthStart(afterYear, afterMonth)) + MONTHLY_CUTOFF_DELAY;
+        opensAt = uint64(monthStart(nextYear, nextMonth));
+        closesAt = type(uint64).max;
     }
 
     /// @dev Unix time of 00:00 UTC on the first day of a month (proleptic Gregorian, days from civil).
@@ -512,11 +505,14 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         emit MonthlyCommitmentSet(cap, enabled);
     }
 
-    /// @notice Anyone may commit one period's allocation inside its window, once per period, while the owner
-    /// has monthly commitments on. The identity authority must have signed monthlyDigest(period, root) for
+    /// @notice The owner finalizes one closed period's allocation, once per period, while monthly commitments
+    /// are on. Elapsed time alone never authorizes a commitment. The identity authority must have signed monthlyDigest(period, root) for
     /// exactly these awards, and their gross total must be within monthlyCap. The free balance covers new
     /// awards only; matching existing awards retain their payment state and are never reserved twice.
-    function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation) external {
+    function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation)
+        external
+        onlyOwner
+    {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         if (!monthlyEnabled) revert MonthlyDisabled();
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
@@ -555,10 +551,11 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         emit MonthlyCommitted(period, root, uint128(total), entries.length);
     }
 
-    /// @notice Reserve the complete unfunded remainder in one bounded call. Leaf creation never needs
+    /// @notice The owner reserves the complete unfunded remainder in one bounded call. Leaf creation never needs
     /// a wallet, fresh authority signature, an open admission window, or the owner's later opt-in.
     function reserveMonthly(uint32 period, MonthlyReservation calldata reservation, bytes calldata attestation)
         external
+        onlyOwner
     {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         if (!monthlyEnabled) revert MonthlyDisabled();

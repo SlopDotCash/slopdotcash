@@ -44,7 +44,8 @@ const bytes = (hex: string) => {
 /**
  * Called through the attester's serialized Durable Object. The intent is saved
  * before invoking its signer: interrupted requests may sign the same bytes but
- * can never replace a month's root. On-chain submission remains permissionless.
+ * can never replace a month's root. Its owner authorizes on-chain admission;
+ * subsequent leaf processing remains permissionless.
  */
 export async function signMonthlyAllocation(
   deps: Omit<Parameters<typeof prepareMonthlyAttestation>[0], "now"> & {

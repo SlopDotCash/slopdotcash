@@ -15,9 +15,6 @@ const MIN_BINDING_DELAY: i64 = 0;
 const MAX_BINDING_DELAY: i64 = 30 * 86400;
 /// Historical rotation delays remain bounded; new deployments use zero delay.
 const MAX_ROTATION_DELAY: i64 = 90 * 86400;
-/// A monthly allocation for calendar UTC month M can be recorded from this delay after M ends
-/// until this delay after the next month ends (owner decision D1: 00:00 UTC on the 4th).
-const MONTHLY_CUTOFF_DELAY: i64 = 72 * 3600;
 /// The identity authority signs this prefix, the program ID, the project, the period (u32 LE,
 /// YYYYMM), the allocation root, total, freeze time (i64 LE) and stored network domain.
 pub const MONTHLY_MESSAGE_PREFIX: &[u8] = b"slop-monthly-allocation-v3";
@@ -305,9 +302,9 @@ pub mod slop_escrow {
         });
         Ok(())
     }
-    // Anyone records one period's allocation root inside the period's window, once per
-    // period, while the owner has monthly commitments on. The instruction just before this
-    // one must be an Ed25519 program check of the project's identity authority signature
+    // The owner records one closed period's allocation root, once per period,
+    // without an automatic deadline, while monthly commitments are on. The instruction
+    // just before this one must be an Ed25519 program check of the project's identity authority signature
     // over monthly_message(program, project, period, root, total, frozen_at, network).
     // `frozen_at` is when the attester froze the allocation, after it checked that no
     // included source was consumed; only a source consumed before it can be released.
@@ -321,12 +318,9 @@ pub mod slop_escrow {
         let p = &mut ctx.accounts.project;
         require!(p.purpose == Purpose::Ordinary, EscrowError::WrongPurpose);
         require!(p.monthly_enabled, EscrowError::MonthlyDisabled);
-        let (opens_at, closes_at) = monthly_window(period)?;
+        let opens_at = monthly_period_end(period)?;
         let now = Clock::get()?.unix_timestamp;
-        require!(
-            now >= opens_at && now < closes_at,
-            EscrowError::MonthlyWindowClosed
-        );
+        require!(now >= opens_at, EscrowError::MonthlyWindowClosed);
         require!(
             frozen_at >= opens_at && frozen_at <= now,
             EscrowError::InvalidFreeze
@@ -969,24 +963,22 @@ fn merkle_sum_root(
     );
     Ok(node)
 }
-/// When a period (YYYYMM, UTC, year 2000 to 9999) may be recorded: from the cutoff delay after
-/// the month ends until the cutoff delay after the next month ends. Only one period is open at
-/// a time, so a stolen authority key can commit at most one cap per month.
-fn monthly_window(period: u32) -> Result<(i64, i64)> {
+/// A calendar period must be closed before its owner finalizes it. There is no expiry.
+fn monthly_period_end(period: u32) -> Result<i64> {
     let (year, month) = ((period / 100) as i64, (period % 100) as i64);
     require!(
         (2000..=9999).contains(&year) && (1..=12).contains(&month),
         EscrowError::InvalidPeriod
     );
-    let next = |(y, m): (i64, i64)| if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-    let first = next((year, month));
-    let second = next(first);
-    Ok((
-        month_start(first.0, first.1) + MONTHLY_CUTOFF_DELAY,
-        month_start(second.0, second.1) + MONTHLY_CUTOFF_DELAY,
-    ))
+    let first = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    Ok(month_start(first.0, first.1))
 }
-/// Unix time of 00:00 UTC on the first day of a month (proleptic Gregorian, days from civil).
+
+/// Unix time of 00:00 UTC on the first day of a month (proleptic Gregorian).
 fn month_start(year: i64, month: i64) -> i64 {
     let y = if month <= 2 { year - 1 } else { year };
     let era = y / 400;
@@ -1163,8 +1155,8 @@ pub struct SetMonthlyCommitment<'info> {
 #[derive(Accounts)]
 #[instruction(period:u32)]
 pub struct CommitMonthly<'info> {
-    /// Anyone; pays the period account's rent.
-    #[account(mut)]
+    /// The owner authorizes the exact allocation and pays the period account's rent.
+    #[account(mut, address=project.owner)]
     pub payer: Signer<'info>,
     #[account(mut)]
     pub project: Box<Account<'info, Project>>,
@@ -1673,17 +1665,22 @@ mod tests {
         assert!(!valid_rotation_delay(90 * 86400 + 1));
     }
     #[test]
-    fn monthly_window_is_the_utc_month_plus_72_hours() {
-        // November 2026 opens at 00:00 UTC on 4 December 2026 and closes on 4 January 2027.
+    fn monthly_finalization_starts_at_the_calendar_month_end() {
         assert_eq!(
-            monthly_window(202611).unwrap(),
-            (1_796_342_400, 1_799_020_800)
+            monthly_period_end(202611).unwrap(),
+            1_796_342_400 - 3 * 86400
         );
-        assert_eq!(monthly_window(202612).unwrap().0, 1_799_020_800);
+        assert_eq!(
+            monthly_period_end(202612).unwrap(),
+            1_799_020_800 - 3 * 86400
+        );
         // February 2028 has 29 days.
-        assert_eq!(monthly_window(202802).unwrap().0, 1_835_740_800);
+        assert_eq!(
+            monthly_period_end(202802).unwrap(),
+            1_835_740_800 - 3 * 86400
+        );
         for invalid in [202600, 202613, 199912, 1_000_001] {
-            assert!(monthly_window(invalid).is_err());
+            assert!(monthly_period_end(invalid).is_err());
         }
     }
     #[test]

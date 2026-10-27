@@ -258,23 +258,13 @@ sections 6 and 7). Migration `0062` adds its private records.
    no public reason exists. `POST .../monthly-settings` (`automatic`) turns
    the automatic default off or on again.
 3. **Execution snapshot.** `POST .../monthly/:YYYY-MM/finalize`
-   (`expectedSequence`) freezes the current allocations now. Otherwise the
-   payments Worker's scheduled coordinator freezes them at the cutoff,
-   unless the owner turned the default off, the project is restricted or
-   paused, or its vault network is not served. The cutoff is
-   `MONTHLY_PAYMENT_SCHEDULE`, `{"firstPeriod":"YYYY-MM",
-   "cutoffSecondsAfterPeriodEnd":N}`, counted from 00:00 UTC on the next
-   1st. Owner decision D1 (24 October 2026) sets the calendar UTC month,
-   `{"firstPeriod":"2026-11","cutoffSecondsAfterPeriodEnd":259200}`: the
-   first automatic month is November 2026 and the cutoff is 72 hours after
-   the month ends. The value lives once in the `[vars]` of `wrangler.toml`
-   and `wrangler.staging.toml`; `workers/payment-executor/configure.mjs`
-   copies it to the ordinary dispatcher. Earlier months are never frozen
-   automatically. Without the value nothing is frozen automatically, and a
-   malformed value fails the run. While the automatic default is on, the
-   allocations cannot change after the cutoff. Either path writes the single
-   `monthly_payment_runs` row of that month; a frozen month accepts no
-   further change.
+   (`expectedSequence`) freezes the allocation only on the owner's request.
+   An unfinalized closed month remains editable indefinitely; the scheduler
+   never freezes it. `MONTHLY_PAYMENT_SCHEDULE` is now
+   `{"firstPeriod":"2026-11"}` in `wrangler.toml` and `wrangler.staging.toml`.
+   It defines the first eligible calendar month, not a deadline. An absent or
+   malformed setting stops automatic payment processing. Finalization writes
+   the single `monthly_payment_runs` row; a finalized month accepts no changes.
    A banned account cannot change allocations or automatic-payment settings,
    or finalize a month. Each write checks the account ban again to refuse a
    concurrent ban. Reading awards and preparing an existing funded obligation
@@ -312,14 +302,18 @@ sections 6 and 7). Migration `0062` adds its private records.
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM/authorization/:network`
    returns the latest signed execution attempt and its publication time, without
    calling a signer or RPC. It exposes no private adjustment history.
-   Publication is not a reservation or payment. A project-operated or
-   permissionless executor must still submit the bounded commitment and
-   reconcile finalized results. The payments scheduler sends published allocations
-   to the configured executor's `/v1/commit-monthly` service. Hosted relayers
-   accept this only on the test stack; production requires a separately operated
-   executor. Legacy EVM reserves its awards in one transaction. EVM V2 reserves
-   the remaining total, then commits bounded proven leaves. An admitted month
-   remains resumable after opt-out or its admission window; only finalized
+   Publication is not a reservation or payment. The owner reviews the whole
+   monthly reservation through `POST .../monthly/:YYYY-MM/finalization` with
+   `step: "review"`, the current manifest and snapshot digests, network and
+   owner wallet. This rechecks current GitHub authority, obtains and retains
+   only that allocation's attestation, and prepares an exact wallet request.
+   The owner submits `commitMonthly` or `reserveMonthly` on EVM, or signs
+   `commit_monthly` as the Solana payer. Only the owner can create a new root;
+   the attester signature alone cannot authorize past or future months.
+   Existing EVM read ABI `monthlyWindow` returns the calendar month end and
+   `uint64.max`; there is no admission expiry. Scheduled and independent
+   executors use `/v1/commit-monthly?admit=false` to resume existing roots and
+   proven leaves. An absent root waits for the owner, and only finalized
    completion retires it. Solana signs `solanaMonthlyMessage` v3. Before it
    signs, the attester reads every included source's `origin` and
    `monthly-source` account at one finalized slot, refuses the month if any
@@ -331,8 +325,7 @@ sections 6 and 7). Migration `0062` adds its private records.
    to the same actor, or a source committed by hand before `frozenAt` releases its
    leaf. A source committed by hand after `frozenAt` stays reserved and is never
    refunded; the executor reports it as `stranded`. Valid funded awards never
-   expire. An admitted Solana month continues after opt-out or its admission
-   window closes. `monthly_payment_execution` tracks fair retries and completed
+   expire. An admitted Solana month continues after opt-out. `monthly_payment_execution` tracks fair retries and completed
    execution, not public payment state. Signed transactions are journaled before
    broadcast and reused after an uncertain response.
    The owner can still prepare individual awards through the Awards page.
@@ -344,7 +337,13 @@ sections 6 and 7). Migration `0062` adds its private records.
    contract refuses a second reservation of the same award. The existing
    dispatcher and executor then pay reserved awards one recipient at a time;
    a walletless award stays reserved until its contributor binds a wallet.
-   Award states come from the finalized chain projection.
+   Award states come from the finalized chain projection. The whole-month
+   wallet flow saves the exact authorization before opening the wallet and
+   retains an uncertain attempt after a lost response. Its check operation
+   reconciles that transaction without requesting a fresh signature. Solana
+   checks use `step: "check"` on the same finalization route and do not require
+   the actor to retain project authority; they only verify the retained signed
+   transaction. An old or changed allocation is never silently substituted.
 
 The public surface shows only final awards and payment evidence from the
 chain. A paused project keeps its funded obligations.

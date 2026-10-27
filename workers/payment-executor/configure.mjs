@@ -270,7 +270,7 @@ export function paymentStack({
         : {
             PAYMENT_NETWORKS: JSON.stringify([network]),
             // The ordinary dispatcher runs the monthly coordinator with the
-            // owner-decided cutoff of the Pages configuration (decision D1).
+            // first eligible month from the Pages configuration; owners finalize explicitly.
             ...(scope === "ordinary" && monthlySchedule !== undefined
               ? { MONTHLY_PAYMENT_SCHEDULE: monthlySchedule }
               : {}),

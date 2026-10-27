@@ -36,7 +36,7 @@ import {
   type MonthlyBaseRow,
   type MonthlyExecutionSnapshot,
   type MonthlySchedule,
-  monthlyCutoff,
+  monthlyFinalizationDate,
   periodEnd,
 } from "../../src/lib/payments/monthly-allocation";
 import { payoutExcludedGithubUserIds } from "../../src/lib/payout-exclusions.mjs";
@@ -599,10 +599,10 @@ export interface MonthlyCoordinatorReport {
 
 /**
  * The single idempotent monthly coordinator. It runs in the scheduled
- * ordinary payments Worker, never for private bounty programs. Without a
- * configured cutoff it freezes nothing; it still creates the obligations of
- * months the owner finalized. A failure in one project month is reported and
- * never stops another.
+ * ordinary payments Worker, never for private bounty programs. Only explicit
+ * owner finalization can freeze an allocation; elapsed time cannot authorize
+ * a proposal. This coordinator creates obligations from those finalizations.
+ * A failure in one project month never stops another.
  */
 export async function coordinateMonthlyPayments(input: {
   db: D1Database;
@@ -622,59 +622,6 @@ export async function coordinateMonthlyPayments(input: {
     waiting: [],
     failures: [],
   };
-  if (input.schedule) {
-    const due = JSON.parse(
-      (
-        await db
-          .prepare(
-            "SELECT json_group_array(json_object('projectId',project_id,'period',period)) items FROM (SELECT project_id,period FROM monthly_reward_bases b WHERE NOT EXISTS(SELECT 1 FROM monthly_payment_runs r WHERE r.project_id=b.project_id AND r.period=b.period) ORDER BY period,project_id)",
-          )
-          .first<{ items: string }>()
-      )?.items ?? "[]",
-    ) as { projectId: string; period: string }[];
-    for (const { projectId, period } of due) {
-      const key = `${projectId}/${period}`;
-      try {
-        const cutoff = monthlyCutoff(input.schedule, period);
-        if (!cutoff) {
-          report.waiting.push({ key, reason: "before-first-period" });
-          continue;
-        }
-        if (now.getTime() < cutoff.getTime()) continue;
-        const project = await input.projects.getProject(projectId);
-        if (!project) throw new Error(`Project ${projectId} is not registered`);
-        if (!(await automaticMonthlyPayment(db, projectId))) {
-          report.waiting.push({ key, reason: "automatic-off" });
-          continue;
-        }
-        if (
-          project.manifest.status !== "active" ||
-          (await input.projects.restricted(project))
-        ) {
-          report.waiting.push({ key, reason: "project-restricted" });
-          continue;
-        }
-        const deployment = servedDeployment(project.manifest, input.networks);
-        if (!deployment) {
-          report.waiting.push({ key, reason: "vault-not-served" });
-          continue;
-        }
-        if (
-          (await freezeMonthlyPeriod(db, {
-            project,
-            deployment,
-            period,
-            trigger: "automatic",
-            actorId: null,
-            now,
-          })) === "frozen"
-        )
-          report.frozen.push(key);
-      } catch (error) {
-        report.failures.push(error);
-      }
-    }
-  }
   const pending = JSON.parse(
     (
       await db
@@ -711,8 +658,8 @@ export interface MonthlyOwnerView {
   period: string;
   manifestSha256: string;
   automatic: boolean;
-  /** Null without MONTHLY_PAYMENT_SCHEDULE or before its first period. */
-  cutoffAt: string | null;
+  /** Calendar month end, or null when outside the configured payment scope. */
+  finalizationOpensAt: string | null;
   deployment: EscrowDeployment | null;
   asset: (PaymentAsset & { symbol: string | null }) | null;
   proposal: {
@@ -811,7 +758,7 @@ export function monthlyOwnerService(deps: {
     const base = await loadBase(deps.db, project.id, period);
     const run = await loadRun(deps.db, project.id, period);
     const schedule = deps.schedule();
-    const cutoff = schedule ? monthlyCutoff(schedule, period) : null;
+    const cutoff = schedule ? monthlyFinalizationDate(schedule, period) : null;
     const vault = deployment
       ? await deps.db
           .prepare(
@@ -877,7 +824,7 @@ export function monthlyOwnerService(deps: {
       period,
       manifestSha256: project.manifestSha256,
       automatic: await automaticMonthlyPayment(deps.db, project.id),
-      cutoffAt: cutoff?.toISOString() ?? null,
+      finalizationOpensAt: cutoff?.toISOString() ?? null,
       deployment,
       asset: vault
         ? {
@@ -964,20 +911,6 @@ export function monthlyOwnerService(deps: {
           409,
           "month_frozen",
           "This month is finalized. Its allocations can no longer change.",
-        );
-      // Decision D1: with the automatic default on, allocations stay as they
-      // were at the cutoff until the coordinator freezes them.
-      const schedule = deps.schedule();
-      const cutoff = schedule ? monthlyCutoff(schedule, period) : null;
-      if (
-        cutoff &&
-        deps.now().getTime() >= cutoff.getTime() &&
-        (await automaticMonthlyPayment(deps.db, project.id))
-      )
-        throw new MonthlyPaymentError(
-          409,
-          "cutoff_passed",
-          "The cutoff for this month has passed. The automatic process pays the current allocations.",
         );
       const base = await loadBase(deps.db, project.id, period);
       if (!base)

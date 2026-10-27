@@ -1340,11 +1340,7 @@ export function scenarioActor(scenario: number, n: number): TestActor {
   };
 }
 
-/**
- * The monthly period whose commitment window is open at `now` (UTC seconds):
- * the window of month M runs from 72 hours after M ends to 72 hours after the
- * next month ends (MONTHLY_CUTOFF_DELAY in both contracts).
- */
+/** Latest closed calendar month, the open current month, and the preceding closed month. */
 export function openMonthlyPeriod(now: bigint) {
   const date = new Date(Number(now) * 1000);
   const shift = (months: number) => {
@@ -1353,8 +1349,7 @@ export function openMonthlyPeriod(now: bigint) {
     );
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
   };
-  const monthStart = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
-  const back = date.getTime() < monthStart + 72 * 3_600_000 ? 2 : 1;
+  const back = 1;
   return {
     open: shift(-back),
     next: shift(1 - back),

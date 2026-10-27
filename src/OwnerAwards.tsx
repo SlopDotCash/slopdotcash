@@ -9,6 +9,9 @@ import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
+import OwnerMonthlyFinalization, {
+  recoverMonthlyFinalizations,
+} from "./OwnerMonthlyFinalization";
 import OwnerReserveRelease from "./OwnerReserveRelease";
 import { formatDateTime } from "./Presentation";
 
@@ -58,6 +61,19 @@ export default function OwnerAwards({
       return {
         pending: [],
         error: errorMessage(reason, "Saved commitments are unavailable."),
+      };
+    }
+  });
+  const [monthlyRecovery, setMonthlyRecovery] = useState(() => {
+    try {
+      return { pending: recoverMonthlyFinalizations(project.id), error: "" };
+    } catch (reason) {
+      return {
+        pending: [],
+        error: errorMessage(
+          reason,
+          "Saved monthly reservations are unavailable.",
+        ),
       };
     }
   });
@@ -225,12 +241,6 @@ export default function OwnerAwards({
         setView({ ...view, automatic: body.automatic });
     });
 
-  // Decision D1: with the automatic default on, the cutoff fixes the
-  // allocations until the coordinator freezes them.
-  const cutoffPassed =
-    view?.automatic === true &&
-    view.cutoffAt !== null &&
-    Date.now() >= Date.parse(view.cutoffAt);
   const reservable =
     view?.run && view.deployment?.network === view.run.network
       ? view.deployment.network
@@ -239,6 +249,29 @@ export default function OwnerAwards({
     <main className="shell route-main owner-awards-page">
       <h1>Monthly awards</h1>
       {recovery.error && <p role="alert">{recovery.error}</p>}
+      {monthlyRecovery.error && <p role="alert">{monthlyRecovery.error}</p>}
+      {monthlyRecovery.pending
+        .filter(
+          (entry) =>
+            !(
+              view?.run &&
+              entry.period === view.period &&
+              entry.deployment.network === view.deployment?.network
+            ),
+        )
+        .map((expected) => (
+          <OwnerMonthlyFinalization
+            key={`monthly-recovery:${expected.period}:${expected.deployment.network}`}
+            expected={expected}
+            available={false}
+            onFinalized={() =>
+              setMonthRequest((current) => ({
+                ...current,
+                revision: current.revision + 1,
+              }))
+            }
+          />
+        ))}
       {recovery.pending.map((entry) => (
         <OwnerCommitment
           key={`recovery:${entry.cycleId}:${entry.expected.network}:${entry.expected.githubUserId}`}
@@ -256,6 +289,20 @@ export default function OwnerAwards({
             value={period}
             disabled={busy}
             onChange={(event) => {
+              try {
+                setMonthlyRecovery({
+                  pending: recoverMonthlyFinalizations(project.id),
+                  error: "",
+                });
+              } catch (reason) {
+                setMonthlyRecovery({
+                  pending: [],
+                  error: errorMessage(
+                    reason,
+                    "Saved monthly reservations are unavailable.",
+                  ),
+                });
+              }
               setMonthRequest({
                 period: event.target.value,
                 revision: monthRequest.revision,
@@ -284,12 +331,8 @@ export default function OwnerAwards({
             Automatic monthly payment is{" "}
             <strong>{view.automatic ? "on" : "off"}</strong>.{" "}
             {view.automatic
-              ? cutoffPassed
-                ? "The cutoff has passed. Current allocations are finalized automatically."
-                : view.cutoffAt
-                  ? `Unless you finalize earlier, the current allocations are finalized at ${formatDateTime(view.cutoffAt)}.`
-                  : "Automatic payment starts later. Finalize this month yourself."
-              : "Finalize each month yourself."}
+              ? "Finalize the allocation when ready. Automatic payment follows your authorization and full funding; there is no deadline."
+              : "Finalize and pay each month when ready; there is no deadline."}
             {project.reward.paymentMode !== "enabled" &&
               " Payments are disabled for this project."}
           </p>
@@ -303,9 +346,9 @@ export default function OwnerAwards({
               ? "Turn off automatic payment"
               : "Turn on automatic payment"}
           </button>
-          {!view.proposal ? (
+          {!view.proposal && !view.run ? (
             <p>No allocation is proposed for this month yet.</p>
-          ) : !view.run ? (
+          ) : view.proposal && !view.run ? (
             <>
               <p>
                 Allocated{" "}
@@ -337,7 +380,7 @@ export default function OwnerAwards({
                           id={id}
                           inputMode="decimal"
                           spellCheck={false}
-                          disabled={busy || cutoffPassed}
+                          disabled={busy}
                           value={
                             drafts[row.githubUserId] ??
                             editableUnits(row.grossBase, decimals)
@@ -353,9 +396,7 @@ export default function OwnerAwards({
                           className="button secondary-button"
                           type="button"
                           disabled={
-                            busy ||
-                            cutoffPassed ||
-                            drafts[row.githubUserId] === undefined
+                            busy || drafts[row.githubUserId] === undefined
                           }
                           onClick={() => void save(row.githubUserId)}
                         >
@@ -375,7 +416,7 @@ export default function OwnerAwards({
                 Finalize awards
               </button>
             </>
-          ) : (
+          ) : view.run ? (
             <>
               <p role="status">
                 Finalized{" "}
@@ -389,6 +430,27 @@ export default function OwnerAwards({
                   ? ""
                   : " Awards wait until the vault's free balance covers them."}
               </p>
+              {view.automatic &&
+                view.deployment &&
+                view.run.awards.length > 0 && (
+                  <OwnerMonthlyFinalization
+                    key={`monthly:${view.period}:${view.deployment.network}`}
+                    expected={{
+                      projectId: project.id,
+                      period: view.period,
+                      snapshotSha256: view.run.snapshotSha256,
+                      manifestSha256: view.manifestSha256,
+                      deployment: view.deployment,
+                    }}
+                    available={view.run.funded}
+                    onFinalized={() =>
+                      setMonthRequest((current) => ({
+                        ...current,
+                        revision: current.revision + 1,
+                      }))
+                    }
+                  />
+                )}
               {view.run.awards.length === 0 ? (
                 <p>No awards this month.</p>
               ) : (
@@ -438,7 +500,7 @@ export default function OwnerAwards({
                   />
                 )}
             </>
-          )}
+          ) : null}
         </section>
       )}
       <p>

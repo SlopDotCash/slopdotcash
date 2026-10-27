@@ -224,18 +224,18 @@ The owner can later call `set_monthly_commitment(cap, enabled)` on an ordinary
 project. "On" needs a positive cap; turning it off preserves existing awards.
 Legacy callers that send `initialize` alone retain their earlier off/zero
 initial state. A period is a calendar UTC
-month written as `YYYYMM`. Its window opens 72 hours after the month ends, at
-00:00 UTC on the 4th, and closes when the next month's window opens, so only one
-period is open at a time.
+month written as `YYYYMM`. Its owner can finalize it as soon as the month
+closes, without an automatic deadline or later expiry.
 
-1. Anyone calls `commit_monthly(period, allocation_root, total, frozen_at)`
-   inside the window, while the switch is on. The instruction just before it in the same
+1. The project owner calls `commit_monthly(period, allocation_root, total, frozen_at)`
+   as the transaction payer, while the switch is on. The instruction just before it in the same
    transaction must be an Ed25519 program check of one signature by the
    project's identity authority over
    `"slop-monthly-allocation-v3" || program ID || project PDA || period (u32 LE) || allocation root || total (u64 LE) || frozen_at (i64 LE) || network domain (32 bytes)`.
    `frozen_at` is when the attester froze the allocation, after it checked that
-   no included source had an `origin`; it must lie between the window opening
-   and the admission time.
+   no included source had an `origin`; it must be after the calendar month end
+   and no later than admission. The owner signature authorizes the exact root;
+   the attester signature alone cannot commit another month.
    The program reads that instruction from the instructions sysvar and requires
    every offset to point inside it. The `month` PDA
    (`["month", project, period LE]`) records the root once, so each period

@@ -339,7 +339,7 @@ export async function submitSolanaMonthly(
   const vault = { key: config.vault, write: false };
   const journal = `solana:monthly:${config.network}:${month}`;
   if (!record) {
-    if (!allowAdmission)
+    if (!allowAdmission || env.SOLANA_SIGNER.address !== config.owner)
       return {
         transactionId: null,
         alreadyCommitted: false,

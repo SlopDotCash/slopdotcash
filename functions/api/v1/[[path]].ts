@@ -18,6 +18,11 @@ import {
   verifyProjectAuthority,
 } from "../../../backend/payments/monthly";
 import {
+  publishMonthlyAuthorizations,
+  readMonthlyAuthorization,
+  requestMonthlyAuthorization,
+} from "../../../backend/payments/monthly-publication";
+import {
   handlePointsApi,
   sessionGithubActor,
 } from "../../../backend/points/handler";
@@ -87,6 +92,7 @@ import { deploymentTier } from "../../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
 import type { GithubActor } from "../../../src/lib/project-contracts";
+import type { MonthlyAuthorization } from "../../../workers/payment-executor/monthly";
 import type { MonthlyReleaseResult } from "../../../workers/payment-executor/monthly-release";
 import {
   loadRegistryPaymentDeployments,
@@ -472,9 +478,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
             actor,
             env.SLOP_GITHUB_READ_TOKEN,
           ),
-        // The cutoff display and the owner's cutoff lock. A malformed value
-        // turns both off; the payments Worker then fails loudly and freezes
-        // nothing automatically, so the allocations stay owner-controlled.
+        // Only the first eligible calendar month is configured. A malformed
+        // value stops automatic processing; no scheduler freezes allocations.
         schedule: () => {
           try {
             return parseMonthlySchedule(env.MONTHLY_PAYMENT_SCHEDULE);
@@ -512,6 +517,43 @@ export async function onRequest(context: PagesContext): Promise<Response> {
           )) as MonthlyReleaseResult;
         },
       }),
+      refreshMonthlyAuthorization: async (input) => {
+        const service = monthlyReleaseService(env, input.network);
+        const schedule = parseMonthlySchedule(env.MONTHLY_PAYMENT_SCHEDULE);
+        if (!service || !schedule)
+          throw new MonthlyPaymentError(
+            503,
+            "monthly_authorization_unavailable",
+            "Monthly authorization is unavailable on this network.",
+          );
+        const result = await publishMonthlyAuthorizations({
+          db,
+          networks: [input.network],
+          schedule,
+          now: now(),
+          only: input,
+          authorize: (request) => requestMonthlyAuthorization(service, request),
+        });
+        if (result.failures.length)
+          throw new MonthlyPaymentError(
+            409,
+            "monthly_authorization_held",
+            "The allocation could not be reverified. No transaction was sent.",
+          );
+        const saved = await readMonthlyAuthorization(
+          db,
+          input.projectId,
+          input.period,
+          input.network,
+        );
+        if (!saved)
+          throw new MonthlyPaymentError(
+            409,
+            "monthly_authorization_unavailable",
+            "The allocation is not ready for a wallet transaction.",
+          );
+        return JSON.parse(saved.authorization) as MonthlyAuthorization;
+      },
       solanaFundingConfig: (projectId, network, vault) =>
         solanaFundingConfig(projectId, network, vault, "ordinary"),
       edgeCache: cache,

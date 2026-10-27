@@ -8,10 +8,7 @@ import {
   indexPaymentEvent,
   type PaymentChainAdapter,
 } from "../../backend/payments/ledger";
-import {
-  automaticMonthlyPayment,
-  coordinateMonthlyPayments,
-} from "../../backend/payments/monthly";
+import { coordinateMonthlyPayments } from "../../backend/payments/monthly";
 import {
   refreshVaultSnapshots,
   type VaultTotals,
@@ -39,9 +36,8 @@ import {
 } from "../../src/lib/escrow-policy.mjs";
 import type { PayoutPolicy } from "../../src/lib/payments/contracts";
 import {
-  monthlyCutoff,
+  monthlyFinalizationDate,
   parseMonthlySchedule,
-  periodEnd,
 } from "../../src/lib/payments/monthly-allocation";
 import type { MonthlyAuthorization } from "../payment-executor/monthly";
 import {
@@ -329,21 +325,13 @@ export async function runMonthlyCommitments(
   if (env.PAYMENT_SCOPE === "security-bounty") return;
   const schedule = parseMonthlySchedule(env.MONTHLY_PAYMENT_SCHEDULE);
   if (!schedule) return;
-  const shifted = new Date(
-    now.getTime() - schedule.cutoffSecondsAfterPeriodEnd * 1000,
-  );
-  const activePeriod = new Date(
-    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() - 1, 1),
-  )
-    .toISOString()
-    .slice(0, 7);
   const registry = await registryDeployments(env);
   const deployments = registry.deployments;
   const failures: unknown[] = [...registry.failures];
   const rows = await env.PAYMENTS_DB.prepare(
-    "SELECT json_group_array(authorization) items FROM (SELECT a.authorization FROM monthly_payment_current_authorizations a LEFT JOIN monthly_payment_execution x ON x.project_id=a.project_id AND x.period=a.period AND x.network=a.network WHERE coalesce(x.complete,0)=0 AND (a.period=? OR json_extract(a.authorization,'$.plan.family')='solana' OR json_extract(a.authorization,'$.plan.evmReservation.version')=2) AND a.network IN (SELECT value FROM json_each(?)) ORDER BY coalesce(x.last_attempt,''),a.period,a.project_id LIMIT 50)",
+    "SELECT json_group_array(authorization) items FROM (SELECT a.authorization FROM monthly_payment_current_authorizations a LEFT JOIN monthly_payment_execution x ON x.project_id=a.project_id AND x.period=a.period AND x.network=a.network WHERE coalesce(x.complete,0)=0 AND a.network IN (SELECT value FROM json_each(?)) ORDER BY coalesce(x.last_attempt,''),a.period,a.project_id LIMIT 50)",
   )
-    .bind(activePeriod, env.PAYMENT_NETWORKS)
+    .bind(env.PAYMENT_NETWORKS)
     .first<{ items: string }>();
   // Newest period first: only the newest month can be admitting, so its reservation is sent before
   // any older month's leaf in this pass. A leaf mined first would advance ordinarySourceSequence
@@ -372,19 +360,11 @@ export async function runMonthlyCommitments(
           now.toISOString(),
         )
         .run();
-      const automatic = await automaticMonthlyPayment(
-        env.PAYMENTS_DB,
-        plan.request.projectId,
-      );
-      const cutoff = monthlyCutoff(schedule, plan.request.period);
-      const closes = monthlyCutoff(
-        schedule,
-        periodEnd(plan.request.period).toISOString().slice(0, 7),
-      );
-      const admit =
-        automatic && !!cutoff && !!closes && now >= cutoff && now < closes;
-      const resumable = plan.family === "solana" || !!plan.evmReservation;
-      if (!admit && !resumable) continue;
+      const opens = monthlyFinalizationDate(schedule, plan.request.period);
+      if (!opens || now < opens) continue;
+      // New roots require the owner's transaction. This service only resumes
+      // already authorized on-chain reservations and their payments.
+      const admit = false;
       const matches = deployments.filter(
         (d) =>
           d.projectId === plan.request.projectId &&
@@ -416,8 +396,6 @@ export async function runMonthlyCommitments(
         complete?: unknown;
       };
       if (
-        !admit &&
-        resumable &&
         result.notAdmitted === true &&
         result.transactionId === null &&
         result.alreadyCommitted === false

@@ -54,7 +54,7 @@ import {
 import { onRequest } from "../../functions/api/v1/[[path]]";
 import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
 import {
-  monthlyCutoff,
+  monthlyFinalizationDate,
   PRD_MONTHLY_SCHEDULE,
   parseMonthlySchedule,
 } from "../../src/lib/payments/monthly-allocation";
@@ -805,7 +805,7 @@ export async function runEvmExtended(
       // The keeper serves its configured schedule only, from its first period.
       const first = monthlySchedule.firstPeriod;
       if (openMonthlyPeriod(await chain.latestTime()).open < first) {
-        const opens = monthlyCutoff(monthlySchedule, first);
+        const opens = monthlyFinalizationDate(monthlySchedule, first);
         throw new Waiting(
           `The project-operated keeper admits PRD periods from ${first}. That commitment window opens at ${opens?.toISOString()} chain time. No monthly transaction was sent.`,
           opens,

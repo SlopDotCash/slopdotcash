@@ -3,21 +3,52 @@
  */
 
 import { EvmMonthlyAlreadyAdmitted } from "../../contracts/evm/adapter";
+import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   type MonthlySchedule,
-  monthlyCutoff,
-  periodEnd,
+  monthlyFinalizationDate,
 } from "../../src/lib/payments/monthly-allocation";
 import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
 import type { D1TransactionalDatabase } from "../d1";
 import { automaticMonthlyPayment } from "./monthly";
 import type { MonthlyAttestationRequest } from "./monthly-attestation";
 
+/** The same bounded private attester protocol for scheduled and owner-requested preparation. */
+export async function requestMonthlyAuthorization(
+  service: { fetch(request: Request): Promise<Response> },
+  request: MonthlyAttestationRequest,
+): Promise<MonthlyAuthorization> {
+  const response = await service.fetch(
+    new Request("https://attester.internal/v1/monthly-authorization", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+  if (response.status === 409) {
+    const rejected = (await readBoundedJson(
+      response,
+      4096,
+      "monthly authorization status",
+    )) as { error?: unknown };
+    if (rejected.error === "monthly_already_admitted")
+      throw new EvmMonthlyAlreadyAdmitted();
+  }
+  if (!response.ok) throw new Error("Monthly attester rejected authorization");
+  return (await readBoundedJson(
+    response,
+    4 * 1024 * 1024,
+    "monthly authorization",
+  )) as MonthlyAuthorization;
+}
+
 export async function publishMonthlyAuthorizations(deps: {
   db: D1TransactionalDatabase;
   networks: readonly string[];
   schedule: MonthlySchedule;
   now: Date;
+  /** An authenticated owner may request only this already-finalized allocation. */
+  only?: MonthlyAttestationRequest;
   authorize(request: MonthlyAttestationRequest): Promise<MonthlyAuthorization>;
 }) {
   // Revisit legacy EVM publications too: a reviewed upgrade may make their
@@ -33,16 +64,20 @@ export async function publishMonthlyAuthorizations(deps: {
     candidates?.items ?? "[]",
   ) as MonthlyAttestationRequest[]) {
     if (
+      deps.only &&
+      Object.entries(deps.only).some(
+        ([key, value]) =>
+          request[key as keyof MonthlyAttestationRequest] !== value,
+      )
+    )
+      continue;
+    if (
       !deps.networks.includes(request.network) ||
       !(await automaticMonthlyPayment(deps.db, request.projectId))
     )
       continue;
-    const cutoff = monthlyCutoff(deps.schedule, request.period);
-    const closes = monthlyCutoff(
-      deps.schedule,
-      periodEnd(request.period).toISOString().slice(0, 7),
-    );
-    if (!cutoff || !closes || deps.now < cutoff || deps.now >= closes) continue;
+    const opens = monthlyFinalizationDate(deps.schedule, request.period);
+    if (!opens || deps.now < opens) continue;
     try {
       const signed = await deps.authorize(request);
       const authorization: MonthlyAuthorization = {

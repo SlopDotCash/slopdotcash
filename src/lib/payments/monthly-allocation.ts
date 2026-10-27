@@ -15,20 +15,16 @@ const ACTOR = /^[1-9][0-9]{0,19}$/;
 export interface MonthlySchedule {
   /** The first closed month that the automatic process may distribute. */
   firstPeriod: string;
-  /** Seconds after the month closes (00:00 UTC on the next 1st) at which the automatic process freezes it. */
-  cutoffSecondsAfterPeriodEnd: number;
 }
 
 /**
  * The recorded monthly period model (PRD section 6 and section 11, Monthly
- * period model): calendar UTC months from 2026-11, cut off 72 hours after the
- * month ends. Public pages read it to describe a month's owner-change window;
- * the automatic process still reads only `MONTHLY_PAYMENT_SCHEDULE`, and a
- * unit test keeps the two equal.
+ * period model): closed calendar UTC months from 2026-11. Owners explicitly
+ * finalize allocations when ready; there is no automatic deadline. The
+ * payment process reads `MONTHLY_PAYMENT_SCHEDULE` for the first eligible period.
  */
 export const PRD_MONTHLY_SCHEDULE: Readonly<MonthlySchedule> = Object.freeze({
   firstPeriod: "2026-11",
-  cutoffSecondsAfterPeriodEnd: 72 * 60 * 60,
 });
 
 /**
@@ -48,15 +44,12 @@ export function parseMonthlySchedule(value: unknown): MonthlySchedule | null {
   if (
     !schedule ||
     typeof schedule !== "object" ||
-    Object.keys(schedule).sort().join() !==
-      "cutoffSecondsAfterPeriodEnd,firstPeriod" ||
+    Object.keys(schedule).join() !== "firstPeriod" ||
     typeof schedule.firstPeriod !== "string" ||
-    !PERIOD.test(schedule.firstPeriod) ||
-    !Number.isSafeInteger(schedule.cutoffSecondsAfterPeriodEnd) ||
-    (schedule.cutoffSecondsAfterPeriodEnd as number) <= 0
+    !PERIOD.test(schedule.firstPeriod)
   )
     throw new Error(
-      'MONTHLY_PAYMENT_SCHEDULE must be {"firstPeriod":"YYYY-MM","cutoffSecondsAfterPeriodEnd":<positive integer>}',
+      'MONTHLY_PAYMENT_SCHEDULE must be {"firstPeriod":"YYYY-MM"}',
     );
   return schedule as MonthlySchedule;
 }
@@ -72,15 +65,13 @@ export function periodEnd(period: string): Date {
   return new Date(Date.UTC(year, month, 1));
 }
 
-/** The automatic cutoff of a month, or null when the month is outside the schedule. */
-export function monthlyCutoff(
+/** When a month is closed and may be finalized, or null before the first period. */
+export function monthlyFinalizationDate(
   schedule: MonthlySchedule,
   period: string,
 ): Date | null {
   if (assertPeriod(period) < schedule.firstPeriod) return null;
-  return new Date(
-    periodEnd(period).getTime() + schedule.cutoffSecondsAfterPeriodEnd * 1000,
-  );
+  return periodEnd(period);
 }
 
 export interface MonthlyBaseRow {

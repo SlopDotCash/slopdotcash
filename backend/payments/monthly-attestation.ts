@@ -25,8 +25,7 @@ import {
   buildExecutionSnapshot,
   type MonthlyExecutionSnapshot,
   type MonthlySchedule,
-  monthlyCutoff,
-  periodEnd,
+  monthlyFinalizationDate,
 } from "../../src/lib/payments/monthly-allocation";
 import { payoutExcludedGithubUserIds } from "../../src/lib/payout-exclusions.mjs";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
@@ -62,7 +61,7 @@ function reject(code: string, message: string): never {
 }
 
 /** The caller must re-run this immediately before signing and publishing.
- * The chain still enforces its live cap, opt-out, authority and monthly window.
+ * The chain still enforces its cap, opt-out, authority, closed period and owner admission.
  * The recorded funding-time decisions preserve already-funded awards.
  * A Solana plan without `frozenAt` has an empty `messageHex` and cannot be
  * signed; the attester first observes the freeze slot (`freezeSolanaMonthly`).
@@ -81,21 +80,11 @@ export async function prepareMonthlyAttestation(
   retainEvmSources = false,
 ): Promise<MonthlyAttestationPlan> {
   const period = assertPeriod(request.period);
-  const cutoff = monthlyCutoff(deps.schedule, period);
-  // Match the contract's single open accounting month; a late funding deposit
-  // must not make an expired authorization signable in a different month.
-  const nextPeriod = periodEnd(period).toISOString().slice(0, 7);
-  const closes = monthlyCutoff(deps.schedule, nextPeriod);
-  if (
-    !cutoff ||
-    !closes ||
-    !Number.isFinite(deps.now.getTime()) ||
-    deps.now < cutoff ||
-    deps.now >= closes
-  )
+  const opens = monthlyFinalizationDate(deps.schedule, period);
+  if (!opens || !Number.isFinite(deps.now.getTime()) || deps.now < opens)
     reject(
-      "monthly_window_closed",
-      "This month is outside its commitment window.",
+      "monthly_period_not_closed",
+      "This month is not yet eligible for finalization.",
     );
   const project = await deps.getProject(request.projectId);
   if (project?.manifest.status !== "active" || (await deps.restricted(project)))
@@ -379,16 +368,12 @@ export async function prepareMonthlyAttestation(
     )
       reject("invalid_deployment", "Solana deployment identity is missing.");
     if (frozenAt !== undefined) {
-      // The contract requires window opening <= frozen_at <= admission time.
+      // The finalized snapshot must belong to a closed month and not be in the future.
       const at = /^[1-9][0-9]{0,15}$/.test(frozenAt) ? Number(frozenAt) : NaN;
-      if (
-        !(at >= cutoff.getTime() / 1000) ||
-        !(at < closes.getTime() / 1000) ||
-        at > deps.now.getTime() / 1000
-      )
+      if (!(at >= opens.getTime() / 1000) || at > deps.now.getTime() / 1000)
         reject(
           "invalid_freeze",
-          "The freeze time is outside the commitment window.",
+          "The finalization time is before the month closed or in the future.",
         );
       messageHex = bytesToHex(
         solanaMonthlyMessage(
