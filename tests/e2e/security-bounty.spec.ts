@@ -8,6 +8,7 @@
  * here reaches GitHub, a model provider, a chain, or an email provider.
  */
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
+import { HISTORICAL_PROJECTS } from "../../src/lib/projects.mjs";
 import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
 import {
   E2E_SECURITY_ACCOUNTS,
@@ -1076,6 +1077,27 @@ test("private security bounty programs keep cases restricted from intake to awar
       recordVideo: { dir: test.info().outputPath("workflow-video") },
     });
     const page = await context.newPage();
+    // Production retains historical registry rows. Keep the published ledger's
+    // registry alongside this test's new D1 projects, which take precedence.
+    await page.route("**/api/v1/projects", async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      const currentIds = new Set(
+        body.projects.map((project: { id: string }) => project.id),
+      );
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          projects: [
+            ...HISTORICAL_PROJECTS.filter(
+              (project) => !currentIds.has(project.id),
+            ),
+            ...body.projects,
+          ],
+        },
+      });
+    });
     await page.goto(`/projects/${a.id}/security`);
     await expect(page.locator("h1")).toHaveText(/ security bounty$/);
     await expect(page.locator(".route-page-header .route-lead")).toHaveText(
@@ -1098,8 +1120,15 @@ test("private security bounty programs keep cases restricted from intake to awar
     const split = page.getByRole("region", { name: "Award split" });
     await expect(split).toContainText("Researcher · 75%75,000 USDC");
     await expect(split).toContainText("Slop · 25%25,000 USDC");
-    // The project page links the program.
-    await page.goto(`/projects/${a.id}`);
+    // Finish the overview background reads before explicitly closing this context.
+    // Strict diagnostics must still catch unexpected request cancellations.
+    await page.goto(`/projects/${a.id}`, { waitUntil: "networkidle" });
+    await expect(
+      page.getByText("Loading records…", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Data could not load.", { exact: true }),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("link", { name: "Security bounty" }),
     ).toHaveAttribute("href", `/projects/${a.id}/security`);
