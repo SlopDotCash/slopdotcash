@@ -135,8 +135,9 @@ function fixture() {
         statements.some((statement) => {
           const sql = statementSql.get(statement) ?? "";
           return (
-            sql.includes("INSERT INTO notifications") &&
-            sql.includes("review_decision='forward'")
+            (sql.includes("INSERT INTO notifications") &&
+              sql.includes("review_decision='forward'")) ||
+            sql.includes("UPDATE security_submission_intake SET routed_at=")
           );
         })
       )
@@ -496,6 +497,86 @@ describe("durable private report controls", () => {
       `security-cases/${first.caseId}`,
     );
     expect(required(firstCase.body.case).award).toBeNull();
+  });
+
+  test("an earlier qualifying report keeps priority while its no-award decision is appealed", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("earlier-appealed-report")).body.submission,
+    );
+    const decision = {
+      action: "decide",
+      outcome: "confirmed",
+      severity: "critical",
+      loss: "verified-potential",
+      inScope: true,
+      reason: "The local reproduction proves a critical loss of funds.",
+      relatedParty: false,
+      rootCauseKey: "appealed-withdrawal-owner-check",
+    };
+    expect((await t.caseAction(first.caseId, decision)).status).toBe(200);
+    expect(
+      (
+        await t.caseAction(first.caseId, {
+          action: "award",
+          decision: "none",
+          reason: "The owner declines an award for this confirmed report.",
+        })
+      ).status,
+    ).toBe(200);
+    const firstCase = required(
+      (await t.call(REPORTER, "GET", `security-cases/${first.caseId}`)).body
+        .case,
+    );
+    const appealed = await t.call(
+      REPORTER,
+      "POST",
+      `security-cases/${first.caseId}/actions`,
+      {
+        action: "appeal",
+        expectedRevision: firstCase.revision,
+        idempotencyKey: "appeal-first-qualifying-report",
+        reason:
+          "Please review why this confirmed qualifying report has no award.",
+      },
+    );
+    expect(appealed.status).toBe(200);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT receipt_state,appeal_state,appeal_from_state FROM security_cases WHERE id=?",
+        )
+        .get(first.caseId),
+    ).toEqual({
+      receipt_state: "disputed",
+      appeal_state: "open",
+      appeal_from_state: "confirmed",
+    });
+    t.advance(1000);
+    const later = required(
+      (await t.create("later-report-during-appeal", OTHER)).body.submission,
+    );
+    expect((await t.caseAction(later.caseId, decision)).status).toBe(200);
+    const awardLater = () =>
+      t.caseAction(later.caseId, {
+        action: "award",
+        decision: "amount",
+        grossMinor: "10000000000",
+        paymentDeadline: "2026-11-30T00:00:00.000Z",
+        confirmation: true,
+        reason:
+          "Try to award the later duplicate while the first appeal is open.",
+      });
+    const unfunded = await awardLater();
+    expect(unfunded.status).toBe(409);
+    expect(unfunded.body.error).toBe("earlier_qualifying_report");
+    t.fund();
+    const funded = await awardLater();
+    expect(funded.status).toBe(409);
+    expect(funded.body.error).toBe("earlier_qualifying_report");
+    expect(
+      t.sqlite.query("SELECT * FROM security_award_reservations").all(),
+    ).toHaveLength(0);
   });
 
   test("an after-approval award cannot substitute another amount for its published gross", async () => {
@@ -985,6 +1066,68 @@ describe("durable private report controls", () => {
       { expectedRevision: required(current.body.submission).intake.revision },
     );
     expect(again.status).toBe(200);
+    expect(t.notices(OWNER)).toHaveLength(1);
+    expect(t.screeningCalls()).toBe(1);
+  });
+
+  test("retries owner routing after a committed manual approval without running screening again", async () => {
+    const t = fixture();
+    t.decision("needs-information");
+    const accepted = await t.create();
+    const submission = required(accepted.body.submission);
+    t.failRouting(true);
+    const reviewed = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${submission.id}/review`,
+      {
+        expectedRevision: submission.intake.revision,
+        decision: "forward",
+        reason: "I verified the reproduction privately.",
+      },
+    );
+    expect(reviewed.status).toBe(500);
+    const saved = await t.call(
+      REPORTER,
+      "GET",
+      `security-submissions/${submission.id}`,
+    );
+    const pending = required(saved.body.submission);
+    expect(pending.intake.canForward).toBe(true);
+    expect(pending.intake.routingState).toBe("pending");
+    expect(t.notices(OWNER)).toHaveLength(0);
+    t.failRouting(false);
+    const retried = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/screen`,
+      { expectedRevision: pending.intake.revision },
+    );
+    expect(retried.status).toBe(200);
+    expect(required(retried.body.submission).intake.routingState).toBe(
+      "routed",
+    );
+    expect(t.notices(OWNER)).toHaveLength(1);
+    expect(t.screeningCalls()).toBe(1);
+    const held = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${submission.id}/review`,
+      {
+        expectedRevision: required(retried.body.submission).intake.revision,
+        decision: "request-information",
+        reason: "An additional reproduction is required.",
+      },
+    );
+    expect(held.status).toBe(200);
+    const refused = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/screen`,
+      { expectedRevision: required(held.body.submission).intake.revision },
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe("screening_not_retryable");
     expect(t.notices(OWNER)).toHaveLength(1);
     expect(t.screeningCalls()).toBe(1);
   });
