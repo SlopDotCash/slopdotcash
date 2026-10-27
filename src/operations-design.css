@@ -97,42 +97,6 @@
   line-height: 1.5;
 }
 
-.operations-page .operations-identifier {
-  display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 0.2rem 0.75rem;
-  min-width: 0;
-}
-
-.operations-page .operations-identifier > code {
-  flex: 1 1 15rem;
-  min-width: 0;
-  color: var(--operations-blue);
-  font-size: 0.75rem;
-  overflow-wrap: anywhere;
-}
-
-.operations-page .operations-identifier .text-button {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  min-height: 2rem;
-  margin: 0;
-  font-size: 0.75rem;
-}
-
-.operations-page .operations-identifier svg {
-  width: 0.85rem;
-  height: 0.85rem;
-}
-
-.operations-page .operations-identifier > [role="status"] {
-  flex-basis: 100%;
-  font-size: 0.75rem;
-}
-
 .operations-page .operations-summary {
   max-width: 42rem;
   margin-top: 0;
@@ -414,4 +378,223 @@
 .operations-page .evidence-object-list button[aria-pressed="true"] {
   border-color: var(--operations-blue);
   background: #9cc9ff0a;
+}
+
+/* Shared controls keep private workflows compact without hiding their actions. */
+.operations-page .button,
+.security-program-editor .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 0.5rem;
+  line-height: 1.3;
+}
+
+.operations-identifier {
+  display: inline-flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
+}
+
+.operations-identifier > code {
+  min-width: 0;
+  max-width: calc(100% - 2.25rem);
+  padding-top: 0.35rem;
+  color: var(--operations-blue, #9cc9ff);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.operations-copy {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 0.4rem;
+  vertical-align: middle;
+}
+
+.operations-page .operations-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  min-height: 2rem;
+  margin: 0;
+  padding: 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.operations-page .operations-copy-button:hover {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.operations-copy-button svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.operations-copy-error {
+  max-width: 14rem;
+  color: #ff9387;
+  font-size: 0.78rem;
+}
+
+.operations-file-actions {
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  margin-block: 0.5rem;
+}
+
+.operations-muted,
+.operations-page .operations-retention {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.operations-page .operations-disclosure {
+  padding-block: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.operations-page .operations-disclosure > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.operations-page .operations-disclosure[open] > summary {
+  margin-bottom: 1rem;
+}
+
+.operations-page .assessment-details > summary > time {
+  display: inline-block;
+  margin-left: 0.5rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 400;
+}
+
+.operations-page .evidence-object-list {
+  display: grid;
+  gap: 0.6rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.operations-page .evidence-object-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.operations-page .evidence-object-choice:hover,
+.operations-page .evidence-object-choice[aria-pressed="true"] {
+  border-color: var(--operations-blue);
+  background: #9cc9ff0a;
+}
+
+.evidence-object-main,
+.evidence-object-status {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.evidence-object-main strong {
+  font-size: 0.9rem;
+}
+
+.evidence-object-meta,
+.evidence-object-status code {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.evidence-object-status {
+  justify-items: end;
+}
+
+.operations-page .operations-detail-panel,
+.operations-page .security-payment-panel {
+  margin-block: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--paper);
+}
+
+.operations-page .security-payment-panel h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.operations-page .operations-findings,
+.operations-page .operations-artifact-list {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0;
+  list-style: none;
+}
+
+.operations-page .operations-findings > li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.operations-page .operations-artifact-list > li {
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+}
+
+.operations-page .operations-artifact-list .operations-card-heading {
+  margin-bottom: 0.4rem;
+}
+
+.security-program-editor .owner-form > .operations-muted {
+  max-width: 44rem;
+}
+
+@media (max-width: 480px) {
+  .operations-page .evidence-object-choice {
+    align-items: flex-start;
+  }
+  .evidence-object-status {
+    justify-items: start;
+  }
+  .operations-page .assessment-details > summary > time {
+    display: block;
+    margin-left: 1rem;
+    margin-top: 0.25rem;
+  }
 }

@@ -13,6 +13,7 @@
 import {
   ArrowRight,
   CircleAlert,
+  Download,
   ExternalLink,
   LockKeyhole,
   RotateCcw,
@@ -31,7 +32,6 @@ import { Link } from "./Link";
 import { ProjectSecuritySettings } from "./ProjectSecuritySettings";
 import "./operations-design.css";
 import { decimalBaseUnits } from "./lib/base-units.mjs";
-import { copyText } from "./lib/copy-text";
 import { errorMessage } from "./lib/errors";
 import {
   clearDraft,
@@ -57,6 +57,7 @@ import {
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
+import { CopyButton, CopyIdentifier } from "./Operations";
 import {
   AccountNav,
   ExternalLinkAnchor,
@@ -81,22 +82,17 @@ function UnsignedPaymentRequest({ request }: { request: unknown }) {
   return (
     <details>
       <summary>Unsigned owner request</summary>
-      <div className="inbox-actions">
+      <div className="operations-file-actions">
+        <CopyButton
+          label="unsigned request"
+          text={text}
+          successMessage="Request copied."
+        />
         <button
-          className="text-button"
+          className="text-button operations-copy-button"
           type="button"
-          onClick={() => {
-            void copyText(text).then(
-              () => setFeedback("Request copied."),
-              () => setFeedback("Copy failed. Select the request text below."),
-            );
-          }}
-        >
-          Copy unsigned request
-        </button>
-        <button
-          className="text-button"
-          type="button"
+          aria-label="Download unsigned request"
+          title="Download unsigned request"
           onClick={() => {
             const url = URL.createObjectURL(
               new Blob([`${text}\n`], { type: "application/json" }),
@@ -109,7 +105,7 @@ function UnsignedPaymentRequest({ request }: { request: unknown }) {
             setFeedback("Request download started.");
           }}
         >
-          Download unsigned request
+          <Download aria-hidden="true" />
         </button>
       </div>
       <p role="status">{feedback}</p>
@@ -2702,21 +2698,29 @@ function CaseDetail({
         <CheckReceipt onDone={reload} record={record} />
       ) : null}
       {record.settlement ? (
-        <section aria-label="Private payment">
-          <p>{record.settlement.privacyNotice}</p>
+        <section
+          aria-label="Private payment"
+          className="security-payment-panel"
+        >
+          <h4>Private payment</h4>
+          <p className="operations-muted">{record.settlement.privacyNotice}</p>
           {record.viewerRoles.includes("reporter") &&
           record.settlement.state !== "paid" ? (
             <p>
               <Link href="/account#wallets">Review your payout wallet</Link>
             </p>
           ) : null}
-          <p>Network: {record.settlement.network}</p>
-          {record.settlement.transactionId ? (
-            <p>
-              Finalized transaction:{" "}
-              <code>{record.settlement.transactionId}</code>
-            </p>
-          ) : null}
+          <dl className="operations-facts">
+            <Fact term="Network">{record.settlement.network}</Fact>
+            {record.settlement.transactionId ? (
+              <Fact term="Finalized transaction">
+                <CopyIdentifier
+                  label="payment transaction ID"
+                  value={record.settlement.transactionId}
+                />
+              </Fact>
+            ) : null}
+          </dl>
           {record.settlement.ownerRequest &&
           record.viewerRoles.includes("financial") ? (
             <UnsignedPaymentRequest request={record.settlement.ownerRequest} />
@@ -2736,7 +2740,9 @@ function CaseDetail({
       <details className="security-reference">
         <summary>Case details and history</summary>
         <dl className="admin-facts">
-          <Fact term="Case">{record.id}</Fact>
+          <Fact term="Case">
+            <CopyIdentifier label="case ID" value={record.id} />
+          </Fact>
           <Fact term="Program terms at receipt">
             {record.terms
               ? `${money(record.terms.grossMinor, record.terms)} published gross per finding (policy revision ${record.policyRevision ?? "—"})`
