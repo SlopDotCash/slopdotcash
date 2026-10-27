@@ -837,29 +837,40 @@ test("owners publish and control bounty programs with verified funding @registry
     diagnostics.allowResponse(
       403,
       "GET",
-      `/api/v1/project-vaults/${id}?purpose=security-bounty`,
+      `/api/v1/project-setup/${id}?attempt=0`,
     );
-    diagnostics.allowResponse(403, "PUT", `/api/v1/projects/${id}`);
     await signIn(page, TOKENS["reporter-b"]);
     await page.goto(`/projects/${id}/security#security-settings`, {
       waitUntil: "networkidle",
     });
     await openProjectSecuritySettings(page);
-    const funds = page.getByRole("region", { name: "Bounty funds" });
-    await expect(funds.getByRole("alert")).toBeVisible();
-    await expect(funds).not.toContainText("Available for new awards:");
-    await page.getByLabel("Status", { exact: true }).selectOption("paused");
-    const refused = page.waitForResponse(
-      (response) =>
-        response.request().method() === "PUT" &&
-        new URL(response.url()).pathname === `/api/v1/projects/${id}`,
+    await expect(page.getByRole("alert")).toContainText(
+      /access|authority|permission/iu,
     );
-    await page.getByRole("button", { name: "Review bounty terms" }).click();
-    await page.getByRole("button", { name: "Publish bounty terms" }).click();
-    expect((await refused).status()).toBe(403);
     await expect(
-      page.getByRole("region", { name: "Security bounty", exact: true }),
-    ).toContainText(/access|authority|permission/iu);
+      page.getByRole("region", { name: "Bounty funds" }),
+    ).toHaveCount(0);
+    await expect(page.getByLabel("Status", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Publish bounty terms" }),
+    ).toHaveCount(0);
+    const refused = await api(
+      request,
+      "PUT",
+      `projects/${id}`,
+      TOKENS["reporter-b"],
+      {
+        expectedRevision: beforeRefusal.revision,
+        manifest: {
+          ...beforeRefusal.manifest,
+          securityBounty: {
+            ...(beforeRefusal.manifest.securityBounty as object),
+            status: "paused",
+          },
+        },
+      },
+    );
+    expect(refused.status).toBe(403);
     const afterRefusal = await adminProject(request, id);
     expect(afterRefusal.revision).toBe(beforeRefusal.revision);
     expect(afterRefusal.manifest.securityBounty).toEqual(
