@@ -62,7 +62,7 @@ test("disabled payouts are visible from discovery through the project page", asy
     funding.getByText("Payments: Disabled", { exact: true }),
   ).toBeVisible();
   await expect(
-    funding.getByText("Project vault: Not set up", { exact: true }),
+    funding.getByText("Vault: Not set up", { exact: true }),
   ).toBeVisible();
   await page.screenshot({
     path: info.outputPath("funding-payment-unavailable.png"),

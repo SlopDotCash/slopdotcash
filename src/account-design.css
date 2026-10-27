@@ -491,3 +491,8 @@
   font-size: 0.75rem;
   font-weight: normal;
 }
+
+/* Keep hidden status text inside the scrollable table cell at 200% text. */
+.points-value {
+  position: relative;
+}

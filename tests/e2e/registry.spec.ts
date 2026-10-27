@@ -791,7 +791,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   ).toHaveValue("Clarify paused project description");
   await expect(
     card.getByRole("region", { name: "Revision changes" }),
-  ).toContainText("headline");
+  ).toContainText("Short description");
   await expect(
     card.getByRole("textbox", { name: "Short description", exact: true }),
   ).toHaveValue(

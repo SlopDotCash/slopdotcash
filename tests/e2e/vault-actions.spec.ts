@@ -344,7 +344,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   ).toHaveCount(0);
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   await expect(
-    page.getByText("Project vault: Not set up", { exact: true }),
+    page.getByText("Vault: Not set up", { exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByText("Payments are disabled for this project.", { exact: false }),
@@ -2000,7 +2000,6 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
     await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
     await expect(funding.getByRole("status")).toContainText("finalized");
-    await page.getByRole("button", { name: "Edit bounty settings" }).click();
     await page.getByLabel("Status", { exact: true }).selectOption("open");
     await page.getByRole("button", { name: "Publish bounty terms" }).click();
     await expect(
