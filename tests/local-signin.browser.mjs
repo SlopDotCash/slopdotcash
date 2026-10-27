@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -21,6 +21,16 @@ const output = resolve(
 );
 await mkdir(output, { recursive: true });
 const workspace = await prepareE2eFixture();
+// The copied fixture symlinks its dependencies. Permit only that exact
+// dependency directory in this test server so self-hosted fonts can load.
+const config = join(workspace, "vite.local-signin.config.mjs");
+await writeFile(
+  config,
+  `import base from "./vite.config.ts";
+import { mergeConfig } from "vite";
+export default mergeConfig(base, { server: { fs: { allow: ${JSON.stringify([await realpath(workspace), await realpath(join(workspace, "node_modules"))])} } } });
+`,
+);
 const listener = createServer();
 listener.listen(0, "127.0.0.1");
 await once(listener, "listening");
@@ -31,6 +41,8 @@ const server = spawn(
   process.execPath,
   [
     "node_modules/vite/bin/vite.js",
+    "--config",
+    config,
     "--host",
     "127.0.0.1",
     "--port",
@@ -87,6 +99,48 @@ try {
       });
       let signedIn = false;
       const unexpectedRequests = [];
+      const failures = [];
+      const firstParty = (url) => new URL(url).origin === origin;
+      context.on("response", (response) => {
+        if (
+          firstParty(response.url()) &&
+          response.status() >= 400 &&
+          !(
+            response.status() === 401 &&
+            response.request().method() === "GET" &&
+            new URL(response.url()).pathname === "/api/v1/payments/me"
+          )
+        )
+          failures.push(`${response.status()} ${response.url()}`);
+      });
+      context.on("requestfailed", (request) => {
+        if (
+          firstParty(request.url()) &&
+          !(
+            request.failure()?.errorText === "net::ERR_ABORTED" &&
+            request.method() === "GET" &&
+            /^\/api\/v1\/(?:project-session|points\/(?:me|x\/me|sessions)|payments\/me)$/.test(
+              new URL(request.url()).pathname,
+            )
+          )
+        )
+          failures.push(`${request.failure()?.errorText} ${request.url()}`);
+      });
+      context.on("weberror", (error) =>
+        failures.push(`page error ${error.error().message}`),
+      );
+      context.on("console", (message) => {
+        if (
+          message.type() === "error" &&
+          !(
+            message.location().url === `${origin}/api/v1/payments/me` &&
+            /^Failed to load resource: the server responded with a status of 401 /.test(
+              message.text(),
+            )
+          )
+        )
+          failures.push(`console ${message.text()}`);
+      });
       const member = {
         actor: { id: "U_local_return", login: "local-return" },
         joinedAt: "2026-10-01T00:00:00Z",
@@ -186,7 +240,14 @@ try {
         await page
           .getByRole("button", { name: "Continue with GitHub", exact: true })
           .click();
+        const joined = page.waitForResponse(
+          (response) =>
+            response.url() === `${origin}/api/v1/points/join` &&
+            response.request().method() === "POST" &&
+            response.status() === 200,
+        );
         await page.getByRole("link", { name: "Return to Slop" }).click();
+        await (await joined).finished();
         await page.waitForURL((url) => url.pathname !== "/login", {
           timeout: 15_000,
         });
@@ -214,11 +275,34 @@ try {
           await wallets.waitFor({ state: "visible" });
           assert.equal(await wallets.getAttribute("open"), "");
         }
-        await page.waitForLoadState("networkidle");
+        const loadedFonts = await page.evaluate(async () => {
+          const loaded = await Promise.all(
+            [
+              '16px "Bricolage Grotesque Variable"',
+              '700 16px "JetBrains Mono"',
+            ].map((font) => document.fonts.load(font)),
+          );
+          await document.fonts.ready;
+          return loaded.map(
+            (fonts) =>
+              fonts.length > 0 &&
+              fonts.every((font) => font.status === "loaded"),
+          );
+        });
+        assert.deepEqual(
+          loadedFonts,
+          [true, true],
+          "Both local fonts must load",
+        );
         assert.deepEqual(
           unexpectedRequests,
           [],
           "Only explicit API fixtures may answer requests",
+        );
+        assert.deepEqual(
+          failures,
+          [],
+          "No unexpected browser or asset failures",
         );
       } catch (caught) {
         error = String(caught);
@@ -235,6 +319,8 @@ try {
         actual,
         passed: error === "",
         error,
+        unexpectedRequests,
+        failures,
       });
       console.log(`${error ? "FAIL" : "PASS"} ${name} ${width}: ${actual}`);
       await context.close();
