@@ -4200,3 +4200,193 @@ html:has(.security-page) {
   border: 1px solid var(--input-border);
   border-radius: 12px;
 }
+
+/* Project vault: network mark, fee chips, balance tiles and wallet state. */
+.section.project-funding {
+  display: grid;
+  gap: 20px;
+  padding-block: 24px 0;
+}
+
+.project-funding > .button,
+.vault-actions > .setup-badge {
+  justify-self: start;
+}
+
+.vault-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+
+.vault-header h2 {
+  margin: 0;
+  font-size: clamp(24px, 4vw, 36px);
+}
+
+.vault-fees {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.network-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+}
+
+.network-mark {
+  width: 0.8em;
+  height: 0.8em;
+  flex: none;
+}
+
+.vault-totals,
+.vault-snapshot {
+  display: grid;
+  gap: 14px;
+}
+
+.project-funding .data-notice,
+.vault-totals > .setup-badge,
+.vault-snapshot > .setup-badge {
+  justify-self: start;
+  margin: 0;
+}
+
+.vault-meter {
+  margin: 0;
+}
+
+.vault-available {
+  background: var(--orange);
+}
+
+.vault-reserved {
+  background: var(--faint);
+}
+
+.vault-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.vault-stat {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--brand-radius-large);
+  background: var(--surface);
+}
+
+.vault-stat dt,
+.vault-stat--placeholder > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vault-stat dd,
+.vault-stat--placeholder > span:last-child {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--brand-font-data);
+  font-size: clamp(17px, 2vw, 20px);
+  font-weight: 700;
+}
+
+.vault-stat--available dd:first-of-type {
+  font-size: clamp(22px, 3vw, 28px);
+}
+
+.vault-stat .vault-stat-note {
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.vault-stat--placeholder > span:last-child {
+  color: var(--faint);
+}
+
+.vault-finality {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.vault-addresses {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.vault-addresses div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  min-width: 0;
+}
+
+.vault-addresses dt {
+  min-width: 48px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vault-addresses dd {
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+}
+
+.wallet-missing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+
+.wallet-missing > svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.wallet-missing p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.wallet-missing span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+@media (max-width: 520px) {
+  .vault-stat--available {
+    grid-column: 1 / -1;
+  }
+}
