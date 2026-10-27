@@ -2955,13 +2955,14 @@ async function unrestrictedProgramGuard(
   };
 }
 
-/** A later report cannot displace an earlier human-confirmed qualifying finding. */
+/** A later report cannot displace an earlier human-confirmed qualifying finding,
+ * including while an appeal of that confirmed finding's award is open. */
 async function firstQualifyingGuard(
   deps: SecurityApiDependencies,
   row: CaseRow,
 ) {
   if (frozenTerms(row)?.fundingPolicy !== "after-approval") return null;
-  const sql = `NOT EXISTS(SELECT 1 FROM security_cases earlier WHERE earlier.project_id=? AND earlier.id<>? AND earlier.root_cause_key=? AND earlier.receipt_state='confirmed' AND earlier.severity='critical' AND earlier.loss_finding IN ('verified-potential','verified-actual') AND (earlier.received_at<? OR (earlier.received_at=? AND earlier.id<?)) AND json_extract((SELECT e.detail FROM security_case_events e WHERE e.case_id=earlier.id AND e.kind='decide' ORDER BY e.case_revision DESC LIMIT 1),'$.inScope')=1)`;
+  const sql = `NOT EXISTS(SELECT 1 FROM security_cases earlier WHERE earlier.project_id=? AND earlier.id<>? AND earlier.root_cause_key=? AND (earlier.receipt_state='confirmed' OR (earlier.receipt_state='disputed' AND earlier.appeal_state='open' AND earlier.appeal_from_state='confirmed')) AND earlier.severity='critical' AND earlier.loss_finding IN ('verified-potential','verified-actual') AND (earlier.received_at<? OR (earlier.received_at=? AND earlier.id<?)) AND json_extract((SELECT e.detail FROM security_case_events e WHERE e.case_id=earlier.id AND e.kind='decide' ORDER BY e.case_revision DESC LIMIT 1),'$.inScope')=1)`;
   const values = [
     row.project_id,
     row.id,
