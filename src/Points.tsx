@@ -786,6 +786,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
           : "You’re signed in.",
       );
     } catch (e) {
+      // A same-tab or resumed local sign-in has no window to close.
       if (!authorized) popup?.close();
       if (c.signal.aborted) return;
       if (localBackendOrigin !== null) clearLocalFlow();
