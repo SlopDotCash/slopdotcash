@@ -295,6 +295,33 @@ async function listProject(
 }
 
 describe("project registry API", () => {
+  test("first bounty setup checks live management authority without changing the project", async () => {
+    await listProject();
+    const before = await persistence.getProject("open-registry");
+    expect((await call("GET", "project-setup/open-registry")).status).toBe(401);
+    access = ADMIN_ACCESS;
+    const allowed = await call(
+      "GET",
+      "project-setup/open-registry",
+      "applicant",
+    );
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toEqual({
+      viewer: { githubId: APPLICANT.githubId },
+      canManageBounty: true,
+    });
+    expect(await persistence.getProject("open-registry")).toEqual(before);
+    access = { ...ADMIN_ACCESS, permission: "read", roleName: "read" };
+    expect(
+      (await call("GET", "project-setup/open-registry", "applicant")).status,
+    ).toBe(403);
+    access = "unavailable";
+    expect(
+      (await call("GET", "project-setup/open-registry", "applicant")).status,
+    ).toBe(503);
+    expect(await persistence.getProject("open-registry")).toEqual(before);
+  });
+
   test("serves a newly approved project at once, purging the cached list", async () => {
     const empty = await call("GET", "projects");
     expect((await empty.json()).projects).toEqual([]);
