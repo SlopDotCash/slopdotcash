@@ -766,6 +766,12 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       {!me && session === "error" ? (
         <p role="status">Could not check your session. Sign in again.</p>
       ) : null}
+      {!me ? (
+        <p>
+          Signing in makes your Slop membership and any connected X profile link
+          public.
+        </p>
+      ) : null}
       {me ? (
         <div className="account-session-actions">
           <a
@@ -1543,6 +1549,12 @@ function SocialConnections() {
         </>
       ) : (
         <>
+          {!data.account && data.configured ? (
+            <p>
+              Connecting X is optional. Your X profile link will be public when
+              your Slop membership is public.
+            </p>
+          ) : null}
           <div className="connection-row">
             <strong>X</strong>
             <span>
