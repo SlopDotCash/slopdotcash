@@ -182,33 +182,33 @@ export async function recoverUncertainAttempts(
       }
       if (typeof status.transactionId !== "string" || !status.transactionId)
         throw new Error("Invalid attempt transaction identity");
-      if (chainFamily(attempt.chain) === "solana") {
-        if (typeof status.submitted !== "boolean")
-          throw new Error("Missing Solana submission observation");
-        if (!status.submitted) {
-          // A saved signature can have failed preflight. Reopen an older
-          // falsely submitted row too, without retiring its signed bytes.
-          // The executor reuses those bytes until it proves finalized expiry
-          // and rechecks the unpaid award before signing a replacement.
-          await env.PAYMENTS_DB.batch([
-            env.PAYMENTS_DB.prepare(
-              "UPDATE payment_attempts SET transaction_id=NULL,state='unknown' WHERE id=? AND state='submitted' AND transaction_id=? AND EXISTS(SELECT 1 FROM payment_obligations WHERE id=? AND state='reserved')",
-            ).bind(
-              attempt.idempotencyKey,
-              status.transactionId,
-              attempt.obligationId,
-            ),
-            env.PAYMENTS_DB.prepare(
-              "UPDATE payment_outbox SET state='ready',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state='submitted' AND EXISTS(SELECT 1 FROM payment_attempts WHERE id=? AND state='unknown' AND transaction_id IS NULL) AND EXISTS(SELECT 1 FROM payment_obligations WHERE id=? AND state='reserved')",
-            ).bind(
-              new Date().toISOString(),
-              attempt.obligationId,
-              attempt.idempotencyKey,
-              attempt.obligationId,
-            ),
-          ]);
-          continue;
-        }
+      if (typeof status.submitted !== "boolean")
+        throw new Error("Missing submission observation");
+      if (!status.submitted) {
+        // Saved bytes the chain never saw were refused: a failed Solana
+        // preflight, or an EVM broadcast the node rejected, which leaves its
+        // nonce unfilled. Keep the attempt retryable so the dispatcher resends
+        // the same bytes. Reopen an older falsely submitted Solana row too,
+        // without retiring its signed bytes; the executor replaces them only
+        // after it proves finalized expiry and rechecks the unpaid award.
+        await env.PAYMENTS_DB.batch([
+          env.PAYMENTS_DB.prepare(
+            "UPDATE payment_attempts SET transaction_id=NULL,state='unknown' WHERE id=? AND state='submitted' AND transaction_id=? AND EXISTS(SELECT 1 FROM payment_obligations WHERE id=? AND state='reserved')",
+          ).bind(
+            attempt.idempotencyKey,
+            status.transactionId,
+            attempt.obligationId,
+          ),
+          env.PAYMENTS_DB.prepare(
+            "UPDATE payment_outbox SET state='ready',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state='submitted' AND EXISTS(SELECT 1 FROM payment_attempts WHERE id=? AND state='unknown' AND transaction_id IS NULL) AND EXISTS(SELECT 1 FROM payment_obligations WHERE id=? AND state='reserved')",
+          ).bind(
+            new Date().toISOString(),
+            attempt.obligationId,
+            attempt.idempotencyKey,
+            attempt.obligationId,
+          ),
+        ]);
+        continue;
       }
       await env.PAYMENTS_DB.batch([
         env.PAYMENTS_DB.prepare(
