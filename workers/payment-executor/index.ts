@@ -4,7 +4,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import type { PaymentExecutor } from "../../backend/payments/dispatch";
 import type { MonthlyAttestationRequest } from "../../backend/payments/monthly-attestation";
-import { publishMonthlyAuthorizations } from "../../backend/payments/monthly-publication";
+import {
+  publishMonthlyAuthorizations,
+  requestMonthlyAuthorization,
+} from "../../backend/payments/monthly-publication";
 import {
   isMonthlyReleaseCheck,
   isMonthlyReleaseRequest,
@@ -640,33 +643,11 @@ export async function runMonthlyAttester(env: Environment) {
     networks,
     schedule,
     now: new Date(),
-    authorize: async (request) => {
-      const response = await env.JOURNAL.get(
-        env.JOURNAL.idFromName(SIGNER_STACKS[stack].journal),
-      ).fetch(
-        new Request("https://attester.internal/v1/monthly-authorization", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(request),
-        }),
-      );
-      if (response.status === 409) {
-        const rejected = (await readBoundedJson(
-          response,
-          4096,
-          "monthly authorization status",
-        )) as { error?: unknown };
-        if (rejected.error === "monthly_already_admitted")
-          throw new EvmMonthlyAlreadyAdmitted();
-      }
-      if (!response.ok)
-        throw new Error("Monthly attester rejected authorization");
-      return (await readBoundedJson(
-        response,
-        4 * 1024 * 1024,
-        "monthly authorization",
-      )) as MonthlyAuthorization;
-    },
+    authorize: (request) =>
+      requestMonthlyAuthorization(
+        env.JOURNAL.get(env.JOURNAL.idFromName(SIGNER_STACKS[stack].journal)),
+        request,
+      ),
   });
   if (sync.failures.length || report.failures.length)
     throw new Error("Monthly indexing or authorization incomplete");

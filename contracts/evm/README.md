@@ -201,21 +201,22 @@ without the owner's wallet, an ordinary vault has one more path:
 - The new creation path requires both reviewed factory and vault implementations.
   Existing deployments and vault state do not change when this source merges;
   qualify and record any operator-authorized upgrade before using it.
-- A period is a calendar UTC month written as `YYYYMM` (owner decision D1). Its
-  window opens `MONTHLY_CUTOFF_DELAY` (72 hours) after the month ends, at 00:00
-  UTC on the 4th, and closes when the next month's window opens.
-  `monthlyWindow(period)` returns both times. Only one period is open at a
-  time.
+- A period is a calendar UTC month written as `YYYYMM`. The owner may finalize
+  it once the month closes, without a later deadline (26 October 2026 decision).
+  The retained `monthlyWindow(period)` read ABI returns the calendar month end
+  and `uint64.max`. There is no automatic finalization or admission expiry.
 - The identity authority signs the EIP-712 message
   `MonthlyAllocation(uint32 period, bytes32 allocationRoot)` under the vault's
   `SlopProjectEscrow` version `5` domain, which binds the chain and the vault.
   `monthlyDigest(period, root)` returns the digest.
-- Anyone calls `commitMonthly(period, awards, signature)` inside the window.
+- The vault owner calls `commitMonthly(period, awards, signature)` for a closed month.
   `awards` is the list of `(actorId, gross, sourceDigest)` in allocation order.
   The vault rebuilds `allocationRoot(awards)` and requires the authority's
   signature over it. The full gross total must be within `monthlyCap`; the free
   balance must cover all awards that are not already reserved or paid.
-  `monthlyRoots(period)` must be empty, so each period commits once.
+  `monthlyRoots(period)` must be empty, so each period commits once. V2
+  `reserveMonthly` also requires the owner. The attester alone cannot commit
+  additional months; existing leaves and payouts remain permissionless.
   Each new award takes the 2% payout fee, consumes its source digest, gets the
   ID `awardId(sourceDigest)`, and pays through the ordinary binding rules.
   An award already committed by the owner is counted once when its actor,
@@ -256,7 +257,7 @@ without a fee, `monthlyReleased(period)` records it, committed awards do not cha
 committed. Time alone never releases a reserve. See `docs/escrow-unsettleable-month-release.md`. Later signed monthly
 admissions can use free funds within their own caps. Existing funded payments, bindings, deposits,
 and free withdrawals remain available. Permissionless leaf execution completes
-the reserve after owner opt-out or window expiry. It has no refund, expiry, or
+the reserve after owner opt-out or any later month. It has no refund, expiry, or
 human release step. The executor bounds examined leaves, including already
 committed leaves, and retains a finalized cursor for restart.
 
@@ -268,25 +269,22 @@ does not, so that option fails at setup against it. The upgrade proof for the
 deployed vaults is the Base fork rehearsal in `../DEPLOY-MAINNET.md` section
 4.6.
 
-The authority's role therefore grows from wallet binding to monthly
-attestation. It still cannot withdraw, redirect or pay funds, and it cannot
-commit more than one owner cap in each calendar month. A monthly award, like
-any award, pays only to a binding that the destination wallet signed, after the
-commit delay, and the owner can still cancel a binding in
-those windows. A stolen authority key can reserve at most one cap for each
-month until the registrar's rotation executes; the owner limits that exposure
-with the cap and the opt-out. `test/MonthlyCommitment.t.sol` tests the cap, one
-commitment per period, the opt-out, the window, the signature binding over vault,
-period and root, replay, the wrong attester, the rotation, purpose isolation and
-permissionless creation. `test/MonthlyReserveV2.t.sol` tests V2 trees of
-odd and even widths, index aliasing, forged sibling totals, leaf replay, a
-stale source sequence, count-zero sealing, the cap on the whole gross and
-preservation of funded leaves after the admission window, and later monthly admission while earlier leaves remain. The invariant handler in `test/OpusInvariant.t.sol` commits
-signed legacy allocations, V2 reserves and leaves from
-random callers, and checks both identities below with pending gross.
+The authority signs monthly allocations but cannot admit one without the vault
+owner's transaction. It still cannot withdraw, redirect or pay funds. Each
+allocation remains within the monthly cap and commits once per period; every
+award still requires the contributor's wallet-signed destination binding.
+Removing admission deadlines does not let a stolen attester key commit extra
+months. The separately accepted binding-compromise risk remains unchanged.
+`test/MonthlyCommitment.t.sol` covers owner admission, closed months without
+expiry, caps, replay, signature binding and permissionless payment.
+`test/MonthlyReserveV2.t.sol` covers owner-only reservations, authenticated
+leaves, conservation, replay, stale source sequences, cap enforcement and
+preservation of unsettled reserves. The invariant handler exercises owner
+root creation and permissionless leaf/payment callers.
 
-The monthly dispatcher sends a new reservation before older months’ leaves.
-A leaf can change the source sequence and invalidate a reservation signature.
+A new owner reservation can be invalidated by a concurrent leaf that changes
+the source sequence. The owner must review the refreshed authorization; no
+executor silently replaces the wallet-approved reservation.
 
 The first version uses individual commit and pay calls. Dispatchers isolate
 failed recipients by submitting separate transactions. No account can sweep

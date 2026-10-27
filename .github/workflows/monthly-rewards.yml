@@ -6,11 +6,10 @@ name: Propose monthly allocations
 # writes the proposed private allocation of every funded monthly project to
 # its branch's D1 database: main to slop-private, development to
 # slop-staging. Nothing is committed, published or opened as a pull request.
-# Owners change amounts privately; the payments coordinator finalizes the
-# current allocations at the owner-decided cutoff, 72 hours after the month
-# ends (decision D1, backend/payments/README.md). Writing a month's proposal is
-# idempotent, so the run repeats on the first three days of the month, before
-# that cutoff, to recover from a failed run.
+# Owners change amounts privately and explicitly finalize them when ready;
+# this workflow never freezes an allocation. Writing a month's proposal is
+# idempotent, so it repeats on the first three days to recover an initial
+# failure. A later manual dispatch can still prepare any closed month.
 on:
   schedule:
     - cron: "11 0 1-3 * *"

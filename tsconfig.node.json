@@ -12,6 +12,7 @@
   "include": [
     "tests/*.ts",
     "src/lib/payments/**/*.ts",
+    "contracts/monthly-authorization.ts",
     "contracts/evm/adapter.ts",
     "contracts/evm/factories.ts",
     "contracts/evm/monthly-reserve.ts",
@@ -31,6 +32,7 @@
     "contracts/solana/wallet-transactions.ts",
     "contracts/solana/commitment.ts",
     "contracts/solana/monthly-commitment.ts",
+    "contracts/solana/monthly-finalization.ts",
     "contracts/solana/monthly-reserve.ts",
     "contracts/vault-totals.ts",
     "src/lib/base58.ts",
@@ -46,6 +48,7 @@
     "src/lib/browser-json.ts",
     "src/lib/owner-commitment-actions.ts",
     "src/lib/monthly-release-actions.ts",
+    "src/lib/monthly-finalization-actions.ts",
     "src/lib/solana-vault-actions.ts",
     "src/lib/project-api.ts",
     "src/lib/evm-vault-actions.ts",

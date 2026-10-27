@@ -5,7 +5,7 @@ import type { CycleIndexEntry } from "./lib/cycle-index";
 import { errorMessage } from "./lib/errors";
 import { cycleSettlementReminder } from "./lib/funding-reminders";
 import {
-  monthlyCutoff,
+  monthlyFinalizationDate,
   PRD_MONTHLY_SCHEDULE,
 } from "./lib/payments/monthly-allocation";
 import {
@@ -26,7 +26,6 @@ import {
   ExternalLinkAnchor,
   formatCycleMonth,
   formatDate,
-  formatDateTime,
   formatMicroUsdc,
   NotFound,
   stale,
@@ -105,9 +104,12 @@ export function CyclePage({
     state: record?.state ?? (view?.cycle.status === "live" ? "live" : "review"),
   });
   const reviewClosed = record ? awaitingApproval(record) : false;
-  // From 2026-11, owners change allocations until the monthly cutoff instead
-  // of a 14-day review (PRD section 6). Earlier records keep their review.
-  const ownerCutoff = monthlyCutoff(PRD_MONTHLY_SCHEDULE, cycleId);
+  // Current months stay editable until owner finalization; historical review
+  // windows remain part of the original record.
+  const ownerFinalization = monthlyFinalizationDate(
+    PRD_MONTHLY_SCHEDULE,
+    cycleId,
+  );
   const currentStage =
     record?.state === "paid" || record?.state === "settlement-planned"
       ? 3
@@ -205,11 +207,8 @@ export function CyclePage({
         <ol className="cycle-status-grid" aria-label="Cycle progress">
           {[
             ["Contribution", `${formatDate(from)}–${formatDate(to)}`],
-            ownerCutoff
-              ? [
-                  "Owner changes",
-                  `${ownerCutoff.getTime() <= Date.now() ? "Closed" : "Closes"} ${formatDateTime(ownerCutoff.toISOString())}`,
-                ]
+            ownerFinalization
+              ? ["Owner finalization", "When the owner is ready"]
               : [
                   "Review",
                   record?.reviewEndsAt

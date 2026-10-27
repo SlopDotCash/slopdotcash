@@ -130,7 +130,8 @@ The keeper uses the existing finalized scanner and exact amount, token, fee and
 destination verifiers. A successful send is `submitted`, not paid. Only a
 verified finalized payment receipt updates its local payment index; Slop's
 independent scanner updates the site. A walletless or blocked award waits while
-other awards continue. Project restrictions and opt-out prevent new monthly
+other awards continue. New monthly roots require the vault owner; the keeper
+resumes existing reservations. Project restrictions and opt-out prevent new monthly
 admission. Already funded awards and admitted EVM V2 or Solana months can still finish.
 Private bounty vaults stay separate and use their 75/25 payout policy; the
 keeper does not submit a discretionary bounty award.

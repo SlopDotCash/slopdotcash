@@ -618,8 +618,7 @@ try {
       network: "base-sepolia",
       registry: [withEscrow],
       registryDatabase: stagingDatabase,
-      monthlySchedule:
-        '{"firstPeriod":"2026-09","cutoffSecondsAfterPeriodEnd":259200}',
+      monthlySchedule: '{"firstPeriod":"2026-09"}',
       ...input,
     } as PaymentStackInput & { stack?: "test" });
   const stagingRecord = paymentDeploymentRecord("eliza", deployment);

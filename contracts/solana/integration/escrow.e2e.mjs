@@ -1517,8 +1517,8 @@ test("bounded monthly commitment: signed root, cap, one period, opt-out, proofs 
       tokenProgram: TOKEN_PROGRAM_ID,
     })
     .rpc();
-  // The open period is the month before the month that contains now - 72 hours.
-  const shifted = new Date(((await chainTime()) - 259_200) * 1000);
+  // The latest eligible period is the last fully closed calendar month.
+  const shifted = new Date((await chainTime()) * 1000);
   const open = new Date(
     Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() - 1, 1),
   );
@@ -1576,11 +1576,11 @@ test("bounded monthly commitment: signed root, cap, one period, opt-out, proofs 
       privateKey: signer.secretKey,
       message: bytes,
     });
-  const recordAt = (n, r, pre, frozen = frozenAt) =>
+  const recordAt = (n, r, pre, frozen = frozenAt, rootPayer = payer) =>
     program.methods
       .commitMonthly(n, [...Buffer.from(r, "hex")], bn(total), bn(frozen))
       .accountsStrict({
-        payer: stranger.publicKey,
+        payer: rootPayer.publicKey,
         project,
         vault,
         month: pda(seed("month"), key(project), periodSeed(n)),
@@ -1588,7 +1588,7 @@ test("bounded monthly commitment: signed root, cap, one period, opt-out, proofs 
         systemProgram: SystemProgram.programId,
       })
       .preInstructions(pre)
-      .signers([stranger])
+      .signers(rootPayer === payer ? [] : [rootPayer])
       .rpc();
   const record = (
     p = period,
@@ -1679,7 +1679,11 @@ test("bounded monthly commitment: signed root, cap, one period, opt-out, proofs 
     })
     .rpc();
 
-  // The window: an invalid period, and next month's period before its cutoff.
+  // Invalid and still-open periods refuse. The owner must sign every root.
+  await assert.rejects(
+    recordAt(number(period), root, [attestation()], frozenAt, stranger),
+    /ConstraintAddress/,
+  );
   await assert.rejects(
     recordAt(202613, root, [attestation()]),
     /InvalidPeriod/,
@@ -1751,7 +1755,7 @@ test("bounded monthly commitment: signed root, cap, one period, opt-out, proofs 
     /InvalidAttestation/,
   );
   const opensAt =
-    Date.UTC(open.getUTCFullYear(), open.getUTCMonth() + 1, 1) / 1000 + 259_200;
+    Date.UTC(open.getUTCFullYear(), open.getUTCMonth() + 1, 1) / 1000;
   for (const frozen of [opensAt - 1, (await chainTime()) + 3600].map(String))
     await assert.rejects(
       recordAt(
@@ -1772,7 +1776,7 @@ test("bounded monthly commitment: signed root, cap, one period, opt-out, proofs 
   forged.data[16 + 32 + 1] ^= 1;
   await assert.rejects(record(period, root, [forged]));
 
-  // Anyone records the signed root; the period records once.
+  // The owner records the signed root; the period records once.
   await record();
   const recorded = await program.account.monthlyAllocation.fetch(month(period));
   assert.equal(Buffer.from(recorded.allocationRoot).toString("hex"), root);
@@ -2117,7 +2121,14 @@ async function monthlyExecutor(stranger, period, entries, frozenAt, projectId) {
       await nodeSigner(authority).signMessage(signed),
     ).toString("hex"),
   };
-  return { total, config, journal, environment, authorization };
+  return {
+    total,
+    config,
+    journal,
+    environment,
+    ownerEnvironment: { ...environment, SOLANA_SIGNER: nodeSigner(payer) },
+    authorization,
+  };
 }
 
 // An admitted month blocks the owner's direct commits until every leaf settles. A leaf
@@ -2141,7 +2152,7 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
     .setMonthlyCommitment(bn(100_000_000), true)
     .accountsStrict({ owner: payer.publicKey, project })
     .rpc();
-  const shifted = new Date(((await chainTime()) - 259_200) * 1000);
+  const shifted = new Date((await chainTime()) * 1000);
   const open = new Date(
     Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() - 1, 1),
   );
@@ -2170,14 +2181,20 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
   ).committedAt.toNumber();
   while ((await chainTime()) <= consumedAt) await sleep(500);
   const frozenAt = String(await chainTime());
-  const { total, config, journal, environment, authorization } =
-    await monthlyExecutor(
-      stranger,
-      period,
-      entries,
-      frozenAt,
-      "monthly-release",
-    );
+  const {
+    total,
+    config,
+    journal,
+    environment,
+    ownerEnvironment,
+    authorization,
+  } = await monthlyExecutor(
+    stranger,
+    period,
+    entries,
+    frozenAt,
+    "monthly-release",
+  );
   const freezeConfig = {
     ...config,
     mint: config.asset,
@@ -2195,7 +2212,7 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
     Number(observedFreeze) > 0 && Number(observedFreeze) <= (await chainTime()),
   );
   await assert.rejects(
-    submitSolanaMonthly(environment, {
+    submitSolanaMonthly(ownerEnvironment, {
       ...authorization,
       signatureHex: "00".repeat(64),
     }),
@@ -2208,6 +2225,10 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
     false,
   );
   assert.equal(notAdmitted.notAdmitted, true);
+  assert.equal(
+    (await submitSolanaMonthly(environment, authorization, true)).notAdmitted,
+    true,
+  );
   assert.equal(journal.size, 0);
   const originalFetch = globalThis.fetch;
   let lostReply = false;
@@ -2225,7 +2246,7 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
     return response;
   };
   try {
-    submitted = await submitSolanaMonthly(environment, authorization);
+    submitted = await submitSolanaMonthly(ownerEnvironment, authorization);
   } catch (error) {
     // The accepted transaction may not be visible on the immediate status read.
     assert.ok(error instanceof Error);
@@ -2241,11 +2262,11 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
   assert.equal(lostReply, true);
   const rootAttempt = [...journal.values()][0];
   assert.ok(rootAttempt?.transactionId);
-  submitted ??= await submitSolanaMonthly(environment, authorization);
+  submitted ??= await submitSolanaMonthly(ownerEnvironment, authorization);
   assert.equal(submitted.transactionId, rootAttempt.transactionId);
   assert.equal(submitted.alreadyCommitted, false);
   assert.equal(
-    (await submitSolanaMonthly(environment, authorization)).transactionId,
+    (await submitSolanaMonthly(ownerEnvironment, authorization)).transactionId,
     submitted.transactionId,
   );
   await provider.connection.confirmTransaction(
@@ -2387,7 +2408,7 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
 
 // The monthly gate tests share a funded payer that is neither owner nor attester, the one
 // recordable period, and entries whose source digests equal the ones `commit` derives.
-async function monthlyPeriod() {
+async function monthlyPeriod(age = 1) {
   const stranger = Keypair.generate();
   await sendAndConfirmTransaction(
     provider.connection,
@@ -2400,9 +2421,9 @@ async function monthlyPeriod() {
     ),
     [payer],
   );
-  const shifted = new Date(((await chainTime()) - 259_200) * 1000);
+  const shifted = new Date((await chainTime()) * 1000);
   const open = new Date(
-    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() - 1, 1),
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() - age, 1),
   );
   const period = `${open.getUTCFullYear()}-${String(open.getUTCMonth() + 1).padStart(2, "0")}`;
   return { stranger, period, n: Number(period.replace("-", "")) };
@@ -2475,7 +2496,7 @@ const monthlyAdmission = (stranger, period, n) =>
     const signature = await program.methods
       .commitMonthly(n, [...Buffer.from(root, "hex")], bn(total), bn(frozenAt))
       .accountsStrict({
-        payer: stranger.publicKey,
+        payer: payer.publicKey,
         project,
         vault,
         month: monthAt(n),
@@ -2496,7 +2517,7 @@ const monthlyAdmission = (stranger, period, n) =>
           ),
         }),
       ])
-      .signers([stranger])
+      .signers([])
       .rpc();
     // `release` names the obligation a release passes: the leaf's own award by default.
     const leaf = (index, method, release = awardAt(entries[index])) => {
@@ -2547,8 +2568,8 @@ const monthlyAdmission = (stranger, period, n) =>
 // to free balance. After the freeze only an award that already pays the leaf's actor its
 // gross releases, so removing or shrinking an award never becomes a refund. Each leaf
 // settles once.
-test("monthly gate blocks direct commits; a source consumed before the freeze, or by the same award, releases once", async () => {
-  const { stranger, period, n } = await monthlyPeriod();
+test("an owner finalizes an old month and its funded-source protection survives without expiry", async () => {
+  const { stranger, period, n } = await monthlyPeriod(4);
   const ownerCommit = (name, gross = 1) => commit(name, 999, gross);
   const month = () => monthAt(n);
   const admit = monthlyAdmission(stranger, period, n);
@@ -2920,13 +2941,14 @@ test("an identical hand commit after the freeze is counted once and the month co
     mint: mint.toBase58(),
     rpcUrl: provider.connection.rpcEndpoint,
   };
-  const { environment, authorization } = await monthlyExecutor(
-    stranger,
-    period,
-    entries,
-    await freezeSolanaMonthly(freezeConfig, { family: "solana", entries }),
-    "identical",
-  );
+  const { environment, ownerEnvironment, authorization } =
+    await monthlyExecutor(
+      stranger,
+      period,
+      entries,
+      await freezeSolanaMonthly(freezeConfig, { family: "solana", entries }),
+      "identical",
+    );
   const frozenAt = Number(authorization.plan.frozenAt);
   await after(frozenAt);
   await provider.connection.confirmTransaction(
@@ -2945,7 +2967,7 @@ test("an identical hand commit after the freeze is counted once and the month co
       freezeSolanaMonthly(freezeConfig, { family: "solana", entries: [leaf] }),
       /already consumed/,
     );
-  const admitted = await submitSolanaMonthly(environment, authorization);
+  const admitted = await submitSolanaMonthly(ownerEnvironment, authorization);
   await provider.connection.confirmTransaction(
     admitted.transactionId,
     "finalized",

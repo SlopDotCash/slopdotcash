@@ -412,8 +412,7 @@ try {
       database_name: "slop-private",
       database_id: "1b453124-2709-45af-8389-151a8105c461",
     },
-    monthlySchedule:
-      '{"firstPeriod":"2026-11","cutoffSecondsAfterPeriodEnd":259200}',
+    monthlySchedule: '{"firstPeriod":"2026-11"}',
   };
   const stack = paymentStack(stackInput);
   assert.throws(

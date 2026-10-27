@@ -438,7 +438,7 @@ bun scripts/escrow-acceptance/evm-upgrade.ts execute base-sepolia evidence/escro
 bun scripts/escrow-acceptance/evm-upgrade.ts verify  base-sepolia evidence/escrow-upgrade/base-sepolia
 # 4. EVM only: extended suite on the upgraded factory, in a new directory (monthly takes keeper-v2;
 #    it waits until 2026-12-04T00:00Z unless ESCROW_ACCEPTANCE_MONTHLY_SCHEDULE names an earlier first
-#    period, for example {"firstPeriod":"2026-09","cutoffSecondsAfterPeriodEnd":259200}).
+#    period, for example {"firstPeriod":"2026-09"}).
 bun run escrow:acceptance base-sepolia evidence/escrow-acceptance-extended-v2/base-sepolia --suite extended
 ```
 

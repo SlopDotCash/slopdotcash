@@ -9,6 +9,7 @@ import {
   EvmMonthlyAlreadyAdmitted,
   evmMonthlySumTree,
 } from "../../contracts/evm/adapter";
+import { verifyMonthlyOwnerAuthorization } from "../../contracts/monthly-authorization";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { requestOwnerCommitment } from "../../src/lib/owner-commitment-actions";
 import type { PaymentsAccount } from "../../src/lib/payments/contracts";
@@ -130,6 +131,46 @@ const coordinate = (now: Date, configured = schedule) =>
     schedule: configured,
     now,
   });
+// Exercise restart after the owner finalized the immutable allocation but
+// before the obligation batch was stored. The raw coordinator never freezes.
+async function coordinateFinalized(now: Date) {
+  if (!count("monthly_payment_runs")) {
+    const service = monthlyOwnerService({
+      db,
+      ...projects(),
+      networks: () =>
+        project.manifest.escrow?.deployments.map((entry) => entry.network) ??
+        [],
+      verifyAuthority: async () => {},
+      schedule: () => schedule,
+      now: () => now,
+    });
+    const view = await service.view(project.id, "2026-11", actor);
+    const prepare = db.prepare.bind(db);
+    const interruption = new Error(
+      "fixture interruption after owner finalization",
+    );
+    db.prepare = (query) => {
+      if (query.startsWith("INSERT INTO monthly_payment_obligations"))
+        throw interruption;
+      return prepare(query);
+    };
+    try {
+      await service.finalize(
+        project.id,
+        "2026-11",
+        actor,
+        view.proposal?.allocationSequence ?? 0,
+      );
+    } catch (error) {
+      if (error !== interruption) throw error;
+    } finally {
+      db.prepare = prepare;
+    }
+    expect(count("monthly_payment_runs")).toBe(1);
+  }
+  return coordinate(now);
+}
 const owner = () =>
   monthlyOwnerService({
     db,
@@ -207,7 +248,7 @@ describe("monthly coordinator", () => {
       beforeCutoff.toISOString(),
     );
     vault("600");
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     expect(count("monthly_payment_obligations")).toBe(1);
     expect(count("monthly_payment_exclusions")).toBe(1);
     sqlite
@@ -256,7 +297,7 @@ describe("monthly coordinator", () => {
     expect(() =>
       sqlite.exec("DELETE FROM monthly_payment_obligations"),
     ).toThrow("permanent");
-    expect((await coordinate(afterCutoff)).created).toEqual([]);
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([]);
   });
 
   test("an 18-decimal token month keeps exact amounts through owner review, freeze and attestation", async () => {
@@ -290,10 +331,10 @@ describe("monthly coordinator", () => {
       "invalid_allocation",
     );
     vault((900n * unit).toString(), afterCutoff.toISOString(), 18);
-    expect((await coordinate(afterCutoff)).created).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([
       `${project.id}/2026-11`,
     ]);
-    expect((await coordinate(afterCutoff)).created).toEqual([]);
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([]);
     expect(count("monthly_payment_obligations")).toBe(2);
     if (!schedule) throw new Error("Fixture schedule missing");
     const { digest } = sqlite
@@ -436,7 +477,7 @@ describe("monthly coordinator", () => {
     }
   }
   test("a ban after freeze excludes only the unfunded award and preserves the snapshot", async () => {
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     const before = sqlite
       .query("SELECT snapshot, snapshot_sha256 FROM monthly_payment_runs")
       .get();
@@ -447,7 +488,7 @@ describe("monthly coordinator", () => {
       afterCutoff.toISOString(),
     );
     vault("400");
-    const result = await coordinate(afterCutoff);
+    const result = await coordinateFinalized(afterCutoff);
     expect(result.created).toEqual([`${project.id}/2026-11`]);
     expect(
       sqlite
@@ -464,7 +505,7 @@ describe("monthly coordinator", () => {
         .query("SELECT github_user_id FROM monthly_payment_exclusions")
         .all(),
     ).toEqual([{ github_user_id: A }]);
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     expect(count("monthly_payment_obligations")).toBe(1);
     const view = await owner().view(project.id, "2026-11", actor);
     expect(view.run?.totalGrossBase).toBe("400");
@@ -495,7 +536,7 @@ describe("monthly coordinator", () => {
   });
 
   test("a ban that races monthly funding makes the coordinator retry before creating awards", async () => {
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     vault("1000");
     const batch = db.batch.bind(db);
     let pending = true;
@@ -511,10 +552,10 @@ describe("monthly coordinator", () => {
       }
       return batch(statements);
     };
-    expect((await coordinate(afterCutoff)).created).toEqual([]);
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([]);
     expect(count("monthly_payment_obligations")).toBe(0);
     expect(count("monthly_payment_exclusions")).toBe(0);
-    expect((await coordinate(afterCutoff)).created).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([
       `${project.id}/2026-11`,
     ]);
     expect(
@@ -526,14 +567,14 @@ describe("monthly coordinator", () => {
 
   test("a later ban preserves monthly awards that are already funded", async () => {
     vault("1000");
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     seedParticipationBan(
       sqlite,
       { githubId: A, githubLogin: "first" },
       actor,
       afterCutoff.toISOString(),
     );
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     expect(count("monthly_payment_obligations")).toBe(2);
     seedParticipationBan(
       sqlite,
@@ -554,7 +595,7 @@ describe("monthly coordinator", () => {
     );
   });
 
-  test("freezes the current private allocations once at the cutoff and creates each obligation once when funded", async () => {
+  test("resumes an owner-finalized allocation and creates each obligation once when funded", async () => {
     clock = beforeCutoff;
     const changed = await owner().changeAllocation(
       project.id,
@@ -573,17 +614,17 @@ describe("monthly coordinator", () => {
     expect((await coordinate(beforeCutoff)).frozen).toEqual([]);
     expect(count("monthly_payment_runs")).toBe(0);
 
-    const first = await coordinate(afterCutoff);
-    expect(first.frozen).toEqual([`${project.id}/2026-11`]);
+    const first = await coordinateFinalized(afterCutoff);
+    expect(first.frozen).toEqual([]);
     // No finalized vault reading yet: nothing is created.
     expect(first.waiting).toEqual([
       { key: `${project.id}/2026-11`, reason: "stale-funding" },
     ]);
     vault("899");
-    expect((await coordinate(afterCutoff)).waiting).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).waiting).toEqual([
       { key: `${project.id}/2026-11`, reason: "underfunded" },
     ]);
-    expect((await coordinate(afterCutoff)).waiting).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).waiting).toEqual([
       { key: `${project.id}/2026-11`, reason: "underfunded" },
     ]);
     expect(count("monthly_payment_obligations")).toBe(0);
@@ -605,10 +646,10 @@ describe("monthly coordinator", () => {
       },
     ]);
     vault("900");
-    expect((await coordinate(afterCutoff)).created).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([
       `${project.id}/2026-11`,
     ]);
-    const again = await coordinate(afterCutoff);
+    const again = await coordinateFinalized(afterCutoff);
     expect([again.frozen, again.created, again.waiting]).toEqual([[], [], []]);
     expect(
       sqlite
@@ -646,9 +687,9 @@ describe("monthly coordinator", () => {
         )
         .run(project.id, "2026-11", B, OWNER, afterCutoff.toISOString()),
     ).toThrow("monthly allocations frozen");
-    // The owner's late finalization reuses the automatic snapshot.
+    // Repeating owner finalization preserves the first snapshot.
     const view = await owner().finalize(project.id, "2026-11", actor, 1);
-    expect(view.run?.trigger).toBe("automatic");
+    expect(view.run?.trigger).toBe("owner");
     expect(count("monthly_payment_runs")).toBe(1);
     expect(view.run?.awards.map((award) => award.state)).toEqual([
       "awaiting-reservation",
@@ -673,7 +714,7 @@ describe("monthly coordinator", () => {
       beforeCutoff.toISOString(),
     );
     vault("1000");
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     const response = await handlePaymentsApi(
       new Request("https://slop.cash/api/v1/payments/me", {
         headers: { cookie: `__Host-slop_points=${token}` },
@@ -716,9 +757,9 @@ describe("monthly coordinator", () => {
       ).json()) as PaymentsAccount;
     // A proposal under the owner's review is private; nothing is shown.
     expect((await account()).monthlyAwards).toEqual([]);
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     vault("899");
-    expect((await coordinate(afterCutoff)).waiting).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).waiting).toEqual([
       { key: `${project.id}/2026-11`, reason: "underfunded" },
     ]);
     const award = {
@@ -739,7 +780,7 @@ describe("monthly coordinator", () => {
       balances: [],
     });
     vault("1000");
-    expect((await coordinate(afterCutoff)).created).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([
       `${project.id}/2026-11`,
     ]);
     expect((await account()).monthlyAwards).toEqual([
@@ -775,7 +816,7 @@ describe("monthly coordinator", () => {
     ]);
   });
 
-  test("without a defined cutoff nothing is frozen automatically, but the owner can finalize", async () => {
+  test("an absent automatic payment configuration still permits explicit owner finalization", async () => {
     expect((await coordinate(afterCutoff, null)).frozen).toEqual([]);
     expect(count("monthly_payment_runs")).toBe(0);
     vault("1000");
@@ -789,14 +830,10 @@ describe("monthly coordinator", () => {
     expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
       automatic: false,
     });
-    expect((await coordinate(afterCutoff)).waiting).toEqual([
-      { key: `${project.id}/2026-11`, reason: "automatic-off" },
-    ]);
+    expect((await coordinate(afterCutoff)).waiting).toEqual([]);
     await owner().setAutomatic(project.id, actor, true);
     restricted = true;
-    expect((await coordinate(afterCutoff)).waiting).toEqual([
-      { key: `${project.id}/2026-11`, reason: "project-restricted" },
-    ]);
+    expect((await coordinate(afterCutoff)).waiting).toEqual([]);
     await rejects(
       owner().finalize(project.id, "2026-11", actor, 0),
       "project_restricted",
@@ -809,9 +846,18 @@ describe("monthly coordinator", () => {
       schedule,
       now: afterCutoff,
     });
-    expect(unserved.waiting).toEqual([
-      { key: `${project.id}/2026-11`, reason: "vault-not-served" },
-    ]);
+    expect(unserved.waiting).toEqual([]);
+    await rejects(
+      monthlyOwnerService({
+        db,
+        ...projects(),
+        networks: () => ["solana-devnet"],
+        verifyAuthority: async () => {},
+        schedule: () => schedule,
+        now: () => clock,
+      }).finalize(project.id, "2026-11", actor, 0),
+      "vault_not_served",
+    );
     expect(count("monthly_payment_runs")).toBe(0);
   });
 
@@ -831,9 +877,9 @@ describe("monthly coordinator", () => {
         escrowAwardOrigin(project.id, "2026-11", A),
         afterCutoff.toISOString(),
       );
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     vault("400");
-    expect((await coordinate(afterCutoff)).created).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([
       `${project.id}/2026-11`,
     ]);
     const view = await owner().view(project.id, "2026-11", actor);
@@ -883,9 +929,9 @@ describe("monthly coordinator", () => {
 
   test("a Solana hand reservation waits until automatic monthly payment is off", async () => {
     await setupFixture(solanaDeployment);
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     vault("1000");
-    expect((await coordinate(afterCutoff)).created).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([
       `${project.id}/2026-11`,
     ]);
     const service = monthlyOwnerService({
@@ -933,20 +979,20 @@ describe("monthly coordinator", () => {
         escrowAwardOrigin(project.id, "2026-11", A),
         afterCutoff.toISOString(),
       );
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     vault("999");
-    expect((await coordinate(afterCutoff)).created).toEqual([]);
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([]);
     expect(count("monthly_payment_obligations")).toBe(0);
     vault("1000");
-    expect((await coordinate(afterCutoff)).created).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([
       `${project.id}/2026-11`,
     ]);
   });
 
   test("an underfunded month has no obligation to reserve, and earlier unreserved obligations hold their funds", async () => {
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     vault("999");
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     const view = await owner().view(project.id, "2026-11", actor);
     expect(view.run?.funded).toBe(false);
     expect(view.run?.awards.map((award) => award.state)).toEqual([
@@ -969,7 +1015,7 @@ describe("monthly coordinator", () => {
       vault("0");
       return originalBatch(statements);
     };
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     db.batch = originalBatch;
     expect(count("monthly_payment_obligations")).toBe(0);
     expect((await owner().view(project.id, "2026-11", actor)).run?.funded).toBe(
@@ -977,45 +1023,51 @@ describe("monthly coordinator", () => {
     );
     // A stale vault reading never funds a month.
     vault("5000", "2026-11-30T00:00:00.000Z");
-    expect((await coordinate(afterCutoff)).waiting).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).waiting).toEqual([
       { key: `${project.id}/2026-11`, reason: "stale-funding" },
     ]);
     vault("5000");
-    expect((await coordinate(afterCutoff)).created).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([
       `${project.id}/2026-11`,
     ]);
     expect(count("monthly_payment_obligations")).toBe(2);
   });
 
-  test("after the cutoff the automatic default fixes the allocations until they are frozen", async () => {
-    await rejects(
-      owner().changeAllocation(project.id, "2026-11", actor, {
+  test("an old unfinalized month remains editable until its owner explicitly finalizes it", async () => {
+    clock = new Date("2027-02-08T12:00:00.000Z");
+    vault("1000", clock.toISOString());
+    await coordinate(afterCutoff);
+    await coordinate(clock);
+    expect(count("monthly_payment_runs")).toBe(0);
+    expect(count("monthly_payment_obligations")).toBe(0);
+    const changed = await owner().changeAllocation(
+      project.id,
+      "2026-11",
+      actor,
+      {
         githubUserId: B,
         grossBase: "100",
         expectedSequence: 0,
-      }),
-      "cutoff_passed",
+      },
     );
-    await owner().setAutomatic(project.id, actor, false);
-    const view = await owner().changeAllocation(project.id, "2026-11", actor, {
-      githubUserId: B,
-      grossBase: "100",
-      expectedSequence: 0,
-    });
-    expect(view.proposal?.allocations.map((row) => row.grossBase)).toEqual([
+    expect(changed.proposal?.allocations.map((row) => row.grossBase)).toEqual([
       "600",
       "100",
     ]);
-  });
-
-  test("a month before the first automatic period is never frozen automatically", async () => {
-    const later = parseMonthlySchedule(
-      '{"firstPeriod":"2026-12","cutoffSecondsAfterPeriodEnd":259200}',
+    const finalized = await owner().finalize(project.id, "2026-11", actor, 1);
+    expect(finalized.run?.trigger).toBe("owner");
+    expect(finalized.run?.totalGrossBase).toBe("700");
+    expect(count("monthly_payment_obligations")).toBe(2);
+    await rejects(
+      owner().changeAllocation(project.id, "2026-11", actor, {
+        githubUserId: B,
+        grossBase: "200",
+        expectedSequence: 1,
+      }),
+      "month_frozen",
     );
-    expect((await coordinate(afterCutoff, later)).waiting).toEqual([
-      { key: `${project.id}/2026-11`, reason: "before-first-period" },
-    ]);
-    expect(count("monthly_payment_runs")).toBe(0);
+    await coordinate(clock);
+    expect(count("monthly_payment_obligations")).toBe(2);
   });
 
   test("private changes stay within the cap, never pay their author and are serialized", async () => {
@@ -1152,7 +1204,7 @@ describe("monthly attestation input", () => {
       chainObligation("8", chainActor, chainGross, chainFee, A);
       chainObligation("9", B, "399", "7", B);
       // Neither source needs new funds: the month is funded with no vault reading.
-      expect((await coordinate(afterCutoff)).created).toEqual([
+      expect((await coordinateFinalized(afterCutoff)).created).toEqual([
         `${project.id}/2026-11`,
       ]);
       const view = await owner().view(project.id, "2026-11", actor);
@@ -1192,7 +1244,7 @@ describe("monthly attestation input", () => {
   test("a contributor sees a conflicting award, and a month of only conflicts signs nothing", async () => {
     chainObligation("7", "999", "600", "12", A);
     chainObligation("8", "999", "400", "8", B);
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     await rejects(prepare(), "empty_allocation");
     const token = "c".repeat(43);
     sqlite
@@ -1223,7 +1275,7 @@ describe("monthly attestation input", () => {
       expectedSequence: 0,
     });
     vault("2000");
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     const plan = await prepare();
     expect(plan.entries.map((e) => [e.githubUserId, e.grossMicro])).toEqual([
       [A, "600"],
@@ -1235,18 +1287,23 @@ describe("monthly attestation input", () => {
     await rejects(prepare({ digest: "f".repeat(64) }), "snapshot_changed");
     expect(count("payment_obligations")).toBe(0);
   });
-  test("refuses the root before the cutoff, after its window, and when the whole month is unfunded", async () => {
+  test("refuses an open or unfunded month and authorizes an old funded owner-finalized month", async () => {
     vault("500");
-    await coordinate(afterCutoff);
-    await rejects(prepare({ now: beforeCutoff }), "monthly_window_closed");
+    await coordinateFinalized(afterCutoff);
+    await rejects(
+      prepare({ now: new Date("2026-11-30T23:59:59Z") }),
+      "monthly_period_not_closed",
+    );
     await rejects(
       prepare({ now: new Date("2027-01-04T00:00:00.000Z") }),
-      "monthly_window_closed",
+      "award_unfunded",
     );
     await rejects(prepare(), "award_unfunded");
     vault("1000");
-    await coordinate(afterCutoff);
-    expect((await prepare()).totalGrossBase).toBe("1000");
+    await coordinateFinalized(afterCutoff);
+    expect(
+      (await prepare({ now: new Date("2027-02-08T00:00:00Z") })).totalGrossBase,
+    ).toBe("1000");
   });
   test("signs a frozen month after a later revision that keeps its payment terms", async () => {
     const revise = async (
@@ -1273,7 +1330,7 @@ describe("monthly attestation input", () => {
       ).toBe("updated");
     };
     vault("500");
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     await rejects(prepare(), "award_unfunded");
     // While the frozen month waits for a deposit, the owner edits the headline.
     await revise((manifest) => ({
@@ -1281,7 +1338,7 @@ describe("monthly attestation input", () => {
       headline: `${manifest.headline} Now with vaults.`,
     }));
     vault("1000");
-    expect((await coordinate(afterCutoff)).created).toEqual([
+    expect((await coordinateFinalized(afterCutoff)).created).toEqual([
       `${project.id}/2026-11`,
     ]);
     expect((await prepare()).totalGrossBase).toBe("1000");
@@ -1294,7 +1351,7 @@ describe("monthly attestation input", () => {
   });
   test("rechecks restrictions and the owner's opt-out after the month was frozen", async () => {
     vault("1000");
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     restricted = true;
     await rejects(prepare(), "project_restricted");
     restricted = false;
@@ -1314,7 +1371,7 @@ describe("monthly attestation input", () => {
       beforeCutoff.toISOString(),
     );
     vault("1000");
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     const initial = await prepare();
     expect(initial.entries.map((e) => e.githubUserId)).toEqual([A]);
     expect(initial.totalGrossBase).toBe("600");
@@ -1334,7 +1391,7 @@ describe("monthly attestation input", () => {
       expectedSequence: 0,
     });
     vault("2000");
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     const current = await prepare();
     expect(current.entries.map((e) => [e.githubUserId, e.grossMicro])).toEqual([
       [A, "600"],
@@ -1384,7 +1441,7 @@ describe("monthly attestation input", () => {
   });
   test("rejects a forged frozen payload even when its metadata still names the real project", async () => {
     vault("1000");
-    await coordinate(afterCutoff);
+    await coordinateFinalized(afterCutoff);
     // Simulate storage corruption outside the normal immutable API.
     const row = sqlite
       .prepare("SELECT snapshot FROM monthly_payment_runs")
@@ -1414,7 +1471,7 @@ describe("monthly attestation input", () => {
 
 test("monthly signing preserves its first intent through retry and refuses a changed root", async () => {
   vault("1000");
-  await coordinate(afterCutoff);
+  await coordinateFinalized(afterCutoff);
   if (!schedule) throw new Error("Fixture schedule missing");
   const { digest } = sqlite
     .prepare("SELECT snapshot_sha256 digest FROM monthly_payment_runs")
@@ -1454,8 +1511,116 @@ test("monthly signing preserves its first intent through retry and refuses a cha
     snapshotSha256: digest,
   };
   const first = await signMonthlyAllocation(deps, request);
+  const expectedOwnerPlan = { ...request, deployment: first.plan.deployment };
+  expect(
+    await verifyMonthlyOwnerAuthorization(first, expectedOwnerPlan),
+  ).toEqual(first);
+  await expect(
+    verifyMonthlyOwnerAuthorization(first, {
+      ...expectedOwnerPlan,
+      snapshotSha256: "f".repeat(64),
+    }),
+  ).rejects.toThrow("reviewed allocation");
+  await expect(
+    verifyMonthlyOwnerAuthorization(
+      { ...first, signatureHex: "00".repeat(65) },
+      expectedOwnerPlan,
+    ),
+  ).rejects.toThrow();
+  const changedAmount = structuredClone(first);
+  changedAmount.plan.entries[0].grossMicro = "1";
+  await expect(
+    verifyMonthlyOwnerAuthorization(changedAmount, expectedOwnerPlan),
+  ).rejects.toThrow("allocation");
   expect(await signMonthlyAllocation(deps, request)).toEqual(first);
   expect(signatures).toBe(1);
+  const ownerToken = "m".repeat(43);
+  sqlite
+    .prepare(
+      "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('monthly-owner',?,'owner',?,0)",
+    )
+    .run(OWNER, afterCutoff.toISOString());
+  sqlite
+    .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
+    .run(
+      await sha256Hex(ownerToken),
+      "monthly-owner",
+      "2027-01-01T00:00:00.000Z",
+    );
+  const reviewBody = {
+    step: "review",
+    network: "base-sepolia",
+    wallet: first.plan.deployment.owner,
+    snapshotSha256: digest,
+    manifestSha256: project.manifestSha256,
+  };
+  const finalizationRequest = (body = reviewBody, signedIn = true) =>
+    new Request(
+      `https://slop.cash/api/v1/payments/projects/${project.id}/monthly/2026-11/finalization`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://slop.cash",
+          ...(signedIn ? { cookie: `__Host-slop_points=${ownerToken}` } : {}),
+        },
+        body: JSON.stringify(body),
+      },
+    );
+  let ownerPreparations = 0;
+  const ownerDependencies = {
+    db,
+    monthly: owner(),
+    now: () => afterCutoff,
+    refreshMonthlyAuthorization: async (input: typeof request) => {
+      expect(input).toEqual(request);
+      ownerPreparations++;
+      return first;
+    },
+  };
+  expect(
+    (
+      await handlePaymentsApi(
+        finalizationRequest(reviewBody, false),
+        ownerDependencies,
+      )
+    ).status,
+  ).toBe(401);
+  expect(
+    (
+      await handlePaymentsApi(
+        finalizationRequest({
+          ...reviewBody,
+          wallet: "0x0000000000000000000000000000000000000001",
+        }),
+        ownerDependencies,
+      )
+    ).status,
+  ).toBe(403);
+  expect(
+    (
+      await handlePaymentsApi(
+        finalizationRequest({ ...reviewBody, snapshotSha256: "e".repeat(64) }),
+        ownerDependencies,
+      )
+    ).status,
+  ).toBe(409);
+  expect(ownerPreparations).toBe(0);
+  const preparedForOwner = await handlePaymentsApi(
+    finalizationRequest(),
+    ownerDependencies,
+  );
+  expect(preparedForOwner.status).toBe(200);
+  expect(await preparedForOwner.json()).toEqual({ authorization: first });
+  expect(ownerPreparations).toBe(1);
+  expect(
+    (
+      await handlePaymentsApi(finalizationRequest(), {
+        ...ownerDependencies,
+        refreshMonthlyAuthorization: async () => changedAmount,
+      })
+    ).status,
+  ).toBe(409);
   const publicUrl = `https://slop.cash/api/v1/payments/projects/${project.id}/monthly/2026-11/authorization/base-sepolia`;
   expect((await handlePaymentsApi(new Request(publicUrl), { db })).status).toBe(
     404,
@@ -1541,7 +1706,7 @@ test("monthly signing preserves its first intent through retry and refuses a cha
 
 test("V2 monthly signing publishes permanent source-bound attempts and resumes the selected admitted month", async () => {
   vault("1000");
-  await coordinate(afterCutoff);
+  await coordinateFinalized(afterCutoff);
   if (!schedule) throw new Error("Fixture schedule missing");
   const { digest } = sqlite
     .prepare("SELECT snapshot_sha256 digest FROM monthly_payment_runs")
@@ -1635,6 +1800,17 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
     [],
   );
   const first = await authorize();
+  const expectedOwnerPlan = { ...request, deployment: first.plan.deployment };
+  expect(
+    await verifyMonthlyOwnerAuthorization(first, expectedOwnerPlan),
+  ).toEqual(first);
+  const changedReservation = structuredClone(first);
+  if (!changedReservation.plan.evmReservation)
+    throw new Error("Missing fixture reservation");
+  changedReservation.plan.evmReservation.remainingGross = "1";
+  await expect(
+    verifyMonthlyOwnerAuthorization(changedReservation, expectedOwnerPlan),
+  ).rejects.toThrow("allocation");
   expect(first.plan.evmReservation?.sourceSequence).toBe("9");
   expect(signatures).toBe(2);
   expect(count("monthly_payment_authorization_attempts")).toBe(1);
@@ -1779,7 +1955,7 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
 
 test("monthly signing never publishes when the signer fails or an opt-out arrives during signing", async () => {
   vault("1000");
-  await coordinate(afterCutoff);
+  await coordinateFinalized(afterCutoff);
   if (!schedule) throw new Error("Fixture schedule missing");
   const { digest } = sqlite
     .prepare("SELECT snapshot_sha256 digest FROM monthly_payment_runs")
@@ -1843,7 +2019,7 @@ test("monthly signing never publishes when the signer fails or an opt-out arrive
 
 test("monthly dispatcher resumes an older Solana reservation after opt-out and retires only finalized completion", async () => {
   vault("1000");
-  await coordinate(afterCutoff);
+  await coordinateFinalized(afterCutoff);
   await owner().setAutomatic(project.id, actor, false);
   // This is the dispatcher transport boundary. Real signature/admission and
   // post-opt-out leaf execution are covered by the Solana validator suite.
@@ -1929,7 +2105,7 @@ test("monthly dispatcher resumes an older Solana reservation after opt-out and r
   expect(count("payment_obligations")).toBe(0);
 });
 
-test("monthly dispatcher sends a new EVM V2 reservation before an older month's leaves", async () => {
+test("monthly dispatcher resumes published months without authorizing a new root", async () => {
   // An older leaf mined first would advance ordinarySourceSequence and revert the newer
   // reservation, which was signed for the earlier sequence. This tests the dispatcher transport
   // boundary only, so the two authorizations need no frozen runs.
@@ -1987,9 +2163,9 @@ test("monthly dispatcher sends a new EVM V2 reservation before an older month's 
       },
     },
   };
-  // 2026-11 can no longer admit, so it only resumes leaves; 2026-12 is in its window.
+  // Every published month resumes only existing owner-authorized reservations.
   await runMonthlyCommitments(dispatcher, new Date("2027-01-05T00:00:00Z"));
-  expect(sent).toEqual(["2026-12:true", "2026-11:false"]);
+  expect(sent).toEqual(["2026-12:false", "2026-11:false"]);
 });
 
 test("Solana v3 retries preserve the first signed freeze time after a signer outage", async () => {
@@ -2000,7 +2176,7 @@ test("Solana v3 retries preserve the first signed freeze time after a signer out
     identityAuthority: solanaBase58(ed25519.getPublicKey(seed)),
   });
   vault("1000");
-  await coordinate(afterCutoff);
+  await coordinateFinalized(afterCutoff);
   if (!schedule) throw new Error("Missing fixture schedule");
   const row = sqlite
     .prepare("SELECT snapshot_sha256 digest FROM monthly_payment_runs")
@@ -2176,7 +2352,7 @@ test("account keeps an award visible when a reservation is indexed during its re
       "2027-01-01T00:00:00.000Z",
     );
   vault("1000");
-  await coordinate(afterCutoff);
+  await coordinateFinalized(afterCutoff);
   let indexed = false;
   let projections = 0;
   const racingDb: ProjectD1Database = {

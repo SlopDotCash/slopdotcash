@@ -909,6 +909,9 @@ export async function submitEvmMonthly(
     same(env.SIGNER.address, deployment.identityAuthority)
   )
     throw new Error("Monthly executor or deployment mismatch");
+  // A service gas key cannot authorize a new month. Existing reserves remain
+  // permissionless to materialize and pay after their owner's transaction.
+  admit = admit && same(env.SIGNER.address, deployment.owner);
   const reservation = plan.evmReservation;
   if (reservation)
     return submitEvmMonthlyReserve(
@@ -919,7 +922,6 @@ export async function submitEvmMonthly(
       admit,
       maxLeaves,
     );
-  if (!admit) return { transactionId: null, alreadyCommitted: false };
   const root = evmAllocationRoot(plan.entries);
   const expected = evmMonthlyDigest(
     BigInt(deployment.chainId),
@@ -953,6 +955,8 @@ export async function submitEvmMonthly(
       throw new Error("Another monthly root is already committed");
     return { transactionId: null, alreadyCommitted: true };
   }
+  if (!admit)
+    return { transactionId: null, alreadyCommitted: false, notAdmitted: true };
   const key = `monthly:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
   const fingerprint = digest(
     JSON.stringify([

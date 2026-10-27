@@ -1339,7 +1339,7 @@ test("the scanner indexes a committed monthly leaf and advances its cursor", {
     provider.connection.getBlockTime(
       await provider.connection.getSlot("confirmed"),
     );
-  const shifted = new Date(((await chainTime()) - 259_200) * 1000);
+  const shifted = new Date((await chainTime()) * 1000);
   const open = new Date(
     Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() - 1, 1),
   );

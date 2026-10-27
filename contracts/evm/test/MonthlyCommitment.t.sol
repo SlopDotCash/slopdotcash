@@ -17,7 +17,7 @@ interface MonthlyVm {
 }
 
 /// @dev Owner decision D13: permissionless vault creation by owner and purpose, and the bounded monthly
-/// commitment that anyone may submit with the identity authority's signature.
+/// commitment finalized by its owner with the identity authority's signature.
 contract MonthlyCommitmentTest {
     MonthlyVm internal constant vm = MonthlyVm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
@@ -32,9 +32,9 @@ contract MonthlyCommitmentTest {
     uint64 internal constant DELAY = 48 hours;
     bytes32 internal constant PROJECT = keccak256("project");
     uint32 internal constant PERIOD = 202611;
-    /// @dev 00:00 UTC on 4 December 2026 and on 4 January 2027: 72 hours after November and December end.
-    uint64 internal constant NOVEMBER_OPENS = 1_796_342_400;
-    uint64 internal constant NOVEMBER_CLOSES = 1_799_020_800;
+    /// @dev Calendar ends of November and December 2026.
+    uint64 internal constant NOVEMBER_OPENS = 1_796_083_200;
+    uint64 internal constant DECEMBER_OPENS = 1_798_761_600;
 
     event VaultCreated(
         bytes32 indexed projectId,
@@ -93,8 +93,33 @@ contract MonthlyCommitmentTest {
     }
 
     function submit(uint32 period, ProjectEscrow.MonthlyAward[] memory entries, bytes memory signature) internal {
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vault.commitMonthly(period, entries, signature);
+    }
+
+    function test_ownerFinalizesOldMonthOnceWhileAttesterCannotCommitIt() public {
+        ProjectEscrow.MonthlyAward[] memory entries = allocation(100e6, 200e6, 300e6);
+        bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
+        vm.warp(DECEMBER_OPENS + 60 days);
+        vm.prank(SUBMITTER);
+        vm.expectRevert(ProjectEscrow.Unauthorized.selector);
+        vault.commitMonthly(PERIOD, entries, signature);
+        require(vault.monthlyRoots(PERIOD) == bytes32(0), "unauthorized root persisted");
+        vm.prank(OWNER);
+        vault.commitMonthly(PERIOD, entries, signature);
+        require(vault.monthlyRoots(PERIOD) == vault.allocationRoot(entries), "owner root missing");
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.MonthlyAlreadyCommitted.selector);
+        vault.commitMonthly(PERIOD, entries, signature);
+    }
+
+    function test_ownerCanFinalizeAsSoonAsTheCalendarMonthIsClosed() public {
+        ProjectEscrow.MonthlyAward[] memory entries = allocation(100e6, 200e6, 300e6);
+        bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
+        vm.warp(NOVEMBER_OPENS);
+        vm.prank(OWNER);
+        vault.commitMonthly(PERIOD, entries, signature);
+        require(vault.monthlyRoots(PERIOD) == vault.allocationRoot(entries), "closed month refused");
     }
 
     // ------------------------------------------------------------------
@@ -155,7 +180,7 @@ contract MonthlyCommitmentTest {
         vm.warp(NOVEMBER_OPENS);
         ProjectEscrow.MonthlyAward[] memory entries = allocation(1e6, 1e6, 1e6);
         bytes memory signature = attest(AUTHORITY_KEY, bountyVault, PERIOD, entries);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.WrongPurpose.selector);
         bountyVault.commitMonthly(PERIOD, entries, signature);
     }
@@ -164,14 +189,13 @@ contract MonthlyCommitmentTest {
     // Monthly window
     // ------------------------------------------------------------------
 
-    function test_windowIsTheUtcMonthPlus72Hours() public view {
+    function test_closedMonthsHaveNoFinalizationExpiry() public view {
         (uint64 opensAt, uint64 closesAt) = vault.monthlyWindow(PERIOD);
-        require(opensAt == NOVEMBER_OPENS && closesAt == NOVEMBER_CLOSES, "November 2026");
+        require(opensAt == NOVEMBER_OPENS && closesAt == type(uint64).max, "November 2026");
         (opensAt, closesAt) = vault.monthlyWindow(202612);
-        require(opensAt == NOVEMBER_CLOSES && closesAt == 1_801_699_200, "December rolls into January");
-        // February 2028 has 29 days: it closes at 00:00 UTC on 4 March 2028.
+        require(opensAt == DECEMBER_OPENS && closesAt == type(uint64).max, "December 2026");
         (opensAt,) = vault.monthlyWindow(202802);
-        require(opensAt == 1_835_740_800, "leap February");
+        require(opensAt == 1_835_481_600, "leap February");
     }
 
     function test_invalidPeriodsAreRejected() public {
@@ -182,27 +206,23 @@ contract MonthlyCommitmentTest {
         }
     }
 
-    function test_commitOnlyInsideThePeriodWindow() public {
+    function test_ownerCannotFinalizeBeforeTheMonthEnds() public {
         ProjectEscrow.MonthlyAward[] memory entries = allocation(100e6, 200e6, 300e6);
         bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
         vm.warp(NOVEMBER_OPENS - 1);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlyWindowClosed.selector);
         vault.commitMonthly(PERIOD, entries, signature);
-        vm.warp(NOVEMBER_CLOSES);
-        vm.prank(SUBMITTER);
-        vm.expectRevert(ProjectEscrow.MonthlyWindowClosed.selector);
-        vault.commitMonthly(PERIOD, entries, signature);
-        vm.warp(NOVEMBER_CLOSES - 1);
+        vm.warp(NOVEMBER_OPENS);
         submit(PERIOD, entries, signature);
-        require(vault.monthlyRoots(PERIOD) == vault.allocationRoot(entries), "committed at the last second");
+        require(vault.monthlyRoots(PERIOD) == vault.allocationRoot(entries), "closed month accepted");
     }
 
     // ------------------------------------------------------------------
-    // Anyone submits; every award follows the ordinary rules
+    // Owner finalization; every award follows the ordinary rules
     // ------------------------------------------------------------------
 
-    function test_anyoneCommitsASignedAllocationAndPayStaysPermissionless() public {
+    function test_ownerCommitsASignedAllocationAndPayStaysPermissionless() public {
         vm.warp(NOVEMBER_OPENS);
         ProjectEscrow.MonthlyAward[] memory entries = allocation(100e6, 200e6, 300e6);
         bytes32 root = vault.allocationRoot(entries);
@@ -300,7 +320,7 @@ contract MonthlyCommitmentTest {
         bytes32 awardSlot = keccak256(abi.encode(id, uint256(11)));
         vm.store(address(vault), bytes32(uint256(awardSlot) + 1), bytes32(uint256(4_000_000 - 1)));
         bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.DuplicateAward.selector);
         vault.commitMonthly(PERIOD, entries, signature);
         require(vault.monthlyRoots(PERIOD) == bytes32(0), "the month stays uncommitted");
@@ -314,7 +334,7 @@ contract MonthlyCommitmentTest {
         vm.prank(OWNER);
         vault.commitAward(id, 12, 199e6, source);
         bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.DuplicateAward.selector);
         vault.commitMonthly(PERIOD, entries, signature);
         require(vault.monthlyRoots(PERIOD) == bytes32(0), "conflicting month stays uncommitted");
@@ -323,7 +343,7 @@ contract MonthlyCommitmentTest {
     function test_emptyAllocationIsRejected() public {
         vm.warp(NOVEMBER_OPENS);
         ProjectEscrow.MonthlyAward[] memory entries = new ProjectEscrow.MonthlyAward[](0);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidInput.selector);
         vault.commitMonthly(PERIOD, entries, "");
     }
@@ -336,7 +356,7 @@ contract MonthlyCommitmentTest {
         vm.warp(NOVEMBER_OPENS);
         ProjectEscrow.MonthlyAward[] memory over = allocation(400e6, 300e6, 300e6 + 1);
         bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, over);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlyCapExceeded.selector);
         vault.commitMonthly(PERIOD, over, signature);
         ProjectEscrow.MonthlyAward[] memory exact = allocation(400e6, 300e6, 300e6);
@@ -350,7 +370,7 @@ contract MonthlyCommitmentTest {
         vm.warp(NOVEMBER_OPENS);
         ProjectEscrow.MonthlyAward[] memory entries = allocation(5_000e6, 5_000e6, 1);
         bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InsufficientFreeBalance.selector);
         vault.commitMonthly(PERIOD, entries, signature);
     }
@@ -363,11 +383,11 @@ contract MonthlyCommitmentTest {
         ProjectEscrow.MonthlyAward[] memory second = new ProjectEscrow.MonthlyAward[](1);
         second[0] = ProjectEscrow.MonthlyAward(14, 100e6, keccak256("2026-11/14"));
         bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, second);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlyAlreadyCommitted.selector);
         vault.commitMonthly(PERIOD, second, signature);
-        // The next period opens when this one closes.
-        vm.warp(NOVEMBER_CLOSES);
+        // The next period can be finalized once its calendar month is closed.
+        vm.warp(DECEMBER_OPENS);
         submit(202612, second, attest(AUTHORITY_KEY, vault, 202612, second));
         require(vault.monthlyRoots(202612) == vault.allocationRoot(second), "next period");
     }
@@ -379,7 +399,7 @@ contract MonthlyCommitmentTest {
         vm.warp(NOVEMBER_OPENS);
         ProjectEscrow.MonthlyAward[] memory entries = allocation(1e6, 1e6, 1e6);
         bytes memory freshSignature = attest(AUTHORITY_KEY, fresh, PERIOD, entries);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlyDisabled.selector);
         fresh.commitMonthly(PERIOD, entries, freshSignature);
 
@@ -395,7 +415,7 @@ contract MonthlyCommitmentTest {
         bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
         vm.prank(OWNER);
         vault.setMonthlyCommitment(1_000e6, false);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlyDisabled.selector);
         vault.commitMonthly(PERIOD, entries, signature);
         require(vault.freeBalance() == 10_000e6, "nothing reserved");
@@ -414,23 +434,23 @@ contract MonthlyCommitmentTest {
         ProjectEscrow.MonthlyAward[] memory entries = allocation(100e6, 200e6, 300e6);
         // Another period.
         bytes memory otherPeriod = attest(AUTHORITY_KEY, vault, 202610, entries);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.commitMonthly(PERIOD, entries, otherPeriod);
         // Another root: any changed amount, actor, source or order.
         bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
         ProjectEscrow.MonthlyAward[] memory changed = allocation(100e6, 200e6, 300e6 + 1);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.commitMonthly(PERIOD, changed, signature);
         ProjectEscrow.MonthlyAward[] memory reordered = allocation(100e6, 200e6, 300e6);
         (reordered[0], reordered[1]) = (reordered[1], reordered[0]);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.commitMonthly(PERIOD, reordered, signature);
         ProjectEscrow.MonthlyAward[] memory dropped = new ProjectEscrow.MonthlyAward[](2);
         (dropped[0], dropped[1]) = (entries[0], entries[1]);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.commitMonthly(PERIOD, dropped, signature);
         // Another vault: a signature for this vault cannot commit in the owner's other vault.
@@ -443,7 +463,7 @@ contract MonthlyCommitmentTest {
         vm.prank(OWNER);
         other.setMonthlyCommitment(1_000e6, true);
         require(other.allocationRoot(entries) == vault.allocationRoot(entries), "same root in both vaults");
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         other.commitMonthly(PERIOD, entries, signature);
         // The exact signature commits here.
@@ -455,12 +475,12 @@ contract MonthlyCommitmentTest {
         ProjectEscrow.MonthlyAward[] memory entries = allocation(100e6, 200e6, 300e6);
         bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
         submit(PERIOD, entries, signature);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlyAlreadyCommitted.selector);
         vault.commitMonthly(PERIOD, entries, signature);
         // The next period needs its own signature.
-        vm.warp(NOVEMBER_CLOSES);
-        vm.prank(SUBMITTER);
+        vm.warp(DECEMBER_OPENS);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.commitMonthly(202612, entries, signature);
     }
@@ -470,7 +490,7 @@ contract MonthlyCommitmentTest {
         ProjectEscrow.MonthlyAward[] memory entries = allocation(100e6, 200e6, 300e6);
         bytes memory signature = attest(AUTHORITY_KEY, vault, PERIOD, entries);
         vm.chainId(block.chainid + 1);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.commitMonthly(PERIOD, entries, signature);
     }
@@ -479,17 +499,17 @@ contract MonthlyCommitmentTest {
         vm.warp(NOVEMBER_OPENS);
         ProjectEscrow.MonthlyAward[] memory entries = allocation(100e6, 200e6, 300e6);
         bytes memory stranger = attest(STRANGER_KEY, vault, PERIOD, entries);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.commitMonthly(PERIOD, entries, stranger);
         // An empty signature is refused.
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.commitMonthly(PERIOD, entries, hex"");
         // A malleable high-s form of a valid signature is refused.
         bytes memory valid = attest(AUTHORITY_KEY, vault, PERIOD, entries);
         bytes memory malleable = highS(valid);
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.commitMonthly(PERIOD, entries, malleable);
         // After a rotation the old authority's signature fails and the new authority's commits.
@@ -497,7 +517,7 @@ contract MonthlyCommitmentTest {
         factory.proposeIdentityAuthority(vm.addr(NEXT_AUTHORITY_KEY));
         vm.warp(block.timestamp + 7 days);
         factory.executeIdentityAuthorityRotation();
-        vm.prank(SUBMITTER);
+        vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.commitMonthly(PERIOD, entries, valid);
         submit(PERIOD, entries, attest(NEXT_AUTHORITY_KEY, vault, PERIOD, entries));

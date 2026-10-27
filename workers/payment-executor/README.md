@@ -138,9 +138,9 @@ monthly snapshot. Its scheduled job prepares and signs the allocation through
 endpoint is documented in `backend/payments/README.md`.
 
 `POST /v1/commit-monthly` accepts that authorization on a test relayer. It verifies
-the pinned deployment, allocation root and attestation before admission. Legacy
-EVM commits the full entry list. EVM V2 reserves the whole remaining gross first,
-then examines at most 16 proven leaves per call under the existing gas limit.
+the pinned deployment, allocation root and attestation. A new root requires the
+vault owner's transaction, not a service gas key. After that transaction, EVM
+V2 materializes at most 16 proven leaves per call under the existing gas limit.
 A finalized cursor bounds repeated work when another keeper committed a prefix.
 The economic snapshot stays fixed; source changes before admission append a new
 immutable execution authorization. The original V1 authorization remains
@@ -148,8 +148,8 @@ available when an older transaction is pending. The executor reconciles that
 exact transaction before any V2 replacement and accepts its finalized root if
 it wins. It never drops an uncertain send to choose a newer authorization.
 
-Solana submits `commit_monthly` with the signed
-`frozenAt` and then up to 16 Merkle-proven leaves per call, so all leaves settle
+The owner submits Solana `commit_monthly` with the signed `frozenAt`.
+The executor then processes up to 16 Merkle-proven leaves per call, so all leaves settle
 soon after admission. Finalized on-chain counters determine completion. A leaf
 releases only as `release_monthly_award` allows: zero actor, a source that another
 month paid to the same actor for at least the same gross, or a source committed by
@@ -157,8 +157,8 @@ hand before `frozenAt`. A source consumed by hand after `frozenAt` stays reserve
 and reports a reconciliation error. It does not mark the month complete. Valid leaves
 remain funded without an expiry, including after opt-out or authority rotation.
 `?admit=false` resumes admitted EVM V2 and Solana allocations without creating a new month;
-an absent month returns `notAdmitted: true`. The scheduler uses this for older
-months and opted-out projects. No response marks an award paid: the finalized
+an absent month returns `notAdmitted: true`. The scheduler uses this for every
+month and never creates a root on behalf of the owner. No response marks an award paid: the finalized
 scanner remains authoritative.
 
 The separately operated [payment keeper](../../scripts/payment-keeper/README.md)
