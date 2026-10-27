@@ -1175,7 +1175,8 @@ function ProjectFunding({ project }: { project: ProjectDefinition }) {
           {index > 0 ? " · " : null}
           {networkLabel(snapshot.network)}: {amount(snapshot.freeBalance)}{" "}
           available · {amount(reservedGross(snapshot))} reserved
-          {vaultSnapshotStale(snapshot, totals.vault.staleAfterMs)
+          {totals.refreshError !== null ||
+          vaultSnapshotStale(snapshot, totals.vault.staleAfterMs)
             ? ` (stale, read ${formatDateTime(snapshot.observedAt)})`
             : null}
         </span>
