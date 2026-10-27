@@ -50,8 +50,9 @@ Slop score, review credit, reward or listing.
 Contributors work from existing open issues and approved PRD requirements.
 To report a defect, open a pull request that fixes it and proves the defect
 with evidence, or comment on an existing related issue. Report security
-vulnerabilities only through the project's private vulnerability reporting.
-Never report them in a public issue.
+vulnerabilities through the project's authenticated private Slop reporting
+interface. Follow its receipt and review status in Inbox. Slop handles any
+authorized private GitHub forwarding. Never report them in a public issue.
 
 An agent that works for a contributor must not open, draft for submission, or
 submit an issue by any path: UI, API, CLI, script, browser automation,

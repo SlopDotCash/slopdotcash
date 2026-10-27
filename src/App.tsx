@@ -7,6 +7,7 @@ import {
   ExternalLink,
   FolderGit2,
   Plus,
+  ShieldCheck,
   Wallet,
 } from "lucide-react";
 import {
@@ -36,8 +37,16 @@ import { communityProjects, homeProjects } from "./lib/home-projects";
 import { networkLabel } from "./lib/network-names";
 import { formatAssetAmount } from "./lib/payments/contracts";
 import type { ProjectView } from "./lib/project-view";
-import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
+import {
+  findProject,
+  PROJECTS,
+  type ProjectDefinition,
+} from "./lib/projects.mjs";
 import { REWARD_ASSET_NETWORKS } from "./lib/reward-asset.mjs";
+import {
+  formatSecurityAmount,
+  securityBountySplit,
+} from "./lib/security-bounty.mjs";
 import { pageTitle, SITE_ORIGIN, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCycleIndex } from "./lib/use-cycle-index";
@@ -695,6 +704,82 @@ function bootstrapAgentPrompt(): string {
   return `Read ${origin}/SKILL.md and follow it.`;
 }
 
+/** Published bounty terms come from the same registry as project discovery. */
+function SecurityBounties() {
+  const programs = PROJECTS.filter(
+    (project) =>
+      project.status === "active" && project.securityBounty?.status === "open",
+  );
+  return (
+    <section
+      className="section shell home-security-section"
+      aria-labelledby="home-security-title"
+    >
+      <div className="home-section-heading">
+        <h2 className="home-section-title" id="home-security-title">
+          Security bounties
+        </h2>
+        <Link className="text-button" href="/inbox">
+          Your private reports <ArrowRight aria-hidden="true" />
+        </Link>
+      </div>
+      {programs.length === 0 ? (
+        <p className="project-tier-note">
+          No paid security bounties are open. Projects still accept private
+          security reports.
+        </p>
+      ) : (
+        <div className="project-grid">
+          {programs.map((project) => {
+            const terms = project.securityBounty;
+            if (!terms) return null;
+            const split = securityBountySplit(terms.amount.grossMinor);
+            const format = (minor: string) =>
+              formatSecurityAmount(minor, terms.amount);
+            return (
+              <article className="security-bounty-card" key={project.id}>
+                <div className="project-card-heading">
+                  <ShieldCheck aria-hidden="true" />
+                  <h3>{project.name}</h3>
+                </div>
+                <p className="project-bounty">
+                  <strong>{format(split.grossMinor)}</strong>
+                  <span> critical bounty</span>
+                </p>
+                <p>{terms.scope.lossDefinition}</p>
+                <p className="security-bounty-split">
+                  {format(split.researcherMinor)} to the researcher (75%) ·{" "}
+                  {format(split.slopMinor)} to slop.cash (25%). No additional
+                  payout fee.
+                </p>
+                <p className="field-hint">
+                  Safe proof of potential loss of funds. Awards require owner
+                  approval.
+                  {terms.funding.state === "pledged"
+                    ? " Pledged; payment requires approval and verified funding."
+                    : ""}
+                </p>
+                <Link
+                  className="button primary-button"
+                  href={`/projects/${project.slug}/security`}
+                >
+                  Report privately <ArrowRight aria-hidden="true" />
+                </Link>
+                <details className="security-agent-setup">
+                  <summary>Use your agent</summary>
+                  <AgentPromptBox
+                    prompt={`Read ${window.location.origin}/SKILL.md and follow its private security reporting workflow for github.com/${terms.intake.repository}. Start at ${window.location.origin}/projects/${project.slug}/security and submit findings through Slop.`}
+                  />
+                </details>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function HomePage() {
   const featuredProjects = homeProjects();
   const listedCommunityProjects = communityProjects();
@@ -735,6 +820,7 @@ function HomePage() {
           </>
         )}
       </section>
+      <SecurityBounties />
       <GlobalLeaderboard retry={retryScores} state={scores} />
     </main>
   );

@@ -88,12 +88,11 @@ cannot read trace bodies, including their own, after upload. No website or API
 route returns a trace body. Cloudflare account access is separately limited to
 designated operators.
 
-For a privacy, security, or data-subject request, use the repository's enabled
-private GitHub security-advisory intake at
-<https://github.com/SlopDotCash/slopdotcash/security/advisories/new>. It accepts a
-private report from a signed-in GitHub user without publishing the report as an
-issue. Do not put private data, trace contents, or request details in a public
-issue.
+For a privacy, security, or data-subject request, use the authenticated private
+Slop reporting page at <https://slop.cash/projects/slopdotcash/security> and
+follow its status in Inbox. Slop retains the report privately and handles any
+authorized private GitHub forwarding. Do not include a contributor trace body
+in a report, or put private data or request details in a public issue.
 
 An independent hourly Actions job authenticates to GitHub and records the
 private-reporting status in D1. Trace intake reads that status with a 24-hour

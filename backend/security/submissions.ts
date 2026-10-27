@@ -2,21 +2,17 @@
  * Automatic private intake (PRD section 8 "Private reporting is automatic",
  * SEC-07, SEC-10, SEC-16, SEC-17; issue #910).
  *
- * A signed-in reporter writes the report in their browser. Slop creates a
- * submission bound to that account, files the report through GitHub private
- * vulnerability reporting with the reporter's own authorization, verifies
- * the receipt against GitHub, and only then creates the restricted case,
- * analyses and routes it, and notifies the technical approvers through the
- * existing private outbox.
+ * New reports use the durable Slop receipt in report-intake.ts. This module
+ * preserves the reporter-authorized GitHub forwarding and legacy receipts.
+ * A saved report must be screened or explicitly routed by its current
+ * maintainer before forwarding. An unfinished legacy draft is screened on
+ * its first send when durable storage is enabled.
  *
- * - Report content is never stored, logged or echoed. D1 holds only the
- *   state machine, enum codes and identifiers.
- * - The transition to `submitting` commits before GitHub is called. A send
- *   whose outcome is unknown becomes `uncertain`, and only a complete
- *   private listing that finds no copy, taken a quiet period after the
- *   attempt, reopens it for a second send.
- * - There is no public fallback. A refused or unavailable intake leaves the
- *   report in the reporter's browser.
+ * Report content never enters D1, logs or public responses. The transition
+ * to `submitting` commits before GitHub is called. Unknown outcomes require
+ * reconciliation against private advisory evidence before any retry. An
+ * external service failure never destroys a saved Slop report or becomes a
+ * public submission.
  */
 
 import { readBoundedJson } from "../../src/lib/browser-json";
@@ -61,6 +57,15 @@ import {
 } from "./intake-grant";
 import { reportingAuthorityUnavailable } from "./project-access";
 import { checkedAnalysis } from "./report-analysis";
+import {
+  acceptStoredReport,
+  actStoredIntake,
+  approvedReportForForward,
+  listStoredSubmissions,
+  readStoredIntake,
+  screenLegacyReport,
+  storedIntake,
+} from "./report-intake";
 
 export type SubmissionState =
   | "draft"
@@ -71,7 +76,7 @@ export type SubmissionState =
   | "failed"
   | "abandoned";
 
-type SubmissionRow = {
+export type SubmissionRow = {
   id: string;
   project_id: string;
   repository: string;
@@ -152,7 +157,7 @@ function redirect(location: string, cookies: string[]): Response {
 }
 
 /** The reporter's view: state and identifiers, never report content. */
-function submissionView(row: SubmissionRow): Record<string, unknown> {
+export function submissionView(row: SubmissionRow): Record<string, unknown> {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -186,10 +191,10 @@ function submissionView(row: SubmissionRow): Record<string, unknown> {
   };
 }
 
-const COLUMNS =
+export const COLUMNS =
   "id, project_id, repository, reporter_github_id, reporter_github_login, origin, idempotency_key, marker, state, attempt, attempt_started_at, advisory_ghsa, github_created_at, evidence_digest, failure_code, case_id, revision, created_at, updated_at";
 
-async function loadSubmission(
+export async function loadSubmission(
   deps: SecurityApiDependencies,
   id: string,
 ): Promise<SubmissionRow | null> {
@@ -228,6 +233,7 @@ type Transition = {
   kind: string;
   detail?: Record<string, unknown>;
   actorGithubId: string | null;
+  guard?: { sql: string; values: unknown[] };
 };
 
 /**
@@ -253,7 +259,7 @@ function transitionStatements(
           .map((column) => `${column} = ?, `)
           .join(
             "",
-          )}revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND state = ?${next.kind === "send" ? ` AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})` : ""}`,
+          )}revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND state = ?${next.kind === "send" ? ` AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})` : ""}${next.guard ? ` AND (${next.guard.sql})` : ""}`,
       )
       .bind(
         next.state,
@@ -263,6 +269,7 @@ function transitionStatements(
         row.revision,
         row.state,
         ...(next.kind === "send" ? [row.reporter_github_id] : []),
+        ...(next.guard?.values ?? []),
       ),
     deps.db
       .prepare(
@@ -320,6 +327,12 @@ async function settle(
   row: SubmissionRow,
 ): Promise<SubmissionRow> {
   const now = deps.now().getTime();
+  // A saved Slop report and its receipt do not expire with an optional GitHub draft.
+  if (
+    (row.state === "draft" || row.state === "failed") &&
+    (await storedIntake(deps, row.id))
+  )
+    return row;
   let next: Transition | null = null;
   if (
     row.state === "submitting" &&
@@ -587,6 +600,7 @@ async function authorizeSubmission(
   const owned = await ownSubmission(deps, id, actor);
   const body = await readBody(request);
   exactKeys(body, []);
+  await approvedReportForForward(deps, id);
   const row = await settle(deps, owned);
   if (row.state === "receipt-verified" || row.state === "abandoned")
     fail(409, "submission_closed", "This submission is finished");
@@ -724,6 +738,25 @@ async function writeVerifiedCase(
 ): Promise<{ status: number; row: SubmissionRow }> {
   const now = deps.now();
   const at = now.toISOString();
+  const durable = await storedIntake(deps, row.id);
+  if (durable) {
+    const linked = await transition(deps, row, {
+      state: "receipt-verified",
+      set: {
+        case_id: durable.case_id,
+        advisory_ghsa: facts.ghsa,
+        github_created_at: facts.createdAt,
+        evidence_digest: facts.evidenceDigest,
+      },
+      kind: "github-linked",
+      detail: { caseId: durable.case_id, advisory: facts.ghsa },
+      actorGithubId: row.reporter_github_id,
+    });
+    return {
+      status: 200,
+      row: linked ?? ((await loadSubmission(deps, row.id)) as SubmissionRow),
+    };
+  }
   const receivedAt = facts.createdAt;
   // Analysis runs in memory on the content GitHub returned; only enums leave.
   const analysis = checkedAnalysis(
@@ -904,7 +937,7 @@ async function sendSubmission(
   await requireNewParticipation(deps, actor.githubId);
   const loaded = await ownSubmission(deps, id, actor);
   const body = await readBody(request);
-  exactKeys(body, ["expectedRevision", "report"]);
+  exactKeys(body, ["expectedRevision"], ["report"]);
   const expected = expectedRevision(body);
   // A replay of a send already made from this revision returns the state.
   if (expected < loaded.revision) {
@@ -944,7 +977,15 @@ async function sendSubmission(
     TERMINAL_FAILURES.includes(row.failure_code as FailureCode)
   )
     fail(409, "submission_closed", "This submission cannot be sent again");
-  const report = parseReportInput(body.report);
+  const gate = await storedIntake(deps, row.id);
+  const storedReport = await approvedReportForForward(deps, row.id);
+  if (storedReport && body.report !== undefined)
+    fail(
+      400,
+      "invalid_request",
+      "Forward the saved report without replacement text.",
+    );
+  const report = storedReport ?? parseReportInput(body.report);
   const terms = await programTerms(deps, row.project_id);
   if (terms.intake.repository.toLowerCase() !== row.repository.toLowerCase())
     fail(409, "intake_changed", "The program's intake changed; start again");
@@ -955,6 +996,8 @@ async function sendSubmission(
       "intake_unavailable",
       "Private reporting could not be verified; your draft is kept",
     );
+  if (!storedReport && deps.reportStorage)
+    await screenLegacyReport(deps, row.project_id, report, actor.githubId);
   // The send is recorded before GitHub is called; a lost answer is uncertain.
   let sending: SubmissionRow | null;
   try {
@@ -965,6 +1008,14 @@ async function sendSubmission(
         attempt_started_at: deps.now().toISOString(),
       },
       kind: "send",
+      ...(gate
+        ? {
+            guard: {
+              sql: "EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=? AND (review_decision='forward' OR (review_decision IS NULL AND screening_state='legitimate')))",
+              values: [row.id, gate.revision],
+            },
+          }
+        : {}),
       detail: { attempt: row.attempt + 1 },
       actorGithubId: actor.githubId,
     });
@@ -1247,6 +1298,34 @@ export async function handleSubmissionRoute(
   deps: SecurityApiDependencies,
   parts: string[],
 ): Promise<Response> {
+  if (request.method === "POST" && parts.length === 1) {
+    const body = await readBody(request.clone());
+    if (Object.hasOwn(body, "report")) {
+      if (!deps.reportStorage || deps.reportIntakeEnabled === false)
+        fail(
+          503,
+          "intake_unavailable",
+          "Private report storage is unavailable.",
+        );
+      return acceptStoredReport(request, deps, body);
+    }
+    if (deps.reportStorage && body.origin === "slop")
+      fail(
+        400,
+        "report_required",
+        "Submit the complete private report through Slop.",
+      );
+  }
+  if (request.method === "GET" && parts.length === 2)
+    return readStoredIntake(request, deps, parts[1]);
+  if (
+    request.method === "POST" &&
+    parts.length === 3 &&
+    ["screen", "review", "report"].includes(parts[2])
+  )
+    return actStoredIntake(request, deps, parts[1], parts[2]);
+  if (request.method === "GET" && parts.length === 1 && deps.reportStorage)
+    return listStoredSubmissions(request, deps);
   // The signed-in list answers in every mode so the case page can tell
   // whether to offer automatic intake without a failed request. It never
   // reads submissions while intake is off.

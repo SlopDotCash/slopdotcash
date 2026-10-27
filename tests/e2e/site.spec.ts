@@ -290,7 +290,7 @@ test("security reports recover a failed list and share one session across submis
     fullPage: true,
   });
   await expect(
-    page.getByRole("heading", { name: "Your private reports" }),
+    page.getByRole("heading", { name: "Private reports", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(3);
   await expect(page.getByRole("alert")).toHaveCount(0);
@@ -323,6 +323,7 @@ test("security sign-in returns directly to the selected project", async ({
         state: "ready",
         automatic: "ready",
         automaticConfigured: true,
+        storedIntake: true,
         checkedAt: new Date().toISOString(),
         maxAgeSeconds: 300,
         paidParticipation: "open",
@@ -1156,6 +1157,21 @@ test("reaches and reads older inbox notifications without losing the page", asyn
 test("the inbox keeps delivery, read and acknowledgment distinct and links to account email preferences", async ({
   page,
 }) => {
+  // Inbox also loads the signed-in account's private reports and decisions.
+  await page.route("**/api/v1/security-cases", (route) =>
+    route.fulfill({
+      json: {
+        viewer: { githubId: "4242", githubLogin: "example" },
+        programs: [],
+        cases: [],
+      },
+    }),
+  );
+  await page.route("**/api/v1/security-submissions", (route) =>
+    route.fulfill({
+      json: { automatic: false, storedIntake: false, submissions: [] },
+    }),
+  );
   const paymentReads: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/v1/payments/me")

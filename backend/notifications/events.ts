@@ -472,7 +472,7 @@ export function notifySecurityReportReceived<S>(
     .prepare(
       `${INSERT}
        SELECT 'security-receipt:' || c.id, c.reporter_github_id,
-              'security_report_received', c.id, NULL, '/security',
+              'security_report_received', c.id, NULL, COALESCE((SELECT '/inbox?submission=' || i.submission_id FROM security_submission_intake i WHERE i.case_id=c.id), '/security'),
               c.verified_at, c.verified_at
          FROM security_cases c
         WHERE c.id = ? AND c.submission_state = 'verified'
