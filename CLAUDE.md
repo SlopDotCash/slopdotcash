@@ -281,6 +281,9 @@ receipt schema for `authorize` and `start`, without a live GitHub or registry
 authorization call. A local checkout alone does not qualify as an installation.
 Project status and clearance still gate installation, updates and rollback;
 repository access, safe work selection and submission rules still apply.
+Attempt a bounded advisory published-version check at each work-session start;
+never force an update or block work because the installed version is older or
+the check is unavailable.
 Offline behavior requires a template containing this change: existing installs
 need one verified update after publication. Historical template bytes are never
 rewritten and may retain their original online behavior.
