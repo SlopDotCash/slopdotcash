@@ -1,8 +1,11 @@
+import { CalendarDays } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { loginHref } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
+import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
+import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits } from "./lib/payments/contracts";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
 import { apiRequest } from "./lib/project-api";
@@ -12,7 +15,13 @@ import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
 import OwnerReserveRelease, {
   releaseStoragePrefix,
 } from "./OwnerReserveRelease";
-import { formatDateTime } from "./Presentation";
+import {
+  formatDateTime,
+  MetricGrid,
+  MetricTile,
+  NetworkName,
+  StatusBadge,
+} from "./Presentation";
 
 function previousMonth() {
   const now = new Date();
@@ -255,7 +264,9 @@ export default function OwnerAwards({
       className="section owner-awards"
       aria-labelledby="monthly-awards-heading"
     >
-      <h2 id="monthly-awards-heading">Monthly awards</h2>
+      <h2 id="monthly-awards-heading">
+        <CalendarDays size={22} aria-hidden="true" /> Monthly awards
+      </h2>
       {recovery.error && <p role="alert">{recovery.error}</p>}
       {recovery.pending.map((entry) => (
         <OwnerCommitment
@@ -267,10 +278,7 @@ export default function OwnerAwards({
       ))}
       {!opened ? (
         <>
-          <p>
-            Project owners review, change and finalize each month&apos;s awards
-            here, then reserve them in the vault.
-          </p>
+          <p>Review allocations and reserve finalized awards.</p>
           <button
             className="button secondary-button"
             type="button"
@@ -281,7 +289,7 @@ export default function OwnerAwards({
         </>
       ) : (
         <>
-          <form onSubmit={load}>
+          <form className="award-month-toolbar" onSubmit={load}>
             <label>
               Contribution month
               <input
@@ -318,6 +326,13 @@ export default function OwnerAwards({
           {view && (
             <div>
               <h3>{view.period} awards</h3>
+              {view.deployment ? (
+                <NetworkName
+                  chain={ESCROW_NETWORKS[view.deployment.network].chain}
+                >
+                  {networkLabel(view.deployment.network)}
+                </NetworkName>
+              ) : null}
               <p>
                 Automatic monthly payment is{" "}
                 <strong>{view.automatic ? "on" : "off"}</strong>.{" "}
@@ -345,15 +360,21 @@ export default function OwnerAwards({
                 <p>No allocation is proposed for this month yet.</p>
               ) : !view.run ? (
                 <>
-                  <p>
-                    Allocated{" "}
-                    {amount(
-                      view.proposal.allocations
-                        .reduce((sum, row) => sum + BigInt(row.grossBase), 0n)
-                        .toString(),
-                    )}{" "}
-                    of {amount(view.proposal.capBase)}.
-                  </p>
+                  <MetricGrid>
+                    <MetricTile
+                      label="Allocated"
+                      value={amount(
+                        view.proposal.allocations
+                          .reduce((sum, row) => sum + BigInt(row.grossBase), 0n)
+                          .toString(),
+                      )}
+                      tone="info"
+                    />
+                    <MetricTile
+                      label="Monthly cap"
+                      value={amount(view.proposal.capBase)}
+                    />
+                  </MetricGrid>
                   {view.proposal.allocations.length === 0 ? (
                     <p>No one has an allocation this month.</p>
                   ) : (
@@ -367,7 +388,7 @@ export default function OwnerAwards({
                               <dt>Proposed</dt>
                               <dd>{amount(row.proposedGrossBase)}</dd>
                             </dl>
-                            <label htmlFor={id}>
+                            <label htmlFor={id} className="visually-hidden">
                               Award for {row.login}
                               {decimals === null ? " (base units)" : ""}
                             </label>
@@ -395,9 +416,10 @@ export default function OwnerAwards({
                                 cutoffPassed ||
                                 drafts[row.githubUserId] === undefined
                               }
+                              aria-label={`Save ${row.login}`}
                               onClick={() => void save(row.githubUserId)}
                             >
-                              Save {row.login}
+                              Save
                             </button>
                           </li>
                         );
@@ -441,8 +463,25 @@ export default function OwnerAwards({
                             <dd>{amount(award.grossBase)}</dd>
                             <dt>Contributor receives</dt>
                             <dd>{amount(award.netBase)}</dd>
+                            <dt>Fee</dt>
+                            <dd>
+                              {amount(
+                                (
+                                  BigInt(award.grossBase) -
+                                  BigInt(award.netBase)
+                                ).toString(),
+                              )}
+                            </dd>
                             <dt>Status</dt>
-                            <dd>{STATE_TEXT[award.state]}</dd>
+                            <dd>
+                              <StatusBadge
+                                tone={
+                                  award.state === "paid" ? "success" : "warning"
+                                }
+                              >
+                                {STATE_TEXT[award.state]}
+                              </StatusBadge>
+                            </dd>
                           </dl>
                           {reservable &&
                             award.state === "awaiting-reservation" && (

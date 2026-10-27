@@ -1,4 +1,4 @@
-import { CircleAlert, ExternalLink } from "lucide-react";
+import { CalendarDays, CircleAlert, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
@@ -29,6 +29,8 @@ import {
   formatDateTime,
   formatMicroUsdc,
   NotFound,
+  RoutePageHeader,
+  StatusBadge,
   stale,
 } from "./Presentation";
 import { CycleAllocation } from "./ProjectLeaderboard";
@@ -130,7 +132,7 @@ export function CyclePage({
       ? formatMicroUsdc(view.reward.projectedPrincipalMinor)
       : `${(view?.reward.totalSharePartsPerMillion ?? 0) / 10_000}%`;
   return (
-    <main className="shell route-main cycle-page">
+    <main className="shell route-main cycle-page route-cycle">
       <DataNotice state={state} retry={retry} />
       <p className="breadcrumb">
         <Link href={`/projects/${project.slug}`}>{project.name}</Link>
@@ -138,17 +140,33 @@ export function CyclePage({
         {cycleId}
       </p>
       <section className="cycle-hero">
-        <div>
-          <h1>
-            {project.name} · {formatCycleMonth(cycleId)}
-          </h1>
-          <p>
+        <RoutePageHeader
+          title={
+            <>
+              {project.name} · {formatCycleMonth(cycleId)}
+            </>
+          }
+          icon={<CalendarDays />}
+          lead={
+            <>
+              {formatDate(from)}–{formatDate(to)}
+            </>
+          }
+        >
+          <StatusBadge
+            tone={
+              lifecycle === "paid"
+                ? "success"
+                : lifecycle === "live"
+                  ? "info"
+                  : "warning"
+            }
+          >
             {record
               ? cycleLifecycleLabel(record)
-              : lifecycle.replaceAll("-", " ")}{" "}
-            · {formatDate(from)}–{formatDate(to)}
-          </p>
-        </div>
+              : lifecycle.replaceAll("-", " ")}
+          </StatusBadge>
+        </RoutePageHeader>
         <div className="cycle-number">
           <strong>{headlineAmount}</strong>
           <span>
@@ -472,9 +490,8 @@ export function CycleArchivePage({
     (key) => options[key].length > 1 || filters[key],
   );
   return (
-    <main className="shell evidence-page">
-      <section className="evidence-page-hero">
-        <h1>Payment cycles</h1>
+    <main className="shell evidence-page route-cycle-archive">
+      <RoutePageHeader title="Payment cycles" icon={<CalendarDays />}>
         {state.status === "loading" ? (
           <p role="status">Loading cycle history…</p>
         ) : state.status === "error" ? (
@@ -497,7 +514,7 @@ export function CycleArchivePage({
             {formatDate(state.cycleIndex.generatedAt)}
           </p>
         ) : null}
-      </section>
+      </RoutePageHeader>
       {all.length > 0 ? (
         <div className="points-controls cycle-filters">
           {offered.map((key) => (
@@ -554,7 +571,13 @@ export function CycleArchivePage({
                     {formatCycleMonth(cycle.cycleId)}
                   </Link>
                 </h2>
-                <p>{cycleLifecycleLabel(cycle)}</p>
+                <p>
+                  <StatusBadge
+                    tone={cycle.state === "paid" ? "success" : "warning"}
+                  >
+                    {cycleLifecycleLabel(cycle)}
+                  </StatusBadge>
+                </p>
               </div>
               <dl>
                 {cycle.kind === "external-prize-share" ? (

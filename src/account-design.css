@@ -1,0 +1,404 @@
+/* Account, owner and contribution routes only: shared home presentation is untouched. */
+:is(
+  .account-page,
+  .standings-page,
+  .earnings-page,
+  .inbox-page,
+  .proposal-page,
+  .manage-page
+) {
+  padding-block: 2.5rem 4rem;
+}
+:is(
+    .account-page,
+    .standings-page,
+    .earnings-page,
+    .inbox-page,
+    .proposal-page,
+    .manage-page
+  )
+  > p,
+.account-page section > p,
+.owner-awards > p,
+.owner-awards > div > p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+.account-page .points-panel,
+.account-page > #sessions,
+.account-page > #appeals,
+.account-page > #recovery {
+  margin-block: 1rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--brand-radius-large);
+  background: #181713;
+}
+.account-page :is(h2, .earnings-page > h2),
+.earnings-page h2,
+.inbox-page h2,
+.manage-page .project-setup-status h2 {
+  margin: 0 0 1rem;
+  font-size: 1.3rem;
+  line-height: 1.25;
+}
+.account-page .account-sections {
+  gap: 0.4rem;
+  margin-bottom: 1.5rem;
+}
+.account-page .account-sections a {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--brand-radius-small);
+  color: #b9b5aa;
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+.account-page .account-sections a:hover,
+.account-page .account-sections a:focus-visible {
+  color: var(--ink);
+  border-color: var(--orange);
+}
+.account-page .account-session-actions {
+  gap: 0.6rem;
+}
+.account-page :where(#sessions) ul {
+  display: grid;
+  gap: 0.75rem;
+  list-style: none;
+  padding: 0;
+}
+.account-page :where(#sessions) li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.6rem;
+  color: var(--muted);
+}
+.account-page .account-clear {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: #8fd8ad;
+  font-size: 0.9rem;
+}
+.account-close-details {
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+.account-close-details > summary {
+  color: #ffb1a4;
+  width: fit-content;
+  cursor: pointer;
+}
+.account-close-details .account-closure {
+  margin-top: 1rem;
+  border: 0;
+  padding: 0;
+}
+.points-coverage-details {
+  margin: 0.75rem 0 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.points-coverage-details > summary {
+  cursor: pointer;
+}
+.points-coverage-details .points-coverage {
+  margin-block: 0.6rem 0;
+}
+.standings-page .points-controls {
+  gap: 0.75rem;
+  align-items: end;
+}
+.standings-page .points-period {
+  flex: 0 1 auto;
+}
+.standings-page .points-period button[aria-pressed="true"] {
+  border-color: var(--orange);
+  background: #ff5a191a;
+}
+.standings-page .points-rules li {
+  padding-block: 0.65rem;
+  color: var(--muted);
+}
+.standings-page .points-rules strong {
+  color: #ffcb79;
+}
+.earnings-page .points-table :is(td, th) {
+  font-size: 0.88rem;
+}
+.earnings-page .points-table td[data-label="You receive"] {
+  color: #8fd8ad;
+  font-weight: 700;
+}
+.earnings-page .points-table td[data-label="Fee"] {
+  color: var(--muted);
+}
+.inbox-page .inbox-item {
+  padding: 1rem 1.15rem;
+  background: #181713;
+}
+.inbox-page .inbox-unread {
+  border-left-color: #9cc9ff;
+}
+.inbox-item-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: start;
+  margin-bottom: 0.5rem;
+}
+.inbox-kind-icon {
+  display: inline-flex;
+  padding: 0.45rem;
+  border-radius: 0.5rem;
+  background: #9cc9ff12;
+  color: #9cc9ff;
+}
+.inbox-item-heading .inbox-title {
+  margin: 0;
+  padding-top: 0.25rem;
+  line-height: 1.4;
+}
+.inbox-page .inbox-detail {
+  color: #b9b5aa;
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+.inbox-page .inbox-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+}
+.inbox-page .inbox-actions {
+  gap: 0.65rem;
+  margin-top: 0.8rem;
+  font-size: 0.9rem;
+}
+.inbox-email-settings {
+  margin-top: 2rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--brand-radius-large);
+  background: #181713;
+}
+.inbox-email-settings > p {
+  color: var(--muted);
+}
+.proposal-page .proposal-steps {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  border: 0;
+}
+.proposal-page .proposal-steps li {
+  border: 0;
+  border-radius: 0.6rem;
+  background: #181713;
+}
+.proposal-page .proposal-steps button {
+  min-height: 70px;
+  border-radius: inherit;
+  gap: 0.6rem;
+  flex-wrap: nowrap;
+}
+.proposal-page .proposal-steps button[aria-current="step"] {
+  background: #ff5a1917;
+  box-shadow: inset 0 0 0 1px var(--orange);
+}
+.proposal-step-icon {
+  display: inline-flex;
+  color: #ffad78;
+}
+.proposal-step-icon svg {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+:is(.proposal-page, .manage-page) .proposal-form {
+  max-width: 900px;
+  gap: 1.15rem;
+}
+:is(.proposal-page, .manage-page) .proposal-form > h2 {
+  font-size: 1.5rem;
+  margin: 0.5rem 0;
+}
+:is(.proposal-page, .manage-page)
+  :is(.field-hint, .proposal-note, .lookup-status) {
+  color: var(--muted);
+  line-height: 1.5;
+}
+:is(.proposal-page, .manage-page) .field-error,
+:is(.proposal-page, .manage-page) .field-hint[role="alert"] {
+  color: var(--danger);
+}
+.manage-page .project-setup-status {
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+  background: #181713;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+.manage-page .project-setup-status > p {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.manage-page .setup-checks {
+  margin-top: 1rem;
+}
+.manage-page .setup-check {
+  padding: 0.8rem 1rem;
+  font-size: 0.9rem;
+}
+.manage-page .setup-details {
+  font-size: 0.85rem;
+}
+.owner-awards > h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1.5rem;
+}
+.owner-awards > h2 svg {
+  color: #9cc9ff;
+}
+.owner-awards .award-month-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+  margin: 1.25rem 0;
+}
+.owner-awards .award-month-toolbar label {
+  min-width: 12rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.owner-awards .route-metrics {
+  max-width: 42rem;
+}
+.owner-awards .route-metric > dd:first-of-type {
+  font-size: 1.35rem;
+}
+.owner-awards .owner-award-list {
+  padding: 0;
+  list-style: none;
+  gap: 0.65rem;
+  margin-block: 1.25rem;
+}
+.owner-awards .owner-award-list li {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) minmax(8rem, 1fr) minmax(7rem, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: #181713;
+}
+.owner-awards .owner-award-list h4 {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+.owner-awards .owner-award-list dl {
+  display: block;
+  margin: 0;
+  font-size: 0.85rem;
+}
+.owner-awards .owner-award-list dt {
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
+.owner-awards .owner-award-list dd {
+  color: var(--ink);
+  margin-top: 0.2rem;
+}
+.owner-awards .owner-award-list input {
+  width: 100%;
+  min-width: 0;
+}
+.owner-awards .owner-award-list[aria-label="Final awards"] li {
+  grid-template-columns: minmax(7rem, 1fr) 3fr;
+}
+.owner-awards .owner-award-list[aria-label="Final awards"] dl {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) 2fr;
+  gap: 0.4rem;
+}
+.owner-awards .owner-award-list[aria-label="Final awards"] button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+@media (min-width: 760px) {
+  :is(.proposal-page, .manage-page) .proposal-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  :is(.proposal-page, .manage-page) .proposal-form > * {
+    grid-column: 1 / -1;
+  }
+  :is(.proposal-page, .manage-page) .proposal-form > .field-compact {
+    grid-column: auto;
+  }
+}
+@media (max-width: 680px) {
+  :is(
+    .account-page,
+    .standings-page,
+    .earnings-page,
+    .inbox-page,
+    .proposal-page,
+    .manage-page
+  ) {
+    padding-top: 1.5rem;
+  }
+  .account-page .points-panel,
+  .account-page > #sessions,
+  .account-page > #appeals,
+  .account-page > #recovery {
+    padding: 1rem;
+  }
+  .inbox-item-heading {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+  .inbox-item-heading > .route-badge {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .proposal-page .proposal-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .proposal-page .proposal-steps button {
+    min-height: 64px;
+    padding: 0.6rem;
+    font-size: 0.8rem;
+  }
+  .owner-awards .owner-award-list li {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .owner-awards .owner-award-list li > button {
+    justify-self: end;
+  }
+  .owner-awards .owner-award-list[aria-label="Final awards"] li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .owner-awards .owner-award-list[aria-label="Final awards"] dl {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.owner-awards form label {
+  display: grid;
+  gap: 0.5rem;
+}
+.owner-awards input[type="month"] {
+  min-width: 0;
+  width: 100%;
+}
+.owner-awards .owner-award-list li {
+  overflow-wrap: anywhere;
+}
