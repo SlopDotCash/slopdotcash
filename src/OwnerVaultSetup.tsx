@@ -19,6 +19,7 @@ import {
   type VaultSetupReview,
 } from "./lib/vault-setup";
 import { sameWalletAddress } from "./lib/wallets";
+import { UnsentTransactionRecovery } from "./OwnerPresentation";
 import { NetworkName, WalletConnection } from "./Presentation";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
@@ -580,27 +581,17 @@ export function OwnerVaultSetup({
                 Check vault registration
               </button>
               {pending && !pending.hash ? (
-                <details>
-                  <summary>Wallet confirms nothing was sent</summary>
-                  <p>
-                    Check wallet activity first. If creation was sent, enter its
-                    hash above.
-                  </p>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                      remember(null);
-                      setReview(null);
-                      setRecoveryHash("");
-                      setNotice(
-                        "Local request cleared. Review again before sending.",
-                      );
-                    }}
-                  >
-                    I checked my wallet; this request was not sent
-                  </button>
-                </details>
+                <UnsentTransactionRecovery
+                  disabled={busy}
+                  onClear={() => {
+                    remember(null);
+                    setReview(null);
+                    setRecoveryHash("");
+                    setNotice(
+                      "Local request cleared. Review again before sending.",
+                    );
+                  }}
+                />
               ) : null}
             </>
           ) : null}

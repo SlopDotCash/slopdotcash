@@ -1,3 +1,4 @@
+import "./owner-review.css";
 import { errorMessage as message } from "./lib/errors";
 import { CopyIdentifier } from "./Operations";
 import { StatusBadge, formatNullableUtc as time } from "./Presentation";
@@ -92,6 +93,11 @@ function clearanceLabel(clearance: Clearance): string {
       ? "Admitted"
       : LABELS[clearance.state];
 }
+
+const scanLabel = (value: string) => {
+  const text = value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("-", " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+};
 
 const STATE_TEXT: Record<AssessmentState, string> = {
   pending: "Queued",
@@ -426,25 +432,91 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
           </div>
         ) : null}
         {result?.coverage && result.checks ? (
-          <div>
+          <div className="assessment-coverage">
             <dt>Scan coverage</dt>
             <dd>
-              <ul className="scan-coverage-list" aria-label="Scanned surfaces">
-                {Object.entries(result.coverage).map(([surface, entry]) => (
-                  <li key={surface}>
-                    <span>{surface}</span>{" "}
-                    <StatusBadge>{entry.state}</StatusBadge>{" "}
-                    <span>{entry.items} items</span>
-                  </li>
-                ))}
-              </ul>
-              <ul className="scan-coverage-list" aria-label="Scan checks">
-                {Object.entries(result.checks).map(([threat, check]) => (
-                  <li key={threat}>
-                    <span>{threat}</span> <StatusBadge>{check}</StatusBadge>
-                  </li>
-                ))}
-              </ul>
+              <div className="scan-coverage-grid">
+                <section
+                  className="scan-coverage-table"
+                  aria-label="Scanned surfaces table"
+                  // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll all scan columns.
+                  tabIndex={0}
+                >
+                  <table aria-label="Scanned surfaces">
+                    <caption>Surfaces</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Surface</th>
+                        <th scope="col">Coverage</th>
+                        <th scope="col">Items</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(result.coverage)
+                        .sort(
+                          (a, b) =>
+                            Number(a[1].state === "complete") -
+                            Number(b[1].state === "complete"),
+                        )
+                        .map(([surface, entry]) => (
+                          <tr key={surface}>
+                            <th scope="row">{scanLabel(surface)}</th>
+                            <td>
+                              <StatusBadge
+                                tone={
+                                  entry.state === "complete"
+                                    ? "neutral"
+                                    : "warning"
+                                }
+                              >
+                                {scanLabel(entry.state)}
+                              </StatusBadge>
+                            </td>
+                            <td>{entry.items}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </section>
+                <section
+                  className="scan-coverage-table"
+                  aria-label="Scan checks table"
+                  // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll all scan columns.
+                  tabIndex={0}
+                >
+                  <table aria-label="Scan checks">
+                    <caption>Threat checks</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Check</th>
+                        <th scope="col">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(result.checks)
+                        .sort(
+                          (a, b) =>
+                            Number(a[1] === "passed") -
+                            Number(b[1] === "passed"),
+                        )
+                        .map(([threat, check]) => (
+                          <tr key={threat}>
+                            <th scope="row">{scanLabel(threat)}</th>
+                            <td>
+                              <StatusBadge
+                                tone={
+                                  check === "passed" ? "neutral" : "warning"
+                                }
+                              >
+                                {scanLabel(check)}
+                              </StatusBadge>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </section>
+              </div>
               {result.reusedAssessmentId
                 ? ` · Reused clean scan ${result.reusedAssessmentId} (identical content)`
                 : ""}

@@ -39,7 +39,7 @@ function preference(value: unknown): Preference {
   return body as Preference;
 }
 
-export function InboxEmail() {
+export function InboxEmail({ headingId }: { headingId?: string }) {
   const [state, setState] = useState<State>({ status: "loading" });
   const { busy, error, run } = useAction();
   const generation = useRef(0);
@@ -146,10 +146,10 @@ export function InboxEmail() {
 
   return (
     <section
-      aria-labelledby="inbox-email-heading"
+      aria-labelledby={headingId ?? "inbox-email-heading"}
       className="inbox-email-settings email-card"
     >
-      <h2 id="inbox-email-heading">Email preferences</h2>
+      {headingId ? null : <h2 id="inbox-email-heading">Email preferences</h2>}
       {localBackendOrigin ? (
         <p role="status">Local preview only. No email is sent.</p>
       ) : null}

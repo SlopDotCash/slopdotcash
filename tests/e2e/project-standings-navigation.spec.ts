@@ -121,7 +121,7 @@ test("Money received standings preserve unavailable data and recover on retry", 
   await expect(standings.locator("tbody tr").first()).toBeVisible();
   await expect(
     standings.locator("tbody tr").first().locator("td").last(),
-  ).toHaveText("Unavailable");
+  ).toContainText("Unavailable");
   await standings
     .getByRole("button", { name: "Money received", exact: true })
     .click();
@@ -201,12 +201,29 @@ test("global standings still accept project, sort and contributor filters", asyn
   page,
 }) => {
   await fixtures(page);
-  await page.goto(`${site}/points?sort=money&period=lifetime&project=eliza`);
+  await page.goto(`${site}/projects/eliza?sort=money&period=lifetime`);
+  await expect(
+    page.getByRole("link", { name: /Full standings|View leaderboard/u }),
+  ).toHaveCount(0);
+  await page.goto(`${site}/?period=lifetime&sort=money`);
+  const fullView = page.getByRole("link", {
+    name: "View leaderboard",
+    exact: true,
+  });
+  await expect(fullView).toHaveAttribute(
+    "href",
+    "/points?period=lifetime&sort=money",
+  );
+  await expectAccessible(page);
+  await fullView.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/points\?period=lifetime&sort=money/);
   const standings = page.getByRole("region", {
     name: "Contributor standings",
     exact: true,
   });
   const project = standings.getByLabel("Project", { exact: true });
+  await project.selectOption("eliza");
   await expect(project).toHaveValue("eliza");
   await expect(
     standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,144 @@ import {
 const sha = "a".repeat(40);
 const account = "b".repeat(32);
 const name = "slop-payments-base-mainnet-attester";
+
+test("supersession is a clean no-op only before service publication", async () => {
+  const root = await mkdtemp(join(tmpdir(), "slop-release-supersession-"));
+  const workspace = join(root, "workspace");
+  const remote = join(root, "remote.git");
+  const command = (args) => {
+    const result = spawnSync("git", args, { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    return result.stdout.trim();
+  };
+  try {
+    command(["init", "--bare", remote]);
+    command(["init", "-b", "main", workspace]);
+    const commit = () => {
+      command(["-C", workspace, "add", "."]);
+      command([
+        "-C",
+        workspace,
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "-m",
+        "Fixture release",
+      ]);
+      return command(["-C", workspace, "rev-parse", "HEAD"]);
+    };
+    await writeFile(join(workspace, "release.txt"), "tested\n");
+    const tested = commit();
+    await writeFile(join(workspace, "release.txt"), "newer main\n");
+    commit();
+    command(["-C", workspace, "remote", "add", "origin", remote]);
+    command(["-C", workspace, "push", "origin", "main"]);
+    command(["-C", workspace, "checkout", "--detach", tested]);
+    // Git transport and tree comparison are real. Only GitHub's ancestry
+    // response is controlled; the fixture above is an actual fast-forward.
+    await writeFile(join(root, "gh"), "#!/bin/sh\nprintf '%s\\n' ahead\n", {
+      mode: 0o755,
+    });
+    const workflow = Bun.YAML.parse(
+      await readFile(
+        new URL("../.github/workflows/deploy.yml", import.meta.url),
+        "utf8",
+      ),
+    );
+    const steps = Object.values(workflow.jobs).flatMap(
+      (job) => job.steps ?? [],
+    );
+    const early = steps.find(
+      (step) => step.name === "Require live release-input equivalence",
+    ).run;
+    const publish = steps.find(
+      (step) => step.name === "Deploy private identity and Cloudflare Pages",
+    ).run;
+    const firstGuardEnd = publish.indexOf("\n# Prepare every enabled attester");
+    const servicePublication = publish.indexOf(
+      'bun workers/payment-executor/release-mainnets.mjs publish "$attester_dir"',
+    );
+    const lateGuardStart = publish.indexOf('live_main="$(', servicePublication);
+    const lateGuardEnd = publish.indexOf(
+      "\n# Use the same immutable-source publication directory",
+      lateGuardStart,
+    );
+    const pagesPublication = publish.indexOf(
+      "./node_modules/.bin/wrangler pages deploy",
+      lateGuardEnd,
+    );
+    expect(firstGuardEnd).toBeGreaterThan(0);
+    expect(
+      publish.indexOf(
+        "bun scripts/verify-identity-schedules.mjs --restore-missing",
+      ),
+    ).toBeGreaterThan(firstGuardEnd);
+    expect(servicePublication).toBeGreaterThan(firstGuardEnd);
+    expect(lateGuardStart).toBeGreaterThan(servicePublication);
+    expect(lateGuardEnd).toBeGreaterThan(lateGuardStart);
+    expect(pagesPublication).toBeGreaterThan(lateGuardEnd);
+    for (const [guard, servicesPublished] of [
+      [early, false],
+      [publish.slice(0, firstGuardEnd), false],
+      [publish.slice(lateGuardStart, lateGuardEnd), true],
+    ]) {
+      const output = join(root, "output");
+      const summary = join(root, "summary");
+      const writes = join(root, "writes");
+      await Promise.all(
+        [output, summary, writes].map((path) => writeFile(path, "")),
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          "-e",
+          "-c",
+          [
+            "set -euo pipefail",
+            servicesPublished
+              ? 'printf "service\\n" >> "$PUBLICATION_PROOF"'
+              : "",
+            guard,
+            'printf "pages\\n" >> "$PUBLICATION_PROOF"',
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: `${root}:${process.env.PATH}`,
+            GITHUB_WORKSPACE: workspace,
+            GITHUB_REPOSITORY: "SlopDotCash/slopdotcash",
+            GITHUB_SHA: tested,
+            GITHUB_OUTPUT: output,
+            GITHUB_STEP_SUMMARY: summary,
+            PUBLICATION_PROOF: writes,
+            GIT_CONFIG_COUNT: "1",
+            GIT_CONFIG_KEY_0: `url.${remote}.insteadOf`,
+            GIT_CONFIG_VALUE_0:
+              "https://github.com/SlopDotCash/slopdotcash.git",
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(servicesPublished ? 1 : 0);
+      expect(await readFile(writes, "utf8")).toBe(
+        servicesPublished ? "service\n" : "",
+      );
+      expect(await readFile(output, "utf8")).toBe(
+        servicesPublished ? "" : "superseded=true\n",
+      );
+      const reported = await readFile(summary, "utf8");
+      expect(reported).toContain(
+        servicesPublished ? "Partial publication" : "this run did not publish",
+      );
+      if (servicesPublished)
+        expect(reported).not.toContain("this run did not publish");
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("the real Wrangler inventory command returns JSON through the release provider", async () => {
   const directory = await mkdtemp(join(tmpdir(), "slop-wrangler-inventory-"));

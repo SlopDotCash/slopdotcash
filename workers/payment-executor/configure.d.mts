@@ -4,6 +4,8 @@ export interface PaymentStackInput {
   environment?: "isolated" | "staging";
   /** `keeper`: scheduled attester bindings and no dispatcher schedule. */
   topology?: "relayer" | "keeper";
+  /** Staging EVM qualification only; production and other topologies refuse it. */
+  singleNonceBindings?: boolean;
   scope?: "ordinary" | "security-bounty";
   network: string;
   databaseId?: string;

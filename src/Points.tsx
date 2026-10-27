@@ -65,6 +65,7 @@ import {
   AccountNav,
   Avatar,
   DataNotice,
+  Disclosure,
   formatDateTime,
   formatMicroUsdc,
   NotFound,
@@ -72,6 +73,7 @@ import {
   RoutePageHeader,
 } from "./Presentation";
 import "./account-design.css";
+import { ContributionPointTiers } from "./PointsRules";
 import { ProfileActivity, useProfiles } from "./Profiles";
 
 const EarningsPage = lazy(() =>
@@ -398,15 +400,13 @@ export function PointsNav() {
           aria-label="Your account details"
         >
           <strong>@{me.actor.login}</strong>
-          {total !== null ? (
-            <p>{total.toLocaleString()} pts</p>
-          ) : (
+          {total === null ? (
             <p role="status">
               {state.status === "error"
                 ? "Points unavailable"
                 : "Loading points…"}
             </p>
-          )}
+          ) : null}
           {state.status === "error" ? (
             <button type="button" onClick={refresh}>
               Retry points
@@ -631,7 +631,7 @@ export function ProfilePoints({
                     RECENT_POINTS_DAYS,
                   ).toLocaleString()}
               </strong>
-              <span>points · {RECENT_POINTS_DAYS} days</span>
+              <span>Points · last {RECENT_POINTS_DAYS} days</span>
             </div>
             <div>
               <strong>
@@ -932,7 +932,7 @@ export function AccountPage() {
       ) : null}
       {me && signInNotice ? <p role="status">{signInNotice}</p> : null}
       {session === "loading" || signedIn || walletEntry ? (
-        <DetailsSection
+        <Disclosure
           id="wallets"
           className="points-panel account-wallets"
           summary={<h2 id="wallets-heading">Wallets</h2>}
@@ -947,17 +947,17 @@ export function AccountPage() {
               key={me?.actor.id ?? "signed-out"}
             />
           )}
-        </DetailsSection>
+        </Disclosure>
       ) : null}
       {signedIn ? (
-        <DetailsSection
+        <Disclosure
           id="notifications"
           className="points-panel"
-          summary="Email preferences"
+          summary={<h2 id="notifications-heading">Email preferences</h2>}
           lazy
         >
-          <InboxEmail />
-        </DetailsSection>
+          <InboxEmail headingId="notifications-heading" />
+        </Disclosure>
       ) : null}
       <section id="security" className="points-panel">
         <h2>{me ? "Security" : "Recovery"}</h2>
@@ -972,16 +972,18 @@ export function AccountPage() {
             .
           </p>
           {me ? (
-            <DetailsSection
+            <Disclosure
               id="close-account"
               className="account-close-details"
-              summary="Close account"
+              summary={<span id="close-account-heading">Close account</span>}
+              revealFor={["recovery"]}
             >
               <AccountClosure
+                headingId="close-account-heading"
                 login={me.actor.login}
                 onClosed={setClosedNotice}
               />
-            </DetailsSection>
+            </Disclosure>
           ) : null}
         </div>
       </section>
@@ -989,59 +991,17 @@ export function AccountPage() {
   );
 }
 
-/** Keep existing section links useful while optional content stays folded. */
-function DetailsSection({
-  id,
-  summary,
-  children,
-  className,
-  lazy = false,
-}: {
-  id?: string;
-  summary: ReactNode;
-  children: ReactNode;
-  className?: string;
-  lazy?: boolean;
-}) {
-  const details = useRef<HTMLDetailsElement>(null);
-  const [activated, setActivated] = useState(!lazy);
-  useEffect(() => {
-    const reveal = () => {
-      if (
-        id &&
-        (window.location.hash === `#${id}` ||
-          (id === "close-account" && window.location.hash === "#recovery")) &&
-        details.current
-      )
-        details.current.open = true;
-    };
-    reveal();
-    window.addEventListener("hashchange", reveal);
-    return () => window.removeEventListener("hashchange", reveal);
-  }, [id]);
-  return (
-    <details
-      id={id}
-      className={className}
-      ref={details}
-      onToggle={(event) => {
-        if (event.currentTarget.open) setActivated(true);
-      }}
-    >
-      <summary>{summary}</summary>
-      {activated ? children : null}
-    </details>
-  );
-}
 /**
  * Self-service closure (PRD section 3). Closing ends every session and
  * removes optional connections; obligations and records stay, and signing in
  * again with the same GitHub account can reopen it.
  */
 function AccountClosure({
+  headingId,
   login,
   onClosed,
 }: {
+  headingId: string;
   login: string;
   onClosed: (notice: string) => void;
 }) {
@@ -1053,7 +1013,7 @@ function AccountClosure({
   return (
     <form
       className="account-closure"
-      aria-labelledby={`${inputId}-heading`}
+      aria-labelledby={headingId}
       onSubmit={(event) => {
         event.preventDefault();
         if (!matches || busy) return;
@@ -1079,7 +1039,6 @@ function AccountClosure({
         );
       }}
     >
-      <h3 id={`${inputId}-heading`}>Close your account</h3>
       <p>Closing your account:</p>
       <ul>
         <li>signs out every session;</li>
@@ -1112,12 +1071,7 @@ function AccountClosure({
   );
 }
 /** Categories from protocol/points-v1.md: activity and points. */
-const POINT_CATEGORIES: readonly (readonly [string, string])[] = [
-  [
-    "Accepted work: micro, small, medium, large, XL, exceptional",
-    "10 · 30 · 90 · 240 · 450 · 750",
-  ],
-  ["Reviews: triage, standard, deep, specialist", "10 · 30 · 90 · 240"],
+const HISTORICAL_POINT_CATEGORIES: readonly (readonly [string, string])[] = [
   ["Merged PR before scoring began", "10 each"],
   ["Verified payout", "25 per project and month"],
 ];
@@ -1200,25 +1154,32 @@ export function PointsPage() {
           <People query={query} />
         </div>
       ) : null}
-      <DetailsSection
+      <Disclosure
         className="points-panel"
         id="rules"
         summary="Points rules and downloads"
       >
         <p>{POINTS_NOTICE}</p>
-        <ul aria-label="Point categories" className="points-rules">
-          {POINT_CATEGORIES.map(([activity, points]) => (
-            <li key={activity}>
-              <span>{activity}</span>
-              <strong>{points}</strong>
-            </li>
-          ))}
-        </ul>
+        <ContributionPointTiers />
+        <p>
+          Useful reviews: triage 10 · standard 30 · deep 90 · specialist 240
+          points.
+        </p>
+        <Disclosure summary="Historical and participation points">
+          <ul aria-label="Historical point categories" className="points-rules">
+            {HISTORICAL_POINT_CATEGORIES.map(([activity, points]) => (
+              <li key={activity}>
+                <span>{activity}</span>
+                <strong>{points}</strong>
+              </li>
+            ))}
+          </ul>
+        </Disclosure>
         <a href="/protocol/points-v1.md">Read the points rules</a> ·{" "}
         <a href="/data/points.json" download>
           Download points index
         </a>
-      </DetailsSection>
+      </Disclosure>
     </main>
   );
 }
@@ -1250,7 +1211,7 @@ function StandingsCoverage({
         ? monthStart
         : snapshot.window.from;
   return (
-    <DetailsSection
+    <Disclosure
       summary={
         <>
           Updated {formatDateTime(snapshot.generatedAt)} ·{" "}
@@ -1277,7 +1238,7 @@ function StandingsCoverage({
           ? ` Includes ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
           : null}
       </p>
-    </DetailsSection>
+    </Disclosure>
   );
 }
 
@@ -1329,6 +1290,9 @@ export function ContributorStandings({
     }
   }, [searchQuery]);
   const project = projectId ?? filters.project;
+  const fullView = new URLSearchParams({ period, sort });
+  if (project) fullView.set("project", project);
+  if (query) fullView.set("q", query);
   const setSort = (sort: "points" | "money") =>
     setFilters((v) => ({ ...v, sort, page: 0 }));
   const setPeriod = (period: string) =>
@@ -1418,7 +1382,18 @@ export function ContributorStandings({
       className="points-panel"
       aria-label={title ?? "Contributor standings"}
     >
-      {compact ? <h2>{title ?? "Contributor standings"}</h2> : null}
+      {compact ? (
+        projectId ? (
+          <h2>{title ?? "Contributor standings"}</h2>
+        ) : (
+          <div className="points-panel-heading">
+            <h2>{title ?? "Contributor standings"}</h2>
+            <Link href={`/points?${fullView.toString()}`}>
+              View leaderboard
+            </Link>
+          </div>
+        )
+      ) : null}
       {showDataNotice ? (
         <DataNotice state={scores} retry={retryScore ?? retryLoadedScore} />
       ) : null}
@@ -1535,6 +1510,15 @@ export function ContributorStandings({
                           <ArrowDown aria-hidden="true" size={14} />
                         ) : null}
                       </button>
+                      {(key === "money" && !projection.moneyAvailable) ||
+                      (key === "points" && state.status !== "ready") ? (
+                        <small
+                          className="points-column-status"
+                          aria-hidden="true"
+                        >
+                          {key === "money" ? moneyMissing : pointsMissing}
+                        </small>
+                      ) : null}
                     </th>
                   ))}
                 </tr>
@@ -1574,14 +1558,28 @@ export function ContributorStandings({
                         </a>
                       </td>
                       <td className="points-value">
-                        {m.points === null
-                          ? pointsMissing
-                          : `${m.points.toLocaleString()}${compact ? " pts" : ""}`}
+                        {m.points === null ? (
+                          <>
+                            <span aria-hidden="true">—</span>
+                            <span className="visually-hidden">
+                              {pointsMissing}
+                            </span>
+                          </>
+                        ) : (
+                          `${m.points.toLocaleString()}${compact ? " pts" : ""}`
+                        )}
                       </td>
                       <td className="points-value">
-                        {m.money === null
-                          ? moneyMissing
-                          : formatMicroUsdc(m.money.toString())}
+                        {m.money === null ? (
+                          <>
+                            <span aria-hidden="true">—</span>
+                            <span className="visually-hidden">
+                              {moneyMissing}
+                            </span>
+                          </>
+                        ) : (
+                          formatMicroUsdc(m.money.toString())
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1617,7 +1615,13 @@ function xAccount(value: unknown): XAccount {
     throw new Error("Invalid X identity");
   return x;
 }
-function XAccountLink({ account }: { account: XAccount }) {
+function XAccountLink({
+  account,
+  showService = true,
+}: {
+  account: XAccount;
+  showService?: boolean;
+}) {
   return (
     <a
       href={`https://x.com/intent/user?user_id=${encodeURIComponent(account.id)}`}
@@ -1625,7 +1629,7 @@ function XAccountLink({ account }: { account: XAccount }) {
       rel="noreferrer"
       title={`Account connected ${account.verifiedAt.slice(0, 10)}`}
     >
-      X · @{account.username}
+      {showService ? "X · " : ""}@{account.username}
     </a>
   );
 }
@@ -1750,7 +1754,8 @@ function SocialConnections() {
             <span>
               {data.account ? (
                 <>
-                  Connected · <XAccountLink account={data.account} />
+                  Connected ·{" "}
+                  <XAccountLink account={data.account} showService={false} />
                 </>
               ) : (
                 "Not connected"

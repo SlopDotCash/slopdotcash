@@ -11,16 +11,58 @@ type Revision = { revision: number; project: ProjectDefinition };
 export function ProjectSecuritySettings({
   project,
   onProjectChange,
+  onPublishedRevision,
   session,
 }: {
   project: ProjectDefinition;
   onProjectChange: (project: ProjectDefinition) => void;
+  onPublishedRevision: (revision: number) => void;
   session: ProjectSessionState;
 }) {
   const [opened, setOpened] = useState(
     () => window.location.hash === "#security-settings",
   );
   const [open, setOpen] = useState(opened);
+  const [permitted, setPermitted] = useState<string | null>(null);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [permissionAttempt, setPermissionAttempt] = useState(0);
+  const actorId =
+    session.status === "signed-in" ? session.session.githubId : null;
+  useEffect(() => {
+    let active = true;
+    setPermitted(null);
+    setPermissionError(null);
+    if (actorId && opened)
+      projectApiRequest<{
+        viewer: { githubId: string };
+        canManageBounty: boolean;
+      }>(
+        "GET",
+        `project-setup/${encodeURIComponent(project.id)}?attempt=${permissionAttempt}`,
+      ).then(
+        (result) => {
+          if (!active) return;
+          if (result.viewer.githubId === actorId && result.canManageBounty)
+            setPermitted(`${project.id}:${actorId}`);
+          else
+            setPermissionError(
+              "Only the current project steward or a repository administrator can manage this bounty.",
+            );
+        },
+        (error: unknown) => {
+          if (active)
+            setPermissionError(
+              errorMessage(
+                error,
+                "Current project access could not be checked.",
+              ),
+            );
+        },
+      );
+    return () => {
+      active = false;
+    };
+  }, [actorId, project.id, opened, permissionAttempt]);
   if (session.status !== "signed-in") return null;
   return (
     <details
@@ -33,11 +75,28 @@ export function ProjectSecuritySettings({
       open={open}
     >
       <summary>Manage security program and private bounty funds</summary>
-      {opened ? (
+      {opened && permitted !== `${project.id}:${actorId}` ? (
+        permissionError ? (
+          <div role="alert">
+            <p>{permissionError}</p>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setPermissionAttempt((value) => value + 1)}
+            >
+              Retry management access
+            </button>
+          </div>
+        ) : (
+          <p role="status">Checking current project access…</p>
+        )
+      ) : null}
+      {opened && permitted === `${project.id}:${actorId}` ? (
         <SecuritySettingsEditor
           actor={session.session}
           key={`${project.id}:${session.session.githubId}`}
           onProjectChange={onProjectChange}
+          onPublishedRevision={onPublishedRevision}
           project={project}
         />
       ) : null}
@@ -49,10 +108,12 @@ function SecuritySettingsEditor({
   actor,
   project,
   onProjectChange,
+  onPublishedRevision,
 }: {
   actor: { githubId: string; githubLogin: string };
   project: ProjectDefinition;
   onProjectChange: (project: ProjectDefinition) => void;
+  onPublishedRevision: (revision: number) => void;
 }) {
   const [state, setState] = useState<
     | { status: "loading" }
@@ -60,7 +121,6 @@ function SecuritySettingsEditor({
     | { status: "ready"; value: Revision }
   >({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
-  const [published, setPublished] = useState<number | null>(null);
   useEffect(() => {
     let active = true;
     setState({ status: "loading" });
@@ -108,6 +168,7 @@ function SecuritySettingsEditor({
   return (
     <div className="security-owner-settings">
       <SecurityProgramEditor
+        embedded
         actor={actor}
         key={`${current.project.id}:${current.revision}`}
         onPublished={(result) => {
@@ -115,14 +176,11 @@ function SecuritySettingsEditor({
             project: result.project.manifest,
             revision: result.project.revision,
           });
-          setPublished(result.project.revision);
+          onPublishedRevision(result.project.revision);
         }}
         project={current.project}
         revision={current.revision}
       />
-      {published !== null ? (
-        <p role="status">Published revision {published}.</p>
-      ) : null}
       {current.project.securityBounty ? (
         <OwnerBountyVault
           key={current.project.id}

@@ -24,7 +24,10 @@ import {
   useVaultTotals,
   vaultSnapshotStale,
 } from "./EscrowFunding";
+import { FundingStatus } from "./FundingStatus";
 import { Link, useHashScroll } from "./Link";
+import { SecurityOffer } from "./SecurityOffer";
+import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import {
   type PromotionCycle,
@@ -43,10 +46,6 @@ import {
   type ProjectDefinition,
 } from "./lib/projects.mjs";
 import { REWARD_ASSET_NETWORKS } from "./lib/reward-asset.mjs";
-import {
-  formatSecurityAmount,
-  securityBountySplit,
-} from "./lib/security-bounty.mjs";
 import { pageTitle, SITE_ORIGIN, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCycleIndex } from "./lib/use-cycle-index";
@@ -74,12 +73,9 @@ import {
   monthlyPoolPointsOnly,
   NotFound,
   ProjectNav,
-  paymentStateLabel,
   RoutePageHeader,
   reviewBudgetLabel,
-  StatusBadge,
   stale,
-  vaultStateLabel,
 } from "./Presentation";
 import { ProjectRiskFlag } from "./ProjectRiskFlag";
 
@@ -712,8 +708,9 @@ function SecurityBounties() {
   );
   return (
     <section
-      className="section shell home-security-section"
+      className={`section shell home-security-section${programs.length === 0 ? " home-security-section--empty" : ""}`}
       aria-labelledby="home-security-title"
+      id="security-bounties"
     >
       <div className="home-section-heading">
         <h2 className="home-section-title" id="home-security-title">
@@ -725,40 +722,22 @@ function SecurityBounties() {
       </div>
       {programs.length === 0 ? (
         <p className="project-tier-note">
-          No paid security bounties are open. Projects still accept private
-          security reports.
+          No paid security bounties are open.{" "}
+          <a href="#projects">Choose a project</a> to report a security issue
+          privately without a promised award.
         </p>
       ) : (
         <div className="project-grid">
           {programs.map((project) => {
             const terms = project.securityBounty;
             if (!terms) return null;
-            const split = securityBountySplit(terms.amount.grossMinor);
-            const format = (minor: string) =>
-              formatSecurityAmount(minor, terms.amount);
             return (
               <article className="security-bounty-card" key={project.id}>
                 <div className="project-card-heading">
                   <ShieldCheck aria-hidden="true" />
                   <h3>{project.name}</h3>
                 </div>
-                <p className="project-bounty">
-                  <strong>{format(split.grossMinor)}</strong>
-                  <span> critical bounty</span>
-                </p>
-                <p>{terms.scope.lossDefinition}</p>
-                <p className="security-bounty-split">
-                  {format(split.researcherMinor)} to the researcher (75%) ·{" "}
-                  {format(split.slopMinor)} to slop.cash (25%). No additional
-                  payout fee.
-                </p>
-                <p className="field-hint">
-                  Safe proof of potential loss of funds. Awards require owner
-                  approval.
-                  {terms.funding.state === "pledged"
-                    ? " Pledged; payment requires approval and verified funding."
-                    : ""}
-                </p>
+                <SecurityOffer project={project} />
                 <Link
                   className="button primary-button"
                   href={`/projects/${project.slug}/security`}
@@ -790,7 +769,19 @@ function HomePage() {
       <section className="hero shell">
         <HeroHeading />
         <InstallPanel />
+        <nav
+          className="report-form-actions"
+          aria-label="Choose how to participate"
+        >
+          <a className="button secondary-button" href="#projects">
+            Contribute to a project
+          </a>
+          <a className="button secondary-button" href="#security-bounties">
+            Report a vulnerability
+          </a>
+        </nav>
       </section>
+      <SecurityBounties />
 
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
@@ -820,7 +811,6 @@ function HomePage() {
           </>
         )}
       </section>
-      <SecurityBounties />
       <GlobalLeaderboard retry={retryScores} state={scores} />
     </main>
   );
@@ -1445,10 +1435,7 @@ function ProjectFundingPage({
       <ProjectNav project={project} current="funding" />
       <section className="funding-records">
         {!project.escrow ? (
-          <div className="route-funding-status">
-            <StatusBadge>Payments: {paymentStateLabel(project)}</StatusBadge>
-            <StatusBadge>Project vault: {vaultStateLabel(project)}</StatusBadge>
-          </div>
+          <FundingStatus project={project} className="route-funding-status" />
         ) : null}
         {project.reward.kind === "external-prize-share" ? (
           <p>The organizer pays this prize.</p>

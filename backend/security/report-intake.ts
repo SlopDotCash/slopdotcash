@@ -549,7 +549,20 @@ export async function acceptStoredReport(
       "intake_unavailable",
       "New private report intake is unavailable. Existing reports are retained.",
     );
-  exactKeys(body, ["projectId", "idempotencyKey", "origin", "report"]);
+  exactKeys(
+    body,
+    ["projectId", "idempotencyKey", "origin", "report"],
+    ["expectedReporterGithubId"],
+  );
+  if (
+    body.expectedReporterGithubId !== undefined &&
+    body.expectedReporterGithubId !== actor.githubId
+  )
+    fail(
+      403,
+      "reporter_changed",
+      "Your account changed. Sign in again before submitting this report.",
+    );
   if (body.origin !== "slop")
     fail(400, "invalid_request", "A Slop report must use the Slop origin.");
   const projectId = stringField(body, "projectId", PROJECT_ID);
@@ -824,6 +837,7 @@ export async function listStoredSubmissions(
   }
   rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return json(200, {
+    recipientGithubId: actor.githubId,
     automatic: deps.intake?.mode === "on",
     storedIntake:
       Boolean(deps.reportStorage) && deps.reportIntakeEnabled !== false,

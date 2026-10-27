@@ -147,4 +147,12 @@ export function clearAllDrafts(
   storage: DraftStorage | null = sessionStore(),
 ): void {
   pruneDrafts([], storage);
+  if (storage) {
+    try {
+      for (const key of Object.keys(storage))
+        if (key.startsWith("slop-report-compose:")) storage.removeItem(key);
+    } catch {
+      /* Storage may be unavailable during sign-out. */
+    }
+  }
 }

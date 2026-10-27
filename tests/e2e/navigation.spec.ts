@@ -106,7 +106,7 @@ test("same-route fragment navigation opens the named account disclosure", async 
   });
   await expect(closure).toHaveAttribute("open", "");
   await expect(
-    page.getByRole("heading", { name: "Close your account" }),
+    page.getByRole("form", { name: "Close account", exact: true }),
   ).toBeVisible();
   await expect(closure).toBeInViewport();
   const confirmation = closure.getByRole("textbox");
@@ -177,7 +177,7 @@ test("a walletless award leads to wallet setup without changing the award", asyn
   });
   await page.goto(`${site}/earnings`, { waitUntil: "networkidle" });
   const award = page
-    .getByRole("list", { name: "Payment history", exact: true })
+    .getByRole("list", { name: "Awards and payments", exact: true })
     .getByRole("listitem")
     .filter({ hasText: "Awaiting wallet" });
   await expect(award).toContainText("0.98");

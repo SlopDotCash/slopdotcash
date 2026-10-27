@@ -1,7 +1,7 @@
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
-test("notification refresh preserves private edits only for the same account", async ({
+test("compact Inbox keeps private report metadata scoped through refresh and outages", async ({
   page,
   diagnostics,
 }, info) => {
@@ -67,7 +67,7 @@ test("notification refresh preserves private edits only for the same account", a
     disclosureState: "embargoed",
   };
   let actor = "42";
-  let authorityUnavailable = true;
+  const authorityUnavailable = true;
   let mode: "ready" | "error" | "signed-out" = "error";
   let release: (() => void) | undefined;
   let notificationsStarted: (() => void) | undefined;
@@ -76,6 +76,7 @@ test("notification refresh preserves private edits only for the same account", a
   });
   let blocked: Promise<void> | undefined;
   const writes: string[] = [];
+  let reportReads = 0;
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname.slice("/api/v1/".length);
@@ -118,182 +119,95 @@ test("notification refresh preserves private edits only for the same account", a
     if (path === "security-submissions")
       return route.fulfill({
         json: {
+          recipientGithubId: actor,
           automatic: false,
           authorityUnavailable,
           submissions: actor === "42" ? [submission] : [],
         },
       });
-    if (path === `security-submissions/${id}` && actor === "42")
+    if (path === `security-submissions/${id}` && actor === "42") {
+      reportReads++;
       return route.fulfill({ json: { submission, report } });
+    }
     if (path === "projects")
       return route.fulfill({ json: { schemaVersion: "1", projects: [] } });
     throw new Error(`Unexpected private-inbox fixture request: ${path}`);
   });
   diagnostics.allowResponse(503, "GET", "/api/v1/notifications");
-  await page.goto(`/inbox?submission=${id}`, { waitUntil: "networkidle" });
-  const card = page.locator(`[aria-labelledby="submission-${id}"]`);
-  await expect(card.locator(".security-report-text")).toHaveText(
-    report.description,
+  await page.goto(`/inbox?view=notifications&submission=${id}`, {
+    waitUntil: "networkidle",
+  });
+  const receipt = page.getByRole("list", { name: "Private report receipt" });
+  await expect(receipt).toContainText("More evidence needed");
+  await expect(page.getByText(report.description, { exact: true })).toHaveCount(
+    0,
   );
-  await card
-    .getByText("Add evidence or correct report", { exact: true })
-    .click();
-  const correction = card.getByRole("textbox", {
-    name: /^Description/u,
-  });
-  const text =
-    "Unsaved corrected private reproduction steps. Keep this text only in memory.";
-  await correction.fill(text);
-  await page.getByRole("button", { name: /Case eference/u }).click();
-  const selected = page.locator(`[aria-labelledby="case-${caseId}"]`);
-  await expect(selected).toBeVisible();
-  const partialNotice = page.getByText(
-    "Some maintainer access could not be checked. Your own reports are shown.",
-    { exact: false },
-  );
-  await expect(partialNotice).toBeVisible();
-  const restoreText = await enlargeText(page.locator("main"));
-  try {
-    await expectAccessible(page);
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= window.innerWidth + 1,
-      ),
-    ).toBe(true);
-    await page.screenshot({
-      path: info.outputPath("private-inbox-text200.png"),
-      fullPage: true,
-    });
-  } finally {
-    await restoreText();
-  }
-  authorityUnavailable = false;
-  await page
-    .getByRole("button", { name: "Retry access check", exact: true })
-    .focus();
-  await page.keyboard.press("Enter");
-  await expect(partialNotice).toHaveCount(0);
-  await expect(correction).toHaveValue(text);
-  // A notification outage must not block the independently authenticated report.
-  await expect(page.getByRole("alert")).toContainText(
-    "The inbox could not load",
-  );
-  mode = "ready";
-  await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(correction).toHaveValue(text);
-  await expect(selected).toBeVisible();
-  blocked = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  notificationRead = new Promise<void>((resolve) => {
-    notificationsStarted = resolve;
-  });
-  await page
-    .getByRole("button", { name: "Older notifications", exact: true })
-    .click();
-  await notificationRead;
-  try {
-    await expect(correction).toHaveValue(text);
-    await expect(selected).toBeVisible();
-    mode = "error";
-  } finally {
-    release?.();
-    blocked = undefined;
-  }
-  await expect(page.getByRole("alert")).toContainText(
-    "The inbox could not load",
-  );
-  await expect(correction).toHaveValue(text);
-  await expect(selected).toBeVisible();
-  diagnostics.allowResponse(503, "GET", olderPath);
-  blocked = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  notificationRead = new Promise<void>((resolve) => {
-    notificationsStarted = resolve;
-  });
-  await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await notificationRead;
-  try {
-    await expect(correction).toHaveValue(text);
-    await expect(selected).toBeVisible();
-    mode = "ready";
-  } finally {
-    release?.();
-    blocked = undefined;
-  }
-  await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(correction).toHaveValue(text);
-  await expect(selected).toBeVisible();
-  await expectAccessible(page);
-  await page.screenshot({
-    path: info.outputPath("private-correction-retained.png"),
-    fullPage: true,
-  });
-  await page
-    .getByRole("button", { name: "Newer notifications", exact: true })
-    .click();
-  await expect(correction).toHaveValue(text);
-  actor = "43";
-  mode = "error";
-  await page
-    .getByRole("button", { name: "Older notifications", exact: true })
-    .click();
-  await expect(
-    page.getByText("You have no private security cases."),
-  ).toBeVisible();
-  await expect(card).toHaveCount(0);
-  await expect(selected).toHaveCount(0);
   await expect(page.locator("textarea")).toHaveCount(0);
-  await expect(page).toHaveURL(/\/inbox$/u);
+  expect(reportReads).toBe(0);
+  const restoreText = await enlargeText(page.locator("main"));
+  await expectAccessible(page);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: info.outputPath("compact-inbox-text200.png"),
+    fullPage: true,
+  });
+  await restoreText();
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Newer notifications", exact: true }),
-  ).toBeDisabled();
-  actor = "42";
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Notifications" })).toContainText(
+    "More evidence needed",
+  );
+  blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  notificationRead = new Promise<void>((resolve) => {
+    notificationsStarted = resolve;
+  });
   await page
     .getByRole("button", { name: "Older notifications", exact: true })
     .click();
-  await expect(card).toBeVisible();
-  await expect(selected).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Newer notifications", exact: true }),
-  ).toBeDisabled();
-  await card.getByText("Read private report", { exact: true }).click();
-  await card
-    .getByText("Add evidence or correct report", { exact: true })
-    .click();
-  await expect(correction).toHaveValue(report.description);
-  await page.screenshot({
-    path: info.outputPath("account-switch-reset.png"),
-    fullPage: true,
+  await notificationRead;
+  mode = "error";
+  release?.();
+  blocked = undefined;
+  diagnostics.allowResponse(503, "GET", olderPath);
+  await expect(page.getByRole("alert")).toContainText(
+    "The inbox could not load",
+  );
+  await expect(receipt).toContainText("More evidence needed");
+  actor = "43";
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(receipt).toHaveCount(0);
+  await expect(page).toHaveURL(/\/inbox\?view=notifications$/u);
+  await expect(page.locator("textarea")).toHaveCount(0);
+  mode = "ready";
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("You have no notifications.")).toBeVisible();
+  actor = "42";
+  await page.goto(`/inbox?view=notifications&submission=${id}`, {
+    waitUntil: "networkidle",
   });
-  await correction.fill(text);
+  await expect(page.getByRole("list", { name: "Notifications" })).toContainText(
+    "More evidence needed",
+  );
   mode = "signed-out";
-  diagnostics.allowResponse(401, "GET", "/api/v1/notifications");
   diagnostics.allowResponse(401, "GET", olderPath);
+  diagnostics.allowResponse(401, "GET", "/api/v1/notifications");
   await page
     .getByRole("button", { name: "Older notifications", exact: true })
     .click();
   await expect(
     page.getByRole("link", { name: "Sign in with GitHub", exact: true }),
   ).toBeVisible();
-  await expect(card).toHaveCount(0);
-  await expect(page.locator("textarea")).toHaveCount(0);
-  await page.screenshot({
-    path: info.outputPath("signed-out-cleared.png"),
-    fullPage: true,
-  });
+  await expect(receipt).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "Open case", exact: true }),
+  ).toHaveCount(0);
+  expect(reportReads).toBe(0);
   expect(writes).toEqual([]);
-  expect(
-    await page.evaluate(
-      (value) =>
-        [localStorage, sessionStorage].some((storage) =>
-          Object.values(storage).some((entry) => entry.includes(value)),
-        ),
-      text,
-    ),
-  ).toBe(false);
 });
