@@ -1,6 +1,7 @@
 import { ArrowDown, ChevronDown } from "lucide-react";
 import {
   createContext,
+  lazy,
   type ReactNode,
   useCallback,
   useContext,
@@ -12,9 +13,8 @@ import {
 } from "react";
 import { identityPublicOrigin } from "../workers/identity/contracts";
 import { AccountAppeals } from "./AccountAppeals";
-import { EarningsPage } from "./Earnings";
 import { Link } from "./Link";
-import { browserDeployment } from "./lib/browser-deployment";
+import { browserDeployment, loginHref } from "./lib/browser-deployment";
 import {
   fetchWithDeadline,
   readBoundedJson,
@@ -53,14 +53,12 @@ import {
 } from "./Presentation";
 import { ProfileActivity, useProfiles } from "./Profiles";
 
+const EarningsPage = lazy(() =>
+  import("./Earnings").then((module) => ({ default: module.EarningsPage })),
+);
+
 const productOrigin = () =>
   browserDeployment.browserOrigins.has(window.location.origin);
-
-/** Sign-in works only on a product origin, so other origins link there. */
-export const loginHref = (next: string) =>
-  `${productOrigin() ? "" : browserDeployment.site}${
-    next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`
-  }`;
 
 function AdminAccountLink({ onNavigate }: { onNavigate: () => void }) {
   const session = useProjectSession();

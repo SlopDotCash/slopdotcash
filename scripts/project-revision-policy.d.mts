@@ -10,7 +10,3 @@ export interface ProjectRevisionPolicy {
 export declare function currentProjectPolicies(
   root: string,
 ): Promise<ProjectRevisionPolicy[]>;
-export declare function currentProjectPolicy(
-  root: string,
-  projectId: string,
-): Promise<ProjectRevisionPolicy>;

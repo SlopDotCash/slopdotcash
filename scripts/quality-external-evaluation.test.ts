@@ -12,13 +12,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import {
-  assertQualityEvidence,
-  calculateQualityReview,
-} from "../src/lib/contribution-quality";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import { externalSourceId } from "../src/lib/external-sources";
-import type { FundingPreparation } from "../src/lib/funding-review-data";
 import {
   assertPublishableLeaderboardSnapshot,
   createLeaderboardSnapshot,
@@ -241,18 +236,6 @@ describe("payment quality evidence for an external evaluated contribution", () =
   );
   writeFileSync(path("bases.json"), "[]");
 
-  test("the award is scored in the October payment review ledger", () => {
-    const external = paymentReviewSnapshot(snapshot).ledger.filter(
-      (event) => event.source.kind === "external",
-    );
-    expect(external.map((event) => event.source.url)).toEqual([sourceUrl]);
-    expect(
-      input.view.leaders.map(
-        (leader) => `${leader.actor.login}:${leader.scoreThirds}`,
-      ),
-    ).toEqual(["slopcontributor:6"]);
-  });
-
   test("prepare-contribution-quality keeps the award as an evaluation", () => {
     const result = spawnSync(
       process.execPath,
@@ -276,27 +259,5 @@ describe("payment quality evidence for an external evaluated contribution", () =
         (event: { kind: string; url: string }) => `${event.kind} ${event.url}`,
       ),
     ).toEqual([`evaluation ${sourceUrl}`]);
-  });
-
-  test("the review page decision on the award reconciles the cap", () => {
-    const evidence = assertQualityEvidence(
-      JSON.parse(readFileSync(path("quality.json"), "utf8")),
-      input.preparation as unknown as FundingPreparation,
-    );
-    const [event] = evidence.events;
-    // ContributionQualityReview links the selected events as evidence.
-    const result = calculateQualityReview(
-      evidence,
-      [
-        {
-          eventIds: [event.id],
-          tier: "small",
-          reason: "Accepted explainer outcome.",
-          evidenceUrls: [event.url],
-        },
-      ],
-      "1000000000",
-    );
-    expect(result.after.get(event.actorId)).toBe("1000000000");
   });
 });

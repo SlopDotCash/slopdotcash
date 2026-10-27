@@ -1,10 +1,10 @@
 /** Explicit opt-in to the signed-in account's verified email destination (NOT-01). */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { useAction } from "./lib/use-action";
-import { loginHref } from "./Points";
 
 type Preference =
   | {

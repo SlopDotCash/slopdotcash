@@ -22,9 +22,9 @@ import {
   type ReferralWatchFetch,
   referralWatchConfig,
 } from "../../scripts/check-referral-roots";
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import worker, { runOnce } from "./index";
 import { buildTree } from "./merkle";
-import { sqliteD1 } from "./sqlite-d1";
 
 const evmRoot = fileURLToPath(new URL("../../contracts/evm/", import.meta.url));
 const port = process.env.SLOP_REFERRAL_ANVIL_PORT ?? "18561";

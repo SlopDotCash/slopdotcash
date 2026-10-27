@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
+import { loginHref } from "./lib/browser-deployment";
 import {
   CONTRIBUTION_LABELS,
   SKILL_RULE_FIELDS,
@@ -59,7 +60,6 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { OwnerBountyVault } from "./OwnerBountyVault";
-import { loginHref } from "./Points";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 import { SecurityProgramEditor } from "./SecurityProgramEditor";
 

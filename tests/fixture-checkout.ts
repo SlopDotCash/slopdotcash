@@ -1,9 +1,8 @@
 /**
- * Exports the tracked tree, without tests/fixtures, into a scratch directory
+ * Copies the current working tree, without tests/fixtures, into a scratch directory
  * and restores the frozen pre-registry projects and history there. Scripts
  * that read fixed repository paths, such as the cycle index sync, run inside it.
  */
-import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
   mkdirSync,
@@ -13,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { copyWorkingTree } from "../scripts/copy-working-tree.mjs";
 import { copyFixtureHistory } from "./fixture-overlay.mjs";
 
 const repositoryRoot = resolve(import.meta.dir, "..");
@@ -20,26 +20,7 @@ const repositoryRoot = resolve(import.meta.dir, "..");
 export function fixtureCheckout(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix));
   try {
-    const archive = spawnSync(
-      "git",
-      ["archive", "HEAD", "--", ".", ":(exclude)tests/fixtures"],
-      {
-        cwd: repositoryRoot,
-        encoding: "buffer",
-        maxBuffer: 256 * 1024 * 1024,
-      },
-    );
-    if (archive.status !== 0)
-      throw new Error(
-        `git archive failed: ${archive.stderr?.toString() || archive.error || "unknown error"}`,
-      );
-    const extract = spawnSync("tar", ["-x", "-f", "-", "-C", root], {
-      input: archive.stdout,
-    });
-    if (extract.status !== 0)
-      throw new Error(
-        `tar extract failed: ${extract.stderr?.toString() || extract.error || "unknown error"}`,
-      );
+    copyWorkingTree(repositoryRoot, root, ["tests/fixtures"]);
     copyFileSync(
       join(repositoryRoot, "tests/fixtures/project-registry.mjs"),
       join(root, "src/lib/project-registry.generated.mjs"),

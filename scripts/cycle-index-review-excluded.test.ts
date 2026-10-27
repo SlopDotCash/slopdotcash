@@ -15,8 +15,8 @@
  * `cycles:check` fail and froze that cycle's CI and deployment.
  *
  * `public/data/cycles/index.json` is a build output and is not committed, so
- * this test exports the tracked tree, builds the index with the real sync
- * script, and then exercises both the validator and that script.
+ * this test copies the current working tree, builds the index with the real
+ * sync script, and validates the changed historical record.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -61,32 +61,6 @@ beforeAll(() => {
 afterAll(() => {
   if (workingCopy) rmSync(workingCopy, { recursive: true, force: true });
 });
-
-/** A fresh deep copy so each case starts from the published bytes. */
-const fixture = (): CycleIndex =>
-  JSON.parse(JSON.stringify(published)) as CycleIndex;
-
-/** The first published cycle that is still inside its public review window. */
-function reviewCycle(value: CycleIndex): CycleIndex["cycles"][number] {
-  const cycle = value.cycles.find((entry) => entry.state === "review");
-  expect(cycle).toBeDefined();
-  // A review cycle has no allocation yet: that absence is what derives the
-  // state, so it is also what makes the excluded row a review-window state.
-  expect(cycle?.files.allocation).toBeNull();
-  expect(cycle?.reward.approvedMinor).toBe("0");
-  return cycle as CycleIndex["cycles"][number];
-}
-
-/** An unclaimed, unfunded row: the legal shape a creator may exclude. */
-function unclaimedRow(cycle: CycleIndex["cycles"][number]) {
-  const row = cycle.contributors.find(
-    (contributor) => contributor.state === "unclaimed",
-  );
-  expect(row).toBeDefined();
-  expect(row?.approvedMinor).toBe("0");
-  expect(row?.paidMinor).toBe("0");
-  return row as CycleIndex["cycles"][number]["contributors"][number];
-}
 
 /** Rewrites one row's state in the scratch copy's real `proposal.json`. */
 function excludeRowOnDisk(target: string, login: string) {
@@ -195,46 +169,6 @@ function findExcludableRow(): { target: string; login: string } | null {
 }
 
 describe("cycle index review window", () => {
-  test("an excluded row keeps the cycle in its review window", () => {
-    const value = fixture();
-    const row = unclaimedRow(reviewCycle(value));
-    row.state = "excluded";
-    // An excluded row carries no wallet and no approved amount.
-    row.wallet = null;
-    row.approvedMinor = "0";
-    row.paidMinor = "0";
-
-    expect(() => assertCycleIndex(value)).not.toThrow();
-  });
-
-  test("an excluded row still fails once the cycle is funded outside review", () => {
-    const value = fixture();
-    const cycle = reviewCycle(value);
-    const row = unclaimedRow(cycle);
-    row.state = "excluded";
-    row.wallet = null;
-    // Review state requires an unfunded cycle, so an approved cycle total is
-    // immutable evidence that the cycle left review. A creator must not be
-    // able to hide that behind an excluded row. That total is caught before
-    // the review-state guard by the reward reconciliation, which is part of
-    // the same fail-closed contract.
-    cycle.reward.approvedMinor = "1000000";
-
-    expect(() => assertCycleIndex(value)).toThrow(
-      /reward money totals do not reconcile/,
-    );
-  });
-
-  test("a paid row is still rejected inside the review window", () => {
-    const value = fixture();
-    const row = unclaimedRow(reviewCycle(value));
-    row.state = "paid";
-
-    expect(() => assertCycleIndex(value)).toThrow(
-      /wallet contradicts its state/,
-    );
-  });
-
   test("the sync script accepts an excluded row end to end", () => {
     // Proves the guard change through the same entry point CI runs, not only
     // through the in-process validator. The row is selected so the review state

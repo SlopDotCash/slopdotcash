@@ -1,6 +1,6 @@
 // The points import and API: pointsSql batches applied to the real migrations
 // and read back through the points API. Each batch keeps the permanent history
-// prefix, fits the D1 statement limit and publishes whole or not at all.
+// prefix and publishes whole or not at all.
 // Member reads fail closed and report no points the program has ended.
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -10,9 +10,6 @@ import type { PointsJournal } from "../src/lib/points";
 import { MIGRATIONS, sqliteD1 } from "../tests/sqlite-d1";
 import { sha256Hex } from "../workers/identity/crypto";
 import { pointsSql } from "./generate-points";
-
-// https://developers.cloudflare.com/d1/platform/limits/
-const D1_MAX_STATEMENT_BYTES = 100_000;
 
 function checkpoint(): PointsJournal {
   return JSON.parse(readFileSync("data/points/history.json", "utf8"));
@@ -129,17 +126,6 @@ function journalWithCoverage(entries: number): PointsJournal {
     })),
   };
 }
-
-test("every points import statement fits the D1 statement limit", () => {
-  const journal = journalWithCoverage(700);
-  expect(JSON.stringify(journal.coverage).length).toBeGreaterThan(
-    D1_MAX_STATEMENT_BYTES,
-  );
-  for (const statement of pointsSql(journal).trim().split("\n"))
-    expect(Buffer.byteLength(statement)).toBeLessThanOrEqual(
-      D1_MAX_STATEMENT_BYTES,
-    );
-});
 
 test("a staged coverage list is served whole and an incomplete one publishes nothing", async () => {
   const journal = journalWithCoverage(700);

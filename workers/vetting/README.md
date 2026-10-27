@@ -180,7 +180,7 @@ specialist or the isolated analysis releases it.
 ## Evidence
 
 ```sh
-bun test scripts/vetting-bounded-scan.test.ts scripts/vetting-scan-flags.test.ts
+bun test scripts/vetting-scan-flags.test.ts
 bun test scripts/vetting-scan-service.test.ts
 ```
 

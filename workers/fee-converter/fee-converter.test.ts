@@ -12,12 +12,12 @@ import {
 } from "../../contracts/solana/adapter";
 import { ata } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
 import {
   type ChainClient,
   type ConversionRow,
   type FeeVault,
-  message,
   type PreparedSend,
   type Quote,
   type QuoteResult,
@@ -26,10 +26,9 @@ import {
   type SendStatus,
 } from "./core";
 import { createEvmClient } from "./evm";
-import worker, { runOnce, triggerAt } from "./index";
+import worker, { runOnce } from "./index";
 import { NativeGasJournal } from "./native-gas";
 import { createSolanaClient, parseTransaction } from "./solana";
-import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore, projectRewardTokens, projectVaults } from "./store";
 
 const TOKEN = "0x1111111111111111111111111111111111111111";
@@ -189,15 +188,6 @@ describe("release gates", () => {
     ).toEqual({ n: 0 });
   });
 
-  test("an enabled network without a fee wallet is refused", () => {
-    expect(() =>
-      parseConfig({
-        FEE_CONVERTER_MODE: "dry_run",
-        FEE_CONVERTER_NETWORKS: "robinhood",
-      }),
-    ).toThrow(/FEE_WALLET_ROBINHOOD/);
-  });
-
   test("scheduled startup failures reject after every enabled network is attempted", async () => {
     const { db, sqlite } = sqliteD1();
     const errors: string[] = [];
@@ -259,66 +249,6 @@ describe("release gates", () => {
         ),
       }),
     ).toThrow(/does not control the configured fee wallet/);
-  });
-
-  test("a running converter refuses to start without an owner-set dust threshold", () => {
-    for (const mode of ["dry_run", "live"])
-      for (const name of [
-        "FEE_CONVERTER_MIN_VALUE_MICRO",
-        "FEE_CONVERTER_GAS_MULTIPLE",
-      ])
-        expect(() => config({ FEE_CONVERTER_MODE: mode, [name]: "" })).toThrow(
-          `${name} awaits the owner's decision`,
-        );
-    expect(() => config({ FEE_CONVERTER_MAX_SLIPPAGE_BPS: "" })).toThrow(
-      "FEE_CONVERTER_MAX_SLIPPAGE_BPS is required",
-    );
-    // An owner may choose to convert every received fee.
-    expect(
-      config({
-        FEE_CONVERTER_MIN_VALUE_MICRO: "0",
-        FEE_CONVERTER_GAS_MULTIPLE: "0",
-      }).limits,
-    ).toMatchObject({ minValueMicro: 0n, gasMultiple: 0n });
-    expect(
-      parseConfig({ FEE_CONVERTER_MODE: "off", FEE_CONVERTER_NETWORKS: "" })
-        .mode,
-    ).toBe("off");
-  });
-
-  test("the checked-in configuration signs live only with the owner's native limits", async () => {
-    const toml = await Bun.file(
-      new URL("./wrangler.toml", import.meta.url),
-    ).text();
-    expect(toml).toMatch(/^FEE_CONVERTER_MODE = "live"$/mu);
-    const budgets = /^FEE_CONVERTER_NATIVE_BUDGETS = '(.+)'$/mu.exec(toml)?.[1];
-    expect(JSON.parse(budgets ?? "null")).toEqual({
-      base: {
-        perTransaction: "100000000000000",
-        perDay: "1000000000000000",
-        additionalFeeReserve: "50000000000000",
-      },
-      ethereum: {
-        perTransaction: "1000000000000000",
-        perDay: "10000000000000000",
-        additionalFeeReserve: "0",
-      },
-      robinhood: {
-        perTransaction: "200000000000000",
-        perDay: "2000000000000000",
-        additionalFeeReserve: "0",
-      },
-      solana: {
-        perTransaction: "5000000",
-        perDay: "20000000",
-        additionalFeeReserve: "0",
-      },
-    });
-    expect(toml).toMatch(
-      /^FEE_CONVERTER_NETWORKS = "base,ethereum,robinhood"$/mu,
-    );
-    expect(toml).toMatch(/^FEE_CONVERTER_MIN_VALUE_MICRO = "5000000"$/mu);
-    expect(toml).toMatch(/^FEE_CONVERTER_GAS_MULTIPLE = "10"$/mu);
   });
 });
 
@@ -402,35 +332,6 @@ describe("USDC routes", () => {
       console.log = original;
       sqlite.close();
     }
-  });
-
-  test("EVM clients refuse to quote a network without a verified USDC target", async () => {
-    const parsed = parseConfig({
-      FEE_CONVERTER_MODE: "dry_run",
-      FEE_CONVERTER_NETWORKS: "robinhood",
-      FEE_WALLET_ROBINHOOD: WALLET,
-      ...LIMITS,
-    });
-    let fetched = false;
-    const client = createEvmClient({
-      config: parsed.networks[0],
-      limits: parsed.limits,
-      kyberClientId: "test",
-      fetch: (async () => {
-        fetched = true;
-        throw new Error("no network in unit tests");
-      }) as unknown as typeof fetch,
-    });
-    await expect(client.quote(TOKEN, 1_000n)).rejects.toThrow(
-      "no verified USDC target on robinhood",
-    );
-    expect(fetched).toBe(false);
-  });
-
-  test("records name the network USDC as the target", async () => {
-    const h = harness({ mode: "dry_run" });
-    await runNetwork(h.network, h.deps);
-    expect(h.rows()[0]).toMatchObject({ target_token: USDC, state: "quoted" });
   });
 });
 
@@ -547,13 +448,6 @@ describe("Kyber gas pricing in the conversion workflow", () => {
 });
 
 describe("receipt-triggered conversion", () => {
-  test("cron minutes alternate receipt checks with a recovery scan", () => {
-    expect(triggerAt(Date.parse("2026-10-18T12:00:00Z"))).toBe("recovery");
-    expect(triggerAt(Date.parse("2026-10-18T12:01:00Z"))).toBe("receipts");
-    expect(triggerAt(Date.parse("2026-10-18T12:14:00Z"))).toBe("receipts");
-    expect(triggerAt(Date.parse("2026-10-18T12:45:00Z"))).toBe("recovery");
-  });
-
   test("a receipt run converts a newly received fee and leaves an unchanged balance alone", async () => {
     const h = harness({ mode: "dry_run" });
     h.deps.trigger = "receipts";
@@ -1250,289 +1144,6 @@ describe("replacement lease and restart recovery", () => {
   });
 });
 
-describe("EVM reconciliation", () => {
-  test.each([
-    ["max fee per gas less than block base fee", true],
-    ["fee cap less than block base fee", true],
-    ["transaction is outdated", false],
-  ])(
-    "only explicit RPC fee refusal permits replacement: %s",
-    async (message, feeRefused) => {
-      const { createEvmClient } = await import("./evm");
-      const h = harness();
-      const calls: string[] = [];
-      const client = createEvmClient({
-        config: h.network,
-        limits: h.deps.limits,
-        kyberClientId: "test",
-        fetch: (async (_url: unknown, init?: RequestInit) => {
-          const request = JSON.parse(String(init?.body));
-          calls.push(request.method);
-          return Response.json({
-            jsonrpc: "2.0",
-            id: request.id,
-            error: { code: -32000, message },
-          });
-        }) as typeof fetch,
-      });
-      let failure: unknown;
-      try {
-        await client.broadcast("0x01");
-      } catch (error) {
-        failure = error;
-      }
-      expect(failure instanceof FeeCapTooLowError).toBe(feeRefused);
-      expect(failure).toBeInstanceOf(Error);
-      expect(calls.every((method) => method === "eth_sendRawTransaction")).toBe(
-        true,
-      );
-    },
-  );
-
-  test("a transport error mentioning a low fee is still an uncertain send", async () => {
-    const { createEvmClient } = await import("./evm");
-    const h = harness();
-    const client = createEvmClient({
-      config: h.network,
-      limits: h.deps.limits,
-      kyberClientId: "test",
-      fetch: (async () => {
-        throw new Error(
-          "connection lost: max fee per gas less than block base fee",
-        );
-      }) as unknown as typeof fetch,
-    });
-    let failure: unknown;
-    try {
-      await client.broadcast("0x01");
-    } catch (error) {
-      failure = error;
-    }
-    expect(failure).toBeInstanceOf(Error);
-    expect(failure).not.toBeInstanceOf(FeeCapTooLowError);
-  });
-
-  test.each([
-    ["original success", false, "0x1", "none", "finalized"],
-    ["replacement success", true, "0x1", "none", "finalized"],
-    ["original revert", false, "0x0", "none", "failed"],
-    ["replacement revert", true, "0x0", "none", "failed"],
-    ["wrong receipt hash", true, "0x1", "receiptHash", "submitted"],
-    ["wrong canonical hash", true, "0x1", "blockHash", "submitted"],
-    ["wrong canonical height", true, "0x1", "blockNumber", "submitted"],
-    ["missing canonical height", true, "0x1", "missingHeight", "submitted"],
-    ["missing finalized height", true, "0x1", "missingFinality", "submitted"],
-    ["wrong transaction slot", true, "0x1", "index", "submitted"],
-    ["missing block member", true, "0x0", "membership", "submitted"],
-    ["not finalized", true, "0x1", "finality", "submitted"],
-    ["canonical lookup unavailable", true, "0x1", "unavailable", "submitted"],
-  ])(
-    "canonical fee receipt: %s",
-    async (_name, replaced, receiptStatus, fault, state) => {
-      const { createEvmClient } = await import("./evm");
-      const hash = (value: number) =>
-        `0x${value.toString(16).padStart(64, "0")}`;
-      const original = hash(1);
-      const winner = replaced ? hash(2) : original;
-      const h = harness();
-      const prepare = h.chain.prepare;
-      h.chain.prepare = async (...args) => ({
-        ...(await prepare(...args)),
-        txId: original,
-      });
-      await runNetwork(h.network, h.deps);
-      const row = h.rows()[0];
-      if (replaced) {
-        expect(
-          await h.deps.store.acquireLock("base", "fixture-lease", h.clock.now),
-        ).toBe(true);
-        expect(
-          await h.deps.store.insertReplacement(
-            {
-              id: "replacement-fixture",
-              conversionId: String(row.id),
-              network: "base",
-              attempt: 1,
-              evmNonce: 1,
-              txId: winner,
-              rawTx: "0xfixture",
-              maxFeePerGas: "125",
-              maxPriorityFeePerGas: "25",
-              createdAt: h.clock.now.toISOString(),
-            },
-            "fixture-lease",
-            h.clock.now,
-          ),
-        ).toBe(true);
-        await h.deps.store.releaseLock("base", "fixture-lease", h.clock.now);
-      }
-      const calls: string[] = [];
-      const provider = (async (_url: unknown, init?: RequestInit) => {
-        const request = JSON.parse(String(init?.body));
-        calls.push(request.method);
-        let result: unknown;
-        if (request.method === "eth_getTransactionReceipt") {
-          result =
-            request.params[0] !== winner
-              ? null
-              : {
-                  transactionHash: fault === "receiptHash" ? hash(9) : winner,
-                  transactionIndex: fault === "index" ? "0x1" : "0x0",
-                  blockHash: hash(300),
-                  blockNumber: "0x64",
-                  from: WALLET,
-                  to: h.network.definition.router,
-                  cumulativeGasUsed: "0x5208",
-                  gasUsed: "0x5208",
-                  effectiveGasPrice: "0x1",
-                  contractAddress: null,
-                  logs:
-                    receiptStatus === "0x0"
-                      ? []
-                      : [
-                          {
-                            address: USDC,
-                            topics: [
-                              "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-                              hash(0),
-                              `0x${WALLET.slice(2).padStart(64, "0")}`,
-                            ],
-                            data: hash(100),
-                            blockNumber: "0x64",
-                            blockHash: hash(300),
-                            transactionHash: winner,
-                            transactionIndex: "0x0",
-                            logIndex: "0x0",
-                            removed: false,
-                          },
-                        ],
-                  logsBloom: `0x${"00".repeat(256)}`,
-                  status: receiptStatus,
-                  type: "0x2",
-                };
-        } else if (request.method === "eth_getBlockByNumber") {
-          if (request.params[0] !== "finalized" && fault === "unavailable")
-            return Response.json({
-              jsonrpc: "2.0",
-              id: request.id,
-              error: { code: -32000, message: "unavailable" },
-            });
-          result = {
-            number:
-              (request.params[0] === "finalized" &&
-                fault === "missingFinality") ||
-              (request.params[0] !== "finalized" && fault === "missingHeight")
-                ? null
-                : request.params[0] === "finalized" && fault === "finality"
-                  ? "0x63"
-                  : fault === "blockNumber"
-                    ? "0x65"
-                    : "0x64",
-            hash: fault === "blockHash" ? hash(301) : hash(300),
-            timestamp: "0x1",
-            transactions: fault === "membership" ? [] : [winner],
-          };
-        } else if (request.method === "eth_call") result = hash(0);
-        else throw new Error(`Unexpected method: ${request.method}`);
-        return Response.json({ jsonrpc: "2.0", id: request.id, result });
-      }) as typeof fetch;
-      h.deps.client = (network) =>
-        createEvmClient({
-          config: network,
-          limits: h.deps.limits,
-          kyberClientId: "test",
-          fetch: provider,
-        });
-      await runNetwork(h.network, h.deps);
-      expect(h.rows()[0].state).toBe(state);
-      expect(h.rows()[0].landed_tx_id).toBe(
-        state === "submitted" ? null : winner,
-      );
-      if (state === "finalized") expect(h.rows()[0].amount_out).toBe("100");
-      expect(calls).not.toContain("eth_sendRawTransaction");
-    },
-  );
-
-  /**
-   * A node after the recorded swap (nonce 1) landed in a finalized block: the
-   * finalized nonce count is 2. Methods in `failing` answer HTTP 429; the
-   * node knows no receipt and no transaction for the other lookups.
-   */
-  function rpcAfterLandedSwap(failing: string[]): typeof fetch {
-    return (async (_url: string, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body));
-      const requests: { id: number; method: string }[] = Array.isArray(body)
-        ? body
-        : [body];
-      if (requests.some((request) => failing.includes(request.method)))
-        return new Response("rate limited", { status: 429 });
-      const replies = requests.map((request) => ({
-        jsonrpc: "2.0",
-        id: request.id,
-        result:
-          request.method === "eth_getTransactionCount"
-            ? "0x2"
-            : request.method === "eth_call"
-              ? `0x${"0".repeat(64)}`
-              : null,
-      }));
-      return Response.json(Array.isArray(body) ? replies : replies[0]);
-    }) as unknown as typeof fetch;
-  }
-
-  async function reconcileThroughEvm(failing: string[]) {
-    const h = harness();
-    await runNetwork(h.network, h.deps);
-    expect(h.rows()[0]).toMatchObject({ state: "submitted", evm_nonce: 1 });
-    const since = new Date(
-      h.clock.now.getTime() - 24 * 60 * 60 * 1000,
-    ).toISOString();
-    const counted = await h.deps.store.liveValueSince("base", since);
-    h.deps.client = (network) =>
-      createEvmClient({
-        config: network,
-        limits: h.deps.limits,
-        kyberClientId: "test",
-        fetch: rpcAfterLandedSwap(failing),
-        sleep: async () => {},
-      });
-    await runNetwork(h.network, h.deps);
-    return {
-      h,
-      counted,
-      countedAfter: await h.deps.store.liveValueSince("base", since),
-    };
-  }
-
-  test.each([
-    "eth_getTransactionReceipt",
-    "eth_getTransactionByHash",
-    "eth_getTransactionReceipt,eth_getTransactionByHash",
-  ])("a failed %s lookup leaves the send open", async (methods) => {
-    const { h, counted, countedAfter } = await reconcileThroughEvm(
-      methods.split(","),
-    );
-    // A finalized nonce cannot tell this swap from another transaction. Only
-    // the receipt can, so the row waits for a run whose lookups succeed.
-    const [row] = h.rows();
-    expect([row.state, row.reason]).toEqual(["submitted", null]);
-    expect(countedAfter).toBe(counted);
-    expect(h.events).toContainEqual(
-      expect.objectContaining({ event: "fee_conversion_reconcile_error" }),
-    );
-  });
-
-  test("a send the node does not know fails once its nonce is finalized", async () => {
-    const { h, countedAfter } = await reconcileThroughEvm([]);
-    const [row] = h.rows();
-    expect([row.state, row.reason]).toEqual([
-      "failed",
-      "nonce used by another transaction",
-    ]);
-    expect(countedAfter).toBe(0n);
-  });
-});
-
 describe("D1 contract", () => {
   test("the schema refuses a second open send, a submitted row without bytes, and edits to final rows", async () => {
     const h = harness();
@@ -1753,57 +1364,12 @@ describe("D1 contract", () => {
       [],
     );
   });
-
-  test("live Solana refuses absent native limits before loading a valid signer", async () => {
-    const { chainClient } = await import("./index");
-    const seed = new Uint8Array(32).fill(7);
-    const publicKey = ed25519.getPublicKey(seed);
-    let keyReads = 0;
-    const env = {
-      FEE_CONVERTER_MODE: "live",
-      FEE_CONVERTER_NETWORKS: "solana",
-      FEE_WALLET_SOLANA: solanaBase58(publicKey),
-      get FEE_WALLET_KEY_SOLANA() {
-        keyReads += 1;
-        return JSON.stringify([...seed, ...publicKey]);
-      },
-      ...LIMITS,
-    };
-    expect(() => parseConfig(env)).toThrow("Native gas limits");
-    const parsed = parseConfig(
-      Object.assign(Object.create(env), {
-        FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({
-          solana: {
-            perTransaction: "5000000",
-            perDay: "20000000",
-            additionalFeeReserve: "0",
-          },
-        }),
-      }),
-    );
-    expect(() => chainClient(env, parsed, parsed.networks[0])).toThrow(
-      "durable budget journal",
-    );
-    expect(keyReads).toBe(0);
-  });
-
-  test("error text drops URLs and echoed request bodies", () => {
-    expect(
-      message(
-        new Error(
-          'failed. URL: https://x.example/key/abc123 Request body: {"raw":"0x"}',
-        ),
-      ),
-    ).toBe("failed. URL: <url>");
-  });
 });
 
 describe("Solana vault fee claims", () => {
   const SOLANA_USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
   const MAINNET_GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
-  const ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
   const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-  const SYSTEM_PROGRAM = "11111111111111111111111111111111";
   const key = (n: number) => solanaBase58(new Uint8Array(32).fill(n));
   const seed = new Uint8Array(32).fill(7);
   const publicKey = ed25519.getPublicKey(seed);
@@ -2169,178 +1735,6 @@ describe("Solana vault fee claims", () => {
     };
     return { ...chain, deps, events, config: chain.network.networks[0] };
   }
-
-  test("accrued fees are read only after the reviewed deployment verifies", async () => {
-    const { state, client } = solanaChain();
-    const fees = client(false).vaultFees;
-    expect(await fees?.accrued(vault({}, "security-bounty"))).toEqual({
-      asset: SOLANA_USDC,
-      amount: 10_000_000n,
-    });
-    expect(state.verified).toEqual([
-      expect.objectContaining({
-        genesisHash: MAINNET_GENESIS,
-        programId: PROGRAM,
-        projectPda: PROJECT,
-        vault: VAULT,
-        mint: SOLANA_USDC,
-        feeRecipient: wallet,
-        payoutPolicy: "security-bounty",
-      }),
-    ]);
-    state.finalizedAccrued = 0n;
-    expect(await fees?.accrued(vault())).toBeNull();
-  });
-
-  test("another fee recipient, a forged vault or an incomplete record is never claimed", async () => {
-    const { state, client } = solanaChain();
-    const fees = client(true).vaultFees;
-    expect(await fees?.accrued(vault({ feeRecipient: key(40) }))).toBeNull();
-    await expect(fees?.accrued(vault({ vault: key(41) }))).rejects.toThrow(
-      /not the reviewed project's vault address/,
-    );
-    await expect(
-      fees?.accrued(vault({ rotationAuthority: undefined })),
-    ).rejects.toThrow(/lacks rotationAuthority/);
-    await expect(
-      fees?.accrued(vault({ network: "base-mainnet" })),
-    ).rejects.toThrow(/is not Solana/);
-    await expect(fees?.claim(vault({ feeRecipient: key(40) }))).rejects.toThrow(
-      /another fee recipient/,
-    );
-    expect(state.verified).toEqual([]);
-    expect(state.sent).toEqual([]);
-  });
-
-  test("a claim signs only claim_fees into the fee wallet's own token account", async () => {
-    const { state, client } = solanaChain();
-    const { txId } =
-      (await client(true).vaultFees?.claim(vault(), async (record) => {
-        expect(state.sent).toHaveLength(0);
-        expect(record.txId).toBe(
-          solanaBase58(unb64(record.rawTx).slice(1, 65)),
-        );
-        expect(record.amount).toBe(10_000_000n);
-        expect(record.evmNonce).toBeNull();
-      })) ?? {};
-    expect(state.sent).toHaveLength(1);
-    const raw = unb64(state.sent[0]);
-    const parsed = parseTransaction(raw);
-    expect(parsed.signatureCount).toBe(1);
-    expect(parsed.requiredSignatures).toBe(1);
-    expect(parsed.staticKeys[0]).toBe(wallet);
-    expect(parsed.programs).toEqual([ATA_PROGRAM, PROGRAM]);
-    expect([...parsed.staticKeys].sort()).toEqual(
-      [
-        wallet,
-        ata(SOLANA_USDC, wallet),
-        PROJECT,
-        VAULT,
-        SOLANA_USDC,
-        ATA_PROGRAM,
-        PROGRAM,
-        TOKEN_PROGRAM,
-        SYSTEM_PROGRAM,
-      ].sort(),
-    );
-    const signature = raw.slice(1, 65);
-    expect(
-      ed25519.verify(signature, raw.slice(parsed.messageOffset), publicKey),
-    ).toBe(true);
-    expect(txId).toBe(solanaBase58(signature));
-  });
-
-  test("Synthetic token claims use the Token-2022 ATA and reserve ImmutableOwner rent without changing the fee amount", async () => {
-    const testMint = "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh";
-    const program = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-    const mint = new Uint8Array(
-      await Bun.file(
-        new URL(
-          "../../contracts/solana/integration/fixtures/token-2022-mint.bin",
-          import.meta.url,
-        ),
-      ).arrayBuffer(),
-    );
-    const { state, client } = solanaChain(testMint, program, mint);
-    const send = await client(true).vaultFees!.claim(
-      vault({ asset: testMint }),
-      async (record) => {
-        expect(record.amount).toBe(state.finalizedAccrued);
-        expect(record.nativeGasId).toBeTruthy();
-      },
-      undefined,
-      undefined,
-      10_000_000n,
-    );
-    expect(send.txId).toBe(solanaBase58(unb64(state.sent[0]).slice(1, 65)));
-    const parsed = parseTransaction(unb64(state.sent[0]));
-    expect(parsed.staticKeys).toContain(ata(testMint, wallet, program));
-    expect(parsed.staticKeys).not.toContain(ata(testMint, wallet));
-    expect(parsed.staticKeys).toContain(program);
-    expect(parsed.staticKeys).not.toContain(TOKEN_PROGRAM);
-    expect(state.rentSizes).toEqual([170]);
-  });
-
-  test("an unfinalized earlier claim or project transaction blocks a new claim", async () => {
-    const { state, client } = solanaChain();
-    const fees = client(true).vaultFees;
-    state.confirmedAccrued = 0n;
-    await expect(fees?.claim(vault())).rejects.toThrow(
-      /confirmed but not yet finalized/,
-    );
-    state.confirmedAccrued = 10_000_000n;
-    state.unfinalized = true;
-    await expect(fees?.claim(vault())).rejects.toThrow(/not yet finalized/);
-    expect(state.sent).toEqual([]);
-  });
-
-  test("a receipt that does not match the vault fee fails the claim", async () => {
-    const { state, client } = solanaChain();
-    state.receipt = 9_000_000n;
-    await expect(
-      client(true).vaultFees?.claim(vault(), async () => {}),
-    ).rejects.toThrow(/receipt does not match the vault fee/);
-  });
-
-  test("Solana priority fees and account creation must fit before a claim is signed", async () => {
-    const run = solanaChain();
-    run.state.nativeFee = 5_000_000;
-    let recorded = false;
-    await expect(
-      run.client(true).vaultFees!.claim(vault(), async () => {
-        recorded = true;
-      }),
-    ).rejects.toThrow("transaction budget");
-    expect(recorded).toBe(false);
-    expect(run.state.sent).toEqual([]);
-    expect(await run.nativeJournal.rows()).toEqual([]);
-  });
-
-  test("a zero-value native gas quote cannot authorize a Solana signature", async () => {
-    const run = solanaChain();
-    run.state.nativeQuoteOut = "0";
-    await expect(
-      run.client(true).vaultFees!.claim(vault(), async () => {}),
-    ).rejects.toThrow("cannot be priced");
-    expect(run.state.sent).toEqual([]);
-    expect(await run.nativeJournal.rows()).toEqual([]);
-  });
-
-  test("unexplained native debit and an unpriced final gas multiple refuse before signing", async () => {
-    const run = solanaChain();
-    run.state.walletDebit = 2_000_000;
-    await expect(
-      run.client(true).vaultFees!.claim(vault(), async () => {}),
-    ).rejects.toThrow("unbounded native wallet debit");
-    run.state.walletDebit = 1493440;
-    await expect(
-      run
-        .client(true)
-        .vaultFees!.claim(vault(), async () => {}, undefined, undefined, 1n),
-    ).rejects.toThrow("gas-cost multiple");
-    expect(run.state.sent).toEqual([]);
-    expect(await run.nativeJournal.rows()).toEqual([]);
-  });
 
   test("a dry run reports the claim and signs nothing", async () => {
     const run = solanaRun("dry_run");

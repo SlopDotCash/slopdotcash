@@ -1,5 +1,6 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
+import { loginHref } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { formatBaseUnits } from "./lib/payments/contracts";
@@ -9,7 +10,6 @@ import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
 import OwnerReserveRelease from "./OwnerReserveRelease";
-import { loginHref } from "./Points";
 import { formatDateTime } from "./Presentation";
 
 function previousMonth() {
@@ -61,11 +61,24 @@ export default function OwnerAwards({
       };
     }
   });
-  const [period, setPeriod] = useState(previousMonth);
+  const [monthRequest, setMonthRequest] = useState(() => ({
+    period: previousMonth(),
+    revision: 0,
+  }));
+  const { period } = monthRequest;
   const [view, setView] = useState<MonthlyOwnerView | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
-  const { busy, error, run: act } = useAction();
+  const {
+    busy: actionBusy,
+    error: actionError,
+    setError: setActionError,
+    run: act,
+  } = useAction();
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const busy = loading || actionBusy;
+  const error = loadError ?? actionError;
   const [notice, setNotice] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const base = `payments/projects/${encodeURIComponent(project.id)}`;
@@ -76,38 +89,86 @@ export default function OwnerAwards({
       ? `${value} token base units`
       : `${formatBaseUnits(value, decimals)}${symbol ? ` ${symbol}` : ""}`;
 
-  function accept(body: MonthlyOwnerView, month: string) {
-    if (
-      body.projectId !== project.id ||
-      body.period !== month ||
-      typeof body.automatic !== "boolean" ||
-      (body.proposal !== null && !Array.isArray(body.proposal.allocations)) ||
-      (body.run !== null && !Array.isArray(body.run.awards))
-    )
-      throw new Error("The award response could not be verified.");
-    setView(body);
-    setDrafts({});
-  }
-  async function call(path: string, request: unknown, label: string) {
-    const response = await apiRequest(`${base}${path}`, {
-      body: request,
-      timeoutMs: 120_000,
-    });
-    const body = (await readBoundedJson(
-      response,
-      8 * 1024 * 1024,
-      label,
-    )) as Record<string, unknown> & { message?: string };
-    if (response.status === 401) {
-      setSignedOut(true);
-      return null;
+  const accept = useCallback(
+    (body: MonthlyOwnerView, month: string) => {
+      if (
+        body.projectId !== project.id ||
+        body.period !== month ||
+        typeof body.automatic !== "boolean" ||
+        (body.proposal !== null && !Array.isArray(body.proposal.allocations)) ||
+        (body.run !== null && !Array.isArray(body.run.awards))
+      )
+        throw new Error("The award response could not be verified.");
+      setView(body);
+      setDrafts({});
+    },
+    [project.id],
+  );
+  const call = useCallback(
+    async (
+      path: string,
+      request: unknown,
+      label: string,
+      signal?: AbortSignal,
+    ) => {
+      const response = await apiRequest(`${base}${path}`, {
+        body: request,
+        timeoutMs: 120_000,
+        signal,
+      });
+      const body = (await readBoundedJson(
+        response,
+        8 * 1024 * 1024,
+        label,
+      )) as Record<string, unknown> & { message?: string };
+      if (signal?.aborted) return null;
+      if (response.status === 401) {
+        setSignedOut(true);
+        return null;
+      }
+      if (!response.ok)
+        throw new Error(body.message ?? "Awards are unavailable. Retry.");
+      return body;
+    },
+    [base],
+  );
+  useEffect(() => {
+    setView(null);
+    setSelectedActor(null);
+    setLoadError(null);
+    setActionError(null);
+    setNotice("");
+    setSignedOut(false);
+    setLoading(false);
+    const month = monthRequest.period;
+    if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)) {
+      setLoadError("Choose a valid contribution month.");
+      return;
     }
-    if (!response.ok)
-      throw new Error(body.message ?? "Awards are unavailable. Retry.");
-    return body;
-  }
+    const controller = new AbortController();
+    setLoading(true);
+    void call(
+      `/monthly/${month}`,
+      undefined,
+      "Monthly awards",
+      controller.signal,
+    )
+      .then((body) => {
+        if (!controller.signal.aborted && body)
+          accept(body as unknown as MonthlyOwnerView, month);
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted)
+          setLoadError(errorMessage(reason, "Awards are unavailable."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [accept, call, monthRequest, setActionError]);
   function run(action: () => Promise<void>) {
     setNotice("");
+    setLoadError(null);
     setSignedOut(false);
     return act(action, (reason) =>
       errorMessage(reason, "Awards are unavailable."),
@@ -115,16 +176,10 @@ export default function OwnerAwards({
   }
   function load(event: FormEvent) {
     event.preventDefault();
-    setView(null);
-    setSelectedActor(null);
-    void run(async () => {
-      const body = await call(
-        `/monthly/${period}`,
-        undefined,
-        "Monthly awards",
-      );
-      if (body) accept(body as unknown as MonthlyOwnerView, period);
-    });
+    setMonthRequest((current) => ({
+      ...current,
+      revision: current.revision + 1,
+    }));
   }
   const save = (githubUserId: string) =>
     run(async () => {
@@ -201,13 +256,16 @@ export default function OwnerAwards({
             value={period}
             disabled={busy}
             onChange={(event) => {
-              setPeriod(event.target.value);
+              setMonthRequest({
+                period: event.target.value,
+                revision: monthRequest.revision,
+              });
               setView(null);
             }}
           />
         </label>
         <button className="button primary-button" type="submit" disabled={busy}>
-          {busy && !view ? "Loading…" : "Load awards"}
+          {loading ? "Loading…" : "Refresh awards"}
         </button>
       </form>
       {signedOut && (
