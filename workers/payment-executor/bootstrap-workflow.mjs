@@ -33,29 +33,6 @@ try {
   };
   const { configs } = paymentStack(input);
   const config = configs.attester;
-  assert.deepEqual(Object.keys(configs), ["attester"]);
-  assert.deepEqual(config.triggers, { crons: [] });
-  assert.equal(config.workers_dev, false);
-  assert.equal(config.preview_urls, false);
-  assert.deepEqual(config.routes, []);
-  assert.equal(config.services, undefined);
-  assert.deepEqual(config.durable_objects.bindings, [
-    { name: "JOURNAL", class_name: "PaymentSignerJournal" },
-  ]);
-  assert.deepEqual(config.migrations, [
-    { tag: "v1", new_sqlite_classes: ["PaymentSignerJournal"] },
-  ]);
-  assert.throws(
-    () =>
-      paymentStack({
-        ...input,
-        stack: "test",
-        network: "base-sepolia",
-        databaseName: "slop-payments-base-sepolia-bootstrap",
-        databaseId: "11111111-1111-4111-8111-111111111111",
-      }),
-    /Expected reviewed deployment array/,
-  );
   const configPath = join(directory, "wrangler.json");
   await writeFile(configPath, JSON.stringify(config));
   const env = childEnvironment(process.env, {

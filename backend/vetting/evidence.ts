@@ -86,7 +86,6 @@ export const EVIDENCE_POLICY = {
   recoveryPolicyReference:
     "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6380038965",
 } as const;
-export type EvidencePolicy = typeof EVIDENCE_POLICY;
 function hasKeys(value: Record<string, unknown>, keys: string[]) {
   return Object.keys(value).sort().join() === keys.sort().join();
 }
