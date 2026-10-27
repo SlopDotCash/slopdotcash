@@ -265,6 +265,20 @@ export default function InboxPage() {
     return () => controller.abort();
   }, [cursor, receive, acceptRecipient]);
   useEffect(() => load(), [load]);
+  useEffect(() => {
+    const refresh = () => {
+      load();
+    };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [load]);
+  const reportsIdentityChanged = useCallback(
+    (actorId: string | null) => {
+      acceptRecipient(actorId);
+      load();
+    },
+    [acceptRecipient, load],
+  );
 
   function act(action: () => Promise<"ok" | "signed-out">, done: string) {
     setMessage("");
@@ -298,6 +312,7 @@ export default function InboxPage() {
             aria-pressed={view === tab}
             onClick={() => {
               setView(tab);
+              load();
               const query = new URLSearchParams(window.location.search);
               query.set("view", tab);
               window.history.replaceState(
@@ -333,9 +348,16 @@ export default function InboxPage() {
         </div>
       ) : null}
       {view === "reports" && recipient !== null ? (
-        <Suspense fallback={<p role="status">Loading reports…</p>}>
-          <SecurityInbox embedded key={recipient} />
-        </Suspense>
+        <div hidden={state.status === "loading"}>
+          <Suspense fallback={<p role="status">Loading reports…</p>}>
+            <SecurityInbox
+              embedded
+              key={recipient}
+              expectedActorId={recipient}
+              onIdentityChange={reportsIdentityChanged}
+            />
+          </Suspense>
+        </div>
       ) : null}
       {view === "notifications" ? (
         <>
