@@ -1272,6 +1272,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
             enforcement: {
               state: "clear",
               appeal: "none",
+              projectAppeal: "none",
               since: null,
               restrictedBy: [],
               nextSequence: 1,

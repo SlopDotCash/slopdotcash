@@ -1947,6 +1947,34 @@ test("a malicious decision that closes a kept project appeal needs an independen
   });
 });
 
+test("admin state separates a kept appeal from a new project request without weakening review", async () => {
+  const { t, decide } = await keptAppealFlow();
+  const state = async () => {
+    const response = await t.call("GET", "admin/projects", OWNER);
+    expect(response.status).toBe(200);
+    return (
+      response.body.projects as { id: string; enforcement: unknown }[]
+    ).find((project) => project.id === "kept-appeal")?.enforcement;
+  };
+  expect(await state()).toMatchObject({
+    appeal: "requested",
+    projectAppeal: "none",
+    decisionRequired: true,
+  });
+  const kept = await decide("reinstate", OWNER, 7);
+  expect(kept.status).toBe(409);
+  expect(kept.body.error).toBe("no_open_appeal");
+  expect((await decide("request_reinstatement", OWNER, 7)).status).toBe(200);
+  expect(await state()).toMatchObject({
+    appeal: "requested",
+    projectAppeal: "requested",
+    decisionRequired: true,
+  });
+  const unscanned = await decide("reinstate", OWNER, 8);
+  expect(unscanned.status).toBe(409);
+  expect(unscanned.body.error).toBe("vetting_required");
+});
+
 test("an account release leaves the kept project appeal for an independent malicious decision", async () => {
   const { decide } = await keptAppealFlow();
   // OWNER did not ban OTHER, so OWNER can release OTHER. The release decides

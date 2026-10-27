@@ -1981,6 +1981,7 @@ function adminEnforcement(
   return {
     state: restriction.state,
     appeal: restriction.appeal,
+    projectAppeal: projectAppealState(restriction),
     since: restriction.since,
     restrictedBy: restriction.restrictedBy,
     nextSequence: restriction.nextSequence,

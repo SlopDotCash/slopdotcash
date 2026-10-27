@@ -49,6 +49,7 @@ function maintainerList(maintainers: { githubLogin: string }[]): string {
 function availableActions(
   enforcement: AdminProject["enforcement"],
 ): EnforcementAction[] {
+  const projectAppeal = enforcement.projectAppeal === "requested";
   const accountActions: EnforcementAction[] =
     enforcement.bannedMaintainers.length > 0
       ? enforcement.appeal === "requested"
@@ -58,14 +59,17 @@ function availableActions(
   if (enforcement.state === "clear")
     return [...accountActions, "quarantine", "ban"];
   if (enforcement.decisionRequired)
-    return enforcement.appeal === "requested"
+    return projectAppeal
       ? ["ban", "reinstate"]
       : ["ban", "request_reinstatement"];
   const escalate: EnforcementAction[] =
     enforcement.state === "quarantined" ? ["ban"] : [];
-  return enforcement.appeal === "requested"
-    ? [...accountActions, ...escalate, "reinstate", "deny_reinstatement"]
-    : [...escalate, "request_reinstatement"];
+  const projectActions: EnforcementAction[] = projectAppeal
+    ? ["reinstate"]
+    : ["request_reinstatement"];
+  if (enforcement.appeal === "requested")
+    projectActions.push("deny_reinstatement");
+  return [...new Set([...accountActions, ...escalate, ...projectActions])];
 }
 
 function stateLabel(state: AdminProject["enforcement"]["state"]): string {
