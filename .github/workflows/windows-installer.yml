@@ -5,7 +5,11 @@ on:
     branches: [develop, development, main]
     paths:
       - ".github/workflows/windows-installer.yml"
-      - "skills/contribute-to-*/scripts/run-receipt.mjs"
+      - "skills/project-contributor-template/**"
+      - "scripts/run-e2e-phase.mjs"
+      - "scripts/e2e-runner.test.ts"
+      - "tests/fixture-overlay.mjs"
+      - "tests/fixtures/project-registry.mjs"
       - "src/lib/install-command.ts"
       - "tests/integration/installer.e2e.ts"
       - "tests/install-authority-fixture.ts"
@@ -39,6 +43,10 @@ jobs:
       - name: Install frozen dependencies without lifecycle scripts
         shell: bash
         run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Stop timed-out process trees and preserve phase failures
+        shell: bash
+        run: bun test ./scripts/e2e-runner.test.ts --timeout 10000
 
       - name: Exercise install, update, rollback, active reads, and locking
         shell: bash

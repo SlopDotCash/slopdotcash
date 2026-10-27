@@ -1,7 +1,8 @@
 /** Real Pages handler and session/registry tables; GitHub is the controlled external boundary. */
 import { afterEach, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { onRequest } from "../functions/api/v1/[[path]]";
+import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { sha256Hex } from "../workers/identity/crypto";
 
@@ -17,9 +18,7 @@ test("organization maintainers reach private monthly awards through their own se
       .sort(),
   );
   try {
-    const project = JSON.parse(
-      readFileSync("tests/fixtures/projects/eliza.json", "utf8"),
-    );
+    const project = fixtureProject("eliza");
     project.reward.feeBasisPoints = 200;
     project.reward.chain = "base";
     project.escrow = {

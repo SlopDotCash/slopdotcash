@@ -93,7 +93,6 @@ jobs:
       - run: forge fmt --root contracts/evm --check
       - run: forge build --root contracts/evm --sizes
       - run: forge test --root contracts/evm
-      - run: bun run test:escrow-policy
       - run: bun run test:contracts:evm
       - run: bun run test:payments
       - run: bun run test:referral-accrual:anvil

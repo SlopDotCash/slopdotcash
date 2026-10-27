@@ -1216,7 +1216,7 @@ async function verifyArtifact(
       contentSha256: complete ? sha256Hex(bytes) : null,
     };
   } catch (error) {
-    // error-policy:J1 the CLI boundary translates transport failures into a
+    // error-policy:J1 the verifier boundary translates transport failures into a
     // row-level verification failure instead of accepting unreachable proof.
     const timedOut = controller.signal.aborted;
     return {
@@ -1230,6 +1230,35 @@ async function verifyArtifact(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Counts only artifact references accepted by this verifier's trust policy. */
+export function planReferencedArtifacts(
+  body,
+  requiredRows = REQUIRED_EVIDENCE_ROWS,
+  options = {},
+) {
+  const rows = extractEvidenceRows(String(body ?? ""));
+  const allowedArtifactKinds = options.allowedArtifactKinds
+    ? new Set(options.allowedArtifactKinds)
+    : null;
+  const identities = new Set();
+  let referenceCount = 0;
+  for (const { id } of requiredRows) {
+    const rowText = rows.get(id);
+    if (rowText === undefined) continue;
+    const artifacts = trustedArtifacts(rowText).filter(
+      (artifact) =>
+        allowedArtifactKinds === null ||
+        allowedArtifactKinds.has(artifact.kind),
+    );
+    referenceCount += artifacts.length;
+    for (const artifact of artifacts) identities.add(artifact.identity);
+  }
+  return {
+    referenceCount,
+    uniqueArtifactCount: identities.size,
+  };
 }
 
 /**
@@ -1268,7 +1297,7 @@ async function mapWithConcurrency(items, concurrency, mapper) {
 
 /**
  * Resolves every trusted artifact referenced by an evidence row. Fetch is
- * injected for deterministic tests; the CLI uses the runtime implementation.
+ * injected by workflow checks; ingestion uses the runtime implementation.
  */
 export async function verifyReferencedArtifacts(
   body,
@@ -1313,8 +1342,7 @@ export async function verifyReferencedArtifacts(
     0,
     Math.min(10_000, Math.trunc(options.transientRetryDelayMs ?? 1_000)),
   );
-  // This standalone script runs outside Turbo task caching; credentials affect
-  // transport access, never the deterministic evidence verdict.
+  // Credentials affect transport access, never the evidence verdict.
   const githubToken = process.env.GITHUB_TOKEN;
   const ghToken = process.env.GH_TOKEN;
   const token = options.token ?? githubToken ?? ghToken ?? "";

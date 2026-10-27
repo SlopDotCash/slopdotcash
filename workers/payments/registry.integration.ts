@@ -38,6 +38,7 @@ import {
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
+import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import {
   type PaymentStackInput,
   paymentStack,
@@ -245,9 +246,7 @@ try {
   // The worker reads at the finalized tag, so let the deposit finalize.
   await rpc("anvil_mine", ["0x40"]);
 
-  const fixture = JSON.parse(
-    readFileSync(`${root}tests/fixtures/projects/eliza.json`, "utf8"),
-  );
+  const fixture = fixtureProject("eliza");
   const base = {
     ...fixture,
     reward: {
