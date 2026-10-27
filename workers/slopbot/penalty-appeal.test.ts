@@ -1286,33 +1286,98 @@ test("model triage replaces the prefilter category before category mode and pena
   });
 });
 
-test("a limited model replacement for a prefilter stays held instead of labeling", async () => {
-  await closedItem(async (run) => {
-    run.emptyComparison();
-    run.repositoryConfig(
-      JSON.stringify({
-        version: 1,
-        audience: "protection",
-        closure: true,
-        categories: { empty: "close", spam: "label" },
-      }),
-    );
-    run.modelSequence([
-      {
-        category: "spam",
-        confidence: 0.97,
-        limitations: ["The source interpretation remains unresolved."],
-      },
-    ]);
-    expect(await run.review()).toStartWith("held for maintainer");
-    expect(run.modelInputs).toHaveLength(1);
-    expect(run.writes).not.toContain(
-      "POST /repos/SlopDotCash/asi/issues/5/labels",
-    );
-    expect(run.currentState()).toBe("open");
-    expect(run.sql(PENALTY)).toEqual([]);
-  });
-});
+for (const mode of ["label", "close"] as const) {
+  for (const source of ["prefilter", "ordinary"] as const) {
+    test(`a limited ${source} verdict gives the exact hold reason with one call in ${mode} mode`, async () => {
+      await closedItem(async (run) => {
+        if (source === "prefilter") run.emptyComparison();
+        run.repositoryConfig(
+          JSON.stringify({
+            version: 1,
+            audience: "protection",
+            closure: true,
+            categories: { empty: "close", spam: mode },
+          }),
+        );
+        run.modelSequence([
+          {
+            category: "spam",
+            confidence: 0.97,
+            limitations: ["The source interpretation remains unresolved."],
+          },
+        ]);
+        expect(await run.review()).toStartWith("held for maintainer");
+        expect(run.modelInputs).toHaveLength(1);
+        expect(run.sql("SELECT call_kind FROM slopbot_costs")).toEqual([
+          { call_kind: "triage" },
+        ]);
+        expect(run.comments.at(-1)).toContain(
+          "_Slopbot is not certain about this finding (unresolved model limitations), so a maintainer decides first.",
+        );
+        expect(run.writes).not.toContain(
+          "POST /repos/SlopDotCash/asi/issues/5/labels",
+        );
+        expect(run.currentState()).toBe("open");
+        expect(run.sql(PENALTY)).toEqual([]);
+      });
+    });
+  }
+
+  for (const finding of [
+    {
+      name: "low confidence",
+      confidence: 0.85,
+      evidence: ["Buy cheap followers"],
+      limitations: [],
+      reason: "confidence below closure threshold",
+    },
+    {
+      name: "bad grounding",
+      confidence: 0.97,
+      evidence: ["not in the submitted item"],
+      limitations: [],
+      reason: "no verbatim evidence from the item",
+    },
+    {
+      name: "low confidence and limitations",
+      confidence: 0.85,
+      evidence: ["Buy cheap followers"],
+      limitations: ["Unresolved check."],
+      reason: "confidence below closure threshold",
+    },
+    {
+      name: "bad grounding, low confidence and limitations",
+      confidence: 0.85,
+      evidence: ["not in the submitted item"],
+      limitations: ["Unresolved check."],
+      reason: "no verbatim evidence from the item",
+    },
+  ]) {
+    test(`${finding.name} preserves its hold reason and one call in ${mode} mode`, async () => {
+      await closedItem(async (run) => {
+        run.repositoryConfig(
+          JSON.stringify({
+            version: 1,
+            audience: "protection",
+            closure: true,
+            categories: { spam: mode },
+          }),
+        );
+        run.modelSequence([{ category: "spam", ...finding }]);
+        expect(await run.review()).toStartWith("held for maintainer");
+        expect(run.modelInputs).toHaveLength(1);
+        expect(run.comments.at(-1)).toContain(
+          `_Slopbot is not certain about this finding (${finding.reason}), so a maintainer decides first.`,
+        );
+        expect(run.writes).not.toContain(
+          "POST /repos/SlopDotCash/asi/issues/5/labels",
+        );
+        expect(run.currentState()).toBe("open");
+        expect(run.sql(PENALTY)).toEqual([]);
+      });
+    });
+  }
+}
 
 for (const change of ["head", "comparison", "consent"] as const) {
   test(`empty prefilter confirmation rechecks changed ${change}`, async () => {
