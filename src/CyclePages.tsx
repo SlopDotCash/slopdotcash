@@ -493,7 +493,6 @@ export function CycleArchivePage({
   return (
     <main className="shell evidence-page route-cycle-archive">
       <RoutePageHeader title="Payment cycles" icon={<CalendarDays />}>
-        <EvidenceNav current="cycles" />
         {state.status === "loading" ? (
           <p role="status">Loading cycle history…</p>
         ) : state.status === "error" ? (
