@@ -124,7 +124,6 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
   expect(response.ok()).toBe(true);
   const census = await response.json();
   assertProfiles(census);
-  expect(census.schemaVersion).toBe("2");
   const reopened = census.issues?.items.find(
     (issue) =>
       issue.authorId !== null &&

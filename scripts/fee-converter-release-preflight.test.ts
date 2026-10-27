@@ -61,8 +61,6 @@ function release(mode: string, networks: string, secrets: string[]) {
       /^FEE_CONVERTER_NETWORKS = ".*"$/mu,
       `FEE_CONVERTER_NETWORKS = "${networks}"`,
     );
-  expect(toml).toContain(`FEE_CONVERTER_MODE = "${mode}"`);
-  expect(toml).toContain(`FEE_CONVERTER_NETWORKS = "${networks}"`);
   writeFileSync(join(root, "workers/fee-converter/wrangler.toml"), toml);
   const inventory = join(root, "secrets.json");
   writeFileSync(

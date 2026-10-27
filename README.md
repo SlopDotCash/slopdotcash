@@ -214,8 +214,8 @@ bun run test:e2e
 
 `bun run verify` checks the committed source records (brand tokens, projects,
 evaluations, disclosures, contribution quality, cycles, and protocol identity);
-audits dependencies; runs type and lint checks, unit tests, and the database,
-API, CLI and Worker integration suites; and produces the static build.
+audits dependencies; runs type and lint checks, smart-contract unit tests, and
+the database, API, CLI and Worker integration suites; and produces the static build.
 `bun run format:check` is a separate required check. Browser behavior is covered
 by `bun run test:e2e`; the separate escrow workflow checks the contract and
 payment lifecycles.

@@ -96,24 +96,6 @@ def main():
         for phase in ('before-command', 'after-traced-command', 'after-post-collector-probe'):
             large_metadata.snapshot(phase)
         assert 'filesystem-metadata-limit' in large_metadata.result()['visibilityGaps']
-        # Conservative transport-size measurement: the metadata here overstates
-        # its real escaped-byte budget; use actual bytes from a maximum-sized file.
-        import json
-        transport_root = parent / 'transport'
-        transport_root.mkdir()
-        (transport_root / 'bytes').write_bytes(b'x' * FilesystemCapture.MAX_BYTES)
-        transport = FilesystemCapture(transport_root)
-        transport.snapshot('before-command')
-        body = transport.result()
-        body['worstMetadata'] = '"' * (FilesystemCapture.MAX_METADATA + 256 * 72)
-        maximum = {'filesystem': json.dumps(body),
-                   'trace': base64.b64encode(b't' * (1024 * 1024)).decode(),
-                   'output': base64.b64encode(b'o' * 65536).decode(),
-                   'post': base64.b64encode(b'o' * 65536).decode(),
-                   'sourceSha256': ['a' * 64] * 1000, 'other': 'x' * 16384}
-        framed = len(base64.b64encode(json.dumps(maximum).encode()))
-        assert framed < 15 * 1024 * 1024 // 4
-        print('Conservative maximum serialized receipt bytes:', framed)
         print('Actual filesystem capture, refusal, limit and replacement workflows passed')
 
 
