@@ -134,12 +134,13 @@ async function reviewEmptyPull(
       )
         return Response.json({
           node_id: path.endsWith("/issues/6") ? "PR_prior" : "PR_local",
-          number: 5,
+          number: path.endsWith("/issues/6") ? 6 : 5,
           state: "open",
           title: "empty change",
           body: "Made via @slopdotcash",
           user: { login: "author", id: 42, type: "User" },
           assignees: [],
+          pull_request: {},
         });
       if (path.endsWith("/pulls/5") || path.endsWith("/pulls/6"))
         if (source === "missing-pull")

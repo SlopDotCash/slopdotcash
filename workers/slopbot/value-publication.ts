@@ -23,6 +23,10 @@ import {
   reuseMergeResolution,
   type ValueMergeRecipe,
 } from "./value-merge-profile";
+import {
+  NO_CHANGE_PROMOTION_CONTEXT,
+  noChangePromotionMatches,
+} from "./value-no-change-promotion";
 import { type ValueAssessmentResult, valueSourceDigest } from "./value-review";
 
 export type ValueClient = EvidenceClient & Pick<GitHubClient, "fileText">;
@@ -45,6 +49,8 @@ export async function loadValuePolicy(
 
 /** Re-read full source after inference. Head equality alone misses edited
  * discussions, added reviews and changed accepted-range evidence.
+ * A joint caller may defer only the verified promotion marker; its complete
+ * freshly collected group must still pass original-source verification.
  */
 export async function verifyCurrentValueSource(
   github: ValueClient,
@@ -52,6 +58,7 @@ export async function verifyCurrentValueSource(
   result: Pick<ValueResult, "policySha" | "sourceDigest">,
   repositories: readonly TargetRepository[],
   mergeRecipe?: ValueMergeRecipe,
+  verificationScope: "standalone" | "joint" = "standalone",
 ) {
   const repository = findRepository(repositories, evidence.repository);
   if (!repository)
@@ -92,7 +99,15 @@ export async function verifyCurrentValueSource(
     current.commits.every((commit) => commit.parents.length !== 2)
   )
     current.mergeResolutions = [];
-  if (current.pull.state !== "closed" || current.limitations.length)
+  const deferredPromotion =
+    verificationScope === "joint" && noChangePromotionMatches(current);
+  if (
+    current.pull.state !== "closed" ||
+    current.limitations.some(
+      (limitation) =>
+        !deferredPromotion || limitation !== NO_CHANGE_PROMOTION_CONTEXT,
+    )
+  )
     throw new Error(
       "Value publication requires complete closed-pull-request evidence",
     );

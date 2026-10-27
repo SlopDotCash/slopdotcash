@@ -41,6 +41,7 @@ export async function verifyCurrentWorkUnitSource(
     repositories,
   );
   if (
+    original.limitations.length ||
     original.sourceDigest !== supplied.sourceDigest ||
     original.sourceDigest !== result.sourceDigest
   )
@@ -57,6 +58,7 @@ export async function verifyCurrentWorkUnitSource(
         },
         repositories,
         source.mergeRecipe,
+        "joint",
       ),
     );
   }

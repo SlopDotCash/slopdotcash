@@ -69,6 +69,25 @@ export async function readValueTreeProof(
   repository: string,
   ref: string,
 ): Promise<{ treeSha: string; entries: Map<string, Entry> } | null> {
+  return readTreeProof(client, repository, ref, true);
+}
+
+/** Verify the complete root object, whose child hashes commit to the entire
+ * tree. This proves tree identity without claiming a readable leaf inventory. */
+export async function readValueTreeRootProof(
+  client: EvidenceClient,
+  repository: string,
+  ref: string,
+): Promise<{ treeSha: string; entries: Map<string, Entry> } | null> {
+  return readTreeProof(client, repository, ref, false);
+}
+
+async function readTreeProof(
+  client: EvidenceClient,
+  repository: string,
+  ref: string,
+  recursive: boolean,
+): Promise<{ treeSha: string; entries: Map<string, Entry> } | null> {
   const oid = /^[a-f0-9]{40}$/u;
   if (!oid.test(ref)) return null;
   const commit = await client.get<{ sha: string; tree: { sha: string } }>(
@@ -79,7 +98,9 @@ export async function readValueTreeProof(
     sha: string;
     truncated: boolean;
     tree: Entry[];
-  }>(`/repos/${repository}/git/trees/${commit.tree.sha}?recursive=1`);
+  }>(
+    `/repos/${repository}/git/trees/${commit.tree.sha}${recursive ? "?recursive=1" : ""}`,
+  );
   if (
     result?.sha !== commit.tree.sha ||
     result.truncated !== false ||
@@ -101,6 +122,7 @@ export async function readValueTreeProof(
       typeof entry.path !== "string" ||
       !entry.path ||
       entry.path.length > 1024 ||
+      (!recursive && entry.path.includes("/")) ||
       entry.path.includes("\\") ||
       [...entry.path].some(
         (c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127,
@@ -124,7 +146,9 @@ export async function readValueTreeProof(
   }
   for (const [path, expected] of [
     ["", commit.tree.sha],
-    ...result.tree.filter((e) => e.type === "tree").map((e) => [e.path, e.sha]),
+    ...(recursive
+      ? result.tree.filter((e) => e.type === "tree").map((e) => [e.path, e.sha])
+      : []),
   ]) {
     const actual = await treeDigest(children.get(path) ?? []);
     if (actual !== expected) return null;
