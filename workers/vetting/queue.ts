@@ -287,6 +287,7 @@ export async function acquireQueuedAssessment(
     )
       throw new Error("Invalid source coverage");
     const inputs = [];
+    const inputDigests = new Map<string, string>();
     const sources = [
       ...[contributor, reviewer].flatMap((group) =>
         group.files.map((file) => ({
@@ -322,11 +323,17 @@ export async function acquireQueuedAssessment(
         )
           throw error;
       }
-      inputs.push({
-        path: source.path,
-        sha256: source.sha256,
-        state: "quarantined",
-      });
+      const existing = inputDigests.get(source.path);
+      if (existing !== undefined && existing !== source.sha256)
+        throw new Error("Conflicting template input digests");
+      if (existing === undefined) {
+        inputDigests.set(source.path, source.sha256);
+        inputs.push({
+          path: source.path,
+          sha256: source.sha256,
+          state: "quarantined",
+        });
+      }
     }
     const bundle = Buffer.from(
       JSON.stringify({
