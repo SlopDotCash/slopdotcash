@@ -39,6 +39,15 @@ The checked-in configuration sets `live` mode on Base, Ethereum and
 Robinhood. The Worker deploys only when the `SLOP_FEE_CONVERTER_RELEASE`
 repository variable is `enabled`.
 
+Owner decision, 27 October 2026: Solana fee conversion is conditionally approved,
+but live activation is deferred while owner vault setup is on another computer.
+Keep Solana out of `FEE_CONVERTER_NETWORKS` until an independently operated
+full-history recovery RPC and the first registered Solana vault are verified,
+and all existing readiness checks pass. Activate only through a later reviewed
+`main` release. The controls release and approved 0.05 SOL gas top-up are complete
+(#905); do not repeat the top-up or the existing program upgrade. Merging this
+prepared work does not activate signing or prove live conversion.
+
 **Solana signs only against the separated program layout.** The deployed
 Solana program pins an independent rotation-confirmation authority, separate
 from the fee recipient and identity authority. The rotation key must never be
