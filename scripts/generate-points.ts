@@ -22,6 +22,7 @@ import {
   type PointsJournal,
   pointMembers,
   pointRevisionId,
+  reconcilePointPenalties,
   retainedBatchOwnedKeys,
 } from "../src/lib/points";
 import { findHistoricalRepository, findProject } from "../src/lib/projects.mjs";
@@ -385,6 +386,11 @@ export async function generatePoints(
   journal = applyRetainedHistoryBatch(
     journal,
     reviewedAwards,
+    hash(JSON.stringify(reviewed)),
+    now,
+  );
+  journal = reconcilePointPenalties(
+    journal,
     hash(JSON.stringify(reviewed)),
     now,
   );

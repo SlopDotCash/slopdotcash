@@ -151,6 +151,11 @@ export type PublishedPenalty = {
   recorded_at: string;
 };
 
+export type PublishedPenaltyHistory = PublishedPenalty & {
+  reversed_at: string | null;
+  reversal: "appeal_upheld" | "maintainer_reopen" | null;
+};
+
 export const PENALTY_PAGE_SIZE = 100;
 
 /** The unreversed debits of one project in item node ID order. A reversed
@@ -159,15 +164,19 @@ export async function activePenaltyPage(
   db: D1Database,
   projectId: string,
   after: string,
-): Promise<{ records: PublishedPenalty[]; nextAfter: string | null }> {
+  history = false,
+): Promise<{
+  records: (PublishedPenalty & Partial<PublishedPenaltyHistory>)[];
+  nextAfter: string | null;
+}> {
   const row = await db
     .prepare(`SELECT json_group_array(json_object(
     'item_node_id', item_node_id, 'repository_id', repository_id,
     'author_github_id', author_github_id, 'category', category,
     'table_version', table_version, 'debit_thirds', debit_thirds,
-    'period', period, 'recorded_at', recorded_at)) AS records_json
+    'period', period, 'recorded_at', recorded_at${history ? ", 'reversed_at', reversed_at, 'reversal', reversal" : ""})) AS records_json
     FROM (SELECT * FROM slopbot_penalties
-      WHERE project_id = ? AND reversed_at IS NULL AND item_node_id > ?
+      WHERE project_id = ? ${history ? "" : "AND reversed_at IS NULL"} AND item_node_id > ?
       ORDER BY item_node_id LIMIT ?)`)
     .bind(projectId, after, PENALTY_PAGE_SIZE + 1)
     .first<{ records_json: string }>();
