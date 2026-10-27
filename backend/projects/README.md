@@ -303,10 +303,13 @@ rate limit, and caches each answer for five minutes. The browser never calls
   it at `/admin`. An account named in the current project ban can use the same
   route even if it is no longer the owner and did not list the project. Its
   record uses `banned-account` and `account-request`. A banned account
-  files this account appeal while the project is clear or a project appeal
-  is open, also when it is a moderator that files at `/admin`. Filing does
-  not lift a restriction or grant project access. Only a moderator decides
-  the appeal.
+  files this account appeal while the project is clear. It also files an
+  account appeal while a project appeal is open and no later confirmed
+  malicious result kept that project appeal. This rule also applies to a
+  banned moderator that files at `/admin`. In other states, a banned steward
+  or applicant, or a banned moderator at `/admin`, files a project appeal.
+  Filing does not lift a restriction or grant project access. Only a
+  moderator decides the appeal.
 - Reinstatement needs an open reinstatement request and a moderator who did
   not place the restriction. Both preview and confirmation require a clean
   scan of the current restricted revision, requested after the latest restriction,
