@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type { TargetRepository } from "../../src/lib/repositories.mjs";
+import {
+  fixture as binaryFixture,
+  repository as binaryRepository,
+  collect as collectBinaryFixture,
+} from "../../tests/value-binary-fixture";
 import type { ValueEvidence } from "./value-evidence";
 import {
   collectNoChangePromotion,
@@ -224,6 +229,39 @@ function unchangedPromotion() {
   };
   return { original, promotion, client, responses, treeSha };
 }
+
+test("collection holds a proven no-change promotion even on the configured branch with the same author", async () => {
+  const f = binaryFixture({ textOnly: true, direct: true });
+  const base = f.pull.base.sha;
+  const head = f.pull.head.sha;
+  const merge = f.pull.merge_commit_sha;
+  const content = new Map([
+    ["fix.ts", new TextEncoder().encode("export const fixed = true;\n")],
+  ]);
+  f.bind(base, content, []);
+  f.bind(head, content, [base]);
+  f.bind(merge, content, [base, head]);
+  f.pull.user.node_id = "U_author";
+  const get = f.client.get.bind(f.client);
+  f.client.get = async <T>(path: string): Promise<T | null> => {
+    if (path.startsWith(`/repos/${binaryRepository.id}/commits/${merge}?`)) {
+      const result = await get<Record<string, unknown>>(path);
+      return {
+        ...result,
+        stats: { additions: 0, deletions: 0, total: 0 },
+        files: [],
+      } as T;
+    }
+    return get<T>(path);
+  };
+  const result = await collectBinaryFixture(f);
+  expect(result.noChangePromotion).toMatchObject({
+    baseSha: base,
+    headSha: head,
+    mergeSha: merge,
+  });
+  expect(result.limitations).toEqual([NO_CHANGE_PROMOTION_CONTEXT]);
+});
 
 test("an unchanged branch promotion preserves original credit only after complete joint source verification", async () => {
   const f = unchangedPromotion();

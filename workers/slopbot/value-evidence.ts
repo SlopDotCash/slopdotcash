@@ -1030,7 +1030,17 @@ export async function collectValueEvidence(
   if (pull.user.type !== "Bot") implementationActors.add(pull.user.node_id);
   let historicalBranchPolicy: ValueBranchPolicy | undefined;
   let noChangePromotion: NoChangePromotionProof | null = null;
+  try {
+    noChangePromotion = await collectNoChangePromotion(client, repository, {
+      pull,
+      mergeCommitEvidence,
+    });
+  } catch {
+    // Unavailable or malformed Git objects never establish a duplicate.
+  }
+  if (noChangePromotion) limitations.push(NO_CHANGE_PROMOTION_CONTEXT);
   if (
+    noChangePromotion === null &&
     pull.merged_at !== null &&
     repositoryPolicy !== null &&
     pull.base.ref !== repositoryPolicy.integrationBranch &&
@@ -1052,18 +1062,8 @@ export async function collectValueEvidence(
         pull.base.sha,
       );
     } catch {
-      try {
-        noChangePromotion = await collectNoChangePromotion(client, repository, {
-          pull,
-          mergeCommitEvidence,
-        });
-      } catch {
-        // Unavailable or malformed Git objects never waive branch authority.
-      }
       limitations.push(
-        noChangePromotion
-          ? NO_CHANGE_PROMOTION_CONTEXT
-          : "Historical integration branch authority is unavailable or ambiguous",
+        "Historical integration branch authority is unavailable or ambiguous",
       );
     }
   }
