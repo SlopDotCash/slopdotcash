@@ -151,26 +151,23 @@ async function solanaMetadata(
   const result = (await rpc(fetcher, url, "getAccountInfo", [
     address,
     { encoding: "base64", commitment: "finalized" },
-  ])) as { value?: unknown } | null;
+  ])) as { value?: { owner?: unknown } | null } | null;
   const account = result?.value;
   if (!account)
     throw new TokenMetadataError("No account exists at that mint address");
-  // The shared reader refuses every owner, layout and extension outside classic SPL
-  // Token and the approved metadata-only Token-2022 subset.
+  // Vault creation, funding and the monthly commitment use the classic Token program
+  // only, so owner setup refuses every other owner, Token-2022 included, until they
+  // support it.
+  if (account.owner !== TOKEN_PROGRAM)
+    throw new TokenMetadataError("The mint is not a classic SPL Token mint");
+  // The shared reader's errors name internal layout checks; for example a token
+  // account usually fails its mint-initialized check. The applicant sees one message.
   let mint: TokenMintReading;
   try {
     mint = readTokenMint(account, decodeBase58Bytes(address));
-  } catch (error) {
-    throw new TokenMetadataError(
-      error instanceof Error
-        ? error.message
-        : "The account is not a token mint",
-    );
+  } catch {
+    throw new TokenMetadataError("The account is not an SPL mint");
   }
-  // Vault creation, funding and the monthly commitment use the classic Token program
-  // only, so owner setup refuses a Token-2022 mint until they support it.
-  if (mint.program !== TOKEN_PROGRAM)
-    throw new TokenMetadataError("The mint is not a classic SPL Token mint");
   return { decimals: mint.decimals, symbol: null };
 }
 
