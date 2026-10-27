@@ -445,7 +445,11 @@ function prospectiveFinancialChange(
     escrow && {
       ...escrow,
       deployments: escrow.deployments.map(
-        ({ maxNativeCostWei: _limit, ...deployment }) => deployment,
+        ({
+          maxNativeCostWei: _nativeLimit,
+          bindingConsentNonceLimit: _nonceLimit,
+          ...deployment
+        }) => deployment,
       ),
     };
   const before = previous.reward;

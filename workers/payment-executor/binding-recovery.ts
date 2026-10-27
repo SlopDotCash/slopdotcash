@@ -9,6 +9,7 @@ import {
 import { evmRpc, isCanonicalEvmReceipt } from "../../contracts/evm/adapter";
 import {
   type Attempt,
+  assertBindingConsentBudget,
   assertEvmNativeCost,
   type ExecutorEnvironment,
   PENDING_BINDINGS,
@@ -138,6 +139,8 @@ export async function reconcileBindingWinner(
   )
     throw new Error("Stored binding identity differs");
   decodeFunctionData({ abi: storedBindingAbi, data: original.data });
+  // A proved legacy winner can be observed without granting it a new budget.
+  await assertBindingConsentBudget(env.JOURNAL, deployment, attempt, false);
   if (original.gas === undefined || original.maxFeePerGas === undefined)
     throw new Error("Stored binding gas envelope unavailable");
   // Current configuration cannot invalidate finalized history. Only a limit

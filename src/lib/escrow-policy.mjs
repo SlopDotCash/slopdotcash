@@ -320,6 +320,9 @@ function validateEscrowPolicy(value, feeBasisPoints) {
       ...(deployment.maxNativeCostWei === undefined
         ? []
         : ["maxNativeCostWei"]),
+      ...(deployment.bindingConsentNonceLimit === undefined
+        ? []
+        : ["bindingConsentNonceLimit"]),
       "network",
       "vault",
       "programId",
@@ -346,6 +349,12 @@ function validateEscrowPolicy(value, feeBasisPoints) {
         !isMaxNativeCostWei(deployment.maxNativeCostWei))
     )
       throw new TypeError("Invalid EVM native cost limit");
+    if (
+      deployment.bindingConsentNonceLimit !== undefined &&
+      (chainFamily(value.chain) !== "evm" ||
+        deployment.bindingConsentNonceLimit !== 1)
+    )
+      throw new TypeError("Invalid binding consent nonce limit");
     if (deployment.evmUpgrade !== undefined) {
       const upgrade = deployment.evmUpgrade;
       keys(upgrade, [
@@ -586,7 +595,8 @@ export function assertEscrowTransition(
       Object.keys(deployment).some((key) => {
         // This off-chain execution restriction is not historical chain evidence.
         // Every already-signed operation retains its own original bound.
-        if (key === "maxNativeCostWei") return false;
+        if (key === "maxNativeCostWei" || key === "bindingConsentNonceLimit")
+          return false;
         // Owner revisions retain prior deployment evidence. Only an already
         // upgradeable deployment may update its reviewed implementation.
         const evmUpgrade = deployment.evmUpgrade && successor.evmUpgrade;
