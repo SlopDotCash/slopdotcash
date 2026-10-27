@@ -30,7 +30,8 @@ Each assessment remains permanently bound to its actual project revision,
 content digest, integration-branch commit and skill template. These fields never
 change when later content is admitted. The complete canonical retained evidence
 is checked on every clearance read; missing, corrupt, expired or unauthorized
-evidence fails closed.
+evidence fails closed. Successful bounded admission evidence is retained permanently under the
+27 October owner decision; other closed cases retain the 90-day rule.
 
 Owner decision #1467 section3.9 requires one successful admission scan when the
 project is added. The latest actual assessment in the uninterrupted history of

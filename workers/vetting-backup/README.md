@@ -40,7 +40,11 @@ claim that exercise has occurred.
 Raw deletion is separately disabled unless `EVIDENCE_RETENTION_MODE` is
 `enabled`. After a complete snapshot, the same single-consumer queue selects
 at most 16 objects whose case closed at least 90 days ago, using the D1 clock.
-Open and recently closed cases are not eligible. Closure comes from migration
+Open and recently closed cases are not eligible. Successful bounded admission-scan
+evidence is permanent and is never selected for deletion, including original
+evidence behind reused results (owner decision, 27 October 2026, #1467).
+The admission gate still verifies all required retained bytes; retention is not
+proof of a passed scan. Closure comes from migration
 0066 and the policy-owner route in the evidence API.
 
 Before deleting an object, the worker checks that every exact part exists in
