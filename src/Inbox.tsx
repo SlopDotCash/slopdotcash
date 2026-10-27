@@ -309,9 +309,9 @@ export default function InboxPage() {
           </button>
         ))}
       </nav>
-      {view === "reports" ? (
+      {view === "reports" && recipient !== null ? (
         <Suspense fallback={<p role="status">Loading reports…</p>}>
-          <SecurityInbox embedded />
+          <SecurityInbox embedded key={recipient} />
         </Suspense>
       ) : null}
       {view === "notifications" ? (
