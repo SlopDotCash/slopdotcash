@@ -105,9 +105,12 @@ to `"true"` after the explicit production qualification and activation review.
    removes the finding label and reverses the penalty. A later human close
    stays. The appeal escalates to a moderator, with the
    `slopbot: moderator` label, when the draft is rejected, the finding is
-   `scam`, the debit at stake is 24 thirds or more, the draft confidence is
-   below 0.9, or the appeal is unresolved 7 days after it opened. A moderator
-   in `PROJECT_MODERATOR_GITHUB_IDS` decides an escalated appeal with
+   `scam`, the appellant has an active participation ban, the debit at stake
+   is 24 thirds or more, the draft confidence is below 0.9, or the appeal is
+   unresolved 7 days after it opened. The account ban is checked again when
+   accepting a draft, including in the resolution write. Resolving this work
+   appeal never lifts the account ban. A moderator in
+   `PROJECT_MODERATOR_GITHUB_IDS` decides an escalated appeal with
    `/slopbot uphold` or `/slopbot deny`, never their own. Unset, no moderator
    decision is possible. A maintainer reopen always wins.
    The signature-verified webhook receipt binds a reopen to its item, sender,
