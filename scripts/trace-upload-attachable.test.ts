@@ -393,6 +393,44 @@ test("a failed storage write retains its reservation and permits a same-byte ret
   expect((await t.finalize(id)).status).toBe(200);
 });
 
+test("a stale or disabled private intake observation refuses a capability upload before any bytes are kept", async () => {
+  const t = api();
+  const created = await t.createRun();
+  const runId = created.json.serverRunId as string;
+  const intentA = await t.intent(runId, TRACE_A);
+  expect(intentA.status).toBe(201);
+  const uploadUrl = intentA.json.uploadUrl as string;
+  const observations = [
+    { status: "unavailable" as const },
+    {
+      status: "verified" as const,
+      enabled: false,
+      verifiedAt: new Date(T0).toISOString(),
+    },
+  ];
+  for (const observation of observations) {
+    // A client that skips the public preflight still reaches the write path.
+    t.deps.privateIntakeStatus = async () => observation;
+    const refused = await t.upload(uploadUrl, TRACE_A);
+    expect(refused.status).toBe(503);
+    expect(refused.json).toEqual({ error: "private_intake_unavailable" });
+    expect(await t.retained(TRACE_A)).toBe(false);
+    expect(t.reservation(runId)).toBeNull();
+    expect((await t.deps.persistence.getRun(runId))?.state).toBe(
+      "awaiting_trace",
+    );
+  }
+  // The unconsumed capability uploads once the observation is renewed.
+  t.deps.privateIntakeStatus = async () => ({
+    status: "verified",
+    enabled: true,
+    verifiedAt: new Date(T0).toISOString(),
+  });
+  expect((await t.upload(uploadUrl, TRACE_A)).status).toBe(201);
+  expect(await t.retained(TRACE_A)).toBe(true);
+  expect((await t.finalize(runId)).status).toBe(200);
+});
+
 test("an account ban stops trace intents, capability uploads and finalization on existing runs without retaining R2 bytes, while preserving wallet claims", async () => {
   const t = api();
   const runUploaded = await runWithTraceA(t);
