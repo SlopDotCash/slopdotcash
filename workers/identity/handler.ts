@@ -72,11 +72,14 @@ function publicOriginOf(deps: OriginDependencies): string {
     loopback: deps.allowLoopback,
   });
 }
-/** The site the sign-in page links back to: the local dev server when the identity origin is local. */
+/**
+ * Where the sign-in page links back to. For a local identity origin that is
+ * the dev server's sign-in page, which finishes a same-tab sign-in.
+ */
 function siteOf(deps: OriginDependencies): string {
   return deps.allowLoopback === true &&
     isLocalDevelopmentOrigin(deps.publicOrigin)
-    ? deps.publicOrigin
+    ? `${deps.publicOrigin}/login`
     : deploymentOrigins(deps.tier).site;
 }
 
