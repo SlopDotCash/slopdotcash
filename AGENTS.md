@@ -74,12 +74,7 @@ alias only.
     not transfer tokens; referrers claim their own tokens immediately after a
     root is posted (owner decision, 26 October 2026). The owner can void the
     latest root only before its first successful claim; paid tokens cannot be
-    clawed back. There is no guaranteed intervention window. Owner decision,
-    27 October 2026: defer referrals from launch. Keep the accrual mode off and
-    program flag false; do not file accruals or post roots. Referral setup,
-    funding and qualification do not gate launch. Preserve code and history.
-    Any later reactivation needs separate owner approval. After that approval,
-    the accrual job may run only in off or dry_run until the program
+    clawed back. There is no guaranteed intervention window. The accrual job may run only in off or dry_run until the program
     token exists, the funding line is agreed, an independent root watcher is
     operating, and the owner explicitly activates posting. Counsel review is
     not required (owner decision, 26 October 2026). Root
