@@ -9,7 +9,10 @@ import {
   verifyEvmVaultCreation,
 } from "../../contracts/evm/adapter";
 import type { ReviewedEvmFactory } from "../../contracts/evm/factories";
-import type { SolanaProgramConfig } from "../../contracts/solana/adapter";
+import {
+  type SolanaProgramConfig,
+  SolanaRpcUnavailable,
+} from "../../contracts/solana/adapter";
 import {
   prepareSolanaVaultCreation,
   SolanaVaultCreationFailed,
@@ -305,6 +308,8 @@ export function ownerVaultSetupService(deps: {
             prepared,
           };
         } catch (error) {
+          // The request can be valid while the chain is unreadable.
+          if (error instanceof SolanaRpcUnavailable) networkUnavailable();
           // A finalized creation can predate the current infrastructure pin.
           // Try only retained reviewed configurations, never trust account fields
           // as a new review. Preserve the failure if none matches this vault.
@@ -453,6 +458,7 @@ export function ownerVaultSetupService(deps: {
             deploymentTransaction: transactionId,
           };
         } catch (error) {
+          if (error instanceof SolanaRpcUnavailable) networkUnavailable();
           fail(
             422,
             error instanceof SolanaVaultCreationFailed
