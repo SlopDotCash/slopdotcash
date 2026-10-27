@@ -495,6 +495,18 @@ describe("automatic scan and activation", () => {
     ).toBe("unscanned");
   });
 
+  test("admission evidence stays usable after the ordinary 90-day closure boundary", async () => {
+    const id = await activeProject();
+    const original = JSON.stringify(await vetting.getAssessment(id));
+    clock = new Date(NOW.getTime() + 91 * 86400_000);
+    expect((await (await publicProject()).json()).vetting).toMatchObject({
+      state: "cleared",
+      basis: "admission",
+      assessment: { id },
+    });
+    expect(JSON.stringify(await vetting.getAssessment(id))).toBe(original);
+  });
+
   test("an explicit investigation can reuse identical content without automatic rescans", async () => {
     const first = await activeProject();
     // A routine commit keeps admission; a separate explicit request still

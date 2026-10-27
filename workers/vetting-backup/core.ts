@@ -1,5 +1,6 @@
 /** Private scanner backup and retention. No HTTP access. */
 import type { ProjectD1Database } from "../../backend/projects/cloudflare-persistence";
+import { PERMANENT_ADMISSION_EVIDENCE_SQL } from "../../backend/vetting/evidence-retention";
 import type { R2Bucket } from "../../backend/trace/cloudflare-persistence";
 import {
   chunkKey,
@@ -298,7 +299,9 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
         await env.EVIDENCE_DATABASE.prepare(
           `SELECT o.assessment_id,o.run_id,o.sha256,o.object_key,o.chunks,o.size_bytes
        FROM vetting_evidence_objects o JOIN vetting_evidence_case_closures c ON c.assessment_id=o.assessment_id
+       JOIN vetting_assessments a ON a.id=o.assessment_id
        WHERE julianday(c.closed_at,'+90 days') <= julianday('now')
+         AND COALESCE((${PERMANENT_ADMISSION_EVIDENCE_SQL}),0)=0
          AND o.object_key > ?
          AND NOT EXISTS (SELECT 1 FROM vetting_evidence_deletions d WHERE d.assessment_id=o.assessment_id AND d.run_id=o.run_id AND d.sha256=o.sha256)
        ORDER BY o.object_key LIMIT 16`,
