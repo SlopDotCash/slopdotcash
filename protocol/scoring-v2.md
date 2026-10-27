@@ -282,23 +282,29 @@ exclude implementation actors, bots, reviews after merge or closure, and
 duplicate findings. A review submitted at or after its author's account ban
 publishes `review-credit-account-banned` and takes no reviewer slot or share.
 Reviews before that ban remain eligible under their original policy.
-A qualifying review whose submission time is outside the
-scoring window publishes `review-credit-outside-window`. It takes no reviewer
-slot and no share. Its band does not replace an in-window review by the same
-person. The award keeps the submission time, so a later merge does not move
-that review into the current window. The remaining reviews are grouped by
-immutable reviewer node ID. Reviewers are ordered by their first in-window
-qualifying review's submission time, then review node ID. The first five share
-the pull request's review pool, weighted by each reviewer's highest in-window
-assessed band (triage 1, standard 3, deep 9, specialist 24 thirds). The pool
+Each pull request's allocation window has the scoring window's length and
+ends at its merge or closure. Every run that scores the pull request uses the
+same allocation window, so it selects the same reviewers and divides the same
+pool. A qualifying review submitted before the allocation window publishes
+`review-credit-outside-window`. It takes no reviewer slot and no share. Its
+band does not replace a later review by the same person. The award keeps the
+submission time, so a later merge does not move that review into the current
+window. A credited review inside the allocation window but before the current
+scoring window keeps its slot and share. It publishes
+`review-credit-outside-window` and keeps its earlier Points; the reviewer's
+later reviews take no second share. The remaining reviews are grouped by
+immutable reviewer node ID. Reviewers are ordered by their first qualifying
+review's submission time in the allocation window, then review node ID. The
+first five share the pull request's review pool, weighted by each reviewer's
+highest assessed band in the allocation window (triage 1, standard 3, deep 9, specialist 24 thirds). The pool
 is the sum of those five highest bands, capped at the pull request's own
 assessed size in thirds, and never less than one third. Each useful review
 thus earns its band until the reviews would outweigh the work, and a small
 review never earns a large fixed pool. Shares are integer thirds by largest
 remainder; equal remainders go to the earlier reviewer, and the shares always
 sum to the pool. Each credited reviewer has one ledger record, sourced from
-that reviewer's highest in-window band. Their other in-window reviews publish
-`already-awarded-reviewer`; later reviewers publish
+that reviewer's highest band in the allocation window. Their other reviews
+publish `already-awarded-reviewer`; later reviewers publish
 `review-credit-reviewer-limit`; a zero rounded share publishes
 `review-credit-zero-share`. A joint work unit whose accepted members span the
 effective instant is not applied, so legacy work is never scored twice; its
