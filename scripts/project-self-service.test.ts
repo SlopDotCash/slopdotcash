@@ -2575,3 +2575,117 @@ test("a ban issued during the authority check prevents automatic activation", as
     status: "paused",
   });
 });
+
+test("an account-page appeal from a banned owner survives reload without opening a project appeal", async () => {
+  const t = registry();
+  t.deps.moderatorGithubIds = new Set([ADMIN]);
+  t.deps.adminGithubIds = new Set([ADMIN]);
+  t.deps.github.fetch = async () =>
+    Response.json({ id: Number(OWNER), login: "owner", type: "User" });
+  expect((await t.create("account-page", "example/account-page")).status).toBe(
+    201,
+  );
+  const project = await t.persistence.getProject("account-page");
+  if (!project) throw new Error("Project missing");
+  const vettingBan = async (
+    sequence: number,
+    appealAfter: "none" | "requested" = "none",
+  ) => {
+    const current = await t.persistence.getProject(project.id);
+    if (!current) throw new Error("Project missing");
+    return t.persistence.appendEnforcement(
+      {
+        id: `enf_dual_appeal_scan_${sequence}`,
+        projectId: project.id,
+        sequence,
+        action: "ban",
+        stateAfter: "banned",
+        appealAfter,
+        reason: "Synthetic confirmed malicious scan",
+        evidenceReference: "private-case-fixture",
+        repositoryGithubId: "987654321",
+        repositoryKeys: ["example/dual-appeal"],
+        actor: null,
+        actorRole: "vetting-service",
+        decisionSource: "standing-rule",
+        systemIssuer: {
+          kind: "vetting-service",
+          keySha256: "a".repeat(64),
+          assessmentId: `vet_fixture_${sequence}`,
+          policyVersion: "fixture",
+          rule: "confirmed-malicious",
+        },
+        beforeRevision: current.revision,
+        beforeManifestSha256: current.manifestSha256,
+        afterRevision: null,
+        afterManifestSha256: null,
+        result: "revision_pending",
+        createdAt: NOW,
+      },
+      null,
+      [],
+    );
+  };
+  expect(await vettingBan(1)).toBe("recorded");
+  const ban = await t.call(
+    "POST",
+    "admin/projects/account-page/enforcement",
+    ADMIN,
+    {
+      action: "ban",
+      reason: "Reviewed malicious code",
+      evidenceReference: "private-case-fixture",
+      expectedRevision: project.revision,
+      expectedSequence: 2,
+      responsibleAccounts: [{ githubLogin: "owner" }],
+    },
+  );
+  expect(ban.status).toBe(200);
+  const body = {
+    projectId: "account-page",
+    appealScope: "account",
+    reason: "Review my account separately",
+    evidenceReference: "private-account-fixture",
+  };
+  expect((await t.call("POST", "project-appeals", OTHER, body)).status).toBe(
+    403,
+  );
+  expect(
+    (
+      await t.call("POST", "project-appeals", OWNER, {
+        ...body,
+        appealScope: "arbitrary",
+      })
+    ).status,
+  ).toBe(400);
+  const appealed = await t.call("POST", "project-appeals", OWNER, body);
+  expect(appealed.status).toBe(200);
+  expect(appealed.body.record).toMatchObject({
+    actorRole: "banned-account",
+    decisionSource: "account-request",
+    appealAfter: "requested",
+  });
+  expect((await t.call("GET", "project-appeals", OWNER)).body).toEqual({
+    appeals: [
+      { projectId: "account-page", state: "banned", appeal: "requested" },
+    ],
+  });
+  expect((await t.call("POST", "project-appeals", OWNER, body)).status).toBe(
+    409,
+  );
+  // The separate project appeal remains available after the account request.
+  const projectAppeal = await t.call("POST", "project-appeals", OWNER, {
+    projectId: "account-page",
+    reason: "Review the project restriction",
+    evidenceReference: "private-project-fixture",
+  });
+  expect(projectAppeal.status).toBe(200);
+  expect(projectAppeal.body.record).toMatchObject({
+    actorRole: "project-applicant",
+  });
+  expect((await t.call("GET", "project-appeals", OWNER)).body).toEqual({
+    appeals: [
+      { projectId: "account-page", state: "banned", appeal: "requested" },
+    ],
+  });
+});

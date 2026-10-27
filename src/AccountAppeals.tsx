@@ -82,6 +82,7 @@ function AccountAppealForm({
     void run(async () => {
       await projectApiRequest("POST", "project-appeals", {
         projectId: appeal.projectId,
+        appealScope: "account",
         reason: reason.trim(),
         evidenceReference: evidence.trim(),
       });
