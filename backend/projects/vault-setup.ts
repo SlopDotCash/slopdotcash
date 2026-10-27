@@ -278,7 +278,10 @@ export function ownerVaultSetupService(deps: {
             family: "solana" as const,
             template,
             config,
-            creation,
+            creation: {
+              ...creation,
+              tokenProgram: prepared.tokenProgram,
+            },
             prepared,
           };
         } catch (error) {
