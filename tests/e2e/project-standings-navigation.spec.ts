@@ -202,19 +202,10 @@ test("global standings still accept project, sort and contributor filters", asyn
 }) => {
   await fixtures(page);
   await page.goto(`${site}/projects/eliza?sort=money&period=lifetime`);
-  const fullView = page.getByRole("link", {
-    name: "View leaderboard",
-    exact: true,
-  });
-  await expect(fullView).toHaveAttribute(
-    "href",
-    "/points?period=lifetime&sort=money&project=eliza",
-  );
-  await fullView.focus();
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(
-    /\/points\?period=lifetime&sort=money&project=eliza/,
-  );
+  await expect(
+    page.getByRole("link", { name: /Full standings|View leaderboard/u }),
+  ).toHaveCount(0);
+  await page.goto(`${site}/points?period=lifetime&sort=money&project=eliza`);
   const standings = page.getByRole("region", {
     name: "Contributor standings",
     exact: true,
