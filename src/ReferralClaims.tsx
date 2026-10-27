@@ -86,7 +86,7 @@ export function ReferralClaims() {
     })
       .then(async (response) => {
         if (!response.ok)
-          throw new Error("Additional payout records could not load. Retry.");
+          throw new Error(`Referral request ${response.status}`);
         const value = referralResponse(
           await readBoundedJson(response, 262144, "referral claim"),
         );
@@ -117,12 +117,10 @@ export function ReferralClaims() {
           } else rememberPending(value, p);
         } else setPending(null);
       })
-      .catch((e: unknown) => {
+      .catch(() => {
         if (!controller.signal.aborted) {
           setLoadFailed(true);
-          setError(
-            errorMessage(e, "Additional payout records could not load. Retry."),
-          );
+          setError("Additional payout records could not load.");
         }
       });
     return () => controller.abort();

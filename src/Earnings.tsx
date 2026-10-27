@@ -33,6 +33,7 @@ import { apiRequest } from "./lib/project-api";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { shortAddress } from "./lib/wallets";
 import { PayoutConsent } from "./PayoutConsent";
 import {
   AWARD_STATUS,
@@ -64,10 +65,6 @@ const WALLET_FAMILIES: readonly {
   { id: "solana", label: "Solana", article: "a", chains: ["solana"] },
   { id: "evm", label: "EVM", article: "an", chains: EVM_CHAINS },
 ];
-
-function shortAddress(address: string): string {
-  return `${address.slice(0, address.startsWith("0x") ? 6 : 4)}…${address.slice(-4)}`;
-}
 
 class SignedOutError extends Error {}
 

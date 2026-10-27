@@ -1,6 +1,9 @@
+import { ArrowDown, ShieldCheck, Vault, Wallet } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { evmBindingTypedData } from "../contracts/evm/adapter";
+import { ChainIcon } from "./ChainIcon";
+import { Link } from "./Link";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
@@ -13,7 +16,7 @@ import {
 } from "./lib/payout-consent";
 import { apiRequest } from "./lib/project-api";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
-import { sameWalletAddress } from "./lib/wallets";
+import { sameWalletAddress, shortAddress } from "./lib/wallets";
 
 async function request(path: string, body: unknown) {
   const response = await apiRequest(`payments/wallets/${path}`, {
@@ -202,16 +205,23 @@ export function PayoutConsent({
   }
   return (
     <div className="payout-consent">
-      {!open && !notice && (
-        <button
-          type="button"
-          ref={actionButton}
-          className="button secondary-button"
-          onClick={() => setOpen(true)}
-        >
-          Authorize payout wallet
-        </button>
-      )}
+      {!open &&
+        !notice &&
+        (wallets.length === 0 ? (
+          // This browser has no wallet that can sign; wallets are set up in account settings.
+          <Link className="button secondary-button" href="/account#wallets">
+            Authorize payout wallet
+          </Link>
+        ) : (
+          <button
+            type="button"
+            ref={actionButton}
+            className="button secondary-button"
+            onClick={() => setOpen(true)}
+          >
+            Authorize payout wallet
+          </button>
+        ))}
       {createPortal(
         <dialog
           ref={dialog}
@@ -226,39 +236,52 @@ export function PayoutConsent({
           }}
           onClose={() => setOpen(false)}
         >
-          <h2 id={headingId} tabIndex={-1} ref={reviewHeading}>
-            Review payout wallet consent
-          </h2>
-          <p>
-            Receive your awards from this vault on{" "}
-            {networkLabel(payment.network)}.
-          </p>
-          <dl>
-            <dt>Confirmed payout address</dt>
-            <dd className="wallet-address">{claim.address}</dd>
-            <dt>Project vault</dt>
-            <dd className="wallet-address">{payment.vault}</dd>
-          </dl>
-          <p>
+          <div className="consent-head">
+            <ChainIcon chain={payment.chain} decorative />
+            <div>
+              <h2 id={headingId} tabIndex={-1} ref={reviewHeading}>
+                Authorize payout
+              </h2>
+              <p>{networkLabel(payment.network)}</p>
+            </div>
+          </div>
+          <div className="consent-route">
+            <dl className="consent-party">
+              <dt>
+                <Vault aria-hidden="true" size={16} />
+                Vault
+              </dt>
+              <dd>
+                <code className="wallet-address" title={payment.vault}>
+                  {shortAddress(payment.vault)}
+                </code>
+              </dd>
+            </dl>
+            <ArrowDown className="consent-arrow" aria-hidden="true" size={18} />
+            <dl className="consent-party">
+              <dt>
+                <Wallet aria-hidden="true" size={16} />
+                Your wallet
+              </dt>
+              <dd>
+                <code className="wallet-address" title={claim.address}>
+                  {shortAddress(claim.address)}
+                </code>
+              </dd>
+            </dl>
+          </div>
+          <p className="consent-note">
+            <ShieldCheck aria-hidden="true" size={16} />
             {network.family === "evm"
-              ? "Sign to authorize this payout address. No funds move."
-              : "Sign the binding transaction. No funds move; Slop pays the network fee."}
+              ? "Signing moves no funds."
+              : "Signing moves no funds. Slop pays the network fee."}
           </p>
-          {wallets.length === 0 && (
-            <p>
-              Open this page in a wallet browser with{" "}
-              {network.family === "evm"
-                ? "an EVM wallet"
-                : "a Solana wallet that supports transaction signing"}
-              .
-            </p>
-          )}
           <div className="wallet-picker-list">
             {wallets.map((wallet) => (
               <button
                 key={wallet.id}
                 type="button"
-                className="button secondary-button"
+                className="button primary-button"
                 disabled={busy}
                 onClick={() => void authorize(wallet)}
               >
@@ -267,6 +290,7 @@ export function PayoutConsent({
             ))}
             <button
               type="button"
+              className="button secondary-button"
               disabled={busy}
               onClick={() => {
                 setOpen(false);
@@ -276,7 +300,11 @@ export function PayoutConsent({
               Cancel
             </button>
           </div>
-          {error && <p role="alert">{error}</p>}
+          {error && (
+            <p role="alert" className="consent-error">
+              {error}
+            </p>
+          )}
         </dialog>,
         document.body,
       )}
