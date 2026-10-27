@@ -598,3 +598,19 @@
     margin-top: 0.25rem;
   }
 }
+
+.operations-page .route-page-header h1 {
+  font-size: clamp(1.6rem, 2.6vw, 2.25rem);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.operations-page .evidence-content,
+.operations-page .security-payment-request {
+  background: #0d0c09;
+  color: #d6d2c8;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.85rem;
+  line-height: 1.6;
+}
