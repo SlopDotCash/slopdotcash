@@ -67,7 +67,7 @@
     "escrow:acceptance": "bun scripts/escrow-acceptance.ts",
     "test:escrow-acceptance:local": "bun scripts/escrow-acceptance/local.ts",
     "test:vetting:sandbox": "bun workers/vetting-sandbox/workflow.ts",
-    "test:vetting:flags": "bun --no-env-file workers/vetting-flags/workflow.ts",
+    "test:vetting:flags": "node workers/vetting-flags/run-workflow.mjs",
     "test:vetting:recovery": "node workers/vetting-backup/qualification-workflow.mjs"
   },
   "dependencies": {
