@@ -114,7 +114,7 @@ test("shared navigation preserves project drafts and account sign-in destination
   await page.route("**/api/v1/notifications", (route) =>
     route.fulfill({ status: 401, json: { error: "unauthorized" } }),
   );
-  await page.goto("/projects/eliza");
+  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   const projectNav = page.getByRole("navigation", {
     name: "Project navigation",
   });
@@ -131,10 +131,12 @@ test("shared navigation preserves project drafts and account sign-in destination
   await expect(
     projectNav.getByRole("link", { name: "Security" }),
   ).toHaveAttribute("aria-current", "page");
+  await page.waitForLoadState("networkidle");
   await projectNav.getByRole("link", { name: "Settings" }).click();
   await expect(page.getByLabel("Short description")).toHaveValue(draft);
+  await page.waitForLoadState("networkidle");
 
-  await page.goto("/account");
+  await page.goto("/account", { waitUntil: "networkidle" });
   const accountNav = page.getByRole("navigation", {
     name: "Account navigation",
   });
@@ -142,7 +144,7 @@ test("shared navigation preserves project drafts and account sign-in destination
   await expect(page).toHaveURL(/\/earnings$/u);
   await expect(
     page.getByRole("main").getByRole("link", { name: "Sign in with GitHub" }),
-  ).toHaveAttribute("href", /next=%2Fearnings$/u);
+  ).toHaveAttribute("href", "/login?next=earnings");
   await accountNav.getByRole("link", { name: "Inbox" }).click();
   await expect(page).toHaveURL(/\/inbox$/u);
   await expect(
@@ -159,6 +161,7 @@ test("shared navigation preserves project drafts and account sign-in destination
   await expect(
     page.getByRole("heading", { name: "Run receipts" }),
   ).toBeVisible();
+  await page.waitForLoadState("networkidle");
   await records.getByRole("link", { name: "Cycles" }).focus();
   await page.keyboard.press("Enter");
   await expect(
