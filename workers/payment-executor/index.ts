@@ -800,12 +800,26 @@ function logRejected(route: string, error: unknown) {
 }
 
 /** Separate pending attempts and receipts, but atomically share the EVM nonce. */
-function privateScopeJournal(storage: JournalStore): JournalStore {
+export function privateScopeJournal(storage: JournalStore): JournalStore {
   const scoped = (key: string) =>
     key.startsWith("nonce:") ? key : `security:${key}`;
   return {
     get: <T>(key: string) => storage.get<T>(scoped(key)),
     put: <T>(key: string, value: T) => storage.put(scoped(key), value),
+    ...(storage.list
+      ? {
+          list: async <T>(options: { prefix: string; limit: number }) => {
+            const prefix = scoped(options.prefix);
+            const values = await storage.list!<T>({ ...options, prefix });
+            return new Map(
+              [...values].map(([key, value]) => [
+                prefix === options.prefix ? key : key.slice("security:".length),
+                value,
+              ]),
+            );
+          },
+        }
+      : {}),
     transaction: <T>(callback: (store: JournalStore) => Promise<T>) =>
       storage.transaction((transaction) =>
         callback(privateScopeJournal(transaction)),
