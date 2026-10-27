@@ -1778,6 +1778,7 @@ function SubmissionsPanel({
   onOpenCase: (caseId: string) => void;
 }) {
   const [submissions, setSubmissions] = useState<Submission[] | null>(null);
+  const [authorityUnavailable, setAuthorityUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (submissions === null) return;
@@ -1791,14 +1792,16 @@ function SubmissionsPanel({
   }, [submissions, onLinkFallback]);
   const load = useCallback(() => {
     setError(null);
-    projectApiRequest<{ automatic: boolean; submissions: Submission[] }>(
-      "GET",
-      "security-submissions",
-    ).then(
+    projectApiRequest<{
+      automatic: boolean;
+      submissions: Submission[];
+      authorityUnavailable?: boolean;
+    }>("GET", "security-submissions").then(
       (body) => {
         // Report text is kept only while its submission can still be sent.
         pruneDrafts(body.submissions);
         setSubmissions(body.submissions);
+        setAuthorityUnavailable(body.authorityUnavailable === true);
         onAvailability(body.automatic === true);
       },
       (caught: unknown) => {
@@ -1823,7 +1826,7 @@ function SubmissionsPanel({
   const shown = submissions.filter(
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
-  if (shown.length === 0 && !grantError) return null;
+  if (shown.length === 0 && !grantError && !authorityUnavailable) return null;
   const pending = shown.filter((entry) => entry.state !== "receipt-verified");
   const verified = shown.filter((entry) => entry.state === "receipt-verified");
   const renderSubmission = (submission: Submission) => (
@@ -1850,6 +1853,15 @@ function SubmissionsPanel({
           <RotateCcw aria-hidden="true" /> Refresh reports
         </button>
       </div>
+      {authorityUnavailable ? (
+        <p className="form-error" role="status">
+          <CircleAlert aria-hidden="true" /> Some maintainer access could not be
+          checked. Your own reports are shown.{" "}
+          <button className="text-button" onClick={load} type="button">
+            Retry access check
+          </button>
+        </p>
+      ) : null}
       {error ? (
         <p className="form-error" role="alert">
           Report status could not refresh. The previous status is shown. {error}

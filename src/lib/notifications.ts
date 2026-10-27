@@ -72,6 +72,8 @@ export interface Notification {
 }
 
 export interface NotificationsResponse {
+  /** The authenticated recipient of this response and its private inbox. */
+  recipientGithubId: string;
   notifications: Notification[];
   unread: number;
   nextCursor?: string | null;
@@ -137,6 +139,8 @@ export function parseNotificationsResponse(
   if (
     typeof body !== "object" ||
     body === null ||
+    typeof body.recipientGithubId !== "string" ||
+    !/^[1-9][0-9]{0,19}$/u.test(body.recipientGithubId) ||
     !Array.isArray(body.notifications) ||
     !body.notifications.every(isNotification) ||
     !Number.isSafeInteger(body.unread) ||

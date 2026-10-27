@@ -1114,6 +1114,7 @@ test("reaches and reads older inbox notifications without losing the page", asyn
     const last = entries.at(-1);
     return route.fulfill({
       json: {
+        recipientGithubId: "42",
         notifications: entries,
         unread: notifications.filter((n) => n.readAt === null).length,
         nextCursor:
@@ -1211,7 +1212,12 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   ];
   await page.route(/\/api\/v1\/notifications(?:\?.*)?$/u, (route) =>
     route.fulfill({
-      json: { notifications, unread: 3, nextCursor: null },
+      json: {
+        recipientGithubId: "42",
+        notifications,
+        unread: 3,
+        nextCursor: null,
+      },
     }),
   );
   await page.route("**/api/v1/notifications/email", (route) =>
