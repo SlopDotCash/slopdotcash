@@ -87,6 +87,15 @@ before displaying or retaining the response. A later session read does not
 establish who received an earlier response. Case lists already carry `viewer`
 for the same check.
 
+The private workspace also sends `x-slop-expected-github-id` on each report
+and case request. Authentication resolves the current actor first, then
+refuses a malformed expectation or a different actor before private reads or
+writes. The header only narrows the authenticated session; it never supplies
+authority. Existing clients may omit it and retain the normal role checks.
+The browser drops retained private views on account changes or access loss,
+and clears tab drafts after confirmed sign-out while retaining uncertain
+submissions through temporary session failures.
+
 A caller without a role gets the same 404 as for a missing case. Writes need
 this site's `Origin` and a JSON content type. Responses are `private,
 no-store` and `noindex`. Errors never log case data.
