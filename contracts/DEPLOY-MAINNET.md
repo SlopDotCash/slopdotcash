@@ -331,20 +331,16 @@ KEY=$(cast call "$FACTORY" 'vaultKey(address,bytes32,address,uint8)(bytes32)' \
 VAULT=$(cast call "$FACTORY" 'vaults(bytes32)(address)' "$KEY" --rpc-url "$RPC")
 ```
 
-> **Required upgrade step.** Owner vault setup on the website calls
-> `createWithMonthlyCommitment`. Base's finalized upgrade above supports this
-> method; its reviewed infrastructure must still reach the protected release.
-> Ethereum and Robinhood retain the older implementations. Before setup can
-> work on either of those networks, an
-> operator must deploy and verify new factory and vault implementations, and
-> the upgrade authority (the owner wallet) must sign the factory upgrade below.
-> Until then, the setup route refuses creation on that network. Section 4 holds
-> the reviewed upgrade kit. A source merge does not perform an upgrade.
+> **The required upgrades are complete.** The finalized bundled upgrade above
+> supplies `createWithMonthlyCommitment` on Base, Ethereum and Robinhood.
+> `contracts/evm/factories.ts` records those reviewed implementations. Do not
+> repeat the upgrade to enable project setup. The website also requires the
+> network in `PAYMENT_NETWORKS`; a published factory review alone does not enable
+> it. Complete the ordered activation and first-payment checks in section 3.
 
 For a new ordinary vault under PRD decision D1, use the reviewed factory and
-vault implementation that support atomic monthly setup. The older deployments
-listed above do not gain this method from a source merge. After a reviewed
-operator upgrade, replace the creation call above with:
+vault implementation that support atomic monthly setup. Replace the legacy
+creation call above with:
 
 ```sh
 cast send "$FACTORY" 'createWithMonthlyCommitment(bytes32,address,uint128,bool)' \
@@ -358,10 +354,11 @@ Read `monthlyCap()` and `monthlyEnabled()` from the created vault at the same
 finalized block as its other acceptance reads. The legacy creation call is
 for compatibility and private bounty vaults; it does not enable the default.
 
-For an existing factory, the operator first deploys and verifies the reviewed
-replacement factory and vault implementations. Prepare and simulate this
-unsigned factory upgrade, which also selects the implementation for future
-vaults in the same transaction:
+For a separately approved future factory upgrade, the operator first deploys
+and verifies the reviewed replacement factory and vault implementations.
+Prepare and simulate this unsigned factory upgrade, which also selects the
+implementation for future vaults in the same transaction. This is not a step
+to repeat for the current deployments:
 
 ```sh
 SET_VAULT_DATA=$(cast calldata 'setVaultImplementation(address)' "$NEW_VAULT_IMPLEMENTATION")
@@ -706,8 +703,10 @@ proxy, its implementation and selected new-vault implementation, runtime
 hashes, upgrade authority, registrar, identity authority, fee recipient and
 delays. Record those reviewed fields, the source commit and expected vault
 proxy runtime hash once in `REVIEWED_EVM_FACTORIES`, with the public chain
-proof in the PR. The normal main release makes that factory available to
-owners. No secret belongs in this file.
+proof in the PR. Publish the review through the normal main release. Owner
+setup also requires that network in `PAYMENT_NETWORKS`; its activation and
+first reconciled payout remain separate section 3 gates. No secret belongs
+in this file.
 
 The owner saves the project reward policy, confirms the wallet in Earnings,
 reviews creation and signs with that wallet. The server checks the actual
