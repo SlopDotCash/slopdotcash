@@ -207,18 +207,26 @@ for (const withObligations of [false, true])
         fullPage: true,
       });
       const profile = page.locator("#profile");
+      const signInPopup = page.waitForEvent("popup");
       await profile
         .getByRole("button", { name: "Continue with GitHub", exact: true })
         .click();
+      const signInWindow = await signInPopup;
       await expect(profile).toContainText("You closed this account.");
+      await expect.poll(() => signInWindow.isClosed()).toBe(true);
+      expect(page.isClosed()).toBe(false);
       expect((await readState()).member.closed_at).not.toBeNull();
+      const reopenPopup = page.waitForEvent("popup");
       await profile
         .getByRole("button", {
           name: "Reopen account with GitHub",
           exact: true,
         })
         .click();
+      const reopenWindow = await reopenPopup;
       await expect(profile).toContainText("Your account is open again.");
+      await expect.poll(() => reopenWindow.isClosed()).toBe(true);
+      expect(page.isClosed()).toBe(false);
       const reopened = await readState();
       expect(reopened.retained).toEqual(before.retained);
       expect(reopened.member).toEqual({ public: 1, closed_at: null });
