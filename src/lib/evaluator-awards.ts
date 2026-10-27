@@ -392,6 +392,7 @@ export function loadEvaluatorAwardEvents(
   }
   const ids = new Set<string>();
   const sources = new Set<string>();
+  const githubWork = new Set<string>();
   const reviewPairs = new Set<string>();
   const externalWork = new Set<string>();
   const externalContent = new Set<string>();
@@ -421,7 +422,20 @@ export function loadEvaluatorAwardEvents(
       throw new TypeError(`${relative(root, path)} does not match projectId`);
     }
     const sourceKey = `${manifest.repository}\0${manifest.source.id}`;
-    if (ids.has(manifest.id) || sources.has(sourceKey)) {
+    // One GitHub item has a legacy and a current node ID, and its URL may use
+    // another case or a transfer alias. Key it by number and fragment too.
+    const githubWorkKey = manifest.source.platform
+      ? null
+      : JSON.stringify([
+          manifest.repository,
+          manifest.source.number,
+          new URL(manifest.source.url).hash.toLowerCase(),
+        ]);
+    if (
+      ids.has(manifest.id) ||
+      sources.has(sourceKey) ||
+      (githubWorkKey !== null && githubWork.has(githubWorkKey))
+    ) {
       throw new TypeError("evaluator award ids and sources must be unique");
     }
     if (manifest.source.kind === "review") {
@@ -455,6 +469,7 @@ export function loadEvaluatorAwardEvents(
     }
     ids.add(manifest.id);
     sources.add(sourceKey);
+    if (githubWorkKey !== null) githubWork.add(githubWorkKey);
     return {
       id: manifest.id,
       actor: manifest.actor,
