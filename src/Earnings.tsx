@@ -30,7 +30,6 @@ import {
   UNRESERVED_AWARD_STATES,
 } from "./lib/payments/contracts";
 import { apiRequest } from "./lib/project-api";
-import { findProject } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
