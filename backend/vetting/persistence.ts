@@ -252,18 +252,11 @@ export class CloudflareVettingPersistence {
     >,
   ): Promise<"created" | "conflict"> {
     try {
-      const result = await this.db
+      await this.db
         .prepare(
           `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, flag_ids)
-           SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending',
-             (SELECT json_group_array(id) FROM (SELECT id FROM project_flags WHERE project_id = ?12 AND state = 'active' ORDER BY id))
-           WHERE NOT EXISTS (
-             SELECT 1 FROM vetting_assessments current
-             WHERE current.rowid = (SELECT MAX(rowid) FROM vetting_assessments WHERE project_id = ?2)
-               AND current.state = 'pending' AND current.revision = ?3
-               AND current.commit_sha = ?6 AND current.template_sha256 = ?7
-               AND current.flag_ids = (SELECT json_group_array(id) FROM (SELECT id FROM project_flags WHERE project_id = ?12 AND state = 'active' ORDER BY id))
-           )`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending',
+             (SELECT json_group_array(id) FROM (SELECT id FROM project_flags WHERE project_id = ? AND state = 'active' ORDER BY id)))`,
         )
         .bind(
           assessment.id,
@@ -280,7 +273,7 @@ export class CloudflareVettingPersistence {
           assessment.projectId,
         )
         .run();
-      return result.meta?.changes === 0 ? "conflict" : "created";
+      return "created";
     } catch (error) {
       if (error instanceof Error && /UNIQUE/u.test(error.message))
         return "conflict";
