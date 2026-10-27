@@ -489,10 +489,31 @@ export function applyPointsSnapshot(
   const publishedPenalties = (snapshot.penalties ?? []).filter((penalty) =>
     repositoryIds.has(penalty.repository),
   );
+  // Retained awards left the rolling ledger, but they are still that month's
+  // credit, so the debit is bounded by them too instead of under-applying.
+  const retainedCredit = new Map<string, number>();
+  const retainedKeys = retainedBatchOwnedKeys(journal);
+  for (const revision of latestPoints(journal).values()) {
+    const award = revision.award;
+    if (
+      !retainedKeys.has(award.key) ||
+      award.category === PENALTY_DEBIT_CATEGORY ||
+      !award.amount
+    )
+      continue;
+    if (award.amount % POINTS_PER_THIRD !== 0)
+      throw new Error("Retained points are not whole score thirds");
+    const bucket = `${award.actor.id}\0${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
+    retainedCredit.set(
+      bucket,
+      (retainedCredit.get(bucket) ?? 0) + award.amount / POINTS_PER_THIRD,
+    );
+  }
   const appliedDebits = penaltyDeductions(
     snapshot.ledger,
     publishedPenalties,
     debitProjectOf,
+    retainedCredit,
   ).byPenalty;
   for (const penalty of publishedPenalties) {
     const thirds = appliedDebits.get(penalty.id) ?? 0;
@@ -518,9 +539,16 @@ export function applyPointsSnapshot(
   // deletion from missing pages or a shortened rolling window.
   for (const previous of latestPoints(journal).values()) {
     const a = previous.award;
-    if (a.category === PENALTY_DEBIT_CATEGORY && !keys.has(a.key)) {
-      // A reversed debit is absent from the published feed, so the next
-      // snapshot restores that month's points instead of keeping a stale debit.
+    if (
+      a.category === PENALTY_DEBIT_CATEGORY &&
+      !keys.has(a.key) &&
+      a.occurredAt >= snapshot.window.from &&
+      a.occurredAt < snapshot.window.to
+    ) {
+      // Inside the published window an absent debit is a reversal from the
+      // feed, so the next snapshot restores that month's points. Outside it the
+      // snapshot simply stopped carrying the closed pull request, which proves
+      // nothing: preserve the recorded debit instead of silently restoring it.
       awards.push({ ...a, amount: 0 });
       keys.add(a.key);
     }

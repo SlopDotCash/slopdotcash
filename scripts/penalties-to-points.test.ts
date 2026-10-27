@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import type { LeaderboardSnapshot } from "../src/lib/leaderboard";
+import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
 import {
   appendPointAwards,
   applyPointsSnapshot,
@@ -10,6 +11,11 @@ import {
   pointMembers,
 } from "../src/lib/points";
 import { REGISTERED_REPOSITORIES } from "../src/lib/repositories.mjs";
+import {
+  CLOSED_PULL_REQUEST_ID,
+  PENALIZED_AUTHOR,
+  penaltyScoreInput,
+} from "../tests/penalty-score-fixture";
 
 /** A registered project repository, provided by tests/registry-preload.ts. */
 const repository = REGISTERED_REPOSITORIES[0];
@@ -164,5 +170,110 @@ describe("published Slopbot debits reach Points", () => {
         spam.occurredAt,
       ),
     ).toThrow("Invalid point award");
+  });
+});
+
+/** The published feed record for the fixture's Slopbot-closed pull request. */
+const FEED = [
+  {
+    itemNodeId: CLOSED_PULL_REQUEST_ID,
+    authorGithubId: "42",
+    category: "spam",
+    tableVersion: "slopbot-penalties-v1",
+    debitThirds: 3,
+    period: "2026-11",
+    recordedAt: "2026-11-10T00:00:00.000Z",
+  },
+];
+
+function authorTotal(
+  journal: ReturnType<typeof emptyPointsJournal>,
+  month: string,
+): number {
+  return (
+    pointMembers(journal, month).find((m) => m.actor.id === PENALIZED_AUTHOR.id)
+      ?.total ?? 0
+  );
+}
+
+describe("debit retention outside the published window", () => {
+  // The fixture builds November and December 2026 snapshots, and a snapshot may
+  // not be dated in the future. Reset after every test.
+  afterEach(() => setSystemTime());
+
+  test("a debit that ages out of the window is preserved, not reversed", () => {
+    // The first snapshot carries the close of 2026-10-16 in its window, so the
+    // debit is published and applied.
+    const first = snapshot();
+    let journal = applyPointsSnapshot(
+      emptyPointsJournal(first.generatedAt),
+      first,
+      "b".repeat(64),
+      first.generatedAt,
+    );
+    const before = totalAfter([first]);
+    expect(journal.revisions.some((r) => r.award.amount < 0)).toBe(true);
+
+    // The next snapshot moves its window forward, so the 35-day retention no
+    // longer carries that close and publishes no debit for it. Absence is not a
+    // reversal: the recorded debit must survive untouched.
+    const later = {
+      ...snapshot({ penalties: [] }),
+      generatedAt: "2026-11-20T00:00:00.000Z",
+      window: {
+        from: "2026-10-20T00:00:00.000Z",
+        to: "2026-11-20T00:00:00.000Z",
+      },
+    } as LeaderboardSnapshot;
+    expect(later.penalties ?? []).toEqual([]);
+    journal = applyPointsSnapshot(
+      journal,
+      later,
+      "c".repeat(64),
+      later.generatedAt,
+    );
+    expect(
+      journal.revisions.some(
+        (r) =>
+          r.award.category === PENALTY_DEBIT_CATEGORY && r.award.amount === 0,
+      ),
+    ).toBe(false);
+    const member = pointMembers(journal, "2026-10").find(
+      (m) => m.actor.id === actor.id,
+    );
+    expect(member?.total).toBe(before);
+  });
+
+  test("a debit withdrawn inside the window is restored", () => {
+    setSystemTime(new Date("2026-12-21T00:00:00.000Z"));
+    const debited = createLeaderboardSnapshot(
+      penaltyScoreInput(FEED, "2026-11-20T00:00:00.000Z"),
+    );
+    let journal = applyPointsSnapshot(
+      emptyPointsJournal(debited.generatedAt),
+      debited,
+      "d".repeat(64),
+      debited.generatedAt,
+    );
+    const withDebit = authorTotal(journal, "2026-11");
+
+    // The feed no longer lists the debit, and its close is still inside the
+    // window: this is an upheld appeal or a maintainer reopen.
+    const cleared = createLeaderboardSnapshot(
+      penaltyScoreInput([], "2026-11-20T00:00:00.000Z"),
+    );
+    journal = applyPointsSnapshot(
+      journal,
+      cleared,
+      "e".repeat(64),
+      cleared.generatedAt,
+    );
+    expect(authorTotal(journal, "2026-11")).toBeGreaterThan(withDebit);
+    expect(
+      journal.revisions.some(
+        (r) =>
+          r.award.category === PENALTY_DEBIT_CATEGORY && r.award.amount === 0,
+      ),
+    ).toBe(true);
   });
 });
