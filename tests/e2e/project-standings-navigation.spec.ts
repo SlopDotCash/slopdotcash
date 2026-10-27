@@ -205,12 +205,25 @@ test("global standings still accept project, sort and contributor filters", asyn
   await expect(
     page.getByRole("link", { name: /Full standings|View leaderboard/u }),
   ).toHaveCount(0);
-  await page.goto(`${site}/points?period=lifetime&sort=money&project=eliza`);
+  await page.goto(`${site}/?period=lifetime&sort=money`);
+  const fullView = page.getByRole("link", {
+    name: "View leaderboard",
+    exact: true,
+  });
+  await expect(fullView).toHaveAttribute(
+    "href",
+    "/points?period=lifetime&sort=money",
+  );
+  await expectAccessible(page);
+  await fullView.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/points\?period=lifetime&sort=money/);
   const standings = page.getByRole("region", {
     name: "Contributor standings",
     exact: true,
   });
   const project = standings.getByLabel("Project", { exact: true });
+  await project.selectOption("eliza");
   await expect(project).toHaveValue("eliza");
   await expect(
     standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),

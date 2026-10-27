@@ -1290,6 +1290,9 @@ export function ContributorStandings({
     }
   }, [searchQuery]);
   const project = projectId ?? filters.project;
+  const fullView = new URLSearchParams({ period, sort });
+  if (project) fullView.set("project", project);
+  if (query) fullView.set("q", query);
   const setSort = (sort: "points" | "money") =>
     setFilters((v) => ({ ...v, sort, page: 0 }));
   const setPeriod = (period: string) =>
@@ -1379,7 +1382,18 @@ export function ContributorStandings({
       className="points-panel"
       aria-label={title ?? "Contributor standings"}
     >
-      {compact ? <h2>{title ?? "Contributor standings"}</h2> : null}
+      {compact ? (
+        projectId ? (
+          <h2>{title ?? "Contributor standings"}</h2>
+        ) : (
+          <div className="points-panel-heading">
+            <h2>{title ?? "Contributor standings"}</h2>
+            <Link href={`/points?${fullView.toString()}`}>
+              View leaderboard
+            </Link>
+          </div>
+        )
+      ) : null}
       {showDataNotice ? (
         <DataNotice state={scores} retry={retryScore ?? retryLoadedScore} />
       ) : null}
