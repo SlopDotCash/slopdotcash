@@ -146,16 +146,21 @@ for (const [next, expected] of [
     await action.click();
     await (await popup).close();
     await expect(page).toHaveURL(expected);
-    await page.goto(`${deployment.site}/account#profile`);
-    const profile = page.locator("#profile");
+    await page.goto(`${deployment.site}/account`);
+    // Signed in, the account page has no sign-in panel; its section links
+    // include Connections, which only a member sees.
+    const sections = page.getByRole("navigation", {
+      name: "Account sections",
+    });
     await expect(
-      profile.getByRole("button", { name: "Sign out" }),
+      sections.getByRole("link", { name: "Connections" }),
     ).toBeVisible();
+    await expect(page.locator("#profile")).toHaveCount(0);
     // Membership is always public, so the account page offers no visibility choice.
-    await expect(profile.getByRole("checkbox")).toHaveCount(0);
+    await expect(page.getByRole("main").getByRole("checkbox")).toHaveCount(0);
     await page.reload();
     await expect(
-      profile.getByRole("button", { name: "Sign out" }),
+      sections.getByRole("link", { name: "Connections" }),
     ).toBeVisible();
     await page.goto(
       `${deployment.site}/login?next=${encodeURIComponent(next)}`,

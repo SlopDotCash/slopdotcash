@@ -1265,11 +1265,6 @@ main h2 {
   border-top: 1px solid var(--line);
 }
 
-.wallet-note {
-  color: var(--muted);
-  font-size: 13px;
-}
-
 @keyframes wallet-spin {
   to {
     transform: rotate(360deg);
