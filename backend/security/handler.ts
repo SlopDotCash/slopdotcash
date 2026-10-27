@@ -3039,7 +3039,13 @@ async function actOnCase(
     action === "triage-appeal"
   )
     return await automaticAction(deps, row, roles, actor, action, body);
-  if (row.submission_state !== "verified")
+  // These two maintainer decisions establish or reject the claimed receipt.
+  // planChange still checks the current role and allowed transition.
+  if (
+    row.submission_state !== "verified" &&
+    action !== "verify-link" &&
+    action !== "reject-link"
+  )
     fail(409, "not_verified", "The case is not verified yet");
   const change = await planChange(
     deps,
