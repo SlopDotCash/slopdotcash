@@ -80,7 +80,6 @@
     "@wallet-standard/base": "1.1.1",
     "@wallet-standard/features": "1.1.1",
     "lucide-react": "^1.0.0",
-    "qrcode": "1.5.4",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "viem": "2.57.3"
@@ -91,7 +90,6 @@
     "@noble/curves": "2.4.0",
     "@playwright/test": "^1.61.0",
     "@types/node": "^24.0.0",
-    "@types/qrcode": "1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@typescript/native": "npm:typescript@^7.0.2",
