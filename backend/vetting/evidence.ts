@@ -766,12 +766,162 @@ export class VettingEvidence {
       const required = new Set([
         result.scan.reportSha256,
         result.assessed.inputManifestSha256,
+        ...(result.assessed.sourceInventorySha256
+          ? [result.assessed.sourceInventorySha256]
+          : []),
         ...result.assessed.dependencyLocks.map((lock) => lock.sha256),
         ...result.artifacts.flatMap((artifact) => [
           artifact.sha256,
           ...(artifact.parentSha256 ? [artifact.parentSha256] : []),
         ]),
       ]);
+      if (result.assessed.sourceInventorySha256) {
+        const reportRow = bySha.get(result.scan.reportSha256);
+        const sourceRow = bySha.get(result.assessed.sourceInventorySha256);
+        const finalRow = bySha.get(result.assessed.inputManifestSha256);
+        if (
+          reportRow?.kind !== "trace" ||
+          sourceRow?.kind !== "manifest" ||
+          finalRow?.kind !== "manifest"
+        )
+          return false;
+        const bytes = await this.bytes(reportRow, run);
+        let report: unknown;
+        try {
+          report = JSON.parse(
+            new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          );
+        } catch {
+          return false;
+        }
+        if (
+          !isRecord(report) ||
+          !hasKeys(report, [
+            "schemaVersion",
+            "assessmentId",
+            "sourceInventorySha256",
+            "inventorySha256",
+            "findings",
+            "downloads",
+            "execution",
+            "executionEvidenceSha256s",
+            "visibilityGaps",
+            "reviews",
+          ]) ||
+          report.schemaVersion !== "slop-scan-report-v2" ||
+          report.assessmentId !== assessmentId ||
+          report.sourceInventorySha256 !==
+            result.assessed.sourceInventorySha256 ||
+          report.inventorySha256 !== result.assessed.inputManifestSha256 ||
+          JSON.stringify(report.execution) !==
+            JSON.stringify(result.execution) ||
+          !Array.isArray(report.executionEvidenceSha256s) ||
+          report.executionEvidenceSha256s.length > 500 ||
+          (result.execution !== null &&
+            report.executionEvidenceSha256s.length === 0)
+        )
+          return false;
+        const executionDigests = new Set<string>();
+        const executionItems: { id: string; text: string; sha256: string }[] =
+          [];
+        for (const sha of report.executionEvidenceSha256s) {
+          const executionRow =
+            typeof sha === "string" ? bySha.get(sha) : undefined;
+          if (
+            typeof sha !== "string" ||
+            !HEX.test(sha) ||
+            executionDigests.has(sha) ||
+            executionRow?.kind !== "trace"
+          )
+            return false;
+          executionDigests.add(sha);
+          required.add(sha);
+          // Failed/opaque output is valid retained evidence for an incomplete
+          // result. Only clean admission requires the exact review-item graph.
+          if (result.disposition !== "clean") continue;
+          const executionBytes = await this.bytes(executionRow, run);
+          try {
+            const execution: unknown = JSON.parse(
+              new TextDecoder("utf-8", { fatal: true }).decode(executionBytes),
+            );
+            if (
+              !isRecord(execution) ||
+              execution.schema !== "slop-isolated-artifact-v1" ||
+              typeof execution.runId !== "string" ||
+              typeof execution.stdoutBase64 !== "string" ||
+              typeof execution.stderrBase64 !== "string"
+            )
+              return false;
+            const output = (value: string) => {
+              const binary = atob(value);
+              if (binary.length > 65536 || btoa(binary) !== value)
+                throw new Error("Invalid execution output");
+              return new TextDecoder("utf-8", { fatal: true }).decode(
+                Uint8Array.from(binary, (character) => character.charCodeAt(0)),
+              );
+            };
+            const text = JSON.stringify({
+              ...execution,
+              stdout: output(execution.stdoutBase64),
+              stderr: output(execution.stderrBase64),
+            });
+            executionItems.push({
+              id: `execution:${execution.runId}`,
+              text,
+              sha256: await sha256Hex(new TextEncoder().encode(text)),
+            });
+          } catch {
+            return false;
+          }
+        }
+        if (result.disposition === "clean") {
+          const sourceBytes = await this.bytes(sourceRow, run);
+          const finalBytes = await this.bytes(finalRow, run);
+          try {
+            const source: unknown = JSON.parse(
+              new TextDecoder("utf-8", { fatal: true }).decode(sourceBytes),
+            );
+            const final: unknown = JSON.parse(
+              new TextDecoder("utf-8", { fatal: true }).decode(finalBytes),
+            );
+            if (
+              !isRecord(source) ||
+              !isRecord(final) ||
+              !hasKeys(source, [
+                "schemaVersion",
+                "items",
+                "artifacts",
+                "visibilityGaps",
+              ]) ||
+              !hasKeys(final, [
+                "schemaVersion",
+                "items",
+                "artifacts",
+                "visibilityGaps",
+              ]) ||
+              source.schemaVersion !== "slop-scan-inventory-v2" ||
+              final.schemaVersion !== source.schemaVersion ||
+              !Array.isArray(source.items) ||
+              !Array.isArray(final.items) ||
+              JSON.stringify(final.items) !==
+                JSON.stringify([...source.items, ...executionItems]) ||
+              !Array.isArray(source.artifacts) ||
+              !Array.isArray(final.artifacts) ||
+              JSON.stringify(source.artifacts) !==
+                JSON.stringify(final.artifacts) ||
+              !Array.isArray(source.visibilityGaps) ||
+              !Array.isArray(final.visibilityGaps) ||
+              final.visibilityGaps.length !== 0 ||
+              JSON.stringify(
+                final.visibilityGaps.slice(0, source.visibilityGaps.length),
+              ) !== JSON.stringify(source.visibilityGaps)
+            )
+              return false;
+          } catch {
+            return false;
+          }
+        }
+      }
       for (const sha of required) {
         const row = bySha.get(sha);
         if (!row) return false;

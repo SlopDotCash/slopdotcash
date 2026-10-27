@@ -47,6 +47,7 @@ import {
   isScanResult,
   parseRecordedVettingResult,
   recordedResultProblems,
+  scanSourceInventory,
 } from "./scan-result";
 
 const VETTING_SIGNATURE_CONTEXT = "slop-vetting:v1";
@@ -761,10 +762,10 @@ async function serviceReuse(
         repository: project.manifest.repositories[0]?.id ?? "",
         commitSha: assessment.commitSha,
         templateSha256: assessment.templateSha256,
-        inputManifestSha256: value.inputManifestSha256,
       },
       reusedAssessmentId: cached.id,
     };
+    if (scanSourceInventory(result) !== value.inputManifestSha256) continue;
     if (!reusableCleanScan(cached, result, restriction)) continue;
     if (recordedResultProblems(result).length > 0) continue;
     if (!(await deps.evidence?.retained(result))) continue;

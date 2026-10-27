@@ -100,6 +100,7 @@ records described in [Independent reinstatement](#independent-reinstatement).
 | `POST /api/v1/admin/vetting/assessments` | admin          | Queues a scan of the current revision (`projectId`, `revision`, `reason`) at the live branch head and template digest; HTTP 503 `pin_unavailable` when either cannot be read |
 | `GET /api/v1/vetting/requests`           | signed service | Queued scans with the assigned `commitSha` and `templateSha256`, the revision URL and the template index URL                                                                 |
 | `POST /api/v1/vetting/results`           | signed service | Records one `slop-vetting-result-v2` scan result, or a historical `slop-vetting-result-v1` result                                                                            |
+| `POST /api/v1/vetting/reuse`             | signed service | Reads an original clean scan by the acquired-input inventory digest, without granting clearance or returning trace bodies |
 | `POST /api/v1/vetting/refresh`           | signed service | Body `{}`. Queues automatic scans, for the project steward, of changed or unscanned content and of flag-only pauses. Completes a flag-only reinstatement that a fresh clean scan at the current live pin could not write when it landed. Returns the queued and reinstated assessment ids                                    |
 | `GET /api/v1/project-flags/:id`          | member         | The member's own active flag and the project's restriction state                                                                                                              |
 | `POST /api/v1/project-flags/:id`         | member         | Files one flag (`category`, `evidence`, optional GitHub `evidenceUrl`); the second distinct active reporter pauses the project                                              |
@@ -160,13 +161,21 @@ Historical `slop-vetting-result-v1` results keep their secure-VM rules in
 `result.ts`: eleven telemetry channels, two model reviews and a complete
 canonical assembly. No recorded incomplete result is reinterpreted as clean.
 
-The scanner may query signed `POST /api/v1/vetting/reuse` after its isolated
-inspection. The bounded body names the pending assessment, final inventory
-digest and policy version. A hit returns the original clean result rebound to
+The scanner may query signed `POST /api/v1/vetting/reuse` before fresh isolated
+execution. The bounded body names the pending assessment, acquired-input
+inventory digest and policy version. A hit returns the original clean result rebound to
 the queued revision and commit; a miss returns `result: null`. The lookup
 checks retained evidence and shares the result intake's original-scan and
 restriction predicate. It never records clearance: normal signed result
 publication repeats these checks, including current contributor-flag pauses.
+New scan results carry an optional `assessed.sourceInventorySha256` binding in
+addition to the final reviewed `inputManifestSha256`. Their private v2 scan
+report binds both retained inventories and every original execution report;
+the evidence checker verifies that the final inventory preserves the source
+items and appends only those exact execution items. Reuse retains the original
+final inventory, model review inputs, run IDs and dates. Existing text-only
+results can still reuse by their final inventory hash; legacy native results
+without the explicit source binding cannot reuse. No trace-body route is added.
 
 ## Scanner service dependency
 
