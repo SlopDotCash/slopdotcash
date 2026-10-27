@@ -101,7 +101,9 @@ export default function OwnerAwards({
     }
   }, [awardMonths, period]);
   const [view, setView] = useState<MonthlyOwnerView | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>(
+    {},
+  );
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
   const {
     busy: actionBusy,
@@ -134,7 +136,6 @@ export default function OwnerAwards({
       )
         throw new Error("The award response could not be verified.");
       setView(body);
-      setDrafts({});
     },
     [project.id],
   );
@@ -219,7 +220,7 @@ export default function OwnerAwards({
   const save = (githubUserId: string) =>
     run(async () => {
       if (!view?.proposal) return;
-      const draft = drafts[githubUserId];
+      const draft = drafts[view.period]?.[githubUserId];
       if (draft === undefined) return;
       const body = await call(
         `/monthly/${view.period}/allocations`,
@@ -232,6 +233,13 @@ export default function OwnerAwards({
       );
       if (body) {
         accept(body as unknown as MonthlyOwnerView, view.period);
+        setDrafts((previous) => {
+          const next = { ...previous };
+          const month = { ...(next[view.period] ?? {}) };
+          delete month[githubUserId];
+          next[view.period] = month;
+          return next;
+        });
         setNotice("Allocation saved privately.");
       }
     });
@@ -245,6 +253,11 @@ export default function OwnerAwards({
       );
       if (body) {
         accept(body as unknown as MonthlyOwnerView, view.period);
+        setDrafts((previous) => {
+          const next = { ...previous };
+          delete next[view.period];
+          return next;
+        });
         setNotice("This month's awards are final.");
       }
     });
@@ -494,7 +507,8 @@ export default function OwnerAwards({
                             <div className="owner-award-edit">
                               <label htmlFor={id}>
                                 <span aria-hidden="true">
-                                  {drafts[row.githubUserId] === undefined
+                                  {drafts[view.period]?.[row.githubUserId] ===
+                                  undefined
                                     ? "Edit gross"
                                     : "Unsaved gross"}
                                 </span>
@@ -509,13 +523,16 @@ export default function OwnerAwards({
                                 spellCheck={false}
                                 disabled={busy || cutoffPassed}
                                 value={
-                                  drafts[row.githubUserId] ??
+                                  drafts[view.period]?.[row.githubUserId] ??
                                   editableUnits(row.grossBase, decimals)
                                 }
                                 onChange={(event) =>
                                   setDrafts({
                                     ...drafts,
-                                    [row.githubUserId]: event.target.value,
+                                    [view.period]: {
+                                      ...(drafts[view.period] ?? {}),
+                                      [row.githubUserId]: event.target.value,
+                                    },
                                   })
                                 }
                               />
@@ -525,7 +542,8 @@ export default function OwnerAwards({
                                 disabled={
                                   busy ||
                                   cutoffPassed ||
-                                  drafts[row.githubUserId] === undefined
+                                  drafts[view.period]?.[row.githubUserId] ===
+                                    undefined
                                 }
                                 aria-label={`Save ${row.login}`}
                                 onClick={() => void save(row.githubUserId)}
