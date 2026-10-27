@@ -236,6 +236,7 @@ test("notification refresh preserves private edits only for the same account", a
     .click();
   await expect(correction).toHaveValue(text);
   actor = "43";
+  mode = "error";
   await page
     .getByRole("button", { name: "Older notifications", exact: true })
     .click();
@@ -246,6 +247,8 @@ test("notification refresh preserves private edits only for the same account", a
   await expect(selected).toHaveCount(0);
   await expect(page.locator("textarea")).toHaveCount(0);
   await expect(page).toHaveURL(/\/inbox$/u);
+  mode = "ready";
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Newer notifications", exact: true }),
   ).toBeDisabled();
