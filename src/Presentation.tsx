@@ -12,6 +12,98 @@ import type { DataState } from "./lib/use-snapshot";
 
 type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";
 
+function SectionNav({
+  label,
+  current,
+  links,
+  reload = false,
+}: {
+  label: string;
+  current: string;
+  reload?: boolean;
+  links: readonly { id: string; label: string; href: string }[];
+}) {
+  return (
+    <nav aria-label={label} className="account-sections route-section-nav">
+      {links.map((link) =>
+        reload ? (
+          <a
+            key={link.id}
+            href={link.href}
+            aria-current={current === link.id ? "page" : undefined}
+          >
+            {link.label}
+          </a>
+        ) : (
+          <Link
+            key={link.id}
+            href={link.href}
+            ariaCurrent={current === link.id ? "page" : undefined}
+          >
+            {link.label}
+          </Link>
+        ),
+      )}
+    </nav>
+  );
+}
+
+/** Re-read the canonical registry between project pages after an owner revision. */
+export function ProjectNav({
+  project,
+  current,
+}: {
+  project: Pick<ProjectDefinition, "slug">;
+  current: "overview" | "funding" | "settings" | "security";
+}) {
+  const base = `/projects/${project.slug}`;
+  return (
+    <SectionNav
+      label="Project navigation"
+      current={current}
+      reload
+      links={[
+        { id: "overview", label: "Overview", href: base },
+        { id: "funding", label: "Funds & awards", href: `${base}/funding` },
+        { id: "settings", label: "Settings", href: `${base}/manage` },
+        { id: "security", label: "Security", href: `${base}/security` },
+      ]}
+    />
+  );
+}
+
+export function AccountNav({
+  current,
+}: {
+  current: "account" | "payouts" | "inbox" | "security";
+}) {
+  return (
+    <SectionNav
+      label="Account navigation"
+      current={current}
+      links={[
+        { id: "payouts", label: "Payouts", href: "/earnings" },
+        { id: "inbox", label: "Inbox", href: "/inbox" },
+        { id: "security", label: "Security cases", href: "/security" },
+        { id: "account", label: "Settings", href: "/account" },
+      ]}
+    />
+  );
+}
+
+export function EvidenceNav({ current }: { current: "receipts" | "cycles" }) {
+  return (
+    <SectionNav
+      label="Public records"
+      current={current}
+      links={[
+        { id: "receipts", label: "Receipts", href: "/receipts" },
+        { id: "cycles", label: "Cycles", href: "/cycles" },
+      ]}
+    />
+  );
+}
+
 /** Page framing for inner routes; no global or homepage typography changes. */
 export function RoutePageHeader({
   title,

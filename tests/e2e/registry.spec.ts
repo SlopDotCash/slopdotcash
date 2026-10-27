@@ -258,6 +258,17 @@ async function signIn(page: Page, token: string) {
   }, token);
 }
 
+/** Open a settings group only when it is folded; repeated saves preserve it. */
+async function openSettings(page: Page, label: string) {
+  if (label === "Contributor instructions")
+    await openSettings(page, "Contribution rules");
+  const summary = page
+    .getByText(label, { exact: true })
+    .locator("xpath=self::summary");
+  const group = summary.locator("xpath=parent::details");
+  if ((await group.getAttribute("open")) === null) await summary.click();
+}
+
 /** One setup check shows its state badge and, under Check details, its message. */
 async function expectSetupCheck(
   setup: Locator,
@@ -489,6 +500,17 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     has: admin.getByText(project.id, { exact: true }),
   });
   await expect(card).toContainText("Generated from revision 1");
+  await card.getByRole("button", { name: "Edit project" }).click();
+  await card
+    .getByText("Customize contributor instructions", { exact: true })
+    .click();
+  const adminTests = card.getByRole("textbox", { name: /^Required tests/u });
+  const originalAdminTests = await adminTests.inputValue();
+  await adminTests.fill("x".repeat(2001));
+  await expect(adminTests).toHaveAttribute("aria-invalid", "true");
+  await adminTests.fill(originalAdminTests);
+  await expect(adminTests).toBeVisible();
+  await card.getByRole("button", { name: "Close and keep draft" }).click();
   await expectAccessible(admin);
 
   // The installer's trust root: the exact approved bytes and their digest.
@@ -510,6 +532,19 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await returningOwner.goto(`/projects/${project.id}/manage`, {
     waitUntil: "networkidle",
   });
+  await openSettings(returningOwner, "Contribution rules");
+  await openSettings(returningOwner, "Contributor instructions");
+  const requiredTests = returningOwner.getByLabel("Required tests", {
+    exact: true,
+  });
+  const originalTests = await requiredTests.inputValue();
+  await requiredTests.fill("x".repeat(2001));
+  await returningOwner.getByText("Contribution rules", { exact: true }).click();
+  await returningOwner.getByRole("button", { name: "Publish changes" }).click();
+  await expect(requiredTests).toBeVisible();
+  await expect(requiredTests).toHaveAttribute("aria-invalid", "true");
+  await requiredTests.fill(originalTests);
+  await expect(requiredTests).toBeVisible();
   const consent = returningOwner.getByRole("checkbox", {
     name: "Allow automatic closure by Slopbot",
   });
@@ -518,6 +553,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await returningOwner
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("Useful accepted outcomes with a clearer project scope");
+  await openSettings(returningOwner, "Public revision note (optional)");
   await returningOwner
     .getByLabel("Revision note", { exact: true })
     .fill("Clarify the project scope for contributors");
@@ -539,8 +575,10 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   ).toBe("Useful accepted outcomes with a clearer project scope");
   // The form must finish loading before it is edited and published.
   await returningOwner.reload({ waitUntil: "networkidle" });
+  await openSettings(returningOwner, "Contribution rules");
   await expect(consent).toBeChecked();
   await consent.uncheck();
+  await openSettings(returningOwner, "Public revision note (optional)");
   await returningOwner
     .getByLabel("Revision note", { exact: true })
     .fill("Withdraw automatic closure permission");
@@ -563,6 +601,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     automaticClosure: true,
   });
   await returningOwner.reload({ waitUntil: "networkidle" });
+  await openSettings(returningOwner, "Contribution rules");
   await expect(consent).not.toBeChecked();
   await expectAccessible(returningOwner);
   await returningOwner.goto("/projects/new", { waitUntil: "networkidle" });
@@ -1516,6 +1555,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await page
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("Accepted setup outcomes with a clear project scope");
+  await openSettings(page, "Public revision note (optional)");
   await page
     .getByLabel("Revision note", { exact: true })
     .fill("Clarify the project scope for contributors");
@@ -1528,13 +1568,16 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   expect(diagnostics.count(refusedPublish)).toBe(0);
 
   // A policy with no deployed or funded vault must not lock the asset.
+  await openSettings(page, "Monthly rewards");
   await expect(
     page.getByRole("combobox", { name: "Network", exact: true }),
   ).toBeEnabled();
   await page
     .getByRole("combobox", { name: "Network", exact: true })
     .selectOption("ethereum");
+  await openSettings(page, "Monthly rewards");
   await page.getByLabel("Monthly amount (USDC)").fill("1200");
+  await openSettings(page, "Public revision note (optional)");
   await page
     .getByLabel("Revision note", { exact: true })
     .fill("Use USDC on Ethereum from next month");
@@ -1631,9 +1674,11 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
   await page.goto(`/projects/${project.id}/manage`, {
     waitUntil: "networkidle",
   });
+  await openSettings(page, "Monthly rewards");
   const network = page.getByRole("combobox", { name: "Network", exact: true });
   await network.selectOption("base");
   await page.getByLabel("Monthly amount (USDC)").fill("1000");
+  await openSettings(page, "Public revision note (optional)");
   await page
     .getByLabel("Revision note", { exact: true })
     .fill("Use Base USDC from next month");
@@ -1915,11 +1960,8 @@ test("an owner initializes a legacy monthly project without shortening its accep
     });
     await expectAccessible(page);
     await page
-      .getByRole("region", { name: "Payouts", exact: true })
-      .getByRole("link", {
-        name: "Vault funding",
-        exact: true,
-      })
+      .getByRole("navigation", { name: "Project navigation", exact: true })
+      .getByRole("link", { name: "Funds & awards", exact: true })
       .click();
     await expect(
       page.getByRole("heading", { name: /Project vault.*Solana/i }),
@@ -2114,6 +2156,7 @@ test.describe("private evidence console", () => {
         exact: true,
       }),
     });
+    await trace.getByText("Read evidence", { exact: true }).click();
     await trace
       .getByLabel("Reason to inspect Harmless trace fixture")
       .fill("Verify complete private collector evidence");
@@ -2124,17 +2167,25 @@ test.describe("private evidence console", () => {
     await expect(trace.getByRole("status")).toHaveText(
       "Complete bytes verified. Text is displayed without execution.",
     );
-    await expect(trace.locator("pre")).toHaveText(
-      VETTING_EVIDENCE_OBJECTS[0].body.trim(),
-    );
+    await expect(
+      trace.getByRole("textbox", {
+        name: "Harmless trace fixture verified content",
+      }),
+    ).toHaveValue(VETTING_EVIDENCE_OBJECTS[0].body);
     const binary = page
       .getByRole("article")
       .filter({ hasText: VETTING_EVIDENCE_OBJECTS[2].sha256 });
+    await binary.getByText("Download evidence", { exact: true }).click();
     await binary
       .getByRole("textbox")
       .fill("Inspect exact binary artifact without executing it");
     const downloaded = page.waitForEvent("download");
-    await binary.getByRole("button").click();
+    await binary
+      .getByRole("button", {
+        name: `Download ${VETTING_EVIDENCE_OBJECTS[2].label}`,
+        exact: true,
+      })
+      .click();
     const download = await downloaded;
     const saved = test.info().outputPath("harmless-artifact.bin");
     await download.saveAs(saved);
@@ -2149,7 +2200,11 @@ test.describe("private evidence console", () => {
     await page.evaluate(() => {
       document.documentElement.style.zoom = "2";
     });
-    await expect(trace.locator("pre")).toBeVisible();
+    await expect(
+      trace.getByRole("textbox", {
+        name: "Harmless trace fixture verified content",
+      }),
+    ).toBeVisible();
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth + 1,

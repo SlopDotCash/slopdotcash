@@ -253,10 +253,10 @@ export function AutomaticMonthlyPayment({
   return (
     <section
       className="admin-card vault-actions"
-      aria-label={`Automatic monthly payment · ${networkLabel(deployment.network)}`}
+      aria-label={`Vault monthly authorization · ${networkLabel(deployment.network)}`}
     >
       <h3>
-        Automatic monthly payment ·{" "}
+        Vault monthly authorization ·{" "}
         <NetworkName chain={ESCROW_NETWORKS[deployment.network].chain}>
           {networkLabel(deployment.network)}
         </NetworkName>
@@ -371,7 +371,7 @@ export function AutomaticMonthlyPayment({
       ) : wallet && !storageError ? (
         <>
           <fieldset className="admin-fieldset" disabled={busy}>
-            <legend>Monthly payment setting</legend>
+            <legend>Vault monthly authorization</legend>
             <label className="checkbox-field">
               <input
                 type="checkbox"

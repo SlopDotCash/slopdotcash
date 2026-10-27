@@ -1,6 +1,9 @@
+import { ArrowDown, ShieldCheck, Vault, Wallet } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { evmBindingTypedData } from "../contracts/evm/adapter";
+import { ChainIcon } from "./ChainIcon";
+import { Link } from "./Link";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
@@ -25,7 +28,7 @@ async function request(path: string, body: unknown) {
       response.status === 401
         ? "Sign in again, then review your payout wallet."
         : response.status === 409
-          ? "The wallet changed or is still being prepared. Refresh payments and review again."
+          ? "The wallet changed or is still being prepared. Reload this page and review again."
           : "Payout consent is unavailable. Your award stays reserved. Retry later.",
     );
   return (await readBoundedJson(response, 16_384, "payout consent")) as Record<
@@ -146,7 +149,7 @@ export function PayoutConsent({
             "Payout consent was not stored. Refresh and review again.",
           );
         setNotice(
-          "Wallet consent saved. Payment is not yet verified. Refresh payments to check progress.",
+          "Wallet consent saved. Payment is not yet verified. Reload this page to check progress.",
         );
       } else {
         if (!wallet.solanaSign)
@@ -158,7 +161,7 @@ export function PayoutConsent({
         });
         if (typeof prepared.transaction !== "string")
           throw new Error(
-            "The binding is already pending or unavailable. Refresh payments before trying again.",
+            "The binding is already pending or unavailable. Reload this page before trying again.",
           );
         const bytes = Uint8Array.from(atob(prepared.transaction), (c) =>
           c.charCodeAt(0),
@@ -185,10 +188,10 @@ export function PayoutConsent({
         });
         if (typeof result.transactionId !== "string")
           throw new Error(
-            "Binding submission could not be verified. Refresh payments before retrying.",
+            "Binding submission could not be verified. Reload this page before retrying.",
           );
         setNotice(
-          "Binding submitted; payment is not yet verified. Refresh payments to check progress.",
+          "Binding submitted; payment is not yet verified. Reload this page to check progress.",
         );
       }
       setOpen(false);
@@ -202,16 +205,23 @@ export function PayoutConsent({
   }
   return (
     <div className="payout-consent">
-      {!open && !notice && (
-        <button
-          type="button"
-          ref={actionButton}
-          className="button secondary-button"
-          onClick={() => setOpen(true)}
-        >
-          Authorize payout wallet
-        </button>
-      )}
+      {!open &&
+        !notice &&
+        (wallets.length === 0 ? (
+          // This browser has no wallet that can sign; wallets are set up in account settings.
+          <Link className="button secondary-button" href="/account#wallets">
+            Authorize payout wallet
+          </Link>
+        ) : (
+          <button
+            type="button"
+            ref={actionButton}
+            className="button secondary-button"
+            onClick={() => setOpen(true)}
+          >
+            Authorize payout wallet
+          </button>
+        ))}
       {createPortal(
         <dialog
           ref={dialog}
@@ -226,47 +236,62 @@ export function PayoutConsent({
           }}
           onClose={() => setOpen(false)}
         >
-          <h2 id={headingId} tabIndex={-1} ref={reviewHeading}>
-            Review payout wallet consent
-          </h2>
-          <p>
-            Receive your awards from this vault on{" "}
-            {networkLabel(payment.network)}.
-          </p>
-          <dl>
-            <dt>Confirmed payout address</dt>
-            <dd className="wallet-address">{claim.address}</dd>
-            <dt>Project vault</dt>
-            <dd className="wallet-address">{payment.vault}</dd>
-          </dl>
-          <p>
+          <div className="consent-head">
+            <ChainIcon chain={payment.chain} decorative />
+            <div>
+              <h2 id={headingId} tabIndex={-1} ref={reviewHeading}>
+                Authorize payout wallet
+              </h2>
+              <p>{networkLabel(payment.network)}</p>
+            </div>
+          </div>
+          <div className="consent-route">
+            <dl className="consent-party">
+              <dt>
+                <Vault aria-hidden="true" size={16} />
+                Vault
+              </dt>
+              <dd>
+                <code className="wallet-address">{payment.vault}</code>
+              </dd>
+            </dl>
+            <ArrowDown className="consent-arrow" aria-hidden="true" size={18} />
+            <dl className="consent-party">
+              <dt>
+                <Wallet aria-hidden="true" size={16} />
+                Your wallet
+              </dt>
+              <dd>
+                <code className="wallet-address">{claim.address}</code>
+              </dd>
+            </dl>
+          </div>
+          <p className="consent-note">
+            <ShieldCheck aria-hidden="true" size={16} />
             {network.family === "evm"
-              ? "Sign to authorize this payout address. No funds move."
-              : "Sign the binding transaction. No funds move; Slop pays the network fee."}
+              ? "Signing moves no funds."
+              : "Signing moves no funds. Slop pays the network fee."}
           </p>
-          {wallets.length === 0 && (
-            <p>
-              Open this page in a wallet browser with{" "}
-              {network.family === "evm"
-                ? "an EVM wallet"
-                : "a Solana wallet that supports transaction signing"}
-              .
-            </p>
-          )}
           <div className="wallet-picker-list">
             {wallets.map((wallet) => (
               <button
                 key={wallet.id}
                 type="button"
-                className="button secondary-button"
+                className="wallet-picker-row"
                 disabled={busy}
                 onClick={() => void authorize(wallet)}
               >
+                {wallet.icon ? (
+                  <img src={wallet.icon} width={32} height={32} alt="" />
+                ) : (
+                  <Wallet size={24} aria-hidden="true" />
+                )}
                 {busy ? "Confirm in your wallet…" : `Sign with ${wallet.name}`}
               </button>
             ))}
             <button
               type="button"
+              className="button secondary-button"
               disabled={busy}
               onClick={() => {
                 setOpen(false);
@@ -276,7 +301,11 @@ export function PayoutConsent({
               Cancel
             </button>
           </div>
-          {error && <p role="alert">{error}</p>}
+          {error && (
+            <p role="alert" className="consent-error">
+              {error}
+            </p>
+          )}
         </dialog>,
         document.body,
       )}

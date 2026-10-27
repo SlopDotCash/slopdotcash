@@ -29,10 +29,11 @@ the contract is
 - Two test-role addresses: `REFERRAL_OWNER` (void, pause, poster change,
   rescue) and `REFERRAL_POSTER` (posts roots). They must differ; the
   contract refuses them equal. For the rehearsal both can be test keystores.
-  At launch the poster is the Worker's hot key and the owner must be a key
-  that can act within five days of any `RootPosted` (the review's M-2): the
-  S.P. operator key or a multisig with no execution delay, not a decision
-  market. Who holds them is the owner's decision.
+  At launch the poster is the Worker's hot key. The owner must be able to
+  pause the distributor and rotate the poster, but no response deadline
+  guarantees intervention before an immediately available claim. The latest
+  root can be voided only before its first successful claim, and paid tokens
+  cannot be recovered. Who holds these separate keys is the owner's decision.
 - `REFERRAL_EPOCH_CAP` in base units: the most the declared total may exceed
   the highest total ever posted. The owner approved 2,000,000 tokens for the
   whole root, or `2000000000000000000000000` at 18 decimals. The separate

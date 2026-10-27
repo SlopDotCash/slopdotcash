@@ -57,8 +57,10 @@ import {
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
 import {
+  AccountNav,
   ExternalLinkAnchor,
   formatNullableUtc as formatUtc,
+  ProjectNav,
   RoutePageHeader,
   SignInPanel,
   StatusBadge,
@@ -479,6 +481,9 @@ function ReportFields({
   draft: ReportDraft;
   onChange: (draft: ReportDraft) => void;
 }) {
+  const [classificationOpen, setClassificationOpen] = useState(
+    Boolean(draft.severity || draft.cvss || draft.cwe),
+  );
   const set = (key: keyof ReportDraft) => (value: string) =>
     onChange({ ...draft, [key]: value });
   return (
@@ -510,7 +515,8 @@ function ReportFields({
       </label>
       <details
         className="security-classification"
-        open={Boolean(draft.severity || draft.cvss || draft.cwe)}
+        open={classificationOpen}
+        onToggle={(event) => setClassificationOpen(event.currentTarget.open)}
       >
         <summary>
           Additional classification <span>Optional</span>
@@ -650,6 +656,7 @@ export function SecurityProgramPage({
           }
           lead="No published bounty terms, so no award is promised."
         />
+        <ProjectNav project={project} current="security" />
         <IntakeHandoff project={project} />
       </main>
     );
@@ -676,6 +683,7 @@ export function SecurityProgramPage({
           {PROGRAM_STATUS_LABELS[terms.status]}
         </StatusBadge>
       </RoutePageHeader>
+      <ProjectNav project={project} current="security" />
       <IntakeHandoff project={project} />
       <div className="security-program-terms">
         <section aria-labelledby="security-terms" className="admin-card">
@@ -1544,6 +1552,24 @@ function SubmissionsPanel({
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
   if (shown.length === 0 && !grantError) return null;
+  const pending = shown.filter((entry) => entry.state !== "receipt-verified");
+  const verified = shown.filter((entry) => entry.state === "receipt-verified");
+  const renderSubmission = (submission: Submission) => (
+    <SubmissionCard
+      session={session}
+      focused={submission.id === focusId}
+      key={submission.id}
+      onOpenCase={onOpenCase}
+      onUpdated={(updated) =>
+        setSubmissions((current) =>
+          (current ?? []).map((entry) =>
+            entry.id === updated.id ? updated : entry,
+          ),
+        )
+      }
+      submission={submission}
+    />
+  );
   return (
     <section aria-labelledby="security-submissions" className="admin-section">
       <h2 id="security-submissions">Your private reports</h2>
@@ -1553,22 +1579,16 @@ function SubmissionsPanel({
           {GRANT_ERRORS[grantError] ?? GRANT_ERRORS.grant_exchange_failed}
         </p>
       ) : null}
-      {shown.map((submission) => (
-        <SubmissionCard
-          session={session}
-          focused={submission.id === focusId}
-          key={submission.id}
-          onOpenCase={onOpenCase}
-          onUpdated={(updated) =>
-            setSubmissions((current) =>
-              (current ?? []).map((entry) =>
-                entry.id === updated.id ? updated : entry,
-              ),
-            )
-          }
-          submission={submission}
-        />
-      ))}
+      {pending.map(renderSubmission)}
+      {verified.length > 0 ? (
+        <details
+          className="security-reference"
+          open={verified.some((entry) => entry.id === focusId)}
+        >
+          <summary>Verified report receipts ({verified.length})</summary>
+          {verified.map(renderSubmission)}
+        </details>
+      ) : null}
     </section>
   );
 }
@@ -2459,8 +2479,10 @@ function AppealTriagePanel({
   );
 }
 
-/** Owner and reviewer decisions shown at once; access tools stay folded. */
+/** Order common decisions first while keeping one action visible at a time. */
 const PRIMARY_ACTIONS = [
+  "verify-link",
+  "reject-link",
   "request-information",
   "decide",
   "award",
@@ -2471,6 +2493,58 @@ const PRIMARY_ACTIONS = [
   "consent-payment",
   "appeal",
 ];
+
+function CaseActions({
+  record,
+  disclosureRelevant,
+  onDone,
+}: {
+  record: SecurityCase;
+  disclosureRelevant: boolean;
+  onDone: (updated: SecurityCase | null, note: string) => void;
+}) {
+  const available = record.allowedActions.filter(
+    (action) => actionSpec(action, record) !== null,
+  );
+  const actions = [
+    ...available.filter(
+      (action) =>
+        PRIMARY_ACTIONS.includes(action) ||
+        (action === "disclosure" && disclosureRelevant),
+    ),
+    ...available.filter(
+      (action) =>
+        !PRIMARY_ACTIONS.includes(action) &&
+        !(action === "disclosure" && disclosureRelevant),
+    ),
+  ];
+  const [selected, setSelected] = useState(actions[0] ?? "");
+  const active = actions.includes(selected) ? selected : (actions[0] ?? "");
+  if (!active) return null;
+  return (
+    <section className="security-actions" aria-label="Case actions">
+      <label className="form-field" htmlFor={`case-action-${record.id}`}>
+        Action
+        <select
+          id={`case-action-${record.id}`}
+          value={active}
+          onChange={(event) => setSelected(event.target.value)}
+        >
+          {actions.map((action) => (
+            <option key={action} value={action}>
+              {actionSpec(action, record)?.title}
+            </option>
+          ))}
+        </select>
+      </label>
+      {actions.map((action) => (
+        <div hidden={action !== active} key={`${action}-${record.revision}`}>
+          <ActionForm action={action} record={record} onDone={onDone} />
+        </div>
+      ))}
+    </section>
+  );
+}
 
 function CaseDetail({
   caseId,
@@ -2514,29 +2588,6 @@ function CaseDetail({
     ["resolved", "mitigation-verified"].includes(
       record.remediationState ?? "",
     ) || record.disclosureState !== "embargoed";
-  const form = (action: string) => (
-    <ActionForm
-      action={action}
-      key={`${action}-${record.revision}`}
-      onDone={(updated, saved) => {
-        setNote(saved);
-        if (updated) replace({ case: updated });
-        else reload();
-        onChanged();
-      }}
-      record={record}
-    />
-  );
-  const primary = record.allowedActions.filter(
-    (action) =>
-      PRIMARY_ACTIONS.includes(action) ||
-      (action === "disclosure" && disclosureRelevant),
-  );
-  const more = record.allowedActions.filter(
-    (action) =>
-      ["assign-triager", "revoke-triager", "recognition"].includes(action) ||
-      (action === "disclosure" && !disclosureRelevant),
-  );
   return (
     <article
       aria-labelledby={`case-${record.id}`}
@@ -2651,13 +2702,16 @@ function CaseDetail({
           ) : null}
         </section>
       ) : null}
-      {primary.map(form)}
-      {more.length > 0 ? (
-        <details>
-          <summary>More actions</summary>
-          {more.map(form)}
-        </details>
-      ) : null}
+      <CaseActions
+        record={record}
+        disclosureRelevant={disclosureRelevant}
+        onDone={(updated, saved) => {
+          setNote(saved);
+          if (updated) replace({ case: updated });
+          else reload();
+          onChanged();
+        }}
+      />
       <details className="security-reference">
         <summary>Case details and history</summary>
         <dl className="admin-facts">
@@ -2889,59 +2943,72 @@ export default function SecurityCasesPage() {
           onLinkFallback={setLinkFallback}
           onOpenCase={openCase}
         />
-        {automatic ? (
-          <section aria-labelledby="security-link" className="admin-section">
-            <h2 id="security-link">Already reported on GitHub? Verify it</h2>
-            <DirectVerifyForm
-              onUnavailable={() => setDirectUnavailable(true)}
-              programProjects={programProjects}
-            />
-            {linkFallback || directUnavailable ? (
-              <>
-                <p className="admin-status">
-                  GitHub could not verify this report. Link it for a maintainer
-                  to verify.
-                </p>
-                <ClaimForm
-                  onCreated={created}
-                  programProjects={programProjects}
-                />
-              </>
-            ) : null}
-          </section>
-        ) : automatic === false ? (
-          <section aria-labelledby="security-link" className="admin-section">
-            <h2 id="security-link">Link a report you submitted on GitHub</h2>
-            <p className="admin-status">A maintainer verifies the link.</p>
-            <ClaimForm onCreated={created} programProjects={programProjects} />
-          </section>
-        ) : null}
-        {maintained.size > 0 ? (
-          <section aria-labelledby="security-import" className="admin-section">
-            <h2 id="security-import">Reports sent on GitHub directly</h2>
-            {automatic === false ? (
-              <RecordForm
+        <details
+          className="security-reference"
+          open={linkFallback || directUnavailable}
+        >
+          <summary>Link or import a GitHub report</summary>
+          {automatic ? (
+            <section aria-labelledby="security-link" className="admin-section">
+              <h2 id="security-link">Already reported on GitHub? Verify it</h2>
+              <DirectVerifyForm
+                onUnavailable={() => setDirectUnavailable(true)}
+                programProjects={programProjects}
+              />
+              {linkFallback || directUnavailable ? (
+                <>
+                  <p className="admin-status">
+                    GitHub could not verify this report. Link it for a
+                    maintainer to verify.
+                  </p>
+                  <ClaimForm
+                    onCreated={created}
+                    programProjects={programProjects}
+                  />
+                </>
+              ) : null}
+            </section>
+          ) : automatic === false ? (
+            <section aria-labelledby="security-link" className="admin-section">
+              <h2 id="security-link">Link a report you submitted on GitHub</h2>
+              <p className="admin-status">A maintainer verifies the link.</p>
+              <ClaimForm
                 onCreated={created}
-                programProjects={programProjects.filter((project) =>
-                  maintained.has(project.id),
-                )}
+                programProjects={programProjects}
               />
-            ) : (
-              <ImportReports
-                onImported={reload}
-                projects={programProjects.filter((project) =>
-                  maintained.has(project.id),
-                )}
-              />
-            )}
-          </section>
-        ) : null}
+            </section>
+          ) : null}
+          {maintained.size > 0 ? (
+            <section
+              aria-labelledby="security-import"
+              className="admin-section"
+            >
+              <h2 id="security-import">Reports sent on GitHub directly</h2>
+              {automatic === false ? (
+                <RecordForm
+                  onCreated={created}
+                  programProjects={programProjects.filter((project) =>
+                    maintained.has(project.id),
+                  )}
+                />
+              ) : (
+                <ImportReports
+                  onImported={reload}
+                  projects={programProjects.filter((project) =>
+                    maintained.has(project.id),
+                  )}
+                />
+              )}
+            </section>
+          ) : null}
+        </details>
       </>
     );
   }
   return (
     <main className="shell route-main admin-page security-page operations-page">
       <RoutePageHeader icon={<LockKeyhole />} title="Security cases" />
+      <AccountNav current="security" />
       {body}
     </main>
   );

@@ -627,6 +627,42 @@ label {
   color: var(--muted);
 }
 
+/* Eligible work under the project prompt reuses the project rows. */
+.open-work {
+  margin-top: 32px;
+}
+
+.open-work h3 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.open-work p {
+  max-width: 62ch;
+  margin: 8px 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Whole rows are links; only the running-text link keeps an underline. */
+.project-hero #start .open-work .project-row {
+  text-decoration: none;
+}
+
+.open-work .project-row-name strong {
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.open-work .project-row-name small {
+  white-space: normal;
+}
+
+.open-work p.open-work-more {
+  margin: 16px 0 0;
+}
+
 /* Home. */
 .hero {
   padding-block: clamp(72px, 10vw, 140px) clamp(72px, 9vw, 128px);

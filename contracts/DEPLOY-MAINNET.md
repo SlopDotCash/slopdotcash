@@ -182,7 +182,13 @@ so no vault upgrade was needed and no deployment record needs a history entry.
 
 These steps deploy replacement UUPS EVM factories and vault implementations,
 and deploy or upgrade the Solana program with owner-controlled upgrades.
-The approved launch order is Base, Solana, Ethereum, then Robinhood.
+The approved live qualification order is Base, Solana, then Robinhood.
+The owner waived the separate Ethereum first-vault live qualification on
+27 October 2026 (PRD section 11). Record that launch gate as waived, not as
+a completed live test. Successful Base and Robinhood qualification supplies
+the shared EVM coverage. Existing Ethereum asset, authority, finality and
+explicit activation controls remain; this waiver authorizes no new funding
+or transaction.
 
 A human or an owner-authorized agent may execute the reviewed plan within
 the owner's authorized financial scope (PRD section 11, 25 October 2026). An
@@ -1076,11 +1082,12 @@ Record the transactions on the release issue (section 3.5).
 
 To stop new Slop attestations on a network, change its
 `mainnet-execution.mjs` value back to `false` through a reviewed pull request
-and redeploy the attester Worker. On Base the release redeploys it only while
-the snapshot pins a Base vault, so stop the attester this way before a
-snapshot removes the last pinned Base vault; a release with no pinned vault
-leaves an existing attester unchanged. Do not delete `SIGNER_PRIVATE_KEY` to
-stop it: every later release of the site then stops at the secret check. Do
+and release the attester Worker. The release updates an existing disabled
+network's attester only while the snapshot retains a vault pin. It removes
+the cron, retains the pins and journal, and grants no Pages entrypoints.
+Stop the attester before a snapshot removes its last vault pin; an empty
+snapshot leaves an existing attester unchanged. Do not delete the signing
+secret as a stop procedure: enabling that network later requires it. Do
 not delete the Worker: that deletes its signing journal. Slop cannot stop a payment that the project
 or a permissionless executor submits for an approved and funded obligation.
 

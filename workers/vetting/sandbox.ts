@@ -1,27 +1,19 @@
 /** Signed runner client. Returned bytes must remain in private evidence storage. */
 
-import { isRecord, readLimitedBody } from "../../backend/trace/validation";
+import { readLimitedBody } from "../../backend/trace/validation";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import {
+  type ArtifactInterpreter,
+  type IsolatedArtifactEvidence,
+  parseIsolatedArtifactEvidence,
+} from "./isolated-evidence";
 import type { QueueConnection } from "./queue";
 import { serviceOrigin, signedVettingFetch } from "./service";
 
-export type ArtifactInterpreter = "python" | "node" | "binary";
-export type IsolatedArtifactEvidence = {
-  schema: "slop-isolated-artifact-v1";
-  runId: string;
-  startedAt: string;
-  completedAt: string;
-  imageSha256: string | null;
-  sourceSha: string | null;
-  artifactSha256: string;
-  interpreter: ArtifactInterpreter;
-  internetEnabled: false;
-  status: "exited" | "timeout" | "output-limit" | "not-executable";
-  exitCode: number;
-  stdoutBase64: string;
-  stderrBase64: string;
-  outputComplete: boolean;
-};
+export type {
+  ArtifactInterpreter,
+  IsolatedArtifactEvidence,
+} from "./isolated-evidence";
 
 export async function runIsolatedArtifact(input: {
   connection: QueueConnection;
@@ -52,43 +44,9 @@ export async function runIsolatedArtifact(input: {
     throw new Error(`Isolated execution unavailable (${response.status})`);
   }
   const bytes = await readLimitedBody(response, 180 * 1024);
-  const evidence: unknown = JSON.parse(new TextDecoder().decode(bytes));
-  if (
-    !isRecord(evidence) ||
-    evidence.schema !== "slop-isolated-artifact-v1" ||
-    typeof evidence.runId !== "string" ||
-    !/^[a-f0-9-]{36}$/.test(evidence.runId) ||
-    typeof evidence.startedAt !== "string" ||
-    typeof evidence.completedAt !== "string" ||
-    !Number.isFinite(Date.parse(evidence.startedAt)) ||
-    !Number.isFinite(Date.parse(evidence.completedAt)) ||
-    Date.parse(evidence.completedAt) < Date.parse(evidence.startedAt) ||
-    !(
-      evidence.imageSha256 === null ||
-      (typeof evidence.imageSha256 === "string" &&
-        /^[a-f0-9]{64}$/.test(evidence.imageSha256))
-    ) ||
-    !(
-      evidence.sourceSha === null ||
-      (typeof evidence.sourceSha === "string" &&
-        /^[a-f0-9]{40}$/.test(evidence.sourceSha))
-    ) ||
-    evidence.artifactSha256 !== artifactSha256 ||
-    evidence.interpreter !== interpreter ||
-    evidence.internetEnabled !== false ||
-    !["exited", "timeout", "output-limit", "not-executable"].includes(
-      String(evidence.status),
-    ) ||
-    !Number.isSafeInteger(evidence.exitCode) ||
-    evidence.outputComplete !== (evidence.status === "exited") ||
-    typeof evidence.stdoutBase64 !== "string" ||
-    typeof evidence.stderrBase64 !== "string"
-  )
-    throw new Error("Invalid isolated execution evidence");
-  for (const output of [evidence.stdoutBase64, evidence.stderrBase64]) {
-    const decoded = Buffer.from(output, "base64");
-    if (decoded.length > 65536 || decoded.toString("base64") !== output)
-      throw new Error("Invalid isolated execution output");
-  }
-  return { evidence: evidence as IsolatedArtifactEvidence, bytes };
+  const evidence = parseIsolatedArtifactEvidence(bytes, {
+    artifactSha256s: new Set([artifactSha256]),
+    interpreter,
+  });
+  return { evidence, bytes };
 }

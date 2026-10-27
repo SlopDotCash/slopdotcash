@@ -12,6 +12,7 @@ import { ProjectEnforcementPanel } from "./AdminProjectEnforcement";
 import "./operations-design.css";
 import { ActivationClearance, VettingSection } from "./AdminVetting";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
+import { formatBaseUnits } from "./lib/base-units.mjs";
 import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
 import { errorMessage } from "./lib/errors";
 import {
@@ -26,6 +27,7 @@ import {
 } from "./lib/project-schema.mjs";
 import { usesGeneratedSkills } from "./lib/project-skill.mjs";
 import {
+  NETWORK_NAMES,
   REWARD_ASSET_NETWORKS,
   type RewardAssetNetwork,
   rewardAssetChoice,
@@ -170,6 +172,7 @@ function ProjectEditor({
     }
   }, [draftKey, text, skill, asset, assetSelected, status, reason]);
   const [busy, setBusy] = useState(false);
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const skillStarted = CONTRIBUTION_FIELDS.some(
     (field) => skill[field].trim() !== "",
@@ -423,7 +426,11 @@ function ProjectEditor({
         </p>
       </fieldset>
       <details
-        open={Object.values(skillErrors).some((value) => value !== null)}
+        onToggle={(event) => setInstructionsOpen(event.currentTarget.open)}
+        open={
+          instructionsOpen ||
+          Object.values(skillErrors).some((value) => value !== null)
+        }
       >
         <summary>Customize contributor instructions</summary>
         <fieldset className="admin-fieldset">
@@ -833,34 +840,39 @@ function ProjectsSection({
                     {project.status}
                   </StatusBadge>
                 </header>
-                <dl className="admin-facts">
-                  <div>
-                    <dt>Project id</dt>
-                    <dd>{project.id}</dd>
-                  </div>
-                  <div>
-                    <dt>Revision</dt>
-                    <dd>
-                      {project.revision} · updated{" "}
-                      {formatDateTime(project.updatedAt)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Skills</dt>
-                    <dd>
-                      {usesGeneratedSkills(project.manifest)
-                        ? `Generated from revision ${project.revision}`
-                        : `${project.manifest.skill.sourcePath} · ${project.manifest.reviewSkill.sourcePath}`}
-                    </dd>
-                  </div>
-                </dl>
-                <GeneratedSkillPreview
-                  manifest={project.manifest}
-                  registry={{
-                    revision: project.revision,
-                    manifestSha256: project.manifestSha256,
-                  }}
-                />
+                <details className="admin-reference">
+                  <summary>
+                    Project configuration · revision {project.revision}
+                  </summary>
+                  <dl className="admin-facts">
+                    <div>
+                      <dt>Project id</dt>
+                      <dd>{project.id}</dd>
+                    </div>
+                    <div>
+                      <dt>Revision</dt>
+                      <dd>
+                        {project.revision} · updated{" "}
+                        {formatDateTime(project.updatedAt)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Skills</dt>
+                      <dd>
+                        {usesGeneratedSkills(project.manifest)
+                          ? `Generated from revision ${project.revision}`
+                          : `${project.manifest.skill.sourcePath} · ${project.manifest.reviewSkill.sourcePath}`}
+                      </dd>
+                    </div>
+                  </dl>
+                  <GeneratedSkillPreview
+                    manifest={project.manifest}
+                    registry={{
+                      revision: project.revision,
+                      manifestSha256: project.manifestSha256,
+                    }}
+                  />
+                </details>
                 {editing === project.id ? (
                   <ProjectEditor
                     key={`${project.id}:${project.revision}`}
@@ -944,6 +956,126 @@ function ProjectsSection({
   );
 }
 
+/** The parts of `GET /api/v1/admin/fee-conversions` this page shows. */
+type FeeConversionReport = {
+  routes: {
+    network: string;
+    targetToken: string | null;
+    status: "usdc" | "not_converted";
+  }[];
+  totals: {
+    network: string;
+    token: string;
+    targetToken: string;
+    conversions: number;
+    amountIn: string;
+    amountOut: string;
+  }[];
+};
+
+const loadFeeConversions = async () => {
+  const { routes, totals } = await projectApiRequest<FeeConversionReport>(
+    "GET",
+    "admin/fee-conversions",
+  );
+  return { routes, totals };
+};
+
+function networkName(network: string): string {
+  return Object.hasOwn(NETWORK_NAMES, network)
+    ? NETWORK_NAMES[network as RewardAssetNetwork]
+    : network;
+}
+
+function shortToken(address: string): string {
+  return `token ${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+/** Output in the network's reviewed stablecoin decimals, else exact base units. */
+function convertedAmount(
+  network: string,
+  targetToken: string,
+  amount: string,
+): string {
+  const stablecoin = Object.hasOwn(REWARD_ASSET_NETWORKS, network)
+    ? REWARD_ASSET_NETWORKS[network as RewardAssetNetwork].stablecoin
+    : null;
+  const reviewed =
+    stablecoin !== null &&
+    (network === "solana"
+      ? stablecoin.address === targetToken
+      : stablecoin.address.toLowerCase() === targetToken.toLowerCase());
+  return reviewed
+    ? `${formatBaseUnits(amount, stablecoin.decimals)} ${stablecoin.symbol}`
+    : `${amount} base units of ${shortToken(targetToken)}`;
+}
+
+/**
+ * PRD section 6: fees received on Base, Ethereum and Solana convert to USDC.
+ * Robinhood Chain keeps each received asset and shows it as "not converted",
+ * not pending. Totals count finalized live conversions only.
+ */
+function FeeConversionsSection() {
+  const [state, reload] = usePublicResource(
+    true,
+    loadFeeConversions,
+    "Fee conversions could not load.",
+  );
+  return (
+    <section aria-labelledby="admin-fee-conversions" className="admin-section">
+      <div className="admin-section-heading">
+        <h2 id="admin-fee-conversions">Fee conversions</h2>
+      </div>
+      {state.status !== "ready" ? (
+        <LoadNotice label="fee conversions" retry={reload} state={state} />
+      ) : (
+        <article className="admin-card">
+          <dl className="admin-facts">
+            {state.routes.map((route) => {
+              const totals = state.totals.filter(
+                (total) => total.network === route.network,
+              );
+              return (
+                <div key={route.network}>
+                  <dt>{networkName(route.network)}</dt>
+                  <dd>
+                    <StatusBadge tone="neutral">
+                      {route.status === "usdc"
+                        ? "USDC conversion policy"
+                        : "Not converted"}
+                    </StatusBadge>
+                  </dd>
+                  {totals.length > 0 ? (
+                    totals.map((total) => (
+                      <dd key={total.token}>
+                        {total.conversions}{" "}
+                        {total.conversions === 1 ? "conversion" : "conversions"}
+                        : {total.amountIn} base units of{" "}
+                        {shortToken(total.token)} to{" "}
+                        {convertedAmount(
+                          total.network,
+                          total.targetToken,
+                          total.amountOut,
+                        )}
+                      </dd>
+                    ))
+                  ) : (
+                    <dd>
+                      {route.status === "usdc"
+                        ? "No finalized conversion yet."
+                        : "Received assets stay in the fee wallet."}
+                    </dd>
+                  )}
+                </div>
+              );
+            })}
+          </dl>
+        </article>
+      )}
+    </section>
+  );
+}
+
 export default function AdminPage() {
   const [selectedProject, setSelectedProject] = useState(() =>
     new URLSearchParams(window.location.search).get("project"),
@@ -994,7 +1126,9 @@ export default function AdminPage() {
             projectId={selectedProject}
             key={`vetting-${selectedProject}-${vettingVersion}`}
           />
-        ) : null}
+        ) : (
+          <FeeConversionsSection />
+        )}
       </>
     );
   }

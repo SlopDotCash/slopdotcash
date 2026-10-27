@@ -589,6 +589,21 @@ export interface LeaderboardMethodology {
   collectionPolicy: string;
 }
 
+/** A bound GraphQL observation; NOT_FOUND alone does not establish deletion. */
+export interface UnavailableSource {
+  nodeId: string;
+  reason: "NOT_FOUND";
+  /** Still enumerated by the second census, but unavailable on an exact re-probe. */
+  unavailableInMergedCensus?: true;
+}
+
+/** A complete joint assessment is withheld while a required source is unavailable. */
+export interface HeldWorkUnit {
+  recordDigest: string;
+  sourceNodeIds: string[];
+  unavailableNodeIds: string[];
+}
+
 export interface LeaderboardSourceMetadata {
   provider: "github-graphql";
   fetchedAt: string;
@@ -598,6 +613,9 @@ export interface LeaderboardSourceMetadata {
   repositories: Array<{ id: RepositoryId; repositoryId: string }>;
   requestCount: number;
   searchSliceCount: number;
+  /** Absent from older snapshots. Counts observations, not proven deletions. */
+  unavailableSources?: UnavailableSource[];
+  heldWorkUnits?: HeldWorkUnit[];
   rateLimit: {
     cost: number;
     consumedDuringRun?: number;
@@ -606,6 +624,9 @@ export interface LeaderboardSourceMetadata {
     resetAt: string;
   };
   counts: {
+    unavailableSources?: number;
+    unavailableMergedPullRequests?: number;
+    heldWorkUnits?: number;
     closedUnmergedPullRequests?: number;
     mergedPullRequests: number;
     detailedMergedPullRequests: number;
@@ -698,7 +719,14 @@ export interface LeaderboardInput {
   /** A shared decision is indexed by each member PR, but scored once per unit. */
   jointValueDecisions?: ReadonlyMap<
     string,
-    Awaited<ReturnType<typeof consumeWorkUnitHistory>>
+    | Awaited<ReturnType<typeof consumeWorkUnitHistory>>
+    | (Pick<
+        Awaited<ReturnType<typeof consumeWorkUnitHistory>>,
+        "history" | "throughSequence" | "latestDigest"
+      > & {
+        status: "unresolved";
+        sourceUnavailable: true;
+      })
   >;
   /** Complete human context for joint members outside the census; never counted as new outcomes. */
   valueContextPullRequests?: MergedPullRequestReviewRecord[];

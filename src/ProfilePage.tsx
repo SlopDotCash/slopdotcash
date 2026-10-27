@@ -42,6 +42,7 @@ export function ProfilePage({
 }) {
   const profiles = useProfiles();
   const membership = useProfileMembership(login);
+  const [allCycles, setAllCycles] = useState(false);
   const actor = currentProfileActor(state, login, profiles.state, membership);
   const currentWallet = useCurrentWallet(actor, login);
   if (state.status !== "ready")
@@ -85,7 +86,9 @@ export function ProfilePage({
             Retry profile
           </button>
         ) : null}
-        <Link href="/points">Find a contributor</Link>
+        <p>
+          <Link href="/points">Find a contributor</Link>
+        </p>
       </main>
     );
   const globalLeaders = createGlobalLeaders(
@@ -101,11 +104,15 @@ export function ProfilePage({
       .filter((leader) => leader.actor.id === actor.id)
       .map((leader) => ({ leader, view })),
   );
-  const history = state.cycleIndex.cycles.flatMap((cycle) =>
-    cycle.contributors
-      .filter((contributor) => contributor.actor.id === actor.id)
-      .map((contributor) => ({ contributor, cycle })),
-  );
+  const history = state.cycleIndex.cycles
+    .flatMap((cycle) =>
+      cycle.contributors
+        .filter((contributor) => contributor.actor.id === actor.id)
+        .map((contributor) => ({ contributor, cycle })),
+    )
+    .sort((left, right) =>
+      right.cycle.cycleId.localeCompare(left.cycle.cycleId),
+    );
   if (matches.length === 0 && history.length === 0 && !globalLeader) {
     return (
       <main className="shell route-main">
@@ -199,14 +206,8 @@ export function ProfilePage({
         ) : null}
       </ProfilePoints>
       {penalties.length > 0 ? (
-        <section
-          className="section profile-section"
-          aria-labelledby="profile-penalties"
-        >
-          <div className="profile-section-heading">
-            <h2 id="profile-penalties">Penalties</h2>
-            <span>{penalties.length} recorded</span>
-          </div>
+        <details className="section profile-section">
+          <summary>Penalty history · {penalties.length}</summary>
           <p>
             <Link href="/how-it-works#points">How penalties work</Link>
           </p>
@@ -231,7 +232,7 @@ export function ProfilePage({
               </li>
             ))}
           </ul>
-        </section>
+        </details>
       ) : null}
       {history.length > 0 ? (
         <section className="section profile-section">
@@ -239,53 +240,69 @@ export function ProfilePage({
             <h2>Past cycles</h2>
           </div>
           <div className="profile-projects">
-            {history.map(({ contributor, cycle }) => (
-              <Link
-                href={`/cycles/${cycle.projectId}/${cycle.cycleId}`}
-                key={`${cycle.projectId}:${cycle.cycleId}`}
-              >
-                <span>
-                  <strong>
-                    {findProject(cycle.projectId)?.name ?? cycle.projectId}
-                  </strong>
-                  <small>{formatCycleMonth(cycle.cycleId)}</small>
-                </span>
-                <span>
-                  <strong>
-                    {formatPointsFromThirds(
-                      contributor.scoreThirds ?? contributor.score * 3,
-                    )}{" "}
-                    points
-                  </strong>
-                  <small>
-                    <StatusBadge
-                      className={`payout-state payout-state-${contributor.state}`}
-                      tone={
-                        contributor.state === "paid" ? "success" : "warning"
-                      }
-                    >
-                      {contributor.state === "paid"
-                        ? "Paid"
-                        : cycleLifecycleLabel(cycle)}
-                    </StatusBadge>
-                  </small>
-                </span>
-                <span>
-                  <strong>
-                    {formatMicroUsdc(
-                      contributor.state === "paid"
-                        ? contributor.paidMinor
-                        : contributor.approvedMinor !== "0"
-                          ? contributor.approvedMinor
-                          : contributor.suggestedMinor,
-                    )}
-                  </strong>
-                  <small>{cycleContributorStateLabel(contributor.state)}</small>
-                </span>
-                <ChevronRight aria-hidden="true" />
-              </Link>
-            ))}
+            {(allCycles ? history : history.slice(0, 3)).map(
+              ({ contributor, cycle }) => (
+                <Link
+                  href={`/cycles/${cycle.projectId}/${cycle.cycleId}`}
+                  key={`${cycle.projectId}:${cycle.cycleId}`}
+                >
+                  <span>
+                    <strong>
+                      {findProject(cycle.projectId)?.name ?? cycle.projectId}
+                    </strong>
+                    <small>{formatCycleMonth(cycle.cycleId)}</small>
+                  </span>
+                  <span>
+                    <strong>
+                      {formatPointsFromThirds(
+                        contributor.scoreThirds ?? contributor.score * 3,
+                      )}{" "}
+                      points
+                    </strong>
+                    <small>
+                      <StatusBadge
+                        className={`payout-state payout-state-${contributor.state}`}
+                        tone={
+                          contributor.state === "paid" ? "success" : "warning"
+                        }
+                      >
+                        {contributor.state === "paid"
+                          ? "Paid"
+                          : cycleLifecycleLabel(cycle)}
+                      </StatusBadge>
+                    </small>
+                  </span>
+                  <span>
+                    <strong>
+                      {formatMicroUsdc(
+                        contributor.state === "paid"
+                          ? contributor.paidMinor
+                          : contributor.approvedMinor !== "0"
+                            ? contributor.approvedMinor
+                            : contributor.suggestedMinor,
+                      )}
+                    </strong>
+                    <small>
+                      {cycleContributorStateLabel(contributor.state)}
+                    </small>
+                  </span>
+                  <ChevronRight aria-hidden="true" />
+                </Link>
+              ),
+            )}
           </div>
+          {history.length > 3 ? (
+            <button
+              className="button secondary-button button-small"
+              type="button"
+              aria-expanded={allCycles}
+              onClick={() => setAllCycles(!allCycles)}
+            >
+              {allCycles
+                ? "Show recent cycles"
+                : `Show all ${history.length} cycles`}
+            </button>
+          ) : null}
         </section>
       ) : null}
     </main>

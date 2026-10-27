@@ -67,7 +67,7 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { OwnerBountyVault } from "./OwnerBountyVault";
-import { RoutePageHeader } from "./Presentation";
+import { ProjectNav, RoutePageHeader } from "./Presentation";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 import { SecurityProgramEditor } from "./SecurityProgramEditor";
 
@@ -898,6 +898,7 @@ export default function ProjectProposalPage() {
     message: string;
   }>({ state: "idle", message: "" });
   const [factsOpen, setFactsOpen] = useState(false);
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const lookupController = useRef<AbortController | null>(null);
@@ -1209,6 +1210,8 @@ export default function ProjectProposalPage() {
     )
       setFactsOpen(true);
     if (isTermsField(field)) setTermsOpen(true);
+    if (SKILL_RULE_FIELDS.some((entry) => entry === field))
+      setInstructionsOpen(true);
     setStep(owner);
     window.setTimeout(() => document.getElementById(`field-${field}`)?.focus());
   }
@@ -1287,6 +1290,7 @@ export default function ProjectProposalPage() {
     setSubmission({ status: "idle" });
     suggestedText.current = { name: "", headline: "", goal: "", criteria: "" };
     setTermsOpen(false);
+    setInstructionsOpen(false);
     setAttempted(SETUP_STEPS.map(() => false));
     setLookup({ state: "idle", message: "" });
     setConfirmClear(false);
@@ -1584,7 +1588,13 @@ export default function ProjectProposalPage() {
             />
             <details
               className="proposal-skill-rules"
-              open={SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))}
+              onToggle={(event) =>
+                setInstructionsOpen(event.currentTarget.open)
+              }
+              open={
+                instructionsOpen ||
+                SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))
+              }
             >
               <summary>Contributor instructions (optional)</summary>
               <p className="field-hint">
@@ -2279,7 +2289,25 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   const shown = (field: string) => (attempted ? errors[field] : undefined);
   async function publish() {
     setAttempted(true);
-    if (!valid || !changed || base === null || staleDraft) return;
+    if (!valid) {
+      const fieldNames: Record<string, string> = {
+        monthlyAmount: "monthlyPool",
+        tokenAddress: "rewardAssetAddress",
+        tokenSymbol: "rewardAssetSymbol",
+      };
+      for (const [field, error] of Object.entries(errors)) {
+        if (!error) continue;
+        let group = document
+          .getElementById(`field-${fieldNames[field] ?? field}`)
+          ?.closest("details");
+        while (group) {
+          group.open = true;
+          group = group.parentElement?.closest("details") ?? null;
+        }
+      }
+      return;
+    }
+    if (!changed || base === null || staleDraft) return;
     const submittedDraft = draft;
     setSubmission({ state: "publishing" });
     try {
@@ -2325,6 +2353,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         <Link href={`/projects/${project.slug}`}>{project.name}</Link>
       </p>
       <RoutePageHeader icon={<Settings2 />} title="Manage project" />
+      <ProjectNav project={project} current="settings" />
       {session.status === "signed-in" ? (
         <ProjectSetupStatusPanel
           key={
@@ -2346,79 +2375,85 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         noValidate
         onSubmit={(event) => event.preventDefault()}
       >
-        <TextField
-          error={shown("headline")}
-          label="Short description"
-          name="headline"
-          onChange={set("headline")}
-          value={value.headline}
-        />
-        <TextField
-          error={shown("goal")}
-          label="Goal"
-          multiline
-          name="goal"
-          onChange={set("goal")}
-          value={value.goal}
-        />
-        <TextField
-          error={shown("criteria")}
-          label="Acceptance criteria"
-          multiline
-          name="criteria"
-          onChange={set("criteria")}
-          placeholder="What accepted GitHub outcomes qualify?"
-          value={value.criteria}
-        />
-        <ClosureConsent
-          onChange={set("automaticClosure")}
-          value={value.automaticClosure}
-        />
-        <details
-          className="proposal-skill-rules"
-          open={SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))}
-        >
-          <summary>Contributor instructions</summary>
-          <p className="field-hint">
-            These cannot override Slop's safety rules.
-          </p>
-          {SKILL_RULE_FIELDS.map((field) => (
-            <TextField
-              error={shown(field)}
-              key={field}
-              label={CONTRIBUTION_LABELS[field].label}
-              multiline
-              name={field}
-              onChange={set(field)}
-              placeholder={CONTRIBUTION_LABELS[field].placeholder}
-              value={value[field]}
-            />
-          ))}
+        <details className="proposal-advanced" open>
+          <summary>Project listing</summary>
+          <TextField
+            error={shown("headline")}
+            label="Short description"
+            name="headline"
+            onChange={set("headline")}
+            value={value.headline}
+          />
+          <TextField
+            error={shown("goal")}
+            label="Goal"
+            multiline
+            name="goal"
+            onChange={set("goal")}
+            value={value.goal}
+          />
+        </details>
+        <details className="proposal-advanced">
+          <summary>Contribution rules</summary>
+          <TextField
+            error={shown("criteria")}
+            label="Acceptance criteria"
+            multiline
+            name="criteria"
+            onChange={set("criteria")}
+            placeholder="What accepted GitHub outcomes qualify?"
+            value={value.criteria}
+          />
+          <ClosureConsent
+            onChange={set("automaticClosure")}
+            value={value.automaticClosure}
+          />
+          <details className="proposal-skill-rules">
+            <summary>Contributor instructions</summary>
+            <p className="field-hint">
+              These cannot override Slop's safety rules.
+            </p>
+            {SKILL_RULE_FIELDS.map((field) => (
+              <TextField
+                error={shown(field)}
+                key={field}
+                label={CONTRIBUTION_LABELS[field].label}
+                multiline
+                name={field}
+                onChange={set(field)}
+                placeholder={CONTRIBUTION_LABELS[field].placeholder}
+                value={value[field]}
+              />
+            ))}
+          </details>
         </details>
         {monthly ? (
-          <FundingFields
-            choice={choice}
-            error={(field) =>
-              shown(
-                field === "monthlyAmount" ? "monthlyAmount" : "tokenAddress",
-              )
-            }
-            networkFixed={assetFixed}
-            set={(field, entry) =>
-              set(
-                (
-                  {
-                    mode: "fundingMode",
-                    network: "network",
-                    assetKind: "assetKind",
-                    tokenAddress: "tokenAddress",
-                    tokenSymbol: "tokenSymbol",
-                    monthlyAmount: "monthlyAmount",
-                  } as const
-                )[field],
-              )(entry)
-            }
-          />
+          <details className="proposal-advanced">
+            <summary>Monthly rewards</summary>
+            <FundingFields
+              choice={choice}
+              error={(field) =>
+                shown(
+                  field === "monthlyAmount" ? "monthlyAmount" : "tokenAddress",
+                )
+              }
+              networkFixed={assetFixed}
+              set={(field, entry) =>
+                set(
+                  (
+                    {
+                      mode: "fundingMode",
+                      network: "network",
+                      assetKind: "assetKind",
+                      tokenAddress: "tokenAddress",
+                      tokenSymbol: "tokenSymbol",
+                      monthlyAmount: "monthlyAmount",
+                    } as const
+                  )[field],
+                )(entry)
+              }
+            />
+          </details>
         ) : null}
         {monthly &&
         choice.mode === "monthly" &&
@@ -2435,15 +2470,18 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             </button>
           </div>
         ) : null}
-        <TextField
-          error={shown("note")}
-          hint="Optional and public."
-          label="Revision note"
-          multiline
-          name="note"
-          onChange={set("note")}
-          value={value.note}
-        />
+        <details className="proposal-advanced">
+          <summary>Public revision note (optional)</summary>
+          <TextField
+            error={shown("note")}
+            hint="Optional and public."
+            label="Revision note"
+            multiline
+            name="note"
+            onChange={set("note")}
+            value={value.note}
+          />
+        </details>
         {staleDraft ? (
           <div role="alert" className="form-error">
             <p>
@@ -2463,61 +2501,57 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             </button>
           </div>
         ) : null}
-        <section aria-labelledby="update-changes" className="update-changes">
-          <h2 id="update-changes">Changes</h2>
-          {!changed ? (
-            <p>No changes yet.</p>
-          ) : (
-            <>
-              <ul>
-                {changes.presentation.length > 0 ||
-                (scanExempt && changes.executable.length > 0) ? (
-                  <li>
-                    Publishes now:{" "}
-                    {[
-                      ...changes.presentation,
-                      ...(scanExempt ? changes.executable : []),
-                    ]
-                      .map(label)
-                      .join(", ")}
-                    .
-                  </li>
-                ) : null}
-                {!scanExempt && changes.executable.length > 0 ? (
-                  <li>
-                    Needs a new security scan:{" "}
-                    {changes.executable.map(label).join(", ")}.{" "}
-                    {current.status === "active"
-                      ? "The project pauses and goes live again when the scan passes."
-                      : "The project goes live when the scan passes."}
-                  </li>
-                ) : null}
-                {changes.financial.length > 0 ? (
-                  <li>
-                    Applies from {nextCycle} (UTC):{" "}
-                    {changes.financial.map(label).join(", ")}. Funded awards
-                    keep their terms.
-                  </li>
-                ) : null}
-              </ul>
-              {diff.map((change) => (
-                <div className="project-change" key={change.field}>
-                  <h3>{change.label}</h3>
-                  <dl>
-                    <div>
-                      <dt>Current</dt>
-                      <dd>{change.before || "Not set"}</dd>
-                    </div>
-                    <div>
-                      <dt>Proposed</dt>
-                      <dd>{change.after || "Not set"}</dd>
-                    </div>
-                  </dl>
-                </div>
-              ))}
-            </>
-          )}
-        </section>
+        {changed ? (
+          <section aria-labelledby="update-changes" className="update-changes">
+            <h2 id="update-changes">Changes</h2>
+            <ul>
+              {changes.presentation.length > 0 ||
+              (scanExempt && changes.executable.length > 0) ? (
+                <li>
+                  Publishes now:{" "}
+                  {[
+                    ...changes.presentation,
+                    ...(scanExempt ? changes.executable : []),
+                  ]
+                    .map(label)
+                    .join(", ")}
+                  .
+                </li>
+              ) : null}
+              {!scanExempt && changes.executable.length > 0 ? (
+                <li>
+                  Needs a new security scan:{" "}
+                  {changes.executable.map(label).join(", ")}.{" "}
+                  {current.status === "active"
+                    ? "The project pauses and goes live again when the scan passes."
+                    : "The project goes live when the scan passes."}
+                </li>
+              ) : null}
+              {changes.financial.length > 0 ? (
+                <li>
+                  Applies from {nextCycle} (UTC):{" "}
+                  {changes.financial.map(label).join(", ")}. Funded awards keep
+                  their terms.
+                </li>
+              ) : null}
+            </ul>
+            {diff.map((change) => (
+              <div className="project-change" key={change.field}>
+                <h3>{change.label}</h3>
+                <dl>
+                  <div>
+                    <dt>Current</dt>
+                    <dd>{change.before || "Not set"}</dd>
+                  </div>
+                  <div>
+                    <dt>Proposed</dt>
+                    <dd>{change.after || "Not set"}</dd>
+                  </div>
+                </dl>
+              </div>
+            ))}
+          </section>
+        ) : null}
         {attempted && (!valid || !changed) ? (
           <p className="form-error" role="alert">
             {changed
@@ -2598,7 +2632,8 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         </div>
       </form>
       {base && session.status === "signed-in" && (
-        <>
+        <details className="proposal-advanced" id="security-settings">
+          <summary>Security program and private bounty funds</summary>
           <SecurityProgramEditor
             key={`${current.id}:${base.revision}`}
             project={current}
@@ -2619,23 +2654,16 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
               onRegistered={setBase}
             />
           ) : null}
-        </>
+        </details>
       )}
-      {monthly ? (
-        <section aria-labelledby="update-payouts" className="owner-section">
-          <h2 id="update-payouts">Payouts</h2>
-          <p className="payout-status">
-            <a href={`/projects/${project.slug}/funding`}>Vault funding</a>
-          </p>
-        </section>
-      ) : (
+      {!monthly ? (
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>
           <p className="payout-status">
             External award. Slop publishes contribution shares only.
           </p>
         </section>
-      )}
+      ) : null}
     </main>
   );
 }

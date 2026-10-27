@@ -86,7 +86,7 @@ export function ReferralClaims() {
     })
       .then(async (response) => {
         if (!response.ok)
-          throw new Error("Additional payout records could not load. Retry.");
+          throw new Error(`Referral request ${response.status}`);
         const value = referralResponse(
           await readBoundedJson(response, 262144, "referral claim"),
         );
@@ -117,12 +117,10 @@ export function ReferralClaims() {
           } else rememberPending(value, p);
         } else setPending(null);
       })
-      .catch((e: unknown) => {
+      .catch(() => {
         if (!controller.signal.aborted) {
           setLoadFailed(true);
-          setError(
-            errorMessage(e, "Additional payout records could not load. Retry."),
-          );
+          setError("Additional payout records could not load.");
         }
       });
     return () => controller.abort();
@@ -229,18 +227,9 @@ export function ReferralClaims() {
           This claim record is stale. Showing the last verified amounts.
         </p>
       )}
-      <dl>
-        <dt>Accrued</dt>
-        <dd>{amount(data.accruedBase)}</dd>
-        <dt>Pending</dt>
-        <dd>{amount(data.pendingBase)}</dd>
-        <dt>Claimable</dt>
-        <dd>{amount(data.claimableBase)}</dd>
-        <dt>Claimed</dt>
-        <dd>{amount(data.claimedBase)}</dd>
-      </dl>
-      {data.program && <p>Network: {networkLabel(data.program.network)}.</p>}
-      {data.observedAt && <p>Updated {formatDateTime(data.observedAt)}.</p>}
+      <p>
+        <strong>{amount(data.claimableBase)}</strong> claimable
+      </p>
       {data.paused && <p role="status">Claims are paused.</p>}
       {data.ended && <p role="status">Claims are closed.</p>}
       {data.latestVoided && (
@@ -255,17 +244,12 @@ export function ReferralClaims() {
           once verified.
         </p>
       )}
-      {data.wallet ? (
-        <p>
-          Referral wallet (fixed for this program):
-          <code className="referral-address">{data.wallet}</code>
-        </p>
-      ) : (
+      {!data.wallet ? (
         <p>
           <a href="/account#wallets">Confirm a Robinhood wallet in Account</a>.
           The first wallet included stays fixed.
         </p>
-      )}
+      ) : null}
       {message && <p role="status">{message}</p>}
       {pending !== null && (
         <div role="status">
@@ -345,6 +329,9 @@ export function ReferralClaims() {
               {review.data.program?.distributor}
             </code>
           </p>
+          <p>
+            Your wallet pays the network fee. No token approval is required.
+          </p>
           <div className="handoff-actions">
             <button
               className="button primary-button"
@@ -364,6 +351,25 @@ export function ReferralClaims() {
           </div>
         </section>
       )}
+      <details>
+        <summary>Reward details</summary>
+        <dl>
+          <dt>Accrued</dt>
+          <dd>{amount(data.accruedBase)}</dd>
+          <dt>Pending</dt>
+          <dd>{amount(data.pendingBase)}</dd>
+          <dt>Claimed</dt>
+          <dd>{amount(data.claimedBase)}</dd>
+        </dl>
+        {data.program && <p>Network: {networkLabel(data.program.network)}.</p>}
+        {data.observedAt && <p>Updated {formatDateTime(data.observedAt)}.</p>}
+        {data.wallet ? (
+          <p>
+            Referral wallet (fixed for this program):
+            <code className="referral-address">{data.wallet}</code>
+          </p>
+        ) : null}
+      </details>
     </section>
   );
 }

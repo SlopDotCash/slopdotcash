@@ -80,7 +80,9 @@ if (
 )
   throw new Error("SLOP_E2E_VETTING_PUBLIC_KEY must be a base64 Ed25519 key");
 const registryArguments = registryPersistTo
-  ? ` --persist-to ${JSON.stringify(registryPersistTo)}${
+  ? // Positive local registry workflows must explicitly select test networks;
+    // the release configuration intentionally has no network enabled by default.
+    ` --persist-to ${JSON.stringify(registryPersistTo)} --binding 'PAYMENT_NETWORKS=["base-sepolia","solana-devnet"]'${
       registryAdmins ? ` --binding ADMIN_GITHUB_IDS=${registryAdmins}` : ""
     }${
       registryModerators
@@ -126,13 +128,15 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   fullyParallel: true,
   // Wrangler's Pages proxy can terminate while serving concurrent browser
-  // workers, so the Pages phase keeps one worker. Explicit local-chain runs
-  // also share a chain port between viewport projects. Other preview checks
-  // run in parallel, capped because each loads the complete public ledger.
+  // workers, so the Pages phase keeps one worker. Registry tests also share
+  // one local D1 fixture; concurrent writers can fail inside Miniflare.
+  // Explicit local-chain runs share a chain port between viewport projects.
+  // Other preview checks run in parallel, capped because each loads the ledger.
   // SLOP_E2E_WORKERS overrides either default.
   workers:
     requestedWorkers === undefined
       ? localServer === "pages" ||
+        registryPersistTo !== undefined ||
         process.env.SLOP_E2E_VAULT_ACTIONS === "1" ||
         process.env.SLOP_E2E_SOLANA_VAULT === "1"
         ? 1

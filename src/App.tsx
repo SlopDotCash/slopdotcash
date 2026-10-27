@@ -35,6 +35,7 @@ import { copyText } from "./lib/copy-text";
 import { communityProjects, homeProjects } from "./lib/home-projects";
 import { networkLabel } from "./lib/network-names";
 import { formatAssetAmount } from "./lib/payments/contracts";
+import type { ProjectView } from "./lib/project-view";
 import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
 import { REWARD_ASSET_NETWORKS } from "./lib/reward-asset.mjs";
 import { pageTitle, SITE_ORIGIN, STATIC_PAGE_TITLES } from "./lib/site-routes";
@@ -62,12 +63,13 @@ import {
   MetricGrid,
   MetricTile,
   monthlyPoolPointsOnly,
-  monthlyPoolUnfunded,
   NotFound,
+  ProjectNav,
   paymentStateLabel,
   RoutePageHeader,
   reviewBudgetLabel,
   StatusBadge,
+  stale,
   vaultStateLabel,
 } from "./Presentation";
 import { ProjectRiskFlag } from "./ProjectRiskFlag";
@@ -284,7 +286,17 @@ function internalRoute(pathname: string): Route {
 /** Legacy pages now live as sections of their canonical routes. */
 const LEGACY_SECTIONS = new Map([["wallet", "/account#wallets"]]);
 
-function canonicalPath(): string {
+function canonicalLocation(): string {
+  const awards = /^\/projects\/([^/]+)\/awards\/?$/.exec(
+    window.location.pathname,
+  );
+  if (awards) {
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `/projects/${awards[1]}/funding${window.location.search}${window.location.hash || "#monthly-awards"}`,
+    );
+  }
   const legacy = LEGACY_SECTIONS.get(
     window.location.pathname.replace(/^\/|\/$/gu, ""),
   );
@@ -296,17 +308,21 @@ function canonicalPath(): string {
       `${path}${window.location.search}#${hash}`,
     );
   }
-  return window.location.pathname;
+  return window.location.href;
 }
 
 function useRoute(): Route {
-  const [path, setPath] = useState(canonicalPath);
+  const [href, setHref] = useState(canonicalLocation);
   useEffect(() => {
-    const update = () => setPath(canonicalPath());
+    const update = () => setHref(canonicalLocation());
     window.addEventListener("popstate", update);
-    return () => window.removeEventListener("popstate", update);
+    window.addEventListener("hashchange", update);
+    return () => {
+      window.removeEventListener("popstate", update);
+      window.removeEventListener("hashchange", update);
+    };
   }, []);
-  return useMemo(() => internalRoute(path), [path]);
+  return useMemo(() => internalRoute(new URL(href).pathname), [href]);
 }
 
 /** The title and canonical path of a route; a missing page has no canonical. */
@@ -413,9 +429,11 @@ function Header() {
   );
 }
 
-function Footer() {
+function Footer({ marketing }: { marketing: boolean }) {
   return (
-    <footer className="site-footer">
+    <footer
+      className={`site-footer${marketing ? "" : " site-footer--compact"}`}
+    >
       <div className="shell footer-grid">
         <div className="footer-brand-row">
           <SlopMark inverse size={104} />
@@ -883,10 +901,14 @@ function ProjectParticipation({
   project,
   cycles,
   displayCycleId,
+  view,
+  outdated = false,
 }: {
   project: ProjectDefinition;
   cycles: readonly PromotionCycle[] | null;
   displayCycleId: string | null;
+  view?: ProjectView;
+  outdated?: boolean;
 }) {
   if (project.participation?.state === "archived") {
     const successor = findProject(project.participation.successorProjectId);
@@ -926,7 +948,9 @@ function ProjectParticipation({
     );
   }
   if (projectPromotionEligible(project, cycles, displayCycleId))
-    return <InstallPanel project={project} />;
+    return (
+      <ProjectInstallPanel project={project} view={view} outdated={outdated} />
+    );
   return (
     <section className="section" id="start">
       <h2>Agent setup</h2>
@@ -941,8 +965,7 @@ function ProjectParticipation({
   );
 }
 
-function InstallPanel({ project }: { project?: ProjectDefinition }) {
-  if (project) return <ProjectInstallPanel project={project} />;
+function InstallPanel() {
   return (
     <div className="home-agent-setup">
       <p className="hero-copy">Paste this into your coding agent.</p>
@@ -957,7 +980,15 @@ function InstallPanel({ project }: { project?: ProjectDefinition }) {
  * confirms this project, the panel offers the generic agent prompt, which
  * selects only cleared projects itself.
  */
-function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
+function ProjectInstallPanel({
+  project,
+  view,
+  outdated,
+}: {
+  project: ProjectDefinition;
+  view: ProjectView | undefined;
+  outdated: boolean;
+}) {
   const projectId = project.id;
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
@@ -1017,7 +1048,74 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
       <AgentPromptBox
         prompt={ready ? projectAgentPrompt(project) : bootstrapAgentPrompt()}
       />
+      {ready && view ? (
+        <ProjectOpenWork project={project} view={view} outdated={outdated} />
+      ) : null}
     </div>
+  );
+}
+
+const OPEN_WORK_LIMIT = 5;
+
+/**
+ * PRD section 7: the contributor goes from the project to eligible work. Only
+ * items whose published selection decision is "candidate" appear, so
+ * assignees, claims, drafts, review requests, approvals, requested changes,
+ * security labels, blocked or untriaged issues and epics stay out. The list
+ * appears only for a project cleared for agents, and agents recheck GitHub.
+ */
+function ProjectOpenWork({
+  project,
+  view,
+  outdated,
+}: {
+  project: ProjectDefinition;
+  view: ProjectView;
+  outdated: boolean;
+}) {
+  const candidates = [
+    ...view.workQueue.issues,
+    ...view.workQueue.pullRequests,
+  ].filter((item) => item.selection.status === "candidate");
+  const shown = candidates.slice(0, OPEN_WORK_LIMIT);
+  return (
+    <section aria-labelledby="open-work-heading" className="open-work">
+      <h3 id="open-work-heading">Open work</h3>
+      <p>
+        {outdated ? "May be outdated. " : ""}Issues ready for a fix and pull
+        requests ready for review, read from GitHub{" "}
+        {formatDateTime(view.generatedAt)}. Your agent checks each item again
+        before it starts.
+      </p>
+      {shown.length === 0 ? (
+        <EmptyState text="No open issue or pull request is ready for new work now." />
+      ) : (
+        <ul className="project-rows">
+          {shown.map((item) => (
+            <li key={item.id}>
+              <ExternalLinkAnchor className="project-row" href={item.url}>
+                <span className="project-row-name">
+                  <strong>{item.title}</strong>
+                  <small>
+                    {item.kind === "issue" ? "Issue" : "Pull request to review"}{" "}
+                    · {item.repository}#{item.number}
+                  </small>
+                </span>
+                <ExternalLink aria-hidden="true" />
+              </ExternalLinkAnchor>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="open-work-more">
+        {candidates.length > shown.length
+          ? `${shown.length} of ${candidates.length} shown. `
+          : ""}
+        <ExternalLinkAnchor href={project.links.issues}>
+          All issues on GitHub
+        </ExternalLinkAnchor>
+      </p>
+    </section>
   );
 }
 
@@ -1057,10 +1155,6 @@ function ProjectPaymentHistory({
     <section className="section payment-history">
       <div className="simple-heading">
         <h2>{externalPrize ? "Cycle history" : "Payment history"}</h2>
-        {externalPrize ? null : (
-          <Link href={`/projects/${project.slug}/funding`}>Manage funding</Link>
-        )}
-        <Link href={`/projects/${project.slug}/manage`}>Manage project</Link>
       </div>
       {directState.status === "error" && !externalPrize ? (
         <p role="status">
@@ -1081,7 +1175,7 @@ function ProjectPaymentHistory({
             Paid {formatDate(paidOn)} for {formatCycleMonth(month)} work ·{" "}
             {count} transfers ·{" "}
             <ExternalLinkAnchor
-              href={`${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/disclosures/${project.id}-${month}-direct-payments.json`}
+              href={`${browserDeployment.site}/api/v1/payments/projects/${project.id}/direct-transfers`}
             >
               Disclosure
             </ExternalLinkAnchor>
@@ -1217,7 +1311,7 @@ function ProjectFundingPage({
               }
               value={
                 monthlyPoolPointsOnly(project.reward)
-                  ? "$0 (Points only)"
+                  ? "Points only"
                   : project.reward.kind === "monthly-pool"
                     ? project.reward.monthlyCapDisplay
                     : (project.reward.externalOpportunity
@@ -1234,6 +1328,7 @@ function ProjectFundingPage({
           </MetricGrid>
         }
       />
+      <ProjectNav project={project} current="funding" />
       <section className="funding-records">
         {!project.escrow ? (
           <div className="route-funding-status">
@@ -1280,157 +1375,94 @@ function ProjectPage({
     state.status === "ready"
       ? state.views.find((candidate) => candidate.project.id === project.id)
       : undefined;
-  const headlinePrefix = "Make money ";
-  const promotionEligible = projectPromotionEligible(
-    project,
-    state.status === "ready" ? state.cycleIndex.cycles : null,
-    view?.cycle.id ?? null,
-  );
-  const headlineAction = project.headline.startsWith(headlinePrefix)
-    ? project.headline.slice(headlinePrefix.length)
-    : null;
+  const externalPrize = project.reward.kind === "external-prize-share";
+  const pointsOnly = monthlyPoolPointsOnly(project.reward);
   return (
     <main className="route-project">
       <section className="project-hero">
         <div className="shell">
           <DataNotice state={state} retry={retry} />
-          <p className="breadcrumb">
-            <Link href="/">Projects</Link>
-            <span>/</span>
-            {project.name}
-          </p>
-          <div className="project-hero-grid">
+          <RoutePageHeader
+            title={project.name}
+            icon={<FolderGit2 />}
+            eyebrow={<Link href="/">Projects</Link>}
+            lead={project.description}
+          >
+            <ProjectNav project={project} current="overview" />
+          </RoutePageHeader>
+          <div
+            className={`project-overview${externalPrize ? " project-overview--prize" : ""}`}
+          >
             <div>
-              <div className="route-project-title">
-                <FolderGit2 aria-hidden="true" />
-                <h1>
-                  {project.status === "paused" ||
-                  (project.reward.kind === "monthly-pool" &&
-                    project.reward.paymentMode !== "enabled") ||
-                  monthlyPoolPointsOnly(project.reward) ? (
-                    project.name
-                  ) : headlineAction ? (
-                    <>
-                      Make money{" "}
-                      <span className="project-headline-action">
-                        {headlineAction}
-                      </span>
-                    </>
-                  ) : (
-                    project.headline
-                  )}
-                </h1>
+              <div className="project-state-summary">
+                <p className="project-reward-status">
+                  {pointsOnly
+                    ? "Points only · no cash rewards"
+                    : externalPrize
+                      ? "External prize · organizer decides awards"
+                      : `${project.reward.monthlyCapDisplay} monthly target${project.escrow ? "" : ` · ${fundingStateLabel(project)}`} · ${project.reward.paymentMode === "enabled" ? "payments enabled" : "payments not active"}`}
+                </p>
+                <ProjectFunding project={project} />
               </div>
-              <p className="hero-copy">
-                {monthlyPoolPointsOnly(project.reward)
-                  ? project.contribution?.approvedScope ||
-                    headlineAction ||
-                    project.headline
-                  : project.description}
-              </p>
-              <p className="project-reward-status">
-                {monthlyPoolPointsOnly(project.reward)
-                  ? "Points only · no cash rewards"
-                  : project.reward.kind === "monthly-pool"
-                    ? `${project.reward.monthlyCapDisplay} monthly target · ${monthlyPoolUnfunded(project.reward) ? "not funded yet" : `${formatMicroUsdc(project.reward.committedMinor)} funded`} · ${project.reward.paymentMode === "enabled" ? "payments enabled" : "payments not active"}`
-                    : "External prize · organizer decides awards"}
-              </p>
-              {project.status === "paused" ? (
-                <ProjectParticipation
-                  project={project}
-                  displayCycleId={view?.cycle.id ?? null}
-                  cycles={
-                    state.status === "ready" ? state.cycleIndex.cycles : null
-                  }
-                />
-              ) : null}
-              <p className="project-terms-line">
+              <div className="project-resource-links">
+                <ExternalLinkAnchor href={project.links.repository}>
+                  View in GitHub <ExternalLink aria-hidden="true" size={14} />
+                </ExternalLinkAnchor>
                 <Link href={`/projects/${project.slug}/security`}>
                   {project.securityBounty
                     ? "Security bounty"
                     : "Report a security issue"}
                 </Link>
-              </p>
+              </div>
               {project.rewardAsset ? (
-                <p className="project-terms-line">
-                  Reward asset: {project.rewardAsset.symbol} on{" "}
-                  {REWARD_ASSET_NETWORKS[project.rewardAsset.network].name} ·{" "}
-                  <code>{project.rewardAsset.address}</code>
-                </p>
+                <details className="asset-details">
+                  <summary>
+                    {project.rewardAsset.symbol} on{" "}
+                    {REWARD_ASSET_NETWORKS[project.rewardAsset.network].name} ·
+                    Asset details
+                  </summary>
+                  <p>
+                    Token contract: <code>{project.rewardAsset.address}</code>
+                  </p>
+                </details>
               ) : null}
             </div>
-            {project.status === "paused" ? null : state.status !== "ready" ? (
+            {externalPrize ? (
               <aside className="reward-card">
                 <strong>
-                  {state.status === "loading"
-                    ? "Loading funding history…"
-                    : "Funding history unavailable"}
+                  <span className="reward-exact-amount">
+                    {
+                      project.reward.externalOpportunity
+                        ?.advertisedAmountDisplay
+                    }
+                  </span>
+                  {" + points"}
                 </strong>
+                <details>
+                  <summary>Prize allocation terms</summary>
+                  <p>{project.terms.externalPrize?.allocationAuthority}</p>
+                  <a href={`/projects/${project.id}/terms.json`}>
+                    Full prize terms
+                  </a>
+                </details>
               </aside>
-            ) : project.reward.kind === "monthly-pool" &&
-              monthlyPoolUnfunded(project.reward) ? null : promotionEligible ? (
-              <aside className="reward-card">
-                <strong
-                  className={
-                    project.reward.kind === "monthly-pool" &&
-                    !monthlyPoolUnfunded(project.reward)
-                      ? "reward-amount-monthly"
-                      : undefined
-                  }
-                >
-                  {monthlyPoolPointsOnly(project.reward) ? (
-                    "$0 + points"
-                  ) : project.reward.kind === "monthly-pool" ? (
-                    `${monthlyPoolCapLabel(project)} / mo`
-                  ) : (
-                    <>
-                      <span className="reward-exact-amount">
-                        {
-                          project.reward.externalOpportunity
-                            ?.advertisedAmountDisplay
-                        }
-                      </span>
-                      {" + points"}
-                    </>
-                  )}
-                </strong>
-                {project.reward.kind === "external-prize-share" ? (
-                  <details>
-                    <summary>Prize allocation terms</summary>
-                    <p>{project.terms.externalPrize?.allocationAuthority}</p>
-                    <a href={`/projects/${project.id}/terms.json`}>
-                      Full prize terms
-                    </a>
-                  </details>
-                ) : null}
-                <div>
-                  {project.reward.reviewBudget ? (
-                    <small>
-                      + {reviewBudgetLabel(project.reward.reviewBudget)}
-                    </small>
-                  ) : null}
-                  <div className="reward-actions">
-                    <ExternalLinkAnchor href={project.links.repository}>
-                      View in GitHub
-                      <ExternalLink aria-hidden="true" size={14} />
-                    </ExternalLinkAnchor>
-                  </div>
-                </div>
-              </aside>
-            ) : (
-              <aside className="reward-card">
-                <strong>Not funded this month</strong>
-              </aside>
-            )}
+            ) : null}
           </div>
-          {project.status !== "paused" && state.status === "ready" ? (
+          {project.reward.reviewBudget ? (
+            <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
+          ) : null}
+          {project.status === "paused" || state.status === "ready" ? (
             <ProjectParticipation
               project={project}
               displayCycleId={view?.cycle.id ?? null}
-              cycles={state.cycleIndex.cycles}
+              cycles={state.status === "ready" ? state.cycleIndex.cycles : null}
+              view={view}
+              outdated={
+                state.status === "ready" &&
+                (state.refreshError !== undefined || stale(state.snapshot))
+              }
             />
           ) : null}
-          <ProjectFunding project={project} />
         </div>
       </section>
       <div className="shell">
@@ -1612,7 +1644,7 @@ function AppContent({ route }: { route: Route }) {
           {content}
         </Suspense>
       </div>
-      <Footer />
+      <Footer marketing={route.kind === "home"} />
     </>
   );
 }

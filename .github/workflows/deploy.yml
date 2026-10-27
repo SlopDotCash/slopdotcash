@@ -416,6 +416,11 @@ jobs:
         env:
           BROWSER_SHARD: ${{ matrix.shard }}
         run: node scripts/run-e2e.mjs --shard="$BROWSER_SHARD"
+      - name: Verify local sign-in return paths
+        if: matrix.lane == 'preview-1'
+        # This DEV-mode flow needs Vite, not the production preview bundle.
+        # Chromium and the pinned Python dependency are installed above.
+        run: bun run test:local-signin
       - name: Verify automatic private intake
         if: matrix.lane == 'registry-1'
         env:
@@ -737,6 +742,15 @@ jobs:
             exit 1
           fi
 
+      - name: Qualify unviewed-media value assessments with the real provider
+        if: vars.SLOPBOT_RELEASE == 'enabled'
+        timeout-minutes: 9
+        env:
+          SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
+        # This main-only environment supplies the key only to this step.
+        # Synthetic source and local SQLite; no production bindings or output artifacts.
+        run: bun --no-env-file scripts/qualify-value-models.ts
+
       - name: Require reviewed Pages project
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -875,7 +889,8 @@ jobs:
           fi
 
           # Prepare every enabled attester from the checked registry. This reads
-          # secret names only; disabled networks are neither created nor updated.
+          # secret names only. A disabled network with retained vaults updates
+          # its existing attester to stop execution; it never creates one.
           attester_dir="$RUNNER_TEMP/slop-payment-attester"
           bun workers/payment-executor/release-mainnets.mjs prepare "$attester_dir"
 

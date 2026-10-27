@@ -23,6 +23,7 @@ import {
   cycleStateLabel,
   DataNotice,
   EmptyState,
+  EvidenceNav,
   ExternalLinkAnchor,
   formatCycleMonth,
   formatDate,
@@ -515,6 +516,7 @@ export function CycleArchivePage({
           </p>
         ) : null}
       </RoutePageHeader>
+      <EvidenceNav current="cycles" />
       {all.length > 0 ? (
         <div className="points-controls cycle-filters">
           {offered.map((key) => (
@@ -559,6 +561,18 @@ export function CycleArchivePage({
       <div className="cycle-records">
         {cycles.map((cycle) => {
           const project = findProject(cycle.projectId);
+          const amountStage =
+            cycle.state === "paid"
+              ? "Paid"
+              : cycle.approvedAt !== null
+                ? "Approved"
+                : "Suggested";
+          const amount =
+            amountStage === "Paid"
+              ? cycle.reward.paidMinor
+              : amountStage === "Approved"
+                ? cycle.reward.approvedMinor
+                : cycle.reward.suggestedMinor;
           return (
             <article
               className="cycle-record"
@@ -579,16 +593,21 @@ export function CycleArchivePage({
                   </StatusBadge>
                 </p>
               </div>
-              <dl>
-                {cycle.kind === "external-prize-share" ? (
+              {cycle.kind === "external-prize-share" ? (
+                <dl>
                   <div>
                     <dt>External prize share</dt>
                     <dd>
                       {(cycle.reward.sharePartsPerMillion ?? 0) / 10_000}%
                     </dd>
                   </div>
-                ) : (
-                  <>
+                </dl>
+              ) : (
+                <details className="cycle-amounts">
+                  <summary>
+                    {amountStage} <strong>{formatMicroUsdc(amount)}</strong>
+                  </summary>
+                  <dl>
                     <div>
                       <dt>Suggested</dt>
                       <dd>{formatMicroUsdc(cycle.reward.suggestedMinor)}</dd>
@@ -601,9 +620,9 @@ export function CycleArchivePage({
                       <dt>Paid</dt>
                       <dd>{formatMicroUsdc(cycle.reward.paidMinor)}</dd>
                     </div>
-                  </>
-                )}
-              </dl>
+                  </dl>
+                </details>
+              )}
             </article>
           );
         })}
