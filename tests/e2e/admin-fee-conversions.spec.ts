@@ -5,7 +5,8 @@ import { expect, expectAccessible, projectSuffix, test } from "./fixtures";
 
 // PRD section 6: the admin page reads the private fee-conversion route of the
 // real local Pages/D1 fixture. Robinhood Chain keeps received fees and shows
-// them as "not converted"; the other networks show finalized USDC output.
+// them as "not converted"; other route labels describe policy, not live
+// activation, while the totals show only finalized USDC output.
 test("an admin sees Robinhood Chain fees as not converted beside finalized USDC conversions @registry", async ({
   diagnostics,
   page,
@@ -89,12 +90,12 @@ test("an admin sees Robinhood Chain fees as not converted beside finalized USDC 
     "Received assets stay in the fee wallet.",
   );
   await expect(network("Robinhood Chain")).not.toContainText(/pending/iu);
-  await expect(network("Ethereum")).toContainText("Converts to USDC");
+  await expect(network("Ethereum")).toContainText("USDC conversion policy");
   await expect(network("Ethereum")).toContainText(
     "No finalized conversion yet.",
   );
-  await expect(network("Solana")).toContainText("Converts to USDC");
-  await expect(network("Base")).toContainText("Converts to USDC");
+  await expect(network("Solana")).toContainText("USDC conversion policy");
+  await expect(network("Base")).toContainText("USDC conversion policy");
   await expect(network("Base")).toContainText(
     `1 conversion: 2500000000000000000 base units of token ${token.slice(0, 6)}…${token.slice(-4)} to 12.5 USDC`,
   );
