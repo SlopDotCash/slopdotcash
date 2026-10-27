@@ -32,6 +32,7 @@ import {
 import {
   inspectMintAccount,
   inspectTokenAccount,
+  TOKEN_2022_PROGRAM,
 } from "../../contracts/solana/token";
 import {
   ata,
@@ -1182,6 +1183,12 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           userPublicKey: wallet,
           wrapAndUnwrapSol: false,
           asLegacyTransaction: false,
+          // PumpSwap V2 otherwise creates a user-volume PDA outside the
+          // reviewed ATA-only rent budget. Shared routing uses the router's
+          // existing pool accounts; every resolved account is still checked.
+          ...(inputMint.tokenProgram === TOKEN_2022_PROGRAM
+            ? { useSharedAccounts: true }
+            : {}),
           dynamicComputeUnitLimit: true,
           prioritizationFeeLamports: {
             priorityLevelWithMaxLamports: {

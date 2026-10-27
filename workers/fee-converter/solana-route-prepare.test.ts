@@ -190,6 +190,7 @@ async function fixture(
     if (uri.hostname === "jupiter.invalid") {
       if (uri.pathname.endsWith("/swap")) {
         expect(JSON.parse(String(init?.body)).asLegacyTransaction).toBe(false);
+        expect(JSON.parse(String(init?.body)).useSharedAccounts).toBe(true);
         return Response.json({
           swapTransaction: solanaBase64(raw),
           lastValidBlockHeight: 1000,

@@ -706,12 +706,22 @@ approval signatures, persisted bytes, database reopen, finality before a fresh
 swap, matching token proceeds, lost-send recovery and refusal after a claim
 loses its network lease. It is not live Kyber, Circle or production evidence.
 
-The Solana check uses a local
-`solana-test-validator` (port 28899) that clones the mainnet Jupiter and
-Whirlpool programs and one JUP/USDC route. It uses the normal native-budget
-and signing-journal path with a generated local wallet.
-They need `anvil` and `solana-test-validator` on `PATH` and never touch a real
-chain.
+The Solana check uses a local `solana-test-validator` (default port 28899).
+It captures real Jupiter V2 quote and unsigned swap responses, resolves their
+lookup tables at finalized commitment, and clones the route's public programs
+and accounts. The default input is classic SPL JUP.
+`SLOP_FEE_TEST_PORT` selects another local port range.
+The captured responses stay bound to the requested wallet and quote while
+execution runs against the isolated snapshot. The harness selects stable
+on-chain AMMs instead of expiring oracle-price routes. It retains the original
+lookup evidence, rebases only table extension timing for the fresh local bank,
+and normalizes fixture rent epochs; lookup addresses and authority stay intact.
+Generated throwaway wallets
+exercise a real local receipt, the normal native budget, signing journal,
+finalized conversion, restart reconciliation and duplicate refusal.
+These checks require `anvil` and `solana-test-validator` on `PATH`. Public
+mainnet access is read-only; every signed transaction is sent only to the
+local validator. Local results do not qualify a production deployment.
 
 The registry discovery includes ordinary `escrow.deployments` and private
 bounty `securityBounty.settlement.deployments`. Both supply fee assets and
