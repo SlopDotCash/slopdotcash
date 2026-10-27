@@ -1173,6 +1173,13 @@ export function authorizeSkill(
   const value = JSON.parse(result.stdout);
   if (value.revision !== provenance.revision || !value.authorization)
     fail("Skill authority returned an invalid revision");
+  if (value.updates?.length) {
+    console.error(
+      value.updates[0].status === "available"
+        ? `A newer verified skill template exists on main (${value.updates[0].revision}). Your installed version remains usable. Review update instructions at https://slop.cash/projects/${PROJECT.projectId}/manual.md .`
+        : "The update check is unavailable. Your verified installed skill remains usable; no update was installed.",
+    );
+  }
   return value;
 }
 

@@ -50,12 +50,11 @@ export function renderInstallGuide({
   return `# Install ${skillName} for ${clientName}
 
 Install or update the complete skill archive. The authenticated installer
-accepts the current \`main\` revision, a byte-identical authorized ancestor,
-an explicitly labeled same-repository release candidate, or the latest verified
-production publication while a newer template is unpublished. The release
-exception requires the canonical workflow's successful production checks;
-current revocations and project clearance still apply. The installer independently
-compares packaged bytes with immutable GitHub source before atomic activation.
+accepts the current \`main\` revision, a verified historical main revision,
+or an explicitly labeled same-repository release candidate. Older versions
+remain usable. Check for updates at the start of each work session; update
+notices do not force installation. Current revocations and project restrictions
+still apply. The installer independently compares packaged bytes with immutable GitHub source before atomic activation.
 Verification uses GitHub's anonymous API budget, which is shared by every
 process behind your public IP. Export \`GH_TOKEN\` or \`GITHUB_TOKEN\` to use
 your own authenticated budget instead; the token is sent only to

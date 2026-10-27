@@ -31,9 +31,8 @@ export const GUIDE_RENDERER_PATHS = Object.freeze([
 /** Revisions the generated installer may authorize, for every skill manifest. */
 export const ACCEPTED_SKILL_REVISIONS = Object.freeze([
   "current main head",
-  "main ancestor whose complete canonical skill tree is byte-identical to current main",
+  "main ancestor whose bytes match its own immutable canonical source; newer-template notices do not disable it",
   "open non-draft same-repository PR head into main, zero behind current main, with a release-candidate label event after the exact current-head event",
-  "main ancestor used by the latest verified production publication from a push or manual release, with successful source, publication and served-byte checks; current revocations and project clearance remain required",
 ]);
 
 const encoder = new TextEncoder();

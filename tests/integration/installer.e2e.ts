@@ -838,15 +838,14 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
         [revisionB]: { files: baseFiles("changed-canonical-skill") },
       },
     });
-    const rejected = run(
+    const older = run(
       command(staleArtifact, changedAuthority),
       join(staleRoot, "install"),
     );
-    expect(rejected.status).not.toBe(0);
-    expect(rejected.stderr).toContain("bytes differ from current main");
+    expect(older.status, older.stderr).toBe(0);
   });
 
-  it("rejects changed ancestor skills even after a successful release and rejects revocation", () => {
+  it("accepts outdated main ancestors but still rejects explicit revocation", () => {
     for (const revoked of [false, true]) {
       const root = freshRoot(`published-${revoked}`);
       const files = baseFiles("published");
@@ -883,18 +882,17 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
         expect(installed.status).not.toBe(0);
         expect(installed.stderr).toContain("explicitly revoked");
       } else {
-        expect(installed.status).not.toBe(0);
-        expect(installed.stderr).toContain("bytes differ from current main");
+        expect(installed.status, installed.stderr).toBe(0);
         expect(
           existsSync(
             join(root, "install", "codex", "skills", "contribute-to-eliza"),
           ),
-        ).toBe(false);
+        ).toBe(true);
       }
     }
   });
 
-  it("keeps the latest released ancestor authorized until a newer release carries the template change", () => {
+  it("keeps an outdated installed skill usable and reports updates without requiring publication", () => {
     const root = freshRoot("latest-release");
     const installRoot = join(root, "install");
     const files = baseFiles("released-template");
@@ -947,10 +945,8 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
       repository: "SlopDotCash/slopdotcash",
       revision: revisionA,
       authorization: {
-        kind: "release",
+        kind: "develop",
         develop: revisionB,
-        run: 40453260922,
-        attempt: 1,
       },
     });
     const entry = pathToFileURL(
@@ -974,246 +970,32 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
     expect(fresh.status, fresh.stderr).toBe(0);
     expect(JSON.parse(fresh.stdout)).toMatchObject({
       revision: revisionA,
-      authorization: { kind: "release", develop: revisionB },
+      authorization: { kind: "develop", develop: revisionB },
+      updates: [{ status: "available", revision: revisionB }],
     });
 
-    // The release carrying the change succeeds: the stale ancestor is no
-    // longer what production serves, so it is refused until reinstalled.
+    // A later publication does not revoke the installed skill or force an update.
     authority = configureAuthority(root, authorityWithLatestRelease(revisionB));
     const superseded = authorize(authority);
-    expect(superseded.status).not.toBe(0);
-    expect(superseded.stderr).toContain("bytes differ from current main");
+    expect(superseded.status, superseded.stderr).toBe(0);
+    expect(superseded.stderr).toContain("newer verified skill template");
     const stale = run(command(artifact, authority), installRoot);
-    expect(stale.status).not.toBe(0);
-    expect(stale.stderr).toContain("bytes differ from current main");
+    expect(stale.status, stale.stderr).toBe(0);
     expect(currentLink(installRoot)).toBe(
       `.contribute-to-eliza-versions/${revisionA}`,
     );
-  });
-
-  it("selects the newest verified manual publication rather than an older push", () => {
-    const root = freshRoot("manual-release");
-    const files = baseFiles("release-a");
-    const next = {
-      ...files,
-      "references/revision.txt": Buffer.from("release-b\n"),
+    const unavailableUpdate = authorityWithLatestRelease(revisionB);
+    unavailableUpdate.responseOverrides = {
+      [`/repos/SlopDotCash/slopdotcash/contents/skills/contribute-to-eliza?ref=${revisionB}`]:
+        { message: "unavailable" },
     };
-    const current = {
-      ...files,
-      "references/revision.txt": Buffer.from("unreleased-c\n"),
-    };
-    const a = releaseEvidence(revisionA, 100);
-    const b = releaseEvidence(revisionB, 200, {
-      event: "workflow_dispatch",
-      createdAt: "2026-10-27T02:00:00Z",
-      completedAt: "2026-10-27T02:01:00Z",
-    });
-    const authority = configureAuthority(
-      root,
-      releaseHistory(files, next, current, [b, a]),
-    );
-    const stale = run(
-      command(writeArtifact(root, revisionA, files), authority),
-      join(root, "stale"),
-    );
-    expect(stale.status).not.toBe(0);
-    expect(stale.stderr).toContain("bytes differ from current main");
-    const latest = run(
-      command(writeArtifact(root, revisionB, next), authority),
-      join(root, "latest"),
-    );
-    expect(latest.status, latest.stderr).toBe(0);
-  });
-
-  it.each(["job", "publication", "metadata", "bytes"] as const)(
-    "refuses workflow success without successful %s proof",
-    (missing) => {
-      const root = freshRoot(`release-${missing}`);
-      const files = baseFiles("release-a");
-      const proof = releaseEvidence(revisionA, 100);
-      if (missing === "job") proof.jobs.jobs[0].conclusion = "skipped";
-      else {
-        const name = {
-          publication: "Deploy private identity and Cloudflare Pages",
-          metadata: "Verify Cloudflare deployment commit metadata",
-          bytes: "Verify published skill and leaderboard",
-        }[missing];
-        const step = proof.jobs.jobs[0].steps.find((row) => row.name === name);
-        if (!step) throw new Error("Missing publication fixture step");
-        step.conclusion = "skipped";
-      }
-      const authority = configureAuthority(
-        root,
-        releaseHistory(
-          files,
-          files,
-          { ...files, "references/revision.txt": Buffer.from("changed\n") },
-          [proof],
-        ),
-      );
-      const installed = run(
-        command(writeArtifact(root, revisionA, files), authority),
-        join(root, "install"),
-      );
-      expect(installed.status).not.toBe(0);
-      expect(installed.stderr).toContain("bytes differ from current main");
-    },
-  );
-
-  it("orders verified publications by completion instead of run creation", () => {
-    const root = freshRoot("release-completion");
-    const files = baseFiles("release-a");
-    const next = {
-      ...files,
-      "references/revision.txt": Buffer.from("release-b\n"),
-    };
-    const current = {
-      ...files,
-      "references/revision.txt": Buffer.from("changed\n"),
-    };
-    const a = releaseEvidence(revisionA, 200, {
-      createdAt: "2026-10-27T02:00:00Z",
-      completedAt: "2026-10-27T02:01:00Z",
-    });
-    const b = releaseEvidence(revisionB, 100, {
-      createdAt: "2026-10-27T01:00:00Z",
-      completedAt: "2026-10-27T03:01:00Z",
-    });
-    const authority = configureAuthority(
-      root,
-      releaseHistory(files, next, current, [a, b]),
-    );
-    expect(
-      run(
-        command(writeArtifact(root, revisionA, files), authority),
-        join(root, "stale"),
-      ).status,
-    ).not.toBe(0);
-    const latest = run(
-      command(writeArtifact(root, revisionB, next), authority),
-      join(root, "latest"),
-    );
-    expect(latest.status, latest.stderr).toBe(0);
-  });
-
-  it("does not prune a running release whose metadata predates its verified production job", () => {
-    const root = freshRoot("running-release");
-    const files = baseFiles("release-a");
-    const next = {
-      ...files,
-      "references/revision.txt": Buffer.from("release-b\n"),
-    };
-    const current = {
-      ...files,
-      "references/revision.txt": Buffer.from("changed\n"),
-    };
-    const a = releaseEvidence(revisionA, 100, {
-      completedAt: "2026-10-27T03:00:00Z",
-    });
-    const b = releaseEvidence(revisionB, 200, {
-      createdAt: "2026-10-27T02:00:00Z",
-      completedAt: "2026-10-27T04:00:00Z",
-      updatedAt: "2026-10-27T02:30:00Z",
-    });
-    b.run.status = "in_progress";
-    const authority = configureAuthority(
-      root,
-      releaseHistory(files, next, current, [a, b]),
-    );
-    expect(
-      run(
-        command(writeArtifact(root, revisionA, files), authority),
-        join(root, "stale"),
-      ).status,
-    ).not.toBe(0);
-    const installed = run(
-      command(writeArtifact(root, revisionB, next), authority),
-      join(root, "latest"),
-    );
-    expect(installed.status, installed.stderr).toBe(0);
-  });
-
-  it("retains a verified earlier attempt when a rerun fails without publication", () => {
-    const root = freshRoot("failed-rerun");
-    const files = baseFiles("release-a");
-    const first = releaseEvidence(revisionA, 100);
-    const rerun = releaseEvidence(revisionA, 100, {
-      attempt: 2,
-      updatedAt: "2026-10-27T03:00:00Z",
-    });
-    rerun.run.conclusion = "failure";
-    rerun.jobs.jobs[0].conclusion = "skipped";
-    const options = releaseHistory(
-      files,
-      files,
-      { ...files, "references/revision.txt": Buffer.from("changed\n") },
-      [rerun],
-    );
-    options.responseOverrides = {
-      ...options.responseOverrides,
-      [releaseJobsPath(100, 1)]: first.jobs,
-    };
-    const authority = configureAuthority(root, options);
-    const installed = run(
-      command(writeArtifact(root, revisionA, files), authority),
-      join(root, "install"),
-    );
-    expect(installed.status, installed.stderr).toBe(0);
-    expect(
-      JSON.parse(
-        readFileSync(
-          join(
-            versionPath(join(root, "install"), revisionA),
-            ".slop-authorization.json",
-          ),
-          "utf8",
-        ),
-      ).authorization,
-    ).toMatchObject({ run: 100, attempt: 1 });
-  });
-
-  it("refuses revoked grace and ambiguous or incomplete release evidence", () => {
-    const files = baseFiles("release-a");
-    const current = {
-      ...files,
-      "references/revision.txt": Buffer.from("changed\n"),
-    };
-    for (const fault of ["revoked", "tied", "incomplete", "bounded"] as const) {
-      const root = freshRoot(`release-${fault}`);
-      const a = releaseEvidence(revisionA, 100);
-      const b = releaseEvidence(revisionB, 200);
-      const options = releaseHistory(
-        files,
-        files,
-        current,
-        fault === "tied" ? [a, b] : [a],
-      );
-      const overrides = options.responseOverrides ?? {};
-      if (fault === "revoked")
-        overrides[
-          `/repos/SlopDotCash/slopdotcash/contents/protocol/skill-revocations.json?ref=${revisionC}`
-        ] = {
-          encoding: "base64",
-          content: Buffer.from(JSON.stringify([revisionA])).toString("base64"),
-        };
-      if (fault === "incomplete")
-        overrides[releaseRunsPath] = { total_count: 2, workflow_runs: [a.run] };
-      if (fault === "bounded")
-        overrides[releaseRunsPath] = {
-          total_count: 1001,
-          workflow_runs: [a.run],
-        };
-      options.responseOverrides = overrides;
-      const installed = run(
-        command(
-          writeArtifact(root, revisionA, files),
-          configureAuthority(root, options),
-        ),
-        join(root, "install"),
-      );
-      expect(installed.status).not.toBe(0);
-      expect(installed.stderr).toMatch(/revoked|ambiguous|incomplete|bound/u);
-    }
+    authority = configureAuthority(root, unavailableUpdate);
+    const offlineUpdate = authorize(authority);
+    expect(offlineUpdate.status, offlineUpdate.stderr).toBe(0);
+    expect(offlineUpdate.stderr).toContain("update check is unavailable");
+    expect(JSON.parse(offlineUpdate.stdout).updates).toEqual([
+      { status: "unavailable" },
+    ]);
   });
 
   it("authorizes an installed release with a Windows-sized argument bound", () => {
@@ -1275,9 +1057,8 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
     );
     expect(checked.status, checked.stderr).toBe(0);
     expect(JSON.parse(checked.stdout).authorization).toMatchObject({
-      kind: "release",
-      run: 100,
-      attempt: 1,
+      kind: "develop",
+      develop: revisionC,
     });
     if (process.platform !== "win32")
       expect(readFileSync(marker, "utf8")).toBe("bounded");
@@ -1403,9 +1184,9 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
       ["authorize", "--json"],
     ]) {
       const stale = invoke(args);
-      expect(stale.status).not.toBe(0);
-      expect(stale.stderr).toContain("bytes differ from current main");
-      expect(stale.stderr).toContain(revisionA);
+      expect(stale.status, stale.stderr).toBe(0);
+      expect(stale.stderr).toContain("newer verified skill template");
+      expect(stale.stderr).toContain(revisionB);
     }
     const historical = invoke(["finish", ...identity, "--run", runId]);
     expect(historical.status, historical.stderr).toBe(0);
@@ -1786,7 +1567,7 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
     expect(missing.stderr).toContain("not retained locally");
   });
 
-  it("rejects stale develop rollback until identical current bytes reauthorize it", () => {
+  it("permits an explicit rollback to a verified older main revision", () => {
     const root = freshRoot("rollback-develop-history");
     const installRoot = join(root, "install");
     const filesA = baseFiles("revision-a");
@@ -1815,10 +1596,9 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
       SLOP_SKILL_OPERATION: "rollback",
       SLOP_SKILL_REVISION: revisionA,
     });
-    expect(stale.status).not.toBe(0);
-    expect(stale.stderr).toContain("bytes differ from current main");
+    expect(stale.status, stale.stderr).toBe(0);
     expect(currentLink(installRoot)).toBe(
-      `.contribute-to-eliza-versions/${revisionB}`,
+      `.contribute-to-eliza-versions/${revisionA}`,
     );
 
     authority = configureAuthority(root, {
