@@ -661,6 +661,7 @@ function JoinPoints({
 }) {
   const { me, setMe, session } = usePoints();
   const [busy, setBusy] = useState(false);
+  const [canCancel, setCanCancel] = useState(false);
   const [message, setMessage] = useState("");
   const [closedAccount, setClosedAccount] = useState(false);
   const active = useRef<AbortController | null>(null);
@@ -714,9 +715,9 @@ function JoinPoints({
     const c = new AbortController();
     active.current = c;
     setBusy(true);
+    setCanCancel(true);
     setMessage("");
     let authorized = false;
-    let authorizationOrigin: string | undefined;
     try {
       const assertion = await requestIdentityAssertion({
         origin: identityPublicOrigin(
@@ -744,7 +745,6 @@ function JoinPoints({
               },
         authorize: (url) => {
           authorized = true;
-          authorizationOrigin = new URL(url).origin;
           if (sameTab) window.location.assign(url);
           else popup?.location.replace(url);
         },
@@ -777,26 +777,17 @@ function JoinPoints({
           const body = await readBoundedJson(response, 16384, "sign-in");
           if (!body || typeof body !== "object" || Array.isArray(body))
             throw new Error("Sign-in failed. Start again.");
-          // A completed sign-in can close its own window before this poll.
-          // Only a still-pending flow needs recovery when the window is gone.
-          if (
-            response.status === 202 &&
-            "status" in body &&
-            body.status === "pending" &&
-            // A same-tab or resumed local sign-in has no window to watch.
-            popup?.closed === true
-          )
-            throw new Error("The GitHub sign-in window was closed. Try again.");
+          // COOP isolates the GitHub window and can report its WindowProxy as
+          // closed while the user is still signing in. The bounded identity
+          // flow and explicit Cancel action determine when polling stops.
           return {
             status: response.status,
             body: body as Record<string, unknown>,
           };
         },
       });
-      // An isolated cross-origin popup must close itself. Tell only the
-      // validated identity origin after it has verified this sign-in.
-      if (authorizationOrigin)
-        popup?.postMessage("slop:identity-complete", authorizationOrigin);
+      c.signal.throwIfAborted();
+      setCanCancel(false);
       const joined = await requestJson("/api/v1/points/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -807,6 +798,7 @@ function JoinPoints({
         ),
         signal: c.signal,
       });
+      c.signal.throwIfAborted();
       setClosedAccount(false);
       setMe(member(joined));
       const notice = reopen
@@ -829,7 +821,10 @@ function JoinPoints({
             : errorMessage(e, "Sign-in unavailable"),
         );
     } finally {
-      if (active.current === c) setBusy(false);
+      if (active.current === c) {
+        setBusy(false);
+        setCanCancel(false);
+      }
     }
   }
   if (!productOrigin()) {
@@ -870,11 +865,30 @@ function JoinPoints({
       >
         <GithubIcon aria-hidden="true" />
         {busy
-          ? "Waiting for GitHub…"
+          ? canCancel
+            ? "Waiting for GitHub…"
+            : "Signing in…"
           : closedAccount
             ? "Reopen account with GitHub"
             : "Continue with GitHub"}
       </button>
+      {busy && canCancel ? (
+        <button
+          type="button"
+          onClick={() => {
+            active.current?.abort();
+            active.current = null;
+            if (localBackendOrigin !== null) clearLocalFlow();
+            setBusy(false);
+            setCanCancel(false);
+            setMessage(
+              "Sign-in cancelled. Close the GitHub window and try again when ready.",
+            );
+          }}
+        >
+          Cancel sign-in
+        </button>
+      ) : null}
       <p role="status">{message}</p>
     </section>
   );
