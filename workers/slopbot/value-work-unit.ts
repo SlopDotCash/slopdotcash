@@ -128,6 +128,26 @@ export async function prepareWorkUnitEvidence(
     const acceptedAt = pull.merged_at ?? indirect?.observedOnBranchAt;
     if (acceptedAt === undefined) continue;
     const mergedAt = Date.parse(acceptedAt);
+    // Admission covers every imported commit, including merge commits that
+    // do not generate ordinary implementation claims below.
+    if (noChangePromotion) {
+      for (const commit of evidence.commits) {
+        const originals = sources.filter(
+          ({ evidence: original }) =>
+            original.repositoryNodeId === evidence.repositoryNodeId &&
+            original.pull.node_id !== pull.node_id &&
+            original.pull.merge_commit_sha === commit.sha &&
+            original.mergeCommitEvidence?.sha === commit.sha &&
+            original.pull.merged_at !== null &&
+            Date.parse(original.pull.merged_at) < mergedAt &&
+            original.limitations.length === 0,
+        );
+        if (originals.length !== 1)
+          limitations.add(
+            `${pull.node_id}: unchanged promotion needs one complete original PR for ${commit.sha}`,
+          );
+      }
+    }
     const acceptedFiles = indirect?.integrationFiles ?? evidence.files;
     const changedPaths = new Set(
       acceptedFiles.flatMap((file) => [
