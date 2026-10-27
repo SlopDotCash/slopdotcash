@@ -3,14 +3,13 @@ import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
 import { collectTargetRepositories } from "../src/lib/repositories.mjs";
+import { GitHubClient } from "../workers/slopbot/github";
 import {
   collectValueContext,
   type ValueContextSelection,
 } from "../workers/slopbot/value-context";
-import {
-  collectValueEvidence,
-  type EvidenceClient,
-} from "../workers/slopbot/value-evidence";
+import { collectValueEvidence } from "../workers/slopbot/value-evidence";
+import { resolveGitHubToken } from "./github-token";
 import {
   fetchProjectRegistry,
   renderProjectRevisions,
@@ -59,40 +58,10 @@ if (
   throw new Error(
     "Raw evidence must be outside the repository, including through symlinks",
   );
-const client: EvidenceClient = {
-  async graphql<T>(
-    query: string,
-    variables: Record<string, unknown>,
-  ): Promise<T> {
-    const result = Bun.spawn(["gh", "api", "graphql", "--input", "-"], {
-      stdin: new Blob([JSON.stringify({ query, variables })]),
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    const [body, status] = await Promise.all([
-      new Response(result.stdout).text(),
-      result.exited,
-    ]);
-    if (status !== 0) throw new Error("GitHub author evidence request failed");
-    const response = JSON.parse(body) as { data?: T; errors?: unknown[] };
-    if (!response.data || response.errors?.length)
-      throw new Error("GitHub author evidence incomplete");
-    return response.data;
-  },
-  async get<T>(path: string): Promise<T | null> {
-    const result = Bun.spawn(["gh", "api", path], {
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    const [body, status] = await Promise.all([
-      new Response(result.stdout).text(),
-      result.exited,
-    ]);
-    if (status !== 0)
-      throw new Error(`GitHub evidence request failed: ${path}`);
-    return JSON.parse(body) as T;
-  },
-};
+// Use the same typed provider failures as authenticated journal collection.
+// Retained-reference discovery distinguishes an absent/ambiguous commit from
+// a provider outage; collapsing both into a generic CLI error stops valid PRs.
+const client = GitHubClient.forToken(await resolveGitHubToken());
 const registry = await fetchProjectRegistry();
 const projects = assertProjectRegistry(registry.projects);
 renderProjectRevisions(registry.revisions, projects);
