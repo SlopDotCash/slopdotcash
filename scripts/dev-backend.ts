@@ -110,6 +110,9 @@ const apiEnv = {
   TRACE_AUTH_SECRET: setting("TRACE_AUTH_SECRET") ?? secret(),
   SLOP_IDENTITY: { fetch: identity },
   ADMIN_GITHUB_IDS: setting("ADMIN_GITHUB_IDS"),
+  // Optional: connects X. The X app's callback is `${origin}/api/v1/points/x/callback`.
+  X_CLIENT_ID: setting("X_CLIENT_ID"),
+  X_CLIENT_SECRET: setting("X_CLIENT_SECRET"),
 };
 
 const server = Bun.serve({

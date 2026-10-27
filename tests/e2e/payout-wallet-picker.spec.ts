@@ -334,14 +334,24 @@ test("no wallets offers official install links in either network modal", async (
   await expect(page.getByText("No unpaid awards", { exact: true })).toHaveCount(
     0,
   );
+  const installs = {
+    EVM: {
+      MetaMask: "https://metamask.io/download",
+      Rabby: "https://rabby.io",
+      "Coinbase Wallet": "https://www.coinbase.com/wallet/downloads",
+      Phantom: "https://phantom.com/download",
+    },
+    Solana: {
+      Phantom: "https://phantom.com/download",
+      Solflare: "https://solflare.com/download",
+    },
+  } as const;
   for (const chain of ["EVM", "Solana"] as const) {
     const dialog = await openPicker(page, chain);
-    await expect(
-      dialog.getByRole("link", { name: "MetaMask Install", exact: false }),
-    ).toHaveAttribute("href", "https://metamask.io/download");
-    await expect(
-      dialog.getByRole("link", { name: "Phantom Install", exact: false }),
-    ).toHaveAttribute("href", "https://phantom.com/download");
+    for (const [name, href] of Object.entries(installs[chain]))
+      await expect(
+        dialog.getByRole("link", { name: `${name} Install`, exact: false }),
+      ).toHaveAttribute("href", href);
     await expect(
       dialog.getByRole("button", { name: "Detected", exact: false }),
     ).toHaveCount(0);
@@ -350,31 +360,38 @@ test("no wallets offers official install links in either network modal", async (
   expect(writes).toEqual([]);
 });
 
-test("legacy wallet browser remains connectable through the modal", async ({
-  page,
-}) => {
-  await payments(page);
-  await page.addInitScript(
-    ({ evmAddress }) => {
-      Object.assign(window, {
-        ethereum: {
-          isMetaMask: true,
-          request: async ({ method }: { method: string }) =>
-            method === "eth_requestAccounts" ? [evmAddress] : "0xfixture",
-        },
-      });
-    },
-    { evmAddress },
-  );
-  await page.goto("/account#wallets");
-  const dialog = await openPicker(page, "EVM");
-  await dialog
-    .getByRole("button", { name: "MetaMask Detected", exact: true })
-    .click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
-  ).toBeVisible();
-});
+// Wallets that imitate MetaMask also set isMetaMask; each keeps its own name.
+for (const [name, flags] of [
+  ["MetaMask", { isMetaMask: true }],
+  ["Rabby", { isRabby: true, isMetaMask: true }],
+  ["Brave Wallet", { isBraveWallet: true, isMetaMask: true }],
+  ["Coinbase Wallet", { isCoinbaseWallet: true, isMetaMask: true }],
+] as const)
+  test(`legacy ${name} browser remains connectable through the modal`, async ({
+    page,
+  }) => {
+    await payments(page);
+    await page.addInitScript(
+      ({ evmAddress, flags }) => {
+        Object.assign(window, {
+          ethereum: {
+            ...flags,
+            request: async ({ method }: { method: string }) =>
+              method === "eth_requestAccounts" ? [evmAddress] : "0xfixture",
+          },
+        });
+      },
+      { evmAddress, flags },
+    );
+    await page.goto("/account#wallets");
+    const dialog = await openPicker(page, "EVM");
+    await dialog
+      .getByRole("button", { name: `${name} Detected`, exact: true })
+      .click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
+    ).toBeVisible();
+  });
 
 test("conflicting EIP-6963 UUID removes both providers without wallet requests", async ({
   page,
