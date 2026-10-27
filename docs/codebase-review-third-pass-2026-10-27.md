@@ -2603,7 +2603,7 @@ PR1475 introduced `scripts/mainnet-release-plan.test.ts` after the initial inven
 
 ## Final integration addition: TT12 — redundant release authorization probe
 
-The post-inventory release change adds one test in `scripts/mainnet-release-publication.test.js` that creates a temporary directory, supplies a provider callback returning `Unauthorized`, and only asserts that the function rejects. It never reads or verifies a produced artifact, native service or persistent refusal outcome. The existing actual bootstrap workflow already exercises authorization failures together with no-deploy/no-secret evidence. Remove that one partial callback-only declaration; retain the other three publication scenarios that write, inspect and tamper with real generated configuration files. No production release logic changes.
+The post-inventory release change adds one test in `scripts/mainnet-release-publication.test.js` that creates a temporary directory, supplies a provider callback returning `Unauthorized`, and only asserts that the function rejects. It never reads or verifies a produced artifact, native service or persistent refusal outcome. The existing actual bootstrap workflow already exercises authorization failures together with no-deploy/no-secret evidence. Remove that one partial callback-only declaration; retain the other three publication scenarios that write, inspect and tamper with real generated configuration files. Remove their redundant mock argument-prefix/deploy-count and returned-plan flag assertions as well; the actual generated binding/configuration output and tamper refusal remain the evidence. No production release logic changes.
 
 ## Final fixture liveness check
 
