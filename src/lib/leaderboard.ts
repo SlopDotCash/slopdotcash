@@ -3322,7 +3322,8 @@ function createSnapshotWithReviewCutoff(
   // pull request's merge events; its credit actors stay self-reviewers.
   const creditActorIds = new Map<string, ReadonlySet<string>>();
   for (const pullRequest of mergedPullRequestOutcomes) {
-    if (heldSourceIds.has(pullRequest.id)) continue;
+    // A missing joint member withholds that assessment, not this separately
+    // verified merge's existing minimum or a current human ratification.
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
     const valuePolicyApplies = underValuePolicy(pullRequest.mergedAt);
     const ratification =
@@ -7445,11 +7446,18 @@ export function assertLeaderboardSnapshot(
         validatedLedger.some(
           (event) =>
             event.id.startsWith(`${id}:`) &&
-            event.category !== "evaluated-contribution",
+            event.category !== "evaluated-contribution" &&
+            !(
+              event.category === "merged-pull-request" &&
+              !event.id.includes(":joint:") &&
+              !event.scoreDecisionSourceId?.startsWith("value:") &&
+              (event.scoreDecisionSourceId !== undefined ||
+                event.scoreThirds === MIN_VALUE_MERGE_THIRDS)
+            ),
         )
       )
         throw new Error(
-          "Held joint source cannot receive fresh ordinary credit",
+          "Held joint source can retain only its independent merge minimum or human ratification",
         );
     }
   }

@@ -458,7 +458,7 @@ test("removed node is recorded after a complete recollection and both valid outc
   }
 });
 
-test("persistent unavailable joint context holds the whole unit without fallback or changing prior Points", async () => {
+test("unavailable joint context keeps the verified merge minimum without replacing prior Points", async () => {
   setSystemTime(new Date(GENERATED_AT));
   const healthy = await fixture("healthy");
   let before: LeaderboardSnapshot;
@@ -491,8 +491,17 @@ test("persistent unavailable joint context holds the whole unit without fallback
         (row) => row.pullRequestId === retained.id,
       ),
     ).toMatchObject({ status: "unresolved", recordDigest });
+    const minimum = required(
+      snapshot.ledger.find(
+        (event) =>
+          event.source.id === retained.id &&
+          event.category === "merged-pull-request",
+      ),
+    );
+    expect(minimum.scoreThirds).toBe(1);
+    expect(minimum.scoreDecisionSourceId).toBeUndefined();
     expect(
-      snapshot.ledger.some((event) => event.id.startsWith(`${retained.id}:`)),
+      snapshot.ledger.some((event) => event.source.id === removed.id),
     ).toBe(false);
     expect(
       snapshot.ledger.some((event) => event.source.id === unaffected.id),
@@ -508,6 +517,98 @@ test("persistent unavailable joint context holds the whole unit without fallback
     );
     const original = journal.revisions[0].award;
     expect(latestPoints(after).get(original.key)?.award).toEqual(original);
+    expect(
+      [...latestPoints(after).values()].filter(
+        (row) => row.award.sourceId === retained.id && row.award.amount > 0,
+      ),
+    ).toHaveLength(1);
+
+    const fresh = applyPointsSnapshot(
+      { ...journal, revisions: [] },
+      snapshot,
+      "c".repeat(64),
+      GENERATED_AT,
+    );
+    expect(
+      [...latestPoints(fresh).values()].find(
+        (row) => row.award.sourceId === retained.id,
+      )?.award.amount,
+    ).toBe(10);
+    const repeated = applyPointsSnapshot(
+      fresh,
+      snapshot,
+      "d".repeat(64),
+      GENERATED_AT,
+    );
+    expect(repeated.revisions).toEqual(fresh.revisions);
+
+    // A later complete joint decision uses a different award key. Exercise
+    // the canonical projector's replacement and replay, not model quality.
+    const jointEvent = {
+      ...required(
+        before.ledger.find(
+          (event) =>
+            event.source.id === retained.id &&
+            event.category === "merged-pull-request",
+        ),
+      ),
+      id: `${retained.id}:joint:restored`,
+      workUnitId: `wu_${"c".repeat(64)}`,
+      scoreThirds: 3,
+      points: 1,
+      scoreDecisionSourceId: `value:${recordDigest}`,
+      scoreDecisionAt: GENERATED_AT,
+    };
+    const restored = {
+      ...before,
+      ledger: [
+        ...before.ledger.filter((event) => event.source.id !== retained.id),
+        jointEvent,
+      ],
+      valueAssessmentCoverage: before.valueAssessmentCoverage?.map((row) =>
+        row.pullRequestId === retained.id
+          ? { ...row, status: "assessed" as const, recordDigest }
+          : row,
+      ),
+    };
+    const completed = applyPointsSnapshot(
+      fresh,
+      restored,
+      "e".repeat(64),
+      GENERATED_AT,
+    );
+    expect(
+      [...latestPoints(completed).values()]
+        .filter((row) => row.award.sourceId === retained.id)
+        .map((row) => row.award.amount)
+        .sort((a, b) => a - b),
+    ).toEqual([0, 30]);
+    expect(
+      applyPointsSnapshot(completed, restored, "f".repeat(64), GENERATED_AT)
+        .revisions,
+    ).toEqual(completed.revisions);
+    expect(
+      applyPointsSnapshot(completed, snapshot, "f".repeat(64), GENERATED_AT)
+        .revisions,
+    ).toEqual(completed.revisions);
+
+    const own = journalFor(before);
+    const prior = appendPointAwards(
+      own,
+      [{ ...own.revisions[0].award, amount: 90 }],
+      "e".repeat(64),
+      before.ruleVersion,
+      GENERATED_AT,
+    );
+    const preserved = applyPointsSnapshot(
+      prior,
+      snapshot,
+      "f".repeat(64),
+      GENERATED_AT,
+    );
+    expect(
+      latestPoints(preserved).get(own.revisions[0].award.key)?.award.amount,
+    ).toBe(90);
     expect(f.stats().attempts).toBe(2);
     expect(f.stats().forbiddenSourceReads).toBe(0);
     assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
