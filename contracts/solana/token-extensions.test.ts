@@ -150,6 +150,34 @@ describe("readTokenMint", () => {
     ).toThrow("Token-2022 freeze authority is not disabled");
   });
 
+  test("applies the authority rule to a base Token-2022 mint", () => {
+    for (const [offset, role] of [
+      [0, "mint"],
+      [46, "freeze"],
+    ] as const) {
+      const mint = classicMint(6);
+      mint[offset] = 1;
+      mint.fill(9, offset + 4, offset + 36);
+      expect(() => readTokenMint(account(TOKEN_2022_PROGRAM, mint))).toThrow(
+        `Token-2022 ${role} authority is not disabled`,
+      );
+      expect(readTokenMint(account(TOKEN_PROGRAM, mint)).decimals).toBe(6);
+    }
+  });
+
+  test("admits revoked authorities that retain their old key bytes", () => {
+    // SPL's pack_coption_key(None) clears the four-byte tag only. Revoking a
+    // previously active authority therefore leaves its old key in the body.
+    for (const mint of [classicMint(6), bytes(FIXTURE_MINT).slice()]) {
+      mint.fill(9, 4, 36);
+      mint.fill(7, 50, 82);
+      expect(
+        readTokenMint(account(TOKEN_2022_PROGRAM, mint), MINT_ADDRESS)
+          .decimals,
+      ).toBe(6);
+    }
+  });
+
   test("refuses every other or unknown mint extension", () => {
     // A TransferFeeConfig record is not admitted.
     const transferFee = mutatedMint((data) => {
