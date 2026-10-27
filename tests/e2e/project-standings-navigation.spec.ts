@@ -1,9 +1,9 @@
 /** A fixed project route must win over filters retained by a reused standings view. */
 import { join } from "node:path";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { cycleIndexFixture } from "../fixtures";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -82,12 +82,15 @@ async function fixtures(page: Page, paymentsAvailable = () => true) {
 }
 
 test("Money received standings preserve unavailable data and recover on retry", async ({
+  diagnostics,
   page,
 }, info) => {
+  // The payment source outage asserted below.
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of 503 .*\/direct-transfers$/u,
+  );
   let available = false;
-  const errors: string[] = [];
   const failures: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
   page.on("response", (response) => {
     if (response.status() >= 400)
       failures.push(`${response.status()} ${response.url()}`);
@@ -139,27 +142,15 @@ test("Money received standings preserve unavailable data and recover on retry", 
     "synthetic-slop",
   );
   await expect(retry).toHaveCount(0);
-  expect(errors).toEqual([]);
   expect(failures).toEqual([]);
   await page.screenshot({ path: info.outputPath("payments-recovered.png") });
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
 });
 
 test("history navigation keeps contributor standings scoped to the current project", async ({
   page,
 }, info) => {
   await fixtures(page);
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
-  });
   await page.goto(`${site}/projects/slopdotcash?sort=money&period=lifetime`);
   const standings = page.getByRole("region", {
     name: "Contributor standings",
@@ -198,19 +189,12 @@ test("history navigation keeps contributor standings scoped to the current proje
   });
   await expect(slop).toContainText("$222.22");
   await expect(eliza).toHaveCount(0);
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.evaluate(() => history.go(2));
   await expect(page.locator(".breadcrumb")).toHaveText("Projects/Eliza");
   await expect(eliza).toContainText("$111.11");
   await expect(slop).toHaveCount(0);
   expect(await page.evaluate(() => performance.timeOrigin)).toBe(document);
-  expect(errors).toEqual([]);
 });
 
 test("global standings still accept project, sort and contributor filters", async ({
@@ -263,11 +247,5 @@ test("global standings still accept project, sort and contributor filters", asyn
     }),
   ).toHaveAttribute("aria-sort", "descending");
   await expect(page).toHaveURL(/sort=money/);
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
 });

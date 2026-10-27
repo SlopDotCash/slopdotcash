@@ -31,10 +31,10 @@ import { assertLeaderboardSnapshot, assertPublishableLeaderboardSnapshot } from 
 import { buildEscrowCycle, validateEscrowCycle } from "./src/lib/payments/escrow-cycle";
 import { createPaymentProjectView } from "./src/lib/project-view";
 import { snapshotFixture } from "./tests/fixtures";
-const bytes = readFileSync("tests/fixtures/history/cycles/eliza/2026-09/source-snapshot.json");
+const bytes = readFileSync("cycles/eliza/2026-09/source-snapshot.json");
 const snapshot = JSON.parse(bytes.toString());
 assertLeaderboardSnapshot(snapshot);
-const project = JSON.parse(readFileSync("tests/fixtures/projects/eliza.json", "utf8"));
+const project = JSON.parse(readFileSync(${JSON.stringify(resolve(import.meta.dir, "../tests/fixtures/projects/eliza.json"))}, "utf8"));
 project.reward.feeBasisPoints = 200;
 project.escrow = { schemaVersion: "1", effectiveCycle: "2026-09", chain: "solana", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] };
 const view = createPaymentProjectView(snapshot, "eliza", "2026-09", undefined, project);
