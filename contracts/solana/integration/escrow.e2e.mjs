@@ -2228,7 +2228,13 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
     submitted = await submitSolanaMonthly(environment, authorization);
   } catch (error) {
     // The accepted transaction may not be visible on the immediate status read.
-    assert.match(error.message, /Test: accepted broadcast response lost/);
+    assert.ok(error instanceof Error);
+    assert.equal(error.constructor.name, "SolanaRpcUnavailable");
+    assert.equal(error.message, "RPC failure");
+    assert.equal(
+      error.cause?.message,
+      "Test: accepted broadcast response lost",
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -3115,10 +3121,13 @@ test("whole-reserve inspection proves only an authenticated wrong sum", async ()
     await inspect(settings, { entries: [...entries].reverse() }),
     { status: "held", reason: "allocation-mismatch" },
   );
-  await assert.rejects(
-    inspect(settings, { entries }, "provider"),
-    /provider unavailable/,
-  );
+  await assert.rejects(inspect(settings, { entries }, "provider"), (error) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.constructor.name, "SolanaRpcUnavailable");
+    assert.equal(error.message, "RPC failure");
+    assert.equal(error.cause?.message, "controlled provider unavailable");
+    return true;
+  });
   await assert.rejects(
     inspect({ ...settings, codeSha256: "0".repeat(64) }, { entries }),
     /program bytes/,

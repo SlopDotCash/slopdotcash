@@ -301,7 +301,7 @@ async function requestAssessment(
  * Queues one scan of a project's current revision at its live pin. The
  * queue assigns the exact commit and template digest (VET-07); the service
  * cannot choose them, and a result for any other commit is refused. Returns
- * "conflict" when this revision already has a queued scan. Throws
+ * "conflict" when this pin and active flag set already have a queued scan. Throws
  * `pin_unavailable` when the live pin cannot be read.
  */
 async function queueAssessment(

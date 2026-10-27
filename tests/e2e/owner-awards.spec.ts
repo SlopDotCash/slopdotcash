@@ -198,6 +198,45 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await expect(awards).toContainText(
     "No allocation is proposed for this month yet.",
   );
+  // Native month controls must shrink within the form at 200% text size.
+  await page.evaluate(() => {
+    const typography = [
+      ...document.querySelectorAll<HTMLElement>("body *"),
+    ].map((el) => ({
+      el,
+      font: getComputedStyle(el).fontSize,
+      line: getComputedStyle(el).lineHeight,
+    }));
+    for (const { el, font, line } of typography) {
+      el.style.fontSize = `${Number.parseFloat(font) * 2}px`;
+      if (line !== "normal")
+        el.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
+    }
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await page.getByLabel("Contribution month").focus();
+  // Tab through the native control's month/year segments before the button.
+  for (
+    let remaining = 4;
+    remaining > 0 &&
+    !(await load.evaluate((button) => button === document.activeElement));
+    remaining--
+  )
+    await page.keyboard.press("Tab");
+  await expect(load).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(awards).toContainText(
+    "No allocation is proposed for this month yet.",
+  );
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("owner-monthly-awards-zoom.png"),
+    fullPage: true,
+  });
 });
 
 test("owner reserve repair keeps healthy and unknown states held and restores a submitted transaction after reload", async ({

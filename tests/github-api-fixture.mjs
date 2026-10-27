@@ -676,7 +676,11 @@ export function startGitHubApiFixture(port) {
     response.writeHead(404, { "content-type": "application/json" });
     response.end('{"message":"Not Found"}');
   });
-  return new Promise((resolve) =>
-    server.listen(port, "127.0.0.1", () => resolve(server)),
-  );
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve(server);
+    });
+  });
 }

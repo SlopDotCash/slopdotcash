@@ -138,10 +138,15 @@ response reports the same source revision and a real image digest. Set the
 environment's `VETTING_CONTROLLER_RELEASE` to `enabled`, then dispatch the
 workflow on that branch for qualification. Set the repository's
 `VETTING_CONTROLLER_SCHEDULE` to `enabled` only after qualification. Scheduled
-dispatch occurs every 15 minutes. It skips a branch with an active controller
-run, and a branch whose head has no successful `deploy.yml` release yet,
-because that head's sandbox is not deployed. The skip is a run notice, not a
-failed scan.
+dispatch remains a 15-minute backstop. A successful same-repository
+`slop.cash` release also dispatches its branch immediately, after confirming
+that the branch still names that release's commit and its deployment job
+succeeded. Pull-request runs cannot dispatch the controller. Both paths skip
+a branch with an active controller run, or a head without a completed
+deployment, because that head's sandbox is not deployed. The completion
+trigger uses only GitHub metadata and never checks out release artifacts or
+untrusted source. The activation switch still gates both paths; this change
+does not activate scanning. A skip is a run notice, not a failed scan.
 
 The workflow and journal source do not establish deployment or provider
 acceptance. Verify the full scan, private evidence, publication and recovery
