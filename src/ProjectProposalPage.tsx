@@ -1963,8 +1963,8 @@ const DRAFT_FIELDS = [
 /**
  * Owners publish project changes directly (PRD section 4). The page edits the
  * current D1 revision, keeps the draft on this device, and shows each change
- * with what it needs: presentation publishes at once, contribution rules need
- * a new security scan, and a funding change applies from the next calendar
+ * with what it needs: presentation and admitted-repository contribution rules
+ * publish at once, and a funding change applies from the next calendar
  * month. A draft saved against an older revision must be confirmed against
  * the current one, and the server refuses a stale base revision.
  */
@@ -1976,12 +1976,12 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
-  // PRD section 8: an exempt project publishes skill input changes without a
-  // new scan, so the change list must not say that it pauses.
+  // PRD section 8: admission or an exemption permits routine skill edits
+  // without a new scan, so the change list must not say that they pause.
   const [setupStatus, setSetupStatus] = useState<ProjectSetupStatus | null>(
     null,
   );
-  const scanExempt = setupStatus?.checks.scan.exempt === true;
+  const scanCleared = setupStatus?.checks.scan.state === "cleared";
   const [submission, setSubmission] = useState<
     | { state: "idle" | "publishing" }
     | { state: "error"; message: string; staleRevision: boolean }
@@ -2506,19 +2506,19 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             <h2 id="update-changes">Changes</h2>
             <ul>
               {changes.presentation.length > 0 ||
-              (scanExempt && changes.executable.length > 0) ? (
+              (scanCleared && changes.executable.length > 0) ? (
                 <li>
                   Publishes now:{" "}
                   {[
                     ...changes.presentation,
-                    ...(scanExempt ? changes.executable : []),
+                    ...(scanCleared ? changes.executable : []),
                   ]
                     .map(label)
                     .join(", ")}
                   .
                 </li>
               ) : null}
-              {!scanExempt && changes.executable.length > 0 ? (
+              {!scanCleared && changes.executable.length > 0 ? (
                 <li>
                   Needs a new security scan:{" "}
                   {changes.executable.map(label).join(", ")}.{" "}
