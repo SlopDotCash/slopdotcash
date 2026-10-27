@@ -680,9 +680,6 @@ function GlobalLeaderboard({
         showDataNotice
         title="Top sloperators"
       />
-      <Link className="section-more" href="/points">
-        View leaderboard <ArrowRight aria-hidden="true" size={16} />
-      </Link>
     </section>
   );
 }

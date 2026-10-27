@@ -190,3 +190,30 @@ test("a walletless award leads to wallet setup without changing the award", asyn
   expect(writes).toEqual([]);
   await expectAccessible(page);
 });
+
+test("signed-out account history navigation reveals lazy wallet setup", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowResponse(401, "GET", "/api/v1/payments/me");
+  await page.route("**/api/v1/payments/me", (route) =>
+    route.fulfill({ status: 401, json: { error: "unauthorized" } }),
+  );
+  await page.route("**/api/v1/points/me", (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.goto("/account", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", { name: "Account", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("#wallets")).toHaveCount(0);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/account#wallets");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page.locator("#wallets")).toHaveAttribute("open", "");
+  await expect(
+    page.locator("#wallets").getByRole("link", { name: "Sign in with GitHub" }),
+  ).toBeVisible();
+  await expectAccessible(page);
+});
