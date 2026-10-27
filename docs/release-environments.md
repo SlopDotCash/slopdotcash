@@ -17,6 +17,13 @@ acceptance, open a promotion pull request from `development` into `main`.
 Both branches require the full build, browser, and policy checks. A failed check
 must prevent publication. Never publish a local build or a pull-request build.
 
+Trusted branch preparation keeps its running revision when another run starts.
+The newest pending revision replaces earlier pending work. Superseded pull
+request checks may still cancel. The combined quality gate skips cancelled
+prerequisites; failed or skipped checks still prevent publication. Production
+publication continues to require current-main equivalence and the shared
+publication lock.
+
 Owner decision, 25 October 2026: branch protections and rulesets are not
 release requirements. Do not add or restore them during release work unless
 the owner asks. Continue the reviewed pull-request flow and the workflow
