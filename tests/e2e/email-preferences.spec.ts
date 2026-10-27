@@ -14,7 +14,9 @@ test("verified activity email preference persists and can be withdrawn @registry
     recordVideo: { dir: test.info().outputPath("email-preference-video") },
   });
   const page = await context.newPage();
-  await page.goto("/how-it-works", { waitUntil: "domcontentloaded" });
+  // Firefox can render this page without resolving its navigation lifecycle
+  // wait. Check the visible page and loaded fonts before starting the flow.
+  await page.goto("/how-it-works", { waitUntil: "commit" });
   await expect(
     page.getByRole("heading", { name: "How Slop works", exact: true }),
   ).toBeVisible();
