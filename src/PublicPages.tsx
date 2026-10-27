@@ -31,7 +31,6 @@ import {
   DataNotice,
   ExternalLinkAnchor,
   formatDate,
-  formatDateTime,
   formatPointsFromThirds,
   monthlyPoolLabel,
   NetworkName,

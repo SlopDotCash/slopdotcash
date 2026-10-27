@@ -63,7 +63,6 @@ import { useAllDirectTransfers } from "./lib/use-direct-transfers";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
   AccountNav,
-  Avatar,
   DataNotice,
   formatDateTime,
   formatMicroUsdc,
@@ -1309,13 +1308,11 @@ function StandingsCoverage({
   state,
   month,
   projectId,
-  compact = false,
 }: {
   state: Extract<DataState, { status: "ready" }>;
   /** The ranked UTC month, or null for recorded history. */
   month: string | null;
   projectId: string;
-  compact?: boolean;
 }) {
   const { snapshot, cycleIndex } = state;
   const { counts } = snapshot.source;
@@ -1331,32 +1328,6 @@ function StandingsCoverage({
       : Date.parse(monthStart) > Date.parse(snapshot.window.from)
         ? monthStart
         : snapshot.window.from;
-  if (compact) {
-    return (
-      <p className="points-meta compact-standings-period">
-        {rankedFrom !== null ? (
-          Date.parse(rankedFrom) < Date.parse(snapshot.window.to) ? (
-            <>
-              This month: {formatDateTime(rankedFrom)}–
-              {formatDateTime(snapshot.window.to)}
-            </>
-          ) : (
-            <>
-              This month (UTC) · no snapshot coverage after{" "}
-              {formatDateTime(snapshot.window.to)}
-            </>
-          )
-        ) : (
-          <>
-            Recorded history · snapshot {formatDateTime(snapshot.window.from)}–
-            {formatDateTime(snapshot.window.to)};{" "}
-            {countFormat.format(closedCycles)} closed{" "}
-            {closedCycles === 1 ? "cycle" : "cycles"} included
-          </>
-        )}
-      </p>
-    );
-  }
   return (
     <DetailsSection
       summary={
@@ -1527,16 +1498,6 @@ export function ContributorStandings({
       aria-label={title ?? "Contributor standings"}
     >
       {compact ? <h2>{title ?? "Contributor standings"}</h2> : null}
-      {compact && scores.status === "ready" ? (
-        <StandingsCoverage
-          compact
-          state={scores}
-          month={
-            period === "month" ? new Date().toISOString().slice(0, 7) : null
-          }
-          projectId={project}
-        />
-      ) : null}
       {showDataNotice ? (
         <DataNotice state={scores} retry={retryScore ?? retryLoadedScore} />
       ) : null}
@@ -1668,12 +1629,15 @@ export function ContributorStandings({
                           className="points-person"
                           href={`/contributors/${encodeURIComponent(m.actor.login)}`}
                         >
-                          <Avatar
-                            actor={{
-                              login: m.actor.login,
-                              avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`,
+                          <img
+                            alt=""
+                            height={40}
+                            loading="lazy"
+                            onError={(event) => {
+                              event.currentTarget.hidden = true;
                             }}
-                            size="medium"
+                            src={`https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`}
+                            width={40}
                           />
                           {m.actor.login}
                         </a>
@@ -1681,7 +1645,7 @@ export function ContributorStandings({
                       <td className="points-value">
                         {m.points === null
                           ? pointsMissing
-                          : m.points.toLocaleString()}
+                          : `${m.points.toLocaleString()} pts`}
                       </td>
                       <td className="points-value">
                         {m.money === null

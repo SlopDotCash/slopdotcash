@@ -610,6 +610,7 @@ test("maintainers can verify or reject a manually linked private report @registr
 
 test("owners publish and control bounty programs with verified funding @registry", async ({
   browser,
+  diagnostics,
   request,
 }) => {
   test.setTimeout(180_000);
@@ -788,6 +789,45 @@ test("owners publish and control bounty programs with verified funding @registry
     expect(
       (await adminProject(request, id)).manifest.securityBounty,
     ).toMatchObject({ status: "closed" });
+    // Moving these controls to the public Security workspace grants no
+    // authority to another signed-in reader, even with a funded vault.
+    const beforeRefusal = await adminProject(request, id);
+    diagnostics.allowResponse(
+      403,
+      "GET",
+      `/api/v1/project-vaults/${id}?purpose=security-bounty`,
+    );
+    diagnostics.allowResponse(403, "PUT", `/api/v1/projects/${id}`);
+    await signIn(page, TOKENS["reporter-b"]);
+    await page.goto(`/projects/${id}/security#security-settings`, {
+      waitUntil: "networkidle",
+    });
+    await openProjectSecuritySettings(page);
+    const funds = page.getByRole("region", { name: "Bounty funds" });
+    await expect(funds.getByRole("alert")).toBeVisible();
+    await expect(funds).not.toContainText("Available for new awards:");
+    await page.getByRole("button", { name: "Edit bounty settings" }).click();
+    await page.getByLabel("Status", { exact: true }).selectOption("paused");
+    const refused = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        new URL(response.url()).pathname === `/api/v1/projects/${id}`,
+    );
+    await page.getByRole("button", { name: "Publish bounty terms" }).click();
+    expect((await refused).status()).toBe(403);
+    await expect(
+      page.getByRole("region", { name: "Security bounty", exact: true }),
+    ).toContainText(/access|authority|permission/iu);
+    const afterRefusal = await adminProject(request, id);
+    expect(afterRefusal.revision).toBe(beforeRefusal.revision);
+    expect(afterRefusal.manifest.securityBounty).toEqual(
+      beforeRefusal.manifest.securityBounty,
+    );
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("nonowner-security-settings-refused.png"),
+      fullPage: true,
+    });
   } finally {
     await context.close();
   }
