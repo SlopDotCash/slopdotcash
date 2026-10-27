@@ -34,6 +34,11 @@ import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
 import type { ActorRef } from "./lib/leaderboard-types";
 import {
+  clearLocalFlow,
+  readLocalFlow,
+  saveLocalFlow,
+} from "./lib/local-signin";
+import {
   assemblePoints,
   POINTS_NOTICE,
   type PointsIndex,
@@ -640,23 +645,42 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
   const [closedAccount, setClosedAccount] = useState(false);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
-  async function start(reopen = false) {
-    active.current?.abort();
-    const popup = window.open(
-      "about:blank",
-      "_blank",
-      "popup,width=600,height=720",
+  // Local development: finish a same-tab sign-in when GitHub sends the browser back.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once the session check settles
+  useEffect(() => {
+    if (localBackendOrigin === null || me || session !== "ready") return;
+    const saved = readLocalFlow();
+    if (!saved) return;
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${saved.search}`,
     );
-    if (!popup) {
-      // Some browsers, including embedded ones, never open the window; without
-      // it the sign-in would wait for a GitHub page nobody can see.
-      setBusy(false);
-      setMessage(
-        "Your browser did not open the GitHub sign-in window. Allow pop-ups for this site, or open it in another browser, and try again.",
+    void start(saved.reopen, saved.flow);
+  }, [me, session]);
+  async function start(reopen = false, resume?: unknown) {
+    active.current?.abort();
+    // A flow that GitHub already completed needs no window.
+    let popup: Window | null = null;
+    if (resume === undefined) {
+      popup = window.open(
+        "about:blank",
+        "_blank",
+        "popup,width=600,height=720",
       );
-      return;
+      if (!popup && localBackendOrigin === null) {
+        // Some browsers, including embedded ones, never open the window; without
+        // it the sign-in would wait for a GitHub page nobody can see.
+        setBusy(false);
+        setMessage(
+          "Your browser did not open the GitHub sign-in window. Allow pop-ups for this site, or open it in another browser, and try again.",
+        );
+        return;
+      }
+      if (popup) popup.opener = null;
     }
-    popup.opener = null;
+    // Only a local backend signs in in this tab when no window opens.
+    const sameTab = resume === undefined && popup === null;
     const c = new AbortController();
     active.current = c;
     setBusy(true);
@@ -678,7 +702,16 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
         allowLoopback: localBackendOrigin !== null,
         audience: "slop-points-web",
         signal: c.signal,
-        authorize: (url) => popup.location.replace(url),
+        resume,
+        saveAuthorization:
+          localBackendOrigin === null
+            ? undefined
+            : (value) => {
+                if (value === null) clearLocalFlow();
+                else if (sameTab) saveLocalFlow(value, reopen);
+              },
+        authorize: (url) =>
+          sameTab ? window.location.assign(url) : popup?.location.replace(url),
         request: async (url, init) => {
           const response = await fetchWithDeadline(url, {
             ...init,
@@ -717,6 +750,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       );
     } catch (e) {
       if (c.signal.aborted) return;
+      if (localBackendOrigin !== null) clearLocalFlow();
       if (e instanceof PointsRequestError && e.code === "account_closed") {
         setClosedAccount(true);
         setMessage("You closed this account. Reopen it to sign in.");

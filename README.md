@@ -171,22 +171,29 @@ Sign-in works only on a product origin, so the plain dev server links to
 slop.cash. To sign in on localhost with real GitHub and return to localhost, run
 the identity Worker and the API on this machine:
 
-1. Create your own GitHub App (not the production App). Set the callback to
-   `http://localhost:4466/v1/oauth/callback`. Turn webhooks off and request no
-   permissions.
-2. Put its client ID and a new client secret in `.env` as
-   `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`.
-3. In two terminals, run:
+1. In two terminals, run:
 
 ```bash
 bun run dev:backend
 bun run dev:local
 ```
 
-Open `http://localhost:4466`, not `127.0.0.1`: the origin must match the callback.
+2. Create the GitHub App once. Open `http://localhost:4466/__dev/setup` and
+   select the button. GitHub shows the App before it creates it. Check the name
+   and confirm. The credentials are saved in `.slop-dev/github-app.json`, which
+   Git ignores. To use an App you already made, give it the callback
+   `http://localhost:4466/v1/oauth/callback`, no webhook, and no permissions,
+   and put its client ID and secret in `.env` as `GITHUB_APP_CLIENT_ID` and
+   `GITHUB_APP_CLIENT_SECRET`.
+3. Open `http://localhost:4466`, not `127.0.0.1`, and select "Log in".
+
+If your browser cannot open the sign-in window (the Claude desktop preview pane
+cannot), sign-in runs in the same tab. GitHub sends you to the identity page.
+Select "Return to Slop" there, and the sign-in page finishes the sign-in.
+
 If you use another port, set `SLOP_DEV_ORIGIN` (for example
-`http://localhost:4467`) for the backend and use the same callback and port for
-the dev server.
+`http://localhost:4467`) for the backend, and use the same port for the dev
+server.
 
 The backend keeps its data in `.slop-dev/` (ignored by Git; delete it to start
 over). Only sign-in and the API run locally, on an empty database. Project and
