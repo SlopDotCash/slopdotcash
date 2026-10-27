@@ -1,19 +1,13 @@
-/** One GitHub authority implementation for installation and run/write gates. */
+/** Immutable GitHub source and registry verification for installation. */
 export const SKILL_AUTHORITY_PYTHON = `
 repository = "SlopDotCash/slopdotcash"
 github_repository = "SlopDotCash/slopdotcash"
-release_label = "slop-release-candidate"
 provenance_name = "PROVENANCE.json"
 max_source_files = 32
 max_source_directories = 32
 max_entry_bytes = 1_048_576
 max_total_bytes = 4_194_304
 max_api_bytes = 2_097_152
-max_pull_pages = 10
-max_timeline_pages = 10
-max_release_pages = 10
-max_release_attempts = 10
-max_release_job_requests = 32
 download_attempts = 3
 retry_backoff_seconds = (2.0, 4.0)
 sha_pattern = re.compile(r"[0-9a-f]{40}")
@@ -232,324 +226,6 @@ def api_json(path, query=()):
     )
 
 
-def pull_records(revision):
-    records = []
-    for page in range(1, max_pull_pages + 1):
-        response = api_json(
-            f"/repos/{github_repository}/commits/{revision}/pulls",
-            (("page", str(page)), ("per_page", "100")),
-        )
-        if not isinstance(response, list):
-            raise ValueError("GitHub associated-pulls response must be an array")
-        if len(response) > 100:
-            raise ValueError("GitHub associated-pulls page exceeds its bound")
-        records.extend(response)
-        if len(response) < 100:
-            return records
-    raise ValueError("GitHub associated-pulls pagination exceeded its bound")
-
-
-def pull_timeline(number):
-    if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
-        raise ValueError("candidate pull request number is invalid")
-    records = []
-    for page in range(1, max_timeline_pages + 1):
-        response = api_json(
-            f"/repos/{github_repository}/issues/{number}/timeline",
-            (("page", str(page)), ("per_page", "100")),
-        )
-        if not isinstance(response, list) or len(response) > 100:
-            raise ValueError("GitHub pull-request timeline page is invalid or unbounded")
-        records.extend(response)
-        if len(response) < 100:
-            return records
-    raise ValueError("GitHub pull-request timeline pagination exceeded its bound")
-
-
-def candidate_approval_is_fresh(number, revision):
-    revision_event = None
-    last_head_change = None
-    last_release_label = None
-    for index, event in enumerate(pull_timeline(number)):
-        if not isinstance(event, dict):
-            raise ValueError("GitHub pull-request timeline entry must be an object")
-        kind = event.get("event")
-        if kind == "committed":
-            event_revision = event.get("sha")
-            if not isinstance(event_revision, str) or not sha_pattern.fullmatch(event_revision):
-                raise ValueError("GitHub committed timeline event omitted its revision")
-            last_head_change = index
-            if event_revision == revision:
-                revision_event = index
-        elif kind in ("head_ref_force_pushed", "head_ref_restored"):
-            last_head_change = index
-        elif kind in ("labeled", "unlabeled"):
-            label = event.get("label")
-            if isinstance(label, dict) and label.get("name") == release_label:
-                last_release_label = (kind, index)
-    return (
-        revision_event is not None
-        and last_head_change is not None
-        and last_release_label is not None
-        and last_release_label[0] == "labeled"
-        and last_release_label[1] > last_head_change
-        and last_release_label[1] > revision_event
-    )
-
-
-def pull_matches_repository_contract(pull, revision, *, require_open, require_label=True):
-    if not isinstance(pull, dict):
-        return False
-    head = pull.get("head")
-    base = pull.get("base")
-    labels = pull.get("labels")
-    if not isinstance(head, dict) or not isinstance(base, dict) or not isinstance(labels, list):
-        return False
-    head_repository = head.get("repo")
-    base_repository = base.get("repo")
-    if not isinstance(head_repository, dict) or not isinstance(base_repository, dict):
-        return False
-    label_names = {
-        label.get("name")
-        for label in labels
-        if isinstance(label, dict) and isinstance(label.get("name"), str)
-    }
-    expected_state = pull.get("state") == "open" if require_open else pull.get("state") == "closed"
-    return (
-        expected_state
-        and pull.get("draft") is False
-        and head.get("sha") == revision
-        and head_repository.get("full_name") == github_repository
-        and base.get("ref") == "main"
-        and base_repository.get("full_name") == github_repository
-        and (not require_label or release_label in label_names)
-    )
-
-
-def develop_head():
-    response = api_json(f"/repos/{github_repository}/git/ref/heads/main")
-    if not isinstance(response, dict) or response.get("ref") != "refs/heads/main":
-        raise ValueError("GitHub main ref response has the wrong identity")
-    target = response.get("object")
-    if not isinstance(target, dict) or target.get("type") != "commit":
-        raise ValueError("GitHub main ref does not resolve to a commit")
-    return require_sha(target.get("sha"), "GitHub main head")
-
-
-def release_integer(value, context):
-    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-        raise ValueError(f"GitHub release {context} is invalid")
-    return value
-
-
-def release_time(value, context):
-    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value):
-        raise ValueError(f"GitHub release {context} is invalid")
-    time.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
-    return value
-
-
-def main_release_runs():
-    # Read bounded metadata, including failed or running reruns: an earlier
-    # attempt can remain the latest verified publication. No job history is
-    # read for records whose updated_at cannot beat the selected completion.
-    total = None
-    seen = set()
-    records = []
-    for page in range(1, max_release_pages + 1):
-        response = api_json(
-            f"/repos/{github_repository}/actions/workflows/deploy.yml/runs",
-            (("branch", "main"), ("per_page", "100"), ("page", str(page))),
-        )
-        if not isinstance(response, dict) or not isinstance(response.get("workflow_runs"), list):
-            raise ValueError("GitHub release history is invalid")
-        count = response.get("total_count")
-        if not isinstance(count, int) or isinstance(count, bool) or count < 0 or count > 100 * max_release_pages:
-            raise ValueError("GitHub release history exceeds its bound")
-        if total is not None and total != count:
-            raise ValueError("GitHub release history changed during pagination")
-        total = count
-        rows = response["workflow_runs"]
-        if len(rows) != min(100, total - len(seen)):
-            raise ValueError("GitHub release history is incomplete")
-        for run in rows:
-            if not isinstance(run, dict):
-                raise ValueError("GitHub release record is invalid")
-            run_id = release_integer(run.get("id"), "run id")
-            if run_id in seen:
-                raise ValueError("GitHub release history repeats a run")
-            seen.add(run_id)
-            if run.get("event") not in ("push", "workflow_dispatch"):
-                continue
-            repository_record = run.get("head_repository")
-            if (run.get("head_branch") != "main" or run.get("path") != ".github/workflows/deploy.yml"
-                or not isinstance(repository_record, dict) or repository_record.get("full_name") != github_repository):
-                raise ValueError("GitHub release record has the wrong authority")
-            require_sha(run.get("head_sha"), "release head")
-            release_integer(run.get("run_attempt"), "attempt")
-            if run.get("status") not in ("completed", "in_progress", "queued", "pending", "waiting", "requested"):
-                raise ValueError("GitHub release status is invalid")
-            created = release_time(run.get("created_at"), "creation time")
-            updated = release_time(run.get("updated_at"), "update time")
-            if created > updated:
-                raise ValueError("GitHub release time order is invalid")
-            records.append(run)
-        if len(seen) == total:
-            # Running metadata can lag completed jobs. Inspect every active
-            # run first; only completed runs have a usable completion bound.
-            return sorted(records, key=lambda run: (run["status"] != "completed", run["updated_at"], run["id"]), reverse=True)
-    raise ValueError("GitHub release history pagination exceeded its bound")
-
-
-def verified_publication(run, attempt):
-    response = api_json(
-        f"/repos/{github_repository}/actions/runs/{run['id']}/attempts/{attempt}/jobs",
-        (("per_page", "100"), ("page", "1")),
-    )
-    if not isinstance(response, dict) or not isinstance(response.get("jobs"), list):
-        raise ValueError("GitHub release jobs are invalid")
-    jobs = response["jobs"]
-    count = response.get("total_count")
-    if not isinstance(count, int) or isinstance(count, bool) or count < 0 or count > 100 or len(jobs) != count:
-        raise ValueError("GitHub release jobs are incomplete or unbounded")
-    ids = set()
-    production = []
-    for job in jobs:
-        if not isinstance(job, dict):
-            raise ValueError("GitHub release job is invalid")
-        job_id = release_integer(job.get("id"), "job id")
-        if job_id in ids:
-            raise ValueError("GitHub release jobs repeat an id")
-        ids.add(job_id)
-        if job.get("name") == "Deploy trusted production bundle":
-            production.append(job)
-    if len(production) > 1:
-        raise ValueError("GitHub release has ambiguous production jobs")
-    if not production:
-        return None
-    job = production[0]
-    if job.get("run_id") != run["id"] or job.get("run_attempt") != attempt or job.get("head_sha") != run["head_sha"]:
-        raise ValueError("GitHub production job names another source or attempt")
-    if job.get("status") != "completed" or job.get("conclusion") != "success":
-        return None
-    started = release_time(job.get("started_at"), "job start")
-    completed = release_time(job.get("completed_at"), "job completion")
-    if not run["created_at"] <= started <= completed:
-        raise ValueError("GitHub production job time order is invalid")
-    if run["status"] == "completed" and completed > run["updated_at"]:
-        raise ValueError("GitHub completed release metadata predates its job")
-    steps = job.get("steps")
-    if not isinstance(steps, list) or len(steps) > 100:
-        raise ValueError("GitHub production steps are invalid")
-    previous_number = 0
-    previous_end = started
-    for name in (
-        "Verify deployment checkout",
-        "Verify downloaded Pages bundle",
-        "Require live release-input equivalence",
-        "Deploy private identity and Cloudflare Pages",
-        "Verify Cloudflare deployment commit metadata",
-        "Verify published skill and leaderboard",
-    ):
-        matches = [step for step in steps if isinstance(step, dict) and step.get("name") == name]
-        if len(matches) > 1:
-            raise ValueError("GitHub production verification is ambiguous")
-        if not matches or matches[0].get("status") != "completed" or matches[0].get("conclusion") != "success":
-            return None
-        step = matches[0]
-        number = release_integer(step.get("number"), "step number")
-        start = release_time(step.get("started_at"), "step start")
-        end = release_time(step.get("completed_at"), "step completion")
-        if number <= previous_number or not previous_end <= start <= end <= completed:
-            raise ValueError("GitHub production verification time order is invalid")
-        previous_number, previous_end = number, end
-    return completed
-
-
-def latest_main_release():
-    best = None
-    requests = 0
-    for run in main_release_runs():
-        # Only completed run metadata bounds its completed jobs. Active run
-        # metadata can lag a successful production job, so never prune it.
-        if run["status"] == "completed" and best is not None and run["updated_at"] < best[0]:
-            break
-        attempts = run["run_attempt"]
-        if attempts > max_release_attempts:
-            raise ValueError("GitHub release attempts exceed their bound")
-        for attempt in range(attempts, 0, -1):
-            requests += 1
-            if requests > max_release_job_requests:
-                raise ValueError("GitHub release proof requests exceed their bound")
-            completed = verified_publication(run, attempt)
-            if completed is None:
-                continue
-            candidate = (completed, run["head_sha"], run["id"], attempt)
-            if best is None or completed > best[0]:
-                best = candidate
-            elif completed == best[0]:
-                if candidate[1] != best[1]:
-                    raise ValueError("GitHub latest verified publication is ambiguous")
-                best = min(best, candidate)
-            # GitHub rerun attempts follow the preceding attempt; an earlier
-            # attempt cannot publish after this successful verified one.
-            break
-    return None if best is None else (best[1], best[2], best[3])
-
-
-def authorize_revision(revision, canonical_files):
-    current_develop = develop_head()
-    revocations = api_json(f"/repos/{github_repository}/contents/protocol/skill-revocations.json", (("ref", current_develop),))
-    if not isinstance(revocations, dict) or revocations.get("encoding") != "base64":
-        raise ValueError("Skill revocation list is unavailable")
-    revoked = decode_json(base64.b64decode(revocations["content"]), "skill revocations")
-    if not isinstance(revoked, list) or any(not isinstance(item, str) or not sha_pattern.fullmatch(item) for item in revoked):
-        raise ValueError("Skill revocation list is invalid")
-    if revision in revoked:
-        raise ValueError("This skill revision was explicitly revoked; install the replacement")
-    if revision == current_develop:
-        return {"kind": "develop", "develop": current_develop}
-    matching = [
-        pull
-        for pull in pull_records(revision)
-        if pull_matches_repository_contract(pull, revision, require_open=True)
-    ]
-    if matching:
-        numbers = sorted(
-            pull.get("number")
-            for pull in matching
-            if isinstance(pull.get("number"), int) and pull.get("number") > 0
-        )
-        if not numbers:
-            raise ValueError("authorized release candidate omitted its pull request number")
-        approved = [
-            number
-            for number in numbers
-            if candidate_approval_is_fresh(number, revision)
-        ]
-        if not approved:
-            raise ValueError("release-candidate approval is not bound to the current pull-request head")
-        if not compare_is_ancestor(current_develop, revision):
-            raise ValueError("release candidate is behind or divergent from current main")
-        return {"kind": "candidate", "develop": current_develop, "pull": approved[0]}
-    if compare_is_ancestor(revision, current_develop):
-        current_files = remote_skill_bytes(current_develop)
-        if current_files == canonical_files:
-            return {"kind": "develop", "develop": current_develop}
-        # A template change on main is unpublished until its release succeeds,
-        # and the installer can only download what production serves. The one
-        # ancestor that is the newest successful main release stays authorized
-        # until the next release lands; an explicit revocation above still
-        # refuses it, and no older release qualifies.
-        latest_release = latest_main_release()
-        if latest_release is not None and latest_release[0] == revision:
-            return {"kind": "release", "develop": current_develop, "run": latest_release[1], "attempt": latest_release[2]}
-        raise ValueError(f"installed skill bytes differ from current main {current_develop}; install the current skill")
-    raise ValueError(
-        "archive revision is neither the current canonical main skill nor an open labeled same-repository release candidate"
-    )
-
-
 def git_blob_digest(contents):
     header = f"blob {len(contents)}\\0".encode("ascii")
     return hashlib.sha1(header + contents).hexdigest()
@@ -609,6 +285,10 @@ def list_remote_skill_files(revision):
 
 
 def remote_skill_bytes(revision):
+    require_sha(revision, "source revision")
+    commit = api_json(f"/repos/{github_repository}/git/commits/{revision}")
+    if not isinstance(commit, dict) or commit.get("sha") != revision:
+        raise ValueError("GitHub did not resolve the requested immutable commit")
     entries = list_remote_skill_files(revision)
     result = {}
     total = 0
@@ -633,7 +313,7 @@ def remote_skill_bytes(revision):
 
 
 # Generated project skills (PRD SKL-03/04): the trust root is the pair
-# (template revision on main, approved D1 revision digest). This renderer is
+# (canonical template commit, approved D1 revision digest). This renderer is
 # the byte-for-byte mirror of src/lib/project-skill.mjs; change both together.
 project_skill_templates = {
     "skills/project-contributor-template": "contributor",
@@ -820,106 +500,11 @@ def expected_skill_bytes(revision, binding):
     return render_project_skill(role, template_files, manifest, binding), template_files
 
 
-def compare_is_ancestor(old_revision, new_revision):
-    # Without paging, GitHub returns up to 250 commits and 300 file patches,
-    # which exceeds max_api_bytes on a long range and refuses a valid update.
-    # A paginated comparison lists files only on page 1, so page 2 of one
-    # commit each still carries every relation field read below.
-    comparison = api_json(
-        f"/repos/{github_repository}/compare/{old_revision}...{new_revision}",
-        (("per_page", "1"), ("page", "2")),
-    )
-    if not isinstance(comparison, dict):
-        raise ValueError("GitHub compare response must be an object")
-    base_commit = comparison.get("base_commit")
-    merge_base = comparison.get("merge_base_commit")
-    return (
-        comparison.get("status") == "ahead"
-        and isinstance(comparison.get("ahead_by"), int)
-        and comparison.get("ahead_by") > 0
-        and comparison.get("behind_by") == 0
-        and isinstance(base_commit, dict)
-        and base_commit.get("sha") == old_revision
-        and isinstance(merge_base, dict)
-        and merge_base.get("sha") == old_revision
-    )
-
-
 `;
 
-/** One Python 3 qualification shared by installation and run/write gates. */
+/** Python 3 qualification for online installation, update and rollback. */
 export function pythonRuntimeProbe(requiresHttpsTrust) {
   return requiresHttpsTrust
     ? 'import os, re, ssl, sys; d = ssl.get_default_verify_paths().capath; raise SystemExit(0 if sys.version_info.major == 3 and (ssl.create_default_context().get_ca_certs() or (d and os.path.isdir(d) and any(re.fullmatch("[0-9a-f]{8}[.][0-9]+", n) for n in os.listdir(d)))) else 1)'
     : "import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)";
-}
-
-/** Run the same source authorization without installing or changing a version. */
-export function createSkillAuthorizationProgram(testAuthority) {
-  const authority = {
-    apiOrigin: "https://api.github.com",
-    rawOrigin: "https://raw.githubusercontent.com",
-    registryOrigin: "https://slop.cash",
-    ...testAuthority,
-  };
-  if (testAuthority !== undefined) {
-    const keys = Object.keys(testAuthority ?? {})
-      .sort()
-      .join(",");
-    if (
-      !testAuthority ||
-      (keys !== "apiOrigin,rawOrigin" &&
-        keys !== "apiOrigin,rawOrigin,registryOrigin") ||
-      Object.values(testAuthority).some((value) => {
-        const url = new URL(value);
-        return url.protocol !== "file:" || url.search || url.hash;
-      })
-    )
-      throw new TypeError(
-        "Test skill authority requires deterministic file:// origins",
-      );
-  }
-  return `
-import base64
-import hashlib
-import json
-import math
-import os
-import re
-import socket
-import sys
-import time
-import unicodedata
-import urllib.error
-import urllib.parse
-import urllib.request
-from pathlib import PurePosixPath
-
-request = json.load(sys.stdin)
-api_origin = ${JSON.stringify(authority.apiOrigin.replace(/\/$/u, ""))}
-raw_origin = ${JSON.stringify(authority.rawOrigin.replace(/\/$/u, ""))}
-registry_origin = ${JSON.stringify(authority.registryOrigin.replace(/\/$/u, ""))}
-skill_repository_path = request["sourcePath"]
-request_timeout_seconds = 60
-${SKILL_AUTHORITY_PYTHON}
-
-try:
-    revision = require_sha(request["revision"], "installed revision")
-    canonical_relative_path(skill_repository_path, "canonical source path")
-    files = {path: base64.b64decode(contents, validate=True) for path, contents in request["files"].items()}
-    binding = request.get("registry")
-    if binding is not None:
-        require_registry_binding(binding, binding.get("projectId") if isinstance(binding, dict) else None)
-    expected, template_files = expected_skill_bytes(revision, binding)
-    if sorted(files) != sorted(expected):
-        raise ValueError("installed tree differs from its immutable source")
-    for path, contents in files.items():
-        if contents != expected[path]:
-            raise ValueError("installed bytes differ from their immutable source")
-    authorization = authorize_revision(revision, template_files)
-    print(json.dumps({"revision": revision, "authorization": authorization}))
-except (ValueError, KeyError, TypeError) as error:
-    print(str(error), file=sys.stderr)
-    sys.exit(1)
-`;
 }

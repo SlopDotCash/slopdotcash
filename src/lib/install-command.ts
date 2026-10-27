@@ -7,8 +7,8 @@ import {
  * Generates the independently authenticated, resource-limited skill installer.
  * GitHub authorizes immutable source bytes while the site checksum detects
  * transport corruption; versioned local directories make activation atomic.
- * Entry receipts preserve transition history but never replace live rollback
- * authorization for the retained revision about to become active.
+ * Receipts preserve installation history. Requested revisions do not require
+ * branch ancestry, release approval, or a live runtime authorization check.
  */
 
 interface TestAuthorityOrigins {
@@ -340,12 +340,17 @@ def canonical_authorization_receipt_bytes(
 ):
     kind = authorization.get("kind") if isinstance(authorization, dict) else None
     develop = authorization.get("develop") if isinstance(authorization, dict) else None
-    require_sha(develop, "authorization receipt develop revision")
-    if kind == "develop":
+    if kind == "source":
+        if set(authorization) != {"kind", "revision"} or authorization.get("revision") != revision:
+            raise ValueError("source receipt has an invalid schema")
+        recorded_authorization = {"kind": kind, "revision": revision}
+    elif kind == "develop":
+        require_sha(develop, "authorization receipt develop revision")
         if set(authorization) != {"kind", "develop"}:
             raise ValueError("develop authorization receipt has an invalid schema")
         recorded_authorization = {"kind": kind, "develop": develop}
     elif kind == "candidate":
+        require_sha(develop, "authorization receipt develop revision")
         pull = authorization.get("pull")
         if (
             set(authorization) != {"kind", "develop", "pull"}
@@ -356,16 +361,13 @@ def canonical_authorization_receipt_bytes(
             raise ValueError("candidate authorization receipt has an invalid schema")
         recorded_authorization = {"kind": kind, "develop": develop, "pull": pull}
     elif kind == "release":
+        require_sha(develop, "authorization receipt develop revision")
         run = authorization.get("run")
         attempt = authorization.get("attempt")
         if (
             set(authorization) != {"kind", "develop", "run", "attempt"}
-            or not isinstance(run, int)
-            or isinstance(run, bool)
-            or run <= 0
-            or not isinstance(attempt, int)
-            or isinstance(attempt, bool)
-            or attempt <= 0
+            or not isinstance(run, int) or isinstance(run, bool) or run <= 0
+            or not isinstance(attempt, int) or isinstance(attempt, bool) or attempt <= 0
         ):
             raise ValueError("release authorization receipt has an invalid schema")
         recorded_authorization = {"kind": kind, "develop": develop, "run": run, "attempt": attempt}
@@ -525,7 +527,7 @@ def extract_archive(archive_contents, extraction_root):
         raise ValueError("archive provenance is missing")
     binding = provenance_binding(provenance)
     canonical_files, template_files = expected_skill_bytes(revision, binding)
-    authorization = authorize_revision(revision, template_files)
+    authorization = {"kind": "source", "revision": revision}
     if packaged_paths != sorted(canonical_files):
         raise ValueError("archive files do not exactly match the canonical skill file list")
     validate_provenance(provenance, revision, canonical_files, repository, binding)
@@ -539,38 +541,6 @@ def extract_archive(archive_contents, extraction_root):
             if packaged_file.read() != contents:
                 raise ValueError("archive file bytes disagree with their immutable source")
     return staged_skill, revision, canonical_files, authorization, binding, template_files
-
-
-def is_candidate_to_merged_transition(
-    old_revision, old_authorization, new_revision, new_authorization
-):
-    if (
-        old_authorization.get("kind") != "candidate"
-        or new_authorization.get("kind") != "develop"
-    ):
-        return False
-    candidate_pull = old_authorization.get("pull")
-    for pull in pull_records(old_revision):
-        if (
-            not isinstance(pull, dict)
-            or
-            pull.get("number") != candidate_pull
-            or not pull_matches_repository_contract(
-                pull,
-                old_revision,
-                require_open=False,
-                require_label=False,
-            )
-        ):
-            continue
-        if not isinstance(pull.get("merged_at"), str):
-            continue
-        merge_revision = pull.get("merge_commit_sha")
-        if not isinstance(merge_revision, str) or not sha_pattern.fullmatch(merge_revision):
-            continue
-        if merge_revision == new_revision or compare_is_ancestor(merge_revision, new_revision):
-            return True
-    return False
 
 
 def read_provenance(path):
@@ -828,44 +798,23 @@ def install_or_update():
             old_files, old_authorization, _ = verify_local_version(
                 old_path, old_key, old_files
             )
+            # Template selection has no ancestry gate. Ordinary updates still
+            # cannot roll back the project's approved D1 policy revision.
+            old_registry = int(old_key.split("-r")[1]) if "-r" in old_key else None
+            new_registry = binding["revision"] if binding is not None else None
+            if old_registry is not None and new_registry is not None and new_registry < old_registry:
+                raise ValueError("refusing downgrade of the project registry revision; use explicit rollback")
             if old_key == key:
-                authorize_revision(revision, template_files)
                 print(f"{skill_name} is already verified at {key}; no changes made.")
                 return
             if old_files == canonical_files:
-                authorize_revision(revision, template_files)
                 print(
                     f"{skill_name} already has the current verified canonical bytes at {old_key}; no changes made."
                 )
                 return
-            old_revision = old_key[:40]
-            # A generated skill may also move to a newer registry revision of
-            # the same template; it never moves back to an older one.
-            old_registry = int(old_key.split("-r")[1]) if "-r" in old_key else None
-            new_registry = binding["revision"] if binding is not None else None
-            template_forward = (
-                old_revision == revision
-                or compare_is_ancestor(old_revision, revision)
-                or is_candidate_to_merged_transition(
-                    old_revision,
-                    old_authorization,
-                    revision,
-                    authorization,
-                )
-            )
-            if (
-                not template_forward
-                or (
-                    old_registry is not None
-                    and new_registry is not None
-                    and new_registry < old_registry
-                )
-            ):
-                raise ValueError("refusing downgrade or divergent skill update")
-
-        # Recheck mutable GitHub authority after every download and comparison,
-        # immediately before a new immutable version can become activatable.
-        authorization = authorize_revision(revision, template_files)
+        # Source integrity is sufficient. Explicit installation may select any
+        # revision, including a different branch or an older retained release.
+        authorization = {"kind": "source", "revision": revision}
         with open(
             os.path.join(staged_skill, authorization_receipt_name),
             "xb",
@@ -902,9 +851,6 @@ def rollback():
     if not os.path.lexists(retained_path):
         raise ValueError("requested rollback revision is not retained locally")
     retained_files, _, retained_templates = verify_local_version(retained_path, revision)
-    # Receipts preserve entry-time authority for forward transitions; every
-    # explicit rollback target must still pass mutable GitHub policy now.
-    authorize_revision(revision[:40], retained_templates)
     if revision == current_revision:
         print(f"{skill_name} is already verified at {revision}; no changes made.")
         return
@@ -915,7 +861,7 @@ def rollback():
     if activated[0] != revision:
         raise ValueError("activated rollback target has the wrong revision")
     verify_local_version(activated[1], revision, retained_files)
-    print(f"Rolled back {skill_name} to currently authorized retained revision {revision}.")
+    print(f"Rolled back {skill_name} to verified retained revision {revision}.")
 
 
 def acquire_lock():
