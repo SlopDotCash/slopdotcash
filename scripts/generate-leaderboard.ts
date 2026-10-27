@@ -46,7 +46,6 @@ import {
   type PullRequestFile,
   type PullRequestRecord,
   type PullRequestReview,
-  penaltyProjectOf,
   pullRequestTextSources,
   repositoryIdFromUrl,
   SCORE_WINDOW_DAYS,
@@ -56,6 +55,7 @@ import {
   type VerifiedEvidenceArtifact,
 } from "../src/lib/leaderboard";
 import {
+  REGISTERED_REPOSITORIES,
   TARGET_REPOSITORIES,
   type TargetRepository,
 } from "../src/lib/repositories.mjs";
@@ -4079,15 +4079,14 @@ export async function generateLeaderboardFromGitHub(
       return github.get<T>(path);
     },
   });
-  // Keep explicit reversals even after a closed PR leaves the rolling census.
+  // History is a retained read, not GitHub collection. Keep reversals after
+  // a PR leaves the rolling census or its project is paused/retired.
   const penalties: NonNullable<LeaderboardInput["penalties"]>[number][] = [];
   const penaltyHistory: NonNullable<LeaderboardInput["penaltyHistory"]> = [];
   let hasPenaltyHistory = false;
   for (const projectId of [
     ...new Set(
-      collections.map((collection) =>
-        penaltyProjectOf(collection.repository.id),
-      ),
+      REGISTERED_REPOSITORIES.map((repository) => repository.projectId),
     ),
   ].sort()) {
     // Reconstruct state at the GitHub cutoff when a close/reversal happens

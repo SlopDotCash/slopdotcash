@@ -48,7 +48,9 @@ export function assertPenaltyHistory(
           .sort()
           .join() ||
       !projectIds.includes(row.projectId) ||
+      typeof row.itemNodeId !== "string" ||
       !/^[A-Za-z0-9_=-]{1,100}$/u.test(row.itemNodeId) ||
+      typeof row.authorGithubId !== "string" ||
       !/^[1-9][0-9]*$/u.test(row.authorGithubId) ||
       !/^[a-z_]{1,40}$/u.test(row.category) ||
       !/^slopbot-penalties-v[1-9][0-9]*$/u.test(row.tableVersion) ||

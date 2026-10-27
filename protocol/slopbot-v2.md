@@ -100,8 +100,9 @@ score.
 
 The additive `history=1` mode returns `slop-penalty-history:v1` and retains
 reversed rows, adding only the reversal time and its `appeal_upheld` or
-`maintainer_reopen` reason. The collector reads all pages for each collected
-project and retains this safe evidence in `penaltyHistory`. A new Points debit
+`maintainer_reopen` reason. The collector reads all pages for each registered
+project, including paused and retired projects, and retains this safe evidence
+in `penaltyHistory`. This does not collect their GitHub work. A new Points debit
 still requires the GitHub-bound `penalties` entry; retained history can reverse
 only an already-bound journal identity. A missing row never proves reversal.
 During the first release, a Worker that returns the exact legacy active-feed

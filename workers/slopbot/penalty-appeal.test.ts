@@ -13,6 +13,7 @@ import {
   fetchProjectPenaltyState,
 } from "../../scripts/value-ingestion";
 import {
+  assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
   type LeaderboardSnapshot,
 } from "../../src/lib/leaderboard";
@@ -1498,7 +1499,16 @@ test("an old Points debit survives missing snapshots and reverses only on retain
     input.detailEligibleMergedPullRequestIds = [];
     input.source.counts.mergedPullRequests = 0;
     input.source.counts.detailedMergedPullRequests = 0;
-    const absent = createLeaderboardSnapshot(input);
+    // A paused project's repositories leave GitHub collection, but its
+    // retained reversal history must still reach the Points journal.
+    const empty = createLeaderboardSnapshot(input);
+    const absent: LeaderboardSnapshot = {
+      ...empty,
+      repository: null,
+      repositories: [],
+      source: { ...empty.source, repositoryId: null, repositories: [] },
+    };
+    assertLeaderboardSnapshot(absent);
     // Neither an old-format snapshot nor a complete empty active feed is a reversal.
     journal = applyPointsSnapshot(journal, absent, "b".repeat(64), later);
     journal = applyPointsSnapshot(
@@ -1543,6 +1553,7 @@ test("an old Points debit survives missing snapshots and reverses only on retain
       ),
     ).toThrow("Penalty reversal identity mismatch");
     const restored = { ...absent, penaltyHistory: history };
+    assertLeaderboardSnapshot(restored);
     journal = applyPointsSnapshot(journal, restored, "e".repeat(64), later);
     expect(member()).toMatchObject({ total: 40, monthly: 10 });
     expect(journal.revisions.slice(0, original.length)).toEqual(original);

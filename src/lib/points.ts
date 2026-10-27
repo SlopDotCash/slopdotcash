@@ -13,7 +13,10 @@ import {
   isHistoricalProjectId,
   isHistoricalRepositoryId,
 } from "./projects.mjs";
-import { findRegisteredRepositoryById } from "./repositories.mjs";
+import {
+  findRegisteredRepositoryById,
+  REGISTERED_REPOSITORIES,
+} from "./repositories.mjs";
 import { assertPenaltyHistory } from "./score-penalties";
 import { VALUE_SCORING_APPROVED_HISTORY_FROM } from "./scoring-policy";
 import { sha256Hex } from "./sha256";
@@ -513,7 +516,7 @@ export function reconcilePointPenalties(
   if (snapshot?.penaltyHistory !== undefined) {
     assertPenaltyHistory(
       snapshot.penaltyHistory,
-      snapshot.repositories.map((r) => r.projectId),
+      REGISTERED_REPOSITORIES.map((r) => r.projectId),
       snapshot.generatedAt,
     );
     const bySource = new Map(

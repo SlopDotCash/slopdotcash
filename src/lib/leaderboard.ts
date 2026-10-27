@@ -6819,7 +6819,7 @@ export function assertLeaderboardSnapshot(
   if (snapshot.penaltyHistory !== undefined)
     assertPenaltyHistory(
       snapshot.penaltyHistory,
-      snapshot.repositories.map((r) => r.projectId),
+      REGISTERED_REPOSITORIES.map((r) => r.projectId),
       snapshot.generatedAt,
     );
   const penaltyThirds = penaltyDeductions(
