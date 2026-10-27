@@ -39,6 +39,7 @@ import {
   createEvmExecutor,
   type JournalStore,
   lookupAttempt,
+  observedEvmTransaction,
   pendingStoredBindings,
   preflightEvmDeployment,
   retireUnsignedAttempt,
@@ -484,7 +485,10 @@ export class PaymentSignerJournal {
           { PAYMENTS_DB: database, JOURNAL: this.state.storage },
           input,
         );
-        if (this.env.CHAIN_FAMILY === "solana" && result.transactionId) {
+        if (!result.transactionId) return Response.json(result);
+        // Stored bytes alone are not a send. Report whether the chain saw them,
+        // so a refused broadcast or preflight stays retryable.
+        if (this.env.CHAIN_FAMILY === "solana") {
           const config = await preflightSolanaDeployment(this.env, input);
           return Response.json({
             ...result,
@@ -492,7 +496,13 @@ export class PaymentSignerJournal {
               (await solanaTransactionStatus({ config }, result)) !== null,
           });
         }
-        return Response.json(result);
+        return Response.json({
+          ...result,
+          submitted: await observedEvmTransaction(
+            await preflightEvmDeployment(this.env, input),
+            result.transactionId,
+          ),
+        });
       }
       if (request.headers.get("idempotency-key") !== input.idempotencyKey)
         return new Response("Idempotency key required", { status: 400 });
