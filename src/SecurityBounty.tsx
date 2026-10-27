@@ -3296,7 +3296,7 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
               <option value="review">Needs your review</option>
               <option value="waiting">Waiting for researcher</option>
               <option value="award">Award and payment</option>
-              <option value="resolved">Resolved</option>
+              <option value="resolved">Paid or ineligible</option>
             </select>
           </label>
         ) : null}
