@@ -136,6 +136,11 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
 }, info) => {
   const authorized = await setup(page);
   await expect(
+    page
+      .locator(".payout-row")
+      .getByRole("link", { name: "eliza", exact: true }),
+  ).toHaveAttribute("href", "/projects/eliza");
+  await expect(
     page.getByText("Gross 1 USDC · fee 0.02 USDC", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Authorize payout wallet" }).click();
