@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { expectHeaderRow } from "../header-row";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -57,7 +58,6 @@ for (const [next, expected] of [
   test(`login returns ${next} to a safe destination`, async ({
     diagnostics,
     page,
-    baseURL,
   }) => {
     diagnostics.allowPreviewApiMisses();
     // The signed-out membership read before sign-in.
@@ -128,10 +128,15 @@ for (const [next, expected] of [
         await route.fulfill({ status: 404, json: {} });
         return;
       }
-      const response = await route.fetch({
-        url: `${baseURL}${url.pathname}${url.search}`,
+      await route.fulfill({
+        path: join(
+          process.cwd(),
+          "dist",
+          route.request().resourceType() === "document"
+            ? "index.html"
+            : url.pathname,
+        ),
       });
-      await route.fulfill({ response });
     });
     await page.goto(`/login?next=${encodeURIComponent(next)}`);
     await page
