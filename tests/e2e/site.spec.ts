@@ -931,6 +931,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await page.route("**/api/v1/projects/eliza*", (route) => {
     if (route.request().method() === "PUT") {
       submission = route.request().postDataJSON();
+      Object.assign(project, submission?.manifest);
       return route.fulfill({
         json: {
           project: {
@@ -1057,9 +1058,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     manifest: { contribution: { approvedScope: scope } },
   });
   await page.getByRole("button", { name: "Discard draft" }).click();
-  await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
-    project.contribution?.approvedScope ?? "",
-  );
+  await expect(page.getByLabel("Acceptance criteria")).toHaveValue(scope);
   await expect(page.getByRole("region", { name: "Changes" })).toHaveCount(0);
   // PRD section 8: an exempt project publishes skill changes without a new
   // scan, so the change list must not say that it needs one.
@@ -1071,7 +1070,9 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByText("Exempt", { exact: true })).toBeVisible();
   await openOwnerSettings(page, "Contribution rules");
-  await page.getByLabel("Acceptance criteria").fill(scope);
+  await page
+    .getByLabel("Acceptance criteria")
+    .fill(`${scope} Keep the review evidence concise.`);
   const exemptChanges = page.getByRole("region", { name: "Changes" });
   await expect(exemptChanges).toContainText(
     "Presentation and cleared contribution changes publish now.",
@@ -1087,7 +1088,9 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByText("Exempt", { exact: true })).toHaveCount(0);
   await openOwnerSettings(page, "Contribution rules");
-  await page.getByLabel("Acceptance criteria").fill(scope);
+  await page
+    .getByLabel("Acceptance criteria")
+    .fill(`${scope} Keep the review evidence concise.`);
   const admittedChanges = page.getByRole("region", { name: "Changes" });
   await expect(admittedChanges).toContainText(
     "Presentation and cleared contribution changes publish now.",
