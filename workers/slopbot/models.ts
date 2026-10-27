@@ -70,6 +70,7 @@ export async function runRoute(
 
 // The Anthropic wire reports budget exhaustion as invalid_request_error,
 // with structured budget detail rather than the OpenAI budget_exceeded code.
+// A long-running response may commit HTTP 200 before that denial is known.
 // Do not retry another model when the provider has denied spending.
 function budgetResetAt(error: unknown): string | null {
   if (typeof error !== "object" || error === null) return null;
@@ -79,7 +80,7 @@ function budgetResetAt(error: unknown): string | null {
   };
   const payload = value.error?.error;
   if (
-    value.status !== 400 ||
+    (value.status !== 400 && value.status !== 200) ||
     payload?.type !== "invalid_request_error" ||
     typeof payload.detail !== "object" ||
     payload.detail === null
@@ -167,7 +168,10 @@ export async function runStructuredRoute<T>(
       const status = (error as { status?: unknown })?.status;
       const headers = (error as { headers?: unknown })?.headers;
       if (headers instanceof Headers) {
-        record.providerCostMicroUsd = providerCost(headers);
+        record.providerCostMicroUsd = providerCost(
+          headers,
+          (error as { error?: unknown }).error,
+        );
         record.providerRequestId = providerRequestId(headers);
       }
       const resetAt = budgetResetAt(error);
@@ -210,7 +214,21 @@ function parseJson(text: string | undefined): unknown {
   }
 }
 
-function providerCost(headers: Headers): number | null {
+function providerCost(headers: Headers, body?: unknown): number | null {
+  const usage = (body as { usage?: { buyer_cost_micro?: unknown } } | null)
+    ?.usage;
+  // Surplus's canonical receipt is in the body on both fast and long calls.
+  // A malformed present field stays unknown; a legacy header cannot repair it.
+  if (
+    typeof usage === "object" &&
+    usage !== null &&
+    Object.hasOwn(usage, "buyer_cost_micro")
+  ) {
+    const cost = usage.buyer_cost_micro;
+    return typeof cost === "number" && Number.isSafeInteger(cost) && cost >= 0
+      ? cost
+      : null;
+  }
   const cost = headers.get("x-si-buyer-cost-micro");
   return cost !== null &&
     /^(0|[1-9][0-9]*)$/u.test(cost) &&
@@ -282,9 +300,27 @@ async function callClaude(
       },
     } as unknown as Anthropic.MessageCreateParamsNonStreaming)
     .withResponse();
-  const providerCostMicroUsd = providerCost(transport.headers);
+  // The SDK preserves Surplus's additive fields even though its types do not
+  // declare them. Read the receipt before handling a committed error response.
+  const surplusResponse = response as Anthropic.Message & {
+    error?: unknown;
+    surplus?: { truncated?: unknown };
+  };
+  const providerCostMicroUsd = providerCost(transport.headers, response);
   const requestId = providerRequestId(transport.headers);
-  const truncated = transport.headers.get("x-si-truncated") === "1";
+  if (Object.hasOwn(surplusResponse, "error")) {
+    // Reuse the SDK-error path so receipts and structured budget denials get
+    // the same handling even when the HTTP status was committed early.
+    throw new Anthropic.APIError(
+      transport.status,
+      response,
+      undefined,
+      transport.headers,
+    );
+  }
+  const truncated =
+    surplusResponse.surplus?.truncated === true ||
+    transport.headers.get("x-si-truncated") === "1";
   const usage: Usage = {
     input: response.usage.input_tokens,
     cacheWrite: response.usage.cache_creation_input_tokens ?? 0,

@@ -474,10 +474,14 @@ scores or prove a hosted publication.
 
 ## Provider request receipts
 
-The Anthropic SDK response headers carry Surplus transport evidence. The route
-retains `x-si-buyer-cost-micro` as a nullable integer in a separate immutable
-`provider_cost_micro_usd` column (migration `0015`). Missing, fractional or
-unsafe values remain unknown. This is a provider report, not a finalized invoice;
+Surplus reports the canonical nonstreaming charge in
+`usage.buyer_cost_micro`, including long-running responses whose cost header
+is absent. The route retains a nonnegative safe integer in the immutable
+`provider_cost_micro_usd` column (migration `0015`). It uses the legacy
+`x-si-buyer-cost-micro` header only when the body field is absent; a malformed
+present body field remains unknown. It never adds the two values. Missing,
+fractional or unsafe values remain unknown. This is a provider report, not a
+finalized invoice;
 it does not replace the versioned price, change billing, or mark reconciliation
 complete. Migration `0019` also retains the transport `x-request-id` in the
 private immutable `provider_request_id` column. The model response body's ID
@@ -485,10 +489,13 @@ is a different identity. Only bounded ASCII identifiers are accepted; missing
 or invalid IDs stay null, including all earlier rows. Neither header is exposed
 by the public assessment reader.
 
-`x-si-truncated: 1` rejects the response even if its JSON and stop reason appear
-complete. SDK retries are disabled so each explicit route attempt has one cost
-record. Failure responses retain a valid cost header without recording provider
-error bodies. See the official [Surplus routing controls](https://www.surplusintelligence.ai/docs/marketplace/routing-controls).
+Either `surplus.truncated: true` in the body or `x-si-truncated: 1` rejects the
+response even if its JSON and stop reason appear complete. A committed HTTP
+200 response with an error envelope is still a failure. The route retains its
+cost and request ID, and a structured budget denial stops fallback just as an
+HTTP 400 denial does. SDK retries are disabled, so each explicit route attempt
+has one cost record. Provider error bodies are never retained. See the official
+[Surplus response contract](https://www.surplusintelligence.ai/docs/reference/long-running-responses).
 
 Live Opus and Sol receipt checks passed on 10 October 2026. Controlled local HTTP
 checks covered deadline truncation, fractional costs, error receipts and retry
