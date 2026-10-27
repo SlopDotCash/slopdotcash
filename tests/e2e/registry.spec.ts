@@ -167,6 +167,10 @@ async function queueScan(
   const card = admin.getByRole("article", {
     name: `Security vetting for ${projectId}`,
   });
+  await card
+    .getByText(`Queue scan of revision ${revision}`, { exact: true })
+    .locator("xpath=self::summary")
+    .click();
   await card.getByLabel("Reason for the scan").fill(reason);
   await card
     .getByRole("button", { name: `Queue scan of revision ${revision}` })
@@ -311,7 +315,7 @@ async function draftApplication(
   await expect(consent).not.toBeChecked();
   if (project.automaticClosure) await consent.check();
   await page.getByRole("button", { name: "Next: Rewards" }).click();
-  await page.getByLabel("Pay contributors a monthly amount").check();
+  await page.getByLabel("Monthly rewards").check();
   await page.getByLabel("Monthly amount (USDC)").fill("1000");
   if (project.network)
     await page
@@ -650,7 +654,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   // An unscanned revision serves no executable skill (PRD VET-01).
   const unscanned = await request.get(`/projects/${project.id}/skill.md`);
   expect(unscanned.status()).toBe(404);
-  expect(await unscanned.text()).toContain("security vetting");
+  expect(await unscanned.text()).toContain("admission clearance");
   expect(
     await (await request.get(`/api/v1/projects/${project.id}`)).json(),
   ).toMatchObject({ skillsPublished: false, vetting: { state: "queued" } });
@@ -694,7 +698,8 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   );
   expect(diagnostics.count(refused)).toBe(1);
 
-  // A signed clean claim still lacks canonical runtime closure.
+  // A signed clean claim still lacks canonical runtime closure. Rejection
+  // leaves this newer investigation queued; it cannot revive the old result.
   await queueScan(admin, project.id, "Rescan after the gap");
   await postVettingResult(request, project.id, project.repository, "clean");
   await admin.reload();
@@ -702,7 +707,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     admin
       .getByRole("article", { name: `Security vetting for ${project.id}` })
       .locator(".admin-badge"),
-  ).toHaveText("Quarantined");
+  ).toHaveText("Queued");
   for (const path of [
     "skill.md",
     "SKILL.md",
@@ -719,6 +724,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     revision: 1,
     skillsPublished: false,
     project: { status: "paused" },
+    vetting: { state: "queued" },
   });
   const card = admin.locator(".admin-card", {
     has: admin.getByText(project.id, { exact: true }),
@@ -730,7 +736,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     .fill("Activation remains blocked without canonical closure");
   await card.getByRole("button", { name: "Save revision 2" }).click();
   await expect(card.getByRole("alert")).toContainText(
-    "Security vetting is quarantined",
+    "Security vetting is queued",
   );
   expect(diagnostics.count(refused)).toBe(2);
   await postVettingResult(
@@ -2187,19 +2193,21 @@ test.describe("private evidence console", () => {
         exact: true,
       }),
     ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Inspect evidence inventory" })
-      .click();
     await expect(
       page.getByText("Access expiry is enforced here.", { exact: false }),
     ).toBeVisible();
+    await page
+      .getByRole("button", {
+        name: `Select Harmless trace fixture, ${VETTING_EVIDENCE_OBJECTS[0].sha256.slice(0, 12)}`,
+        exact: true,
+      })
+      .click();
     const trace = page.getByRole("article").filter({
       has: page.getByRole("heading", {
         name: "Harmless trace fixture",
         exact: true,
       }),
     });
-    await trace.getByText("Read evidence", { exact: true }).click();
     await trace
       .getByLabel("Reason to inspect Harmless trace fixture")
       .fill("Verify complete private collector evidence");
@@ -2215,10 +2223,15 @@ test.describe("private evidence console", () => {
         name: "Harmless trace fixture verified content",
       }),
     ).toHaveValue(VETTING_EVIDENCE_OBJECTS[0].body);
+    await page
+      .getByRole("button", {
+        name: `Select ${VETTING_EVIDENCE_OBJECTS[2].label}, ${VETTING_EVIDENCE_OBJECTS[2].sha256.slice(0, 12)}`,
+        exact: true,
+      })
+      .click();
     const binary = page
       .getByRole("article")
       .filter({ hasText: VETTING_EVIDENCE_OBJECTS[2].sha256 });
-    await binary.getByText("Download evidence", { exact: true }).click();
     await binary
       .getByRole("textbox")
       .fill("Inspect exact binary artifact without executing it");
@@ -2235,6 +2248,30 @@ test.describe("private evidence console", () => {
     expect(await readFile(saved, "utf8")).toBe(
       VETTING_EVIDENCE_OBJECTS[2].body,
     );
+    // Changing the selected file removes the preceding private viewer. A
+    // fresh read still requires its own reason and audited grant.
+    await expect(
+      page.getByRole("textbox", {
+        name: "Harmless trace fixture verified content",
+      }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("button", {
+        name: `Select Harmless trace fixture, ${VETTING_EVIDENCE_OBJECTS[0].sha256.slice(0, 12)}`,
+        exact: true,
+      })
+      .click();
+    await trace
+      .getByLabel("Reason to inspect Harmless trace fixture")
+      .fill("Inspect this trace again for the enlarged-text review");
+    await trace
+      .getByRole("button", { name: "Read Harmless trace fixture" })
+      .click();
+    await expect(
+      trace.getByRole("textbox", {
+        name: "Harmless trace fixture verified content",
+      }),
+    ).toHaveValue(VETTING_EVIDENCE_OBJECTS[0].body);
     // At 200% zoom, keep at least the supported 320 CSS-pixel reflow width.
     // Zooming a 320px viewport directly would test an unsupported 160px layout.
     const viewport = page.viewportSize();

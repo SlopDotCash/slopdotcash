@@ -16,7 +16,10 @@ import {
   type PointsJournal,
 } from "../src/lib/points";
 import { findProject } from "../src/lib/projects.mjs";
-import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
+import {
+  REGISTERED_REPOSITORIES,
+  TARGET_REPOSITORIES,
+} from "../src/lib/repositories.mjs";
 import {
   GENERATED_AT,
   penaltyScoreInput,
@@ -109,6 +112,8 @@ const record = {
 };
 const recordJson = JSON.stringify(record);
 const recordDigest = sha256(recordJson);
+/** A registered project that only the staging registry lists. */
+const STAGING_ONLY = "canonry";
 type Failure =
   | "forbidden"
   | "mixed"
@@ -119,6 +124,7 @@ type Failure =
 async function fixture(
   mode: "removed" | "persistent" | "joint" | "healthy",
   failure?: Failure,
+  productionProjects?: readonly string[],
 ) {
   let missingSeen = false;
   let requests = 0;
@@ -261,13 +267,31 @@ async function fixture(
           schemaVersion: "slop-account-bans:v1",
           bans: [],
         });
-      if (url.pathname === "/v1/penalties")
+      if (productionProjects && url.pathname === "/api/v1/projects")
+        return Response.json({
+          schemaVersion: "1",
+          projects: productionProjects.map((id) => ({ id })),
+          restrictions: [],
+        });
+      if (productionProjects && url.pathname === "/api/v1/project-revisions")
+        return Response.json({ schemaVersion: "1", revisions: [] });
+      if (url.pathname === "/v1/penalties") {
+        // The production feed rejects a project it does not know.
+        if (
+          productionProjects &&
+          url.searchParams.get("project") === STAGING_ONLY
+        )
+          return Response.json(
+            { error: "Invalid penalty query" },
+            { status: 400 },
+          );
         return Response.json({
           schemaVersion: "slop-penalty-history:v1",
           project: url.searchParams.get("project"),
           records: [],
           nextAfter: null,
         });
+      }
       if (url.pathname === `/repos/${repository.owner}/${repository.name}`) {
         repositoryReads++;
         return Response.json({
@@ -350,7 +374,11 @@ async function fixture(
           generate: generateLeaderboardFromGitHub,
           write: writeLeaderboardAtomically,
         },
-        { now: new Date(GENERATED_AT), actualNow: new Date(GENERATED_AT) },
+        {
+          now: new Date(GENERATED_AT),
+          actualNow: new Date(GENERATED_AT),
+          ...(productionProjects ? { deploymentTier: "staging" as const } : {}),
+        },
       ),
     close: async () => {
       server.stop(true);
@@ -682,6 +710,39 @@ for (const failure of ["forbidden", "mixed", "partial", "transport"] as const) {
     }
   });
 }
+
+// A staging build syncs its registry from staging but reads the production
+// penalty feed, which answers HTTP 400 for a project only staging lists.
+test("staging skips only the penalty feed of a project production does not list", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const registered = [
+    ...new Set(REGISTERED_REPOSITORIES.map((row) => row.projectId)),
+  ];
+  const staging = await fixture(
+    "healthy",
+    undefined,
+    registered.filter((id) => id !== STAGING_ONLY),
+  );
+  try {
+    await staging.generate();
+    assertLeaderboardSnapshot(
+      JSON.parse(await readFile(staging.output, "utf8")),
+    );
+  } finally {
+    await staging.close();
+  }
+  const listed = await fixture("healthy", undefined, registered);
+  try {
+    await expect(listed.generate()).rejects.toThrow(
+      "Authoritative penalty feed is unavailable",
+    );
+    expect(await readFile(listed.output, "utf8")).toBe(
+      "last published bytes\n",
+    );
+  } finally {
+    await listed.close();
+  }
+});
 
 test("a persistently enumerated unavailable merge is counted explicitly and receives no fresh credit", async () => {
   setSystemTime(new Date(GENERATED_AT));

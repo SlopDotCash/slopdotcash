@@ -1,7 +1,7 @@
 // The bounded malicious-code scan (audit finding 8) and two-contributor
 // flags (audit finding 9) on the real migrations and handlers: a clean
-// supported scan activates, reused scans bind identical content, changed
-// content is rescanned automatically, two distinct flags pause atomically
+// supported scan admits its immutable repository, explicit rescans retain
+// exact evidence, and two distinct flags pause atomically
 // with one moderator notice, and a clean fresh scan reinstates a flag-only
 // pause while a confirmed malicious result stays with a moderator.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -441,15 +441,92 @@ describe("automatic scan and activation", () => {
     expect((await projects.getProject("open-registry"))?.status).toBe("active");
   });
 
-  test("changed executable content is rescanned; identical content reuses the cached scan", async () => {
-    const first = await activeProject();
-    // A new integration-branch commit makes the clearance stale.
-    livePin = { commitSha: "e".repeat(40), templateSha256: TEMPLATE };
-    expect((await (await publicProject()).json()).vetting.state).toBe("stale");
-    const [rescan] = (await refresh()).queued;
-    expect((await vetting.getAssessment(rescan))?.requestReason).toBe(
-      "Automatic rescan: executable content or skill template changed",
+  test("admission clearance survives same-repository content changes without rewriting scan evidence", async () => {
+    const id = await activeProject();
+    const original = JSON.stringify(await vetting.getAssessment(id));
+    livePin = { commitSha: "e".repeat(40), templateSha256: "f".repeat(64) };
+    pinUp = false;
+    expect((await (await publicProject()).json()).vetting).toMatchObject({
+      state: "cleared",
+      basis: "admission",
+      assessment: { id, commitSha: HEAD, templateSha256: TEMPLATE },
+    });
+    expect((await refresh()).queued).toEqual([]);
+    const current = await projects.getProject("open-registry");
+    if (!current) throw new Error("missing project");
+    const updated = await projectApi(
+      sessionRequest("PUT", "projects/open-registry", "applicant", {
+        manifest: {
+          ...current.manifest,
+          contribution: {
+            ...current.manifest.contribution,
+            requiredTests: "Run the changed repository checks.",
+          },
+        },
+        expectedRevision: current.revision,
+        reason: "Same-repository contribution instructions changed",
+      }),
     );
+    expect(updated.status).toBe(200);
+    expect((await (await publicProject()).json()).vetting.state).toBe(
+      "cleared",
+    );
+    expect(JSON.stringify(await vetting.getAssessment(id))).toBe(original);
+    expect(await vetting.projectAssessments("open-registry")).toHaveLength(1);
+    const next = await projects.getProject("open-registry");
+    if (!next) throw new Error("missing revised project");
+    const other = {
+      ...next.manifest,
+      authority: {
+        ...next.manifest.authority,
+        repositoryId: "999999991",
+        repositoryNodeId: "R_other",
+      },
+    };
+    expect(
+      (
+        await vetting.manifestClearance(
+          next.id,
+          other,
+          next.revision,
+          readLivePin,
+        )
+      ).state,
+    ).toBe("unscanned");
+  });
+
+  test("admission evidence stays usable after the ordinary 90-day closure boundary", async () => {
+    const id = await activeProject();
+    const original = JSON.stringify(await vetting.getAssessment(id));
+    clock = new Date(NOW.getTime() + 91 * 86400_000);
+    expect((await (await publicProject()).json()).vetting).toMatchObject({
+      state: "cleared",
+      basis: "admission",
+      assessment: { id },
+    });
+    expect(JSON.stringify(await vetting.getAssessment(id))).toBe(original);
+  });
+
+  test("an explicit investigation can reuse identical content without automatic rescans", async () => {
+    const first = await activeProject();
+    // A routine commit keeps admission; a separate explicit request still
+    // exercises the exact-input reuse and retained-evidence guards.
+    livePin = { commitSha: "e".repeat(40), templateSha256: TEMPLATE };
+    expect((await (await publicProject()).json()).vetting.state).toBe(
+      "cleared",
+    );
+    expect((await refresh()).queued).toEqual([]);
+    const project = await projects.getProject("open-registry");
+    if (!project) throw new Error("missing project");
+    expect(
+      await queueAutomaticScan(
+        vettingDeps(),
+        project,
+        "Explicit security investigation",
+      ),
+    ).toBe("queued");
+    expect((await (await publicProject()).json()).vetting.state).toBe("queued");
+    const rescan = (await vetting.pendingAssessments())[0].id;
     const reuse = await scanFixture(
       rescan,
       "clean",
@@ -933,6 +1010,73 @@ test("the existing-project exemption is permanent but cannot clear reinstatement
         templateSha256: "e".repeat(64),
       })),
     ).toEqual({ state: "cleared", assessment: null, grandfathered: true });
+    // Migration 0075 exempts the project id permanently, not only its first
+    // repository identity. A later stored revision keeps that existing policy.
+    const changedRepository = {
+      ...existing,
+      authority: {
+        ...existing.authority,
+        repositoryId: "999999991",
+        repositoryNodeId: "R_replaced",
+      },
+    };
+    expect(
+      await registry.appendProjectRevision(
+        {
+          projectId: existing.id,
+          expectedRevision: 1,
+          manifest: changedRepository,
+          manifestText: JSON.stringify(changedRepository),
+          manifestSha256: "f".repeat(64),
+          reason: "Record a replacement repository identity",
+          actor: ADMIN,
+          at: NOW.toISOString(),
+        },
+        0,
+      ),
+    ).toBe("updated");
+    const replaced = await registry.getProject(existing.id);
+    if (!replaced) throw new Error("Missing revised exempt project");
+    const inspectReplacement = (reinstating = false) =>
+      clearance.manifestClearance(
+        replaced.id,
+        replaced.manifest,
+        replaced.revision,
+        async () => ({
+          commitSha: "d".repeat(40),
+          templateSha256: "e".repeat(64),
+        }),
+        reinstating,
+      );
+    expect(await inspectReplacement()).toEqual({
+      state: "cleared",
+      assessment: null,
+      grandfathered: true,
+    });
+    const content = (await clearance.revisionContents(existing.id)).at(-1);
+    if (!content) throw new Error("Missing revised exempt content");
+    expect(
+      await clearance.createAssessment({
+        id: "vet_00000000000000000000000000000099",
+        projectId: replaced.id,
+        revision: replaced.revision,
+        manifestSha256: replaced.manifestSha256,
+        contentSha256: content.contentSha256,
+        commitSha: "d".repeat(40),
+        templateSha256: "e".repeat(64),
+        requestedBy: ADMIN,
+        requestedAt: NOW.toISOString(),
+        requestReason: "Explicit investigation of an exempt project",
+      }),
+    ).toBe("created");
+    // Existing exemption semantics ignore pending normal scans. Flags and
+    // remedial reinstatement still require their separate fresh evidence.
+    expect(await inspectReplacement()).toEqual({
+      state: "cleared",
+      assessment: null,
+      grandfathered: true,
+    });
+    expect((await inspectReplacement(true)).state).not.toBe("cleared");
     expect(() =>
       database.sqlite.exec(
         "INSERT INTO vetting_grandfathered_projects VALUES ('later-scanned', '2026-10-24T00:00:00Z')",
@@ -1081,7 +1225,7 @@ test("an exempt owner edit stays active without a scan, while flags still requir
   expect(scanRequests).toBe(0);
 });
 
-test("a non-exempt owner executable edit still pauses and queues its new content", async () => {
+test("a previously admitted owner executable edit stays active without a new scan", async () => {
   await activeProject();
   const current = await projects.getProject("open-registry");
   if (!current) throw new Error("Missing active project");
@@ -1108,8 +1252,8 @@ test("a non-exempt owner executable edit still pauses and queues its new content
   );
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({
-    project: { revision: current.revision + 1, status: "paused" },
-    setup: { state: "waiting", checks: { scan: { state: "queued" } } },
+    project: { revision: current.revision + 1, status: "active" },
+    setup: { state: "ready", checks: { scan: { state: "cleared" } } },
   });
   expect(
     (await vetting.projectAssessments("open-registry")).filter(
@@ -1117,7 +1261,43 @@ test("a non-exempt owner executable edit still pauses and queues its new content
         assessment.revision === current.revision + 1 &&
         assessment.state === "pending",
     ),
-  ).toHaveLength(1);
+  ).toHaveLength(0);
+});
+
+test("a routine owner edit does not resume a manually paused admitted project", async () => {
+  await activeProject();
+  const current = await projects.getProject("open-registry");
+  if (!current) throw new Error("Missing project");
+  expect(
+    (
+      await projectApi(
+        sessionRequest(
+          "PUT",
+          "admin/projects/open-registry/manifest",
+          "admin",
+          {
+            manifest: { ...current.manifest, status: "paused" },
+            expectedRevision: current.revision,
+            reason: "Manual pause",
+          },
+        ),
+      )
+    ).status,
+  ).toBe(200);
+  const paused = await projects.getProject("open-registry");
+  if (!paused) throw new Error("Missing project");
+  expect(
+    (
+      await projectApi(
+        sessionRequest("PUT", "projects/open-registry", "applicant", {
+          manifest: { ...paused.manifest, headline: "Updated while paused" },
+          expectedRevision: paused.revision,
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  expect((await projects.getProject("open-registry"))?.status).toBe("paused");
+  expect((await refresh()).queued).toEqual([]);
 });
 
 test("withdrawing a flag after the 90-day lifetime expires it by lifetime and returns 404", async () => {

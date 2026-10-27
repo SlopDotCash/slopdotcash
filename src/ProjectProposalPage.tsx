@@ -66,10 +66,8 @@ import {
   type RewardAssetNetwork,
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
-import { OwnerBountyVault } from "./OwnerBountyVault";
 import { ProjectNav, RoutePageHeader } from "./Presentation";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
-import { SecurityProgramEditor } from "./SecurityProgramEditor";
 
 const SETTLEMENT_CHAIN_NAMES: Record<string, string> = NETWORK_NAMES;
 const PROPOSAL_DRAFT_KEY = "slop:project-proposal:v1";
@@ -772,7 +770,7 @@ function FundingFields({
             onChange={() => set("mode", "none")}
             type="radio"
           />{" "}
-          No monthly funding
+          Points only
         </label>
         <label className="checkbox-field">
           <input
@@ -781,13 +779,11 @@ function FundingFields({
             onChange={() => set("mode", "monthly")}
             type="radio"
           />{" "}
-          Pay contributors a monthly amount
+          Monthly rewards
         </label>
       </fieldset>
       {choice.mode === "none" ? (
-        <p className="field-hint">
-          Contributors still earn points. You can add funding later.
-        </p>
+        <p className="field-hint">Add funding later.</p>
       ) : (
         <>
           {networkFixed ? (
@@ -842,10 +838,12 @@ function FundingFields({
                   />
                 </>
               ) : (
-                <p className="field-hint">
-                  {network.stablecoin.symbol} on {network.name}:{" "}
-                  <code>{network.stablecoin.address}</code>
-                </p>
+                <details className="proposal-advanced">
+                  <summary>{network.stablecoin.symbol} asset details</summary>
+                  <p className="field-hint">
+                    {network.name}: <code>{network.stablecoin.address}</code>
+                  </p>
+                </details>
               )}
             </>
           )}
@@ -899,6 +897,7 @@ export default function ProjectProposalPage() {
   }>({ state: "idle", message: "" });
   const [factsOpen, setFactsOpen] = useState(false);
   const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [goalOpen, setGoalOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const lookupController = useRef<AbortController | null>(null);
@@ -1210,6 +1209,7 @@ export default function ProjectProposalPage() {
     )
       setFactsOpen(true);
     if (isTermsField(field)) setTermsOpen(true);
+    if (field === "goal") setGoalOpen(true);
     if (SKILL_RULE_FIELDS.some((entry) => entry === field))
       setInstructionsOpen(true);
     setStep(owner);
@@ -1291,6 +1291,7 @@ export default function ProjectProposalPage() {
     suggestedText.current = { name: "", headline: "", goal: "", criteria: "" };
     setTermsOpen(false);
     setInstructionsOpen(false);
+    setGoalOpen(false);
     setAttempted(SETUP_STEPS.map(() => false));
     setLookup({ state: "idle", message: "" });
     setConfirmClear(false);
@@ -1323,6 +1324,60 @@ export default function ProjectProposalPage() {
       ) : null}
     </div>
   );
+  useEffect(() => {
+    if (submission.status === "submitted")
+      document.getElementById("project-created-heading")?.focus();
+  }, [submission.status]);
+  if (submission.status === "submitted")
+    return (
+      <main className="shell route-main proposal-page">
+        <h1 id="project-created-heading" tabIndex={-1}>
+          Project created
+        </h1>
+        <ProjectSetupStatusPanel
+          initial={submission.setup}
+          projectId={submission.projectId}
+          showProjectLink={false}
+        />
+        {submission.referrer ? (
+          <p className="proposal-note">Referred by @{submission.referrer}.</p>
+        ) : null}
+        <div className="wizard-actions">
+          <Link
+            className="button primary-button"
+            href={`/projects/${submission.projectId}`}
+          >
+            View project
+          </Link>
+          <Link
+            className="button secondary-button"
+            href={`/projects/${submission.projectId}/manage`}
+          >
+            Manage project
+          </Link>
+          <button
+            className="button ghost-button"
+            onClick={() => {
+              clearDraft();
+              clearReferrer();
+            }}
+            type="button"
+          >
+            Add another project
+          </button>
+        </div>
+      </main>
+    );
+  const repositoryPicker = (
+    <RepositoryPicker
+      projectSession={projectSession}
+      onChoose={(repository) => {
+        set("repository")(repository);
+        void runLookup(repository);
+      }}
+      selected={p.repository}
+    />
+  );
   return (
     <main className="shell route-main proposal-page">
       <p className="breadcrumb">
@@ -1340,9 +1395,7 @@ export default function ProjectProposalPage() {
             : "anonymous"
         }
         session={projectSession}
-        refreshKey={
-          submission.status === "submitted" ? submission.projectId : ""
-        }
+        refreshKey=""
       />
       <nav aria-label="Setup steps">
         <ol className="proposal-steps">
@@ -1389,18 +1442,18 @@ export default function ProjectProposalPage() {
         onSubmit={(event) => event.preventDefault()}
       >
         <h2 id="proposal-step-heading" tabIndex={-1}>
-          {step + 1}. {SETUP_STEPS[step]}
+          {SETUP_STEPS[step]}
         </h2>
         {step === 0 ? (
           <>
-            <RepositoryPicker
-              projectSession={projectSession}
-              onChoose={(repository) => {
-                set("repository")(repository);
-                void runLookup(repository);
-              }}
-              selected={p.repository}
-            />
+            {projectSession.status === "signed-in" ? (
+              <details className="proposal-advanced">
+                <summary>Choose from your GitHub repositories</summary>
+                {repositoryPicker}
+              </details>
+            ) : (
+              repositoryPicker
+            )}
             <div className="lookup-row">
               <TextField
                 error={shown("repository")}
@@ -1469,9 +1522,22 @@ export default function ProjectProposalPage() {
             <details
               className="proposal-advanced"
               onToggle={(event) => setFactsOpen(event.currentTarget.open)}
-              open={factsOpen || Object.keys(currentErrors).length > 0}
+              open={
+                factsOpen ||
+                [
+                  "repositoryNumericId",
+                  "repositoryNodeId",
+                  "stewardLogin",
+                  "stewardActorId",
+                  "stewardNodeId",
+                  "licenseSpdx",
+                  "licenseCommit",
+                  "licenseDigest",
+                ].some((field) => Boolean(shown(field as ProposalField)))
+              }
             >
               <summary>Edit repository details</summary>
+              <h3>Repository identity</h3>
               <TextField
                 error={shown("repositoryNumericId")}
                 inputMode="numeric"
@@ -1487,6 +1553,7 @@ export default function ProjectProposalPage() {
                 onChange={set("repositoryNodeId")}
                 value={p.repositoryNodeId}
               />
+              <h3>Steward identity</h3>
               <SelectField
                 label="Steward kind"
                 name="stewardKind"
@@ -1521,9 +1588,8 @@ export default function ProjectProposalPage() {
                 onChange={set("stewardNodeId")}
                 value={p.stewardNodeId}
               />
-              <p className="field-hint">
-                Optional. Leave all three empty if unknown.
-              </p>
+              <h3>License evidence</h3>
+              <p className="field-hint">Leave empty if unknown.</p>
               <TextField
                 error={shown("licenseSpdx")}
                 label="License SPDX"
@@ -1565,14 +1631,21 @@ export default function ProjectProposalPage() {
               onChange={set("headline")}
               value={p.headline}
             />
-            <TextField
-              error={shown("goal")}
-              label="Goal"
-              multiline
-              name="goal"
-              onChange={set("goal")}
-              value={p.goal}
-            />
+            <details
+              className="proposal-advanced"
+              onToggle={(event) => setGoalOpen(event.currentTarget.open)}
+              open={goalOpen || Boolean(shown("goal"))}
+            >
+              <summary>Project goal</summary>
+              <TextField
+                error={shown("goal")}
+                label="Goal"
+                multiline
+                name="goal"
+                onChange={set("goal")}
+                value={p.goal}
+              />
+            </details>
             <TextField
               error={shown("criteria")}
               label="Acceptance criteria"
@@ -1618,7 +1691,7 @@ export default function ProjectProposalPage() {
               onToggle={(event) => setTermsOpen(event.currentTarget.open)}
               open={termsOpen || Object.keys(currentErrors).some(isTermsField)}
             >
-              <summary>Ownership and contribution terms (optional)</summary>
+              <summary>Additional legal terms (optional)</summary>
               <p className="field-hint">
                 Leave as Unknown unless you know them.
               </p>
@@ -1778,12 +1851,6 @@ export default function ProjectProposalPage() {
               <p>{p.headline || "No short description yet."}</p>
               <dl>
                 <div>
-                  <dt>Repository</dt>
-                  <dd>
-                    {p.repository || "Not set"} · {p.integrationBranch}
-                  </dd>
-                </div>
-                <div>
                   <dt>Before you create</dt>
                   <dd>
                     Install Slopbot on {p.repository || "the repository"}.
@@ -1805,13 +1872,12 @@ export default function ProjectProposalPage() {
                         : "Invalid"}
                   </dd>
                 </div>
-                <div>
-                  <dt>Steward</dt>
-                  <dd>
-                    {p.stewardName || "Not set"}
-                    {p.stewardLogin ? ` (@${p.stewardLogin})` : ""}
-                  </dd>
-                </div>
+                {p.fundingMode === "monthly" ? (
+                  <div>
+                    <dt>Fees</dt>
+                    <dd>2% of ordinary awards and unused-fund withdrawals.</dd>
+                  </div>
+                ) : null}
                 {referrer ? (
                   <div>
                     <dt>Referred by</dt>
@@ -1827,32 +1893,38 @@ export default function ProjectProposalPage() {
                     </dd>
                   </div>
                 ) : null}
-                <div>
-                  <dt>License</dt>
-                  <dd>{licenseKnown ? p.licenseSpdx : "Unknown"}</dd>
-                </div>
-                <div>
-                  <dt>Copyright</dt>
-                  <dd>{p.copyrightModel.replaceAll("-", " ")}</dd>
-                </div>
               </dl>
-              <p>{p.goal || "No goal yet."}</p>
+              <details>
+                <summary>Listing details</summary>
+                <dl>
+                  <div>
+                    <dt>Repository</dt>
+                    <dd>
+                      {p.repository || "Not set"} · {p.integrationBranch}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Steward</dt>
+                    <dd>
+                      {p.stewardName || "Not set"}
+                      {p.stewardLogin ? ` (@${p.stewardLogin})` : ""}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>License</dt>
+                    <dd>{licenseKnown ? p.licenseSpdx : "Unknown"}</dd>
+                  </div>
+                  <div>
+                    <dt>Copyright</dt>
+                    <dd>{p.copyrightModel.replaceAll("-", " ")}</dd>
+                  </div>
+                </dl>
+                <p>{p.goal || "No goal yet."}</p>
+              </details>
             </article>
             {valid ? <GeneratedSkillPreview manifest={manifest} draft /> : null}
             <ErrorSummary errors={errors} onSelect={focusField} />
-            {submission.status === "submitted" ? (
-              <div className="proposal-submitted">
-                <h2>Project created</h2>
-                <p>Complete the next step below to go live.</p>
-                <ProjectSetupStatusPanel
-                  initial={submission.setup}
-                  projectId={submission.projectId}
-                />
-                <Link href={`/projects/${submission.projectId}/manage`}>
-                  Manage project
-                </Link>
-              </div>
-            ) : valid ? (
+            {valid ? (
               <div className="handoff-actions">
                 <SubmitProject
                   projectSession={projectSession}
@@ -1963,8 +2035,8 @@ const DRAFT_FIELDS = [
 /**
  * Owners publish project changes directly (PRD section 4). The page edits the
  * current D1 revision, keeps the draft on this device, and shows each change
- * with what it needs: presentation publishes at once, contribution rules need
- * a new security scan, and a funding change applies from the next calendar
+ * with what it needs: presentation and admitted-repository contribution rules
+ * publish at once, and a funding change applies from the next calendar
  * month. A draft saved against an older revision must be confirmed against
  * the current one, and the server refuses a stale base revision.
  */
@@ -1976,12 +2048,12 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
-  // PRD section 8: an exempt project publishes skill input changes without a
-  // new scan, so the change list must not say that it pauses.
+  // PRD section 8: admission or an exemption permits routine skill edits
+  // without a new scan, so the change list must not say that they pause.
   const [setupStatus, setSetupStatus] = useState<ProjectSetupStatus | null>(
     null,
   );
-  const scanExempt = setupStatus?.checks.scan.exempt === true;
+  const scanCleared = setupStatus?.checks.scan.state === "cleared";
   const [submission, setSubmission] = useState<
     | { state: "idle" | "publishing" }
     | { state: "error"; message: string; staleRevision: boolean }
@@ -2506,19 +2578,19 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             <h2 id="update-changes">Changes</h2>
             <ul>
               {changes.presentation.length > 0 ||
-              (scanExempt && changes.executable.length > 0) ? (
+              (scanCleared && changes.executable.length > 0) ? (
                 <li>
                   Publishes now:{" "}
                   {[
                     ...changes.presentation,
-                    ...(scanExempt ? changes.executable : []),
+                    ...(scanCleared ? changes.executable : []),
                   ]
                     .map(label)
                     .join(", ")}
                   .
                 </li>
               ) : null}
-              {!scanExempt && changes.executable.length > 0 ? (
+              {!scanCleared && changes.executable.length > 0 ? (
                 <li>
                   Needs a new security scan:{" "}
                   {changes.executable.map(label).join(", ")}.{" "}
@@ -2631,31 +2703,11 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           </p>
         </div>
       </form>
-      {base && session.status === "signed-in" && (
-        <details className="proposal-advanced" id="security-settings">
-          <summary>Security program and private bounty funds</summary>
-          <SecurityProgramEditor
-            key={`${current.id}:${base.revision}`}
-            project={current}
-            revision={base.revision}
-            actor={session.session}
-            onPublished={(result) => {
-              setBase({
-                project: result.project.manifest,
-                revision: result.project.revision,
-              });
-              setSubmission({ state: "published", result });
-            }}
-          />
-          {current.securityBounty ? (
-            <OwnerBountyVault
-              key={current.id}
-              project={current}
-              onRegistered={setBase}
-            />
-          ) : null}
-        </details>
-      )}
+      <p id="security-settings">
+        <Link href={`/projects/${current.slug}/security#security-settings`}>
+          Manage security program and private bounty funds
+        </Link>
+      </p>
       {!monthly ? (
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>
@@ -2732,6 +2784,12 @@ function OwnerProjects({
     };
   }, [actorId, attempt, refreshKey]);
   if (session.status !== "signed-in") return null;
+  if (
+    state.status === "ready" &&
+    state.projects.length === 0 &&
+    state.applications.length === 0
+  )
+    return null;
   return (
     <details id="your-projects">
       <summary>Your projects</summary>

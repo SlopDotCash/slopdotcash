@@ -107,7 +107,12 @@ export async function qualifyAccess(env: BackupEnvironment) {
     });
     await verifiedPart(source, key, sha256, data.length);
   }
-  async function fixture(id: string, data: Uint8Array, closedDays?: number) {
+  async function fixture(
+    id: string,
+    data: Uint8Array,
+    closedDays?: number,
+    permanentAdmission = false,
+  ) {
     cases.add(id);
     const sha = await sha256Hex(data);
     const key = `vetting/${id}/run/${sha}`;
@@ -148,9 +153,25 @@ export async function qualifyAccess(env: BackupEnvironment) {
       ],
     });
     await db
-      .prepare("INSERT INTO vetting_assessments VALUES(?,'incomplete',?)")
+      .prepare(
+        "INSERT INTO vetting_assessments(id,state,completed_at) VALUES(?,'incomplete',?)",
+      )
       .bind(id, at)
       .run();
+    if (permanentAdmission)
+      await db
+        .prepare(
+          "UPDATE vetting_assessments SET state='clean',result=?,completed_at=? WHERE id=?",
+        )
+        .bind(
+          JSON.stringify({
+            schemaVersion: "slop-vetting-result-v2",
+            disposition: "clean",
+          }),
+          new Date(now - (closedDays ?? 0) * 86400_000).toISOString(),
+          id,
+        )
+        .run();
     await db
       .prepare(
         "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,'run',?,?,?,?,?,?)",
@@ -176,7 +197,7 @@ export async function qualifyAccess(env: BackupEnvironment) {
         .prepare("INSERT INTO vetting_evidence_completions VALUES(?,'run',?,?)")
         .bind(id, sha, at)
         .run();
-    if (closedDays !== undefined)
+    if (closedDays !== undefined && !permanentAdmission)
       await db
         .prepare(
           "INSERT INTO vetting_evidence_case_closures VALUES(?,?,?,'Synthetic aged case')",
@@ -214,6 +235,12 @@ export async function qualifyAccess(env: BackupEnvironment) {
       "vet_qualification_expired",
       encoder.encode("Old closed case eligible for fixture deletion."),
       91,
+    );
+    const permanent = await fixture(
+      "vet_qualification_permanent",
+      encoder.encode("Permanent admission evidence after 91 days."),
+      91,
+      true,
     );
     const large = await fixture(
       "vet_qualification_large",
@@ -422,6 +449,16 @@ export async function qualifyAccess(env: BackupEnvironment) {
       "Expired case read accepted",
     );
     await grant(recent.path);
+    const permanentGrant = await grant(permanent.path);
+    const permanentRead = await request(`${permanent.path}/body`, owner, {
+      headers: { "x-vetting-read-grant": permanentGrant },
+    });
+    check(
+      permanentRead.status === 200 &&
+        (await permanentRead.text()) ===
+          "Permanent admission evidence after 91 days.",
+      "Admission evidence expired after closure",
+    );
     const downloaded = async () => {
       const response = await request(`${large.path}/download-grant`, owner, {
         body: { reason: "Read harmless chunked qualification" },

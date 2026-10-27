@@ -69,6 +69,7 @@ export async function qualifyRetention(
     ["partial", 91, true],
     ["recent", 89, false],
     ["open", null, false],
+    ["permanent_admission", 91, false],
   ];
   for (const [name, age, chunked] of cases) {
     const id = `${prefix}${name}`;
@@ -95,9 +96,25 @@ export async function qualifyRetention(
       }
     const keys = chunks ? chunks.map((part) => chunkKey(key, part)) : [key];
     await db
-      .prepare("INSERT INTO vetting_assessments VALUES(?,'incomplete',?)")
+      .prepare(
+        "INSERT INTO vetting_assessments(id,state,completed_at) VALUES(?,'incomplete',?)",
+      )
       .bind(id, at)
       .run();
+    if (name === "permanent_admission" && age !== null)
+      await db
+        .prepare(
+          "UPDATE vetting_assessments SET state='clean',result=?,completed_at=? WHERE id=?",
+        )
+        .bind(
+          JSON.stringify({
+            schemaVersion: "slop-vetting-result-v2",
+            disposition: "clean",
+          }),
+          new Date(now - age * 86400_000).toISOString(),
+          id,
+        )
+        .run();
     await db
       .prepare(
         "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,'run',?,?,'{}','{}',?,?)",
@@ -110,7 +127,7 @@ export async function qualifyRetention(
       )
       .bind(id, sha, data.length, key, chunks ? JSON.stringify(chunks) : null)
       .run();
-    if (age !== null)
+    if (age !== null && name !== "permanent_admission")
       await db
         .prepare(
           "INSERT INTO vetting_evidence_case_closures VALUES(?,?,'qualification','Synthetic aged closure')",
@@ -244,7 +261,8 @@ export async function qualifyRetention(
   for (const item of fixtures)
     for (const [index, key] of item.keys.entries()) {
       check(
-        Boolean(await source.head(key)) === (item.age !== 91),
+        Boolean(await source.head(key)) ===
+          (item.age !== 91 || item.id.endsWith("permanent_admission")),
         "Source retention differs",
       );
       check(
@@ -396,6 +414,7 @@ export async function qualifyRetention(
     deletedCompleteObjects: 2,
     missingInventoryAudits: 19,
     openRecentAndPermanentTraceRetained: true,
+    permanentAdmissionEvidenceRetained: true,
     immutableDeletionReceipts: true,
     deletionReplayUnchanged: true,
     restoredDeletedSha256: target.sha,

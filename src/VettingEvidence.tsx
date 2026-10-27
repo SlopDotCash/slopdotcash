@@ -1,13 +1,12 @@
 import { FileSearch, LockKeyhole } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { sha256Hex } from "./lib/async-sha256.mjs";
-import { loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { projectApiRequest, useProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 import { CopyIdentifier } from "./Operations";
-import { RoutePageHeader, StatusBadge } from "./Presentation";
+import { RoutePageHeader, SignInPanel, StatusBadge } from "./Presentation";
 import "./operations-design.css";
 
 type EvidenceObject = {
@@ -24,6 +23,7 @@ type Run = {
   runId: string;
   manifestSha256: string;
   expiresAt: string | null;
+  permanentAdmissionEvidence?: boolean;
   assembly?: {
     retained: boolean;
     state: string;
@@ -35,25 +35,59 @@ type Run = {
 };
 type Overview = { runs: Run[]; retentionBoundary: string };
 export default function VettingEvidencePage() {
-  const query = new URLSearchParams(window.location.search);
-  const [assessment, setAssessment] = useState(query.get("assessmentId") ?? "");
-  const [runId, setRunId] = useState(query.get("runId") ?? "");
+  const [initial] = useState(() => {
+    const query = new URLSearchParams(window.location.search);
+    return {
+      assessment: query.get("assessmentId") ?? "",
+      runId: query.get("runId") ?? "",
+    };
+  });
+  const [assessment, setAssessment] = useState(initial.assessment);
+  const [runId, setRunId] = useState(initial.runId);
+  const [lookup, setLookup] = useState(
+    initial.assessment && initial.runId ? initial : null,
+  );
+  const [lookupOpen, setLookupOpen] = useState(!lookup);
   const [data, setData] = useState<Overview | null>(null);
-  const { busy, error, run } = useAction();
+  const [selected, setSelected] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const session = useProjectSession();
+  useEffect(() => {
+    if (!lookup || session.status !== "signed-in") return;
+    let active = true;
+    setData(null);
+    setSelected(null);
+    setBusy(true);
+    setError(null);
+    void projectApiRequest<Overview>(
+      "GET",
+      `operator/vetting-evidence?assessmentId=${encodeURIComponent(lookup.assessment)}&runId=${encodeURIComponent(lookup.runId)}`,
+    ).then(
+      (value) => {
+        if (!active) return;
+        setData(value);
+        setBusy(false);
+      },
+      (cause) => {
+        if (!active) return;
+        setError(errorMessage(cause, "Evidence could not be loaded"));
+        setBusy(false);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [lookup, session.status]);
   function load(event: FormEvent) {
     event.preventDefault();
-    setData(null);
-    void run(
-      async () =>
-        setData(
-          await projectApiRequest<Overview>(
-            "GET",
-            `operator/vetting-evidence?assessmentId=${encodeURIComponent(assessment)}&runId=${encodeURIComponent(runId)}`,
-          ),
-        ),
-      (e) => errorMessage(e, "Evidence could not be loaded"),
-    );
+    const next = { assessment: assessment.trim(), runId: runId.trim() };
+    const url = new URL(window.location.href);
+    url.searchParams.set("assessmentId", next.assessment);
+    url.searchParams.set("runId", next.runId);
+    window.history.replaceState(window.history.state, "", url);
+    setLookup(next);
+    setLookupOpen(false);
   }
   return (
     <main className="shell route-main admin-page operations-page evidence-page">
@@ -65,41 +99,63 @@ export default function VettingEvidencePage() {
           and private data.
         </span>
       </p>
-      {session.status === "signed-out" ? (
-        <p>
-          {/* Keep the assessment and run IDs through sign-in. */}
-          <a
-            href={loginHref(
-              `${window.location.pathname}${window.location.search}`,
-            )}
+      {session.status !== "signed-in" ? (
+        <SignInPanel
+          state={session}
+          next={`${window.location.pathname}${window.location.search}`}
+        />
+      ) : null}
+      {session.status === "signed-in" ? (
+        <details
+          className="admin-card"
+          open={lookupOpen}
+          onToggle={(event) => setLookupOpen(event.currentTarget.open)}
+        >
+          <summary>Find evidence</summary>
+          <form className="evidence-lookup" onSubmit={load}>
+            <label className="form-field">
+              Assessment ID
+              <input
+                required
+                value={assessment}
+                onChange={(e) => setAssessment(e.target.value)}
+              />
+            </label>
+            <label className="form-field">
+              Run ID
+              <input
+                required
+                value={runId}
+                onChange={(e) => setRunId(e.target.value)}
+              />
+            </label>
+            <button
+              className="button primary-button"
+              type="submit"
+              disabled={busy}
+            >
+              {busy ? "Loading evidence…" : "Inspect evidence inventory"}
+            </button>
+          </form>
+        </details>
+      ) : null}
+      {session.status === "signed-in" && busy ? (
+        <p role="status">Loading evidence inventory…</p>
+      ) : null}
+      {session.status === "signed-in" && error ? (
+        <p role="alert">
+          {error} Check the IDs or{" "}
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => lookup && setLookup({ ...lookup })}
           >
-            Sign in with GitHub
-          </a>
+            retry inventory
+          </button>
+          .
         </p>
       ) : null}
-      <form className="admin-card evidence-lookup" onSubmit={load}>
-        <label className="form-field">
-          Assessment ID
-          <input
-            required
-            value={assessment}
-            onChange={(e) => setAssessment(e.target.value)}
-          />
-        </label>
-        <label className="form-field">
-          Run ID
-          <input
-            required
-            value={runId}
-            onChange={(e) => setRunId(e.target.value)}
-          />
-        </label>
-        <button className="button primary-button" type="submit" disabled={busy}>
-          {busy ? "Loading evidence…" : "Inspect evidence inventory"}
-        </button>
-      </form>
-      {error ? <p role="alert">{error} Check the IDs and retry.</p> : null}
-      {data ? (
+      {session.status === "signed-in" && data ? (
         <>
           <p className="operations-retention">{data.retentionBoundary}</p>
           {data.runs.map((run) => (
@@ -111,36 +167,39 @@ export default function VettingEvidencePage() {
                 <h2>Evidence inventory</h2>
                 <StatusBadge icon={<LockKeyhole />}>Private</StatusBadge>
               </header>
-              <dl className="operations-facts">
-                <div>
-                  <dt>Run</dt>
-                  <dd>
-                    <CopyIdentifier label="run ID" value={run.runId} />
-                  </dd>
-                </div>
-                <div>
-                  <dt>Assessment</dt>
-                  <dd>
-                    <CopyIdentifier
-                      label="assessment ID"
-                      value={run.assessmentId}
-                    />
-                  </dd>
-                </div>
-                <div>
-                  <dt>Storage inventory SHA-256</dt>
-                  <dd>
-                    <CopyIdentifier
-                      label="storage inventory digest"
-                      value={run.manifestSha256}
-                    />
-                  </dd>
-                </div>
-                <div>
-                  <dt>Policy</dt>
-                  <dd>{run.policy.version}</dd>
-                </div>
-              </dl>
+              <details className="security-reference">
+                <summary>Run details</summary>
+                <dl className="operations-facts">
+                  <div>
+                    <dt>Run</dt>
+                    <dd>
+                      <CopyIdentifier label="run ID" value={run.runId} />
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Assessment</dt>
+                    <dd>
+                      <CopyIdentifier
+                        label="assessment ID"
+                        value={run.assessmentId}
+                      />
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Storage inventory SHA-256</dt>
+                    <dd>
+                      <CopyIdentifier
+                        label="storage inventory digest"
+                        value={run.manifestSha256}
+                      />
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Policy</dt>
+                    <dd>{run.policy.version}</dd>
+                  </div>
+                </dl>
+              </details>
               {run.assembly ? (
                 <p className="operations-caution">
                   <span>
@@ -155,13 +214,45 @@ export default function VettingEvidencePage() {
                 </p>
               ) : null}
               <p className="operations-retention">
-                {run.expiresAt === null
-                  ? "Case open. Evidence remains available until 90 days after closure."
-                  : `Access expires: ${run.expiresAt}.`}
+                {run.permanentAdmissionEvidence
+                  ? "Admission evidence is retained permanently. Each read still requires a short-lived operator grant."
+                  : run.expiresAt === null
+                    ? "Case open. Evidence remains available until 90 days after closure."
+                    : `Access expires: ${run.expiresAt}.`}
               </p>
-              {run.objects.map((object) => (
-                <EvidenceItem key={object.sha256} run={run} object={object} />
-              ))}
+              {run.objects.length === 0 ? (
+                <p>No retained objects.</p>
+              ) : (
+                <ul
+                  className="evidence-object-list"
+                  aria-label="Retained objects"
+                >
+                  {run.objects.map((object) => {
+                    const key = `${run.assessmentId}/${run.runId}/${object.sha256}`;
+                    return (
+                      <li key={object.sha256}>
+                        <button
+                          className="button secondary-button"
+                          type="button"
+                          aria-label={`Select ${object.label}, ${object.sha256.slice(0, 12)}`}
+                          aria-pressed={selected === key}
+                          onClick={() => setSelected(key)}
+                        >
+                          {object.label} · {object.kind} ·{" "}
+                          {object.sizeBytes.toLocaleString()} bytes ·{" "}
+                          {object.state} · {object.sha256.slice(0, 12)}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {run.objects.map((object) => {
+                const key = `${run.assessmentId}/${run.runId}/${object.sha256}`;
+                return selected === key ? (
+                  <EvidenceItem key={key} run={run} object={object} />
+                ) : null;
+              })}
             </section>
           ))}
         </>
@@ -243,69 +334,62 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
         <h3>{object.label}</h3>
         <StatusBadge tone="warning">{object.state}</StatusBadge>
       </header>
-      <details className="security-reference">
-        <summary>
-          {object.streamed || object.contentType === "application/octet-stream"
-            ? "Download evidence"
-            : "Read evidence"}
-        </summary>
-        <dl className="operations-facts">
-          <div>
-            <dt>Type</dt>
-            <dd>
-              {object.kind} · {object.contentType}
-            </dd>
-          </div>
-          <div>
-            <dt>Size</dt>
-            <dd>{object.sizeBytes.toLocaleString()} bytes</dd>
-          </div>
-          <div>
-            <dt>SHA-256</dt>
-            <dd>
-              <CopyIdentifier
-                label={`${object.label} digest`}
-                value={object.sha256}
-              />
-            </dd>
-          </div>
-        </dl>
-        <form className="evidence-inspection" onSubmit={inspect}>
-          <label className="form-field">
-            Reason to inspect {object.label}
-            <input
-              required
-              minLength={8}
-              maxLength={500}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
+      <dl className="operations-facts">
+        <div>
+          <dt>Type</dt>
+          <dd>
+            {object.kind} · {object.contentType}
+          </dd>
+        </div>
+        <div>
+          <dt>Size</dt>
+          <dd>{object.sizeBytes.toLocaleString()} bytes</dd>
+        </div>
+        <div>
+          <dt>SHA-256</dt>
+          <dd>
+            <CopyIdentifier
+              label={`${object.label} digest`}
+              value={object.sha256}
             />
-          </label>
-          <button
-            className="button secondary-button"
-            type="submit"
-            disabled={busy || object.state !== "stored-unverified"}
-          >
-            {busy
-              ? "Verifying evidence…"
-              : object.streamed ||
-                  object.contentType === "application/octet-stream"
-                ? `Download ${object.label}`
-                : `Read ${object.label}`}
-          </button>
-        </form>
-        {error ? <p role="alert">{error}</p> : null}
-        {status ? <p role="status">{status}</p> : null}
-        {content !== null ? (
-          <textarea
-            className="admin-code evidence-content"
-            aria-label={`${object.label} verified content`}
-            readOnly
-            rows={12}
-            value={content}
+          </dd>
+        </div>
+      </dl>
+      <form className="evidence-inspection" onSubmit={inspect}>
+        <label className="form-field">
+          Reason to inspect {object.label}
+          <input
+            required
+            minLength={8}
+            maxLength={500}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
           />
-        ) : null}
-      </details>
+        </label>
+        <button
+          className="button secondary-button"
+          type="submit"
+          disabled={busy || object.state !== "stored-unverified"}
+        >
+          {busy
+            ? "Verifying evidence…"
+            : object.streamed ||
+                object.contentType === "application/octet-stream"
+              ? `Download ${object.label}`
+              : `Read ${object.label}`}
+        </button>
+      </form>
+      {error ? <p role="alert">{error}</p> : null}
+      {status ? <p role="status">{status}</p> : null}
+      {content !== null ? (
+        <textarea
+          className="admin-code evidence-content"
+          aria-label={`${object.label} verified content`}
+          readOnly
+          rows={12}
+          value={content}
+        />
+      ) : null}
     </article>
   );
 }

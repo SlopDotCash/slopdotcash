@@ -1,4 +1,4 @@
-import { CalendarDays, CircleAlert, ExternalLink } from "lucide-react";
+import { CalendarDays, CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
@@ -19,12 +19,11 @@ import type { CycleIndexState } from "./lib/use-cycle-index";
 import type { DataState } from "./lib/use-snapshot";
 import {
   awaitingApproval,
+  cycleContributorStateLabel,
   cycleLifecycleLabel,
   cycleStateLabel,
   DataNotice,
   EmptyState,
-  EvidenceNav,
-  ExternalLinkAnchor,
   formatCycleMonth,
   formatDate,
   formatDateTime,
@@ -35,6 +34,7 @@ import {
   stale,
 } from "./Presentation";
 import { CycleAllocation } from "./ProjectLeaderboard";
+import { VaultPaymentHistory } from "./VaultPaymentHistory";
 
 export function CyclePage({
   project,
@@ -119,6 +119,44 @@ export function CyclePage({
         : lifecycle === "live"
           ? 0
           : 1;
+  const stages = [
+    ["Contribution", `${formatDate(from)}–${formatDate(to)}`],
+    ownerCutoff
+      ? [
+          "Owner changes",
+          `${ownerCutoff.getTime() <= Date.now() ? "Closed" : "Closes"} ${formatDateTime(ownerCutoff.toISOString())}`,
+        ]
+      : [
+          "Review",
+          record?.reviewEndsAt
+            ? `${reviewClosed ? "Ended" : "Ends"} ${formatDate(record.reviewEndsAt)}`
+            : "Not started",
+        ],
+    [
+      "Approval",
+      record?.approvedAt
+        ? `Approved ${formatDate(record.approvedAt)}`
+        : reviewClosed
+          ? "Awaiting owner approval"
+          : "Not approved",
+    ],
+    [
+      "Payment",
+      record?.settledAt
+        ? `Paid ${formatDate(record.settledAt)}`
+        : record?.state === "settlement-planned"
+          ? "Ready; payment not verified"
+          : "Payment not verified",
+    ],
+  ];
+  const terminalMessage =
+    record?.kind === "external-prize-share"
+      ? "External prize shares. Not paid through Slop."
+      : record?.state === "closed-no-awards"
+        ? "Closed without awards. No payment is due."
+        : record?.state === "wound-up"
+          ? "The vault was returned. Approved awards are held unfunded."
+          : null;
   const headlineAmount = record
     ? record.kind === "external-prize-share"
       ? `${(record.reward.sharePartsPerMillion ?? 0) / 10_000}%`
@@ -137,8 +175,6 @@ export function CyclePage({
       <DataNotice state={state} retry={retry} />
       <p className="breadcrumb">
         <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-        <span>/</span>
-        {cycleId}
       </p>
       <section className="cycle-hero">
         <RoutePageHeader
@@ -191,15 +227,6 @@ export function CyclePage({
           ) : null}
         </div>
       </section>
-      {record?.reward.lines ? (
-        <p className="cycle-line-summary">
-          Shared pool{" "}
-          {formatMicroUsdc(record.reward.lines.sharedPool.suggestedMinor)} +
-          review budget{" "}
-          {formatMicroUsdc(record.reward.lines.reviewBudget.suggestedMinor)}{" "}
-          suggested.
-        </p>
-      ) : null}
       {reminder ? (
         <div
           className={`data-notice cycle-reminder ${reminder.kind}`}
@@ -214,54 +241,38 @@ export function CyclePage({
           </span>
         </div>
       ) : null}
-      {record?.kind === "external-prize-share" ? (
-        <p>External prize shares. Not paid through Slop.</p>
-      ) : record?.state === "closed-no-awards" ? (
-        <p>Closed without awards. No payment is due.</p>
-      ) : record?.state === "wound-up" ? (
-        <p>The vault was returned. Approved awards are held unfunded.</p>
+      {terminalMessage ? (
+        <p>{terminalMessage}</p>
       ) : (
-        <ol className="cycle-status-grid" aria-label="Cycle progress">
-          {[
-            ["Contribution", `${formatDate(from)}–${formatDate(to)}`],
-            ownerCutoff
-              ? [
-                  "Owner changes",
-                  `${ownerCutoff.getTime() <= Date.now() ? "Closed" : "Closes"} ${formatDateTime(ownerCutoff.toISOString())}`,
-                ]
-              : [
-                  "Review",
-                  record?.reviewEndsAt
-                    ? `${reviewClosed ? "Ended" : "Ends"} ${formatDate(record.reviewEndsAt)}`
-                    : "Not started",
-                ],
-            [
-              "Approval",
-              record?.approvedAt
-                ? `Approved ${formatDate(record.approvedAt)}`
-                : reviewClosed
-                  ? "Awaiting owner approval"
-                  : "Not approved",
-            ],
-            [
-              "Payment",
-              record?.settledAt
-                ? `Paid ${formatDate(record.settledAt)}`
-                : record?.state === "settlement-planned"
-                  ? "Ready; payment not verified"
-                  : "Payment not verified",
-            ],
-          ].map(([label, description], index) => (
-            <li
-              key={label}
-              aria-current={index === currentStage ? "step" : undefined}
-            >
-              <strong>{label}</strong>
-              <p>{description}</p>
-            </li>
-          ))}
-        </ol>
+        <p className="cycle-current-stage">
+          <strong>{stages[currentStage]?.[0]}</strong> ·{" "}
+          {stages[currentStage]?.[1]}
+        </p>
       )}
+      {!terminalMessage || record?.reward.lines ? (
+        <details className="cycle-history">
+          <summary>Cycle history</summary>
+          {!terminalMessage ? (
+            <ol className="cycle-status-grid" aria-label="Cycle progress">
+              {stages.map(([label, description], index) => (
+                <li
+                  key={label}
+                  aria-current={index === currentStage ? "step" : undefined}
+                >
+                  <strong>{label}</strong>
+                  <p>{description}</p>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          {record?.reward.lines ? (
+            <section className="cycle-breakdown">
+              <h3>Historical pool breakdown</h3>
+              <CycleAmountHistory amounts={record.reward} />
+            </section>
+          ) : null}
+        </details>
+      ) : null}
       {record ? (
         // A frozen record is what is under review; never replace it with a
         // live recompute, even while the rolling window still covers the month.
@@ -269,8 +280,41 @@ export function CyclePage({
       ) : view ? (
         <CycleAllocation updatedAt={state.snapshot.generatedAt} view={view} />
       ) : null}
-      {record ? <CycleArtifacts cycle={record} /> : null}
     </main>
+  );
+}
+
+const AMOUNT_PHASES = [
+  ["Suggested", "suggestedMinor"],
+  ["Approved", "approvedMinor"],
+  ["Paid", "paidMinor"],
+] as const;
+
+function CycleAmountHistory({
+  amounts,
+}: {
+  amounts: Pick<
+    CycleIndexEntry["reward"],
+    "suggestedMinor" | "approvedMinor" | "paidMinor" | "lines"
+  >;
+}) {
+  return (
+    <dl className="cycle-amount-history">
+      {AMOUNT_PHASES.map(([label, key]) => (
+        <div key={key}>
+          <dt>{label}</dt>
+          <dd>
+            {formatMicroUsdc(amounts[key])}
+            {amounts.lines ? (
+              <small>
+                Pool {formatMicroUsdc(amounts.lines.sharedPool[key])} + review{" "}
+                {formatMicroUsdc(amounts.lines.reviewBudget[key])}
+              </small>
+            ) : null}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -283,137 +327,81 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
       {cycle.contributors.length === 0 ? (
         <EmptyState text="This cycle closed with no accepted awards." />
       ) : (
-        <div className="leader-table">
-          <table className="leader-grid">
+        <section
+          className="plain-table-wrap cycle-contributor-table"
+          aria-label="Archived cycle contributors"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users can scroll the full historical evidence.
+          tabIndex={0}
+        >
+          <table className="plain-table cycle-contributors">
             <caption className="visually-hidden">
-              Archived cycle contributors
+              Archived cycle contributors and current award amounts
             </caption>
             <thead>
-              <tr className="leader-row archived-leader-head">
+              <tr>
                 <th scope="col">Contributor</th>
                 <th scope="col">Points</th>
-                {cycle.kind === "external-prize-share" ? (
-                  <th scope="col">External prize share</th>
-                ) : (
-                  <>
-                    <th scope="col">Suggested</th>
-                    <th scope="col">Approved</th>
-                    <th scope="col">Paid</th>
-                  </>
-                )}
+                <th scope="col">
+                  {cycle.kind === "external-prize-share"
+                    ? "External prize share"
+                    : "Amount"}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {cycle.contributors.map((contributor) => (
-                <tr
-                  className="leader-row archived-leader-row"
-                  key={contributor.actor.id}
-                >
-                  <th scope="row">
-                    <Link
-                      href={`/contributors/${encodeURIComponent(contributor.actor.login)}`}
-                    >
-                      {contributor.actor.login}
-                    </Link>
-                  </th>
-                  <td>
-                    {(
-                      (contributor.scoreThirds ?? contributor.score * 3) * 10
-                    ).toLocaleString()}
-                  </td>
-                  {cycle.kind === "external-prize-share" ? (
-                    <td>{(contributor.sharePartsPerMillion ?? 0) / 10_000}%</td>
-                  ) : (
-                    <>
-                      <td>
-                        {formatMicroUsdc(contributor.suggestedMinor)}
-                        {contributor.lines ? (
-                          <small>
-                            Pool{" "}
-                            {formatMicroUsdc(
-                              contributor.lines.sharedPool.suggestedMinor,
-                            )}{" "}
-                            + review{" "}
-                            {formatMicroUsdc(
-                              contributor.lines.reviewBudget.suggestedMinor,
-                            )}
-                          </small>
-                        ) : null}
-                      </td>
-                      <td>
-                        {formatMicroUsdc(contributor.approvedMinor)}
-                        {contributor.lines ? (
-                          <small>
-                            Pool{" "}
-                            {formatMicroUsdc(
-                              contributor.lines.sharedPool.approvedMinor,
-                            )}{" "}
-                            + review{" "}
-                            {formatMicroUsdc(
-                              contributor.lines.reviewBudget.approvedMinor,
-                            )}
-                          </small>
-                        ) : null}
-                      </td>
-                      <td>
-                        <strong>
-                          {formatMicroUsdc(contributor.paidMinor)}
-                        </strong>
-                        {contributor.lines ? (
-                          <small>
-                            Pool{" "}
-                            {formatMicroUsdc(
-                              contributor.lines.sharedPool.paidMinor,
-                            )}{" "}
-                            + review{" "}
-                            {formatMicroUsdc(
-                              contributor.lines.reviewBudget.paidMinor,
-                            )}
-                          </small>
-                        ) : null}
-                      </td>
-                    </>
-                  )}
-                </tr>
-              ))}
+              {cycle.contributors.map((contributor) => {
+                const phase =
+                  contributor.state === "paid"
+                    ? 2
+                    : cycle.approvedAt === null
+                      ? 0
+                      : 1;
+                const [label, key] = AMOUNT_PHASES[phase];
+                return (
+                  <tr key={contributor.actor.id}>
+                    <th scope="row">
+                      <Link
+                        href={
+                          "/contributors/" +
+                          encodeURIComponent(contributor.actor.login)
+                        }
+                      >
+                        {contributor.actor.login}
+                      </Link>
+                      <small className="cycle-contributor-state">
+                        {cycleContributorStateLabel(contributor.state)}
+                      </small>
+                    </th>
+                    <td>
+                      {(
+                        (contributor.scoreThirds ?? contributor.score * 3) * 10
+                      ).toLocaleString()}
+                    </td>
+                    <td>
+                      {cycle.kind === "external-prize-share" ? (
+                        <span>
+                          {(contributor.sharePartsPerMillion ?? 0) / 10_000}%
+                        </span>
+                      ) : (
+                        <>
+                          <span className="cycle-current-amount">
+                            {label}{" "}
+                            <strong>{formatMicroUsdc(contributor[key])}</strong>
+                          </span>
+                          <details className="cycle-row-history">
+                            <summary>Amount history</summary>
+                            <CycleAmountHistory amounts={contributor} />
+                          </details>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-        </div>
+        </section>
       )}
-    </section>
-  );
-}
-
-function CycleArtifacts({ cycle }: { cycle: CycleIndexEntry }) {
-  const files = [
-    ["Source data", cycle.files.sourceSnapshot],
-    ["Proposal", cycle.files.proposal],
-    ["Approved allocation", cycle.files.allocation],
-    ["Payment plan", cycle.files.executionPlan],
-    ["Verified settlement", cycle.files.settlement],
-  ] as const;
-  return (
-    <section className="section cycle-artifacts">
-      <div className="section-heading">
-        <h2>Evidence</h2>
-      </div>
-      <details>
-        <summary>Original records</summary>
-        <div className="artifact-links">
-          {files
-            .filter((entry) => entry[1] !== null)
-            .map(([label, file]) =>
-              file ? (
-                <ExternalLinkAnchor href={file.url} key={label}>
-                  <span>
-                    <strong>{label}</strong>
-                  </span>
-                  <ExternalLink aria-hidden="true" size={17} />
-                </ExternalLinkAnchor>
-              ) : null,
-            )}
-        </div>
-      </details>
     </section>
   );
 }
@@ -516,7 +504,7 @@ export function CycleArchivePage({
           </p>
         ) : null}
       </RoutePageHeader>
-      <EvidenceNav current="cycles" />
+      <VaultPaymentHistory scope={{ all: true }} />
       {all.length > 0 ? (
         <div className="points-controls cycle-filters">
           {offered.map((key) => (
@@ -607,20 +595,7 @@ export function CycleArchivePage({
                   <summary>
                     {amountStage} <strong>{formatMicroUsdc(amount)}</strong>
                   </summary>
-                  <dl>
-                    <div>
-                      <dt>Suggested</dt>
-                      <dd>{formatMicroUsdc(cycle.reward.suggestedMinor)}</dd>
-                    </div>
-                    <div>
-                      <dt>Approved</dt>
-                      <dd>{formatMicroUsdc(cycle.reward.approvedMinor)}</dd>
-                    </div>
-                    <div>
-                      <dt>Paid</dt>
-                      <dd>{formatMicroUsdc(cycle.reward.paidMinor)}</dd>
-                    </div>
-                  </dl>
+                  <CycleAmountHistory amounts={cycle.reward} />
                 </details>
               )}
             </article>

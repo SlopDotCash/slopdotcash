@@ -1201,8 +1201,8 @@ describe("generated skill publication", () => {
       },
     );
     expect(executable.status).toBe(200);
-    // Changed skill inputs have no scan yet.
-    expect((await get("/projects/open-registry/skill.md")).status).toBe(404);
+    // Changing instructions cannot rehabilitate incomplete historical evidence.
+    expect((await get("/projects/open-registry/skill.md")).status).toBe(503);
     await seedHistoricalResult("open-registry");
     expect((await get("/projects/open-registry/skill.md")).status).toBe(503);
   });

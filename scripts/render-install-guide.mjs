@@ -50,12 +50,13 @@ export function renderInstallGuide({
   return `# Install ${skillName} for ${clientName}
 
 Install or update the complete skill archive. The authenticated installer
-accepts the current \`main\` revision, a byte-identical authorized ancestor,
-an explicitly labeled same-repository release candidate, or the latest verified
-production publication while a newer template is unpublished. The release
-exception requires the canonical workflow's successful production checks;
-current revocations and project clearance still apply. The installer independently
-compares packaged bytes with immutable GitHub source before atomic activation.
+accepts any committed template revision from the canonical repository.
+The installer independently compares packaged bytes with immutable GitHub source before atomic activation.
+Installed skills with offline support verify local provenance and file hashes
+without a live GitHub or registry authorization call. Existing installs need
+one verified update; historical templates retain their original behavior.
+Project clearance still gates installation, updates and explicit rollback.
+Ordinary updates cannot decrease the approved project revision.
 Verification uses GitHub's anonymous API budget, which is shared by every
 process behind your public IP. Export \`GH_TOKEN\` or \`GITHUB_TOKEN\` to use
 your own authenticated budget instead; the token is sent only to
@@ -68,10 +69,9 @@ ${createInstallCommand(artifactOrigin, skillsRoot, {
 })}
 \`\`\`
 
-Re-run the command whenever the skill starts. It is a no-op at the current
-verified revision and retains the prior version for an explicitly authorized
-rollback. Inspect \`PROVENANCE.json\` and \`SKILL.md\` before first use. Never
-enter a wallet seed phrase, private key, or unrelated credential.
+Run the command again when you want to update. It is a no-op at the current
+verified revision and retains the prior version for an explicit rollback.
+Inspect \`PROVENANCE.json\` and \`SKILL.md\` before first use. Never enter a wallet seed phrase, private key, or unrelated credential.
 `;
 }
 

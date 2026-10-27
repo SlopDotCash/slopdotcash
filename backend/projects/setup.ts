@@ -214,7 +214,10 @@ function scanCheck(
           }
         : {
             state: "cleared",
-            message: "The security scan of this revision is clean.",
+            message:
+              clearance.basis === "admission"
+                ? `Repository admission passed at revision ${clearance.assessment.revision}.`
+                : "The security scan of this revision is clean.",
           };
     case "queued":
       return {

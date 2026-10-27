@@ -104,9 +104,6 @@ const HowItWorksPage = lazy(() =>
 const SponsorsPage = lazy(() =>
   import("./PublicPages").then((module) => ({ default: module.SponsorsPage })),
 );
-const ReceiptsPage = lazy(() =>
-  import("./PublicPages").then((module) => ({ default: module.ReceiptsPage })),
-);
 const OwnerAwards = lazy(() => import("./OwnerAwards"));
 const ProjectProposalPage = lazy(() => import("./ProjectProposalPage"));
 const AdminPage = lazy(() => import("./Admin"));
@@ -153,7 +150,6 @@ type ProjectRouteKind =
 type PageRouteKind =
   | "home"
   | "how-it-works"
-  | "receipts"
   | "sponsors"
   | "cycle-archive"
   | "unknown"
@@ -188,7 +184,6 @@ const ROUTES: Record<
 > = {
   home: { snapshot: false, registry: "cached" },
   "how-it-works": { snapshot: false, registry: "independent" },
-  receipts: { snapshot: true, registry: "cached" },
   sponsors: { snapshot: true, registry: "cached" },
   "cycle-archive": { snapshot: false, registry: "cached" },
   unknown: { snapshot: false, registry: "cached" },
@@ -235,7 +230,6 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
   ["admin", "admin"],
   ["account", "account"],
   ["how-it-works", "how-it-works"],
-  ["receipts", "receipts"],
   ["sponsors", "sponsors"],
   ["cycles", "cycle-archive"],
 ]);
@@ -287,6 +281,16 @@ function internalRoute(pathname: string): Route {
 const LEGACY_SECTIONS = new Map([["wallet", "/account#wallets"]]);
 
 function canonicalLocation(): string {
+  const securitySettings = /^\/projects\/([^/]+)\/manage\/?$/.exec(
+    window.location.pathname,
+  );
+  if (securitySettings && window.location.hash === "#security-settings") {
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `/projects/${securitySettings[1]}/security${window.location.search}#security-settings`,
+    );
+  }
   const awards = /^\/projects\/([^/]+)\/awards\/?$/.exec(
     window.location.pathname,
   );
@@ -1131,6 +1135,7 @@ function ProjectPaymentHistory({
   project: ProjectDefinition;
   state: DataState;
 }) {
+  const [showHistory, setShowHistory] = useState(false);
   const [directState, retryDirect] = useDirectTransfers({
     projectId: project.id,
   });
@@ -1156,6 +1161,10 @@ function ProjectPaymentHistory({
     if (payment.blockTime > month.paidOn) month.paidOn = payment.blockTime;
     direct.set(payment.contributionMonth, month);
   }
+  const directMonths = [...direct].sort(([left], [right]) =>
+    right.localeCompare(left),
+  );
+  const historyLimited = directMonths.length > 3 || cycles.length > 3;
   return (
     <section className="section payment-history">
       <div className="simple-heading">
@@ -1173,20 +1182,22 @@ function ProjectPaymentHistory({
           </button>
         </p>
       ) : null}
-      {[...direct].map(([month, { amount, count, paidOn }]) => (
-        <p className="money-summary" key={month}>
-          <strong>{formatMicroUsdc(amount.toString())} paid directly</strong>
-          <span>
-            Paid {formatDate(paidOn)} for {formatCycleMonth(month)} work ·{" "}
-            {count} transfers ·{" "}
-            <ExternalLinkAnchor
-              href={`${browserDeployment.site}/api/v1/payments/projects/${project.id}/direct-transfers`}
-            >
-              Disclosure
-            </ExternalLinkAnchor>
-          </span>
-        </p>
-      ))}
+      {(showHistory ? directMonths : directMonths.slice(0, 3)).map(
+        ([month, { amount, count, paidOn }]) => (
+          <p className="money-summary" key={month}>
+            <strong>{formatMicroUsdc(amount.toString())} paid directly</strong>
+            <span>
+              Paid {formatDate(paidOn)} for {formatCycleMonth(month)} work ·{" "}
+              {count} transfers ·{" "}
+              <ExternalLinkAnchor
+                href={`${browserDeployment.site}/api/v1/payments/projects/${project.id}/direct-transfers`}
+              >
+                Disclosure
+              </ExternalLinkAnchor>
+            </span>
+          </p>
+        ),
+      )}
       {cycles.length === 0 ? (
         <EmptyState text="No cycles have closed yet." />
       ) : (
@@ -1207,7 +1218,7 @@ function ProjectPaymentHistory({
               </tr>
             </thead>
             <tbody>
-              {cycles.map((cycle) => (
+              {(showHistory ? cycles : cycles.slice(0, 3)).map((cycle) => (
                 <tr key={cycle.cycleId}>
                   <th scope="row">
                     <Link href={`/cycles/${project.slug}/${cycle.cycleId}`}>
@@ -1228,6 +1239,18 @@ function ProjectPaymentHistory({
           </table>
         </div>
       )}
+      {historyLimited ? (
+        <button
+          className="button secondary-button"
+          aria-expanded={showHistory}
+          onClick={() => setShowHistory((value) => !value)}
+          type="button"
+        >
+          {showHistory
+            ? "Show recent history"
+            : `Show complete ${externalPrize ? "cycle" : "payment"} history`}
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -1572,8 +1595,6 @@ function AppContent({ route }: { route: Route }) {
   else if (route.kind === "how-it-works") content = <HowItWorksPage />;
   else if (route.kind === "sponsors")
     content = <SponsorsPage retry={retry} state={state} />;
-  else if (route.kind === "receipts")
-    content = <ReceiptsPage retry={retry} state={state} />;
   else if (route.kind === "cycle-archive")
     content = <CycleArchivePage retry={retryArchive} state={archive} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;

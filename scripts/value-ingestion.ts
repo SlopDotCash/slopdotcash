@@ -1,3 +1,4 @@
+import { type DeploymentTier, deploymentOrigins } from "../src/lib/deployment";
 import { canonicalActorAvatarUrl } from "../src/lib/leaderboard";
 /** Read only: no model calls, score publication or payment authority. */
 import type {
@@ -31,6 +32,7 @@ import {
   readWorkUnitHistory,
 } from "../workers/slopbot/value-work-unit-consumption";
 import type { workUnitHistory } from "../workers/slopbot/value-work-unit-journal";
+import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import {
   hydrateValueMergeSource,
   type PublicMergeRepository,
@@ -200,6 +202,27 @@ export async function fetchProjectPenaltyHistory(
   const { records } = await fetchPenaltyRecords(projectId, transport, true);
   assertPenaltyHistory(records, [projectId]);
   return records;
+}
+
+/**
+ * The projects the fixed penalty feed knows, or null when it knows every
+ * registered project. Slopbot and the production registry API read the same
+ * D1 project table. A staging build syncs its registry from staging but reads
+ * this production feed, which answers HTTP 400 for a project that only
+ * staging lists. That project has no feed record. A listed project still
+ * fails closed.
+ */
+export async function penaltyFeedProjects(
+  tier: DeploymentTier,
+): Promise<ReadonlySet<string> | null> {
+  if (tier === "production") return null;
+  const { projects } = await fetchProjectRegistry(
+    deploymentOrigins("production").site,
+  );
+  const ids = projects.map((project) => (project as { id?: unknown })?.id);
+  if (ids.some((id) => typeof id !== "string"))
+    throw new Error("Production project registry lists an invalid project");
+  return new Set(ids as string[]);
 }
 
 /** During the first release the deployed Worker can still serve only v1

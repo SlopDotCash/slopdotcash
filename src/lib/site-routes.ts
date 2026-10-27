@@ -9,7 +9,6 @@ export const STATIC_PAGE_TITLES = new Map([
   ["/", HOME_TITLE],
   ["/how-it-works", "How it works"],
   ["/sponsors", "Sponsors"],
-  ["/receipts", "Run receipts"],
   ["/cycles", "Cycle archive"],
   ["/points", "Leaderboard"],
   ["/projects/new", "Add a project"],

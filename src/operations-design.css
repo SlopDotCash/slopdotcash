@@ -387,3 +387,31 @@
     justify-self: start;
   }
 }
+.operations-page .scan-coverage-list,
+.operations-page .evidence-object-list {
+  display: grid;
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+  margin: 0.65rem 0;
+}
+.operations-page .scan-coverage-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.65rem;
+}
+.operations-page .scan-coverage-list li > span:first-child {
+  flex: 1 1 8rem;
+}
+.operations-page .evidence-object-list button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.operations-page .evidence-object-list button[aria-pressed="true"] {
+  border-color: var(--operations-blue);
+  background: #9cc9ff0a;
+}

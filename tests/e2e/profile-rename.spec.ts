@@ -76,6 +76,9 @@ async function profileRecords(
   await page.route("https://avatars.githubusercontent.com/**", async (r) =>
     r.fulfill({ response: await page.request.get("/slop-mark.svg") }),
   );
+  await page.route("**/api/v1/payments/**vault-payments*", (route) =>
+    route.fulfill({ json: { payments: [], through: 0, next: null, total: 0 } }),
+  );
   const walletRequests: string[] = [];
   await page.route("**/api/v1/wallet-claims/actors/*/current", (r) => {
     walletRequests.push(new URL(r.request().url()).pathname);
@@ -399,7 +402,7 @@ test("profile payment totals stay unavailable until direct transfers recover", a
     });
     const profile = page.getByRole("region", { name: "Contributor profile" });
     const paid = profile
-      .getByText("paid · USDC", { exact: true })
+      .getByText("direct and archived payments · USDC", { exact: true })
       .locator("..")
       .locator("strong");
     const payouts = profile.getByRole("region", {
