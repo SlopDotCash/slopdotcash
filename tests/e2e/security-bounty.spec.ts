@@ -907,8 +907,8 @@ test("private security bounty programs keep cases restricted from intake to awar
     const page = await context.newPage();
     await page.goto(`/projects/${a.id}/security`);
     await expect(page.locator("h1")).toHaveText(/ security bounty$/);
-    await expect(page.locator(".security-lead")).toHaveText(
-      "Published award: 10,000 USDC gross per finding, 7,500 USDC to the researcher. Funded by Slop.",
+    await expect(page.locator(".route-page-header .route-lead")).toHaveText(
+      "Published award: 10,000 USDC gross per finding. Funded by Slop.",
     );
     const facts = page.getByRole("region", { name: "Award terms" });
     await expect(facts).toContainText("Researcher · 75%7,500 USDC");
@@ -921,9 +921,12 @@ test("private security bounty programs keep cases restricted from intake to awar
       fullPage: true,
     });
     await page.goto(`/projects/${b.id}/security`);
-    await expect(page.locator(".security-lead")).toContainText(
-      "100,000 USDC gross per finding, 75,000 USDC to the researcher",
+    await expect(page.locator(".route-page-header .route-lead")).toContainText(
+      "100,000 USDC gross per finding",
     );
+    const split = page.getByRole("region", { name: "Award split" });
+    await expect(split).toContainText("Researcher · 75%75,000 USDC");
+    await expect(split).toContainText("Slop · 25%25,000 USDC");
     // The project page links the program.
     await page.goto(`/projects/${a.id}`);
     await expect(
@@ -2723,6 +2726,22 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     const description = page.getByRole("textbox", { name: "Description" });
     await summary.fill("Draft survives readiness expiry");
     await description.fill("Typed before the readiness answer expired.");
+    const classification = page.locator(".security-classification");
+    await expect(classification).not.toHaveAttribute("open", "");
+    await classification
+      .getByText("Additional classification", { exact: false })
+      .click();
+    const severity = page.getByLabel("Severity (optional)", { exact: true });
+    const cvss = page.getByLabel(
+      "CVSS vector (optional, instead of severity)",
+      { exact: true },
+    );
+    await severity.selectOption("high");
+    await cvss.fill(report.cvssVectorString);
+    await expect(severity).toBeDisabled();
+    await page
+      .getByLabel("CWE IDs (optional)", { exact: true })
+      .fill("CWE-284");
     await page.clock.fastForward(31_000);
     await expect(page.getByRole("alert")).toContainText("is out of date");
     await expect(page.getByRole("alert")).toContainText("Your draft is kept");
@@ -2733,6 +2752,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     await expect(description).toHaveValue(
       "Typed before the readiness answer expired.",
     );
+    await expect(cvss).toHaveValue(report.cvssVectorString);
     await page.getByRole("button", { name: "Check again" }).click();
     await expect(
       page.getByRole("link", { name: /Or report directly on GitHub/u }),
@@ -2747,6 +2767,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     ).toHaveAttribute("href", new RegExp(otherProgram.id));
     await expect(summary).toHaveValue("");
     await expect(description).toHaveValue("");
+    await expect(cvss).toHaveValue("");
     await context.close();
   });
 

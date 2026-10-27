@@ -343,10 +343,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   ).toHaveCount(0);
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   await expect(
-    page
-      .locator(".funding-status-grid div")
-      .filter({ has: page.locator("dt", { hasText: /^Project vault$/ }) })
-      .locator("dd"),
+    page.getByText("Project vault: Not set up", { exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByText("Payments are disabled for this project.", { exact: false }),
@@ -1406,11 +1403,14 @@ test("owner creates, registers and funds a vault through the real API", async ({
     ).toHaveText(
       "Creation used a monthly cap of 1,000 TEST. The project now uses 2,000 TEST. Use the automatic payment controls below to apply the new cap.",
     );
-    await expect(
-      recoveryPage
-        .locator(".funding-status-grid")
-        .getByText("2,000 TEST", { exact: true }),
-    ).toBeVisible();
+    const monthlyTarget = recoveryPage
+      .locator("dl > div")
+      .filter({
+        has: recoveryPage.locator("dt", { hasText: /^Monthly target$/u }),
+      })
+      .locator("dd");
+    await expect(monthlyTarget).toHaveText("2,000 TEST");
+    await expect(monthlyTarget).toBeVisible();
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(state.project.revision).toBe(3);
     expect(state.scanReads).toBe(afterEdit.scanReads);
