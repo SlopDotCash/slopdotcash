@@ -11,7 +11,6 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  readFileSync,
   renameSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
