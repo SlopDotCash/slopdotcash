@@ -124,6 +124,16 @@ selects private vaults. Both scopes share the same Durable Object, identity
 key and nonce journal, because the factory supplies one identity authority.
 Do not run separate signing services with that same key on the same network.
 
+Generated attester configurations retain console logs at 100% sampling so the
+operator failure monitor can read their existing fixed-field error events.
+Invocation logs and traces stay disabled. The request-rejection and binding
+failure events record only the event, known route and error class, not request
+bodies, signed bytes or error messages that may contain private RPC URLs.
+This setting applies only to attesters; relayer and dispatcher logging is
+unchanged. A reviewed release must publish it, then the operator must verify
+the deployed logging settings and a failure-alert receipt before claiming
+monitoring coverage.
+
 Its five-minute schedule indexes finalized events into each scope's separate
 ledger. On EVM it submits only bindings with current account and wallet
 consent, using the existing reconciliation rules. Private internal requests
