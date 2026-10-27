@@ -220,6 +220,21 @@ export function paymentStack({
     configs[role] = {
       ...common,
       name: names[role],
+      ...(role === "attester"
+        ? {
+            observability: {
+              enabled: true,
+              head_sampling_rate: 1,
+              logs: {
+                enabled: true,
+                head_sampling_rate: 1,
+                persist: true,
+                invocation_logs: false,
+              },
+              traces: { enabled: false },
+            },
+          }
+        : {}),
       main: resolve(
         root,
         signer
