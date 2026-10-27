@@ -3,10 +3,10 @@
  * orange with a black mark; `inverse` swaps them for use on orange surfaces.
  */
 export function SlopMark({
-  size = 36,
+  size,
   inverse = false,
 }: {
-  size?: number;
+  size: number;
   inverse?: boolean;
 }) {
   const tile = inverse ? "#0f0e0c" : "#ff5a19";

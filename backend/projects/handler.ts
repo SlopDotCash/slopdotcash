@@ -2273,6 +2273,7 @@ async function recordEnforcement(
   const plan = planEnforcement({
     action,
     actor,
+    actorRole,
     project,
     restriction,
     listedBefore,
@@ -2763,7 +2764,8 @@ export async function handleProjectApi(
       respond: json,
       publicMessage: (_status, error, caught) =>
         caught instanceof GithubLookupError ||
-        error.code === "vault_setup_unavailable",
+        error.code === "vault_setup_unavailable" ||
+        error.code === "vault_network_unavailable",
     });
   }
 }

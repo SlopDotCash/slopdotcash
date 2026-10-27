@@ -3,6 +3,7 @@ import { type ReactNode, useState } from "react";
 import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
 import type { GitHubActor, LeaderboardSnapshot } from "./lib/leaderboard";
+import { POINTS_PER_THIRD } from "./lib/points";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 
@@ -75,22 +76,9 @@ export function formatDateTime(value: string): string {
   }).format(new Date(value))} UTC`;
 }
 
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Something went wrong.";
-}
-
-export function formatTime(value: string | null): string {
-  if (value === null) return "—";
-  return new Date(value).toLocaleString("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC",
-  });
-}
-
-/** Optional admin timestamps include an explicit UTC suffix. */
+/** An optional timestamp; a missing one shows a dash. */
 export function formatNullableUtc(value: string | null): string {
-  return value === null ? "—" : `${formatTime(value)} UTC`;
+  return value === null ? "—" : formatDateTime(value);
 }
 
 export function formatDate(value: string): string {
@@ -143,21 +131,13 @@ export function ExternalLinkAnchor({
   children,
   className,
   href,
-  onClick,
 }: {
   children: ReactNode;
   className?: string;
   href: string;
-  onClick?: () => void;
 }) {
   return (
-    <a
-      className={className}
-      href={href}
-      onClick={onClick}
-      rel="noreferrer"
-      target="_blank"
-    >
+    <a className={className} href={href} rel="noreferrer" target="_blank">
       {children}
     </a>
   );
@@ -294,6 +274,11 @@ export function Avatar({
   );
 }
 
+/** Integer credit-thirds in the displayed Slop Points unit. */
+export function formatPointsFromThirds(thirds: number): string {
+  return (thirds * POINTS_PER_THIRD).toLocaleString();
+}
+
 export function formatPercent(partsPerMillion: number): string {
   return `${(partsPerMillion / 10_000).toFixed(2)}%`;
 }
@@ -306,14 +291,6 @@ export function monthlyPoolPointsOnly(
   reward: Pick<ProjectDefinition["reward"], "kind" | "monthlyCapMinor">,
 ): boolean {
   return reward.kind === "monthly-pool" && reward.monthlyCapMinor === "0";
-}
-
-export function formatScore(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 0,
-    useGrouping: true,
-  }).format(value);
 }
 
 /** One identity header for scored, historical and newly registered contributors. */

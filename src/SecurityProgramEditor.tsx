@@ -1,13 +1,17 @@
 import { useState } from "react";
 import { Link } from "./Link";
+import { formatBaseUnits } from "./lib/base-units.mjs";
+import { errorMessage } from "./lib/errors";
 import { publishProjectRevision, type RevisionResult } from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
-import { formatAssetAmount, parseAssetAmount } from "./lib/project-schema.mjs";
+import { parseAssetAmount } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   assertSecurityBountyTerms,
+  SECURITY_SPLIT,
   type SecurityBountyTerms,
 } from "./lib/security-bounty.mjs";
+import { useAction } from "./lib/use-action";
 
 const TEXT_FIELDS = [
   [
@@ -84,10 +88,9 @@ export function SecurityProgramEditor({
   );
   const [amount, setAmount] = useState(
     existing
-      ? formatAssetAmount(
-          existing.amount.grossMinor,
-          existing.amount.decimals,
-        ).replaceAll(",", "")
+      ? formatBaseUnits(existing.amount.grossMinor, existing.amount.decimals, {
+          grouping: false,
+        })
       : "",
   );
   const [network, setNetwork] = useState<
@@ -115,92 +118,87 @@ export function SecurityProgramEditor({
     disclosure: existing?.disclosure ?? "",
     safeHarbor: existing?.safeHarbor ?? "",
   });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function publish() {
-    setError(null);
-    try {
-      const program: SecurityBountyTerms = {
-        ...(existing ?? {}),
-        version: "1",
-        status,
-        rewardMode: existing?.rewardMode ?? "separate",
-        eligibility: "critical-loss-of-funds",
-        amount: {
-          currency: existing?.amount.currency ?? "USDC",
-          decimals: existing?.amount.decimals ?? 6,
-          network,
-          grossMinor: parseAssetAmount(amount, existing?.amount.decimals ?? 6),
-        },
-        split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
-        sponsor: existing?.sponsor ?? {
-          name: project.name,
-          githubId: actor.githubId,
-        },
-        // The API replaces this with its finalized vault evidence.
-        funding: existing?.funding ?? { state: "pledged" },
-        capacity: {
-          awards: Number(awards),
-          closesAt: existing?.capacity.closesAt ?? null,
-          exhaustionRule: text.exhaustionRule.trim(),
-        },
-        scope: {
-          sourceRevisions: [
-            {
-              repository:
-                existing?.scope.sourceRevisions[0]?.repository ??
-                project.repositories[0].id,
-              commit: commit.trim(),
-            },
-            ...(existing?.scope.sourceRevisions.slice(1) ?? []),
-          ],
-          deployments: existing?.scope.deployments ?? [],
-          includedAssets: lines(text.includedAssets),
-          excludedDependencies: lines(text.excludedDependencies),
-          testingPermission: text.testingPermission.trim(),
-          severityRubric: text.severityRubric.trim(),
-          lossDefinition: text.lossDefinition.trim(),
-        },
-        intake: existing?.intake ?? {
-          kind: "github-private-vulnerability-reporting",
-          repository: project.repositories[0].id,
-        },
-        responseTargets: response,
-        approvers: existing?.approvers ?? {
-          technical: [owner],
-          financial: [owner],
-          dispute: [owner],
-        },
-        dispute: {
-          authority: existing?.dispute.authority ?? "advisory",
-          process: text.dispute.trim(),
-        },
-        disclosure: text.disclosure.trim(),
-        safeHarbor: text.safeHarbor.trim(),
-      };
-      // Open status is authorized only by the API's current finalized balance.
-      assertSecurityBountyTerms(
-        { ...program, status: status === "open" ? "paused" : status },
-        { repositories: project.repositories, reward: { ...project.reward } },
-      );
-      setBusy(true);
-      const result = await publishProjectRevision(
-        project.id,
-        { ...project, securityBounty: program },
-        revision,
-        "Update security bounty terms",
-        null,
-      );
-      onPublished(result);
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Cannot publish the bounty terms. Retry.",
-      );
-    } finally {
-      setBusy(false);
-    }
+  const { busy, error, run } = useAction();
+  function publish() {
+    void run(
+      async () => {
+        const program: SecurityBountyTerms = {
+          ...(existing ?? {}),
+          version: "1",
+          status,
+          rewardMode: existing?.rewardMode ?? "separate",
+          eligibility: "critical-loss-of-funds",
+          amount: {
+            currency: existing?.amount.currency ?? "USDC",
+            decimals: existing?.amount.decimals ?? 6,
+            network,
+            grossMinor: parseAssetAmount(
+              amount,
+              existing?.amount.decimals ?? 6,
+            ),
+          },
+          split: { ...SECURITY_SPLIT },
+          sponsor: existing?.sponsor ?? {
+            name: project.name,
+            githubId: actor.githubId,
+          },
+          // The API replaces this with its finalized vault evidence.
+          funding: existing?.funding ?? { state: "pledged" },
+          capacity: {
+            awards: Number(awards),
+            closesAt: existing?.capacity.closesAt ?? null,
+            exhaustionRule: text.exhaustionRule.trim(),
+          },
+          scope: {
+            sourceRevisions: [
+              {
+                repository:
+                  existing?.scope.sourceRevisions[0]?.repository ??
+                  project.repositories[0].id,
+                commit: commit.trim(),
+              },
+              ...(existing?.scope.sourceRevisions.slice(1) ?? []),
+            ],
+            deployments: existing?.scope.deployments ?? [],
+            includedAssets: lines(text.includedAssets),
+            excludedDependencies: lines(text.excludedDependencies),
+            testingPermission: text.testingPermission.trim(),
+            severityRubric: text.severityRubric.trim(),
+            lossDefinition: text.lossDefinition.trim(),
+          },
+          intake: existing?.intake ?? {
+            kind: "github-private-vulnerability-reporting",
+            repository: project.repositories[0].id,
+          },
+          responseTargets: response,
+          approvers: existing?.approvers ?? {
+            technical: [owner],
+            financial: [owner],
+            dispute: [owner],
+          },
+          dispute: {
+            authority: existing?.dispute.authority ?? "advisory",
+            process: text.dispute.trim(),
+          },
+          disclosure: text.disclosure.trim(),
+          safeHarbor: text.safeHarbor.trim(),
+        };
+        // Open status is authorized only by the API's current finalized balance.
+        assertSecurityBountyTerms(
+          { ...program, status: status === "open" ? "paused" : status },
+          { repositories: project.repositories, reward: { ...project.reward } },
+        );
+        const result = await publishProjectRevision(
+          project.id,
+          { ...project, securityBounty: program },
+          revision,
+          "Update security bounty terms",
+          null,
+        );
+        onPublished(result);
+      },
+      (cause) => errorMessage(cause, "Cannot publish the bounty terms. Retry."),
+    );
   }
   return (
     <section className="owner-section" aria-labelledby="owner-security-title">
@@ -241,7 +239,7 @@ export function SecurityProgramEditor({
             className="proposal-form"
             onSubmit={(event) => {
               event.preventDefault();
-              void publish();
+              publish();
             }}
           >
             <fieldset disabled={busy}>

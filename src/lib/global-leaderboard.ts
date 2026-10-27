@@ -1,4 +1,5 @@
 import { compareActors } from "./github-actor";
+import type { ActorRef } from "./leaderboard-types";
 /**
  * Builds the cumulative cross-project leaderboard from accepted score events
  * and immutable closed-cycle records. A closed cycle replaces overlapping
@@ -10,11 +11,15 @@ import { compareActors } from "./github-actor";
 
 import type { CycleIndex } from "./cycle-index";
 import type { GitHubActor, LeaderboardSnapshot } from "./leaderboard";
-import type { ProjectView } from "./project-view";
+import { type ProjectView, requiredProjection } from "./project-view";
 import { findIngestedProjectByRepositoryId } from "./projects.mjs";
-import { type PenaltyDeductions, penaltyDeductions } from "./score-penalties";
+import {
+  eventThirds,
+  type PenaltyDeductions,
+  penaltyDeductions,
+} from "./score-penalties";
 
-export interface GlobalLeader {
+interface GlobalLeader {
   actor: GitHubActor;
   score: number;
   tokens: number;
@@ -29,7 +34,7 @@ type MutableGlobalLeader = Omit<GlobalLeader, "cycles" | "projects"> & {
   projectIds: Set<string>;
 };
 
-function actorFromCycle(actor: { id: string; login: string }): GitHubActor {
+function actorFromCycle(actor: ActorRef): GitHubActor {
   return {
     ...actor,
     avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(actor.login)}?size=96`,
@@ -136,7 +141,7 @@ export function createGlobalLeaders(
     const key = cycleKey(project.id, event.occurredAt.slice(0, 7));
     const current = byActor.get(event.actor.id) ?? emptyLeader(event.actor);
     current.actor = event.actor;
-    current.score += event.scoreThirds ?? Math.round(event.points * 3);
+    current.score += eventThirds(event);
     current.cycleKeys.add(key);
     current.projectIds.add(project.id);
     byActor.set(event.actor.id, current);
@@ -151,7 +156,10 @@ export function createGlobalLeaders(
       const current = byActor.get(leader.actor.id) ?? emptyLeader(leader.actor);
       current.actor = leader.actor;
       current.tokens += leader.usage.relevantTokens;
-      current.projectedMinor += BigInt(leader.projectedMinor ?? "0");
+      if (view.reward.kind === "monthly-pool")
+        current.projectedMinor += BigInt(
+          requiredProjection(leader.projectedMinor, "amount"),
+        );
       byActor.set(leader.actor.id, current);
     }
   }

@@ -1,8 +1,11 @@
+import { formatBaseUnits } from "../base-units.mjs";
 import {
   ESCROW_NETWORKS,
   type EscrowChain,
   MAX_BASE_UNITS,
 } from "../escrow-policy.mjs";
+
+export { formatBaseUnits };
 
 export type PaymentChain = EscrowChain;
 /**
@@ -24,10 +27,23 @@ export interface AccountPayment extends PaymentAsset {
   feeBase: string;
   state: "reserved" | "paid";
   /** PRD section 6 payment states of a reserved award. */
-  deliveryState: "needs_wallet" | "ready" | "submitted" | "held" | "paid";
+  deliveryState: (typeof PAYMENT_DELIVERY_STATES)[number];
   submittedTransactionId: string | null;
   transactionId: string | null;
 }
+export const PAYMENT_DELIVERY_STATES = [
+  "needs_wallet",
+  "ready",
+  "submitted",
+  "held",
+  "paid",
+] as const;
+/** The states of an approved award before its vault reservation. */
+export const UNRESERVED_AWARD_STATES = [
+  "underfunded",
+  "awaiting-reservation",
+  "conflict",
+] as const satisfies readonly MonthlyAwardState[];
 /**
  * A monthly award's state before and after its vault reservation. Owners and
  * contributors read the same value; a reserved or paid state comes only from
@@ -53,10 +69,7 @@ export interface AccountMonthlyAward extends PaymentAsset {
   grossBase: string;
   feeBase: string;
   netBase: string;
-  state: Extract<
-    MonthlyAwardState,
-    "underfunded" | "awaiting-reservation" | "conflict"
-  >;
+  state: (typeof UNRESERVED_AWARD_STATES)[number];
 }
 export interface PaymentsAccount {
   githubUserId: string;
@@ -137,26 +150,13 @@ export function isAssetDecimals(value: unknown): value is number {
     Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 36
   );
 }
-/** Exact decimal text of a base-unit amount; trailing fraction zeros removed. */
-export function formatBaseUnits(value: string, decimals: number): string {
-  const amount = BigInt(value);
-  if (amount < 0n || !isAssetDecimals(decimals))
-    throw new Error("Invalid base-unit amount");
-  if (decimals === 0) return amount.toLocaleString("en-US");
-  const scale = 10n ** BigInt(decimals);
-  const fraction = (amount % scale)
-    .toString()
-    .padStart(decimals, "0")
-    .replace(/0+$/, "");
-  return `${(amount / scale).toLocaleString("en-US")}${fraction ? `.${fraction}` : ""}`;
-}
 /**
  * The display name of a vault asset. Only a reviewed reference token of the
  * network (escrow-policy `assets`) with the same decimals has a symbol. Any
  * other token shows its shortened address, because a token's own symbol()
  * text is not reviewed.
  */
-export function assetLabel(
+function assetLabel(
   network: string,
   assetAddress: string,
   assetDecimals: number,

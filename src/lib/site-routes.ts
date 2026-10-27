@@ -2,7 +2,7 @@
 import { PROJECTS } from "./projects.mjs";
 
 export const SITE_ORIGIN = "https://slop.cash";
-export const HOME_TITLE = "Slop: make money shipping open source";
+const HOME_TITLE = "Slop: make money shipping open source";
 
 /** Indexable pages with fixed paths, in sitemap order. */
 export const STATIC_PAGE_TITLES = new Map([

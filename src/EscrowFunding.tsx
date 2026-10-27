@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { AutomaticMonthlyPayment } from "./AutomaticMonthlyPayment";
 import { readBoundedJson } from "./lib/browser-json";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import type { VaultConnection } from "./lib/evm-vault-actions";
-import { CHAIN_NAMES, networkLabel } from "./lib/network-names";
+import { networkLabel } from "./lib/network-names";
 import {
   formatAssetAmount,
   isAssetDecimals,
@@ -12,6 +12,9 @@ import {
   type VaultSnapshot,
 } from "./lib/payments/contracts";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { CANONICAL_UINT } from "./lib/record-validation.mjs";
+import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
+import { usePublicResource } from "./lib/use-public-resource";
 import { OwnerVaultSetup } from "./OwnerVaultSetup";
 import { formatDateTime } from "./Presentation";
 import { VaultActions } from "./VaultActions";
@@ -42,14 +45,14 @@ function validSnapshot(s: VaultSnapshot, projectId: string): boolean {
     !!s &&
     s.projectId === projectId &&
     typeof s.network === "string" &&
-    Object.hasOwn(CHAIN_NAMES, s.chain) &&
+    Object.hasOwn(NETWORK_NAMES, s.chain) &&
     typeof s.vault === "string" &&
     typeof s.assetAddress === "string" &&
     /^[0-9A-Za-z]{32,44}$/.test(s.assetAddress) &&
     isAssetDecimals(s.assetDecimals) &&
     CUMULATIVE.every((k) => isBaseUnits(s[k])) &&
     CURRENT.every((k) => s[k] === null || isBaseUnits(s[k])) &&
-    /^(0|[1-9][0-9]*)$/.test(s.blockNumber) &&
+    CANONICAL_UINT.test(s.blockNumber) &&
     !Number.isNaN(Date.parse(s.blockTime)) &&
     !Number.isNaN(Date.parse(s.observedAt))
   );
@@ -112,7 +115,7 @@ function VaultTotals({
   );
 }
 
-export type VaultTotalsState =
+type VaultTotalsState =
   | { status: "none" }
   | { status: "loading" }
   | { status: "error"; message: string }
@@ -123,49 +126,42 @@ export function useVaultTotals(
   project: ProjectDefinition,
   revision = 0,
 ): VaultTotalsState {
-  const [vault, setVault] = useState<VaultResponse | null>(null);
-  const [error, setError] = useState("");
   const deployed = Boolean(project.escrow?.deployments.length);
   // biome-ignore lint/correctness/useExhaustiveDependencies: explicit refresh reloads the cached vault totals.
-  useEffect(() => {
-    setVault(null);
-    setError("");
-    if (!deployed) return;
-    const controller = new AbortController();
-    fetch(`/api/v1/payments/projects/${encodeURIComponent(project.id)}/vault`, {
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok)
-          throw new Error("Vault totals are not available. Please retry.");
-        const value = (await readBoundedJson(
-          response,
-          65536,
-          "project vault totals",
-        )) as VaultResponse;
-        if (
-          !value ||
-          !Array.isArray(value.snapshots) ||
-          !Number.isSafeInteger(value.staleAfterMs) ||
-          Number.isNaN(Date.parse(value.servedAt)) ||
-          !value.snapshots.every((s) => validSnapshot(s, project.id))
-        )
-          throw new Error("The vault totals could not be verified.");
-        if (!controller.signal.aborted) setVault(value);
-      })
-      .catch((reason) => {
-        if (!controller.signal.aborted)
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "Could not load vault totals.",
-          );
-      });
-    return () => controller.abort();
-  }, [project.id, deployed, revision]);
+  const load = useCallback(
+    async (signal: AbortSignal) => {
+      const response = await fetch(
+        `/api/v1/payments/projects/${encodeURIComponent(project.id)}/vault`,
+        { signal },
+      );
+      if (!response.ok)
+        throw new Error("Vault totals are not available. Please retry.");
+      const vault = (await readBoundedJson(
+        response,
+        65536,
+        "project vault totals",
+      )) as VaultResponse;
+      if (
+        !vault ||
+        !Array.isArray(vault.snapshots) ||
+        !Number.isSafeInteger(vault.staleAfterMs) ||
+        Number.isNaN(Date.parse(vault.servedAt)) ||
+        !vault.snapshots.every((s) => validSnapshot(s, project.id))
+      )
+        throw new Error("The vault totals could not be verified.");
+      return { vault };
+    },
+    [project.id, revision],
+  );
+  const [state] = usePublicResource(
+    deployed,
+    load,
+    "Could not load vault totals.",
+  );
   if (!deployed) return { status: "none" };
-  if (error) return { status: "error", message: error };
-  return vault ? { status: "ready", vault } : { status: "loading" };
+  return state.status === "ready"
+    ? { status: "ready", vault: state.vault }
+    : state;
 }
 
 export { reservedGross };
@@ -195,7 +191,9 @@ export function EscrowFunding({
     : null;
   return (
     <section className="section project-funding" aria-label="Project escrow">
-      <h2>Project vault · {CHAIN_NAMES[project.escrow?.chain ?? "solana"]}</h2>
+      <h2>
+        Project vault · {NETWORK_NAMES[project.escrow?.chain ?? "solana"]}
+      </h2>
       <p>
         Awards pay out after a 2% fee in the reward token. Reserved awards
         cannot be withdrawn.

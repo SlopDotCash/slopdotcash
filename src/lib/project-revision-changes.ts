@@ -15,7 +15,7 @@
 import { canonicalJson } from "./canonical-json";
 import type { ProjectDefinition } from "./projects.mjs";
 
-export const PRESENTATION_FIELDS = [
+const PRESENTATION_FIELDS = [
   "name",
   "eyebrow",
   "headline",
@@ -29,7 +29,7 @@ export const PRESENTATION_FIELDS = [
  * source it names and the inputs of the generated skills. A clearance binds
  * this content, so presentation and financial edits keep it.
  */
-export const EXECUTABLE_FIELDS = [
+const EXECUTABLE_FIELDS = [
   "id",
   "repositories",
   "skill",
@@ -37,7 +37,7 @@ export const EXECUTABLE_FIELDS = [
   "contribution",
 ] as const;
 
-export const FINANCIAL_FIELDS = [
+const FINANCIAL_FIELDS = [
   "reward",
   "rewardAsset",
   "escrow",
@@ -45,9 +45,9 @@ export const FINANCIAL_FIELDS = [
   "securityBounty",
 ] as const;
 
-export type RevisionChangeClass = "presentation" | "executable" | "financial";
+type RevisionChangeClass = "presentation" | "executable" | "financial";
 
-export type RevisionChanges = Record<RevisionChangeClass, string[]> & {
+type RevisionChanges = Record<RevisionChangeClass, string[]> & {
   /** Changed fields that owner self-service may not publish. */
   restricted: string[];
 };

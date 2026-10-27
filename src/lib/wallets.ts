@@ -5,18 +5,19 @@
  */
 
 import { decodeBase58Bytes } from "./base58";
-import { chainFamily } from "./escrow-policy.mjs";
+import { chainFamily, type EscrowChain } from "./escrow-policy.mjs";
+import { isFundingAddress } from "./funding-address.mjs";
 
 export const WALLET_CLAIM_REPOSITORY = "SlopDotCash/slopdotcash" as const;
 
 /** Networks a contributor may publish a payout wallet for, one claim each. */
-export const WALLET_CHAINS = [
+export type WalletChain = EscrowChain;
+export const WALLET_CHAINS: readonly WalletChain[] = [
   "solana",
   "base",
   "robinhood",
   "ethereum",
-] as const;
-export type WalletChain = (typeof WALLET_CHAINS)[number];
+];
 
 export interface PublishedWallet<Chain extends WalletChain = WalletChain> {
   address: string;
@@ -27,26 +28,15 @@ export function isWalletChain(value: unknown): value is WalletChain {
   return WALLET_CHAINS.includes(value as WalletChain);
 }
 
-function decodedSolanaAddress(value: unknown): Uint8Array | null {
-  if (
-    typeof value !== "string" ||
-    value.length < 32 ||
-    value.length > 44 ||
-    !/^[1-9A-HJ-NP-Za-km-z]+$/u.test(value)
-  )
-    return null;
-  const bytes = decodeBase58Bytes(value);
-  return bytes.length === 32 ? bytes : null;
-}
 /** Returns true only for a canonical 32-byte Solana public key. */
 export function isSolanaAddress(value: unknown): value is string {
-  return decodedSolanaAddress(value) !== null;
+  return isFundingAddress("solana", value);
 }
 /** Returns the exact decoded bytes used for Solana signature verification. */
 export function solanaAddressBytes(value: string): Uint8Array {
-  const bytes = decodedSolanaAddress(value);
-  if (bytes === null) throw new TypeError("Invalid Solana public address");
-  return bytes;
+  if (!isSolanaAddress(value))
+    throw new TypeError("Invalid Solana public address");
+  return decodeBase58Bytes(value);
 }
 
 /**
@@ -55,11 +45,18 @@ export function solanaAddressBytes(value: string): Uint8Array {
  * the zero address is refused because a transfer to it burns the funds.
  */
 export function isBaseAddress(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    /^0x[0-9a-f]{40}$/u.test(value) &&
-    value !== `0x${"0".repeat(40)}`
-  );
+  return isFundingAddress("base", value);
+}
+
+/** EVM accounts compare without case; Solana public keys are case-sensitive. */
+export function sameWalletAddress(
+  family: "evm" | "solana",
+  left: string,
+  right: string,
+): boolean {
+  return family === "evm"
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
 }
 
 /** Validates an address against the rules of the chain it is claimed on. */

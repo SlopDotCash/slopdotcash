@@ -6,7 +6,6 @@
 
 import {
   readTokenMint,
-  TOKEN_PROGRAM,
   type TokenMintReading,
 } from "../../contracts/solana/token-extensions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
@@ -155,18 +154,13 @@ async function solanaMetadata(
   const account = result?.value;
   if (!account)
     throw new TokenMetadataError("No account exists at that mint address");
-  // Vault creation, funding and the monthly commitment use the classic Token program
-  // only, so owner setup refuses every other owner, Token-2022 included, until they
-  // support it.
-  if (account.owner !== TOKEN_PROGRAM)
-    throw new TokenMetadataError("The mint is not a classic SPL Token mint");
-  // The shared reader's errors name internal layout checks; for example a token
-  // account usually fails its mint-initialized check. The applicant sees one message.
+  // Keep applicant errors independent of the reader's internal layout-check order.
+  // The shared reader still admits only classic SPL and the approved Token-2022 subset.
   let mint: TokenMintReading;
   try {
     mint = readTokenMint(account, decodeBase58Bytes(address));
   } catch {
-    throw new TokenMetadataError("The account is not an SPL mint");
+    throw new TokenMetadataError("The account is not a supported SPL mint");
   }
   return { decimals: mint.decimals, symbol: null };
 }

@@ -9,21 +9,22 @@
 
 import { MAX_BASE_UNITS } from "../escrow-policy.mjs";
 import type { assertProjectDefinition } from "../project-schema.mjs";
+import { CANONICAL_UINT } from "../record-validation.mjs";
 
-export interface EscrowReviewProposal {
+interface EscrowReviewProposal {
   projectId: string;
   cycleId: string;
   grossCapMicro: string;
   awards: { githubUserId: string; grossMicro: string; sourceDigest: string }[];
 }
-export interface EscrowDecision {
+interface EscrowDecision {
   githubUserId: string;
   state: "approved" | "held" | "excluded";
   approvedGrossMicro: string;
   adjustmentReason: string | null;
   relatedParty: boolean;
 }
-export interface EscrowDecisions {
+interface EscrowDecisions {
   schemaVersion: "1";
   proposalSha256: string;
   rows: EscrowDecision[];
@@ -73,7 +74,7 @@ export function assertEscrowDecisions(
       !awards.has(row.githubUserId) ||
       !["approved", "held", "excluded"].includes(String(row.state)) ||
       typeof row.approvedGrossMicro !== "string" ||
-      !/^(0|[1-9]\d*)$/.test(row.approvedGrossMicro) ||
+      !CANONICAL_UINT.test(row.approvedGrossMicro) ||
       typeof row.relatedParty !== "boolean"
     )
       throw new Error("Invalid actor or decision");

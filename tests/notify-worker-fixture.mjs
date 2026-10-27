@@ -6,10 +6,10 @@ import { join, resolve } from "node:path";
 import { childEnvironment } from "../scripts/child-environment.mjs";
 
 export const E2E_EMAIL_ACCOUNTS = Object.fromEntries(
-  [1440, 1024, 768, 320].map((width, index) => [
-    `email${width}`,
-    String(900000101 + index),
-  ]),
+  [
+    [1440, "900000101"],
+    [320, "900000104"],
+  ].map(([width, githubId]) => [`email${width}`, githubId]),
 );
 
 export async function startNotifyWorkerFixture(root, persistTo, port) {
