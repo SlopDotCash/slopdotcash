@@ -31,7 +31,7 @@
     "test:slopbot": "bun test --timeout 30000 ./workers/slopbot",
     "test:trace": "node backend/trace/workflow.mjs",
     "test:notify": "bun test --timeout 30000 ./workers/notify",
-    "test:fee-converter": "bun test --timeout 30000 ./workers/fee-converter ./backend/fee-conversions",
+    "test:fee-converter": "bun test --timeout 30000 ./workers/fee-converter ./backend/fee-conversions ./contracts/solana/token.test.ts ./contracts/solana/adapter.test.ts",
     "test:referral-accrual": "bun test --timeout 30000 ./workers/referral-accrual ./backend/referrals",
     "test:referral-accrual:anvil": "bun workers/referral-accrual/anvil.integration.ts",
     "referral-accrual:dry-run": "bun workers/referral-accrual/dry-run.ts",
