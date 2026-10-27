@@ -289,6 +289,15 @@ test("drafts a project through the setup steps and creates it without an admin",
   await page
     .getByLabel("Acceptance criteria")
     .fill("Accepted pull requests with verified tests.");
+  await page
+    .getByText("Contributor instructions (optional)", { exact: true })
+    .click();
+  const requiredTests = page.getByLabel("Required tests", { exact: true });
+  await requiredTests.fill("x".repeat(2001));
+  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await expect(requiredTests).toHaveAttribute("aria-invalid", "true");
+  await requiredTests.fill("Run the project's existing test suite.");
+  await expect(requiredTests).toBeVisible();
   await expect(page.getByLabel("Copyright model")).toHaveValue("unknown");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
   // Funding is optional; asset and vault details follow the choice.

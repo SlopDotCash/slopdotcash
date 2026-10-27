@@ -2597,6 +2597,122 @@ This addendum is recorded before deleting the newly adopted file. It changes the
 
 The newly adopted fee-converter cap cases perform a real `runNetwork`→SQL-state workflow and stay. Their preliminary direct `h.chain.quote` call and `quote.priceImpactBps` assertion repeat the helper in isolation before the workflow repeats it; remove those two statements only, retaining both exact-cap and above-cap persisted outcomes. The newly adopted registry browser case also repeats the same 200% typography mutation; use the shared TT06 helper without changing its outcome assertions. Newly adopted trace-route refusal/upload-retention and registry browser revision scenarios cross real boundaries and stay.
 
+## Final rebase addition: TT11 — release-plan shape-only unit suite
+
+PR1475 introduced `scripts/mainnet-release-plan.test.ts` after the initial inventory. Its two declarations call configuration builders directly and compare arrays, fields, literal secrets and object identity under hypothetical activation; they execute no release, native runtime, HTTP request or persisted operation. Remove the63-line unit file under the user's non-contract unit-test rule. There are no explicit path consumers in workflows or scripts. Retain `mainnet-release-publication.test.js`, which writes and verifies actual prepared/released configuration files, and the native attester bootstrap workflow. Retain `points-history-retry.test.ts`, whose actual loopback HTTP server exercises bounded published-history reads and refuses persistent/unrecognized503 failures. No release policy or activation is changed by this test-only deletion.
+
+## Final integration addition: TT12 — redundant release authorization probe
+
+The post-inventory release change adds one test in `scripts/mainnet-release-publication.test.js` that creates a temporary directory, supplies a provider callback returning `Unauthorized`, and only asserts that the function rejects. It never reads or verifies a produced artifact, native service or persistent refusal outcome. The existing actual bootstrap workflow already exercises authorization failures together with no-deploy/no-secret evidence. Remove that one partial callback-only declaration; retain the other three publication scenarios that write, inspect and tamper with real generated configuration files. No production release logic changes.
+
+## Final fixture liveness check
+
+`tests/value-binary-fixture.ts`, introduced after the baseline, has one consumer: the real model qualifier. Retain its synthetic source/evidence construction and the four imported exports (`collect`, `fixture`, `policy`, `repository`). Remove the entirely uncalled `required` helper and eight unnecessary export-list entries; all internally used constants/helpers stay. This is interface/dead-code trimming only; the model qualifier and source evidence remain byte-for-byte equivalent in behavior.
+
 ## Implementation results
 
-Report-first checkpoint: this section is intentionally unfilled at the report commit. Implementation, disposition of all finding IDs, final source revision, measured changes, validations and any remaining environment limits will be added after the selected work is completed.
+This section distinguishes the original report baseline from changes delivered by overlapping owner-directed work. The report was committed before implementation (original0cc50319; rebasedf1bbb59e). Findings were implemented in parallel; shared files and tests had explicit owners.
+
+### Delivered source work
+
+- TB01/TB02: real storage failures now reach503 while real sequence/freeze conflicts and expired/refused assertions keep409/401. Real SQL/HTTP regressions verify durable state, no unauthorized session or award, and successful recovery.
+- TB03/RR01: remove the unused policy type, broken282-line wallet-issue migration command and its exclusive Markdown parser. Current wallet validation, immutable claims and operator recovery remain.
+- TT01–TT07/TT09/TT10: remove helper-only and duplicate fragments, consolidate actual migration acceptance, preserve expected failure checks in wallet rotation, share text enlargement without importing browser-test registration, and gzip immutable fixtures losslessly.
+- RR02/TT08: source repair had already arrived through reviewed development. The actual current browser+SQLite+Anvil workflow was executed successfully rather than duplicated or deleted.
+- V01–V17: shared route headings/status/metric presentation, clearer funding, compact public/operational records and account/setup layouts, optional secondary detail, icons/marks and exact amount display. Protected homepage/source/brand checks recorded separately. No authority, scoring or native financial code changed.
+- V04 was superseded by the separate owner-approved retirement of Models in PR1477. Keep the route retired. The concurrent merge removed a renderer still used by Receipts; the follow-up restores that renderer only and prunes obsolete CSS, not the retired page.
+
+### Merge and overlap record
+
+PR1476 delivered the initial UI+cleanup; PR1478 independently delivered the backend/test subset. Both are merged into development. Another UI branch, PR1473, is being reduced to selected functional improvements on the existing visual foundation; no competing stylesheet stack is accepted. PR1479 holds merge/selector corrections. Main promotion is coordinated in the authorized release chat; development merges alone are not claimed as production publication.
+
+### Verified before final integration
+
+- Full Bun:701passed,1platform-specificskip,0failed;5912assertions across72files (119.17s).
+- Full five-driver integration run:passed, including real isolated runtime/retained evidence workflows.
+- Backend focused SQL/HTTP:52passed/417assertions; immutable records/conflicts/expiry and recovery preserved.
+- Migration/fixture/rotation focused tests:15passed/101assertions.
+- Executed installer lifecycle:33passed/230assertions.
+- Native inactive-attester bootstrap:passed, including zero key/RPC/outbound activity under rejected operations.
+- Actual local payout browser:passed;100000000gross,98000000net,2000000fee, final paid state, separate EVM network claims, desktop/mobile/keyboard/200%/AA, zero unexpected console/request failures.
+- Expired wallet session with independently signed-in parent:desktop/mobile passed. Restore the local wallet sign-in shortcut because its exact return target is useful; duplicate-looking entrypoints are not removed when they serve a distinct route.
+- Typecheck, Biome and format:passed at the initial merged checkpoint. Repeated after integration repairs; final results and exact revision to be recorded below.
+- Three fixture decompressions equal original Git bytes and SHA-256, saving16,180,730bytes (92.9%of those payloads). No history reserialization.
+
+The initial full browser run intentionally continued after identifying stale selectors so it could discover every affected path. Its failures are not reported as passes. Fresh focused runs preserve original outcomes and use current visible controls; final combined results follow.
+
+### Visual evidence
+
+Baseline:70route/state labels×2viewports,140full-page and140viewport captures, plus12funding candidate renders. Final captures and current-source integration overlays are in the linked gallery; initial rejected fixtures/interrupted capture runs are excluded. Compare identical states, not unmatched source/fixture combinations.
+
+Homepage14function bodies and3additional participation/install functions plus brand assets matched original source bytes. Desktop raw screenshot later matched exactly (0changedpixels); earlier avatar-only differences were explicitly separated. Mobile/final integration proof follows.
+
+No fabricated deployment, provider qualification, mainnet execution, or Linux-only qualification is claimed. Unchanged native contracts retain their tests; platform-dependent checks and unrelated release work are identified separately.
+
+### Finding-by-finding disposition
+
+| ID | Final behavior or disposition | Evidence / preserved boundary |
+| --- | --- | --- |
+| V01 | Funding uses compact heading/target, exact available/reserved tiles, network marks, automatic cached refresh, integrated monthly awards and explicit unknown/error states. Empty five-card placeholders are removed. Contract/owner details automatically reveal for financial review or pending recovery. | Adopted1454/1455 plus residual changes; cached-source/finality checks and gross/fee/net/recipient review remain. Native EVM8/8 and payout98/2 acceptance pass. |
+| V02 | Additive route header, status badge and metric primitives shared across inner pages. | No global token or homepage rewrite. Protected source/body and raw screenshot comparison below. |
+| V03 | Shorter contributor/maintainer guides, step icons, concise table/example hierarchy; qualifying useful reviews correctly included. | Existing fees, limitations, rules and optional explanations remain accessible; current keyboard/text/AA screenshots. |
+| V04 | Compact model comparison was implemented and captured, then superseded by separately approved Models retirement1477. Do not restore the route. | Actual receipt marks/provenance remain; final Pages lane checks retired-route404. |
+| V05 | Receipt search and full evidence retained with compact summaries and model marks. | Actual nonempty receipt browser flow passes; renderer restored after concurrent retirement merge. |
+| V06 | Sponsor table becomes readable funding cards with direct funding links and labeled target/payment/vault state. | Disabled/points-only/external-prize semantics preserved; keyboard destination/history and absent balances checked. |
+| V07 | Compact historical cycle titles, status badges and aligned values. | Historical bytes, review windows, principal/fees/recipients and downloads remain. |
+| V08 | Standings filters stay visible; exact source bounds/counts move to an accessible coverage disclosure. | Current URL/filter/equal-rank/financial-availability rules retained; actual data, keyboard,200%/AA coverage. |
+| V09 | Project headings/status and profile values become denser without removing existing charts. Long numeric metrics fit320px. | Verified/unknown actor and paused-project safety boundaries retained. |
+| V10 | Account sections grouped, rare closure form disclosed, recovery hashes reveal it. Correct X public-link copy. | Typed confirmation, unpaid obligations, session revocation and explicit sign-in retained. The wallet-local sign-in shortcut remains because its exact return destination is useful. |
+| V11 | Payout records gain network marks and labeled status with aligned exact amounts. | Real EVM registration/partial-success/recovery/payment flow and distinct unavailable/empty states retained. |
+| V12 | Inbox event icons, compact metadata and separate read/email badges. | Opening a notice never acknowledges a security case; explicit read/acknowledge and email consent persist. |
+| V13 | Setup keeps all four steps; compact heading/check status and selective two-column fields. | Drafts, authority refresh, immutable IDs, unchecked automatic-closure consent and stale-save refusal retained. |
+| V14 | Monthly award lists lose browser bullets, use compact rows and precise allocation/cap/network summaries. | Save/finalize/reserve remain separate; no autosave of money edits; native/HTTP behavior unchanged. |
+| V15 | Security intake/cases use compact readiness/next-step/terms; optional classification is disclosed; mobile award cards stack. | Exact75/25 values, roles, safety/private terms and explicit actions remain. Real15-case registry workflow and current320/200% screenshots pass. |
+| V16 | Admin/evidence hierarchy and status use shared primitives; full identifiers have working copy feedback. | Real clipboard equality, private grant reason/expiry, single-use downloads and exact23,592,960-byte integrity tested. No automatic private-body read. |
+| V17 | Compact route-scoped empty/not-found treatment. | Loading, failed, stale, denied and no-data states remain distinct; homepage EmptyState unchanged. |
+| TB01 | Storage outages reach503; genuine allocation/settings conflicts still409. | Actual migrated SQLite read-only/race/freeze workflows; no state mutation on failed writes. |
+| TB02 | Upstream identity401 remains expired; service5xx reaches existing unavailable boundary. | Actual Worker and Points handlers, separate DBs, unchanged assertions/session boundaries. |
+| TB03 | Delete unused EvidencePolicy type alias. | Runtime policy/operator set unchanged. |
+| RR01 | Delete obsolete wallet-issue migration and exclusive Markdown parser chain. | No real caller; default execution always refused; no historical data deletion or new issuer. |
+| RR02 / TT08 | Reuse upstream repair of the live payout browser driver, execute it. | Actual signature→HTTP/SQL→binding→finalized98/2 payment; distinct Base/Robinhood lineage retained. |
+| TT01 | Delete two installer generated-string/helper-only cases. | All33 executed installer lifecycle cases pass. |
+| TT02 | Delete synthetic syscall/parser matrices embedded in assembly workflow. | Real captured evidence assembly/tamper/refusal workflow retained; Linux-only qualification not claimed locally. |
+| TT03 | Delete initial direct config-shape checks from bootstrap driver. | Actual Wrangler/workerd/output/refusal behavior still exercised. |
+| TT04 | Merge duplicate migration success/transaction setup. | Real SQL rows, child/FK/trigger/rollback checks remain. |
+| TT05 | Assert expected first dispatch outcome instead of swallowing every rejection; close DB in finally. | All four real wallet-rotation scenarios remain. |
+| TT06 | Share200% text enlargement across11 browser/capture sites; restore original inline styles where needed. | HTMLElement-only mutation preserves SVGs; standalone helper avoids importing Playwright test registration. |
+| TT07 | Gzip three immutable fixtures, transparent decompression at readers/copy boundary. | Exact byte/SHA-256 equality;16,180,730bytes saved; no historical JSON reserialization. |
+| TT09 | Remove duplicate validation already performed in the actual intercepted project POST. | Actual browser form/identity/manifest outcomes remain. |
+| TT10 | Delete newly adopted mock-generate/mock-write node-recovery unit suite. | Source recovery fix retained; no claim of equivalent vanished-node-specific E2E proof. |
+| TT11 | Delete newly adopted release-plan literal/config-shape unit suite. | Actual filesystem publication and native bootstrap workflows remain. |
+
+### Final browser and visual checkpoints
+
+- Fresh focused preview after interaction corrections: **10/10 passed**, desktop/mobile, zero retries. This covers project setup completion, actual receipt records, retired/unknown route recovery, Inbox email/read states and sponsor keyboard/history navigation.
+- Full real Pages lane: **5/5 passed**, including legacy wallet redirects/reloads, exact public artifacts and retired Models HTTP404.
+- Native EVM browser: **8/8 passed**, four actual Anvil workflows at desktop/mobile. Full vault/token/owner addresses remain visible for review and retained pending recovery. Separate earlier payout flow proves contributor98/2 settlement.
+- Focused current registry: **15/15 passed**, including all evidence-download platform variants, owner terms/funding controls, private intake and classification, case awards, visibility consent, unsigned settlement requests, role loss/ban preservation and moderator Inbox resolution.
+- A fresh whole `registry.spec.ts` run is recorded separately after completion; its previous serial interruption is not counted as a pass.
+- The original full browser run produced295passes,16failures and18opt-in skips. Every failure was kept as diagnostic evidence, including obsolete DOM selectors and the wallet return regression. Subsequent fixed scenarios have fresh results; this report does not turn the original run green retroactively.
+
+### Current visual evidence and homepage preservation
+
+[Current screenshot/video gallery](/Users/shawwalters/.codex/visualizations/2026/10/27/01a17b8b-c2b7-7f22-9204-b99ae13eca9d/third-pass/current-review.html) and [historical before/after gallery](/Users/shawwalters/.codex/visualizations/2026/10/27/01a17b8b-c2b7-7f22-9204-b99ae13eca9d/third-pass/before-after.html) retain the raw captures, source manifests and fixture context.
+
+There are146 historical final screenshots (73labels×2widths),14 current integration screenshots,60 current keyboard/200%-text captures and4 actual copy/classification interactions, plus19 current walkthrough videos. Current checks show zero page overflow and zero axe WCAG A/AA violations. Expected anonymous401 and deliberately injected503 states remain logged; no uncaught application exception or unexpected first-party failure is hidden.
+
+Current integration homepage comparison:1440×3243 has1306 differing raw pixels, all inside15 measured external avatar rectangles and zero outside;320×3686 is pixel-identical, zero changed pixels. Raw images are unmodified. All14 protected homepage function bodies, three additional participation/installer bodies and brand assets are byte-identical. A separate historical run showed desktop raw0 differences; these runs are not conflated.
+
+Intermediate invalid fixtures, interrupted screenshot attempts, a missing fixture registry build variable and an incorrect synthetic Points cursor were corrected and excluded. Some original localhost project captures show optional payment-unavailable fallback that the product-origin fixture does not; those origin differences are not claimed as fixes. The original wrong mobile security baseline was regenerated with valid data. Models' earlier redesign is historical evidence; the current page is retired.
+
+### Size and scope accounting
+
+The test auditor's24-file text subset removes313net lines before final explicit browser assertions. Three historical payloads shrink17,416,533→1,235,803bytes without changing restored bytes. The obsolete wallet migration/parser removes roughly380lines. Do not count330,000 removed JSON display lines as code reduction.
+
+The initial visual implementation adds1,874net source lines, including1,375CSS lines; its benefit is consistent, more readable inner pages, not a net UI-source reduction. Later dead-style pruning removes obsolete selector branches and the separately approved Models retirement removes that page. Shared primitives prevent future duplication, but no unmeasured runtime/bundle speedup is claimed. Final repository totals also include other simultaneous owner-directed changes and are not attributed wholesale to this review.
+
+### Environment limits
+
+The canonical Solana build was attempted. The cached Anchor binary is Linux x86-64 while this host is macOS arm64, so it exits126; no current program artifact could be built here. No stale program binary was substituted and no fresh Solana-native pass is claimed. Solana source/ordinary browser controls and native tests remain; no contract source was changed by this cleanup. Likewise, unchanged Linux disposable-sandbox and real-provider qualification are separate from these local UI/refactor results.
+
+No production activation, live transaction, deployment, DNS change or final-main completion is inferred from source merging. Final release coordination and exact delivered revision are recorded below when confirmed.
