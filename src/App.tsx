@@ -1024,6 +1024,17 @@ function ProjectParticipation({
       <section className="section" id="start">
         <h2>Project paused</h2>
         <p>Do not install this project's skill or start work.</p>
+        <p>
+          A paused project is not collected or scored. Its steward,{" "}
+          <ExternalLinkAnchor href={project.steward.github.profileUrl}>
+            {project.steward.displayName}
+          </ExternalLinkAnchor>
+          , can review its status and next steps on the project setup page.
+          Check back here for a change.{" "}
+          <Link href={`/projects/${project.slug}/manage`}>
+            Project owner: review setup
+          </Link>
+        </p>
       </section>
     );
   }
