@@ -1029,8 +1029,8 @@ function ProjectParticipation({
           <ExternalLinkAnchor href={project.steward.github.profileUrl}>
             {project.steward.displayName}
           </ExternalLinkAnchor>
-          , can resume it from the project setup page, which shows the current
-          status and the next step. Check back here for a change.{" "}
+          , can review its status and next steps on the project setup page.
+          Check back here for a change.{" "}
           <Link href={`/projects/${project.slug}/manage`}>
             Project owner: review setup
           </Link>
