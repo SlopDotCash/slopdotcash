@@ -1,4 +1,4 @@
-import { ArrowRight, CircleAlert, RotateCcw } from "lucide-react";
+import { ArrowRight, CircleAlert, RotateCcw, Wallet } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Link } from "./Link";
 import { loginHref } from "./lib/browser-deployment";
@@ -426,6 +426,57 @@ export function SignInPanel({
   );
 }
 
+/**
+ * Official network marks by escrow chain, shown beside the visible network
+ * name. Base is "The Square" from Base's brand kit
+ * (github.com/base-org/brand-kit, logo/TheSquare/Digital/Base_square_blue.svg
+ * at commit eba9e730). A network without a reviewed mark shows its name only.
+ */
+const NETWORK_MARKS: Readonly<Record<string, ReactNode>> = {
+  base: (
+    <svg
+      className="network-mark"
+      data-network="base"
+      viewBox="0 0 1280 1280"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        fill="#0000ff"
+        d="M0,101.12c0-34.64,0-51.95,6.53-65.28,6.25-12.76,16.56-23.07,29.32-29.32C49.17,0,66.48,0,101.12,0h1077.76c34.63,0,51.96,0,65.28,6.53,12.75,6.25,23.06,16.56,29.32,29.32,6.52,13.32,6.52,30.64,6.52,65.28v1077.76c0,34.63,0,51.96-6.52,65.28-6.26,12.75-16.57,23.06-29.32,29.32-13.32,6.52-30.65,6.52-65.28,6.52H101.12c-34.64,0-51.95,0-65.28-6.52-12.76-6.26-23.07-16.57-29.32-29.32-6.53-13.32-6.53-30.65-6.53-65.28V101.12Z"
+      />
+    </svg>
+  ),
+};
+
+export function NetworkName({
+  chain,
+  children,
+}: {
+  chain: string;
+  children: ReactNode;
+}) {
+  return (
+    <span className="network-name">
+      {Object.hasOwn(NETWORK_MARKS, chain) ? NETWORK_MARKS[chain] : null}
+      {children}
+    </span>
+  );
+}
+
+/** The one empty state for a browser that offers no wallet for this network. */
+export function NoWalletFound({ solana }: { solana: boolean }) {
+  return (
+    <div className="wallet-missing">
+      <Wallet aria-hidden="true" size={22} />
+      <p>
+        <strong>{solana ? "No Solana wallet found" : "No wallet found"}</strong>
+        <span>Use a wallet extension or your wallet app's browser.</span>
+      </p>
+    </div>
+  );
+}
+
 /** Shared chooser presentation; each feature keeps its wallet and signing rules. */
 export function WalletConnection<T extends { id: string; name: string }>({
   address,
@@ -440,31 +491,31 @@ export function WalletConnection<T extends { id: string; name: string }>({
   wallets: readonly T[];
   disabled: boolean;
   legend: string;
-  empty: ReactNode;
+  /** Shown when no wallet is found; omit it where another control already shows it. */
+  empty?: ReactNode;
   className?: string;
   onConnect: (provider: T) => void;
 }) {
-  return address ? (
-    <p>
-      Connected: <code>{address}</code>
-    </p>
-  ) : (
+  if (address)
+    return (
+      <p>
+        Connected: <code>{address}</code>
+      </p>
+    );
+  if (!wallets.length) return empty ?? null;
+  return (
     <fieldset disabled={disabled} className={className}>
       <legend>{legend}</legend>
-      {wallets.length ? (
-        wallets.map((provider) => (
-          <button
-            key={provider.id}
-            type="button"
-            className="button secondary-button"
-            onClick={() => onConnect(provider)}
-          >
-            Connect {provider.name}
-          </button>
-        ))
-      ) : (
-        <p>{empty}</p>
-      )}
+      {wallets.map((provider) => (
+        <button
+          key={provider.id}
+          type="button"
+          className="button secondary-button"
+          onClick={() => onConnect(provider)}
+        >
+          Connect {provider.name}
+        </button>
+      ))}
     </fieldset>
   );
 }
