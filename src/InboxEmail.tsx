@@ -41,7 +41,6 @@ function preference(value: unknown): Preference {
 
 export function InboxEmail() {
   const [state, setState] = useState<State>({ status: "loading" });
-  const [message, setMessage] = useState("");
   const { busy, error, run } = useAction();
   const generation = useRef(0);
   const load = useCallback(() => {
@@ -77,11 +76,10 @@ export function InboxEmail() {
   useEffect(() => load(), [load]);
 
   function save() {
-    if (state.status !== "ready") return;
+    if (busy || state.status !== "ready") return;
     const previous = state.value;
     const enabled = !previous.enabled;
     if (enabled && previous.availability !== "verified") return;
-    setMessage("");
     void run(
       async () => {
         const response = await fetchWithDeadline(PATH, {
@@ -118,77 +116,89 @@ export function InboxEmail() {
             "The saved preference could not be verified. Please retry.",
           );
         setState({ status: "ready", value: { ...previous, enabled } });
-        setMessage(
-          enabled
-            ? "Optional activity email is on."
-            : "Optional activity email is off.",
-        );
       },
       (cause) => errorMessage(cause, "Your preference could not be saved."),
     );
   }
 
+  const ready = state.status === "ready" ? state.value : null;
+  const verified = ready?.availability === "verified";
+  const on = ready?.enabled === true;
+  const canRetry =
+    state.status === "error" || ready?.availability === "unavailable";
+  // Opting in needs a verified address; turning off is always allowed. The
+  // switch stays enabled while saving so keyboard focus is not lost.
+  const switchDisabled = ready === null || (!on && !verified);
+  // The verified address is shown before consent (NOT-01), not once email is on.
+  const detail = busy
+    ? "Saving…"
+    : state.status === "loading"
+      ? "Loading…"
+      : state.status === "error"
+        ? `Email preferences could not be loaded: ${state.message}`
+        : ready?.availability === "verified"
+          ? on
+            ? null
+            : `Sent to ${ready.email}`
+          : ready?.availability === "unverified"
+            ? "No verified email address is on file. Notices still appear in this inbox."
+            : "We could not check your email address, so activity email cannot be turned on yet.";
+
   return (
-    <section aria-labelledby="inbox-email-heading">
+    <section aria-labelledby="inbox-email-heading" className="email-card">
       <h2 id="inbox-email-heading">Email preferences</h2>
-      <p>Security notices are sent separately.</p>
-      {state.status === "loading" ? (
-        <p role="status">Loading email preferences…</p>
-      ) : null}
       {state.status === "signed-out" ? (
         <p>
           Your session expired.{" "}
           <a href={loginHref("/inbox")}>Sign in with GitHub</a>.
         </p>
-      ) : null}
-      {state.status === "error" ? (
-        <p role="alert">
-          Email preferences could not be loaded: {state.message}
-        </p>
-      ) : null}
-      {state.status === "ready" ? (
+      ) : (
         <>
-          <p>
-            Optional activity email is {state.value.enabled ? "on" : "off"}.
-          </p>
-          {state.value.availability === "verified" ? (
-            <p>Verified destination: {state.value.email}</p>
-          ) : (
-            <p>
-              {state.value.availability === "unverified"
-                ? "No verified email address is on file. Notices still appear in this inbox."
-                : "Activity email is temporarily unavailable."}
-            </p>
-          )}
-          {state.value.enabled || state.value.availability === "verified" ? (
+          <div className="email-row">
+            <div className="email-text">
+              <strong id="email-activity-label">Activity email</strong>
+              {detail ? (
+                <span
+                  className="email-detail"
+                  id="email-activity-detail"
+                  role={
+                    state.status === "error"
+                      ? "alert"
+                      : state.status === "loading"
+                        ? "status"
+                        : undefined
+                  }
+                >
+                  {detail}
+                </span>
+              ) : null}
+            </div>
             <button
-              className="button secondary-button"
-              type="button"
-              disabled={busy}
+              aria-busy={busy}
+              aria-checked={on}
+              aria-describedby={detail ? "email-activity-detail" : undefined}
+              aria-labelledby="email-activity-label"
+              className="email-switch"
+              disabled={switchDisabled}
               onClick={save}
-            >
-              {busy
-                ? "Saving email preference…"
-                : state.value.enabled
-                  ? "Turn off activity email"
-                  : "Turn on activity email"}
-            </button>
+              role="switch"
+              type="button"
+            />
+          </div>
+          {canRetry ? (
+            <div>
+              <button
+                className="button secondary-button button-small"
+                type="button"
+                disabled={busy}
+                onClick={load}
+              >
+                Retry email preferences
+              </button>
+            </div>
           ) : null}
         </>
-      ) : null}
-      {state.status === "error" ||
-      (state.status === "ready" &&
-        state.value.availability === "unavailable") ? (
-        <button
-          className="button secondary-button"
-          type="button"
-          disabled={busy}
-          onClick={load}
-        >
-          Retry email preferences
-        </button>
-      ) : null}
-      {message ? <p role="status">{message}</p> : null}
+      )}
       {error ? <p role="alert">{error}</p> : null}
     </section>
   );

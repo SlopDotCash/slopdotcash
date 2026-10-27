@@ -145,8 +145,6 @@ export function ProfilePage({
           </ExternalLinkAnchor>
         ) : currentWallet.status === "loading" ? (
           <span>Checking wallet…</span>
-        ) : membership.own ? (
-          <Link href="/account#wallets">Add a payout wallet</Link>
         ) : null}
       </ContributorIdentity>
       <ProfilePoints

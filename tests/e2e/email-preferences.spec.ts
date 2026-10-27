@@ -25,18 +25,16 @@ test("verified activity email preference persists and can be withdrawn @registry
   await page.goto("/inbox", { waitUntil: "networkidle" });
   const preferences = page.getByRole("region", { name: "Email preferences" });
   await expect(preferences).toContainText("applicant@example.com");
+  const toggle = preferences.getByRole("switch", { name: "Activity email" });
   // Restore opt-out before exercising the complete consent workflow.
-  const off = preferences.getByRole("button", {
-    name: "Turn off activity email",
-  });
-  if (await off.isVisible()) await off.click();
+  if ((await toggle.getAttribute("aria-checked")) === "true")
+    await toggle.click();
+  await expect(toggle).not.toBeChecked();
   await page.screenshot({
     path: test.info().outputPath("optional-email-before.png"),
     fullPage: true,
   });
-  await preferences
-    .getByRole("button", { name: "Turn on activity email" })
-    .focus();
+  await toggle.focus();
   const enabledResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -44,24 +42,19 @@ test("verified activity email preference persists and can be withdrawn @registry
   );
   await page.keyboard.press("Enter");
   expect((await enabledResponse).status()).toBe(200);
-  await expect(preferences.getByRole("status")).toContainText(
-    "Optional activity email is on.",
-  );
+  await expect(toggle).toBeChecked();
+  await expect(preferences).not.toContainText("applicant@example.com");
   await page.screenshot({
     path: test.info().outputPath("optional-email-enabled.png"),
     fullPage: true,
   });
   await expectAccessible(page);
   await page.reload({ waitUntil: "networkidle" });
-  await expect(
-    preferences.getByRole("button", { name: "Turn off activity email" }),
-  ).toBeVisible();
+  await expect(toggle).toBeChecked();
   await page.evaluate(() => {
     document.documentElement.style.zoom = "2";
   });
-  await expect(
-    preferences.getByRole("button", { name: "Turn off activity email" }),
-  ).toBeVisible();
+  await expect(toggle).toBeVisible();
   await page.screenshot({
     path: test.info().outputPath("optional-email-zoom.png"),
     fullPage: true,
@@ -71,21 +64,16 @@ test("verified activity email preference persists and can be withdrawn @registry
       response.request().method() === "POST" &&
       new URL(response.url()).pathname === "/api/v1/notifications/email",
   );
-  await preferences
-    .getByRole("button", { name: "Turn off activity email" })
-    .click();
+  await toggle.click();
   expect((await disabledResponse).status()).toBe(200);
-  await expect(preferences.getByRole("status")).toContainText(
-    "Optional activity email is off.",
-  );
+  await expect(toggle).not.toBeChecked();
+  await expect(preferences).toContainText("applicant@example.com");
   await page.screenshot({
     path: test.info().outputPath("optional-email-disabled.png"),
     fullPage: true,
   });
   await expectAccessible(page);
   await page.reload({ waitUntil: "networkidle" });
-  await expect(
-    preferences.getByRole("button", { name: "Turn on activity email" }),
-  ).toBeVisible();
+  await expect(toggle).not.toBeChecked();
   await context.close();
 });
