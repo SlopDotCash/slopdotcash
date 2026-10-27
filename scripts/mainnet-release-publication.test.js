@@ -196,6 +196,58 @@ test("pinned Base release requires the exact signer inventory and retains canoni
   });
 });
 
+test("unreadable secret-list JSON is retried before a pinned attester can be prepared", async () => {
+  const project = await pinnedProject();
+  await fixture(async ({ directory }) => {
+    let reads = 0;
+    const plan = await prepareMainnetRelease({
+      directory,
+      account,
+      sha,
+      registry: [project],
+      provider: async (args) => {
+        expect(args.slice(0, 2)).toEqual(["secret", "list"]);
+        reads++;
+        if (reads <= 2)
+          return { status: 0, stdout: reads === 1 ? "" : "[", stderr: "" };
+        return ok([
+          { name: "SIGNER_PRIVATE_KEY" },
+          { name: "PAYMENT_RPC_URLS" },
+        ]);
+      },
+    });
+    expect(reads).toBe(3);
+    expect(plan.services[0].published).toBe(false);
+    expect(plan.services[0].release).toBe(true);
+  });
+});
+
+test("persistent unreadable secret-list output fails without a publication plan", async () => {
+  const project = await pinnedProject();
+  await fixture(async ({ directory }) => {
+    let reads = 0;
+    await expect(
+      prepareMainnetRelease({
+        directory,
+        account,
+        sha,
+        registry: [project],
+        provider: async (args) => {
+          expect(args.slice(0, 2)).toEqual(["secret", "list"]);
+          reads++;
+          return { status: 0, stdout: "[", stderr: "" };
+        },
+      }),
+    ).rejects.toThrow(
+      "secret inventory did not return valid JSON after 3 reads",
+    );
+    expect(reads).toBe(3);
+    await expect(
+      readFile(join(directory, "plan.json"), "utf8"),
+    ).rejects.toThrow();
+  });
+});
+
 test("reviewed stop republishes an existing disabled-network attester without exposing its Pages entrypoints", async () => {
   const stoppedName = "slop-payments-ethereum-attester";
   const project = await pinnedProject("ethereum");
