@@ -153,7 +153,16 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
       return route.fulfill({ json: { automatic } });
     },
   );
-  await openMonthlyAwards(page);
+  await page.goto("/projects/eliza");
+  await page.evaluate(() => {
+    history.pushState({}, "", "/projects/eliza/awards?keep=1");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page).toHaveURL(
+    /\/projects\/eliza\/funding\?keep=1#monthly-awards$/u,
+  );
+  await expect(page.locator("#monthly-awards")).toBeInViewport();
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
   await expect(
     page.getByRole("heading", { name: "Monthly awards", exact: true }),
   ).toBeVisible();
