@@ -2273,6 +2273,7 @@ async function recordEnforcement(
   const plan = planEnforcement({
     action,
     actor,
+    actorRole,
     project,
     restriction,
     listedBefore,
