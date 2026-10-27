@@ -1,6 +1,5 @@
 /** Private scanner backup and retention. No HTTP access. */
 import type { ProjectD1Database } from "../../backend/projects/cloudflare-persistence";
-import { PERMANENT_ADMISSION_EVIDENCE_SQL } from "../../backend/vetting/evidence-retention";
 import type { R2Bucket } from "../../backend/trace/cloudflare-persistence";
 import {
   chunkKey,
@@ -8,6 +7,7 @@ import {
   EVIDENCE_CHUNK_BYTES,
   verifiedPart,
 } from "../../backend/vetting/evidence-chunks";
+import { PERMANENT_ADMISSION_EVIDENCE_SQL } from "../../backend/vetting/evidence-retention";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 
 type ListedObject = { key: string; size: number; uploaded: Date };
