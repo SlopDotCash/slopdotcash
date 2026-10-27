@@ -2759,7 +2759,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       page.getByRole("region", { name: "Case actions" }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("button", { name: "Mark as read", exact: false }),
+      report.getByRole("button", { name: "Mark as read", exact: false }),
     ).toBeVisible();
     await expectAccessible(page);
     await page.screenshot({
