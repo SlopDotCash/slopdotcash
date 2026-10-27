@@ -81,6 +81,12 @@ public payment totals or receipt route.
 | `GET /api/v1/security-submissions/authorize/callback` | GitHub redirect | PKCE exchange, `/user` identity binding, grant cookie |
 | `POST /api/v1/security-submissions/:id/{authorize,send,reconcile,verify}` | reporter only | Reauthorize, send privately, reconcile an uncertain send, verify a direct report |
 
+Submission lists include `recipientGithubId`, bound to the authenticated actor
+whose records were queried. Clients match this value to their active account
+before displaying or retaining the response. A later session read does not
+establish who received an earlier response. Case lists already carry `viewer`
+for the same check.
+
 A caller without a role gets the same 404 as for a missing case. Writes need
 this site's `Origin` and a JSON content type. Responses are `private,
 no-store` and `noindex`. Errors never log case data.
