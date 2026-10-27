@@ -273,7 +273,12 @@ authorize this template revision:
    to current `main`; or
 3. an open, non-draft, same-repository PR head into `main` with the
    maintainer-controlled `slop-release-candidate` label applied after the exact
-   current-head commit event.
+   current-head commit event; or
+4. the `main` ancestor that is the head of the newest successful push release
+   of `main` in GitHub Actions, while a later `main` commit changed the
+   template and no release has published it yet. Only that one release
+   qualifies, the next successful release ends it, and a revision listed in
+   `protocol/skill-revocations.json` is refused regardless.
 
 Reject candidates behind or divergent from `main`, missing or extra files,
 working-tree provenance, stale label events, mutable redirects, and byte

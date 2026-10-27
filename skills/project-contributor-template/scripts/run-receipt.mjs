@@ -1242,7 +1242,17 @@ function validateAuthorizationReceipt(revision) {
             develop: authorization.develop,
             pull: authorization.pull,
           }
-        : null;
+        : authorization.kind === "release" &&
+            Object.keys(authorization).sort().join("\0") ===
+              "develop\0kind\0run" &&
+            Number.isSafeInteger(authorization.run) &&
+            authorization.run > 0
+          ? {
+              kind: "release",
+              develop: authorization.develop,
+              run: authorization.run,
+            }
+          : null;
   const expectedReceipt = expectedAuthorization
     ? {
         schemaVersion: "1",

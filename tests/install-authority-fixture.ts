@@ -23,6 +23,11 @@ export interface AuthorityFixtureOptions {
   skillPath?: string;
   comparisons?: Record<string, unknown>;
   developHead: string;
+  /**
+   * The newest successful push release of `main`, as GitHub Actions records
+   * it; absent means no release has succeeded.
+   */
+  latestRelease?: { revision: string; run: number };
   revisions: Record<string, AuthorityRevision>;
   responseOverrides?: Record<string, unknown>;
   timelines?: Record<number, unknown[]>;
@@ -123,6 +128,21 @@ export function createInstallAuthorityFixture(
       object: { sha: options.developHead, type: "commit" },
       ref: "refs/heads/main",
     },
+    [`/repos/${REPOSITORY}/actions/workflows/deploy.yml/runs?branch=main&event=push&status=success&per_page=1`]:
+      {
+        workflow_runs: options.latestRelease
+          ? [
+              {
+                id: options.latestRelease.run,
+                head_sha: options.latestRelease.revision,
+                head_branch: "main",
+                event: "push",
+                conclusion: "success",
+                head_repository: { full_name: REPOSITORY },
+              },
+            ]
+          : [],
+      },
   };
   for (const [revision, configuration] of Object.entries(options.revisions)) {
     responses[

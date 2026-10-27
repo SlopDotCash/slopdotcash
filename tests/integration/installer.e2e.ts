@@ -856,6 +856,98 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
     }
   });
 
+  it("keeps the latest released ancestor authorized until a newer release carries the template change", () => {
+    const root = freshRoot("latest-release");
+    const installRoot = join(root, "install");
+    const files = baseFiles("released-template");
+    files["project.json"] = readFileSync(
+      join(
+        packageRoot,
+        "tests/fixtures/skills/contribute-to-eliza/project.json",
+      ),
+    );
+    for (const name of ["run-receipt.mjs", "skill-authority.mjs"])
+      files[`scripts/${name}`] = readFileSync(
+        join(packageRoot, "skills/project-contributor-template/scripts", name),
+      );
+    const changed = {
+      ...files,
+      "references/revision.txt": Buffer.from("unreleased template change\n"),
+    };
+    const artifact = writeArtifact(root, revisionA, files);
+    const authorityWithLatestRelease = (
+      revision: string,
+    ): AuthorityFixtureOptions => ({
+      developHead: revisionB,
+      latestRelease: { revision, run: 40453260922 },
+      comparisons: {
+        [`${revisionA}...${revisionB}`]: aheadComparison(revisionA, revisionB),
+      },
+      revisions: {
+        [revisionA]: { files },
+        [revisionB]: { files: changed },
+      },
+    });
+
+    // main already carries a template change that no release has published,
+    // so the archive production still serves is the latest released ancestor.
+    let authority = configureAuthority(
+      root,
+      authorityWithLatestRelease(revisionA),
+    );
+    const installed = run(command(artifact, authority), installRoot);
+    expect(installed.status, installed.stderr).toBe(0);
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(versionPath(installRoot, revisionA), ".slop-authorization.json"),
+          "utf8",
+        ),
+      ),
+    ).toEqual({
+      schemaVersion: "1",
+      repository: "SlopDotCash/slopdotcash",
+      revision: revisionA,
+      authorization: { kind: "release", develop: revisionB, run: 40453260922 },
+    });
+    const entry = pathToFileURL(
+      join(versionPath(installRoot, revisionA), "scripts", "run-receipt.mjs"),
+    ).href;
+    const authorize = (testSkillAuthority: typeof authority) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import { main } from ${JSON.stringify(entry)}; await main(["authorize", "--json"], { testSkillAuthority: ${JSON.stringify(testSkillAuthority)} });`,
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, XDG_CONFIG_HOME: join(root, "state") },
+          timeout: 20_000,
+        },
+      );
+    const fresh = authorize(authority);
+    expect(fresh.status, fresh.stderr).toBe(0);
+    expect(JSON.parse(fresh.stdout)).toMatchObject({
+      revision: revisionA,
+      authorization: { kind: "release", develop: revisionB },
+    });
+
+    // The release carrying the change succeeds: the stale ancestor is no
+    // longer what production serves, so it is refused until reinstalled.
+    authority = configureAuthority(root, authorityWithLatestRelease(revisionB));
+    const superseded = authorize(authority);
+    expect(superseded.status).not.toBe(0);
+    expect(superseded.stderr).toContain("bytes differ from current main");
+    const stale = run(command(artifact, authority), installRoot);
+    expect(stale.status).not.toBe(0);
+    expect(stale.stderr).toContain("bytes differ from current main");
+    expect(currentLink(installRoot)).toBe(
+      `.contribute-to-eliza-versions/${revisionA}`,
+    );
+  });
+
   it("revalidates an installed run and write gate without invalidating historical receipts", () => {
     const root = freshRoot("installed-freshness");
     // The frozen Eliza project file plus the current shared skill scripts.

@@ -33,6 +33,7 @@ export const ACCEPTED_SKILL_REVISIONS = Object.freeze([
   "current main head",
   "main ancestor whose complete canonical skill tree is byte-identical to current main",
   "open non-draft same-repository PR head into main, zero behind current main, with a release-candidate label event after the exact current-head event",
+  "main ancestor that is the head of the newest successful push release of main, while a later main commit changed the template and no release has published it",
 ]);
 
 const encoder = new TextEncoder();

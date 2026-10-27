@@ -333,6 +333,37 @@ def develop_head():
     return require_sha(target.get("sha"), "GitHub main head")
 
 
+def latest_main_release():
+    # GitHub Actions is the owner's own record of what the release workflow
+    # published; the newest successful push release of main is the archive
+    # production serves. Older or failed runs never count.
+    response = api_json(
+        f"/repos/{github_repository}/actions/workflows/deploy.yml/runs",
+        (("branch", "main"), ("event", "push"), ("status", "success"), ("per_page", "1")),
+    )
+    if not isinstance(response, dict) or not isinstance(response.get("workflow_runs"), list):
+        raise ValueError("GitHub workflow runs response is invalid")
+    runs = response["workflow_runs"]
+    if not runs:
+        return None
+    run = runs[0]
+    if not isinstance(run, dict):
+        raise ValueError("GitHub workflow run record is invalid")
+    head_repository = run.get("head_repository")
+    if (
+        run.get("head_branch") != "main"
+        or run.get("event") != "push"
+        or run.get("conclusion") != "success"
+        or not isinstance(head_repository, dict)
+        or head_repository.get("full_name") != github_repository
+    ):
+        return None
+    run_id = run.get("id")
+    if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
+        raise ValueError("GitHub workflow run record has an invalid id")
+    return require_sha(run.get("head_sha"), "latest main release head"), run_id
+
+
 def authorize_revision(revision, canonical_files):
     current_develop = develop_head()
     revocations = api_json(f"/repos/{github_repository}/contents/protocol/skill-revocations.json", (("ref", current_develop),))
@@ -372,6 +403,14 @@ def authorize_revision(revision, canonical_files):
         current_files = remote_skill_bytes(current_develop)
         if current_files == canonical_files:
             return {"kind": "develop", "develop": current_develop}
+        # A template change on main is unpublished until its release succeeds,
+        # and the installer can only download what production serves. The one
+        # ancestor that is the newest successful main release stays authorized
+        # until the next release lands; an explicit revocation above still
+        # refuses it, and no older release qualifies.
+        latest_release = latest_main_release()
+        if latest_release is not None and latest_release[0] == revision:
+            return {"kind": "release", "develop": current_develop, "run": latest_release[1]}
         raise ValueError(f"installed skill bytes differ from current main {current_develop}; install the current skill")
     raise ValueError(
         "archive revision is neither the current canonical main skill nor an open labeled same-repository release candidate"
