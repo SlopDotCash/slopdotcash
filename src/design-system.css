@@ -1661,3 +1661,7 @@ summary.model-outcome-summary {
 .account-wallets > .earnings-page {
   padding-block: 1rem 0;
 }
+
+.funding-page > .owner-awards {
+  padding-block: 32px;
+}

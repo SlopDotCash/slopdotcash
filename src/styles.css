@@ -169,8 +169,8 @@ textarea:focus-visible {
 }
 
 .mechanism-flow li {
-  min-height: 210px;
-  padding: 28px;
+  min-height: 0;
+  padding: 20px;
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
@@ -185,7 +185,7 @@ textarea:focus-visible {
 }
 
 .mechanism-flow p {
-  margin: 28px 0 0;
+  margin: 10px 0 0;
   color: var(--muted);
   line-height: 1.6;
 }
@@ -1988,11 +1988,11 @@ small {
 }
 
 .model-outcomes-summary {
-  margin-bottom: 40px;
+  margin-bottom: 24px;
 }
 
 .model-outcomes-section {
-  margin-bottom: 56px;
+  margin-bottom: 32px;
 }
 
 .model-outcomes-section h2 {

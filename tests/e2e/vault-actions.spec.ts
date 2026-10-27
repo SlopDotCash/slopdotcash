@@ -1572,10 +1572,10 @@ test("owner creates, registers and funds a vault through the real API", async ({
       page.getByRole("region", { name: "Setup status: Ready" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", {
-        name: "Vault funding",
-      }),
-    ).toHaveCount(2);
+      page
+        .getByRole("navigation", { name: "Project navigation" })
+        .getByRole("link", { name: "Funds & awards" }),
+    ).toHaveAttribute("href", `/projects/${project.slug}/funding`);
     await expect(
       page.getByText(/Deposit needed|Payments off|Payouts are disabled/),
     ).toHaveCount(0);
