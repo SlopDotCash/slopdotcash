@@ -373,6 +373,11 @@ test("shows agent setup and keeps contribution records available", async ({
   request,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  // This flow exercises the local project and cycle data, not GitHub's image CDN.
+  // Serve a real local image while retaining all console and request failure checks.
+  await page.route("https://avatars.githubusercontent.com/**", (route) =>
+    route.fulfill({ path: "public/slop-mark.svg" }),
+  );
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   const homeLink = page.getByRole("link", { name: "Slop home", exact: true });
   await expect(homeLink).toBeVisible();
