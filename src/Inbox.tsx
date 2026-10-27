@@ -314,115 +314,121 @@ export default function InboxPage() {
           <SecurityInbox embedded />
         </Suspense>
       ) : null}
-      <div hidden={view !== "notifications"}>
-        {state.status === "loading" ? (
-          <p role="status">Loading your inbox…</p>
-        ) : null}
-        {state.status === "signed-out" ? (
-          <SignInPanel
-            state={{ status: "signed-out" }}
-            next={`/inbox${window.location.search}`}
-          />
-        ) : null}
-        {state.status === "error" ? (
-          <div role="alert">
-            <p>{state.message}</p>
-            <button
-              className="button secondary-button"
-              type="button"
-              onClick={load}
-            >
-              Retry
-            </button>
-          </div>
-        ) : null}
-        {grantError ? (
-          <p role="alert" className="form-error">
-            {GRANT_ERRORS[grantError] ?? GRANT_ERRORS.grant_exchange_failed}{" "}
-            <a
-              href={`/security?${new URLSearchParams({ ...(focusId ? { submission: focusId } : {}), intake: grantError })}`}
-            >
-              Open private report
-            </a>
-          </p>
-        ) : null}
-        {reportsError && recipient !== null ? (
-          <div className="form-error" role="alert">
-            {reportsError}{" "}
-            <button className="text-button" type="button" onClick={loadReports}>
-              Retry report status
-            </button>
-          </div>
-        ) : null}
-        {state.status === "error" &&
-        focusId &&
-        visibleReports.find((report) => report.id === focusId) ? (
-          <ol className="inbox-list" aria-label="Private report receipt">
-            <PrivateReportItem
-              submission={
-                visibleReports.find(
-                  (report) => report.id === focusId,
-                ) as Submission
+      {view === "notifications" ? (
+        <>
+          {state.status === "loading" ? (
+            <p role="status">Loading your inbox…</p>
+          ) : null}
+          {state.status === "signed-out" ? (
+            <SignInPanel
+              state={{ status: "signed-out" }}
+              next={`/inbox${window.location.search}`}
+            />
+          ) : null}
+          {state.status === "error" ? (
+            <div role="alert">
+              <p>{state.message}</p>
+              <button
+                className="button secondary-button"
+                type="button"
+                onClick={load}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
+          {grantError ? (
+            <p role="alert" className="form-error">
+              {GRANT_ERRORS[grantError] ?? GRANT_ERRORS.grant_exchange_failed}{" "}
+              <a
+                href={`/security?${new URLSearchParams({ ...(focusId ? { submission: focusId } : {}), intake: grantError })}`}
+              >
+                Open private report
+              </a>
+            </p>
+          ) : null}
+          {reportsError && recipient !== null ? (
+            <div className="form-error" role="alert">
+              {reportsError}{" "}
+              <button
+                className="text-button"
+                type="button"
+                onClick={loadReports}
+              >
+                Retry report status
+              </button>
+            </div>
+          ) : null}
+          {state.status === "error" &&
+          focusId &&
+          visibleReports.find((report) => report.id === focusId) ? (
+            <ol className="inbox-list" aria-label="Private report receipt">
+              <PrivateReportItem
+                submission={
+                  visibleReports.find(
+                    (report) => report.id === focusId,
+                  ) as Submission
+                }
+              />
+            </ol>
+          ) : null}
+          {state.status === "ready" ? (
+            <InboxList
+              busy={busy}
+              response={state.value}
+              reports={visibleReports}
+              focusId={focusId}
+              onMark={(keys, done) => void act(() => markRead(keys), done)}
+              onAcknowledge={(notification) =>
+                void act(
+                  () => acknowledgeSecurity(notification),
+                  "Security notice acknowledged.",
+                )
               }
             />
-          </ol>
-        ) : null}
-        {state.status === "ready" ? (
-          <InboxList
-            busy={busy}
-            response={state.value}
-            reports={visibleReports}
-            focusId={focusId}
-            onMark={(keys, done) => void act(() => markRead(keys), done)}
-            onAcknowledge={(notification) =>
-              void act(
-                () => acknowledgeSecurity(notification),
-                "Security notice acknowledged.",
-              )
-            }
-          />
-        ) : null}
-        {state.status === "ready" &&
-        (previousPages.length > 0 || state.value.nextCursor) ? (
-          <nav aria-label="Notification pages" className="handoff-actions">
-            <button
-              type="button"
-              className="button secondary-button"
-              disabled={busy || previousPages.length === 0}
-              onClick={() => {
-                setCursor(previousPages.at(-1) ?? null);
-                setPreviousPages((pages) => pages.slice(0, -1));
-                setMessage("");
-              }}
-            >
-              Newer notifications
-            </button>
-            <button
-              type="button"
-              className="button secondary-button"
-              disabled={busy || !state.value.nextCursor}
-              onClick={() => {
-                setPreviousPages((pages) => [...pages, cursor]);
-                setCursor(state.value.nextCursor ?? null);
-                setMessage("");
-              }}
-            >
-              Older notifications
-            </button>
-          </nav>
-        ) : null}
-        {message ? <p role="status">{message}</p> : null}
-        {actionError ? (
-          <p className="form-error" role="alert">
-            {actionError}
-          </p>
-        ) : null}
-        {state.status === "ready" ? (
-          <p>
-            <a href="/account#notifications">Email preferences</a>
-          </p>
-        ) : null}
-      </div>
+          ) : null}
+          {state.status === "ready" &&
+          (previousPages.length > 0 || state.value.nextCursor) ? (
+            <nav aria-label="Notification pages" className="handoff-actions">
+              <button
+                type="button"
+                className="button secondary-button"
+                disabled={busy || previousPages.length === 0}
+                onClick={() => {
+                  setCursor(previousPages.at(-1) ?? null);
+                  setPreviousPages((pages) => pages.slice(0, -1));
+                  setMessage("");
+                }}
+              >
+                Newer notifications
+              </button>
+              <button
+                type="button"
+                className="button secondary-button"
+                disabled={busy || !state.value.nextCursor}
+                onClick={() => {
+                  setPreviousPages((pages) => [...pages, cursor]);
+                  setCursor(state.value.nextCursor ?? null);
+                  setMessage("");
+                }}
+              >
+                Older notifications
+              </button>
+            </nav>
+          ) : null}
+          {message ? <p role="status">{message}</p> : null}
+          {actionError ? (
+            <p className="form-error" role="alert">
+              {actionError}
+            </p>
+          ) : null}
+          {state.status === "ready" ? (
+            <p>
+              <a href="/account#notifications">Email preferences</a>
+            </p>
+          ) : null}
+        </>
+      ) : null}
     </main>
   );
 }
