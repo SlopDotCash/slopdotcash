@@ -97,7 +97,7 @@ test("an admin sees Robinhood Chain fees as not converted beside finalized USDC 
   await expect(network("Solana")).toContainText("USDC conversion policy");
   await expect(network("Base")).toContainText("USDC conversion policy");
   await expect(network("Base")).toContainText(
-    `1 conversion: 2500000000000000000 base units of token ${token.slice(0, 6)}…${token.slice(-4)} to 12.5 USDC`,
+    `1 conversion: 2500000000000000000 base units of token ${token} to 12.5 USDC`,
   );
   await expectAccessible(page, {
     include: "section[aria-labelledby='admin-fee-conversions']",
