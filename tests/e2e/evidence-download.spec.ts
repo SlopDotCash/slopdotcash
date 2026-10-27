@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fixtureRepository } from "../github-api-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import { signedVettingHeaders } from "../vetting-fixtures";
 import { expect, expectAccessible, test } from "./fixtures";
 
@@ -198,30 +199,9 @@ test("large private evidence downloads with a single-use browser grant @registry
   // Keep mobile reflow at the existing 320 CSS-pixel minimum. Use the
   // repository's 200% text enlargement check there, and CSS zoom elsewhere.
   const mobile = (page.viewportSize()?.width ?? 0) < 640;
-  const originalTypography = mobile
-    ? await page.evaluate(() => {
-        const items = [...document.querySelectorAll<HTMLElement>("body *")]
-          .filter((element) => element instanceof HTMLElement)
-          .map((element, index) => ({
-            element,
-            index,
-            inlineFont: element.style.fontSize,
-            inlineLine: element.style.lineHeight,
-            font: getComputedStyle(element).fontSize,
-            line: getComputedStyle(element).lineHeight,
-          }));
-        for (const { element, font, line } of items) {
-          element.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-          if (line !== "normal")
-            element.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-        }
-        return items.map(({ index, inlineFont, inlineLine }) => ({
-          index,
-          inlineFont,
-          inlineLine,
-        }));
-      })
-    : [];
+  const restoreText = mobile
+    ? await enlargeText(page.locator("body"))
+    : undefined;
   if (!mobile)
     await page.evaluate(() => {
       document.documentElement.style.zoom = "2";
@@ -246,15 +226,7 @@ test("large private evidence downloads with a single-use browser grant @registry
     document.documentElement.style.zoom = "1";
     scrollTo(0, 0);
   });
-  await page.evaluate((original) => {
-    const elements = [
-      ...document.querySelectorAll<HTMLElement>("body *"),
-    ].filter((element) => element instanceof HTMLElement);
-    for (const { index, inlineFont, inlineLine } of original) {
-      elements[index].style.fontSize = inlineFont;
-      elements[index].style.lineHeight = inlineLine;
-    }
-  }, originalTypography);
+  await restoreText?.();
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
