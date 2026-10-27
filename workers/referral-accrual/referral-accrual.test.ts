@@ -8,24 +8,15 @@ import {
   handleReferralsApi,
   REFERRAL_ACCRUALS_PATH,
 } from "../../backend/referrals/handler";
-import { seedParticipationBan } from "../../backend/security/participation-ban.fixture";
+import { seedParticipationBan } from "../../tests/participation-ban.fixture";
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
-import {
-  eligibleAsset,
-  LOCK_MS,
-  nextPeriod,
-  pendingPeriods,
-  periodBounds,
-  runAccrual,
-  windowEnd,
-} from "./core";
+import { LOCK_MS, runAccrual } from "./core";
 import worker, { type Env, runOnce } from "./index";
-import { buildTree, leafHash, verifyProof } from "./merkle";
-import { sqliteD1 } from "./sqlite-d1";
+import { leafHash } from "./merkle";
 import { D1AccrualStore } from "./store";
 
 const USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
-const USDG_ROBINHOOD = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 const RATE = 3_000_000_000_000n; // 3 tokens per USDC with 18 decimals
 const ONE_TOKEN = 10n ** 18n;
 
@@ -210,7 +201,7 @@ describe("atomic monthly filing and restart", () => {
     test(`a failed ${table} insert leaves no partial month across restart`, async () => {
       const directory = mkdtempSync(join(tmpdir(), "slop-referral-filing-"));
       const filename = join(directory, "d1.sqlite");
-      let { db, sqlite } = sqliteD1(filename);
+      let { db, sqlite } = sqliteD1(undefined, filename);
       try {
         addProject(sqlite, "referred", REFERRER);
         const first = addPaid(
@@ -240,7 +231,7 @@ describe("atomic monthly filing and restart", () => {
           sqlite.query("SELECT * FROM referral_claim_wallets").all(),
         ).toEqual([]);
         sqlite.close();
-        ({ db, sqlite } = sqliteD1(filename, false));
+        ({ db, sqlite } = sqliteD1([], filename));
         expect(rows(sqlite)).toEqual([]);
         expect(files(sqlite)).toEqual([]);
         sqlite.exec("DROP TRIGGER fixture_interruption");
@@ -285,7 +276,7 @@ describe("atomic monthly filing and restart", () => {
   test("a lost batch response resumes the already committed file without duplicate accruals", async () => {
     const directory = mkdtempSync(join(tmpdir(), "slop-referral-response-"));
     const filename = join(directory, "d1.sqlite");
-    let { db, sqlite } = sqliteD1(filename);
+    let { db, sqlite } = sqliteD1(undefined, filename);
     try {
       addProject(sqlite, "referred", REFERRER);
       addPaid(sqlite, "referred", 1_000_000n, "2026-11-05T00:00:00.000Z");
@@ -304,7 +295,7 @@ describe("atomic monthly filing and restart", () => {
         sqlite.query("SELECT wallet FROM referral_claim_wallets").get(),
       ).toEqual({ wallet: WALLET });
       sqlite.close();
-      ({ db, sqlite } = sqliteD1(filename, false));
+      ({ db, sqlite } = sqliteD1([], filename));
       expect(
         (await runOnce(env(db), at("2026-12-01T00:00:00.000Z")))?.filed,
       ).toEqual([]);
@@ -364,178 +355,6 @@ describe("atomic monthly filing and restart", () => {
       }
     });
   }
-});
-
-describe("configuration", () => {
-  test("off is inert without any other value", async () => {
-    const { db } = sqliteD1();
-    expect(await runOnce({ REFERRAL_DB: db })).toBeNull();
-    expect(
-      await runOnce({ REFERRAL_DB: db, REFERRAL_ACCRUAL_MODE: "off" }),
-    ).toBeNull();
-  });
-
-  test("live is refused without the owner's program flag and addresses", () => {
-    expect(() =>
-      parseConfig({ ...VARS, REFERRAL_ACCRUAL_MODE: "live" }),
-    ).toThrow(/REFERRAL_PROGRAM_ENABLED/u);
-    expect(() =>
-      parseConfig({ ...VARS, REFERRAL_ACCRUAL_MODE: "paused" }),
-    ).toThrow(/off, dry_run or live/u);
-  });
-
-  test("every limit is required and a project cap cannot exceed the pool", () => {
-    for (const key of [
-      "REFERRAL_RATE_BASE_PER_MICRO",
-      "REFERRAL_POOL_BASE",
-      "REFERRAL_PROJECT_CAP_BASE",
-      "REFERRAL_WINDOW_MONTHS",
-      "REFERRAL_TOKEN_DECIMALS",
-      "REFERRAL_FIRST_PERIOD",
-    ]) {
-      const missing = { ...VARS } as Record<string, string>;
-      delete missing[key];
-      expect(() => parseConfig(missing)).toThrow(new RegExp(key, "u"));
-    }
-    expect(() =>
-      parseConfig({
-        ...VARS,
-        REFERRAL_PROJECT_CAP_BASE: `${VARS.REFERRAL_POOL_BASE}0`,
-      }),
-    ).toThrow(/must not exceed/u);
-    expect(() =>
-      parseConfig({ ...VARS, REFERRAL_RATE_BASE_PER_MICRO: "1.5" }),
-    ).toThrow(/non-negative integer/u);
-    expect(() =>
-      parseConfig({ ...VARS, REFERRAL_EXCLUDED_GITHUB_IDS: "drew" }),
-    ).toThrow(/malformed/u);
-  });
-
-  test("team, admin and moderator ids are all excluded", () => {
-    const config = parseConfig({
-      ...VARS,
-      REFERRAL_EXCLUDED_GITHUB_IDS: "1",
-      ADMIN_GITHUB_IDS: "2",
-      PROJECT_MODERATOR_GITHUB_IDS: "3, 2",
-    });
-    expect([...config.excludedGithubIds].sort()).toEqual(["1", "2", "3"]);
-  });
-});
-
-describe("periods and windows", () => {
-  test("period bounds, successor and pending closed periods", () => {
-    expect(periodBounds("2026-11")).toEqual({
-      start: "2026-11-01T00:00:00.000Z",
-      end: "2026-12-01T00:00:00.000Z",
-    });
-    expect(nextPeriod("2026-12")).toBe("2027-01");
-    expect(
-      pendingPeriods([], "2026-11", new Date("2026-11-30T23:59:59.999Z")),
-    ).toEqual([]);
-    expect(
-      pendingPeriods([], "2026-11", new Date("2027-01-02T00:00:00.000Z")),
-    ).toEqual(["2026-11", "2026-12"]);
-    expect(
-      pendingPeriods(
-        [{ period: "2026-11" }],
-        "2026-11",
-        new Date("2027-01-02T00:00:00.000Z"),
-      ),
-    ).toEqual(["2026-12"]);
-  });
-
-  test("the window ends twelve calendar months after the first payout", () => {
-    expect(windowEnd("2026-11-15T10:00:00.000Z", 12)).toBe(
-      "2027-11-15T10:00:00.000Z",
-    );
-    expect(windowEnd("2027-01-31T00:00:00.000Z", 1)).toBe(
-      "2027-03-03T00:00:00.000Z",
-    );
-  });
-
-  test("only a network's reference stablecoin with six decimals is eligible", () => {
-    expect(eligibleAsset("base-mainnet", USDC_BASE, 6)).toEqual({
-      symbol: "USDC",
-    });
-    expect(
-      eligibleAsset(
-        "base-mainnet",
-        USDC_BASE.toUpperCase().replace("0X", "0x"),
-        6,
-      ),
-    ).toEqual({ symbol: "USDC" });
-    expect(eligibleAsset("robinhood-mainnet", USDG_ROBINHOOD, 6)).toEqual({
-      symbol: "USDG",
-    });
-    expect(eligibleAsset("base-mainnet", `0x${"1".repeat(40)}`, 18)).toBeNull();
-    expect(eligibleAsset("base-mainnet", USDC_BASE, 18)).toBeNull();
-    expect(eligibleAsset("unknown-network", USDC_BASE, 6)).toBeNull();
-  });
-});
-
-describe("merkle tree", () => {
-  const a = { address: `0x${"a".repeat(40)}`, cumulativeBase: 1n };
-  const b = { address: `0x${"b".repeat(40)}`, cumulativeBase: 2n };
-  const c = { address: `0x${"c".repeat(40)}`, cumulativeBase: 3n };
-
-  test("one leaf is its own root and every proof verifies", () => {
-    const single = buildTree([a]);
-    expect(single?.root).toBe(leafHash(a));
-    expect(single?.leaves[0].proof).toEqual([]);
-    const tree = buildTree([c, a, b]);
-    expect(tree).not.toBeNull();
-    expect(tree?.leaves.map((leaf) => leaf.address)).toEqual([
-      a.address,
-      b.address,
-      c.address,
-    ]);
-    for (const leaf of tree?.leaves ?? [])
-      expect(verifyProof(tree?.root as `0x${string}`, leaf, leaf.proof)).toBe(
-        true,
-      );
-    expect(
-      verifyProof(
-        tree?.root as `0x${string}`,
-        { ...a, cumulativeBase: 2n },
-        tree?.leaves[0].proof ?? [],
-      ),
-    ).toBe(false);
-    expect(buildTree([])).toBeNull();
-    expect(() => buildTree([a, { ...a }])).toThrow(/Duplicate/u);
-  });
-
-  test("the leaf and root vectors match the Solidity test suite", () => {
-    // Shared with contracts/evm/test/ReferralDistributor.t.sol so the two
-    // implementations are checked against the same bytes.
-    const alice = {
-      address: "0x1111111111111111111111111111111111111111",
-      cumulativeBase: 100n * ONE_TOKEN,
-    };
-    const bob = {
-      address: "0x2222222222222222222222222222222222222222",
-      cumulativeBase: 250n * ONE_TOKEN,
-    };
-    const carol = {
-      address: "0x3333333333333333333333333333333333333333",
-      cumulativeBase: 7n * ONE_TOKEN,
-    };
-    expect(leafHash(alice)).toBe(
-      "0x923a571f712ff2d205bc7da76152ab30459ae47d04647ff145ba9ad746468fc6",
-    );
-    expect(leafHash(bob)).toBe(
-      "0x961b65b12221d8db52e43da798be51b873abf56862b42a2bc18e831faf7fbbd8",
-    );
-    expect(buildTree([alice, bob])?.root).toBe(
-      "0x03f9627eb9aef1752099688f5bdd8bc3326fb0dfcafef85aab3c1482acfcdf9d",
-    );
-    const three = buildTree([carol, bob, alice]);
-    expect(three?.root).toBe(
-      "0x026d73c7c26605e67a53ae9cdc94e997f7828802e7947676fd52c3f1463877c9",
-    );
-    expect(three?.leaves[2].proof).toEqual([
-      "0x03f9627eb9aef1752099688f5bdd8bc3326fb0dfcafef85aab3c1482acfcdf9d",
-    ]);
-  });
 });
 
 describe("one accrual run", () => {

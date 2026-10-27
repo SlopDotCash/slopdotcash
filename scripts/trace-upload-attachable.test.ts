@@ -7,7 +7,6 @@
  */
 import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
-import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { signApiToken } from "../backend/trace/auth";
 import {
   CloudflareTracePersistence,
@@ -18,6 +17,7 @@ import {
   type TraceApiDependencies,
 } from "../backend/trace/handler";
 import { sha256Hex } from "../backend/trace/validation";
+import { seedParticipationBan } from "../tests/participation-ban.fixture";
 import { sqliteD1 } from "../tests/sqlite-d1";
 
 const SECRET = "trace-upload-test-secret-0123456789abcdef-0123456789";

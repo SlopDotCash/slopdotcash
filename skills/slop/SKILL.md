@@ -116,7 +116,8 @@ In a fresh temporary directory, first fetch the two renderer paths from
 `raw.githubusercontent.com/SlopDotCash/slopdotcash/<revision>/`, preserving their
 relative paths. Inspect the immutable `src/lib/install-command.ts` before
 execution. If it imports `SKILL_AUTHORITY_PYTHON` from
-`../../scripts/skill-kit/skill-authority.mjs` (or, at older revisions,
+`../../skills/project-contributor-template/scripts/skill-authority.mjs`
+(or, at older revisions, `../../scripts/skill-kit/skill-authority.mjs` or
 `../../skills/contribute-to-eliza/scripts/skill-authority.mjs`), require the
 three-path contract above with that exact path and fetch it from the same
 revision. Otherwise require the two-path contract. Reject any other renderer

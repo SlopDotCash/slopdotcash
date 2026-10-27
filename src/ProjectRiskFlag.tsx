@@ -7,6 +7,7 @@
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { FlagCategory } from "../backend/vetting/flags";
+import { loginHref } from "./lib/browser-deployment";
 import { errorMessage } from "./lib/errors";
 import {
   currentProjectSession,
@@ -15,7 +16,6 @@ import {
 } from "./lib/project-api";
 import type { RestrictionState } from "./lib/project-contracts";
 import { useAction } from "./lib/use-action";
-import { loginHref } from "./Points";
 import { formatDateTime } from "./Presentation";
 
 /** A label for every category the flag API accepts, in picker order. */

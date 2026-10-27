@@ -46,15 +46,3 @@ export async function currentProjectPolicies(root) {
       };
     });
 }
-
-/** The newest D1 revision of one project; unknown projects fail closed. */
-export async function currentProjectPolicy(root, projectId) {
-  const policy = (await currentProjectPolicies(root)).find(
-    (entry) => entry.project.id === projectId,
-  );
-  if (!policy)
-    throw new Error(
-      `Project ${projectId} has no revision in the synced D1 registry; run bun run projects:sync`,
-    );
-  return policy;
-}

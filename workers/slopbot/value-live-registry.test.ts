@@ -384,3 +384,62 @@ test("old and failing requests cannot starve new valuation requests", async () =
     sqlite.close();
   }
 });
+
+/** A retry-dispatch outage must not prevent an independent appeal deadline. */
+test("scheduler preserves appeal progress when retry dispatch is unavailable", async () => {
+  const { db, sqlite } = liveRegistration();
+  const appeal = {
+    kind: "appeal_due" as const,
+    appealKey: "appeal-independent-dispatch",
+    deliveryId: "appeal-independent-dispatch",
+    installationId: job.installationId,
+    repositoryId: job.repositoryId,
+    owner: job.owner,
+    repo: job.repo,
+    itemKind: "pull_request" as const,
+    number: job.number,
+  };
+  sqlite.run(
+    `INSERT INTO slopbot_appeals
+      (appeal_key,repository_id,item_node_id,appellant_github_id,job_json,opened_at,due_at)
+      VALUES (?,?,?,?,?,?,?)`,
+    [
+      appeal.appealKey,
+      appeal.repositoryId,
+      "PR_independent_dispatch",
+      "3",
+      JSON.stringify(appeal),
+      "2000-01-01T00:00:00.000Z",
+      "2000-01-08T00:00:00.000Z",
+    ],
+  );
+  // Exercise a real database failure in one dispatcher, not a model result.
+  sqlite.run("DROP TABLE slopbot_budget_dispatches");
+  const queued: unknown[] = [];
+  const env = {
+    SLOPBOT_DB: db,
+    SLOPBOT_WEBHOOK_SECRET: "unused",
+    SLOPBOT_APP_ID: "unused",
+    SLOPBOT_APP_PRIVATE_KEY: "unused",
+    SLOPBOT_APP_USER_ID: "unused",
+    SLOPBOT_QUEUE: {
+      async send(value: unknown) {
+        queued.push(value);
+      },
+    },
+  };
+  try {
+    await expect(worker.scheduled({}, env)).rejects.toThrow("needs attention");
+    expect(queued).toEqual([appeal]);
+    expect(
+      sqlite
+        .query("SELECT queued_at IS NOT NULL AS queued FROM slopbot_appeals")
+        .get(),
+    ).toEqual({ queued: 1 });
+    // The durable checkpoint still prevents immediate duplicate dispatch.
+    await expect(worker.scheduled({}, env)).rejects.toThrow("needs attention");
+    expect(queued).toEqual([appeal]);
+  } finally {
+    sqlite.close();
+  }
+});

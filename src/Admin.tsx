@@ -15,7 +15,6 @@ import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
 import { errorMessage } from "./lib/errors";
 import {
   type AdminProject,
-  type ProjectSessionState,
   projectApiRequest,
   useProjectSession,
 } from "./lib/project-api";
@@ -31,39 +30,7 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
-import { loginHref } from "./Points";
-import { formatDateTime } from "./Presentation";
-
-export function SignInPanel({
-  state,
-  next,
-  purpose,
-}: {
-  state: Exclude<ProjectSessionState, { status: "signed-in" }>;
-  next: string;
-  purpose?: string;
-}) {
-  if (state.status === "checking") {
-    return (
-      <p aria-live="polite" className="admin-status">
-        Checking sign-in…
-      </p>
-    );
-  }
-  return (
-    <div className="sign-in-panel">
-      {purpose ? <p>{purpose}</p> : null}
-      {state.status === "error" ? (
-        <p className="form-error" role="alert">
-          <CircleAlert aria-hidden="true" /> {state.message}
-        </p>
-      ) : null}
-      <a className="button primary-button" href={loginHref(next)}>
-        Sign in with GitHub
-      </a>
-    </div>
-  );
-}
+import { formatDateTime, SignInPanel } from "./Presentation";
 
 function LoadNotice({
   state,
