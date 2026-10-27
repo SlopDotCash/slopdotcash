@@ -61,10 +61,6 @@ export async function prepareE2eFixture() {
   try {
     copyWorkingTree(repositoryRoot, workspace);
     overlayFixtures(workspace);
-    symlinkSync(
-      join(repositoryRoot, "node_modules"),
-      join(workspace, "node_modules"),
-    );
     run("git", ["init", "-q"], workspace);
     run("git", ["add", "-A"], workspace);
     run(
@@ -85,6 +81,10 @@ export async function prepareE2eFixture() {
     );
     // Runtime dependencies are not fixture source, including symlinks that a
     // directory-only .gitignore rule would otherwise let git add capture.
+    symlinkSync(
+      join(repositoryRoot, "node_modules"),
+      join(workspace, "node_modules"),
+    );
     if (process.env.SLOP_E2E_SOLANA_VAULT === "1") {
       for (const directory of ["node_modules", "target"]) {
         symlinkSync(
