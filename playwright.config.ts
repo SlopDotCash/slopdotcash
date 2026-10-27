@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { availableParallelism } from "node:os";
 
 /**
  * Drives desktop and mobile browser verification against the built site.
@@ -127,14 +128,15 @@ export default defineConfig({
   // Wrangler's Pages proxy can terminate while serving concurrent browser
   // workers, so the Pages phase keeps one worker. Explicit local-chain runs
   // also share a chain port between viewport projects. Other preview checks
-  // run in parallel. SLOP_E2E_WORKERS overrides either default.
+  // run in parallel, capped because each loads the complete public ledger.
+  // SLOP_E2E_WORKERS overrides either default.
   workers:
     requestedWorkers === undefined
       ? localServer === "pages" ||
         process.env.SLOP_E2E_VAULT_ACTIONS === "1" ||
         process.env.SLOP_E2E_SOLANA_VAULT === "1"
         ? 1
-        : "50%"
+        : Math.max(1, Math.min(2, Math.floor(availableParallelism() / 2)))
       : requestedWorkers.endsWith("%")
         ? requestedWorkers
         : Number(requestedWorkers),
