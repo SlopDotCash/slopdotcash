@@ -28,6 +28,7 @@ const REFERRAL_EVENTS = parseAbi([
 ]);
 const COVERAGE_ABI = parseAbi([
   "function nextEpoch() view returns (uint256)",
+  "function CLAIM_DELAY() view returns (uint64)",
   "function totalClaimed() view returns (uint256)",
   "function epochAt(uint256) view returns ((bytes32 root,uint256 total,uint64 postedAt,bool voided))",
 ]);
@@ -293,43 +294,55 @@ export async function refreshReferralClaims(
     // projection or a head that has not caught up with a recent transaction.
     // Keep the old cursor on disagreement so the next run scans the gap again.
     const last = snapshot.epochs.at(-1);
-    const [epochCount, totalClaimed, paused, currentRoot, lastEpoch, balance] =
-      await Promise.all([
-        client.readContract({
-          address: program.distributor,
-          abi: COVERAGE_ABI,
-          functionName: "nextEpoch",
-        }),
-        client.readContract({
-          address: program.distributor,
-          abi: COVERAGE_ABI,
-          functionName: "totalClaimed",
-        }),
-        client.readContract({
-          address: program.distributor,
-          abi: REFERRAL_ABI,
-          functionName: "paused",
-        }),
-        client.readContract({
-          address: program.distributor,
-          abi: REFERRAL_ABI,
-          functionName: "currentRoot",
-        }),
-        last
-          ? client.readContract({
-              address: program.distributor,
-              abi: COVERAGE_ABI,
-              functionName: "epochAt",
-              args: [BigInt(last.epoch)],
-            })
-          : null,
-        client.readContract({
-          address: program.token,
-          abi: TOKEN_ABI,
-          functionName: "balanceOf",
-          args: [program.distributor],
-        }),
-      ]);
+    const [
+      epochCount,
+      totalClaimed,
+      paused,
+      currentRoot,
+      lastEpoch,
+      balance,
+      claimDelay,
+    ] = await Promise.all([
+      client.readContract({
+        address: program.distributor,
+        abi: COVERAGE_ABI,
+        functionName: "nextEpoch",
+      }),
+      client.readContract({
+        address: program.distributor,
+        abi: COVERAGE_ABI,
+        functionName: "totalClaimed",
+      }),
+      client.readContract({
+        address: program.distributor,
+        abi: REFERRAL_ABI,
+        functionName: "paused",
+      }),
+      client.readContract({
+        address: program.distributor,
+        abi: REFERRAL_ABI,
+        functionName: "currentRoot",
+      }),
+      last
+        ? client.readContract({
+            address: program.distributor,
+            abi: COVERAGE_ABI,
+            functionName: "epochAt",
+            args: [BigInt(last.epoch)],
+          })
+        : null,
+      client.readContract({
+        address: program.token,
+        abi: TOKEN_ABI,
+        functionName: "balanceOf",
+        args: [program.distributor],
+      }),
+      client.readContract({
+        address: program.distributor,
+        abi: COVERAGE_ABI,
+        functionName: "CLAIM_DELAY",
+      }),
+    ]);
     const claimed = Object.values(snapshot.claimed).reduce(
       (sum, value) => sum + BigInt(value),
       0n,
@@ -343,6 +356,7 @@ export async function refreshReferralClaims(
         0n,
       );
     if (
+      (claimDelay !== 0n && claimDelay !== 604800n) ||
       epochCount !== BigInt(snapshot.epochs.length) ||
       totalClaimed !== claimed ||
       paused !== snapshot.paused ||
@@ -351,7 +365,8 @@ export async function refreshReferralClaims(
           lastEpoch.root !== last.root ||
           lastEpoch.total !== BigInt(last.totalBase) ||
           lastEpoch.voided !== last.voided ||
-          Number(lastEpoch.postedAt) + 7 * 24 * 3600 !== last.claimableAt)) ||
+          Number(lastEpoch.postedAt) + Number(claimDelay) !==
+            last.claimableAt)) ||
       (active
         ? currentRoot[0] !== active.root ||
           currentRoot[1] !== BigInt(active.totalBase) ||

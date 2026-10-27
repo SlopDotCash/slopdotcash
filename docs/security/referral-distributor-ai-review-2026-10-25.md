@@ -1,6 +1,7 @@
 # ReferralDistributor: AI-assisted internal review
 
 **Status:** internal, AI-assisted review. Not an independent audit. The owner approved the referral program it serves on 25 October 2026 (PRD section 11, "Referral program"). The program token is not deployed, and live root posting needs the owner's explicit activation.
+**Historical scope:** This report describes the seven-day-delay contract reviewed on 25 October. The immediate-claim revision proposed on 26 October removes that intervention window and requires its own source-bound review; the earlier findings are not acceptance of that revision.
 **Date:** 25 October 2026
 **Commissioned and reconciled by:** Drew Pierson (Operator, Slop Cash S.P.), using Claude Fable 5.1 as lead reviewer and author of the contract. Drew is not independent of the project and is not a security engineer. The repository owner (Shaw Walters) did not take part.
 **Code reviewed:** `contracts/evm/src/ReferralDistributor.sol` as first written on branch `drew/referral-distributor-contract` (275 lines, Solidity 0.8.30, no proxy, no external library), with `contracts/evm/test/ReferralDistributor.t.sol` (15 tests at review time), `contracts/evm/integration/MockReferralToken.sol` and `contracts/evm/script/DeployReferralDistributorRobinhoodTestnet.s.sol`.

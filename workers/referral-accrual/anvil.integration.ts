@@ -52,8 +52,7 @@ const anvil = spawn(
     "0",
     "--gas-price",
     "1000000",
-    // Leave the seven-day claim window in the past so the scheduled handler
-    // can use its real execution clock without a production clock override.
+    // Keep the historical fixture blocks before the real scheduled execution clock.
     "--timestamp",
     String(Math.floor(Date.now() / 1000) - 8 * 24 * 3600),
   ],
@@ -285,10 +284,10 @@ try {
   assert.equal(early?.post?.status, "in_flight");
   await rpc("anvil_mine", ["0x41"]);
 
-  // Run 2 reconciles the finalized receipt; the root is inside its window, so
-  // nothing more is posted.
+  // Run 2 reconciles the finalized receipt; the root is immediately eligible
+  // and no later filed root exists.
   const second = await runOnce(env, at("2026-12-02T02:00:00.000Z"));
-  assert.equal(second?.post?.status, "pending_root");
+  assert.equal(second?.post?.status, "nothing_to_post");
   assert.equal(second?.post?.reconciled, 1);
   const post = sqlite
     .query(
@@ -307,7 +306,7 @@ try {
   assert.equal(post.epoch, 0);
   assert.equal(post.merkle_root, file.merkle_root);
   assert.equal(call(distributor, "nextEpoch()(uint256)"), "1");
-  assert.equal(call(distributor, "hasPendingRoot()(bool)"), "true");
+  assert.equal(call(distributor, "hasPendingRoot()(bool)"), "false");
   const onChain = call(
     distributor,
     "epochAt(uint256)((bytes32,uint256,uint64,bool))",
@@ -441,7 +440,7 @@ try {
   assert.equal(cachedBody(), null, "an omitted root cannot advance the cache");
   cacheClock = new Date(cacheClock.getTime() + 1000);
   await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
-  assert.equal((await claimAccount()).claimableBase, "0");
+  assert.equal((await claimAccount()).claimableBase, CUMULATIVE.toString());
 
   const readEvidence: ReferralWatchFetch = async (input, init) => {
     const request = new Request(input, init);
@@ -712,8 +711,7 @@ try {
   sqlite.exec("ROLLBACK TO owner_void_control; RELEASE owner_void_control");
   assert.equal(await rpc("evm_revert", [snapshot]), true);
 
-  // Seven days later the referrer claims its cumulative with the file's proof.
-  await rpc("evm_increaseTime", [7 * 24 * 3600]);
+  // The referrer claims immediately, without advancing the block timestamp.
   await rpc("anvil_mine", ["0x41"]);
   cacheClock = new Date(
     Number(
