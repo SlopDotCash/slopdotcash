@@ -78,6 +78,7 @@ const config = {
     ...base.vars,
     SLOP_ENVIRONMENT: target,
     NOTIFY_INBOX_URL: `${expectedOrigin}/inbox`,
+    ADMIN_GITHUB_IDS: pages.vars?.ADMIN_GITHUB_IDS ?? "",
     PROJECT_MODERATOR_GITHUB_IDS:
       pages.vars?.PROJECT_MODERATOR_GITHUB_IDS ?? "",
   },
