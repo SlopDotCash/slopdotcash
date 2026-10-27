@@ -598,7 +598,7 @@ describe("monthly coordinator", () => {
         recipient_github_id: project.manifest.steward.github.actorId,
         kind: "payout_exception",
         subject: project.id,
-        action_path: `/projects/${project.id}/awards`,
+        action_path: `/projects/${project.id}/funding`,
       },
     ]);
     vault("900");

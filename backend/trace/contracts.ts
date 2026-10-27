@@ -6,7 +6,6 @@ export const TRACE_CONTENT_TYPES = [
 
 export const MAX_TRACE_BYTES = 8 * 1024 * 1024;
 export const MAX_JSON_BYTES = 64 * 1024;
-export const OPERATOR_GRANT_TTL_SECONDS = 60;
 
 export type TraceContentType = (typeof TRACE_CONTENT_TYPES)[number];
 
@@ -110,16 +109,6 @@ export type TraceUploadIntent = {
   consumedAt: string | null;
 };
 
-export type CreateGrantInput = {
-  tokenHash: string;
-  traceSha256: string;
-  operatorGithubId: string;
-  reason: string;
-  requestId: string;
-  createdAt: string;
-  expiresAt: string;
-};
-
 export type AuditInput = {
   id: string;
   actorGithubId: string;
@@ -208,17 +197,6 @@ export interface TracePersistence {
     now: string,
   ): Promise<TraceUploadIntent | null>;
   putTraceBytes(object: TraceObject, bytes: Uint8Array): Promise<void>;
-  createReadGrant(input: CreateGrantInput, audit: AuditInput): Promise<void>;
-  consumeReadGrant(
-    tokenHash: string,
-    traceSha256: string,
-    operatorGithubId: string,
-    now: string,
-    audit: AuditInput,
-  ): Promise<boolean>;
-  readTraceBytes(
-    object: TraceObject,
-  ): Promise<ReadableStream<Uint8Array> | Uint8Array | null>;
   writeAudit(input: AuditInput): Promise<void>;
   /** Atomically commits a wallet claim and its required audit event. */
   createWalletClaim(

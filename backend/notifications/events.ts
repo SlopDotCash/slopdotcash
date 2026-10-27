@@ -306,7 +306,7 @@ export function notifyMonthlyUnderfunded<S>(
               json_extract(p.manifest, '$.steward.github.actorId'),
               'payout_exception', r.project_id,
               'The ' || r.period || ' monthly awards wait for funds. No award is created until the vault covers the whole month.',
-              '/projects/' || r.project_id || '/awards', r.frozen_at, ?
+              '/projects/' || r.project_id || '/funding', r.frozen_at, ?
          FROM monthly_payment_runs r
          JOIN projects p ON p.id = r.project_id
         WHERE r.project_id = ? AND r.period = ?

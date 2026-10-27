@@ -3,11 +3,7 @@ import type { VettingClearance } from "./vetting-contracts";
 
 export type GithubActor = { githubId: string; githubLogin: string };
 
-export type WebSession = GithubActor & {
-  admin: boolean;
-  /** Older servers omit this field; only explicit true shows trace access. */
-  traceOperator?: boolean;
-};
+export type WebSession = GithubActor & { admin: boolean };
 
 export type ProjectRecord = {
   id: string;

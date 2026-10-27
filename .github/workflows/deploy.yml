@@ -416,11 +416,6 @@ jobs:
         env:
           BROWSER_SHARD: ${{ matrix.shard }}
         run: node scripts/run-e2e.mjs --shard="$BROWSER_SHARD"
-      # The private trace operator workflow: Pages routing, native D1 and R2,
-      # and a Chromium sign-in. One registry runner is enough.
-      - name: Run private trace operator workflow
-        if: matrix.lane == 'registry-1'
-        run: bun run test:trace
       - name: Upload browser diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
