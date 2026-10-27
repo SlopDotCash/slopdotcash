@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { loginHref } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import type { EscrowDeployment } from "./lib/escrow-policy.mjs";
@@ -17,7 +18,6 @@ import {
   type VaultSetupReview,
 } from "./lib/vault-setup";
 import { sameWalletAddress } from "./lib/wallets";
-import { loginHref } from "./Points";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
 type Pending = {

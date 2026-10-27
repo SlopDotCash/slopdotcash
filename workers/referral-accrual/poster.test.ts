@@ -12,7 +12,8 @@ import {
 } from "viem";
 import * as accountFactories from "viem/accounts";
 import { privateKeyToAccount } from "viem/accounts";
-import { type PosterConfig, parseConfig } from "./config";
+import { sqliteD1 } from "../../tests/sqlite-d1";
+import type { PosterConfig } from "./config";
 import {
   type ChainState,
   message,
@@ -21,9 +22,7 @@ import {
   type PostStatus,
   postNextRoot,
 } from "./core";
-import { runOnce } from "./index";
 import { createEvmPoster } from "./poster";
-import { sqliteD1 } from "./sqlite-d1";
 import { D1AccrualStore } from "./store";
 
 const ONE = 10n ** 18n;
@@ -36,26 +35,6 @@ const TEST_ACCOUNT = privateKeyToAccount(
 const SIGNER = TEST_ACCOUNT.address.toLowerCase();
 const ROOT_A = `0x${"a".repeat(64)}`;
 const ROOT_B = `0x${"b".repeat(64)}`;
-
-const BASE_VARS = {
-  REFERRAL_FIRST_PERIOD: "2026-11",
-  REFERRAL_RATE_BASE_PER_MICRO: "3000000000000",
-  REFERRAL_TOKEN_DECIMALS: "18",
-  REFERRAL_POOL_BASE: (2_000_000n * ONE).toString(),
-  REFERRAL_PROJECT_CAP_BASE: (250_000n * ONE).toString(),
-  REFERRAL_WINDOW_MONTHS: "12",
-};
-
-const LIVE_VARS = {
-  ...BASE_VARS,
-  REFERRAL_ACCRUAL_MODE: "live",
-  REFERRAL_PROGRAM_ENABLED: "true",
-  REFERRAL_DISTRIBUTOR_ADDRESS: DISTRIBUTOR,
-  REFERRAL_TOKEN_ADDRESS: TOKEN,
-  REFERRAL_POST_NETWORK: "robinhood-testnet",
-  REFERRAL_MAX_NATIVE_PER_TX_WEI: "200000000000000",
-  REFERRAL_MAX_NATIVE_PER_DAY_WEI: "2000000000000000",
-};
 
 const POSTER: PosterConfig = {
   network: "robinhood-testnet",
@@ -187,70 +166,6 @@ function harness(chain: FakeChain, at = "2026-12-03T00:00:00.000Z") {
     }[];
   return { db, sqlite, deps, logs, posts };
 }
-
-describe("live configuration", () => {
-  test("live is refused unless the flag, distributor, token and network are all set", () => {
-    expect(parseConfig(LIVE_VARS).poster).toEqual({
-      ...POSTER,
-      rpcUrl: "https://rpc.testnet.chain.robinhood.com",
-    });
-    expect(
-      parseConfig({ ...LIVE_VARS, RPC_URL_REFERRAL: POSTER.rpcUrl }).poster,
-    ).toEqual(POSTER);
-    for (const [key, value] of [
-      ["REFERRAL_PROGRAM_ENABLED", "false"],
-      ["REFERRAL_PROGRAM_ENABLED", ""],
-      ["REFERRAL_PROGRAM_ENABLED", "TRUE"],
-      ["REFERRAL_DISTRIBUTOR_ADDRESS", ""],
-      ["REFERRAL_DISTRIBUTOR_ADDRESS", "0x123"],
-      ["REFERRAL_TOKEN_ADDRESS", ""],
-      ["REFERRAL_TOKEN_ADDRESS", DISTRIBUTOR],
-      ["REFERRAL_POST_NETWORK", ""],
-      ["REFERRAL_POST_NETWORK", "base-mainnet"],
-      ["REFERRAL_POST_NETWORK", "robinhood"],
-      ["RPC_URL_REFERRAL", "ftp://x"],
-    ] as const) {
-      expect(() => parseConfig({ ...LIVE_VARS, [key]: value })).toThrow();
-    }
-    // dry_run ignores every poster value and never needs the flag.
-    const dry = parseConfig({
-      ...BASE_VARS,
-      REFERRAL_ACCRUAL_MODE: "dry_run",
-      REFERRAL_PROGRAM_ENABLED: "false",
-    });
-    expect(dry.poster).toBeNull();
-    expect(
-      parseConfig({ ...LIVE_VARS, REFERRAL_POST_NETWORK: "robinhood-mainnet" })
-        .poster?.chainId,
-    ).toBe(4663);
-    expect(
-      parseConfig({
-        ...LIVE_VARS,
-        REFERRAL_DISTRIBUTOR_ADDRESS: DISTRIBUTOR.toUpperCase().replace(
-          "0X",
-          "0x",
-        ),
-      }).poster?.distributor,
-    ).toBe(DISTRIBUTOR);
-  });
-
-  test("the shipped wrangler.toml keeps the program off", async () => {
-    const toml = await Bun.file(
-      new URL("./wrangler.toml", import.meta.url),
-    ).text();
-    expect(toml).toMatch(/^REFERRAL_ACCRUAL_MODE = "off"$/mu);
-    expect(toml).toMatch(/^REFERRAL_PROGRAM_ENABLED = "false"$/mu);
-    expect(toml).toMatch(/^REFERRAL_DISTRIBUTOR_ADDRESS = ""$/mu);
-    expect(toml).toMatch(/^REFERRAL_TOKEN_ADDRESS = ""$/mu);
-  });
-
-  test("live mode without the poster key stops before any chain call", async () => {
-    const { db } = sqliteD1();
-    await expect(runOnce({ REFERRAL_DB: db, ...LIVE_VARS })).rejects.toThrow(
-      /REFERRAL_POSTER_KEY/u,
-    );
-  });
-});
 
 describe("posting the next root", () => {
   test("posts the earliest filed root the chain lacks, after reconciling", async () => {

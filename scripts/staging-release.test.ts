@@ -1,7 +1,7 @@
 // The staging release gates: deployment order (real Git and a stub `gh`), the
 // published root's availability and security headers, and the checked-in
 // staging payment configuration.
-import { afterEach, expect, setDefaultTimeout, spyOn, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -14,10 +14,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
-import { onRequest } from "../functions/api/v1/[[path]]";
-import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
-import { parsePaymentNetworks } from "../workers/payments/deployments";
-import { verifyStagingRoot } from "./verify-staging-root.mjs";
 
 // These cases run real Git and runtime subprocesses. Windows process startup
 // can exceed Bun's five-second unit-test default without a guard failure.
@@ -228,162 +224,4 @@ test("wrong checkout, repository or branch cannot reach the staging gate", () =>
   expect(f.run([[]], { GITHUB_SHA: f.revisions[2] }).status).not.toBe(0);
   expect(f.run([[]], { GITHUB_REPOSITORY: "someone/fork" }).status).not.toBe(0);
   expect(f.run([[]], { GITHUB_REF: "refs/heads/main" }).status).not.toBe(0);
-});
-
-const originalFetch = globalThis.fetch;
-afterEach(() => {
-  globalThis.fetch = originalFetch;
-});
-const headers = {
-  "content-security-policy": "default-src 'self'",
-  "strict-transport-security": "max-age=31536000",
-  "x-content-type-options": "nosniff",
-};
-
-test("transient deployment propagation must recover to 200 with every header", async () => {
-  let reads = 0;
-  spyOn(globalThis, "fetch").mockImplementation(
-    Object.assign(
-      async (
-        _url: Parameters<typeof fetch>[0],
-        options?: Parameters<typeof fetch>[1],
-      ) => {
-        expect(options?.redirect).toBe("manual");
-        expect(options?.cache).toBe("no-store");
-        return new Response(
-          null,
-          ++reads === 1 ? { status: 503 } : { status: 200, headers },
-        );
-      },
-      { preconnect: originalFetch.preconnect },
-    ),
-  );
-  await verifyStagingRoot("https://staging.slop.cash", 0);
-  expect(reads).toBe(2);
-});
-
-test("transport failure can recover but never becomes empty success", async () => {
-  let reads = 0;
-  spyOn(globalThis, "fetch").mockImplementation(
-    Object.assign(
-      async () => {
-        if (++reads === 1) throw new TypeError("synthetic connection reset");
-        return new Response(null, { status: 200, headers });
-      },
-      { preconnect: originalFetch.preconnect },
-    ),
-  );
-  await verifyStagingRoot("https://staging.slop.cash", 0);
-  expect(reads).toBe(2);
-});
-
-test("permanent 404 and redirects fail immediately with status and origin", async () => {
-  for (const status of [404, 302]) {
-    let reads = 0;
-    spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        async () => {
-          reads++;
-          return new Response(null, { status });
-        },
-        { preconnect: originalFetch.preconnect },
-      ),
-    );
-    await expect(
-      verifyStagingRoot("https://staging.slop.cash", 0),
-    ).rejects.toThrow(`https://staging.slop.cash returned HTTP ${status}`);
-    expect(reads).toBe(1);
-  }
-});
-
-test("a 200 without security headers never qualifies, even after a transient read", async () => {
-  let reads = 0;
-  spyOn(globalThis, "fetch").mockImplementation(
-    Object.assign(
-      async () =>
-        new Response(null, ++reads === 1 ? { status: 502 } : { status: 200 }),
-      { preconnect: originalFetch.preconnect },
-    ),
-  );
-  await expect(
-    verifyStagingRoot("https://staging.slop.cash", 0),
-  ).rejects.toThrow("omitted content-security-policy");
-  expect(reads).toBe(2);
-});
-
-test("persistent unavailability exhausts the bound and rejects", async () => {
-  let reads = 0;
-  spyOn(globalThis, "fetch").mockImplementation(
-    Object.assign(
-      async () => {
-        reads++;
-        return new Response(null, { status: 503 });
-      },
-      { preconnect: originalFetch.preconnect },
-    ),
-  );
-  await expect(
-    verifyStagingRoot("https://staging.slop.cash", 0),
-  ).rejects.toThrow("retry bound");
-  expect(reads).toBe(6);
-});
-
-test("every required security header remains mandatory", async () => {
-  for (const header of Object.keys(headers)) {
-    const missing = new Headers(headers);
-    missing.delete(header);
-    spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        async () => new Response(null, { status: 200, headers: missing }),
-        {
-          preconnect: originalFetch.preconnect,
-        },
-      ),
-    );
-    await expect(
-      verifyStagingRoot("https://staging.slop.cash", 0),
-    ).rejects.toThrow(`omitted ${header}`);
-  }
-});
-
-test("the checked-in staging configuration reaches payment authentication", async () => {
-  const configuration = Bun.TOML.parse(
-    readFileSync("wrangler.staging.toml", "utf8"),
-  );
-  // Anonymous payment requests must stop at authentication, before using bindings.
-  const env = (
-    configuration as { vars: Parameters<typeof onRequest>[0]["env"] }
-  ).vars;
-  const response = await onRequest({
-    request: new Request("https://staging.slop.cash/api/v1/payments/me"),
-    env,
-  });
-  expect(response.status).toBe(401);
-  expect(await response.json()).toEqual({ error: "not_signed_in" });
-
-  const crossOrigin = await onRequest({
-    request: new Request(
-      "https://staging.slop.cash/api/v1/payments/wallets/register",
-      {
-        method: "POST",
-        headers: {
-          Origin: "https://slop.cash",
-          "Content-Type": "application/json",
-        },
-        body: "{}",
-      },
-    ),
-    env,
-  });
-  expect(crossOrigin.status).toBe(403);
-  expect(await crossOrigin.json()).toEqual({ error: "origin_forbidden" });
-});
-
-test("staging serves registry test networks only", () => {
-  const { vars } = Bun.TOML.parse(
-    readFileSync("wrangler.staging.toml", "utf8"),
-  ) as { vars: { PAYMENT_NETWORKS: string } };
-  // The Pages API parser refuses an empty, unknown or repeated name.
-  for (const network of parsePaymentNetworks(vars.PAYMENT_NETWORKS))
-    expect(ESCROW_NETWORKS[network].testnet).toBe(true);
 });

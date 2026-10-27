@@ -22,10 +22,10 @@ import {
   message,
 } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import { runOnce } from "./index";
 import { parseTransaction } from "./solana";
 import { resolveSolanaAccounts } from "./solana-accounts";
-import { sqliteD1 } from "./sqlite-d1";
 
 const selected = process.env.SLOP_FEE_TEST_TOKEN ?? "jup";
 if (selected !== "jup")
@@ -425,7 +425,7 @@ try {
     }),
   );
   const databasePath = join(dir, "journal.sqlite");
-  let { db, sqlite } = sqliteD1(databasePath);
+  let { db, sqlite } = sqliteD1(undefined, databasePath);
   const env = {
     FEE_DB: db,
     FEE_CONVERTER_MODE: "live",
@@ -473,7 +473,7 @@ try {
   // Drop the database connection and every client from the send run. The
   // next run must recover its signature, route proof and limits from disk.
   sqlite.close();
-  ({ db, sqlite } = sqliteD1(databasePath, false));
+  ({ db, sqlite } = sqliteD1([], databasePath));
   env.FEE_DB = db;
   for (let i = 0; i < 60 && state().state === "submitted"; i++) {
     await Bun.sleep(2_000);

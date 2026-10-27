@@ -1,5 +1,4 @@
-import { useCallback, useState } from "react";
-import { AutomaticMonthlyPayment } from "./AutomaticMonthlyPayment";
+import { lazy, useCallback, useState } from "react";
 import { readBoundedJson } from "./lib/browser-json";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import type { VaultConnection } from "./lib/evm-vault-actions";
@@ -15,9 +14,21 @@ import type { ProjectDefinition } from "./lib/projects.mjs";
 import { CANONICAL_UINT } from "./lib/record-validation.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
-import { OwnerVaultSetup } from "./OwnerVaultSetup";
 import { formatDateTime } from "./Presentation";
-import { VaultActions } from "./VaultActions";
+
+const AutomaticMonthlyPayment = lazy(() =>
+  import("./AutomaticMonthlyPayment").then((module) => ({
+    default: module.AutomaticMonthlyPayment,
+  })),
+);
+const OwnerVaultSetup = lazy(() =>
+  import("./OwnerVaultSetup").then((module) => ({
+    default: module.OwnerVaultSetup,
+  })),
+);
+const VaultActions = lazy(() =>
+  import("./VaultActions").then((module) => ({ default: module.VaultActions })),
+);
 
 interface VaultResponse {
   projectId: string;

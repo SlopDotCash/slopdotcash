@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InboxEmail } from "./InboxEmail";
+import { loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import {
@@ -14,7 +15,6 @@ import {
   parseNotificationsResponse,
 } from "./lib/notifications";
 import { useAction } from "./lib/use-action";
-import { loginHref } from "./Points";
 import { formatDateTime } from "./Presentation";
 
 type InboxState =

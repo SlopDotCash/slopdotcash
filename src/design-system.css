@@ -474,12 +474,6 @@ label {
   gap: 20px;
 }
 
-.footer-wordmark {
-  font-size: clamp(40px, 5vw, 64px);
-  letter-spacing: -0.04em;
-  line-height: 0.9;
-}
-
 .footer-links {
   flex-direction: column;
   flex-wrap: nowrap;

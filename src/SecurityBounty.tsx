@@ -20,7 +20,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { SignInPanel } from "./Admin";
 import { Link } from "./Link";
 import { decimalBaseUnits } from "./lib/base-units.mjs";
 import { copyText } from "./lib/copy-text";
@@ -51,6 +50,7 @@ import { useAction } from "./lib/use-action";
 import {
   ExternalLinkAnchor,
   formatNullableUtc as formatUtc,
+  SignInPanel,
 } from "./Presentation";
 
 function FormError({ message }: { message: string | null }) {

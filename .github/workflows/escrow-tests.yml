@@ -41,6 +41,8 @@ on:
       - 'scripts/child-environment.mjs'
       - 'scripts/prepare-e2e-fixture.mjs'
       - 'scripts/run-e2e*.mjs'
+      - 'scripts/run-security-payments.mjs'
+      - 'scripts/copy-working-tree.mjs'
       - 'playwright.config.ts'
       - 'migrations/**'
       - 'package.json'

@@ -175,8 +175,9 @@ bun run test:e2e
 `bun run verify` checks the committed source records (brand tokens, projects,
 skills, evaluations, disclosures, contribution quality, cycles, and protocol
 identity); audits dependencies; runs type, format, and lint checks; and
-produces the static build. It also runs the Slopbot unit suite; browser
-behavior is covered by `bun run test:e2e`.
+produces the static build. It runs the database, API, CLI and Worker integration
+suites and preserves the smart-contract unit tests. Browser behavior is covered
+by `bun run test:e2e`.
 
 ## Trust and deployment
 
@@ -218,12 +219,15 @@ it generated earlier. A missing declared input stops publication; leftover publi
 files never select the source.
 
 `bun run verify:contracts` and `bun run verify:code` are shared by local verification
-and CI. The former checks source records; the latter checks types, formatting
-and lint. Live chain verification and browser checks remain separate.
+and CI. The former checks source records; the latter checks types, lint and
+the local integration suites. Live chain verification and browser checks remain
+separate.
 
 Edit shared contributor and reviewer rules in the canonical generic
-project-skill templates. Project skills are generated from those templates and
-each project's D1 revision; never commit a per-project skill copy.
+project-skill templates. The contributor template's `scripts/` directory is the
+single source for its runtime and installer authority; no synchronization step
+or mirrored script directory is needed. Project skills are generated from those
+templates and each project's D1 revision; never commit a per-project skill copy.
 Project-specific instructions live in the D1 revision.
 
 Browser evidence is retained separately under `test-results/preview` and

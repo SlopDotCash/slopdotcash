@@ -35,12 +35,12 @@ function scrollToTarget(targetId: string): boolean {
 }
 
 /**
- * The browser's native jump to a URL hash runs before the app renders, so a
- * direct load of /how-it-works#faq would otherwise stay at the top.
+ * A fragment can name content that is still loading on direct entry or
+ * client navigation. Reuse the bounded observer for each destination.
  */
-export function useInitialHashScroll(): void {
+export function useHashScroll(href: string): void {
   useEffect(() => {
-    const targetId = hashTargetId(window.location.hash);
+    const targetId = hashTargetId(new URL(href).hash);
     if (!targetId) return;
     let settling = true;
     const align = () => {
@@ -63,7 +63,7 @@ export function useInitialHashScroll(): void {
     }
     void document.fonts?.ready.then(align);
     return stop;
-  }, []);
+  }, [href]);
 }
 
 export function Link({

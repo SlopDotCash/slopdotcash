@@ -10,6 +10,7 @@ import {
   TOKEN_PROGRAM,
 } from "../../contracts/solana/token-extensions";
 import { ata } from "../../contracts/solana/transactions";
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
 import type { ConversionRow } from "./core";
 import { NativeGasJournal } from "./native-gas";
@@ -20,7 +21,6 @@ import {
 } from "./solana";
 import { LOOKUP_TABLE_PROGRAM } from "./solana-accounts";
 import type { RouteReceipt } from "./solana-route-receipt";
-import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore } from "./store";
 
 const key = (n: number) => solanaBase58(new Uint8Array(32).fill(n));
