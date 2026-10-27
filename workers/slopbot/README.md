@@ -547,9 +547,37 @@ Git blob SHA-1, UTF-8 bytes, byte length and exact added-line count before
 constructing the empty-file diff. Recovery is limited to 16 reads and 2 MiB
 total across both ranges. Each file must fit the remaining shared budget.
 Decoded bytes consume that budget even when later validation refuses them.
-Binary, modified, oversized or invalid files keep their missing-diff limitation. Publication uses the same collector
+This text recovery leaves binary, modified, oversized or invalid files unresolved. Publication uses the same collector
 and rechecks the recovered source. The recovered bodies stay in private source
 evidence; journal records contain their source digest, not the patch bodies.
+
+Added regular binary files have a separate, versioned `addedBinary` source proof.
+It retains the complete bytes as canonical base64, their length, Git blob SHA-1
+and SHA-256, and the immutable comparison commits and verified root trees. The
+collector proves absence at the comparison base and presence with mode `100644`
+at the head, then requires identical bytes in the accepted change and the one
+ordinary implementation commit. It uses the shared blob reader's 48-read,
+512 KiB per-file and 2 MiB decoded-byte limits across those binary scopes, plus
+at most 20,000 retained tree entries. Failed reads consume the existing budgets.
+This is one binary-recovery session per PR, not a new budget for each scope.
+The preexisting text-recovery readers keep their separate, unchanged budgets;
+2 MiB is not a new total limit for the whole collector. Private preparation
+also refuses binary proofs whose combined bodies exceed the session limits.
+Modified, renamed, removed, executable-mode and indirect binary changes remain
+unsupported. Text, empty files and Git LFS pointers cannot use this proof.
+
+Binary proofs do not manufacture patch lines or change GitHub's line counts.
+Every binary path retains its original work-unit claim and actor attribution.
+Their bytes and refs enter the source digest; authenticated import and
+publication collect them again instead of trusting uploaded proof fields.
+Old text-only source records retain their serialization and digest. A new
+binary proof creates a new source revision; it never rewrites an old record.
+
+The collector marks binary content `unviewed`. Byte identity proves which
+artifact was accepted, not what a recording depicts or whether a product works.
+A reviewer must inspect relevant media safely and record actual observations
+and limits in the source-bound assessment. Unviewable required evidence stays
+unresolved; filenames, hashes, test counts and acceptance alone prove no value.
 
 For a rename with no patch and zero added or deleted lines, the collector
 checks the old path at the submitted merge base and the new path at the head.

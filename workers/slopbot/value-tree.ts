@@ -60,6 +60,15 @@ export async function readValueTree(
   repository: string,
   ref: string,
 ): Promise<Map<string, Entry> | null> {
+  return (await readValueTreeProof(client, repository, ref))?.entries ?? null;
+}
+
+/** Retain the verified root identity without changing existing text evidence. */
+export async function readValueTreeProof(
+  client: EvidenceClient,
+  repository: string,
+  ref: string,
+): Promise<{ treeSha: string; entries: Map<string, Entry> } | null> {
   const oid = /^[a-f0-9]{40}$/u;
   if (!oid.test(ref)) return null;
   const commit = await client.get<{ sha: string; tree: { sha: string } }>(
@@ -120,7 +129,7 @@ export async function readValueTree(
     const actual = await treeDigest(children.get(path) ?? []);
     if (actual !== expected) return null;
   }
-  return entries;
+  return { treeSha: commit.tree.sha, entries };
 }
 
 /** Verify the complete tree at every ancestor of the requested paths. A

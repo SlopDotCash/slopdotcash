@@ -6,6 +6,7 @@ import {
   validateValueAssessment,
 } from "../../src/lib/value-assessment";
 import type { ModelEnv } from "./models";
+import { binarySourceLimitations } from "./value-binary";
 import type { ValueEvidence } from "./value-evidence";
 import {
   runValueInference,
@@ -25,7 +26,10 @@ export async function assessValue(
 ) {
   if (evidence.indirectAcceptance)
     throw new Error("Indirect acceptance requires joint work-unit assessment");
-  if (evidence.limitations.length > 0)
+  if (
+    evidence.limitations.length > 0 ||
+    (await binarySourceLimitations(evidence)).length > 0
+  )
     throw new Error("Complete source evidence is required before valuation");
   if (!/^[a-f0-9]{40}$/u.test(policy.sha) || !policy.text.trim())
     throw new Error("Pinned project policy is required");
