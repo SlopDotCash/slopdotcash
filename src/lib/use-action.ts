@@ -6,9 +6,9 @@ import { errorMessage } from "./errors";
  * shown error. An action that resolves "navigating" keeps the controls busy
  * while the browser leaves the page.
  */
-export function useAction() {
+export function useAction(initialError: string | null = null) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   const run = useCallback(
     async (
       action: () => Promise<unknown>,

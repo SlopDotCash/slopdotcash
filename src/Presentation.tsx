@@ -1,9 +1,11 @@
 import { ArrowRight, CircleAlert, RotateCcw } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Link } from "./Link";
+import { loginHref } from "./lib/browser-deployment";
 import type { CycleIndexEntry } from "./lib/cycle-index";
 import type { GitHubActor, LeaderboardSnapshot } from "./lib/leaderboard";
 import { POINTS_PER_THIRD } from "./lib/points";
+import type { ProjectSessionState } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 
@@ -412,4 +414,89 @@ export function PaymentLifecycle() {
       </div>
     </>
   );
+}
+
+export function SignInPanel({
+  state,
+  next,
+  purpose,
+}: {
+  state: Exclude<ProjectSessionState, { status: "signed-in" }>;
+  next: string;
+  purpose?: string;
+}) {
+  if (state.status === "checking") {
+    return (
+      <p aria-live="polite" className="admin-status">
+        Checking sign-in…
+      </p>
+    );
+  }
+  return (
+    <div className="sign-in-panel">
+      {purpose ? <p>{purpose}</p> : null}
+      {state.status === "error" ? (
+        <p className="form-error" role="alert">
+          <CircleAlert aria-hidden="true" /> {state.message}
+        </p>
+      ) : null}
+      <a className="button primary-button" href={loginHref(next)}>
+        Sign in with GitHub
+      </a>
+    </div>
+  );
+}
+
+/** Shared chooser presentation; each feature keeps its wallet and signing rules. */
+export function WalletConnection<T extends { id: string; name: string }>({
+  address,
+  wallets,
+  disabled,
+  legend,
+  empty,
+  className,
+  onConnect,
+}: {
+  address: string | null;
+  wallets: readonly T[];
+  disabled: boolean;
+  legend: string;
+  empty: ReactNode;
+  className?: string;
+  onConnect: (provider: T) => void;
+}) {
+  return address ? (
+    <p>
+      Connected: <code>{address}</code>
+    </p>
+  ) : (
+    <fieldset disabled={disabled} className={className}>
+      <legend>{legend}</legend>
+      {wallets.length ? (
+        wallets.map((provider) => (
+          <button
+            key={provider.id}
+            type="button"
+            className="button secondary-button"
+            onClick={() => onConnect(provider)}
+          >
+            Connect {provider.name}
+          </button>
+        ))
+      ) : (
+        <p>{empty}</p>
+      )}
+    </fieldset>
+  );
+}
+
+export function paymentStateLabel(project: ProjectDefinition): string {
+  return project.reward.paymentMode === "enabled" ? "Enabled" : "Disabled";
+}
+
+/** "Live" only when a recorded vault can pay: payments must be enabled too. */
+export function vaultStateLabel(project: ProjectDefinition): string {
+  if (project.reward.kind === "external-prize-share") return "Not applicable";
+  if (!project.escrow?.deployments.length) return "Not set up";
+  return project.reward.paymentMode === "enabled" ? "Live" : "Set up";
 }

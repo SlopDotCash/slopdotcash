@@ -17,6 +17,7 @@ import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation"
 import type { ProjectRecord } from "../../src/lib/project-contracts";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
+import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
@@ -28,7 +29,6 @@ import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
 } from "../projects/cloudflare-persistence";
-import { seedParticipationBan } from "../security/participation-ban.fixture";
 import { handlePaymentsApi } from "./handler";
 import {
   coordinateMonthlyPayments,

@@ -1,7 +1,7 @@
 import {
   pythonRuntimeProbe,
   SKILL_AUTHORITY_PYTHON,
-} from "../../scripts/skill-kit/skill-authority.mjs";
+} from "../../skills/project-contributor-template/scripts/skill-authority.mjs";
 
 /**
  * Generates the independently authenticated, resource-limited skill installer.

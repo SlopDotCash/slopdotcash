@@ -236,6 +236,7 @@ export default {
           },
         );
       } catch {
+        console.error("slopbot penalty history unavailable");
         return Response.json(
           { error: "Penalties are unavailable" },
           { status: 503, headers: { "cache-control": "no-store" } },
@@ -314,6 +315,7 @@ export default {
           },
         );
       } catch {
+        console.error("slopbot value history unavailable");
         return Response.json(
           { error: "Value history is unavailable" },
           { status: 503, headers: { "cache-control": "no-store" } },
@@ -461,12 +463,12 @@ export default {
   },
 
   async scheduled(_event: unknown, env: Env) {
-    await resumeBudgetBlocks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
-    await dispatchMaintainerHolds(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
-    await dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE);
-    // An email outage must not stop assessment. Notice claims and ambiguous
-    // receipts remain durable, while the scheduled invocation reports failure.
+    // Independent dispatchers and assessment must progress even when another
+    // task fails. Their journals retain retries; the invocation still fails.
     const outcomes = await Promise.allSettled([
+      resumeBudgetBlocks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
+      dispatchMaintainerHolds(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
+      dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       consumePendingValueRequests(env),
       ...(env.SLOP_NOTIFY
         ? [

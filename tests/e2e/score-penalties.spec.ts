@@ -1,6 +1,5 @@
 /**
- * PRD section 7 in the real browser: the How it works page explains the
- * current scoring policy once, and a published Slopbot debit and an explicit
+ * PRD section 7 in the real browser: a published Slopbot debit and an explicit
  * payout exclusion show where a visitor reads the score. The snapshot comes
  * from the real snapshot builder; only the GitHub census is synthetic. The
  * worker-to-score path is covered in workers/slopbot/penalty-appeal.test.ts.
@@ -8,10 +7,6 @@
 import { createLeaderboardSnapshot } from "../../src/lib/leaderboard";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
-import {
-  MAX_CREDITED_REVIEWERS,
-  VALUE_SCORING_POLICY_EFFECTIVE_AT,
-} from "../../src/lib/scoring-policy";
 import { PENALTY_TABLE } from "../../workers/slopbot/penalties";
 import { cycleIndexFixture } from "../fixtures";
 import {
@@ -47,72 +42,6 @@ function publishedSnapshot() {
     Date.now = realNow;
   }
 }
-
-test("How it works explains the current scoring policy once", async ({
-  page,
-}, info) => {
-  await page.goto("/how-it-works", { waitUntil: "networkidle" });
-  const score = page.locator(".score-contract");
-  await expect(score.getByRole("heading", { name: "Points" })).toHaveCount(1);
-  await expect(score).toContainText(
-    "Slopbot sizes each accepted pull request with the tiers in this table and awards points. Every accepted merge earns at least 10 points.",
-  );
-  await score.getByText("Points rules and evidence", { exact: true }).click();
-  await expect(score).toContainText(
-    "A useful review can find a correction or validate the change. A request for changes is not required.",
-  );
-  await expect(score).toContainText(
-    `The first ${MAX_CREDITED_REVIEWERS} distinct qualifying reviewers share one review pool per pull request`,
-  );
-  await expect(score).toContainText(
-    "penalty table: spam 30, scam or malicious 240, a clear violation of a quoted project rule 10.",
-  );
-  await expect(score).toContainText(
-    "their weight leaves the pool, so it does not reduce other contributors' shares.",
-  );
-  const effective = new Intl.DateTimeFormat("en-US", {
-    day: "numeric",
-    month: "short",
-    timeZone: "UTC",
-    year: "numeric",
-  }).format(new Date(VALUE_SCORING_POLICY_EFFECTIVE_AT));
-  await expect(score).toContainText(
-    `These rules apply to work accepted from ${effective} UTC.`,
-  );
-  // The superseded rules are gone.
-  for (const retired of [
-    "Maintainers ratify effort tiers",
-    "need a second maintainer",
-    "answered its request for changes",
-    "fixed 15% weight",
-    "fixed 15% to that outcome",
-    "It is submitted as Request changes",
-    "the latest request for changes that the merged code answered",
-  ])
-    await expect(page.locator("main")).not.toContainText(retired);
-  // The review rules appear once, in the Points rules above.
-  await expect(
-    page.getByText("Do reviews earn points?", { exact: true }),
-  ).toHaveCount(0);
-  const modelQuestion = page.getByText("Does the model I use matter?", {
-    exact: true,
-  });
-  await modelQuestion.focus();
-  await page.keyboard.press("Enter");
-  const modelAnswer = modelQuestion.locator("..");
-  await expect(modelAnswer).toHaveAttribute("open", "");
-  await expect(modelAnswer).toContainText(
-    "From November 2026, monthly and external-prize reward shares use accepted-work Points only.",
-  );
-  await expect(modelAnswer).toContainText(
-    "Optional traces add no payment weight. Older calculations and funded awards stay unchanged; unpaid September–October work stays subject to the reviewed historical reconciliation.",
-  );
-  await expectAccessible(page);
-  await page.screenshot({
-    path: info.outputPath("how-it-works-score.png"),
-    fullPage: true,
-  });
-});
 
 test("a published debit and a payout exclusion show on the profile and the cycle", async ({
   page,

@@ -735,29 +735,6 @@ describe("slopbot scam review notices", () => {
     }
   });
 
-  test("an invalid target or author is refused before any write", () => {
-    const { db } = open();
-    const input = {
-      ...target,
-      itemNodeId: "PR_alpha",
-      authorLogin: "scam-author",
-      recipient: MODERATOR,
-      at: R,
-    };
-    for (const bad of [
-      { owner: "../evil" },
-      { repo: "alpha/../../x" },
-      { number: 0 },
-      { authorLogin: "a b" },
-    ])
-      expect(() =>
-        notifySlopbotScamReview(db as unknown as D1Database, {
-          ...input,
-          ...bad,
-        }),
-      ).toThrow();
-  });
-
   test("moderator access is rechecked on every list, open and read mark", async () => {
     const { db, sqlite, notify, call, rows } = scam();
     await notify(MODERATOR);

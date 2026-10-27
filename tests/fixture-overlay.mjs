@@ -2,7 +2,7 @@
  * Restores the frozen pre-registry history and project skills from
  * tests/fixtures. The fixtures keep one copy of shared bytes: a cycle stored
  * without its source snapshot binds the eliza snapshot of the same month, and
- * every contributor skill carries the shared scripts from scripts/skill-kit.
+ * every contributor skill carries the canonical template scripts.
  */
 import {
   copyFileSync,
@@ -40,7 +40,12 @@ export function copyFixtureHistory(target) {
  */
 export function copyFixtureSkills(target) {
   cpSync(join(fixtures, "skills"), target, { recursive: true });
-  const kit = join(repositoryRoot, "scripts", "skill-kit");
+  const kit = join(
+    repositoryRoot,
+    "skills",
+    "project-contributor-template",
+    "scripts",
+  );
   for (const skill of readdirSync(target)) {
     if (!skill.startsWith("contribute-to-")) continue;
     const project = RAW_PROJECT_DEFINITIONS.find(

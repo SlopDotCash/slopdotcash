@@ -27,7 +27,6 @@ import { fileURLToPath } from "node:url";
 
 import { authorizeSkill } from "./run-receipt.mjs";
 
-export const MODEL_DISCLOSURE_PREFIX = "AI provider/model:";
 export const REQUIRED_EVIDENCE_ROWS = [
   "before-screenshots",
   "after-screenshots",

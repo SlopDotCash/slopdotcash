@@ -27,15 +27,3 @@ export async function writeNewFile(
     await rm(temporaryPath, { force: true });
   }
 }
-
-export function writeNewJsonFile(
-  path: string,
-  value: unknown,
-  existingMessage: string,
-): Promise<void> {
-  return writeNewFile(
-    path,
-    `${JSON.stringify(value, null, 2)}\n`,
-    existingMessage,
-  );
-}

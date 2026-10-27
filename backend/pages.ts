@@ -43,7 +43,7 @@ export type PagesEnv = {
   X_CLIENT_ID?: string;
   X_CLIENT_SECRET?: string;
   OPERATOR_GITHUB_IDS?: string;
-  /** GitHub numeric actor IDs allowed to review project applications. */
+  /** GitHub numeric actor IDs allowed to handle project exceptions. */
   ADMIN_GITHUB_IDS?: string;
   /**
    * GitHub numeric actor IDs with the project moderation role: Quarantine,
@@ -57,9 +57,9 @@ export type PagesEnv = {
   SLOP_GITHUB_READ_TOKEN?: string;
   /**
    * Automatic private security intake (PRD section 8, SEC-07). Off unless
-   * exactly "on" and every App secret below is set; any missing value keeps
-   * the existing manual flow. Owner decision D10: these hold the existing
-   * slopdotcash GitHub App (5257625) with "Repository security advisories:
+   * exactly "on" and every App secret below is set; missing configuration
+   * reports intake as unavailable without a public fallback. Owner decision D10:
+   * these hold the existing slopdotcash GitHub App (5257625) with "Repository security advisories:
    * read"; there is no separate intake App.
    */
   SLOP_PRIVATE_INTAKE_MODE?: string;

@@ -220,7 +220,7 @@ refuses a file whose digest differs.
 The trust root is the pair (template revision on `main`, D1 revision digest)
 (PRD SKL-04). `PROVENANCE.json` and the skill manifest bind the registry
 revision and its manifest SHA-256. The installer (`src/lib/install-command.ts`)
-and the skill's own run gate (`scripts/skill-kit/skill-authority.mjs`)
+and the skill's own run gate (`skills/project-contributor-template/scripts/skill-authority.mjs`)
 authorize the template revision under the GitHub rules, fetch
 `/api/v1/project-revisions/:id/:revision`, check its digest, render the same
 bytes again in Python, and refuse any difference or a move back to an older

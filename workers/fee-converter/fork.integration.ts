@@ -31,10 +31,10 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { handleFeeConversionsApi } from "../../backend/fee-conversions/handler";
 import { evmAwardId } from "../../contracts/evm/adapter";
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import { NETWORK_DEFINITIONS, parseConfig } from "./config";
 import { KYBER_ROUTER_ABI } from "./evm";
 import { chainClient, runOnce } from "./index";
-import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore, projectVaults } from "./store";
 
 const FORK_URL =
@@ -332,7 +332,7 @@ try {
     console.log(`seeded ${await balanceOf(AERO, wallet)} AERO base units`);
   };
 
-  let { db, sqlite } = sqliteD1(journalPath);
+  let { db, sqlite } = sqliteD1(undefined, journalPath);
   closeJournal = () => sqlite.close();
   const env = {
     FEE_DB: db,
@@ -480,7 +480,7 @@ try {
     assert.equal(decoded.args[0].toLowerCase(), ROUTER);
     assert.equal(decoded.args[1], BigInt(approval.amount_in));
     sqlite.close();
-    ({ db, sqlite } = sqliteD1(journalPath, false));
+    ({ db, sqlite } = sqliteD1([], journalPath));
     env.FEE_DB = db;
     await runOnce(env);
     assert.equal(

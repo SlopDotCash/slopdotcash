@@ -26,7 +26,7 @@ export const PUBLIC_SITE_ORIGIN = "https://slop.cash";
 export const GUIDE_RENDERER_PATHS = Object.freeze([
   "scripts/render-install-guide.mjs",
   "src/lib/install-command.ts",
-  "scripts/skill-kit/skill-authority.mjs",
+  "skills/project-contributor-template/scripts/skill-authority.mjs",
 ]);
 /** Revisions the generated installer may authorize, for every skill manifest. */
 export const ACCEPTED_SKILL_REVISIONS = Object.freeze([
