@@ -111,6 +111,13 @@ Every page must use the same schema. The next ingestion after the Worker
 upgrade acquires the retained history; no historical reversal is inferred in
 the meantime.
 
+The feed is a production service. A staging build syncs its registry from
+staging but reads this production feed, which answers HTTP 400 for a project
+that it does not know. Thus the staging collector first reads the production
+registry, which uses the same D1 project table as Slopbot. It does not read the
+feed for a project that the production registry does not list, because the
+feed has no record of that project. Every other feed failure stops the build.
+
 ## Appeals
 
 Owner decision D8 of 24 October 2026. Slopbot triages each appeal first: an
