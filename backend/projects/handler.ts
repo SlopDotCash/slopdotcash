@@ -377,7 +377,11 @@ async function ownerSecurityProgram(
       "A funded bounty program keeps its network and asset",
     );
   const funds = await deps.securityProgramFunds?.(next.id, after);
-  if (status === "open" && (!funds || BigInt(funds.availableMinor) <= 0n))
+  if (
+    status === "open" &&
+    after.fundingPolicy !== "after-approval" &&
+    (!funds || BigInt(funds.availableMinor) <= 0n)
+  )
     fail(
       422,
       "security_funding_unavailable",

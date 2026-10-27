@@ -43,6 +43,7 @@ import {
   publicRestrictionOf,
 } from "../projects/enforcement";
 import type { RepositoryAccessReader } from "../projects/setup";
+import type { R2Bucket } from "../trace/cloudflare-persistence";
 import { readJsonObject } from "../trace/validation";
 import type { AdvisoryReader, GithubPrivateReport } from "./advisories";
 import {
@@ -68,6 +69,10 @@ import {
   repositoryReportingAuthority,
 } from "./project-access";
 import {
+  readStoredReportByCase,
+  storedIntakeViewForCase,
+} from "./report-intake";
+import {
   cachedReportingReadiness,
   type ReportingReader,
   refreshReportingObservation,
@@ -78,6 +83,10 @@ export type SecurityD1Database = D1TransactionalDatabase<D1Statement>;
 
 export type SecurityApiDependencies = {
   db: SecurityD1Database;
+  /** Private security-report prefix, distinct from contributor trace objects. */
+  reportStorage?: R2Bucket;
+  /** Disables new intake while preserving authorized historical body reads. */
+  reportIntakeEnabled?: boolean;
   now: () => Date;
   randomId: () => string;
   sessionActor: (request: Request) => Promise<Actor | null>;
@@ -119,11 +128,11 @@ export type Role =
   | "financial"
   | "dispute";
 
-type CaseRow = {
+export type CaseRow = {
   id: string;
   project_id: string;
   advisory_repository: string;
-  advisory_ghsa: string;
+  advisory_ghsa: string | null;
   reporter_github_id: string;
   reporter_github_login: string;
   submission_state: "claimed" | "verified" | "link-rejected";
@@ -153,7 +162,11 @@ type CaseRow = {
   related_party: "not-assessed" | "unrelated" | "related";
   related_party_review: "not-applicable" | "pending" | "approved" | "refused";
   related_party_reviewer_github_id: string | null;
-  received_at_source: "maintainer-attested" | "github-verified" | null;
+  received_at_source:
+    | "maintainer-attested"
+    | "github-verified"
+    | "slop-received"
+    | null;
   receipt_evidence_digest: string | null;
   award_gross_minor: string | null;
   revision: number;
@@ -195,7 +208,8 @@ export type FrozenTerms = {
   currency: SecurityBountyTerms["amount"]["currency"];
   decimals: number;
   network: SecurityBountyTerms["amount"]["network"];
-  capacityAwards: number;
+  capacityAwards: number | null;
+  fundingPolicy?: "after-approval";
 };
 
 const CASE_ID = /^sc_[A-Za-z0-9_-]{8,72}$/u;
@@ -475,7 +489,7 @@ async function activeTriager(
 }
 
 /** Current roles; recomputed on every request so revocation is immediate. */
-async function caseRoles(
+export async function caseRoles(
   deps: Pick<
     SecurityApiDependencies,
     "db" | "moderatorGithubIds" | "repositoryAccess"
@@ -569,7 +583,8 @@ function frozenTerms(row: CaseRow): FrozenTerms | null {
   return row.terms === null ? null : (JSON.parse(row.terms) as FrozenTerms);
 }
 
-function advisoryUrl(row: CaseRow): string {
+function advisoryUrl(row: CaseRow): string | null {
+  if (row.advisory_ghsa === null) return null;
   return `https://github.com/${row.advisory_repository}/security/advisories/${row.advisory_ghsa}`;
 }
 
@@ -720,8 +735,10 @@ function nextStep(
   if (row.receipt_state === "needs-information")
     return {
       text: reporter
-        ? "Answer the owner's question in the GitHub advisory."
-        : "Waiting for the reporter's answer in the GitHub advisory; decide when ready.",
+        ? row.received_at_source === "slop-received"
+          ? "Add the requested evidence to your saved report in Inbox."
+          : "Answer the owner's question in the GitHub advisory."
+        : "Waiting for the reporter's answer; decide when ready.",
       dueAt: null,
     };
   if (row.related_party_review === "pending" && row.award_state === "pending")
@@ -730,6 +747,17 @@ function nextStep(
         ? "Review the proposed related-party award."
         : "An independent reviewer is reviewing the proposed award.",
       dueAt: null,
+    };
+  if (
+    row.award_state === "pending" &&
+    row.award_gross_minor !== null &&
+    row.related_party_review !== "pending"
+  )
+    return {
+      text: owner
+        ? "The award amount is chosen. Fund the bounty vault, then reserve the award."
+        : "The owner chose an award amount. It is awaiting verified funding.",
+      dueAt: row.payment_deadline,
     };
   if (awardOpen(row))
     return {
@@ -775,7 +803,11 @@ async function programFunds(
 ) {
   const program = (await currentReportingProject(deps, projectId))?.manifest
     .securityBounty;
-  if (program === undefined || program.funding.state !== "verified-available")
+  if (
+    program === undefined ||
+    (program.funding.state !== "verified-available" &&
+      program.fundingPolicy !== "after-approval")
+  )
     return null;
   return readSecurityProgramFunds(deps, projectId, program, snapshotGuards);
 }
@@ -874,13 +906,32 @@ async function caseView(
             },
     };
   }
+  const forwarded =
+    row.advisory_ghsa === null
+      ? await deps.db
+          .prepare(
+            "SELECT repository,advisory_ghsa FROM security_submissions WHERE case_id=? AND state='receipt-verified' AND advisory_ghsa IS NOT NULL",
+          )
+          .bind(row.id)
+          .first<{ repository: string; advisory_ghsa: string }>()
+      : null;
   const shared = {
     ...base,
-    advisory: {
-      repository: row.advisory_repository,
-      ghsa: row.advisory_ghsa,
-      url: advisoryUrl(row),
-    },
+    advisory:
+      row.advisory_ghsa === null
+        ? forwarded
+          ? {
+              repository: forwarded.repository,
+              ghsa: forwarded.advisory_ghsa,
+              url: `https://github.com/${forwarded.repository}/security/advisories/${forwarded.advisory_ghsa}`,
+            }
+          : null
+        : {
+            repository: row.advisory_repository,
+            ghsa: row.advisory_ghsa,
+            url: advisoryUrl(row),
+          },
+    intake: await storedIntakeViewForCase(deps, row.id, roles),
     receiptState: row.receipt_state,
     remediationState: row.remediation_state,
     disclosureState: row.disclosure_state,
@@ -1004,7 +1055,7 @@ async function caseView(
 const CASE_COLUMNS =
   "id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, evidence_digest, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, severity, loss_finding, root_cause_key, duplicate_of, technical_decider_github_id, appeal_state, appeal_from_state, owner_github_id, next_action, next_action_due_at, payment_deadline, related_party, related_party_review, related_party_reviewer_github_id, received_at_source, receipt_evidence_digest, award_gross_minor, revision, created_at, updated_at";
 
-async function loadCase(
+export async function loadCase(
   deps: Pick<SecurityApiDependencies, "db">,
   caseId: string,
 ): Promise<CaseRow | null> {
@@ -1158,6 +1209,9 @@ export async function termsAtReceipt(
       decimals: program.amount.decimals,
       network: program.amount.network,
       capacityAwards: program.capacity.awards,
+      ...(program.fundingPolicy
+        ? { fundingPolicy: program.fundingPolicy }
+        : {}),
     },
   };
 }
@@ -1285,14 +1339,14 @@ export function caseInsertStatement(
     id: string;
     projectId: string;
     repository: string;
-    advisory: string;
+    advisory: string | null;
     reporter: Actor;
     verified: {
       receivedAt: string;
       verifiedBy: string;
       policyRevision: number | null;
       terms: FrozenTerms | null;
-      source?: "github-verified";
+      source?: "github-verified" | "slop-received";
       receiptEvidenceDigest?: string;
     } | null;
     ownerGithubId: string | null;
@@ -1373,6 +1427,7 @@ function analysisDependencies(deps: SecurityApiDependencies) {
     now: deps.now,
     advisories: deps.advisories ?? null,
     analyzer: deps.analyzer ?? null,
+    storedReport: (caseId: string) => readStoredReportByCase(deps, caseId),
   };
 }
 
@@ -1399,9 +1454,9 @@ async function recordPrivateReports(
     const at = deps.now().toISOString();
     const recorded = await deps.db
       .prepare(
-        "SELECT id FROM security_cases WHERE project_id = ? AND advisory_ghsa = ? AND submission_state = 'verified'",
+        "SELECT id FROM security_cases WHERE project_id = ? AND submission_state = 'verified' AND (advisory_ghsa = ? OR id IN (SELECT case_id FROM security_submissions WHERE project_id=? AND advisory_ghsa=? AND state IN ('submitted','receipt-verified')))",
       )
-      .bind(input.projectId, report.ghsa)
+      .bind(input.projectId, report.ghsa, input.projectId, report.ghsa)
       .first<{ id: string }>();
     if (recorded !== null) continue;
     const frozen = await termsAtReceipt(
@@ -1726,6 +1781,28 @@ async function createCase(
       receivedAt,
       ...(await termsAtReceipt(deps, projectId, receivedAt)),
     };
+  }
+  const linked = await deps.db
+    .prepare(
+      "SELECT case_id FROM security_submissions WHERE project_id=? AND repository=? AND advisory_ghsa=? AND case_id IS NOT NULL AND state IN ('submitted','receipt-verified') AND EXISTS(SELECT 1 FROM security_submission_intake i WHERE i.submission_id=security_submissions.id)",
+    )
+    .bind(projectId, terms.intake.repository, advisory)
+    .first<{ case_id: string }>();
+  if (linked) {
+    const existing = await loadCase(deps, linked.case_id);
+    if (existing && existing.reporter_github_id === reporter.githubId) {
+      const roles = await caseRoles(deps, existing, actor);
+      if (roles.size)
+        return json(200, {
+          replayed: true,
+          case: await caseView(deps, existing, roles, true),
+        });
+    }
+    fail(
+      409,
+      "advisory_already_recorded",
+      "This advisory already has a verified case.",
+    );
   }
   const insert = caseInsertStatement(deps, {
     id,
@@ -2577,6 +2654,9 @@ async function planDecision(
       ...row,
       receipt_state: "confirmed",
       root_cause_key: rootCauseKey,
+      severity,
+      loss_finding: loss,
+      decisionInScope: inScope,
       related_party: relatedParty ? "related" : "unrelated",
       related_party_review: "not-applicable",
       award_state: "pending",
@@ -2620,7 +2700,7 @@ async function reporterIsRelated(
  */
 async function planAward(
   deps: SecurityApiDependencies,
-  row: CaseRow,
+  row: CaseRow & { decisionInScope?: boolean },
   actor: Actor,
   body: Record<string, unknown>,
   now: Date,
@@ -2652,7 +2732,47 @@ async function planAward(
       set: { award_state: "ineligible", award_gross_minor: null },
     };
   }
+  if (frozenTerms(row)?.fundingPolicy === "after-approval") {
+    if (
+      row.severity !== "critical" ||
+      !["verified-potential", "verified-actual"].includes(
+        row.loss_finding ?? "",
+      )
+    )
+      fail(
+        409,
+        "award_not_eligible",
+        "This program awards only owner-confirmed critical loss-of-funds findings.",
+      );
+    const decision = await deps.db
+      .prepare(
+        "SELECT detail FROM security_case_events WHERE case_id=? AND kind='decide' ORDER BY case_revision DESC LIMIT 1",
+      )
+      .bind(row.id)
+      .first<{ detail: string }>();
+    // A combined decision/award has not written its event yet; planDecision
+    // passes the new in-scope result separately on the in-memory case.
+    const inScope =
+      (row as CaseRow & { decisionInScope?: boolean }).decisionInScope ??
+      (decision ? JSON.parse(decision.detail).inScope : false);
+    if (inScope !== true)
+      fail(
+        409,
+        "award_not_eligible",
+        "This program awards only findings inside its published scope.",
+      );
+  }
   const grossMinor = stringField(body, "grossMinor", GROSS_MINOR);
+  const promised = frozenTerms(row);
+  if (
+    promised?.fundingPolicy === "after-approval" &&
+    grossMinor !== promised.grossMinor
+  )
+    fail(
+      409,
+      "award_amount_mismatch",
+      "Choose the published award amount or no award for this program.",
+    );
   let split: ReturnType<typeof securityBountySplit>;
   try {
     split = securityBountySplit(grossMinor);
@@ -2672,6 +2792,7 @@ async function planAward(
       "confirmation_required",
       "Confirm the award: gross, both shares, payee and reservation",
     );
+  const firstReport = await firstQualifyingGuard(deps, row);
   const detail = { decision, ...split };
   // A reservation from before discretionary awards: approve that amount.
   if (reserved !== null) {
@@ -2691,7 +2812,10 @@ async function planAward(
       },
     };
   }
-  if (await reporterIsRelated(deps, row)) {
+  if (
+    row.related_party_review !== "approved" &&
+    (await reporterIsRelated(deps, row))
+  ) {
     await assertNewAwardParticipation(deps, row, actor);
     const programGuard = await unrestrictedProgramGuard(deps, row.project_id);
     await assertRootCauseFree(
@@ -2710,11 +2834,12 @@ async function planAward(
         payment_deadline: paymentDeadline,
       },
       relatedReview: true,
-      requireSql: `NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND ${programGuard.sql}`,
+      requireSql: `NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND ${programGuard.sql}${firstReport ? ` AND ${firstReport.sql}` : ""}`,
       requireValues: [
         row.reporter_github_id,
         actor.githubId,
         ...programGuard.values,
+        ...(firstReport?.values ?? []),
       ],
       unmet: {
         code: "participation_banned",
@@ -2743,7 +2868,7 @@ async function planAward(
  * id, root cause key.
  */
 const ROOT_CAUSE_PENDING_REVIEW =
-  "SELECT 1 FROM security_cases o WHERE o.project_id = ? AND o.id <> ? AND o.root_cause_key = ? AND o.receipt_state = 'confirmed' AND o.award_state = 'pending' AND o.related_party_review = 'pending'";
+  "SELECT 1 FROM security_cases o WHERE o.project_id = ? AND o.id <> ? AND o.root_cause_key = ? AND o.receipt_state = 'confirmed' AND o.award_state = 'pending' AND (o.related_party_review = 'pending' OR o.award_gross_minor IS NOT NULL)";
 
 async function assertRootCauseFree(
   deps: SecurityApiDependencies,
@@ -2830,6 +2955,34 @@ async function unrestrictedProgramGuard(
   };
 }
 
+/** A later report cannot displace an earlier human-confirmed qualifying finding. */
+async function firstQualifyingGuard(
+  deps: SecurityApiDependencies,
+  row: CaseRow,
+) {
+  if (frozenTerms(row)?.fundingPolicy !== "after-approval") return null;
+  const sql = `NOT EXISTS(SELECT 1 FROM security_cases earlier WHERE earlier.project_id=? AND earlier.id<>? AND earlier.root_cause_key=? AND earlier.receipt_state='confirmed' AND earlier.severity='critical' AND earlier.loss_finding IN ('verified-potential','verified-actual') AND (earlier.received_at<? OR (earlier.received_at=? AND earlier.id<?)) AND json_extract((SELECT e.detail FROM security_case_events e WHERE e.case_id=earlier.id AND e.kind='decide' ORDER BY e.case_revision DESC LIMIT 1),'$.inScope')=1)`;
+  const values = [
+    row.project_id,
+    row.id,
+    row.root_cause_key,
+    row.received_at,
+    row.received_at,
+    row.id,
+  ];
+  const found = await deps.db
+    .prepare(`SELECT 1 AS available WHERE ${sql}`)
+    .bind(...values)
+    .first();
+  if (!found)
+    fail(
+      409,
+      "earlier_qualifying_report",
+      "An earlier human-confirmed report already qualifies for this finding. Record this report as a duplicate.",
+    );
+  return { sql, values };
+}
+
 /**
  * Reserves the approved gross amount for the case's root cause in the same
  * batch as the revision-checked case update (PRD section 10, Capacity: only
@@ -2843,7 +2996,10 @@ async function awardReservation(
   grossMinor: string,
   at: string,
   actor: Actor,
-): Promise<Required<Pick<Change, "before" | "set" | "requireSql" | "unmet">>> {
+): Promise<
+  Required<Pick<Change, "before" | "set" | "requireSql" | "unmet">> &
+    Pick<Change, "requireValues">
+> {
   await assertNewAwardParticipation(deps, row, actor);
   const terms = frozenTerms(row);
   const rootCauseKey = row.root_cause_key;
@@ -2854,8 +3010,39 @@ async function awardReservation(
   // projects).
   const programGuard = await unrestrictedProgramGuard(deps, row.project_id);
   await assertRootCauseFree(deps, row.project_id, row.id, rootCauseKey);
-  const snapshotGuards = [programGuard];
+  const firstReport = await firstQualifyingGuard(deps, row);
+  const snapshotGuards = [programGuard, ...(firstReport ? [firstReport] : [])];
   const funds = await programFunds(deps, row.project_id, snapshotGuards);
+  if (
+    terms.fundingPolicy === "after-approval" &&
+    (funds === null ||
+      funds.currency !== terms.currency ||
+      funds.decimals !== terms.decimals ||
+      funds.network !== terms.network ||
+      BigInt(grossMinor) > BigInt(funds.availableMinor))
+  ) {
+    return {
+      before: [],
+      set: {
+        award_state: "pending",
+        award_gross_minor: grossMinor,
+        payment_deadline: row.payment_deadline,
+      },
+      requireSql: `${snapshotGuards.map((guard) => guard.sql).join(" AND ")} AND NOT EXISTS (${ROOT_CAUSE_PENDING_REVIEW}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+      requireValues: [
+        ...snapshotGuards.flatMap((guard) => guard.values),
+        row.project_id,
+        row.id,
+        rootCauseKey,
+        row.reporter_github_id,
+        actor.githubId,
+      ],
+      unmet: {
+        code: "award_changed",
+        message: "The award can no longer be selected. Reload the case.",
+      },
+    };
+  }
   if (
     funds === null ||
     funds.currency !== terms.currency ||
@@ -3239,6 +3426,8 @@ async function intakeReadiness(
               ? "ready"
               : "unavailable",
       automaticConfigured: deps.intake?.mode === "on",
+      storedIntake:
+        Boolean(deps.reportStorage) && deps.reportIntakeEnabled !== false,
       checkedAt: observed.checkedAt,
       stale: observed.stale,
       maxAgeSeconds: Math.min(
