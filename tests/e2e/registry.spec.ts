@@ -2157,7 +2157,12 @@ test.describe("private evidence console", () => {
       .getByRole("textbox")
       .fill("Inspect exact binary artifact without executing it");
     const downloaded = page.waitForEvent("download");
-    await binary.getByRole("button").click();
+    await binary
+      .getByRole("button", {
+        name: `Download ${VETTING_EVIDENCE_OBJECTS[2].label}`,
+        exact: true,
+      })
+      .click();
     const download = await downloaded;
     const saved = test.info().outputPath("harmless-artifact.bin");
     await download.saveAs(saved);
