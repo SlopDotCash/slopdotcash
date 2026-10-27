@@ -1135,23 +1135,29 @@ export function authorizeSkill(
   }
   const result = spawnSync(
     python,
-    ["-c", createSkillAuthorizationProgram(testAuthority)],
+    [
+      "-c",
+      'import io,json,sys; p=json.load(sys.stdin); sys.stdin=io.StringIO(json.dumps(p["request"])); exec(p["program"])',
+    ],
     {
       input: JSON.stringify({
-        revision: provenance.revision,
-        sourcePath: PROJECT.skillSourcePath,
-        files,
-        // A generated skill re-renders from its template and this approved
-        // registry revision before it is authorized again.
-        ...(PROJECT.registry
-          ? {
-              registry: {
-                projectId: PROJECT.projectId,
-                revision: PROJECT.registry.revision,
-                manifestSha256: PROJECT.registry.manifestSha256,
-              },
-            }
-          : {}),
+        program: createSkillAuthorizationProgram(testAuthority),
+        request: {
+          revision: provenance.revision,
+          sourcePath: PROJECT.skillSourcePath,
+          files,
+          // A generated skill re-renders from its template and this approved
+          // registry revision before it is authorized again.
+          ...(PROJECT.registry
+            ? {
+                registry: {
+                  projectId: PROJECT.projectId,
+                  revision: PROJECT.registry.revision,
+                  manifestSha256: PROJECT.registry.manifestSha256,
+                },
+              }
+            : {}),
+        },
       }),
       encoding: "utf8",
       maxBuffer: 1024 * 1024,
@@ -1244,13 +1250,16 @@ function validateAuthorizationReceipt(revision) {
           }
         : authorization.kind === "release" &&
             Object.keys(authorization).sort().join("\0") ===
-              "develop\0kind\0run" &&
+              "attempt\0develop\0kind\0run" &&
             Number.isSafeInteger(authorization.run) &&
-            authorization.run > 0
+            authorization.run > 0 &&
+            Number.isSafeInteger(authorization.attempt) &&
+            authorization.attempt > 0
           ? {
               kind: "release",
               develop: authorization.develop,
               run: authorization.run,
+              attempt: authorization.attempt,
             }
           : null;
   const expectedReceipt = expectedAuthorization

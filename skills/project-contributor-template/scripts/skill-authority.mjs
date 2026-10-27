@@ -11,6 +11,9 @@ max_total_bytes = 4_194_304
 max_api_bytes = 2_097_152
 max_pull_pages = 10
 max_timeline_pages = 10
+max_release_pages = 10
+max_release_attempts = 10
+max_release_job_requests = 32
 download_attempts = 3
 retry_backoff_seconds = (2.0, 4.0)
 sha_pattern = re.compile(r"[0-9a-f]{40}")
@@ -333,35 +336,165 @@ def develop_head():
     return require_sha(target.get("sha"), "GitHub main head")
 
 
-def latest_main_release():
-    # GitHub Actions is the owner's own record of what the release workflow
-    # published; the newest successful push release of main is the archive
-    # production serves. Older or failed runs never count.
+def release_integer(value, context):
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"GitHub release {context} is invalid")
+    return value
+
+
+def release_time(value, context):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value):
+        raise ValueError(f"GitHub release {context} is invalid")
+    time.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    return value
+
+
+def main_release_runs():
+    # Read bounded metadata, including failed or running reruns: an earlier
+    # attempt can remain the latest verified publication. No job history is
+    # read for records whose updated_at cannot beat the selected completion.
+    total = None
+    seen = set()
+    records = []
+    for page in range(1, max_release_pages + 1):
+        response = api_json(
+            f"/repos/{github_repository}/actions/workflows/deploy.yml/runs",
+            (("branch", "main"), ("per_page", "100"), ("page", str(page))),
+        )
+        if not isinstance(response, dict) or not isinstance(response.get("workflow_runs"), list):
+            raise ValueError("GitHub release history is invalid")
+        count = response.get("total_count")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0 or count > 100 * max_release_pages:
+            raise ValueError("GitHub release history exceeds its bound")
+        if total is not None and total != count:
+            raise ValueError("GitHub release history changed during pagination")
+        total = count
+        rows = response["workflow_runs"]
+        if len(rows) != min(100, total - len(seen)):
+            raise ValueError("GitHub release history is incomplete")
+        for run in rows:
+            if not isinstance(run, dict):
+                raise ValueError("GitHub release record is invalid")
+            run_id = release_integer(run.get("id"), "run id")
+            if run_id in seen:
+                raise ValueError("GitHub release history repeats a run")
+            seen.add(run_id)
+            if run.get("event") not in ("push", "workflow_dispatch"):
+                continue
+            repository_record = run.get("head_repository")
+            if (run.get("head_branch") != "main" or run.get("path") != ".github/workflows/deploy.yml"
+                or not isinstance(repository_record, dict) or repository_record.get("full_name") != github_repository):
+                raise ValueError("GitHub release record has the wrong authority")
+            require_sha(run.get("head_sha"), "release head")
+            release_integer(run.get("run_attempt"), "attempt")
+            if run.get("status") not in ("completed", "in_progress", "queued", "pending", "waiting", "requested"):
+                raise ValueError("GitHub release status is invalid")
+            created = release_time(run.get("created_at"), "creation time")
+            updated = release_time(run.get("updated_at"), "update time")
+            if created > updated:
+                raise ValueError("GitHub release time order is invalid")
+            records.append(run)
+        if len(seen) == total:
+            # Running metadata can lag completed jobs. Inspect every active
+            # run first; only completed runs have a usable completion bound.
+            return sorted(records, key=lambda run: (run["status"] != "completed", run["updated_at"], run["id"]), reverse=True)
+    raise ValueError("GitHub release history pagination exceeded its bound")
+
+
+def verified_publication(run, attempt):
     response = api_json(
-        f"/repos/{github_repository}/actions/workflows/deploy.yml/runs",
-        (("branch", "main"), ("event", "push"), ("status", "success"), ("per_page", "1")),
+        f"/repos/{github_repository}/actions/runs/{run['id']}/attempts/{attempt}/jobs",
+        (("per_page", "100"), ("page", "1")),
     )
-    if not isinstance(response, dict) or not isinstance(response.get("workflow_runs"), list):
-        raise ValueError("GitHub workflow runs response is invalid")
-    runs = response["workflow_runs"]
-    if not runs:
+    if not isinstance(response, dict) or not isinstance(response.get("jobs"), list):
+        raise ValueError("GitHub release jobs are invalid")
+    jobs = response["jobs"]
+    count = response.get("total_count")
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0 or count > 100 or len(jobs) != count:
+        raise ValueError("GitHub release jobs are incomplete or unbounded")
+    ids = set()
+    production = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            raise ValueError("GitHub release job is invalid")
+        job_id = release_integer(job.get("id"), "job id")
+        if job_id in ids:
+            raise ValueError("GitHub release jobs repeat an id")
+        ids.add(job_id)
+        if job.get("name") == "Deploy trusted production bundle":
+            production.append(job)
+    if len(production) > 1:
+        raise ValueError("GitHub release has ambiguous production jobs")
+    if not production:
         return None
-    run = runs[0]
-    if not isinstance(run, dict):
-        raise ValueError("GitHub workflow run record is invalid")
-    head_repository = run.get("head_repository")
-    if (
-        run.get("head_branch") != "main"
-        or run.get("event") != "push"
-        or run.get("conclusion") != "success"
-        or not isinstance(head_repository, dict)
-        or head_repository.get("full_name") != github_repository
+    job = production[0]
+    if job.get("run_id") != run["id"] or job.get("run_attempt") != attempt or job.get("head_sha") != run["head_sha"]:
+        raise ValueError("GitHub production job names another source or attempt")
+    if job.get("status") != "completed" or job.get("conclusion") != "success":
+        return None
+    started = release_time(job.get("started_at"), "job start")
+    completed = release_time(job.get("completed_at"), "job completion")
+    if not run["created_at"] <= started <= completed:
+        raise ValueError("GitHub production job time order is invalid")
+    if run["status"] == "completed" and completed > run["updated_at"]:
+        raise ValueError("GitHub completed release metadata predates its job")
+    steps = job.get("steps")
+    if not isinstance(steps, list) or len(steps) > 100:
+        raise ValueError("GitHub production steps are invalid")
+    previous_number = 0
+    previous_end = started
+    for name in (
+        "Verify deployment checkout",
+        "Verify downloaded Pages bundle",
+        "Require live release-input equivalence",
+        "Deploy private identity and Cloudflare Pages",
+        "Verify Cloudflare deployment commit metadata",
+        "Verify published skill and leaderboard",
     ):
-        return None
-    run_id = run.get("id")
-    if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
-        raise ValueError("GitHub workflow run record has an invalid id")
-    return require_sha(run.get("head_sha"), "latest main release head"), run_id
+        matches = [step for step in steps if isinstance(step, dict) and step.get("name") == name]
+        if len(matches) > 1:
+            raise ValueError("GitHub production verification is ambiguous")
+        if not matches or matches[0].get("status") != "completed" or matches[0].get("conclusion") != "success":
+            return None
+        step = matches[0]
+        number = release_integer(step.get("number"), "step number")
+        start = release_time(step.get("started_at"), "step start")
+        end = release_time(step.get("completed_at"), "step completion")
+        if number <= previous_number or not previous_end <= start <= end <= completed:
+            raise ValueError("GitHub production verification time order is invalid")
+        previous_number, previous_end = number, end
+    return completed
+
+
+def latest_main_release():
+    best = None
+    requests = 0
+    for run in main_release_runs():
+        # Only completed run metadata bounds its completed jobs. Active run
+        # metadata can lag a successful production job, so never prune it.
+        if run["status"] == "completed" and best is not None and run["updated_at"] < best[0]:
+            break
+        attempts = run["run_attempt"]
+        if attempts > max_release_attempts:
+            raise ValueError("GitHub release attempts exceed their bound")
+        for attempt in range(attempts, 0, -1):
+            requests += 1
+            if requests > max_release_job_requests:
+                raise ValueError("GitHub release proof requests exceed their bound")
+            completed = verified_publication(run, attempt)
+            if completed is None:
+                continue
+            candidate = (completed, run["head_sha"], run["id"], attempt)
+            if best is None or completed > best[0]:
+                best = candidate
+            elif completed == best[0]:
+                if candidate[1] != best[1]:
+                    raise ValueError("GitHub latest verified publication is ambiguous")
+                best = min(best, candidate)
+            # GitHub rerun attempts follow the preceding attempt; an earlier
+            # attempt cannot publish after this successful verified one.
+            break
+    return None if best is None else (best[1], best[2], best[3])
 
 
 def authorize_revision(revision, canonical_files):
@@ -410,7 +543,7 @@ def authorize_revision(revision, canonical_files):
         # refuses it, and no older release qualifies.
         latest_release = latest_main_release()
         if latest_release is not None and latest_release[0] == revision:
-            return {"kind": "release", "develop": current_develop, "run": latest_release[1]}
+            return {"kind": "release", "develop": current_develop, "run": latest_release[1], "attempt": latest_release[2]}
         raise ValueError(f"installed skill bytes differ from current main {current_develop}; install the current skill")
     raise ValueError(
         "archive revision is neither the current canonical main skill nor an open labeled same-repository release candidate"
