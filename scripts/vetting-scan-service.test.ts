@@ -70,7 +70,7 @@ const templateInputs = {
   rendererSources: [{ path: "src/render.mjs", sha256: digest(rendererText) }],
   acceptedRevisions: ["1"],
 };
-const TEMPLATE = digest(JSON.stringify(templateInputs));
+let templateSha256 = digest(JSON.stringify(templateInputs));
 const REPOSITORY_FILES: Record<string, string> = {
   "README.md": "# Fixture\nRun `bun test`.\n",
   "AGENTS.md": "Keep changes small and run the tests.\n",
@@ -227,7 +227,7 @@ async function surplus(request: Request, path: string): Promise<Response> {
   });
 }
 
-const readLivePin = async () => ({ commitSha, templateSha256: TEMPLATE });
+const readLivePin = async () => ({ commitSha, templateSha256 });
 const randomId = () =>
   `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`;
 const actorOf = (request: Request) =>
@@ -428,7 +428,7 @@ async function route(incoming: Request): Promise<Response> {
       schemaVersion: "1",
       repository: "example/templates",
       commit: commitSha,
-      templateSha256: TEMPLATE,
+      templateSha256,
       revisionStatus: "committed",
       contributor: templateInputs.contributor,
       reviewer: templateInputs.reviewer,
@@ -479,6 +479,8 @@ const profile = (
 beforeEach(async () => {
   acquisitionRequests = [];
   publicGitHubLimit = Number.POSITIVE_INFINITY;
+  templateInputs.acceptedRevisions = ["1"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
   clock = NOW;
   root = await mkdtemp(join(tmpdir(), "slop-scan-service-"));
   repository = join(root, "git");
@@ -622,6 +624,33 @@ test("authenticated source acquisition exceeds the public quota without sharing 
       .every((r) => r.authorization !== "Bearer fixture-github-key"),
   ).toBe(true);
   expect(await readdir(config.workDirectory)).toEqual([]);
+});
+
+test("a template update replaces stale queued work without changing its retained assessment", async () => {
+  provider.up = false;
+  const first = await runScanPass(config);
+  const original = await vetting.getAssessment(
+    first.assessments[0].assessmentId,
+  );
+  expect(original?.state).toBe("pending");
+  if (!original) throw new Error("The first scan was not queued");
+
+  templateInputs.acceptedRevisions = ["1", "2"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
+  clock = new Date(clock.getTime() + 1000);
+  const next = await runScanPass(config);
+  const pending = await vetting.pendingAssessments();
+  expect(pending).toHaveLength(1);
+  expect(pending[0].templateSha256).toBe(templateSha256);
+  expect(pending[0].id).not.toBe(original?.id);
+  expect(next.assessments).toEqual([
+    { assessmentId: pending[0].id, state: "retry", step: "primary-review" },
+  ]);
+  expect(await vetting.getAssessment(original.id)).toEqual(original);
+  expect(await vetting.listAssessments()).toHaveLength(2);
+  await runScanPass(config);
+  expect(await vetting.listAssessments()).toHaveLength(2);
+  expect((await activate()).status).toBe(422);
 });
 
 test("a provider outage leaves the scan pending; the next pass clears the project with one Surplus review", async () => {
@@ -860,6 +889,14 @@ test("a two-flag pause is reinstated automatically after the service's clean fre
   await runScanPass(config);
   expect((await activate()).status).toBe(200);
 
+  // An unfinished scan must not block a later scan covering new flags.
+  await commit({ "README.md": "# Updated fixture\n" }, "Update public guide");
+  provider.up = false;
+  const interrupted = await runScanPass(config);
+  const oldId = interrupted.assessments[0].assessmentId;
+  expect((await vetting.getAssessment(oldId))?.state).toBe("pending");
+  provider.up = true;
+
   expect((await flag("alice")).status).toBe(201);
   clock = new Date(NOW.getTime() + 60_000);
   expect(await (await flag("bob")).json()).toMatchObject({
@@ -875,6 +912,8 @@ test("a two-flag pause is reinstated automatically after the service's clean fre
   clock = new Date(NOW.getTime() + 120_000);
   const report = await runScanPass(config);
   const [{ assessmentId }] = report.assessments;
+  expect(assessmentId).not.toBe(oldId);
+  expect((await vetting.getAssessment(oldId))?.state).toBe("pending");
   expect(report.assessments).toEqual([
     {
       assessmentId,

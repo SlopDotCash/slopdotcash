@@ -189,7 +189,11 @@ export class CloudflareVettingPersistence {
   async pendingAssessments(): Promise<VettingAssessment[]> {
     const rows = await this.db
       .prepare(
-        `SELECT ${COLUMNS} FROM vetting_assessments WHERE state = 'pending' ORDER BY requested_at, rowid LIMIT 100`,
+        `SELECT ${COLUMNS} FROM vetting_assessments
+         WHERE state = 'pending' AND rowid = (
+           SELECT MAX(current.rowid) FROM vetting_assessments current
+           WHERE current.project_id = vetting_assessments.project_id
+         ) ORDER BY requested_at, rowid LIMIT 100`,
       )
       .all<AssessmentRow>();
     return (rows.results ?? []).map(fromRow);
@@ -235,7 +239,7 @@ export class CloudflareVettingPersistence {
     return row?.covered === 1;
   }
 
-  /** Returns "conflict" when this revision already has a queued scan. */
+  /** Atomically refuses an identical current pin and flag set. Older rows stay immutable. */
   async createAssessment(
     assessment: Omit<
       VettingAssessment,
@@ -248,10 +252,18 @@ export class CloudflareVettingPersistence {
     >,
   ): Promise<"created" | "conflict"> {
     try {
-      await this.db
+      const result = await this.db
         .prepare(
           `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, flag_ids)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', (SELECT json_group_array(id) FROM project_flags WHERE project_id = ? AND state = 'active'))`,
+           SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending',
+             (SELECT json_group_array(id) FROM (SELECT id FROM project_flags WHERE project_id = ?12 AND state = 'active' ORDER BY id))
+           WHERE NOT EXISTS (
+             SELECT 1 FROM vetting_assessments current
+             WHERE current.rowid = (SELECT MAX(rowid) FROM vetting_assessments WHERE project_id = ?2)
+               AND current.state = 'pending' AND current.revision = ?3
+               AND current.commit_sha = ?6 AND current.template_sha256 = ?7
+               AND current.flag_ids = (SELECT json_group_array(id) FROM (SELECT id FROM project_flags WHERE project_id = ?12 AND state = 'active' ORDER BY id))
+           )`,
         )
         .bind(
           assessment.id,
@@ -268,7 +280,7 @@ export class CloudflareVettingPersistence {
           assessment.projectId,
         )
         .run();
-      return "created";
+      return result.meta?.changes === 0 ? "conflict" : "created";
     } catch (error) {
       if (error instanceof Error && /UNIQUE/u.test(error.message))
         return "conflict";
