@@ -1800,7 +1800,10 @@ function SubmissionsPanel({
   const shown = submissions.filter(
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
-  if (shown.length === 0 && !grantError && !authorityUnavailable) return null;
+  if (shown.length === 0 && !grantError && !authorityUnavailable)
+    return cases.length === 0 ? (
+      <p className="admin-status">You have no private reports yet.</p>
+    ) : null;
   const ordered = shown
     .filter((submission) => {
       const record = cases.find((record) => record.id === submission.caseId);
@@ -3310,71 +3313,81 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
           onKnownCases={setKnownSubmissionCases}
           cases={list.value.cases}
         />
-        <section aria-labelledby="security-cases" className="admin-section">
-          <h2 id="security-cases">Decisions and payments</h2>
-          {list.value.authorityUnavailable ? (
-            <p className="form-error" role="status">
-              Some maintainer access could not be checked.{" "}
-              <button className="text-button" onClick={reload} type="button">
-                Retry access check
-              </button>
-            </p>
-          ) : null}
-          {list.value.cases.length === 0 ? (
-            <p className="admin-status">
-              {list.value.authorityUnavailable
-                ? "No cases to show. Retry the access check."
-                : "You have no private security cases."}
-            </p>
-          ) : (
-            <ul
-              className={`security-case-list${selected ? " security-case-list-selected" : ""}`}
-            >
-              {list.value.cases
-                .filter(
-                  (record) =>
-                    !knownSubmissionCases.includes(record.id) &&
-                    matchesReport(record, filter),
-                )
-                .map((record) => (
-                  <li key={record.id}>
-                    <button
-                      aria-pressed={selected === record.id}
-                      className="security-case-choice"
-                      onClick={() => setSelected(record.id)}
-                      type="button"
-                    >
-                      <span>{record.projectId}</span>
-                      <strong title={record.id}>{caseTitle(record)}</strong>
-                      <span>{record.nextStep}</span>
-                      <span>Award: {awardText(record)}</span>
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          )}
-          {selected ? (
-            <>
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => {
-                  setSelected(null);
-                  const query = new URLSearchParams(window.location.search);
-                  query.delete("case");
-                  window.history.replaceState(
-                    window.history.state,
-                    "",
-                    `${window.location.pathname}?${query}`,
-                  );
-                }}
+        {selected ||
+        list.value.authorityUnavailable ||
+        list.value.cases.some(
+          (record) => !knownSubmissionCases.includes(record.id),
+        ) ? (
+          <section aria-labelledby="security-cases" className="admin-section">
+            <h2 id="security-cases">Decisions and payments</h2>
+            {list.value.authorityUnavailable ? (
+              <p className="form-error" role="status">
+                Some maintainer access could not be checked.{" "}
+                <button className="text-button" onClick={reload} type="button">
+                  Retry access check
+                </button>
+              </p>
+            ) : null}
+            {list.value.cases.length === 0 ? (
+              <p className="admin-status">
+                {list.value.authorityUnavailable
+                  ? "No cases to show. Retry the access check."
+                  : "You have no private security cases."}
+              </p>
+            ) : (
+              <ul
+                className={`security-case-list${selected ? " security-case-list-selected" : ""}`}
               >
-                Back to reports
-              </button>
-              <CaseDetail caseId={selected} key={selected} onChanged={reload} />
-            </>
-          ) : null}
-        </section>
+                {list.value.cases
+                  .filter(
+                    (record) =>
+                      !knownSubmissionCases.includes(record.id) &&
+                      matchesReport(record, filter),
+                  )
+                  .map((record) => (
+                    <li key={record.id}>
+                      <button
+                        aria-pressed={selected === record.id}
+                        className="security-case-choice"
+                        onClick={() => setSelected(record.id)}
+                        type="button"
+                      >
+                        <span>{record.projectId}</span>
+                        <strong title={record.id}>{caseTitle(record)}</strong>
+                        <span>{record.nextStep}</span>
+                        <span>Award: {awardText(record)}</span>
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            )}
+            {selected ? (
+              <>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => {
+                    setSelected(null);
+                    const query = new URLSearchParams(window.location.search);
+                    query.delete("case");
+                    window.history.replaceState(
+                      window.history.state,
+                      "",
+                      `${window.location.pathname}?${query}`,
+                    );
+                  }}
+                >
+                  Back to reports
+                </button>
+                <CaseDetail
+                  caseId={selected}
+                  key={selected}
+                  onChanged={reload}
+                />
+              </>
+            ) : null}
+          </section>
+        ) : null}
         <details
           className="security-reference"
           open={
