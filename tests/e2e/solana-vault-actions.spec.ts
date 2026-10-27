@@ -1401,7 +1401,24 @@ async function ownerSetupWorkflow(
       duplicateTx.serialize(),
       { skipPreflight: true, maxRetries: 0 },
     );
-    await connection.confirmTransaction(failedCreation, "finalized");
+    // web3.js may either return a failed signature notification or throw its
+    // error from the HTTP status race. This case expects failure: require the
+    // exact finalized receipt before testing its rejection by the verifier.
+    await expect
+      .poll(
+        async () => {
+          const receipt = await connection.getTransaction(failedCreation, {
+            commitment: "finalized",
+            maxSupportedTransactionVersion: 0,
+          });
+          return (
+            receipt?.transaction.signatures[0] === failedCreation &&
+            receipt.meta?.err != null
+          );
+        },
+        { timeout: 60_000 },
+      )
+      .toBe(true);
     await expect(
       verifySolanaVaultCreation(
         config,
