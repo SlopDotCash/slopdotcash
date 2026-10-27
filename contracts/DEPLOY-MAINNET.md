@@ -474,6 +474,9 @@ The validator job downloads the same-run retained artifact before testing,
 verifies its source commit, Solana tree, image, run, size and hash, and loads
 those exact bytes for every lifecycle stage. It builds the host IDL separately;
 an independently compiled host program is not substituted for the candidate.
+The producer exports its immutable artifact ID and build attempt. A failed-job
+rerun reuses that exact producer artifact and verifies its original attempt,
+even when the consumer's attempt counter has advanced.
 It also compares the program byte for byte after testing and refuses a
 difference. Neither job uses a
 production signing key, performs a public deployment or proves mainnet acceptance.
