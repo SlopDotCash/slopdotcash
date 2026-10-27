@@ -606,55 +606,7 @@ test("renders contributor and cycle records from validated public data", {
   await expect(
     page.locator(".profile-totals").getByText(/simulated estimate|pool$/u),
   ).toHaveCount(0);
-  const acceptedRecords = snapshot.ledger.filter(
-    (event) => event.actor.id === actor.id,
-  );
-  const activity = page.getByRole("region", { name: "Contribution activity" });
-  await expect(activity).toBeVisible();
-  const dates = await activity
-    .locator("li[data-activity-date]")
-    .evaluateAll((rows) =>
-      rows.map((row) => row.getAttribute("data-activity-date") ?? ""),
-    );
-  expect(dates).toEqual([...dates].sort((a, b) => b.localeCompare(a)));
-  if (acceptedRecords.length > 10) {
-    await expect(activity.locator("li[data-activity-date]")).toHaveCount(10);
-    const expand = activity.getByRole("button", {
-      name: /View all .* activity records/u,
-    });
-    await expand.scrollIntoViewIfNeeded();
-    await expand.focus();
-    await page.keyboard.press("Enter");
-    const collapse = activity.getByRole("button", {
-      name: "Show recent activity",
-    });
-    await expect(collapse).toBeFocused();
-    await expect(collapse).toBeInViewport();
-    const fullDates = await activity
-      .locator("li[data-activity-date]")
-      .evaluateAll((rows) =>
-        rows.map((row) => row.getAttribute("data-activity-date") ?? ""),
-      );
-    expect(fullDates.length).toBeGreaterThanOrEqual(acceptedRecords.length);
-    expect(fullDates).toEqual(
-      [...fullDates].sort((a, b) => b.localeCompare(a)),
-    );
-    const latest = [...acceptedRecords].sort((a, b) =>
-      b.occurredAt.localeCompare(a.occurredAt),
-    )[0];
-    await expect(
-      activity
-        .getByRole("link", { name: latest.source.title, exact: true })
-        .first(),
-    ).toBeVisible();
-    await expect(
-      activity.getByRole("button", { name: "Show recent activity" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    await page.keyboard.press("Enter");
-    await expect(expand).toBeFocused();
-    await expect(expand).toBeInViewport();
-    await expect(activity.locator("li[data-activity-date]")).toHaveCount(10);
-  }
+  await expect(page.locator("li[data-activity-date]")).toHaveCount(0);
 
   const archived = cycles.cycles.find((cycle) =>
     cycle.contributors.some((entry) => entry.actor.id === actor.id),

@@ -162,7 +162,6 @@ export {
 /** Backward-compatible alias for the primary registry repository. */
 export const LEADERBOARD_REPOSITORY = PRIMARY_REPOSITORY?.id ?? null;
 export const LEADERBOARD_SCHEMA_VERSION = "6" as const;
-export const PROFILE_OPPORTUNITY_LIMIT = 5 as const;
 export const SCORE_RULE_VERSION = "slop-score-v2" as const;
 export const SCORE_V2_EFFECTIVE_AT = "2026-08-01T00:00:00.000Z" as const;
 const USAGE_NEUTRAL_EVIDENCE_POLICY_AT = "2026-08-19T00:00:00.000Z" as const;

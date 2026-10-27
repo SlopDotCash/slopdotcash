@@ -14,7 +14,11 @@ import {
 import { identityPublicOrigin } from "../workers/identity/contracts";
 import { AccountAppeals } from "./AccountAppeals";
 import { Link } from "./Link";
-import { browserDeployment, loginHref } from "./lib/browser-deployment";
+import {
+  browserDeployment,
+  localBackendOrigin,
+  loginHref,
+} from "./lib/browser-deployment";
 import {
   fetchWithDeadline,
   readBoundedJson,
@@ -28,7 +32,6 @@ import { errorMessage } from "./lib/errors";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
-import type { ScoreEvent } from "./lib/leaderboard";
 import type { ActorRef } from "./lib/leaderboard-types";
 import {
   assemblePoints,
@@ -38,6 +41,7 @@ import {
   type PointsMember,
   pointMembers,
 } from "./lib/points";
+import { recentPoints } from "./lib/profile-activity";
 import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
@@ -490,8 +494,10 @@ export function useProfileMembership(login: string, enabled = true) {
   };
 }
 
+/** The profile shows points earned over this many recent days beside the total. */
+const RECENT_POINTS_DAYS = 30;
+
 export function ProfilePoints({
-  work,
   actorId,
   login,
   cycles,
@@ -503,7 +509,6 @@ export function ProfilePoints({
 }: {
   children?: ReactNode;
   login: string;
-  work?: readonly ScoreEvent[];
   cycles?: CycleIndex;
   showIdentity?: boolean;
   actorId?: string;
@@ -546,6 +551,15 @@ export function ProfilePoints({
           ? named[0]
           : undefined
       : undefined;
+  // A known actor with no Points record and no membership has none.
+  const pointsKnown =
+    state.status === "ready" &&
+    (m || identity || recorded || (actorId && joinStatus === "absent"));
+  const pointsUnavailable = pointsKnown
+    ? null
+    : state.status === "loading"
+      ? "Loading…"
+      : "Unavailable";
   if (
     notFoundWhenUnrecorded &&
     state.status === "ready" &&
@@ -564,15 +578,7 @@ export function ProfilePoints({
   return (
     <section className="points-panel" aria-label="Slop Points">
       <ProfileActivity
-        work={work}
         awards={m?.awards}
-        pointsMissing={
-          state.status === "ready"
-            ? undefined
-            : state.status === "loading"
-              ? "Points loading…"
-              : "Points unavailable"
-        }
         login={login}
         actorId={resolvedActorId ?? m?.actor.id}
         census={census}
@@ -599,25 +605,30 @@ export function ProfilePoints({
           </>
         }
         summary={
-          <div>
-            <strong>
-              {state.status === "ready" &&
-              (m ||
-                identity ||
-                recorded ||
-                // A known actor with no Points record and no membership has none.
-                (actorId && joinStatus === "absent"))
-                ? (
+          <>
+            <div>
+              <strong>
+                {pointsUnavailable ??
+                  recentPoints(
+                    m?.awards ?? [],
+                    new Date(),
+                    RECENT_POINTS_DAYS,
+                  ).toLocaleString()}
+              </strong>
+              <span>points · {RECENT_POINTS_DAYS} days</span>
+            </div>
+            <div>
+              <strong>
+                {pointsUnavailable ??
+                  (
                     (m?.total ?? 0) +
                     (identity?.welcome ?? 0) +
                     (identity?.socialPoints ?? 0)
-                  ).toLocaleString()
-                : state.status === "loading"
-                  ? "Loading…"
-                  : "Unavailable"}
-            </strong>
-            <span>total points</span>
-          </div>
+                  ).toLocaleString()}
+              </strong>
+              <span>total points</span>
+            </div>
+          </>
         }
       >
         {children}
@@ -656,14 +667,18 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
     try {
       const assertion = await requestIdentityAssertion({
         origin: identityPublicOrigin(
-          [
-            "https://staging.slop.cash",
-            "https://slop-staging.pages.dev",
-          ].includes(window.location.origin)
-            ? import.meta.env.VITE_IDENTITY_PUBLIC_ORIGIN
-            : undefined,
+          // A local backend serves sign-in from the dev server's own origin.
+          localBackendOrigin ??
+            ([
+              "https://staging.slop.cash",
+              "https://slop-staging.pages.dev",
+            ].includes(window.location.origin)
+              ? import.meta.env.VITE_IDENTITY_PUBLIC_ORIGIN
+              : undefined),
           deploymentTier(import.meta.env.VITE_SLOP_ENVIRONMENT),
+          { loopback: localBackendOrigin !== null },
         ),
+        allowLoopback: localBackendOrigin !== null,
         audience: "slop-points-web",
         signal: c.signal,
         authorize: (url) => popup.location.replace(url),
