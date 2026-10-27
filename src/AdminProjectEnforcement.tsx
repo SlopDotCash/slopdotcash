@@ -49,6 +49,7 @@ function maintainerList(maintainers: { githubLogin: string }[]): string {
 function availableActions(
   enforcement: AdminProject["enforcement"],
 ): EnforcementAction[] {
+  const projectAppealRequested = enforcement.projectAppeal === "requested";
   const accountActions: EnforcementAction[] =
     enforcement.bannedMaintainers.length > 0
       ? enforcement.appeal === "requested"
@@ -58,14 +59,24 @@ function availableActions(
   if (enforcement.state === "clear")
     return [...accountActions, "quarantine", "ban"];
   if (enforcement.decisionRequired)
-    return enforcement.appeal === "requested"
+    return projectAppealRequested
       ? ["ban", "reinstate"]
       : ["ban", "request_reinstatement"];
   const escalate: EnforcementAction[] =
     enforcement.state === "quarantined" ? ["ban"] : [];
-  return enforcement.appeal === "requested"
+  return projectAppealRequested
     ? [...accountActions, ...escalate, "reinstate", "deny_reinstatement"]
-    : [...escalate, "request_reinstatement"];
+    : [
+        ...new Set<EnforcementAction>([
+          ...accountActions,
+          ...escalate,
+          "request_reinstatement",
+          ...(enforcement.appeal === "requested" &&
+          enforcement.bannedMaintainers.length > 0
+            ? ["deny_reinstatement" as const]
+            : []),
+        ]),
+      ];
 }
 
 function stateLabel(state: AdminProject["enforcement"]["state"]): string {
@@ -85,7 +96,8 @@ export function ProjectEnforcementPanel({
 }) {
   const enforcement = project.enforcement;
   const actions = availableActions(enforcement);
-  const [action, setAction] = useState<EnforcementAction>(actions[0]);
+  const [selectedAction, setAction] = useState<EnforcementAction>(actions[0]);
+  const action = actions.includes(selectedAction) ? selectedAction : actions[0];
   const [reason, setReason] = useState("");
   const [evidence, setEvidence] = useState("");
   const [responsible, setResponsible] = useState("");
