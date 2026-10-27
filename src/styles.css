@@ -1374,15 +1374,6 @@ small {
   text-overflow: ellipsis;
 }
 
-.proposal-intro {
-  max-width: 950px;
-  padding-bottom: 40px;
-}
-
-.proposal-intro h1 {
-  font-size: clamp(52px, 7vw, 94px);
-}
-
 .proposal-steps {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1538,26 +1529,6 @@ small {
   line-height: 1.55;
 }
 
-.manage-intro {
-  max-width: 860px;
-  padding-bottom: 56px;
-}
-
-.manage-intro h1 {
-  max-width: none;
-  margin-bottom: 18px;
-  font-size: clamp(46px, 6.5vw, 86px);
-  letter-spacing: -0.035em;
-  line-height: 0.96;
-}
-
-.manage-intro p {
-  max-width: 68ch;
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 1.65;
-}
-
 .owner-section {
   display: grid;
   grid-template-columns: minmax(180px, 0.45fr) minmax(0, 1fr);
@@ -1710,8 +1681,7 @@ small {
     margin-top: 24px;
   }
 
-  .project-hero h1,
-  .proposal-intro h1 {
+  .project-hero h1 {
     font-size: clamp(45px, 14vw, 68px);
   }
 
@@ -3772,7 +3742,6 @@ small {
   margin: 0 0 0.5rem;
   overflow-wrap: anywhere;
 }
-.inbox-state,
 .inbox-meta {
   color: var(--muted);
   font-size: 0.875rem;
@@ -4009,47 +3978,6 @@ html:has(.security-page) {
   min-height: 0;
   padding: 0;
   margin-top: 0.3em;
-}
-
-.owner-awards form {
-  display: grid;
-  gap: 1rem;
-  justify-items: start;
-  margin-block: 1.5rem 2rem;
-}
-
-.owner-awards form label {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.owner-awards input[type="month"] {
-  min-width: 0;
-  width: 100%;
-}
-
-.owner-award-list {
-  display: grid;
-  gap: 1.5rem;
-  padding-inline-start: 1.25rem;
-  margin-block: 1.5rem 2rem;
-}
-
-.owner-award-list li {
-  padding-bottom: 1.5rem;
-  border-bottom: 1px solid var(--line);
-  overflow-wrap: anywhere;
-}
-
-.owner-award-list dl {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0.5rem 1rem;
-  max-width: 36rem;
-}
-
-.owner-award-list dd {
-  margin: 0;
 }
 
 /* Compact owner setup checks; text and icons both communicate state. */

@@ -14,6 +14,7 @@ import { checkProjectSetup } from "./lib/project-api";
 import type { ProjectSetupStatus } from "./lib/project-contracts";
 import { formatMonthlyAmount } from "./lib/project-proposal";
 import { REWARD_ASSET_NETWORKS } from "./lib/reward-asset.mjs";
+import { NetworkName, StatusBadge } from "./Presentation";
 
 const HEADINGS: Record<ProjectSetupStatus["state"], string> = {
   ready: "Ready",
@@ -51,7 +52,7 @@ const SCAN: Record<ProjectSetupStatus["checks"]["scan"]["state"], string> = {
   unavailable: "Unavailable",
 };
 
-function StatusBadge({
+function SetupBadge({
   label,
   tone,
 }: {
@@ -61,10 +62,14 @@ function StatusBadge({
   const Icon =
     tone === "ready" ? Check : tone === "pending" ? Clock : CircleAlert;
   return (
-    <span className={`setup-badge setup-badge--${tone}`}>
-      <Icon size={14} aria-hidden="true" />
+    <StatusBadge
+      tone={
+        tone === "ready" ? "success" : tone === "pending" ? "info" : "warning"
+      }
+      icon={<Icon size={14} />}
+    >
       {label}
-    </span>
+    </StatusBadge>
   );
 }
 
@@ -190,7 +195,7 @@ export function ProjectSetupStatusPanel({
                 GitHub access
               </dt>
               <dd>
-                <StatusBadge
+                <SetupBadge
                   label={AUTHORITY[setup.checks.authority.state]}
                   tone={
                     setup.checks.authority.state === "verified"
@@ -206,7 +211,7 @@ export function ProjectSetupStatusPanel({
                 Slopbot
               </dt>
               <dd>
-                <StatusBadge
+                <SetupBadge
                   label={INSTALLATION[setup.checks.installation.state]}
                   tone={
                     setup.checks.installation.state === "installed"
@@ -222,7 +227,7 @@ export function ProjectSetupStatusPanel({
                 Security scan
               </dt>
               <dd>
-                <StatusBadge
+                <SetupBadge
                   label={
                     setup.checks.scan.exempt
                       ? "Exempt"
@@ -260,10 +265,12 @@ export function ProjectSetupStatusPanel({
                       / month
                     </strong>
                     <span className="setup-funding-note">
-                      {REWARD_ASSET_NETWORKS[
-                        setup.funding
-                          .network as keyof typeof REWARD_ASSET_NETWORKS
-                      ]?.name ?? setup.funding.network}
+                      <NetworkName chain={setup.funding.network}>
+                        {REWARD_ASSET_NETWORKS[
+                          setup.funding
+                            .network as keyof typeof REWARD_ASSET_NETWORKS
+                        ]?.name ?? setup.funding.network}
+                      </NetworkName>
                     </span>
                     <a href={`/projects/${setup.slug}/funding`}>
                       Vault funding

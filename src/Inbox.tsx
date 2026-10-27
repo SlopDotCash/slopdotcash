@@ -1,5 +1,13 @@
 /** Signed-in inbox for account, project and payment events (PRD NOT-01). */
 
+import {
+  Bell,
+  CircleDollarSign,
+  FolderGit2,
+  Inbox,
+  ShieldCheck,
+  Wallet,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InboxEmail } from "./InboxEmail";
 import { loginHref } from "./lib/browser-deployment";
@@ -15,7 +23,7 @@ import {
   parseNotificationsResponse,
 } from "./lib/notifications";
 import { useAction } from "./lib/use-action";
-import { formatDateTime } from "./Presentation";
+import { formatDateTime, RoutePageHeader, StatusBadge } from "./Presentation";
 
 type InboxState =
   | { status: "loading" }
@@ -128,7 +136,7 @@ export default function InboxPage() {
 
   return (
     <main className="shell route-main inbox-page">
-      <h1>Inbox</h1>
+      <RoutePageHeader icon={<Inbox />} title="Inbox" />
       {state.status === "loading" ? (
         <p role="status">Loading your inbox…</p>
       ) : null}
@@ -267,19 +275,50 @@ function InboxItem({
 }) {
   const unread = n.readAt === null;
   const title = notificationTitle(n);
+  const Icon =
+    n.kind.startsWith("security_") || n.kind.startsWith("slopbot_")
+      ? ShieldCheck
+      : n.kind === "wallet_changed"
+        ? Wallet
+        : n.kind.startsWith("payment_") ||
+            n.kind.startsWith("payout_") ||
+            n.kind === "award_reserved"
+          ? CircleDollarSign
+          : n.kind.startsWith("project_") ||
+              n.kind.startsWith("application_") ||
+              n.kind.startsWith("reinstatement_")
+            ? FolderGit2
+            : Bell;
   return (
     <li className={unread ? "inbox-item inbox-unread" : "inbox-item"}>
-      <p className="inbox-state">{unread ? "Unread" : "Read"}</p>
-      <p className="inbox-title">{title}</p>
-      {n.detail ? <p className="inbox-detail">{n.detail}</p> : null}
+      <div className="inbox-item-heading">
+        <span className="inbox-kind-icon">
+          <Icon size={20} aria-hidden="true" />
+        </span>
+        <p className="inbox-title">{title}</p>
+        <StatusBadge tone={unread ? "info" : "neutral"}>
+          {unread ? "Unread" : "Read"}
+        </StatusBadge>
+      </div>
+      {n.detail && n.detail !== title ? (
+        <p className="inbox-detail">{n.detail}</p>
+      ) : null}
       <p className="inbox-meta">
         <time dateTime={n.sourceAt}>{formatDateTime(n.sourceAt)}</time>
         {n.emailDelivery ? (
           <>
             {" · "}
-            <span className="inbox-delivery">
+            <StatusBadge
+              tone={
+                n.emailDelivery === "failed"
+                  ? "danger"
+                  : n.emailDelivery === "delivered"
+                    ? "success"
+                    : "neutral"
+              }
+            >
               {emailDeliveryLabel(n.emailDelivery)}
-            </span>
+            </StatusBadge>
           </>
         ) : null}
       </p>
@@ -290,7 +329,7 @@ function InboxItem({
             <p>Acknowledged</p>
           ) : (
             <button
-              className="button secondary-button"
+              className="button secondary-button button-small"
               type="button"
               disabled={busy}
               aria-label={`Acknowledge: ${title}`}
@@ -302,7 +341,7 @@ function InboxItem({
         ) : null}
         {unread ? (
           <button
-            className="button secondary-button"
+            className="button secondary-button button-small"
             type="button"
             disabled={busy}
             aria-label={`Mark as read: ${title}`}
