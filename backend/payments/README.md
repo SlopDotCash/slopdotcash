@@ -28,7 +28,9 @@ wallets and off-curve Solana destinations need a separately reviewed recovery
 path; they cannot skip signature verification. Legacy claim semantics remain
 unchanged.
 
-Registration alone never displaces an authorized wallet. The derived
+The repository owner approved this replacement and recovery policy directly
+in the 27 October 2026 review. Registration alone never displaces an authorized
+wallet. The derived
 `effective_payment_wallet_claims` view keeps the last authorized claim active
 through any unsigned successors, and exposes the pending leaf only before the
 first authorization. Challenges and registration still use the raw claim leaf.

@@ -1,6 +1,10 @@
 # Signed wallet replacement
 
-PRD sections 6 and 11; [owner decisions, 27 October 2026](https://github.com/SlopDotCash/slopdotcash/issues/1467#issuecomment-6437990392), sections 3.4 and 3.5.
+PRD sections 6 and 11. The repository owner directly approved both policies
+in the 27 October 2026 review: keep the verified wallet active until a
+replacement signs, and use email plus the existing signed recovery flow
+without the unused operator proposal endpoint. The [#1467 comment](https://github.com/SlopDotCash/slopdotcash/issues/1467#issuecomment-6437990392)
+is the recorded summary, not the sole approval source.
 
 A registered replacement used to displace the authorized payout wallet before
 its signature. A rejected signature therefore made the account show the new
@@ -19,18 +23,22 @@ recovery remains email to the operator followed by the existing signed flow.
 
 ## Browser evidence
 
-- [Before: rejected signature pauses the old destination](before.webm).
-- [After: rejected signature preserves the verified wallet, desktop](after-desktop.webm).
-- [After: mobile](after-mobile.webm).
+- [Before: rejected signature pauses the old destination](https://github.com/SlopDotCash/slopdotcash/releases/download/pr-evidence-1522-3fc60aa8/before.webm).
+- [After: rejected signature preserves the verified wallet, desktop](https://github.com/SlopDotCash/slopdotcash/releases/download/pr-evidence-1522-3fc60aa8/after-desktop.webm).
+- [After: mobile and tablet reflow](https://github.com/SlopDotCash/slopdotcash/releases/download/pr-evidence-1522-3fc60aa8/after-mobile.webm).
+- [Capture provenance and SHA-256 hashes](https://github.com/SlopDotCash/slopdotcash/releases/download/pr-evidence-1522-3fc60aa8/provenance.json).
 
 These recordings use the actual local Account page with synthetic wallet-provider
 and API fixtures; addresses are repeated-digit test values. No real wallet,
 session, signature, provider, chain submission or production action appears.
-The before recording uses the parent revision's Earnings component and matching
-old response fixture. The after uses the changed component and preserved active
-wallet response. Both have passing Playwright assertions; the backend transition
+The before recording uses source `bb953334c6e1f2c938b2e41364fe7cf778717a63` and its
+matching response fixture. The after recordings use source
+`3fc60aa80158d6075f18626db69adbbdee67b519` and the preserved active-wallet
+response. All three recordings have passing Playwright assertions; the backend transition
 is independently exercised through actual API handlers, SQLite migrations and
 cryptographic test-wallet signatures in `wallet-replacement.test.ts`.
+The evidence is a non-latest prerelease tied to the reviewed source; it is not
+a production release or activation.
 
 The local build input is a retained production leaderboard snapshot prepared by
 `prepare-pr-ledger.ts`. It is not fresh live source completeness or publication
@@ -41,6 +49,11 @@ exactVariant null, speed tier unverified. No paid model call.
 
 ## Validation
 
+- Independent review reproduced three failed API regressions on the exact
+  parent source and passed 23 API, migration, rotation and notification tests
+  (168 assertions) on `3fc60aa8`. The new desktop/mobile recordings passed
+  both targeted cases with zero unexpected browser diagnostics. Cleanup of
+  the video files and approval provenance changes no executable source.
 - Failed-before API proof: registering a replacement made `/payments/me` return
   the unconfirmed replacement, and the unused operator endpoint returned 201.
 - Four API/cryptographic/dispatch/retirement regressions pass, including wrong,
