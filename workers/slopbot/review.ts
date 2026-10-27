@@ -2432,8 +2432,17 @@ export async function escalateDueAppeal(
   const appeal = await appealByKey(db, job.appealKey);
   if (appeal === null || appeal.resolved_at !== null)
     return "appeal already resolved";
+  if (appeal.escalated_at === null && Date.parse(appeal.due_at) > Date.now())
+    return "appeal not due";
+  // Establish the session before escalating, as every sibling appeal path
+  // does: escalation is one-time (the due dispatcher selects only
+  // unescalated appeals), so consuming it before this gate would lose the
+  // escalation publication permanently when the gate fails gracefully —
+  // a suspended installation, an unregistered repository. Leaving the
+  // appeal unescalated lets the dispatcher queue it again after a day.
+  const session = await appealSession(env, job);
+  if (typeof session === "string") return session;
   if (appeal.escalated_at === null) {
-    if (Date.parse(appeal.due_at) > Date.now()) return "appeal not due";
     await escalateAppeal(
       db,
       job.appealKey,
@@ -2443,8 +2452,6 @@ export async function escalateDueAppeal(
   }
   const current = await appealByKey(db, job.appealKey);
   if (current === null) throw new Error("Appeal is missing");
-  const session = await appealSession(env, job);
-  if (typeof session === "string") return `appeal escalated; ${session}`;
   await publishAppealState(env, job, session, current, "escalation");
   return `appeal escalated: ${current.escalation}`;
 }
