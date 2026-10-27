@@ -69,6 +69,7 @@ for (const withObligations of [false, true])
         });
       });
       let dropClosureResponse = withObligations;
+      const completedCallbacks: string[] = [];
       const failures: string[] = [];
       const retiredRequests: string[] = [];
       page.on("request", (request) => {
@@ -115,6 +116,8 @@ for (const withObligations of [false, true])
           url: `${started.url}/${url.origin === SITE ? "site" : "identity"}${url.pathname}${url.search}`,
           maxRedirects: 0,
         });
+        if (url.pathname === "/v1/oauth/callback" && response.status() === 200)
+          completedCallbacks.push(await response.text());
         if (
           dropClosureResponse &&
           url.pathname === "/api/v1/points/account/close"
@@ -254,6 +257,36 @@ for (const withObligations of [false, true])
       expect(failures).toEqual(["409 /api/v1/points/join"]);
       await page.screenshot({
         path: info.outputPath("account-reopened.png"),
+        fullPage: true,
+      });
+      // Exercise the real identity callback and session exchange from /login.
+      // The original tab must keep the full return path while the popup closes.
+      await page
+        .getByRole("button", { name: "Your account", exact: true })
+        .click();
+      await page.getByRole("button", { name: "Sign out", exact: true }).click();
+      await expect(
+        page.getByRole("link", { name: "Log in", exact: true }),
+      ).toBeVisible();
+      const destination = "/account?source=github-login#connections";
+      await page.goto(`${SITE}/login?next=${encodeURIComponent(destination)}`);
+      const returnPopup = page.waitForEvent("popup");
+      await page
+        .getByRole("button", { name: "Continue with GitHub", exact: true })
+        .click();
+      const returnWindow = await returnPopup;
+      await expect.poll(() => returnWindow.isClosed()).toBe(true);
+      await expect(page).toHaveURL(`${SITE}${destination}`);
+      await expect(
+        page.getByRole("button", { name: "Your account", exact: true }),
+      ).toBeVisible();
+      expect(completedCallbacks).toHaveLength(3);
+      for (const body of completedCallbacks) {
+        expect(body).toContain('id="close-window"');
+        expect(body).not.toContain(`href="${SITE}"`);
+      }
+      await page.screenshot({
+        path: info.outputPath("popup-closed-return-preserved.png"),
         fullPage: true,
       });
     } finally {
