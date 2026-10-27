@@ -664,7 +664,7 @@ jobs:
     environment:
       # Every release, scheduled or not, publishes the tested main head and
       # needs the Workers-scoped production credentials for the identity Worker.
-      name: eliza-army-production
+      name: slop-production
       url: https://slop.cash
     steps:
       - name: Checkout exact deployment tooling
