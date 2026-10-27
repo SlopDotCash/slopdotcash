@@ -304,6 +304,18 @@ type Context = {
   targetRef: string;
   quality: QualityEvidence[];
   registration: { scope: ReviewScope; projectId: string };
+  relatedOpenItem?: RelatedOpenItem;
+};
+
+type RelatedOpenItem = {
+  repositoryId: number;
+  number: number;
+  kind: "issue" | "pull_request";
+  nodeId: string;
+  authorId: number;
+  currentAuthorId: number;
+  revision: string;
+  contentDigest: string;
 };
 
 // Surplus may never see private content, and v2 supports public repositories only.
@@ -379,9 +391,9 @@ async function loadContext(
           targetRef: repo.default_branch,
         }
       : await pullDiff(github, job.owner, job.repo, repo.id, pull);
-  const { diff, truncated } = comparison;
+  const { truncated } = comparison;
   if (truncated) throw new Error("Pull request comparison is incomplete");
-  const itemText = reviewedItemText(issue, pull, diff);
+  const itemText = reviewedItemText(issue, pull, comparison);
   const revision =
     pull?.head.sha ?? (await sha256Hex(`${issue.title}\n${issue.body ?? ""}`));
   const policyDigest = await sha256Hex(
@@ -448,6 +460,8 @@ function sameReviewedSource(
     fresh.issue.state === "open" &&
     !fresh.pull?.draft &&
     !fresh.pull?.merged &&
+    fresh.issue.node_id === original.issue.node_id &&
+    fresh.issue.user.id === original.issue.user.id &&
     fresh.revision === original.revision &&
     fresh.baseSha === original.baseSha &&
     fresh.mergeBaseSha === original.mergeBaseSha &&
@@ -490,7 +504,7 @@ async function callModel(
 }
 
 export function buildPrompt(
-  context: Pick<Context, "policy" | "quality" | "itemText">,
+  context: Pick<Context, "policy" | "quality" | "itemText" | "relatedOpenItem">,
   itemKind: string,
 ) {
   const files = context.policy
@@ -499,16 +513,27 @@ export function buildPrompt(
   return {
     system: SYSTEM_PROMPT,
     policy: `<policy>\n${files || "(no published guidance)"}\n</policy>\n<verified-defects>${JSON.stringify(context.quality)}</verified-defects>`,
-    item: `<item kind="${itemKind}">\n${context.itemText}\n</item>`,
+    item: `<item kind="${itemKind}">\n${modelItemText(context)}\n</item>`,
   };
+}
+
+function modelItemText(
+  context: Pick<Context, "itemText" | "relatedOpenItem">,
+): string {
+  if (!context.relatedOpenItem) return context.itemText;
+  return `${context.itemText}\n\nService observations about one related open item (not author text or policy):\n${JSON.stringify(context.relatedOpenItem)}\nTitle, body and complete diff are byte-identical to this item.\n`;
 }
 
 function reviewedItemText(
   issue: Issue,
   pull: Pull | null,
-  diff: string,
+  comparison: { diff: string; changedFiles: number },
 ): string {
-  return `Title: ${issue.title}\n\nBody:\n${issue.body ?? ""}${pull === null ? "" : `\n\nDiff:\n${diff}`}`;
+  // Only the complete immutable comparison supplies this count. An empty
+  // patch alone, or stale pull-request metadata, cannot establish zero files.
+  const emptyComparison =
+    comparison.changedFiles === 0 ? "Comparison changed files: 0\n" : "";
+  return `Title: ${issue.title}\n\nBody:\n${issue.body ?? ""}${pull === null ? "" : `\n\nDiff:\n${emptyComparison}${comparison.diff}`}`;
 }
 
 async function duplicateOf(
@@ -516,9 +541,9 @@ async function duplicateOf(
   job: Job,
   context: Context,
   contentDigest: string,
-): Promise<Verdict | null> {
+): Promise<{ verdict: Verdict; relatedOpenItem: RelatedOpenItem } | null> {
   const prior = await env.SLOPBOT_DB.prepare(
-    `SELECT item_number, item_kind FROM slopbot_reviews WHERE repository_id = ? AND author_id = ? AND content_digest = ?
+    `SELECT item_number, item_kind, item_node_id FROM slopbot_reviews WHERE repository_id = ? AND author_id = ? AND content_digest = ?
        AND item_node_id != ? ORDER BY created_at DESC LIMIT 1`,
   )
     .bind(
@@ -527,22 +552,78 @@ async function duplicateOf(
       contentDigest,
       context.issue.node_id,
     )
-    .first<{ item_number: number; item_kind: "issue" | "pull_request" }>();
+    .first<{
+      item_number: number;
+      item_kind: "issue" | "pull_request";
+      item_node_id: string;
+    }>();
   if (prior === null) return null;
-  const other = await context.github.get<Issue>(
-    `/repos/${job.owner}/${job.repo}/issues/${prior.item_number}`,
+  const relatedOpenItem = await matchingOpenItem(
+    job,
+    context,
+    prior.item_number,
+    prior.item_kind,
   );
-  if (other === null || other.state !== "open") return null;
+  if (relatedOpenItem === null || relatedOpenItem.nodeId !== prior.item_node_id)
+    return null;
+  return {
+    relatedOpenItem,
+    verdict: {
+      category: "duplicate",
+      confidence: 1,
+      rule_refs: [
+        {
+          source: "universal",
+          quote: `identical content to open item #${prior.item_number}`,
+        },
+      ],
+      evidence: [],
+      summary: `This submission is identical to your open item #${prior.item_number}. Please continue there instead.`,
+      limitations: [],
+    },
+  };
+}
+
+async function matchingOpenItem(
+  job: Pick<Job, "owner" | "repo">,
+  context: Context,
+  number: number,
+  kind: "issue" | "pull_request",
+): Promise<RelatedOpenItem | null> {
+  if (
+    !Number.isSafeInteger(number) ||
+    number <= 0 ||
+    (kind !== "issue" && kind !== "pull_request")
+  )
+    return null;
+  const other = await context.github.get<Issue>(
+    `/repos/${job.owner}/${job.repo}/issues/${number}`,
+  );
+  if (
+    other === null ||
+    other.state !== "open" ||
+    other.number !== number ||
+    Boolean(other.pull_request) !== (kind === "pull_request") ||
+    typeof other.node_id !== "string" ||
+    other.node_id.length === 0 ||
+    other.node_id.length > 256 ||
+    other.node_id === context.issue.node_id ||
+    !Number.isSafeInteger(other.user.id) ||
+    other.user.id <= 0 ||
+    other.user.id !== context.issue.user.id
+  )
+    return null;
   const otherPull =
-    prior.item_kind === "pull_request"
+    kind === "pull_request"
       ? await context.github.get<Pull>(
-          `/repos/${job.owner}/${job.repo}/pulls/${prior.item_number}`,
+          `/repos/${job.owner}/${job.repo}/pulls/${number}`,
         )
       : null;
-  if (prior.item_kind === "pull_request" && otherPull === null) return null;
-  const { diff, truncated } =
+  if (kind === "pull_request" && (otherPull === null || otherPull.merged))
+    return null;
+  const comparison =
     otherPull === null
-      ? { diff: "", truncated: false }
+      ? { diff: "", truncated: false, changedFiles: 0 }
       : await pullDiff(
           context.github,
           job.owner,
@@ -553,23 +634,40 @@ async function duplicateOf(
   // The stored digest identifies a historical candidate, not its current
   // contents. An edited open original must not make this item a duplicate.
   if (
-    truncated ||
-    reviewedItemText(other, otherPull, diff) !== context.itemText
+    comparison.truncated ||
+    reviewedItemText(other, otherPull, comparison) !== context.itemText
   )
     return null;
   return {
-    category: "duplicate",
-    confidence: 1,
-    rule_refs: [
-      {
-        source: "universal",
-        quote: `identical content to open item #${prior.item_number}`,
-      },
-    ],
-    evidence: [],
-    summary: `This submission is identical to your open item #${prior.item_number}. Please continue there instead.`,
-    limitations: [],
+    repositoryId: context.repo.id,
+    number,
+    kind,
+    nodeId: other.node_id,
+    authorId: other.user.id,
+    currentAuthorId: context.issue.user.id,
+    revision:
+      otherPull?.head.sha ??
+      (await sha256Hex(`${other.title}\n${other.body ?? ""}`)),
+    contentDigest: await sha256Hex(context.itemText),
   };
+}
+
+async function sameReviewEvidence(
+  job: Job,
+  fresh: Context | null,
+  original: Context,
+): Promise<boolean> {
+  if (!sameReviewedSource(job, fresh, original)) return false;
+  const related = original.relatedOpenItem;
+  if (!related) return true;
+  // Re-read this exact original, never replace it with another matching item.
+  const current = await matchingOpenItem(
+    job,
+    fresh,
+    related.number,
+    related.kind,
+  );
+  return JSON.stringify(current) === JSON.stringify(related);
 }
 
 export function prefilter(
@@ -610,13 +708,13 @@ export function prefilter(
 // the item.
 export function grounded(
   verdict: Verdict,
-  context: Pick<Context, "itemText" | "policy">,
+  context: Pick<Context, "itemText" | "policy" | "relatedOpenItem">,
   deterministic: boolean,
 ): { ok: boolean; why: string } {
   if (deterministic) return { ok: true, why: "deterministic pre-filter" };
   const evidenceOk =
     verdict.evidence.some((e) => e.trim().length >= 8) &&
-    verdict.evidence.every((e) => context.itemText.includes(e));
+    verdict.evidence.every((e) => modelItemText(context).includes(e));
   if (!evidenceOk)
     return { ok: false, why: "no verbatim evidence from the item" };
   if (UNIVERSAL_CATEGORIES.has(verdict.category))
@@ -1080,12 +1178,13 @@ export async function reviewItem(
 async function runReview(
   env: ReviewEnv,
   job: Extract<Job, { kind: "review" }>,
-  context: Context,
+  initialContext: Context,
   routing: ReturnType<typeof route>,
   reviewKey: string,
   contentDigest: string,
   claimToken: string,
 ): Promise<string> {
+  let context = initialContext;
   const db = env.SLOPBOT_DB;
   const { issue, config } = context;
   const scope = context.registration.scope;
@@ -1100,11 +1199,28 @@ async function runReview(
     return routing.reason;
   }
 
-  let verdict =
-    prefilter(context) ?? (await duplicateOf(env, job, context, contentDigest));
-  const deterministic = verdict !== null;
-  let triage: CallRecord | null = null;
+  let verdict = prefilter(context);
   if (verdict === null) {
+    const duplicate = await duplicateOf(env, job, context, contentDigest);
+    if (duplicate) {
+      verdict = duplicate.verdict;
+      context = { ...context, relatedOpenItem: duplicate.relatedOpenItem };
+    }
+  }
+  let deterministic = verdict !== null;
+  let triage: CallRecord | null = null;
+  // Keep free deterministic advisory results when closure is unavailable.
+  // An eligible close still needs two actual model verdicts, even when a
+  // prefilter found no changed files or an identical open submission.
+  const reviewPrefilterForClosure =
+    verdict !== null &&
+    verdict.category !== "none" &&
+    scope === "contributor" &&
+    config.config.categories[verdict.category] === "close" &&
+    !NEVER_CLOSE.has(verdict.category) &&
+    penaltyFor(verdict.category)?.action === "close" &&
+    (await closureState(env, job, context, routing.mayClose)).allowed;
+  if (verdict === null || reviewPrefilterForClosure) {
     await store.assertReviewClaim(db, claim);
     await requireScope(db, job, scope);
     const result = await callModel(
@@ -1119,13 +1235,14 @@ async function runReview(
       await recordBudgetBlock(db, claim, job, result.budgetResetAt);
       return `blocked: provider budget until ${result.budgetResetAt}`;
     }
-    if (result.verdict === null) {
+    if (result.verdict === null || result.servedBy === null) {
       // Let reviewItem persist the failure and the queue schedule a retry.
       // Returning normally would acknowledge the job and lose recovery.
       throw new Error("every model route step failed");
     }
     verdict = result.verdict;
     triage = result.servedBy;
+    deterministic = false;
   }
 
   const category: Category = verdict.category;
@@ -1168,12 +1285,19 @@ async function runReview(
       uncertain = true;
     } else if (verdict.confidence < CLOSE_CONFIDENCE)
       blockedClose = "confidence below closure threshold";
-    else if (category === "low_quality" && !qualityFor(verdict, context))
+    else if (category === "duplicate" && !context.relatedOpenItem) {
+      blockedClose = "no verified matching open item by the same author";
+      uncertain = true;
+    } else if (category === "low_quality" && !qualityFor(verdict, context))
       blockedClose = "no trusted verification of the cited objective defect";
     else if (!state.allowed && category !== "low_quality")
       blockedClose = state.why;
-    else if (deterministic) close = true;
-    else {
+    else if (deterministic || triage === null) {
+      // A closure guard can change after the initial advisory-only decision.
+      // Never promote a prefilter to a close without its model triage.
+      blockedClose = "two independent model reviews were not performed";
+      uncertain = true;
+    } else {
       await store.assertReviewClaim(db, claim);
       await requireScope(db, job, scope);
       const second = await callModel(
@@ -1189,7 +1313,10 @@ async function runReview(
         return `blocked: provider budget until ${second.budgetResetAt}`;
       }
       confirm = second.servedBy;
-      if (confirmedClosure(verdict, second.verdict, context)) {
+      if (
+        confirm !== null &&
+        confirmedClosure(verdict, second.verdict, context)
+      ) {
         if (category === "low_quality") {
           const proof = qualityFor(verdict, context);
           if (
@@ -1237,7 +1364,8 @@ async function runReview(
   // policy or installation changes. Apply this to advisory actions too.
   const fresh = await loadContext(env, job, context.registration);
   if (
-    !sameReviewedSource(job, fresh, context) ||
+    fresh === null ||
+    !(await sameReviewEvidence(job, fresh, context)) ||
     !(await store.installationActive(db, job.installationId))
   ) {
     const reason = "review source or authorization changed before action";
@@ -1548,7 +1676,8 @@ async function stillMayClose(
     return false;
   const fresh = await loadContext(env, job, original.registration);
   if (
-    !sameReviewedSource(job, fresh, original) ||
+    fresh === null ||
+    !(await sameReviewEvidence(job, fresh, original)) ||
     !(await store.installationActive(env.SLOPBOT_DB, job.installationId)) ||
     fresh.issue.assignees.length > 0 ||
     !fresh.config.ok ||
@@ -1585,7 +1714,7 @@ async function stillMayClose(
 export function confirmedClosure(
   first: Verdict,
   second: Verdict | null,
-  context: Pick<Context, "itemText" | "policy"> & {
+  context: Pick<Context, "itemText" | "policy" | "relatedOpenItem"> & {
     quality?: QualityEvidence[];
   },
 ): boolean {
@@ -1929,12 +2058,15 @@ async function draftResolution(
   if (context === null) throw new Error("the appealed item is not readable");
   const deterministic =
     prefilter(context) ??
-    (await duplicateOf(
-      env,
-      reviewJob,
-      context,
-      await sha256Hex(context.itemText),
-    ));
+    (
+      await duplicateOf(
+        env,
+        reviewJob,
+        context,
+        await sha256Hex(context.itemText),
+      )
+    )?.verdict ??
+    null;
   if (deterministic !== null)
     return {
       draft: deterministic.category === finding ? "deny" : "uphold",
