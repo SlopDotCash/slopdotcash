@@ -98,6 +98,18 @@ payment weight falls in the same proportion. A reversed debit is not in the
 feed, so the next snapshot restores the score. A closed cycle record keeps its
 score.
 
+The additive `history=1` mode returns `slop-penalty-history:v1` and retains
+reversed rows, adding only the reversal time and its `appeal_upheld` or
+`maintainer_reopen` reason. The collector reads all pages for each collected
+project and retains this safe evidence in `penaltyHistory`. A new Points debit
+still requires the GitHub-bound `penalties` entry; retained history can reverse
+only an already-bound journal identity. A missing row never proves reversal.
+During the first release, a Worker that returns the exact legacy active-feed
+schema remains usable for active debits, with history explicitly unavailable.
+Every page must use the same schema. The next ingestion after the Worker
+upgrade acquires the retained history; no historical reversal is inferred in
+the meantime.
+
 ## Appeals
 
 Owner decision D8 of 24 October 2026. Slopbot triages each appeal first: an

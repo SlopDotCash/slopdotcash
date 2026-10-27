@@ -1,10 +1,12 @@
 /** Nonfinancial points. This module never supplies reward or settlement inputs. */
+
+import { githubUserIdFromNodeId } from "./github-actor";
 import type {
   GitHubActor,
   LeaderboardSnapshot,
-  PublishedPenalty,
   ScoreEvent,
 } from "./leaderboard";
+import type { PenaltyHistoryRecord } from "./leaderboard-types";
 import {
   findHistoricalProject,
   findHistoricalRepository,
@@ -12,24 +14,18 @@ import {
   isHistoricalRepositoryId,
 } from "./projects.mjs";
 import { findRegisteredRepositoryById } from "./repositories.mjs";
-import { penaltyDeductions } from "./score-penalties";
+import { assertPenaltyHistory } from "./score-penalties";
 import { VALUE_SCORING_APPROVED_HISTORY_FROM } from "./scoring-policy";
 import { sha256Hex } from "./sha256";
 
 export const POINTS_RULE = "slop-points-v1";
-/**
- * A published Slopbot debit recorded as a negative Points award for the UTC
- * month of the close (PRD section 7). Points are the one public measure, so
- * the debit is applied here as well as to the score and the payment weight.
- */
-export const PENALTY_DEBIT_CATEGORY = "penalty-debit";
 export const POINTS_NOTICE =
   "Points have no cash value and cannot be transferred or redeemed.";
 export interface PointAward {
   key: string;
   actor: Pick<GitHubActor, "id" | "login">;
   projectId: string;
-  category: ScoreEvent["category"] | "payout-received" | "penalty-debit";
+  category: ScoreEvent["category"] | "payout-received" | "slopbot-penalty";
   amount: number;
   occurredAt: string;
   sourceId: string;
@@ -44,6 +40,12 @@ export interface PointDecision {
 }
 export interface PointRevision {
   decision?: PointDecision & { delta: number };
+  penalty?: {
+    category: string;
+    debit: number;
+    reversedAt: string | null;
+    reversal: PenaltyHistoryRecord["reversal"];
+  };
   id: string;
   previous: string | null;
   recordedAt: string;
@@ -76,7 +78,7 @@ const categories = new Set([
   "substantive-review",
   "evaluated-contribution",
   "payout-received",
-  PENALTY_DEBIT_CATEGORY,
+  "slopbot-penalty",
 ]);
 function iso(value: unknown): value is string {
   return (
@@ -125,6 +127,7 @@ export function assertPointsJournal(
       "sourceRule",
       "award",
       ...("decision" in r ? ["decision"] : []),
+      ...("penalty" in r ? ["penalty"] : []),
     ]);
     const a = r.award;
     exact(a, [
@@ -146,17 +149,21 @@ export function assertPointsJournal(
       !isHistoricalProjectId(a.projectId) ||
       !categories.has(a.category) ||
       !Number.isSafeInteger(a.amount) ||
-      (a.category === PENALTY_DEBIT_CATEGORY ? a.amount > 0 : a.amount < 0) ||
+      (a.category === "slopbot-penalty" ? a.amount > 0 : a.amount < 0) ||
       !iso(a.occurredAt) ||
       !iso(r.recordedAt) ||
       r.recordedAt > p.generatedAt ||
       !digestPattern.test(r.sourceDigest) ||
-      ![
-        "slop-score-v1",
-        "slop-score-v2",
-        "github-merged-history-v1",
-        "verified-payout-v1",
-      ].includes(r.sourceRule) ||
+      !(
+        [
+          "slop-score-v1",
+          "slop-score-v2",
+          "github-merged-history-v1",
+          "verified-payout-v1",
+        ].includes(r.sourceRule) ||
+        (a.category === "slopbot-penalty" &&
+          /^slopbot-penalties-v[1-9][0-9]*$/u.test(r.sourceRule))
+      ) ||
       typeof a.provisional !== "boolean" ||
       typeof a.sourceId !== "string" ||
       a.sourceId.length > 256 ||
@@ -164,6 +171,39 @@ export function assertPointsJournal(
       a.workUnitId.length > 300
     )
       throw new Error("Invalid point award");
+    if (a.category === "slopbot-penalty") {
+      if (!r.penalty || !r.decision)
+        throw new Error("Penalty evidence is required");
+      exact(r.penalty, ["category", "debit", "reversedAt", "reversal"]);
+      const evidence = r.penalty;
+      const repository = new URL(a.sourceUrl).pathname.match(
+        /^\/([^/]+\/[^/]+)\/pull\/[1-9][0-9]*$/u,
+      )?.[1];
+      if (
+        !/^slopbot-penalties-v[1-9][0-9]*$/u.test(r.sourceRule) ||
+        !/^[a-z_]{1,40}$/u.test(evidence.category) ||
+        !Number.isSafeInteger(evidence.debit) ||
+        evidence.debit < 1 ||
+        a.provisional ||
+        r.decision.sourceId !== a.sourceId ||
+        -a.amount > evidence.debit ||
+        a.workUnitId !== `${a.sourceId}:penalty` ||
+        new URL(a.sourceUrl).origin !== "https://github.com" ||
+        !repository ||
+        findHistoricalRepository(repository)?.projectId !== a.projectId ||
+        (evidence.reversedAt === null
+          ? evidence.reversal !== null
+          : !iso(evidence.reversedAt) ||
+            evidence.reversedAt < a.occurredAt ||
+            evidence.reversedAt > r.recordedAt ||
+            a.amount !== 0 ||
+            !["appeal_upheld", "maintainer_reopen"].includes(
+              evidence.reversal ?? "",
+            ))
+      )
+        throw new Error("Invalid penalty evidence");
+    } else if (r.penalty !== undefined)
+      throw new Error("Unexpected penalty evidence");
     if (a.category === "payout-received") {
       const cycle = a.sourceId.split(":")[1];
       if (
@@ -176,14 +216,6 @@ export function assertPointsJournal(
         a.sourceUrl !== `https://slop.cash/cycles/${a.projectId}/${cycle}`
       )
         throw new Error("Invalid payout recognition");
-    } else if (a.category === PENALTY_DEBIT_CATEGORY) {
-      // A debit keeps Slopbot's recorded close, never a later GitHub event.
-      if (
-        r.sourceRule !== "slop-score-v2" ||
-        a.provisional ||
-        a.workUnitId !== a.sourceId
-      )
-        throw new Error("Invalid penalty debit");
     } else if (r.sourceRule === "verified-payout-v1")
       throw new Error("Payout rule requires payout evidence");
     const url = new URL(a.sourceUrl);
@@ -224,7 +256,8 @@ export function assertPointsJournal(
         throw new Error("Invalid points decision");
       exact(decision, ["sourceId", "effectiveAt", "reason", "delta"]);
       if (
-        r.sourceRule !== "slop-score-v2" ||
+        (r.sourceRule !== "slop-score-v2" &&
+          a.category !== "slopbot-penalty") ||
         typeof decision.sourceId !== "string" ||
         !(
           /^[A-Za-z0-9_=-]{4,256}$/u.test(decision.sourceId) ||
@@ -246,6 +279,15 @@ export function assertPointsJournal(
         r.recordedAt < prior.recordedAt)
     )
       throw new Error("Point history moved");
+    if (
+      prior?.penalty &&
+      (prior.penalty.category !== r.penalty?.category ||
+        prior.penalty.debit !== r.penalty?.debit ||
+        prior.sourceRule !== r.sourceRule ||
+        (prior.penalty.reversedAt !== null &&
+          JSON.stringify(prior.penalty) !== JSON.stringify(r.penalty)))
+    )
+      throw new Error("Penalty history moved");
     latest.set(a.key, r);
     ids.add(id);
   }
@@ -332,42 +374,6 @@ export function latestPoints(
 ): Map<string, PointRevision> {
   return new Map(journal.revisions.map((r) => [r.award.key, r]));
 }
-/** The project a published debit belongs to, from the registered repository. */
-function debitProjectOf(repository: string): string {
-  const projectId = findRegisteredRepositoryById(repository)?.projectId;
-  if (!projectId) throw new Error("Points require a registered project");
-  return projectId;
-}
-/**
- * One published Slopbot debit as a negative Points award for the UTC month of
- * the close. `appliedThirds` is the snapshot's own applied debit, already
- * bounded by that month's credit, so the month never falls below zero.
- */
-export function awardForPenalty(
-  penalty: PublishedPenalty,
-  appliedThirds: number,
-): PointAward {
-  if (!Number.isSafeInteger(appliedThirds) || appliedThirds <= 0)
-    throw new Error("A published debit needs positive applied thirds");
-  const projectId = debitProjectOf(penalty.repository);
-  return {
-    key: pointKey(
-      projectId,
-      penalty.actor.id,
-      PENALTY_DEBIT_CATEGORY,
-      penalty.id,
-    ),
-    actor: { id: penalty.actor.id, login: penalty.actor.login },
-    projectId,
-    category: PENALTY_DEBIT_CATEGORY,
-    amount: -appliedThirds * POINTS_PER_THIRD,
-    occurredAt: new Date(penalty.occurredAt).toISOString(),
-    sourceId: penalty.id,
-    sourceUrl: penalty.source.url,
-    workUnitId: penalty.id,
-    provisional: false,
-  };
-}
 export function appendPointAwards(
   journal: PointsJournal,
   awards: PointAward[],
@@ -375,6 +381,7 @@ export function appendPointAwards(
   sourceRule: string,
   recordedAt: string,
   decisions?: ReadonlyMap<string, PointDecision>,
+  penalties?: ReadonlyMap<string, NonNullable<PointRevision["penalty"]>>,
 ): PointsJournal {
   assertPointsJournal(journal);
   const output = {
@@ -386,9 +393,11 @@ export function appendPointAwards(
   for (const award of [...awards].sort((a, b) => a.key.localeCompare(b.key))) {
     const previous = latest.get(award.key);
     const decision = decisions?.get(award.key);
+    const penalty = penalties?.get(award.key);
     if (
       previous &&
       JSON.stringify(previous.award) === JSON.stringify(award) &&
+      JSON.stringify(previous.penalty) === JSON.stringify(penalty) &&
       (!decision ||
         (previous.decision?.sourceId === decision.sourceId &&
           previous.decision.effectiveAt === decision.effectiveAt &&
@@ -401,6 +410,7 @@ export function appendPointAwards(
       sourceDigest,
       sourceRule,
       award,
+      ...(penalty ? { penalty } : {}),
       ...(decision
         ? {
             decision: {
@@ -439,6 +449,165 @@ export function retainedBatchOwnedKeys(journal: PointsJournal): Set<string> {
   }
   return keys;
 }
+
+/** Record actual debits against the same accepted-work projection as members.
+ * A feed omission never reverses a debit. Only retained, identity-matched
+ * Slopbot reversal evidence can do that, including outside the rolling window.
+ */
+export function reconcilePointPenalties(
+  journal: PointsJournal,
+  digest: string,
+  recordedAt: string,
+  snapshot?: LeaderboardSnapshot,
+): PointsJournal {
+  const candidates = new Map(
+    [...latestPoints(journal)].filter(([, r]) => r.penalty),
+  );
+  for (const penalty of snapshot?.penalties ?? []) {
+    const project = findHistoricalRepository(penalty.repository);
+    if (!project || penalty.actor.kind !== "User")
+      throw new Error("Invalid penalty identity");
+    const award: PointAward = {
+      key: pointKey(
+        project.projectId,
+        penalty.actor.id,
+        "slopbot-penalty",
+        penalty.source.id,
+      ),
+      actor: { id: penalty.actor.id, login: penalty.actor.login },
+      projectId: project.projectId,
+      category: "slopbot-penalty",
+      amount: 0,
+      occurredAt: penalty.occurredAt,
+      sourceId: penalty.source.id,
+      sourceUrl: penalty.source.url,
+      workUnitId: penalty.id,
+      provisional: false,
+    };
+    const evidence = {
+      category: penalty.category,
+      debit: penalty.debitThirds * POINTS_PER_THIRD,
+      reversedAt: null,
+      reversal: null,
+    };
+    const prior = candidates.get(award.key);
+    if (
+      prior &&
+      (prior.sourceRule !== penalty.tableVersion ||
+        prior.award.occurredAt !== award.occurredAt ||
+        prior.penalty?.debit !== evidence.debit ||
+        prior.penalty.category !== evidence.category)
+    )
+      throw new Error("Penalty identity changed");
+    if (!prior)
+      candidates.set(award.key, {
+        id: "",
+        previous: null,
+        recordedAt,
+        sourceDigest: digest,
+        sourceRule: penalty.tableVersion,
+        award,
+        penalty: evidence,
+      });
+  }
+  if (snapshot?.penaltyHistory !== undefined) {
+    assertPenaltyHistory(
+      snapshot.penaltyHistory,
+      snapshot.repositories.map((r) => r.projectId),
+      snapshot.generatedAt,
+    );
+    const bySource = new Map(
+      [...candidates.values()].map((r) => [r.award.sourceId, r]),
+    );
+    for (const evidence of snapshot.penaltyHistory) {
+      const prior = bySource.get(evidence.itemNodeId);
+      if (!prior) continue; // History alone cannot establish a new GitHub identity.
+      if (
+        prior.award.projectId !== evidence.projectId ||
+        githubUserIdFromNodeId(prior.award.actor.id) !==
+          evidence.authorGithubId ||
+        prior.award.occurredAt !== evidence.recordedAt ||
+        prior.sourceRule !== evidence.tableVersion ||
+        prior.penalty?.debit !== evidence.debitThirds * POINTS_PER_THIRD ||
+        prior.penalty.category !== evidence.category
+      )
+        throw new Error("Penalty reversal identity mismatch");
+      if (evidence.reversedAt !== null) {
+        if (
+          prior.penalty.reversedAt !== null &&
+          (prior.penalty.reversedAt !== evidence.reversedAt ||
+            prior.penalty.reversal !== evidence.reversal)
+        )
+          throw new Error("Penalty reversal changed");
+        candidates.set(prior.award.key, {
+          ...prior,
+          penalty: {
+            ...prior.penalty,
+            reversedAt: evidence.reversedAt,
+            reversal: evidence.reversal,
+          },
+        });
+      }
+    }
+  }
+  const bucket = (award: PointAward) =>
+    `${award.actor.id}\0${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
+  const available = new Map<string, number>();
+  for (const member of pointMembers(journal)) {
+    for (const award of member.awards) {
+      if (award.amount <= 0 || award.category === "payout-received") continue;
+      const key = bucket(award);
+      available.set(key, (available.get(key) ?? 0) + award.amount);
+    }
+  }
+  let result = journal;
+  const latest = latestPoints(journal);
+  for (const candidate of [...candidates.values()].sort(
+    (a, b) =>
+      a.award.occurredAt.localeCompare(b.award.occurredAt) ||
+      a.award.workUnitId.localeCompare(b.award.workUnitId),
+  )) {
+    const evidence = candidate.penalty;
+    if (!evidence) continue;
+    const key = bucket(candidate.award);
+    const debit =
+      evidence.reversedAt === null
+        ? Math.min(evidence.debit, available.get(key) ?? 0)
+        : 0;
+    available.set(key, (available.get(key) ?? 0) - debit);
+    const award = { ...candidate.award, amount: -debit || 0 };
+    const prior = latest.get(award.key);
+    if (
+      prior?.award.amount === award.amount &&
+      JSON.stringify(prior.penalty) === JSON.stringify(evidence)
+    )
+      continue;
+    result = appendPointAwards(
+      result,
+      [award],
+      digest,
+      candidate.sourceRule,
+      recordedAt,
+      new Map([
+        [
+          award.key,
+          {
+            sourceId: award.sourceId,
+            effectiveAt:
+              evidence.reversedAt ?? (prior ? recordedAt : award.occurredAt),
+            reason:
+              evidence.reversedAt !== null
+                ? `Slopbot reversed the penalty: ${evidence.reversal}.`
+                : `Slopbot ${evidence.category} penalty: ${evidence.debit} Points, limited to accepted work in ${award.occurredAt.slice(0, 7)}.`,
+          },
+        ],
+      ]),
+      new Map([[award.key, evidence]]),
+    );
+  }
+  return result;
+}
+
 export function applyPointsSnapshot(
   journal: PointsJournal,
   snapshot: LeaderboardSnapshot,
@@ -483,25 +652,6 @@ export function applyPointsSnapshot(
       .map((a) => `${a.projectId}\0${a.sourceId}`),
   );
   const repositoryIds = new Set(snapshot.repositories.map((r) => r.id));
-  // A published debit lowers the same UTC month's accepted-work points. It uses
-  // the snapshot's own applied thirds, so Points, score and payment weight
-  // agree and a month never falls below zero (PRD section 7).
-  const publishedPenalties = (snapshot.penalties ?? []).filter((penalty) =>
-    repositoryIds.has(penalty.repository),
-  );
-  const appliedDebits = penaltyDeductions(
-    snapshot.ledger,
-    publishedPenalties,
-    debitProjectOf,
-  ).byPenalty;
-  for (const penalty of publishedPenalties) {
-    const thirds = appliedDebits.get(penalty.id) ?? 0;
-    if (thirds <= 0) continue;
-    const award = awardForPenalty(penalty, thirds);
-    if (batchOwned.has(award.key) || keys.has(award.key)) continue;
-    awards.push(award);
-    keys.add(award.key);
-  }
   // An adverse ruling can correct a review before the rolling window. A
   // policy or window omission does not revoke its previously earned credit.
   const excludedReviews = new Set<string>();
@@ -518,12 +668,6 @@ export function applyPointsSnapshot(
   // deletion from missing pages or a shortened rolling window.
   for (const previous of latestPoints(journal).values()) {
     const a = previous.award;
-    if (a.category === PENALTY_DEBIT_CATEGORY && !keys.has(a.key)) {
-      // A reversed debit is absent from the published feed, so the next
-      // snapshot restores that month's points instead of keeping a stale debit.
-      awards.push({ ...a, amount: 0 });
-      keys.add(a.key);
-    }
     const omission =
       a.category === "substantive-review"
         ? omittedReviews.get(`${a.projectId}\0${a.sourceId}`)
@@ -597,6 +741,7 @@ export function applyPointsSnapshot(
     }
     if (
       a.category !== "payout-received" &&
+      a.category !== "slopbot-penalty" &&
       a.amount &&
       !batchOwned.has(a.key) &&
       !keys.has(a.key) &&
@@ -639,7 +784,7 @@ export function applyPointsSnapshot(
         digest,
       })),
   ];
-  return result;
+  return reconcilePointPenalties(result, digest, recordedAt, snapshot);
 }
 /**
  * Canonical identity of a GitHub pull-request review URL: the case-folded
@@ -708,6 +853,7 @@ export function pointMembers(
   const groups = new Map<string, PointAward>();
   const actors = new Map<string, PointRevision>();
   for (const revision of journal.revisions) {
+    if (revision.award.category === "slopbot-penalty") continue;
     const prior = actors.get(revision.award.actor.id);
     if (!prior || revision.recordedAt >= prior.recordedAt)
       actors.set(revision.award.actor.id, revision);
@@ -720,6 +866,18 @@ export function pointMembers(
       .map((revision) => revision.award.key),
   );
   const awards = revisions.map((revision) => revision.award);
+  const adjustments = new Map<string, PointAward[]>();
+  for (const award of awards) {
+    if (
+      award.category !== "slopbot-penalty" ||
+      !award.amount ||
+      (projectId && award.projectId !== projectId)
+    )
+      continue;
+    const actorAwards = adjustments.get(award.actor.id) ?? [];
+    actorAwards.push(award);
+    adjustments.set(award.actor.id, actorAwards);
+  }
   // The dedup key is the canonical parsed PR identity, not the raw URL:
   // the journal validator accepts URL variants (owner/repo casing, default
   // port, empty query, dot-segments, mixed-case review fragment) while
@@ -736,6 +894,7 @@ export function pointMembers(
       .filter((key): key is string => key !== undefined),
   );
   for (const a of awards) {
+    if (a.category === "slopbot-penalty") continue;
     const reviewIdentity =
       a.category === "substantive-review"
         ? canonicalReviewIdentity(a.sourceUrl)
@@ -748,13 +907,10 @@ export function pointMembers(
     if (!a.amount || (projectId && a.projectId !== projectId)) continue;
     // The first contribution date comes from every counted record, not
     // only the surviving award: one work unit can have records in more than
-    // one month, and the dedup below keeps only one of them. A published
-    // debit is not a contribution and never sets it.
-    if (a.category !== PENALTY_DEBIT_CATEGORY) {
-      const first = firstContributionAt.get(a.actor.id);
-      if (first === undefined || a.occurredAt < first)
-        firstContributionAt.set(a.actor.id, a.occurredAt);
-    }
+    // one month, and the dedup below keeps only one of them.
+    const first = firstContributionAt.get(a.actor.id);
+    if (first === undefined || a.occurredAt < first)
+      firstContributionAt.set(a.actor.id, a.occurredAt);
     const key = JSON.stringify([
       a.projectId,
       a.actor.id,
@@ -820,25 +976,27 @@ export function pointMembers(
     }
   }
   for (const m of members.values()) {
+    for (const adjustment of adjustments.get(m.actor.id) ?? []) {
+      m.total += adjustment.amount;
+      if (adjustment.occurredAt.startsWith(month))
+        m.monthly += adjustment.amount;
+      m.awards.push(adjustment);
+    }
     m.actor = actors.get(m.actor.id)?.award.actor ?? m.actor;
     m.awards.sort(
       (a, b) =>
         b.occurredAt.localeCompare(a.occurredAt) || a.key.localeCompare(b.key),
     );
-    // A debit counts against the totals but is not a contribution: it adds no
-    // project and earns no badge.
-    const counted = m.awards.filter(
-      (a) => a.category !== PENALTY_DEBIT_CATEGORY,
-    );
-    m.projects = new Set(counted.map((a) => a.projectId)).size;
+    const earned = m.awards.filter((a) => a.category !== "slopbot-penalty");
+    m.projects = new Set(earned.map((a) => a.projectId)).size;
     m.badges = [
-      ...(counted.some((a) => a.category !== "payout-received")
+      ...(earned.some((a) => a.category !== "payout-received")
         ? ["First accepted contribution"]
         : []),
-      ...(counted.some((a) => a.category === "payout-received")
+      ...(m.awards.some((a) => a.category === "payout-received")
         ? ["Verified payout"]
         : []),
-      ...(counted.some((a) => a.category === "substantive-review")
+      ...(m.awards.some((a) => a.category === "substantive-review")
         ? ["First qualifying review"]
         : []),
       ...(m.projects >= 3 ? ["Contributions in 3 projects"] : []),

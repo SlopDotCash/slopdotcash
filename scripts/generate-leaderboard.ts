@@ -1,6 +1,6 @@
 import { GitHubClient } from "../workers/slopbot/github";
 import {
-  fetchProjectPenalties,
+  fetchProjectPenaltyState,
   loadParticipationBans,
   loadValueInputs,
   VALUE_FEED_UNAVAILABLE_EXIT_CODE,
@@ -4079,17 +4079,38 @@ export async function generateLeaderboardFromGitHub(
       return github.get<T>(path);
     },
   });
-  // A debit applies only to a closed, unmerged pull request in this census,
-  // so only projects with such a pull request read the penalty feed.
+  // Keep explicit reversals even after a closed PR leaves the rolling census.
   const penalties: NonNullable<LeaderboardInput["penalties"]>[number][] = [];
+  const penaltyHistory: NonNullable<LeaderboardInput["penaltyHistory"]> = [];
+  let hasPenaltyHistory = false;
   for (const projectId of [
     ...new Set(
-      closedUnmergedPullRequests.map((pull) =>
-        penaltyProjectOf(repositoryIdFromUrl(pull.url)),
+      collections.map((collection) =>
+        penaltyProjectOf(collection.repository.id),
       ),
     ),
-  ].sort())
-    penalties.push(...(await fetchProjectPenalties(projectId)));
+  ].sort()) {
+    // Reconstruct state at the GitHub cutoff when a close/reversal happens
+    // during collection. Later evidence belongs to the next publication.
+    const state = await fetchProjectPenaltyState(projectId);
+    if (state.history === null) {
+      console.warn(
+        `[penalties] ${projectId}: retained history unavailable on the deployed Worker; active debits only`,
+      );
+      penalties.push(...state.penalties);
+      continue;
+    }
+    hasPenaltyHistory = true;
+    const history = state.history
+      .filter((row) => row.recordedAt <= now.toISOString())
+      .map((row) =>
+        row.reversedAt !== null && row.reversedAt > now.toISOString()
+          ? { ...row, reversedAt: null, reversal: null }
+          : row,
+      );
+    penaltyHistory.push(...history);
+    penalties.push(...history.filter((row) => row.reversedAt === null));
+  }
   const fetchedAt = new Date().toISOString();
   const rateLimit = client.getRateLimit();
   const source: LeaderboardSourceMetadata = {
@@ -4139,6 +4160,7 @@ export async function generateLeaderboardFromGitHub(
     reviewedMergedPullRequests: dedupedReviewedMergedPullRequests,
     closedUnmergedPullRequests,
     penalties,
+    ...(hasPenaltyHistory ? { penaltyHistory } : {}),
     detailEligibleMergedPullRequestIds: [...hydrationPlan.detailEligibleIds],
     closedIssueCount,
     resolvedIssues: dedupedClosedIssues,
