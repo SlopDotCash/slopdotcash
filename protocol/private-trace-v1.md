@@ -84,11 +84,9 @@ identity; they never contain the trace body.
 
 Retention is permanent: there is no expiry, contributor download, update,
 correction, or voluntary deletion route. Contributors and project owners
-cannot read trace bodies, including their own, after upload. Only a designated
-Slop operator may retrieve a body through a single-use grant that expires after
-60 seconds, is bound to that operator and digest, requires a recorded reason,
-and appends grant and read audit events. Cloudflare account access is separately
-limited to designated operators.
+cannot read trace bodies, including their own, after upload. No website or API
+route returns a trace body. Cloudflare account access is separately limited to
+designated operators.
 
 For a privacy, security, or data-subject request, use the repository's enabled
 private GitHub security-advisory intake at

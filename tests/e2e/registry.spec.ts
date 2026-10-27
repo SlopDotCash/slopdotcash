@@ -8,9 +8,11 @@
  * A throwaway Ed25519 key stands in for the external secure-VM vetting
  * service, so the lane signs harmless scan results the way the service must.
  */
+
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
+import { enlargeText } from "../text-size";
 import {
   signedVettingHeaders,
   VETTING_EVIDENCE_OBJECTS,
@@ -719,6 +721,9 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   ).toBeDisabled();
   await manifestEditor.fill(JSON.stringify(pausedManifest, null, 2));
   await card
+    .getByRole("combobox", { name: "Network", exact: true })
+    .selectOption("robinhood");
+  await card
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("A reviewed paused project awaiting complete security evidence.");
   expect(JSON.parse(await manifestEditor.inputValue()).headline).toBe(
@@ -750,8 +755,28 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     path: test.info().outputPath("admin-routine-edit.png"),
     fullPage: true,
   });
-  await card.getByRole("button", { name: "Save revision 2" }).click();
+  await enlargeText(admin.locator("body"));
+  expect(
+    await admin.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await card.getByRole("button", { name: "Save revision 2" }).focus();
+  await admin.keyboard.press("Enter");
   await expect(card).toContainText("2 · updated");
+  expect(await listedProject(admin, project.id)).toMatchObject({
+    reward: {
+      chain: "robinhood",
+      currency: "USDG",
+      monthlyCapMinor: "1000000000",
+    },
+    rewardAsset: { network: "robinhood", symbol: "USDG" },
+    escrow: { chain: "robinhood", deployments: [] },
+  });
+  const prior = await (
+    await admin.request.get(`/api/v1/project-revisions/${project.id}/1`)
+  ).json();
+  expect(JSON.parse(prior.manifestText).escrow.chain).toBe("base");
   await expectAccessible(admin);
   await adminContext.close();
 });
@@ -774,11 +799,11 @@ test("the applicant's inbox lists each decision and revision once and keeps the 
 
   await revised.getByRole("button", { name: /^Mark as read/u }).click();
   await expect(page.getByRole("status")).toHaveText("Marked as read.");
-  await expect(revised.locator(".inbox-state")).toHaveText("Read");
+  await expect(revised.getByText("Read", { exact: true })).toBeVisible();
   await expect(revised.getByRole("button")).toHaveCount(0);
   // The read state is stored, not kept only in the page.
   await page.reload();
-  await expect(revised.locator(".inbox-state")).toHaveText("Read");
+  await expect(revised.getByText("Read", { exact: true })).toBeVisible();
 
   // The request client sends no Secure cookie over local http.
   const cookie = `__Host-slop_points=${APPLICANT_TOKEN}`;

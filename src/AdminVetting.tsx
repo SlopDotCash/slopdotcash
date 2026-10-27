@@ -1,5 +1,6 @@
 import { errorMessage as message } from "./lib/errors";
-import { formatNullableUtc as time } from "./Presentation";
+import { CopyIdentifier } from "./Operations";
+import { StatusBadge, formatNullableUtc as time } from "./Presentation";
 /**
  * The admin view of community project security vetting (PRD VET-01 to
  * VET-08). It shows each project's revision-bound clearance, the restricted
@@ -181,11 +182,21 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
         </div>
         <div>
           <dt>Assigned commit</dt>
-          <dd>{assessment.commitSha}</dd>
+          <dd>
+            <CopyIdentifier
+              label="assigned commit"
+              value={assessment.commitSha}
+            />
+          </dd>
         </div>
         <div>
           <dt>Skill template</dt>
-          <dd>{assessment.templateSha256}</dd>
+          <dd>
+            <CopyIdentifier
+              label="skill template digest"
+              value={assessment.templateSha256}
+            />
+          </dd>
         </div>
         <div>
           <dt>Policy version</dt>
@@ -357,11 +368,19 @@ export function VettingSection({ projectId }: { projectId: string }) {
                   >
                     <header>
                       <h3>{project.name}</h3>
-                      <span
-                        className={`admin-badge admin-badge-vetting-${clearance.state}`}
+                      <StatusBadge
+                        className="admin-badge"
+                        tone={
+                          clearance.state === "cleared"
+                            ? "success"
+                            : clearance.state === "banned" ||
+                                clearance.state === "quarantined"
+                              ? "danger"
+                              : "warning"
+                        }
                       >
                         {clearanceLabel(clearance)}
-                      </span>
+                      </StatusBadge>
                     </header>
                     <dl className="admin-facts">
                       <div>

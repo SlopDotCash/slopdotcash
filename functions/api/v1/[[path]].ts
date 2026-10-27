@@ -186,7 +186,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     sessionGithubActor(request, db, new Date().toISOString());
   const adminGithubIds = githubIdSet(env.ADMIN_GITHUB_IDS);
   const moderatorGithubIds = githubIdSet(env.PROJECT_MODERATOR_GITHUB_IDS);
-  const traceOperatorGithubIds = githubIdSet(env.OPERATOR_GITHUB_IDS);
+  const walletOperatorGithubIds = githubIdSet(env.OPERATOR_GITHUB_IDS);
   const cache = edgeCache();
   const waitUntil = context.waitUntil?.bind(context);
   const send = (url: string, init: RequestInit) => fetch(url, init);
@@ -283,7 +283,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         forReinstatement,
       ),
     adminGithubIds,
-    traceOperatorGithubIds,
     moderatorGithubIds,
     now,
     randomId,
@@ -520,7 +519,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       solanaFundingConfig: (projectId, network, vault) =>
         solanaFundingConfig(projectId, network, vault, "ordinary"),
       edgeCache: cache,
-      operatorIds: [...traceOperatorGithubIds],
+      operatorIds: [...walletOperatorGithubIds],
       // Binding consent names a vault recorded in the D1 project registry for
       // a served network; a vault of any other network is unknown.
       paymentDeployments: async () =>
@@ -572,8 +571,14 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     tier,
     persistence: new CloudflareTracePersistence(db, env.PRIVATE_TRACES),
     authSecret: env.TRACE_AUTH_SECRET,
-    operatorGithubIds: traceOperatorGithubIds,
-    bindingRecovery: env.BINDING_RECOVERY,
+    operatorGithubIds: walletOperatorGithubIds,
+    bindingRecoveryForNetwork: (network) => {
+      if (network === "base-mainnet") return env.BINDING_RECOVERY;
+      if (network === "ethereum") return env.BINDING_RECOVERY_ETHEREUM;
+      if (network === "robinhood-mainnet")
+        return env.BINDING_RECOVERY_ROBINHOOD;
+      return undefined;
+    },
     operatorSession: sessionActor,
     now,
     randomId,

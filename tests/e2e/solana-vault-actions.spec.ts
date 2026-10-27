@@ -763,7 +763,8 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
       });
     },
   );
-  await page.goto("/projects/eliza/awards");
+  await page.goto("/projects/eliza/funding");
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
   await page.getByLabel("Contribution month").fill("2026-09");
   await page
     .getByRole("button", { name: "Reserve award for local-contributor" })
@@ -1326,11 +1327,12 @@ async function ownerSetupWorkflow(
       .click();
     await expect(setup).toHaveCount(0);
     if (!bounty) {
-      await expect(
-        page
-          .locator(".funding-status-grid")
-          .getByText("2,000 TEST", { exact: true }),
-      ).toBeVisible();
+      const monthlyTarget = page
+        .locator("dl > div")
+        .filter({ has: page.locator("dt", { hasText: /^Monthly target$/u }) })
+        .locator("dd");
+      await expect(monthlyTarget).toHaveText("2,000 TEST");
+      await expect(monthlyTarget).toBeVisible();
       await expect(
         page
           .getByRole("status")

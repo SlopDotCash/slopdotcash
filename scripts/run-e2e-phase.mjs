@@ -31,11 +31,13 @@ export function runE2ePhase({
     let settled = false;
     let timedOut = false;
     let cleanupTimer;
+    let cleanupPoll;
     const finish = (status) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       clearTimeout(cleanupTimer);
+      clearTimeout(cleanupPoll);
       resolvePhase(status);
     };
     const timer = setTimeout(() => {
@@ -69,13 +71,11 @@ export function runE2ePhase({
         }
       }
       // Sending SIGKILL is asynchronous. Wait for close (including inherited
-      // pipes) before reporting cleanup complete; otherwise a descendant can
-      // still finish a write after the caller starts its next phase.
+      // pipes) and for the POSIX process group to disappear before reporting
+      // cleanup complete. Closed pipes alone do not prove descendants exited.
       // Keep this wait bounded if a descendant escaped the process group.
       cleanupTimer = setTimeout(() => {
-        process.stderr.write(
-          `[${label}] process cleanup did not close its pipes\n`,
-        );
+        process.stderr.write(`[${label}] process cleanup did not finish\n`);
         child.stdout.destroy();
         child.stderr.destroy();
         finish(1);
@@ -89,6 +89,24 @@ export function runE2ePhase({
     });
     child.on("close", (status, signal) => {
       if (signal) process.stderr.write(`[${label}] terminated by ${signal}\n`);
+      if (timedOut && process.platform !== "win32" && child.pid) {
+        const waitForGroupExit = () => {
+          if (settled) return;
+          try {
+            process.kill(-child.pid, 0);
+          } catch (error) {
+            if (error.code === "ESRCH") finish(1);
+            else
+              process.stderr.write(
+                `[${label}] process cleanup could not verify exit: ${error.message}\n`,
+              );
+            return;
+          }
+          cleanupPoll = setTimeout(waitForGroupExit, 25);
+        };
+        waitForGroupExit();
+        return;
+      }
       finish(timedOut ? 1 : (status ?? 1));
     });
   });

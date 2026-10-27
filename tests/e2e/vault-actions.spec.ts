@@ -30,6 +30,7 @@ import {
   applicationManifest,
   CONTRIBUTION,
 } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import {
   escapeRegExp,
   expect,
@@ -342,10 +343,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   ).toHaveCount(0);
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   await expect(
-    page
-      .locator(".funding-status-grid div")
-      .filter({ has: page.locator("dt", { hasText: /^Project vault$/ }) })
-      .locator("dd"),
+    page.getByText("Project vault: Not set up", { exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByText("Payments are disabled for this project.", { exact: false }),
@@ -483,35 +481,13 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     );
   expect(await overflow()).toBeLessThanOrEqual(1);
   // Controlled text enlargement, distinct from native browser zoom.
-  await actions.evaluate((section) => {
-    const sizes = [...section.querySelectorAll<HTMLElement>("*")].map(
-      (element) => ({
-        element,
-        font: getComputedStyle(element).fontSize,
-        line: getComputedStyle(element).lineHeight,
-        original: element.getAttribute("style"),
-      }),
-    );
-    for (const { element, font, line, original } of sizes) {
-      element.dataset.vaultOriginalStyle = original ?? "";
-      element.style.fontSize = `${parseFloat(font) * 2}px`;
-      if (line !== "normal")
-        element.style.lineHeight = `${parseFloat(line) * 2}px`;
-    }
-  });
+  const restoreText = await enlargeText(actions);
   expect(await overflow()).toBeLessThanOrEqual(1);
   await page.screenshot({
     path: info.outputPath("owner-withdrawal-200-percent-text.png"),
     fullPage: true,
   });
-  await actions.evaluate((section) => {
-    for (const element of section.querySelectorAll<HTMLElement>(
-      "[data-vault-original-style]",
-    )) {
-      element.setAttribute("style", element.dataset.vaultOriginalStyle ?? "");
-      delete element.dataset.vaultOriginalStyle;
-    }
-  });
+  await restoreText();
   const confirmWithdrawal = actions.getByRole("button", {
     name: "Confirm withdrawal in wallet",
   });
@@ -649,7 +625,8 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       return route.fulfill({ json: commitment });
     },
   );
-  await page.goto("/projects/eliza/awards");
+  await page.goto("/projects/eliza/funding");
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
   await page.getByLabel("Contribution month").fill("2026-09");
   await page
     .getByRole("button", { name: "Reserve award for local-contributor" })
@@ -709,6 +686,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     "/api/v1/payments/projects/eliza/monthly/2026-09",
   );
   await page.reload();
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
   await expect(page.getByRole("alert")).toHaveText(
     "Review temporarily unavailable",
   );
@@ -1425,11 +1403,14 @@ test("owner creates, registers and funds a vault through the real API", async ({
     ).toHaveText(
       "Creation used a monthly cap of 1,000 TEST. The project now uses 2,000 TEST. Use the automatic payment controls below to apply the new cap.",
     );
-    await expect(
-      recoveryPage
-        .locator(".funding-status-grid")
-        .getByText("2,000 TEST", { exact: true }),
-    ).toBeVisible();
+    const monthlyTarget = recoveryPage
+      .locator("dl > div")
+      .filter({
+        has: recoveryPage.locator("dt", { hasText: /^Monthly target$/u }),
+      })
+      .locator("dd");
+    await expect(monthlyTarget).toHaveText("2,000 TEST");
+    await expect(monthlyTarget).toBeVisible();
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(state.project.revision).toBe(3);
     expect(state.scanReads).toBe(afterEdit.scanReads);

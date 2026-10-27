@@ -1,8 +1,4 @@
-/**
- * Parses the public wallet markers allowed in a canonical GitHub claim
- * source, at most one per chain. The marker proves public attribution by the GitHub account, not
- * custody of the key; payout reviewers preserve the exact source observation.
- */
+/** Canonical wallet addresses and chain-aware comparisons. */
 
 import { decodeBase58Bytes } from "./base58";
 import { chainFamily, type EscrowChain } from "./escrow-policy.mjs";
@@ -18,11 +14,6 @@ export const WALLET_CHAINS: readonly WalletChain[] = [
   "robinhood",
   "ethereum",
 ];
-
-export interface PublishedWallet<Chain extends WalletChain = WalletChain> {
-  address: string;
-  chain: Chain;
-}
 
 export function isWalletChain(value: unknown): value is WalletChain {
   return WALLET_CHAINS.includes(value as WalletChain);
@@ -67,95 +58,4 @@ export function isWalletAddress(chain: WalletChain, value: unknown): boolean {
       ? isBaseAddress(value)
       : isSolanaAddress(value))
   );
-}
-
-function withoutFencedCode(markdown: string): string[] {
-  const retained: string[] = [];
-  let fence: "```" | "~~~" | null = null;
-  for (const line of markdown.split(/\r?\n/u)) {
-    const trimmed = line.trimStart();
-    if (!fence && (trimmed.startsWith("```") || trimmed.startsWith("~~~"))) {
-      fence = trimmed.slice(0, 3) as "```" | "~~~";
-      continue;
-    }
-    if (fence && trimmed.startsWith(fence)) {
-      fence = null;
-      continue;
-    }
-    if (!fence) retained.push(line);
-  }
-  return retained;
-}
-
-/**
- * Finds the exact, standalone markers, at most one per chain. A second marker
- * on the same chain fails closed so an old address cannot remain ambiguously
- * payable after a contributor changes it.
- */
-export function parsePublishedWallets(
-  markdown: string,
-): Partial<{ [Chain in WalletChain]: PublishedWallet<Chain> }> {
-  if (typeof markdown !== "string" || markdown.length > 1_000_000) {
-    throw new TypeError("GitHub profile README is invalid or too large");
-  }
-  const pattern =
-    /^\s*<!--\s*(?:slop-wallet:v1|gitarmy-wallet:v1)\s+(\{[^\r\n]*\})\s*-->\s*$/u;
-  const matches = withoutFencedCode(markdown)
-    .map((line) => pattern.exec(line))
-    .filter((match): match is RegExpExecArray => match !== null);
-  const wallets: Partial<Record<WalletChain, PublishedWallet>> = {};
-  for (const match of matches) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(match[1]);
-    } catch (error) {
-      throw new TypeError("GitHub profile wallet marker is not valid JSON", {
-        cause: error,
-      });
-    }
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
-      throw new TypeError(
-        "GitHub profile wallet marker must contain an object",
-      );
-    }
-    const marker = parsed as Record<string, unknown>;
-    if (Object.keys(marker).sort().join("\0") !== "address\0chain") {
-      throw new TypeError("GitHub profile wallet marker has unexpected fields");
-    }
-    if (!isWalletChain(marker.chain)) {
-      throw new TypeError(
-        "GitHub profile wallet marker must use Solana, Base, Robinhood Chain or Ethereum",
-      );
-    }
-    if (wallets[marker.chain]) {
-      throw new TypeError(
-        `GitHub profile README contains multiple ${marker.chain} wallet markers`,
-      );
-    }
-    if (!isWalletAddress(marker.chain, marker.address)) {
-      throw new TypeError(
-        chainFamily(marker.chain) === "evm"
-          ? "GitHub profile wallet marker has an invalid EVM address"
-          : "GitHub profile wallet marker has an invalid Solana address",
-      );
-    }
-    wallets[marker.chain] = {
-      address: marker.address as string,
-      chain: marker.chain,
-    };
-  }
-  return wallets as Partial<{
-    [Chain in WalletChain]: PublishedWallet<Chain>;
-  }>;
-}
-
-/** Returns the Solana marker, the only chain a cycle can settle on today. */
-export function parsePublishedWallet(
-  markdown: string,
-): PublishedWallet<"solana"> | null {
-  return parsePublishedWallets(markdown).solana ?? null;
 }
