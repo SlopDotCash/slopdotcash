@@ -1327,11 +1327,12 @@ async function ownerSetupWorkflow(
       .click();
     await expect(setup).toHaveCount(0);
     if (!bounty) {
-      await expect(
-        page
-          .locator(".funding-status-grid")
-          .getByText("2,000 TEST", { exact: true }),
-      ).toBeVisible();
+      const monthlyTarget = page
+        .locator("dl > div")
+        .filter({ has: page.locator("dt", { hasText: /^Monthly target$/u }) })
+        .locator("dd");
+      await expect(monthlyTarget).toHaveText("2,000 TEST");
+      await expect(monthlyTarget).toBeVisible();
       await expect(
         page
           .getByRole("status")

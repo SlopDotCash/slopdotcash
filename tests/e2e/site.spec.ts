@@ -979,11 +979,15 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await expect(item("delivery-1").locator(".inbox-delivery")).toHaveText(
     "Email: sent",
   );
-  await expect(item("delivery-1").locator(".inbox-state")).toHaveText("Read");
+  await expect(
+    item("delivery-1").getByText("Read", { exact: true }),
+  ).toBeVisible();
   await expect(item("delivery-2").locator(".inbox-delivery")).toHaveText(
     "Email: delivered",
   );
-  await expect(item("delivery-2").locator(".inbox-state")).toHaveText("Unread");
+  await expect(
+    item("delivery-2").getByText("Unread", { exact: true }),
+  ).toBeVisible();
   await expect(item("delivery-3").locator(".inbox-delivery")).toHaveText(
     "Email: failed",
   );
@@ -1548,26 +1552,37 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await rules.focus();
   await page.keyboard.press("Enter");
   await expect(rules.locator("..")).toHaveAttribute("open", "");
-  const tableRegion = page.getByRole("region", {
+  const pools = page.getByRole("list", {
     name: "Project funding pools",
     exact: true,
   });
-  await tableRegion.focus();
-  await expect(tableRegion).toBeFocused();
-  if (
-    await tableRegion.evaluate(
-      (element) => element.scrollWidth > element.clientWidth,
-    )
-  ) {
-    await page.keyboard.press("ArrowRight");
-    await expect
-      .poll(() => tableRegion.evaluate((element) => element.scrollLeft))
-      .toBeGreaterThan(0);
-  }
+  await expect(pools).toBeVisible();
+  expect(
+    await pools.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  const fundingLink = pools.getByRole("link").first();
+  await expect(fundingLink).toHaveAttribute(
+    "href",
+    /^\/projects\/[^/]+\/funding$/u,
+  );
+  const fundingPath = await fundingLink.getAttribute("href");
+  if (!fundingPath)
+    throw new Error("The funding pool must link to its project");
+  const fundingUrl = new URL(fundingPath, page.url()).href;
+  await fundingLink.focus();
+  await expect(fundingLink).toBeFocused();
   await testInfo.attach("sponsors-page", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
   });
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(fundingUrl);
+  await page.waitForLoadState("networkidle");
+  await page.goBack({ waitUntil: "networkidle" });
+  await expect(page).toHaveURL(/\/sponsors$/u);
+  await expect(pools).toBeVisible();
   const home = page.getByRole("link", { name: "Slop home", exact: true });
   await home.focus();
   await page.keyboard.press("Enter");

@@ -57,32 +57,28 @@ test("disabled payouts are visible from discovery through the project page", asy
     fullPage: true,
   });
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
-  const status = page.locator(".funding-status-grid");
-  const term = (name: string) =>
-    status
-      .locator("div")
-      .filter({ has: page.locator("dt", { hasText: new RegExp(`^${name}$`) }) })
-      .locator("dd");
-  await expect(term("Payments")).toHaveText("Disabled");
-  await expect(term("Project vault")).toHaveText("Not set up");
+  const funding = page.getByRole("main");
+  await expect(
+    funding.getByText("Payments: Disabled", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    funding.getByText("Project vault: Not set up", { exact: true }),
+  ).toBeVisible();
   await page.screenshot({
     path: info.outputPath("funding-payment-unavailable.png"),
     fullPage: true,
   });
   await page.goto("/sponsors", { waitUntil: "networkidle" });
-  const pools = page.getByRole("table");
-  const paymentsColumn = await pools
-    .getByRole("columnheader")
-    .allTextContents()
-    .then((headers) => headers.indexOf("Payments"));
-  expect(paymentsColumn).toBeGreaterThan(0);
+  const pool = page
+    .getByRole("list", { name: "Project funding pools" })
+    .getByRole("listitem")
+    .filter({ has: page.getByRole("link", { name: "Eliza", exact: true }) });
   await expect(
-    pools
-      .getByRole("row")
-      .filter({ has: page.getByRole("link", { name: "Eliza", exact: true }) })
-      .getByRole("cell")
-      .nth(paymentsColumn - 1),
-  ).toHaveText("Disabled");
+    pool.getByText("Payments: Disabled", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    pool.getByText("Vault: Not set up", { exact: true }),
+  ).toBeVisible();
   await expectAccessible(page);
   expect(
     await page.evaluate(
