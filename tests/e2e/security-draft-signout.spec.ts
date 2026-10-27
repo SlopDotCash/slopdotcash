@@ -1,8 +1,12 @@
 import type { Page } from "@playwright/test";
-import { PROJECTS } from "../../src/lib/projects.mjs";
+import { assertProjectRegistry } from "../../src/lib/project-schema.mjs";
+import { RAW_PROJECT_DEFINITIONS } from "../fixtures/project-registry.mjs";
 import { expect, test } from "./fixtures";
 
-const project = PROJECTS.find((entry) => entry.id === "eliza");
+// These preview stubs use the frozen fixture, not the registry being deployed.
+const project = assertProjectRegistry(RAW_PROJECT_DEFINITIONS).find(
+  (entry) => entry.id === "eliza",
+);
 if (!project) throw new Error("Missing private-report project fixture");
 const projectId = project.id;
 const storageKey = (actor: string) =>
