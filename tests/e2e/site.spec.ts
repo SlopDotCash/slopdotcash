@@ -17,6 +17,7 @@ import {
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { archivedPaidCycleIndex } from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -783,6 +784,43 @@ test("renders contributor and cycle records from validated public data", {
       }),
     ).toBeVisible();
   }
+});
+
+test("shows the suggested amount for a walletless cycle still under review", async ({
+  page,
+}) => {
+  const index = archivedPaidCycleIndex();
+  const cycle = index.cycles[0];
+  cycle.state = "review";
+  cycle.approvedAt = null;
+  cycle.settledAt = null;
+  cycle.reward.approvedMinor = "0";
+  cycle.reward.paidMinor = "0";
+  cycle.reward.feeMinor = "0";
+  cycle.files.allocation = null;
+  cycle.files.executionPlan = null;
+  cycle.files.settlement = null;
+  const contributor = cycle.contributors[0];
+  contributor.state = "unclaimed";
+  contributor.wallet = null;
+  contributor.approvedMinor = "0";
+  contributor.paidMinor = "0";
+  assertCycleIndex(index);
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    route.fulfill({ json: index }),
+  );
+  await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
+    waitUntil: "networkidle",
+  });
+  const row = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("link", { name: contributor.actor.login }) });
+  await expect(row).toContainText("Awaiting wallet");
+  await expect(row.locator(".cycle-current-amount")).toHaveText("Suggested $1");
+  await row.getByText("Amount history", { exact: true }).click();
+  await expect(row.locator(".cycle-amount-history")).toContainText(
+    "Approved$0",
+  );
 });
 
 test("makes the public project draft boundary unmistakable", async ({
