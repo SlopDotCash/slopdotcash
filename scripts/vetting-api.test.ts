@@ -1118,3 +1118,72 @@ test("large retained evidence uses bounded chunks, immutable completion and acto
   );
   expect((await grant()).status).toBe(404);
 }, 60_000);
+
+/** #1411 C-09: the scanner controller records its publication state through the
+ * signed service, so the protected job holds no database credential of its own. */
+test("the journal route reserves and completes one publication per assessment", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const intent = {
+    assessmentId: id,
+    resultSha256: "a".repeat(64),
+    origin: ORIGIN,
+    disposition: "incomplete",
+  };
+  const post = async (payload: unknown) =>
+    vettingApi(
+      await signed("POST", "vetting/journal", JSON.stringify(payload)),
+    );
+
+  const before = await post({ operation: "has", assessmentId: id });
+  expect(before.status).toBe(200);
+  expect(await before.json()).toEqual({
+    schemaVersion: "slop-vetting-journal-v1",
+    present: false,
+  });
+
+  expect((await post({ operation: "reserve", ...intent })).status).toBe(200);
+  expect((await post({ operation: "reserve", ...intent })).status).toBe(409);
+
+  const after = await post({ operation: "has", assessmentId: id });
+  expect(await after.json()).toEqual({
+    schemaVersion: "slop-vetting-journal-v1",
+    present: true,
+  });
+
+  const receipt = {
+    operation: "complete",
+    ...intent,
+    outcome: "unknown",
+    httpStatus: null,
+  };
+  expect((await post(receipt)).status).toBe(200);
+  // One receipt per assessment, and it must match the reserved intent.
+  expect((await post(receipt)).status).toBe(409);
+  expect(
+    (await post({ ...receipt, resultSha256: "c".repeat(64) })).status,
+  ).toBe(422);
+  // An unsupported operation, an unknown assessment and an unsigned call are refused.
+  expect((await post({ operation: "purge", ...intent })).status).toBe(400);
+  expect(
+    (
+      await post({
+        operation: "reserve",
+        ...intent,
+        assessmentId: "vet_deadbeef",
+      })
+    ).status,
+  ).toBe(404);
+  // Unknown fields are refused, like the sibling signed routes.
+  expect(
+    (await post({ operation: "has", assessmentId: id, extra: 1 })).status,
+  ).toBe(400);
+  const unsigned = await vettingApi(
+    new Request(`${ORIGIN}/api/v1/vetting/journal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "has", assessmentId: id }),
+    }),
+  );
+  expect(unsigned.status).toBe(401);
+}, 60_000);

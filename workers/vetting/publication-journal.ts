@@ -1,15 +1,22 @@
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  JOURNAL_PATH,
+  JOURNAL_SCHEMA,
+  PUBLICATION_OUTCOMES,
+  type PublicationIntent,
+  type PublicationOutcome,
+  type PublicationReceipt,
+} from "../../src/lib/vetting-contracts";
+import { signedServiceHeaders, type VettingServiceSigner } from "./service";
 
-export type PublicationIntent = {
-  assessmentId: string;
-  resultSha256: string;
-  origin: string;
-  disposition: string;
-};
-export type PublicationReceipt = PublicationIntent & {
-  outcome: "accepted" | "rejected" | "unknown";
-  httpStatus: number | null;
+export {
+  JOURNAL_PATH,
+  JOURNAL_SCHEMA,
+  PUBLICATION_OUTCOMES,
+  type PublicationIntent,
+  type PublicationOutcome,
+  type PublicationReceipt,
 };
 /** Reservation must be durable before the first publication request. */
 export interface PublicationJournal {
@@ -48,85 +55,78 @@ export function filePublicationJournal(root: string): PublicationJournal {
   };
 }
 
-/** Protected scheduled jobs use D1 for metadata only; no source or model text. */
-export function d1PublicationJournal(config: {
-  accountId: string;
-  databaseId: string;
-  token: string;
+/**
+ * The journal route contract is shared with the service handler in
+ * `src/lib/vetting-contracts.ts`; this module only owns the file-backed client.
+ */
+
+/**
+ * Records publication state through the signed vetting service instead of
+ * writing the database from the scheduled job. The controller then holds no
+ * account-wide Cloudflare credential: the only writer of these two tables is
+ * the deployed service (#1411 C-09).
+ */
+export function servicePublicationJournal(config: {
+  origin: string;
+  signer: VettingServiceSigner;
   fetch?: typeof fetch;
 }): PublicationJournal {
-  if (
-    !/^[a-f0-9]{32}$/.test(config.accountId) ||
-    !/^[a-f0-9-]{36}$/.test(config.databaseId) ||
-    !config.token
-  )
-    throw new Error("Invalid publication journal configuration");
-  async function query(sql: string, params: (string | number | null)[]) {
-    const response = await (config.fetch ?? fetch)(
-      `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/d1/database/${config.databaseId}/query`,
-      {
-        method: "POST",
-        redirect: "error",
-        signal: AbortSignal.timeout(30_000),
-        headers: {
-          authorization: `Bearer ${config.token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ sql, params }),
+  const origin = new URL(config.origin).origin;
+  const fetcher = config.fetch ?? fetch;
+  async function call(payload: Record<string, unknown>): Promise<unknown> {
+    const body = new TextEncoder().encode(JSON.stringify(payload));
+    const response = await fetcher(`${origin}${JOURNAL_PATH}`, {
+      method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(30_000),
+      headers: {
+        "content-type": "application/json",
+        ...(await signedServiceHeaders({
+          signer: config.signer,
+          method: "POST",
+          pathAndQuery: JOURNAL_PATH,
+          body,
+        })),
       },
-    );
-    if (!response.ok) throw new Error("Publication journal unavailable");
-    const body = (await response.json()) as {
-      success?: boolean;
-      result?: { success?: boolean; results?: unknown[] }[];
-    };
-    if (
-      body.success !== true ||
-      body.result?.length !== 1 ||
-      body.result[0].success !== true ||
-      !Array.isArray(body.result[0].results)
-    )
-      throw new Error("Invalid publication journal response");
-    return body.result[0].results;
+      body,
+    });
+    if (!response.ok)
+      throw new Error(
+        `Publication journal refused ${String(payload.operation)} (HTTP ${response.status})`,
+      );
+    const reply = (await response.json()) as { schemaVersion?: unknown };
+    if (reply.schemaVersion !== JOURNAL_SCHEMA)
+      throw new Error("Publication journal reply has an unexpected contract");
+    return reply;
   }
   return {
     async has(id) {
+      const value = await call({ operation: "has", assessmentId: id });
       return (
-        (
-          await query(
-            "SELECT assessment_id FROM vetting_publication_intents WHERE assessment_id=?",
-            [id],
-          )
-        ).length > 0
+        typeof value === "object" &&
+        value !== null &&
+        (value as { present?: unknown }).present === true
       );
     },
     async reserve(intent) {
-      const inserted = await query(
-        "INSERT INTO vetting_publication_intents(assessment_id,result_sha256,origin,disposition) VALUES(?,?,?,?) ON CONFLICT(assessment_id) DO NOTHING RETURNING assessment_id",
-        [
-          intent.assessmentId,
-          intent.resultSha256,
-          intent.origin,
-          intent.disposition,
-        ],
-      );
-      if (inserted.length !== 1)
-        throw new Error("Publication already reserved; reconcile its outcome");
+      await call({
+        operation: "reserve",
+        assessmentId: intent.assessmentId,
+        resultSha256: intent.resultSha256,
+        origin: intent.origin,
+        disposition: intent.disposition,
+      });
     },
     async complete(receipt) {
-      const inserted = await query(
-        "INSERT INTO vetting_publication_receipts(assessment_id,outcome,http_status) SELECT assessment_id,?,? FROM vetting_publication_intents WHERE assessment_id=? AND result_sha256=? AND origin=? AND disposition=? RETURNING assessment_id",
-        [
-          receipt.outcome,
-          receipt.httpStatus,
-          receipt.assessmentId,
-          receipt.resultSha256,
-          receipt.origin,
-          receipt.disposition,
-        ],
-      );
-      if (inserted.length !== 1)
-        throw new Error("Publication receipt has no matching intent");
+      await call({
+        operation: "complete",
+        assessmentId: receipt.assessmentId,
+        resultSha256: receipt.resultSha256,
+        origin: receipt.origin,
+        disposition: receipt.disposition,
+        outcome: receipt.outcome,
+        httpStatus: receipt.httpStatus,
+      });
     },
   };
 }

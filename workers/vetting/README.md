@@ -154,8 +154,9 @@ model responses stay in private temporary files and are deleted at the end of
 the pass; no workflow artifact contains them. Risky artifacts still execute
 only through the separate Cloudflare sandbox.
 
-The scheduled controller uses the selected environment's D1 database for its
-publication journal. Migration `0074_vetting_publication_journal.sql` stores
+The scheduled controller records its publication journal through the signed
+service route `POST /api/v1/vetting/journal`, so the scan job holds no
+Cloudflare credential of its own. Migration `0074_vetting_publication_journal.sql` stores
 only assessment identity, result digest, disposition and receipt metadata.
 The intent is reserved atomically before submission and cannot be changed or
 deleted. Restarting a job does not forget an accepted, rejected or uncertain
@@ -164,8 +165,7 @@ The local CLI retains its filesystem journal.
 
 Before activation, supply the existing scanner key as
 `SLOP_VETTING_SIGNING_JWK` and the existing provider key as `SURPLUS_API_KEY`
-in each protected environment. Reuse its Cloudflare account ID and API token.
-Set its `VETTING_RATE_CARDS` variable to an object with `primary` and
+in each protected environment. Set its `VETTING_RATE_CARDS` variable to an object with `primary` and
 `specialist` rate cards, each containing the four nano-USD-per-token fields
 from `ScannerProfile`. Verify those rates against the provider account; do not
 copy test rates. The controller pins the approved Surplus models and endpoints.
