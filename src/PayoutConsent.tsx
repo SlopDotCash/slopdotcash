@@ -273,6 +273,7 @@ export function PayoutConsent({
             ))}
             <button
               type="button"
+              className="button secondary-button"
               disabled={busy}
               onClick={() => {
                 setOpen(false);
