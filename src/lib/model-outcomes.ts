@@ -15,6 +15,7 @@ import type {
   ScoreEvent,
 } from "./leaderboard-types";
 import { isUnavailableModelIdentifier } from "./model-identity";
+import { POINTS_PER_THIRD } from "./points";
 
 /** Provider spellings that name the same organization. */
 const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
@@ -208,6 +209,19 @@ function attributionClient(attribution: ModelAttribution): string | null {
 }
 
 /**
+ * Ledger points in the public Points unit: 30 per score, 10 per third,
+ * the same conversion `awardForScore` applies. A legacy event without
+ * `scoreThirds` carries whole scores, so its points are tripled first.
+ * Without this, model outcome tables report raw score units at 1/30 of
+ * the Points every other public surface shows.
+ */
+export function pointsForScoreEvent(
+  event: Pick<ScoreEvent, "points" | "scoreThirds">,
+): number {
+  return (event.scoreThirds ?? event.points * 3) * POINTS_PER_THIRD;
+}
+
+/**
  * Joins each accepted outcome in the ledger to the model declarations made on
  * that same source by the same actor, then counts per model and per client.
  *
@@ -307,12 +321,13 @@ export function summarizeModelOutcomes(
       ...new Set(own.map((attribution) => identities.get(attribution)?.key)),
     ].filter((key): key is string => typeof key === "string");
     if (keys.length === 0) return;
-    const share = event.points / keys.length;
+    const eventPoints = pointsForScoreEvent(event);
+    const share = eventPoints / keys.length;
 
     if (isPullRequest) {
       mergedSourceIdsWithModel.add(event.source.id);
       totals.mergedPullRequestsWithModel = mergedSourceIdsWithModel.size;
-      totals.pullRequestPointsWithModel += event.points;
+      totals.pullRequestPointsWithModel += eventPoints;
       if (own.some((attribution) => attribution.run)) {
         mergedSourceIdsWithSignedRun.add(event.source.id);
         totals.mergedPullRequestsWithSignedRun =
@@ -355,7 +370,7 @@ export function summarizeModelOutcomes(
         const bucket = clients.get(client);
         if (!bucket) continue;
         bucket.mergedPullRequests.add(event.source.id);
-        bucket.pullRequestPoints += event.points / clientKeys.length;
+        bucket.pullRequestPoints += eventPoints / clientKeys.length;
       }
     }
   };
@@ -366,7 +381,7 @@ export function summarizeModelOutcomes(
     if (event.category === "merged-pull-request") {
       mergedSourceIds.add(event.source.id);
       totals.mergedPullRequests = mergedSourceIds.size;
-      totals.pullRequestPoints += event.points;
+      totals.pullRequestPoints += pointsForScoreEvent(event);
       countOutcome(event, true);
     } else if (event.category === "substantive-review") {
       totals.acceptedReviews += 1;
