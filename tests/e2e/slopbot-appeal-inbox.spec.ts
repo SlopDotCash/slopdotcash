@@ -77,12 +77,12 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
       body: "Verified GitHub appeal redirect",
     });
   });
-  await item.getByRole("link", { name: "Open appeal on GitHub" }).click();
+  await item.getByRole("link", { name: /Open appeal on GitHub/u }).click();
   await expect(page.getByText("Verified GitHub appeal redirect")).toBeVisible();
   await page.goto("/inbox", { waitUntil: "networkidle" });
   await item.getByRole("button", { name: "Mark as read" }).focus();
   await page.keyboard.press("Enter");
-  await expect(item.getByText("Read", { exact: true })).toBeVisible();
+  await expect(item.locator(".inbox-state")).toHaveText("Read");
   await expectAccessible(page, { everyRule: true });
   await page.screenshot({
     path: test.info().outputPath("appeal-review.png"),

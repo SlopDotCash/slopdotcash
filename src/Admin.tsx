@@ -838,34 +838,39 @@ function ProjectsSection({
                     {project.status}
                   </StatusBadge>
                 </header>
-                <dl className="admin-facts">
-                  <div>
-                    <dt>Project id</dt>
-                    <dd>{project.id}</dd>
-                  </div>
-                  <div>
-                    <dt>Revision</dt>
-                    <dd>
-                      {project.revision} · updated{" "}
-                      {formatDateTime(project.updatedAt)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Skills</dt>
-                    <dd>
-                      {usesGeneratedSkills(project.manifest)
-                        ? `Generated from revision ${project.revision}`
-                        : `${project.manifest.skill.sourcePath} · ${project.manifest.reviewSkill.sourcePath}`}
-                    </dd>
-                  </div>
-                </dl>
-                <GeneratedSkillPreview
-                  manifest={project.manifest}
-                  registry={{
-                    revision: project.revision,
-                    manifestSha256: project.manifestSha256,
-                  }}
-                />
+                <details className="admin-reference">
+                  <summary>
+                    Project configuration · revision {project.revision}
+                  </summary>
+                  <dl className="admin-facts">
+                    <div>
+                      <dt>Project id</dt>
+                      <dd>{project.id}</dd>
+                    </div>
+                    <div>
+                      <dt>Revision</dt>
+                      <dd>
+                        {project.revision} · updated{" "}
+                        {formatDateTime(project.updatedAt)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Skills</dt>
+                      <dd>
+                        {usesGeneratedSkills(project.manifest)
+                          ? `Generated from revision ${project.revision}`
+                          : `${project.manifest.skill.sourcePath} · ${project.manifest.reviewSkill.sourcePath}`}
+                      </dd>
+                    </div>
+                  </dl>
+                  <GeneratedSkillPreview
+                    manifest={project.manifest}
+                    registry={{
+                      revision: project.revision,
+                      manifestSha256: project.manifestSha256,
+                    }}
+                  />
+                </details>
                 {editing === project.id ? (
                   <ProjectEditor
                     key={`${project.id}:${project.revision}`}
