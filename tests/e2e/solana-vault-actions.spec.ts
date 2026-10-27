@@ -28,7 +28,6 @@ import { buildInitializeVaultInstructions } from "../../contracts/solana/owner-i
 import { message } from "../../contracts/solana/transactions";
 import { formatBaseUnits } from "../../src/lib/base-units.mjs";
 import { decodeBase58Bytes } from "../../src/lib/base58";
-import type { CycleIndex } from "../../src/lib/cycle-index";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -41,6 +40,7 @@ import {
   escapeRegExp,
   expect,
   expectAccessible,
+  serveProjectCycleIndex,
   test,
 } from "./fixtures";
 
@@ -462,21 +462,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   await page.route("**/api/v1/projects/eliza", (route) =>
     route.fulfill({ json: { project, revision: 1 } }),
   );
-  // This page serves one synthetic project. Keep its existing cycle history,
-  // but omit cycles whose projects are absent from that runtime registry.
-  const cycleIndex = JSON.parse(
-    readFileSync(join(process.cwd(), "public/data/cycles/index.json"), "utf8"),
-  ) as CycleIndex;
-  await page.route("**/data/cycles/index.json?**", (route) =>
-    route.fulfill({
-      json: {
-        ...cycleIndex,
-        cycles: cycleIndex.cycles.filter(
-          (cycle) => cycle.projectId === project.id,
-        ),
-      },
-    }),
-  );
+  await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({ json: { session: null } }),
   );

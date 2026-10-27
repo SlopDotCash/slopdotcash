@@ -2,7 +2,12 @@
 
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  serveProjectCycleIndex,
+  test,
+} from "./fixtures";
 
 test("disabled payouts are visible from discovery through the project page", async ({
   page,
@@ -22,6 +27,7 @@ test("disabled payouts are visible from discovery through the project page", asy
   await page.route("**/api/v1/projects/eliza", (route) =>
     route.fulfill({ json: { project, revision: 1 } }),
   );
+  await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
   );
