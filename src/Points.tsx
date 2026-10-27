@@ -119,6 +119,17 @@ class PointsRequestError extends Error {
     super(`Points request returned ${status}`);
   }
 }
+/**
+ * The next action after the identity service refuses a sign-in request: 410
+ * ends an expired flow, 429 is its one-minute rate limit, and anything else
+ * means the service is unavailable.
+ */
+function identityFailure(status: number): string {
+  if (status === 410) return "Sign-in expired. Please start again.";
+  if (status === 429)
+    return "Too many sign-in attempts. Wait one minute, then try again.";
+  return "Sign-in is temporarily unavailable. Try again in a few minutes.";
+}
 async function requestJson(url: string, init: RequestInit = {}) {
   const response = await fetchWithDeadline(url, {
     ...init,
@@ -662,6 +673,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
     active.current = c;
     setBusy(true);
     setMessage("");
+    let authorized = false;
     try {
       const assertion = await requestIdentityAssertion({
         origin: identityPublicOrigin(
@@ -679,7 +691,10 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
         allowLoopback: localBackendOrigin !== null,
         audience: "slop-points-web",
         signal: c.signal,
-        authorize: (url) => popup.location.replace(url),
+        authorize: (url) => {
+          authorized = true;
+          popup.location.replace(url);
+        },
         request: async (url, init) => {
           const response = await fetchWithDeadline(url, {
             ...init,
@@ -689,7 +704,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
             cache: "no-store",
             referrerPolicy: "no-referrer",
           });
-          if (!response.ok) throw new Error("Sign-in expired. Start again.");
+          if (!response.ok) throw new Error(identityFailure(response.status));
           const body = await readBoundedJson(response, 16384, "sign-in");
           if (!body || typeof body !== "object" || Array.isArray(body))
             throw new Error("Sign-in failed. Start again.");
@@ -726,6 +741,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
           : "You’re signed in.",
       );
     } catch (e) {
+      if (!authorized) popup.close();
       if (c.signal.aborted) return;
       if (e instanceof PointsRequestError && e.code === "account_closed") {
         setClosedAccount(true);
@@ -840,8 +856,11 @@ export function LoginPage() {
   );
 }
 export function AccountPage() {
-  const accountSession = useProjectSession();
   const { me, session } = usePoints();
+  const accountSession = useProjectSession(
+    me?.actor.id ?? "signed-out",
+    session !== "loading",
+  );
   const [closedNotice, setClosedNotice] = useState("");
   const closure = useRef<HTMLDetailsElement>(null);
   useEffect(() => {

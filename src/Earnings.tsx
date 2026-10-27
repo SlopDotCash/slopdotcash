@@ -274,29 +274,52 @@ export function EarningsPage({
     };
     if (typeof claim.claimId !== "string")
       throw new Error("Wallet registration could not be verified.");
-    const challenge = (await request("wallets/challenge", {
-      claimId: claim.claimId,
-    })) as {
-      challengeId: string;
-      message: string;
-      address: string;
-      chain: string;
-    };
-    if (
-      challenge.address !== address ||
-      challenge.chain !== chain ||
-      typeof challenge.challengeId !== "string" ||
-      typeof challenge.message !== "string"
-    )
+    // A new claim replaces the saved one at once, and payouts go only to a
+    // confirmed current claim. A later failure reloads the account and says
+    // what changed.
+    const saved = data?.wallets.find((w) => w.chain === chain);
+    let authorizationAttempted = false;
+    try {
+      const challenge = (await request("wallets/challenge", {
+        claimId: claim.claimId,
+      })) as {
+        challengeId: string;
+        message: string;
+        address: string;
+        chain: string;
+      };
+      if (
+        challenge.address !== address ||
+        challenge.chain !== chain ||
+        typeof challenge.challengeId !== "string" ||
+        typeof challenge.message !== "string"
+      )
+        throw new Error(
+          "Wallet confirmation does not match your selected address.",
+        );
+      const signature = await sign(challenge.message);
+      authorizationAttempted = true;
+      await request("wallets/authorize", {
+        claimId: claim.claimId,
+        challengeId: challenge.challengeId,
+        signature,
+      });
+    } catch (e) {
+      if (e instanceof SignedOutError || claim.claimId === saved?.claimId)
+        throw e;
+      const network = NETWORK_NAMES[chain];
+      if (authorizationAttempted)
+        throw new Error(
+          `${errorMessage(e, "Wallet confirmation failed.")} Your new ${network} address ${address} was saved, but confirmation could not be verified. Check the current wallet status below before trying again.`,
+        );
       throw new Error(
-        "Wallet confirmation does not match your selected address.",
+        `${errorMessage(e, "Wallet confirmation failed.")} ${
+          saved?.authorized
+            ? `Your new ${network} address ${address} is saved but not confirmed. Payouts to your earlier address ${saved.address} are paused. Connect your wallet again to confirm the new address, or to confirm the earlier address again.`
+            : `Your ${network} address ${address} is saved but not confirmed. Connect your wallet again to confirm it for automatic payments.`
+        }`,
       );
-    const signature = await sign(challenge.message);
-    await request("wallets/authorize", {
-      claimId: claim.claimId,
-      challengeId: challenge.challengeId,
-      signature,
-    });
+    }
   }
 
   /** Confirms the address on each chain of the family that lacks it, one signature per chain. */
