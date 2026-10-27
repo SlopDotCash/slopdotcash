@@ -371,7 +371,7 @@ test("no wallets offers official install links in either network modal", async (
   expect(writes).toEqual([]);
 });
 
-// Wallets that imitate MetaMask also set isMetaMask; each keeps its own name.
+// Compatibility flags must not make another wallet appear as MetaMask.
 for (const [name, flags] of [
   ["MetaMask", { isMetaMask: true }],
   ["Rabby", { isRabby: true, isMetaMask: true }],
@@ -396,7 +396,9 @@ for (const [name, flags] of [
     );
     await page.goto("/account#wallets");
     const dialog = await openPicker(page, "EVM");
-    await dialog.getByRole("button", { name, exact: true }).click();
+    const walletButton = dialog.getByRole("button", { name, exact: true });
+    await expect(walletButton).toBeVisible();
+    await walletButton.click();
     await expect(
       page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
     ).toBeVisible();

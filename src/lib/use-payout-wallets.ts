@@ -19,9 +19,6 @@ type EthereumWallet = {
   isBraveWallet?: boolean;
   isTrust?: boolean;
   isTrustWallet?: boolean;
-  isOkxWallet?: boolean;
-  isOKExWallet?: boolean;
-  isRainbow?: boolean;
 };
 type SolanaWallet = {
   connect(): Promise<{ publicKey: { toString(): string } }>;
@@ -151,9 +148,6 @@ const LEGACY_EVM_NAMES = [
   ["isPhantom", "Phantom"],
   ["isTrust", "Trust Wallet"],
   ["isTrustWallet", "Trust Wallet"],
-  ["isOkxWallet", "OKX Wallet"],
-  ["isOKExWallet", "OKX Wallet"],
-  ["isRainbow", "Rainbow"],
   ["isCoinbaseWallet", "Coinbase Wallet"],
   ["isMetaMask", "MetaMask"],
 ] as const satisfies readonly (readonly [keyof EthereumWallet, string])[];
