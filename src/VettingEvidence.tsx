@@ -24,6 +24,7 @@ type Run = {
   runId: string;
   manifestSha256: string;
   expiresAt: string | null;
+  permanentAdmissionEvidence?: boolean;
   assembly?: {
     retained: boolean;
     state: string;
@@ -155,9 +156,11 @@ export default function VettingEvidencePage() {
                 </p>
               ) : null}
               <p className="operations-retention">
-                {run.expiresAt === null
-                  ? "Case open. Evidence remains available until 90 days after closure."
-                  : `Access expires: ${run.expiresAt}.`}
+                {run.permanentAdmissionEvidence
+                  ? "Admission evidence is retained permanently. Each read still requires a short-lived operator grant."
+                  : run.expiresAt === null
+                    ? "Case open. Evidence remains available until 90 days after closure."
+                    : `Access expires: ${run.expiresAt}.`}
               </p>
               {run.objects.map((object) => (
                 <EvidenceItem key={object.sha256} run={run} object={object} />

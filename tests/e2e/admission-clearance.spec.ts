@@ -154,4 +154,37 @@ test("admin distinguishes retained admission from the current revision and can r
     path: info.outputPath("explicit-investigation.png"),
     fullPage: true,
   });
+  await page.route("**/api/v1/operator/vetting-evidence?**", (route) =>
+    route.fulfill({
+      json: {
+        runs: [
+          {
+            assessmentId: "admission-1",
+            runId: "run-1",
+            manifestSha256: "c".repeat(64),
+            expiresAt: null,
+            permanentAdmissionEvidence: true,
+            policy: { version: "slop-scanner-evidence-2026-10-27" },
+            objects: [],
+          },
+        ],
+        retentionBoundary: "Private synthetic admission evidence.",
+      },
+    }),
+  );
+  await page.goto("/vetting-evidence?assessmentId=admission-1&runId=run-1");
+  await page
+    .getByRole("button", { name: "Inspect evidence inventory" })
+    .click();
+  await expect(
+    page.getByText("Admission evidence is retained permanently.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(page.getByText("Case open.", { exact: false })).toHaveCount(0);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("permanent-admission-evidence.png"),
+    fullPage: true,
+  });
 });

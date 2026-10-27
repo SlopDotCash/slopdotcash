@@ -196,7 +196,7 @@ PRD section 8 permanently exempts the existing projects captured by migration
 `0075_vetting_grandfathered_projects.sql` from normal scan clearance, including
 future executable changes. Later projects require one successful admission scan of their immutable GitHub
 repository. Routine commits, dependencies, Markdown, skill and presentation
-changes keep that admission; do not claim the later content was scanned.
+changes keep that admission; do not claim the later content was scanned. Keep successful bounded admission-scan evidence permanently, including original evidence used by a reused result (owner decision, 27 October 2026). Other scanner cases keep their existing retention rules.
 Keep the original complete assessment and retained evidence. Another repository
 cannot inherit it. Record the existing-project exemption explicitly, never as a
 passed scan; explicit security investigations, flags, pauses, confirmed-malicious
