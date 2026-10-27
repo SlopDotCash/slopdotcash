@@ -117,17 +117,34 @@ export async function acquireQueuedAssessment(
   connection: QueueConnection,
   assessmentId: string,
   directory: string,
+  githubToken?: string,
 ) {
   const deadline = AbortSignal.timeout(180_000);
   const baseFetch = connection.fetch ?? fetch;
-  const fetcher = ((input: string | URL | Request, init?: RequestInit) =>
-    baseFetch(input, {
+  const fetcher = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    // This credential belongs to trusted acquisition only. Never send it to
+    // Slop, raw content, the model provider, or an isolated execution service.
+    if (
+      githubToken &&
+      url.origin === "https://api.github.com" &&
+      url.pathname.startsWith("/repos/") &&
+      (init?.method ?? "GET") === "GET"
+    )
+      headers.set("authorization", `Bearer ${githubToken}`);
+    return baseFetch(input, {
       ...init,
+      headers: Object.fromEntries(headers),
+      redirect: "error",
       signal: AbortSignal.any([
         deadline,
         ...(init?.signal ? [init.signal] : []),
       ]),
-    })) as typeof fetch;
+    });
+  }) as typeof fetch;
   // Re-read the signed queue at acquisition start. Caller-supplied commit/template pins are not accepted.
   const assessment = (
     await readPendingAssessments({ ...connection, fetch: fetcher })
