@@ -75,7 +75,7 @@ jobs:
       pull-requests: read
     environment:
       # Production writes only from main; staging only from development.
-      name: ${{ github.ref == 'refs/heads/main' && 'eliza-army-production' || 'slop-staging' }}
+      name: ${{ github.ref == 'refs/heads/main' && 'slop-production' || 'slop-staging' }}
     steps:
       - name: Checkout trusted branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
