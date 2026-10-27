@@ -1576,6 +1576,7 @@ async function ownerSetupWorkflow(
       privateUnavailable = false;
       expect(privateErrors).toBe(1);
       await page.getByLabel("Status", { exact: true }).selectOption("open");
+      await page.getByRole("button", { name: "Review bounty terms" }).click();
       await page.getByRole("button", { name: "Publish bounty terms" }).click();
       await expect(
         page.getByRole("status").filter({ hasText: "Published revision" }),

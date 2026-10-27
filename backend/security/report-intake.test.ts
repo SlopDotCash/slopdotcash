@@ -381,6 +381,34 @@ function fixture() {
 }
 
 describe("durable private report controls", () => {
+  test("a changed browser account cannot submit another reporter's prepared draft", async () => {
+    const t = fixture();
+    const response = await t.call(OTHER, "POST", "security-submissions", {
+      projectId: PROJECT,
+      origin: "slop",
+      idempotencyKey: "bound-reporter-draft-key",
+      expectedReporterGithubId: REPORTER.githubId,
+      report: REPORT,
+    });
+    expect(response.status).toBe(403);
+    expect(t.objects.size).toBe(0);
+    expect(t.screeningCalls()).toBe(0);
+    expect(
+      t.sqlite
+        .query("SELECT COUNT(*) AS count FROM security_submissions")
+        .get(),
+    ).toEqual({ count: 0 });
+    const accepted = await t.call(REPORTER, "POST", "security-submissions", {
+      projectId: PROJECT,
+      origin: "slop",
+      idempotencyKey: "bound-reporter-draft-key",
+      expectedReporterGithubId: REPORTER.githubId,
+      report: REPORT,
+    });
+    expect(accepted.status).toBe(201);
+    expect(t.objects.size).toBe(1);
+  });
+
   test.each(["send", "decision"] as const)(
     "a report revision cannot replace evidence after a concurrent %s commits",
     async (interruption) => {

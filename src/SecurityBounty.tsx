@@ -23,11 +23,13 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { Link } from "./Link";
+import { PrivateReportForm } from "./PrivateReportForm";
 import {
   GRANT_ERRORS,
   githubSubmissionStatus,
@@ -36,6 +38,7 @@ import {
   submissionStatus,
 } from "./PrivateReportSummary";
 import { ProjectSecuritySettings } from "./ProjectSecuritySettings";
+import { SecurityOffer } from "./SecurityOffer";
 import "./operations-design.css";
 import "./private-report-design.css";
 import { decimalBaseUnits, formatBaseUnits } from "./lib/base-units.mjs";
@@ -187,7 +190,6 @@ function IntakeHandoff({
   session: ProjectSessionState;
 }) {
   const [state, setState] = useState<ReadinessState>({ status: "checking" });
-  const [draft, setDraft] = useState<ReportDraft>(EMPTY_DRAFT);
   const check = useCallback((): Promise<Readiness | null> => {
     setState((current) =>
       current.status === "checked"
@@ -255,12 +257,7 @@ function IntakeHandoff({
         Never post exploit details publicly.
       </p>
       {state.status === "checked" && state.value.storedIntake === true ? (
-        <AutomaticReportForm
-          session={session}
-          draft={draft}
-          onDraft={setDraft}
-          project={project}
-        />
+        <AutomaticReportForm session={session} project={project} />
       ) : state.status === "checking" ? (
         <p role="status">Checking private intake…</p>
       ) : (
@@ -415,6 +412,7 @@ function ReportFields({
   draft: ReportDraft;
   onChange: (draft: ReportDraft) => void;
 }) {
+  const fieldId = useId();
   const [classificationOpen, setClassificationOpen] = useState(
     Boolean(draft.severity || draft.cvss || draft.cwe),
   );
@@ -425,6 +423,7 @@ function ReportFields({
       <label>
         Summary
         <input
+          id={`${fieldId}-summary`}
           autoComplete="off"
           maxLength={1024}
           minLength={8}
@@ -436,6 +435,7 @@ function ReportFields({
       <label>
         Description
         <textarea
+          id={`${fieldId}-description`}
           maxLength={65000}
           minLength={20}
           onChange={(event) => set("description")(event.target.value)}
@@ -502,18 +502,12 @@ function ReportFields({
  * A rejected request leaves the typed evidence in the form for recovery.
  */
 function AutomaticReportForm({
-  draft,
-  onDraft,
-  project,
   session,
+  project,
 }: {
   session: ProjectSessionState;
-  draft: ReportDraft;
-  onDraft: (draft: ReportDraft) => void;
   project: ProjectDefinition;
 }) {
-  const [key] = useState(requestKey);
-  const { busy, error, run } = useAction();
   if (session.status !== "signed-in")
     return (
       <SignInPanel
@@ -522,39 +516,17 @@ function AutomaticReportForm({
         purpose="Sign in to report through Slop."
       />
     );
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    void run(async () => {
-      const body = await projectApiRequest<{
-        submission: Submission;
-      }>("POST", "security-submissions", {
-        projectId: project.id,
-        idempotencyKey: key,
-        origin: "slop",
-        report: reportBody(draft),
-      });
-      clearDraft(body.submission.id);
-      window.location.assign(
-        `/inbox?submission=${encodeURIComponent(body.submission.id)}`,
-      );
-      return "navigating";
-    });
-  };
   return (
-    <form className="security-form" onSubmit={submit}>
-      <p>
-        Submit as @{session.session.githubLogin}. Slop keeps the report private,
-        screens its evidence with Surplus Intelligence, and notifies the project
-        owner when it is ready for review. You can follow its status in your
-        Inbox. GitHub authorization is optional and is requested separately if
-        you choose private GitHub delivery.
-      </p>
-      <ReportFields draft={draft} onChange={onDraft} />
-      <FormError message={error} />
-      <button className="button primary-button" disabled={busy} type="submit">
-        {busy ? "Submitting…" : "Submit private report"}
-      </button>
-    </form>
+    <PrivateReportForm
+      key={`${project.id}:${session.session.githubId}`}
+      project={project}
+      owner={session.session.githubId}
+      login={session.session.githubLogin}
+      body={reportBody}
+      fields={(draft, change) => (
+        <ReportFields draft={draft} onChange={change} />
+      )}
+    />
   );
 }
 
@@ -578,7 +550,17 @@ export function SecurityProgramPage({
   project: ProjectDefinition;
 }) {
   const [project, setProject] = useState(initialProject);
-  const session = useProjectSession();
+  const [published, setPublished] = useState<{
+    projectId: string;
+    revision: number;
+  } | null>(null);
+  const [sessionEpoch, setSessionEpoch] = useState(0);
+  const session = useProjectSession(sessionEpoch);
+  useEffect(() => {
+    const check = () => setSessionEpoch((value) => value + 1);
+    window.addEventListener("focus", check);
+    return () => window.removeEventListener("focus", check);
+  }, []);
   useEffect(() => setProject(initialProject), [initialProject]);
   const terms = project.securityBounty;
   if (terms === undefined)
@@ -595,10 +577,16 @@ export function SecurityProgramPage({
           lead="No published bounty terms, so no award is promised."
         />
         <ProjectNav project={project} current="security" />
+        {published?.projectId === project.id ? (
+          <p role="status">Published revision {published.revision}.</p>
+        ) : null}
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
           key={project.id}
           onProjectChange={setProject}
+          onPublishedRevision={(revision) =>
+            setPublished({ projectId: project.id, revision })
+          }
           project={project}
           session={session}
         />
@@ -628,60 +616,66 @@ export function SecurityProgramPage({
         </StatusBadge>
       </RoutePageHeader>
       <ProjectNav project={project} current="security" />
-      <IntakeHandoff project={project} session={session} />
-      <ProjectSecuritySettings
-        key={project.id}
-        onProjectChange={setProject}
-        project={project}
-        session={session}
-      />
+      {published?.projectId === project.id ? (
+        <p role="status">Published revision {published.revision}.</p>
+      ) : null}
+      <SecurityOffer project={project} />
+      <p>
+        <a href="#security-scope">
+          Check covered source and safe testing rules
+        </a>
+      </p>
       <div className="security-program-terms">
-        <section aria-labelledby="security-terms" className="admin-card">
-          <h2 id="security-terms">Award terms</h2>
-          <section className="security-award-split" aria-label="Award split">
-            <div>
-              <span>Researcher · 75%</span>
-              <strong>{money.researcher}</strong>
-            </div>
-            <div>
-              <span>Slop · 25%</span>
-              <strong>{money.slop}</strong>
-            </div>
+        <details className="security-reference">
+          <summary>Full award terms</summary>
+          <section aria-labelledby="security-terms" className="admin-card">
+            <h2 id="security-terms">Award terms</h2>
+            <section className="security-award-split" aria-label="Award split">
+              <div>
+                <span>Researcher · 75%</span>
+                <strong>{money.researcher}</strong>
+              </div>
+              <div>
+                <span>Slop · 25%</span>
+                <strong>{money.slop}</strong>
+              </div>
+            </section>
+            <dl className="admin-facts">
+              <Fact term="Currency">
+                {terms.amount.currency}
+                {terms.amount.network ? ` on ${terms.amount.network}` : ""}
+              </Fact>
+              <Fact term="Funding">
+                {terms.funding.state === "pledged"
+                  ? terms.fundingPolicy === "after-approval"
+                    ? "Pledged. Funds are supplied after the owner approves a qualifying finding. Payment requires verified funding."
+                    : "Pledged, not verified."
+                  : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
+              </Fact>
+              <Fact term="Capacity">
+                {terms.capacity.awards === null
+                  ? "No fixed award count; each first qualifying finding is reviewed separately"
+                  : `${terms.capacity.awards} award${terms.capacity.awards === 1 ? "" : "s"} at the published amount`}
+                {terms.capacity.closesAt
+                  ? `; closes ${formatUtc(terms.capacity.closesAt)}`
+                  : ""}
+                . {terms.capacity.exhaustionRule}
+              </Fact>
+              <Fact term="Other work">
+                {terms.rewardMode === "bounty-only"
+                  ? "Bounty only. Other work, including fixes, earns no monthly pool cash."
+                  : "Contribution rewards are separate; one outcome is never paid twice."}
+              </Fact>
+            </dl>
+            <p>
+              Awards are discretionary. The owner decides whether to award;
+              fixed after-approval awards use the amount published at receipt;
+              critical bugs and potential loss of funds are priorities, not an
+              automatic payout. No other payout fee applies. The terms in force
+              when Slop receives your report apply to your case.
+            </p>
           </section>
-          <dl className="admin-facts">
-            <Fact term="Currency">
-              {terms.amount.currency}
-              {terms.amount.network ? ` on ${terms.amount.network}` : ""}
-            </Fact>
-            <Fact term="Funding">
-              {terms.funding.state === "pledged"
-                ? terms.fundingPolicy === "after-approval"
-                  ? "Pledged. Funds are supplied after the owner approves a qualifying finding. Payment requires verified funding."
-                  : "Pledged, not verified."
-                : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
-            </Fact>
-            <Fact term="Capacity">
-              {terms.capacity.awards === null
-                ? "No fixed award count; each first qualifying finding is reviewed separately"
-                : `${terms.capacity.awards} award${terms.capacity.awards === 1 ? "" : "s"} at the published amount`}
-              {terms.capacity.closesAt
-                ? `; closes ${formatUtc(terms.capacity.closesAt)}`
-                : ""}
-              . {terms.capacity.exhaustionRule}
-            </Fact>
-            <Fact term="Other work">
-              {terms.rewardMode === "bounty-only"
-                ? "Bounty only. Other work, including fixes, earns no monthly pool cash."
-                : "Contribution rewards are separate; one outcome is never paid twice."}
-            </Fact>
-          </dl>
-          <p>
-            Awards are discretionary. The owner decides whether to award and how
-            much; critical bugs and potential loss of funds are priorities, not
-            an automatic payout. No other payout fee applies. The terms in force
-            when Slop receives your report apply to your case.
-          </p>
-        </section>
+        </details>
         <section aria-labelledby="security-scope" className="admin-card">
           <h2 id="security-scope">Scope</h2>
           <dl className="admin-facts">
@@ -732,35 +726,49 @@ export function SecurityProgramPage({
             potential loss.
           </p>
         </section>
-        <section aria-labelledby="security-trust" className="admin-card">
-          <h2 id="security-trust">Decisions, disputes and disclosure</h2>
-          <dl className="admin-facts">
-            <Fact term="Findings and awards">
-              {people(terms.approvers.technical)}
-            </Fact>
-            <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
-            <Fact term="Disputes">
-              Contact {people(terms.approvers.dispute)}. {terms.dispute.process}{" "}
-              A Slop moderator decides escalated appeals.
-            </Fact>
-            <Fact term="Response targets">
-              Acknowledge within {terms.responseTargets.acknowledgeHours} hours;
-              first triage within {terms.responseTargets.triageBusinessDays}{" "}
-              business days; updates every{" "}
-              {terms.responseTargets.updateIntervalDays} days. A missed target
-              never publishes a report or approves an award.
-            </Fact>
-            <Fact term="Disclosure">{terms.disclosure}</Fact>
-            <Fact term="Safe harbor">{terms.safeHarbor}</Fact>
-          </dl>
-          <p>
-            Slop never publishes cases; rejected, duplicate, disputed and paid
-            reports stay private, and you decide separately whether your name is
-            public. Repository administrators and security managers can read the
-            advisory on GitHub. A public-chain payment shows its addresses,
-            amount and time.
-          </p>
-        </section>
+        <IntakeHandoff project={project} session={session} />
+        <ProjectSecuritySettings
+          key={project.id}
+          onProjectChange={setProject}
+          onPublishedRevision={(revision) =>
+            setPublished({ projectId: project.id, revision })
+          }
+          project={project}
+          session={session}
+        />
+        <details className="security-reference">
+          <summary>Response, disclosure and researcher terms</summary>
+          <section aria-labelledby="security-trust" className="admin-card">
+            <h2 id="security-trust">Decisions, disputes and disclosure</h2>
+            <dl className="admin-facts">
+              <Fact term="Findings and awards">
+                {people(terms.approvers.technical)}
+              </Fact>
+              <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
+              <Fact term="Disputes">
+                Contact {people(terms.approvers.dispute)}.{" "}
+                {terms.dispute.process} A Slop moderator decides escalated
+                appeals.
+              </Fact>
+              <Fact term="Response targets">
+                Acknowledge within {terms.responseTargets.acknowledgeHours}{" "}
+                hours; first triage within{" "}
+                {terms.responseTargets.triageBusinessDays} business days;
+                updates every {terms.responseTargets.updateIntervalDays} days. A
+                missed target never publishes a report or approves an award.
+              </Fact>
+              <Fact term="Disclosure">{terms.disclosure}</Fact>
+              <Fact term="Safe harbor">{terms.safeHarbor}</Fact>
+            </dl>
+            <p>
+              Slop never publishes cases; rejected, duplicate, disputed and paid
+              reports stay private, and you decide separately whether your name
+              is public. Repository administrators and security managers can
+              read the advisory on GitHub. A public-chain payment shows its
+              addresses, amount and time.
+            </p>
+          </section>
+        </details>
       </div>
     </main>
   );
@@ -881,6 +889,30 @@ type SecurityCase = {
   triagers?: (GithubActor & { revokedAt: string | null })[];
   events?: CaseEvent[];
 };
+
+type ReportFilter = "all" | "review" | "waiting" | "award" | "resolved";
+function matchesReport(record: SecurityCase, filter: ReportFilter): boolean {
+  if (filter === "review")
+    return record.allowedActions.some((action) =>
+      ["decide", "verify-link", "request-information"].includes(action),
+    );
+  if (filter === "waiting") return record.receiptState === "needs-information";
+  if (filter === "award")
+    return (
+      record.allowedActions.some((action) =>
+        ["award", "prepare-payment"].includes(action),
+      ) || Boolean(record.award && record.paymentState !== "paid")
+    );
+  if (filter === "resolved")
+    return (
+      record.paymentState === "paid" ||
+      ["rejected", "duplicate", "out-of-scope"].includes(
+        record.receiptState ?? "",
+      ) ||
+      record.awardState === "ineligible"
+    );
+  return true;
+}
 
 type CaseList = {
   viewer: GithubActor;
@@ -1438,11 +1470,13 @@ function SubmissionCard({
   onUpdated,
   onOpenCase,
   caseRecord,
+  readReport,
 }: {
   session: Extract<ProjectSessionState, { status: "signed-in" }>;
   submission: Submission;
   caseRecord?: SecurityCase;
   focused: boolean;
+  readReport: boolean;
   onUpdated: (submission: Submission) => void;
   onOpenCase: (caseId: string) => void;
 }) {
@@ -1559,7 +1593,7 @@ function SubmissionCard({
             <PrivateReportDetail
               submission={submission}
               onUpdated={onUpdated}
-              expanded={focused}
+              expanded={focused && readReport}
             />
             {submission.intake.canRetryScreening ? (
               <button
@@ -1704,7 +1738,11 @@ function SubmissionsPanel({
   onOpenCase,
   onKnownCases,
   cases,
+  filter,
+  readReport,
 }: {
+  filter: ReportFilter;
+  readReport: boolean;
   session: Extract<ProjectSessionState, { status: "signed-in" }>;
   cases: SecurityCase[];
   focusId: string | null;
@@ -1778,15 +1816,24 @@ function SubmissionsPanel({
   const shown = submissions.filter(
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
-  if (shown.length === 0 && !grantError && !authorityUnavailable) return null;
-  const ordered = [...shown].sort(
-    (a, b) =>
-      Number(b.id === focusId) - Number(a.id === focusId) ||
-      Number(reportNeedsAction(b)) - Number(reportNeedsAction(a)),
-  );
+  if (shown.length === 0 && !grantError && !authorityUnavailable)
+    return cases.length === 0 ? (
+      <p className="admin-status">You have no private reports yet.</p>
+    ) : null;
+  const ordered = shown
+    .filter((submission) => {
+      const record = cases.find((record) => record.id === submission.caseId);
+      return record ? matchesReport(record, filter) : filter === "all";
+    })
+    .sort(
+      (a, b) =>
+        Number(b.id === focusId) - Number(a.id === focusId) ||
+        Number(reportNeedsAction(b)) - Number(reportNeedsAction(a)),
+    );
   const renderSubmission = (submission: Submission) => (
     <SubmissionCard
       session={session}
+      readReport={readReport}
       focused={submission.id === focusId}
       key={submission.id}
       onOpenCase={onOpenCase}
@@ -2055,10 +2102,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             name: "severity",
             label: "Severity",
             kind: "select",
-            // The AI proposal is listed first, so the form starts with it.
-            options: [...SEVERITY_OPTIONS].sort(([value]) =>
-              value === proposal?.proposedSeverity ? -1 : 1,
-            ),
+            options: [["", "Choose severity"], ...SEVERITY_OPTIONS],
           },
           {
             name: "loss",
@@ -2469,6 +2513,7 @@ function ActionForm({
             <label key={field.name}>
               {field.label}
               <select
+                required
                 onChange={(event) => set(event.target.value)}
                 value={String(values[field.name])}
               >
@@ -2611,7 +2656,7 @@ function AnalysisPanel({
     });
   return (
     <section aria-labelledby={`analysis-${record.id}`}>
-      <h4 id={`analysis-${record.id}`}>AI summary</h4>
+      <h4 id={`analysis-${record.id}`}>Advisory assessment</h4>
       {analysis === null ? (
         <p className="admin-status">No analysis yet.</p>
       ) : analysis.state === "running" ? (
@@ -2796,18 +2841,29 @@ function CaseActions({
   if (!active) return null;
   return (
     <section className="security-actions" aria-label="Case actions">
-      {actions.length > 1 ? (
-        <>
-          <span
-            id={`case-action-title-${record.id}`}
-            className="visually-hidden"
-          >
-            {actionSpec(active, record)?.title}
-          </span>
-          <label className="form-field" htmlFor={`case-action-${record.id}`}>
-            <span className="visually-hidden">Action</span>
+      <fieldset className="report-form-actions">
+        <legend>Review actions</legend>
+        {actions
+          .filter((action) => PRIMARY_ACTIONS.includes(action))
+          .map((action) => (
+            <button
+              type="button"
+              className="button secondary-button"
+              aria-pressed={active === action}
+              data-case-action-selector={action}
+              onClick={() => setSelected(action)}
+              key={action}
+            >
+              {actionSpec(action, record)?.title}
+            </button>
+          ))}
+      </fieldset>
+      {actions.some((action) => !PRIMARY_ACTIONS.includes(action)) ? (
+        <details open={!PRIMARY_ACTIONS.includes(active)}>
+          <summary>Other case actions</summary>
+          <label>
+            Action
             <select
-              id={`case-action-${record.id}`}
               value={active}
               onChange={(event) => setSelected(event.target.value)}
             >
@@ -2818,18 +2874,11 @@ function CaseActions({
               ))}
             </select>
           </label>
-        </>
+        </details>
       ) : null}
       {actions.map((action) => (
         <div hidden={action !== active} key={`${action}-${record.revision}`}>
-          <ActionForm
-            action={action}
-            record={record}
-            onDone={onDone}
-            headingId={
-              actions.length > 1 ? `case-action-title-${record.id}` : undefined
-            }
-          />
+          <ActionForm action={action} record={record} onDone={onDone} />
         </div>
       ))}
     </section>
@@ -2951,6 +3000,26 @@ function CaseDetail({
             : ""}
         </Fact>
       </dl>
+      {record.award && record.terms ? (
+        <section className="security-offer" aria-label="Award and payment">
+          <h4>Award and payment</h4>
+          <dl className="admin-facts">
+            <Fact term="Researcher receives">
+              {money(record.award.researcherMinor, record.terms)}
+            </Fact>
+            <Fact term="Total award">
+              {money(record.award.grossMinor, record.terms)}
+            </Fact>
+            <Fact term="Slop share">
+              {money(record.award.slopMinor, record.terms)}
+            </Fact>
+            <Fact term="Payment status">
+              {PAYMENT_LABELS[record.paymentState] ?? record.paymentState}
+            </Fact>
+          </dl>
+          <p>Approval and funding are separate from finalized payment.</p>
+        </section>
+      ) : null}
       {owner ? (
         <AnalysisPanel
           onRetry={() => {
@@ -3119,7 +3188,8 @@ function CheckReceipt({
 }
 
 /** The signed-in private case inbox. */
-export function SecurityInbox() {
+export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
+  const [filter, setFilter] = useState<ReportFilter>("all");
   const session = useProjectSession();
   const [list, reload] = useSecurityData<CaseList>(
     session.status === "signed-in" ? "security-cases" : null,
@@ -3159,11 +3229,11 @@ export function SecurityInbox() {
       window.history.replaceState(
         window.history.state,
         "",
-        `/security?${query}`,
+        `${embedded ? "/inbox" : "/security"}?${query}`,
       );
       reload();
     },
-    [reload],
+    [reload, embedded],
   );
   const created = (record: SecurityCase) => {
     setSelected(record.id);
@@ -3228,8 +3298,28 @@ export function SecurityInbox() {
     body = (
       <>
         {note ? <p role="status">{note}</p> : null}
+        {maintained.size > 0 ? (
+          <label>
+            Show reports
+            <select
+              value={filter}
+              onChange={(event) => {
+                setFilter(event.target.value as ReportFilter);
+                setSelected(null);
+              }}
+            >
+              <option value="all">All reports</option>
+              <option value="review">Needs your review</option>
+              <option value="waiting">Waiting for researcher</option>
+              <option value="award">Award and payment</option>
+              <option value="resolved">Paid or ineligible</option>
+            </select>
+          </label>
+        ) : null}
         <SubmissionsPanel
           key={session.session.githubId}
+          readReport={!embedded}
+          filter={filter}
           session={session}
           focusId={returned.submission}
           grantError={returned.error}
@@ -3239,47 +3329,81 @@ export function SecurityInbox() {
           onKnownCases={setKnownSubmissionCases}
           cases={list.value.cases}
         />
-        <section aria-labelledby="security-cases" className="admin-section">
-          <h2 id="security-cases">Decisions and payments</h2>
-          {list.value.authorityUnavailable ? (
-            <p className="form-error" role="status">
-              Some maintainer access could not be checked.{" "}
-              <button className="text-button" onClick={reload} type="button">
-                Retry access check
-              </button>
-            </p>
-          ) : null}
-          {list.value.cases.length === 0 ? (
-            <p className="admin-status">
-              {list.value.authorityUnavailable
-                ? "No cases to show. Retry the access check."
-                : "You have no private security cases."}
-            </p>
-          ) : (
-            <ul className="security-case-list">
-              {list.value.cases
-                .filter((record) => !knownSubmissionCases.includes(record.id))
-                .map((record) => (
-                  <li key={record.id}>
-                    <button
-                      aria-pressed={selected === record.id}
-                      className="security-case-choice"
-                      onClick={() => setSelected(record.id)}
-                      type="button"
-                    >
-                      <span>{record.projectId}</span>
-                      <strong title={record.id}>{caseTitle(record)}</strong>
-                      <span>{record.nextStep}</span>
-                      <span>Award: {awardText(record)}</span>
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          )}
-          {selected ? (
-            <CaseDetail caseId={selected} key={selected} onChanged={reload} />
-          ) : null}
-        </section>
+        {selected ||
+        list.value.authorityUnavailable ||
+        list.value.cases.some(
+          (record) => !knownSubmissionCases.includes(record.id),
+        ) ? (
+          <section aria-labelledby="security-cases" className="admin-section">
+            <h2 id="security-cases">Decisions and payments</h2>
+            {list.value.authorityUnavailable ? (
+              <p className="form-error" role="status">
+                Some maintainer access could not be checked.{" "}
+                <button className="text-button" onClick={reload} type="button">
+                  Retry access check
+                </button>
+              </p>
+            ) : null}
+            {list.value.cases.length === 0 ? (
+              <p className="admin-status">
+                {list.value.authorityUnavailable
+                  ? "No cases to show. Retry the access check."
+                  : "You have no private security cases."}
+              </p>
+            ) : (
+              <ul
+                className={`security-case-list${selected ? " security-case-list-selected" : ""}`}
+              >
+                {list.value.cases
+                  .filter(
+                    (record) =>
+                      !knownSubmissionCases.includes(record.id) &&
+                      matchesReport(record, filter),
+                  )
+                  .map((record) => (
+                    <li key={record.id}>
+                      <button
+                        aria-pressed={selected === record.id}
+                        className="security-case-choice"
+                        onClick={() => setSelected(record.id)}
+                        type="button"
+                      >
+                        <span>{record.projectId}</span>
+                        <strong title={record.id}>{caseTitle(record)}</strong>
+                        <span>{record.nextStep}</span>
+                        <span>Award: {awardText(record)}</span>
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            )}
+            {selected ? (
+              <>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => {
+                    setSelected(null);
+                    const query = new URLSearchParams(window.location.search);
+                    query.delete("case");
+                    window.history.replaceState(
+                      window.history.state,
+                      "",
+                      `${window.location.pathname}?${query}`,
+                    );
+                  }}
+                >
+                  Back to reports
+                </button>
+                <CaseDetail
+                  caseId={selected}
+                  key={selected}
+                  onChanged={reload}
+                />
+              </>
+            ) : null}
+          </section>
+        ) : null}
         <details
           className="security-reference"
           open={
@@ -3346,6 +3470,15 @@ export function SecurityInbox() {
       </>
     );
   }
+  if (embedded)
+    return (
+      <section
+        className="security-page operations-page"
+        aria-label="Private security reports"
+      >
+        {body}
+      </section>
+    );
   return (
     <main className="shell route-main admin-page security-page operations-page">
       <RoutePageHeader icon={<LockKeyhole />} title="Security cases" />
