@@ -218,7 +218,11 @@ is mailed after opt-in. A send already in flight cannot be recalled.
 
 Migration 0033 queues each new ordinary event atomically only for an enabled
 preference. Before dispatch, the Worker checks both the saved preference and
-its destination version again. Wallet-change account-security notices use a
+its destination version again. It also rechecks the recipient's role (PRD
+section 9): a payout exception mails only the project's current GitHub
+steward, and an owner notice only an account that still lists or stewards the
+project. After a steward change, queued mail to the former steward is
+suppressed; the inbox notice itself stays. Wallet-change account-security notices use a
 separate essential flag and require a verified destination, but do not use
 the optional activity preference. Private bounty notices remain in their own
 SEC-16 queue and are unaffected by this switch.

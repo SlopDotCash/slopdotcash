@@ -51,8 +51,9 @@ const GITHUB_ID = (column: string) =>
 /**
  * The people who answer for a project: the account that listed it and its
  * current GitHub steward. `project` is a SQL expression for the project id.
+ * Activity mail rechecks it before each send (PRD section 9).
  */
-const PROJECT_OWNERS = (project: string) => `(
+export const PROJECT_OWNERS = (project: string) => `(
   ${LISTED_BY(project)}
   UNION
   SELECT json_extract(manifest, '$.steward.github.actorId')
