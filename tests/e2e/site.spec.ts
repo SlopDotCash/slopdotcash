@@ -101,6 +101,81 @@ test("project setup shares one sign-in read with its owner inventory", async ({
   await expectAccessible(page);
 });
 
+test("shared navigation preserves project drafts and account sign-in destinations", async ({
+  diagnostics,
+  page,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allowResponse(401, "GET", "/api/v1/payments/me");
+  diagnostics.allowResponse(401, "GET", "/api/v1/notifications");
+  await page.route("**/api/v1/payments/me", (route) =>
+    route.fulfill({ status: 401, json: { error: "unauthorized" } }),
+  );
+  await page.route("**/api/v1/notifications", (route) =>
+    route.fulfill({ status: 401, json: { error: "unauthorized" } }),
+  );
+  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
+  const projectNav = page.getByRole("navigation", {
+    name: "Project navigation",
+  });
+  await projectNav.getByRole("link", { name: "Funds & awards" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Eliza funding" }),
+  ).toBeVisible();
+  await projectNav.getByRole("link", { name: "Settings" }).click();
+  const draft = "Draft retained across project navigation";
+  await page.getByLabel("Short description").fill(draft);
+  await projectNav.getByRole("link", { name: "Security" }).click();
+  await expect(page).toHaveURL(/\/projects\/eliza\/security$/u);
+  await expect(
+    projectNav.getByRole("link", { name: "Security" }),
+  ).toHaveAttribute("aria-current", "page");
+  await page.waitForLoadState("networkidle");
+  await projectNav.getByRole("link", { name: "Settings" }).click();
+  await expect(page.getByLabel("Short description")).toHaveValue(draft);
+  await page.waitForLoadState("networkidle");
+
+  await page.goto("/account", { waitUntil: "networkidle" });
+  const accountNav = page.getByRole("navigation", {
+    name: "Account navigation",
+  });
+  await accountNav.getByRole("link", { name: "Payouts" }).click();
+  await expect(page).toHaveURL(/\/earnings$/u);
+  await expect(
+    page.getByRole("main").getByRole("link", { name: "Sign in with GitHub" }),
+  ).toHaveAttribute("href", "/login?next=earnings");
+  await accountNav.getByRole("link", { name: "Inbox" }).click();
+  await expect(page).toHaveURL(/\/inbox$/u);
+  await expect(
+    page.getByRole("main").getByRole("link", { name: "Sign in with GitHub" }),
+  ).toHaveAttribute("href", /next=%2Finbox$/u);
+  await accountNav.getByRole("link", { name: "Settings" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Account", exact: true }),
+  ).toBeVisible();
+
+  await page.goto("/cycles");
+  const records = page.getByRole("navigation", { name: "Public records" });
+  await records.getByRole("link", { name: "Receipts" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Run receipts" }),
+  ).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  await records.getByRole("link", { name: "Cycles" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Payment cycles" }),
+  ).toBeVisible();
+  await enlargeText(page.locator("body"));
+  await expectAccessible(page);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+});
+
 test("security reports recover a failed list and share one session across submissions", async ({
   page,
   diagnostics,
@@ -772,6 +847,22 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
     project.contribution?.approvedScope ?? "",
   );
+  const instructions = page.locator("details.proposal-skill-rules");
+  await instructions.locator("summary").click();
+  await page
+    .getByLabel("Required tests", { exact: true })
+    .fill("x".repeat(2001));
+  await page.getByRole("button", { name: "Publish changes" }).click();
+  await expect(page.locator("#field-requiredTests-error")).toBeVisible();
+  await instructions.locator("summary").click();
+  await expect(instructions).not.toHaveAttribute("open", "");
+  await page.getByRole("button", { name: "Publish changes" }).click();
+  await expect(page.locator("#field-requiredTests-error")).toBeVisible();
+  expect(submission).toBeNull();
+  await page
+    .getByLabel("Required tests", { exact: true })
+    .fill(project.contribution?.requiredTests ?? "");
+  await expect(instructions).toHaveAttribute("open", "");
   const scope =
     "Fix reproducible defects and provide the affected workflow evidence.";
   await page.getByLabel("Acceptance criteria").fill(scope);
@@ -976,32 +1067,34 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await page.goto("/inbox", { waitUntil: "networkidle" });
   const item = (subject: string) =>
     page.locator(".inbox-item", { hasText: subject });
-  await expect(item("delivery-1").locator(".inbox-delivery")).toHaveText(
-    "Email: sent",
-  );
+  await expect(
+    item("delivery-1").getByText("Email: sent", { exact: true }),
+  ).toBeVisible();
   await expect(
     item("delivery-1").getByText("Read", { exact: true }),
   ).toBeVisible();
-  await expect(item("delivery-2").locator(".inbox-delivery")).toHaveText(
-    "Email: delivered",
-  );
+  await expect(
+    item("delivery-2").getByText("Email: delivered", { exact: true }),
+  ).toBeVisible();
   await expect(
     item("delivery-2").getByText("Unread", { exact: true }),
   ).toBeVisible();
-  await expect(item("delivery-3").locator(".inbox-delivery")).toHaveText(
-    "Email: failed",
-  );
-  await expect(item("delivery-4").locator(".inbox-delivery")).toHaveText(
-    "Email: uncertain",
-  );
-  await expect(item("delivery-5").locator(".inbox-delivery")).toHaveText(
-    "Email: queued",
-  );
-  await expect(item("delivery-6").locator(".inbox-delivery")).toHaveCount(0);
+  await expect(
+    item("delivery-3").getByText("Email: failed", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    item("delivery-4").getByText("Email: uncertain", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    item("delivery-5").getByText("Email: queued", { exact: true }),
+  ).toBeVisible();
+  await expect(item("delivery-6").getByText(/^Email:/u)).toHaveCount(0);
   // A private notice stays generic: the provider-accepted email does not
   // stand in for the explicit acknowledgment.
   const security = item("case-0001");
-  await expect(security.locator(".inbox-delivery")).toHaveText("Email: sent");
+  await expect(
+    security.getByText("Email: sent", { exact: true }),
+  ).toBeVisible();
   await expect(
     security.getByRole("button", { name: /^Acknowledge:/u }),
   ).toBeVisible();
@@ -1580,8 +1673,12 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(fundingUrl);
   await page.waitForLoadState("networkidle");
+  const poolReturnSnapshot = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
   await page.goBack({ waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/sponsors$/u);
+  expect(await (await poolReturnSnapshot).finished()).toBeNull();
   await expect(pools).toBeVisible();
   const home = page.getByRole("link", { name: "Slop home", exact: true });
   await home.focus();
@@ -1592,8 +1689,12 @@ test("opens the sponsors page directly and through keyboard navigation", async (
     timeout: 60_000,
   });
   await page.waitForLoadState("networkidle");
+  const homeReturnSnapshot = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
   await page.goBack({ waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/sponsors$/u);
+  expect(await (await homeReturnSnapshot).finished()).toBeNull();
 });
 
 test("lands direct and lazy cross-route hash links on their section", async ({

@@ -489,6 +489,17 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     has: admin.getByText(project.id, { exact: true }),
   });
   await expect(card).toContainText("Generated from revision 1");
+  await card.getByRole("button", { name: "Edit project" }).click();
+  await card
+    .getByText("Customize contributor instructions", { exact: true })
+    .click();
+  const adminTests = card.getByRole("textbox", { name: /^Required tests/u });
+  const originalAdminTests = await adminTests.inputValue();
+  await adminTests.fill("x".repeat(2001));
+  await expect(adminTests).toHaveAttribute("aria-invalid", "true");
+  await adminTests.fill(originalAdminTests);
+  await expect(adminTests).toBeVisible();
+  await card.getByRole("button", { name: "Close and keep draft" }).click();
   await expectAccessible(admin);
 
   // The installer's trust root: the exact approved bytes and their digest.
@@ -510,6 +521,18 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await returningOwner.goto(`/projects/${project.id}/manage`, {
     waitUntil: "networkidle",
   });
+  await returningOwner
+    .getByText("Contributor instructions", { exact: true })
+    .click();
+  const requiredTests = returningOwner.getByLabel("Required tests", {
+    exact: true,
+  });
+  const originalTests = await requiredTests.inputValue();
+  await requiredTests.fill("x".repeat(2001));
+  await returningOwner.getByRole("button", { name: "Publish changes" }).click();
+  await expect(requiredTests).toHaveAttribute("aria-invalid", "true");
+  await requiredTests.fill(originalTests);
+  await expect(requiredTests).toBeVisible();
   const consent = returningOwner.getByRole("checkbox", {
     name: "Allow automatic closure by Slopbot",
   });

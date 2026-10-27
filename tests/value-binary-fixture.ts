@@ -35,10 +35,6 @@ const hash = (type: string, content: Uint8Array) =>
     .update(content)
     .digest("hex");
 const clone = <T>(value: T): T => structuredClone(value);
-function required<T>(value: T | undefined): T {
-  if (value === undefined) throw new Error("Required fixture value is missing");
-  return value;
-}
 function added(filename = binaryPath): FileChange {
   return {
     filename,
@@ -247,17 +243,4 @@ async function collect(f = fixture()) {
   return collectValueEvidence(f.client, repository.id, 1, repository);
 }
 
-export {
-  added,
-  base,
-  binaryPath,
-  bytes,
-  clone,
-  collect,
-  fixture,
-  head,
-  merge,
-  policy,
-  repository,
-  required,
-};
+export { collect, fixture, policy, repository };

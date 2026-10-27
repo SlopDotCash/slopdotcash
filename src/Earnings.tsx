@@ -36,6 +36,7 @@ import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { PayoutConsent } from "./PayoutConsent";
 import {
+  AccountNav,
   formatCycleMonth,
   NetworkName,
   RoutePageHeader,
@@ -395,6 +396,7 @@ export function EarningsPage({
           }
         />
       )}
+      {!walletsOnly ? <AccountNav current="payouts" /> : null}
       <dialog
         ref={dialog}
         className="wallet-picker"
@@ -812,13 +814,21 @@ export function EarningsPage({
                                 {
                                   {
                                     paid: "Paid",
-                                    needs_wallet: `Awaiting wallet: add or confirm your ${NETWORK_NAMES[payment.chain]} wallet`,
+                                    needs_wallet: "Awaiting wallet",
                                     ready: "Payment queued",
                                     submitted: "Submitted",
                                     held: "Held",
                                   }[payment.deliveryState]
                                 }
                               </StatusBadge>
+                              {payment.deliveryState === "needs_wallet" ? (
+                                <p>
+                                  <a href="/account#wallets">
+                                    Add or confirm your{" "}
+                                    {NETWORK_NAMES[payment.chain]} wallet
+                                  </a>
+                                </p>
+                              ) : null}
                               <PayoutConsent
                                 key={
                                   data.wallets.find(

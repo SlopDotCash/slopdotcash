@@ -38,6 +38,7 @@ import {
 import {
   DataNotice,
   EmptyState,
+  EvidenceNav,
   ExternalLinkAnchor,
   formatDate,
   formatPointsFromThirds,
@@ -796,6 +797,7 @@ export function ReceiptsPage({
       >
         <DataNotice retry={retry} state={state} />
       </RoutePageHeader>
+      <EvidenceNav current="receipts" />
       {state.status === "ready" && receipts.length > 0 ? (
         <label className="receipt-search">
           Find a receipt
