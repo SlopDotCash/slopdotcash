@@ -333,7 +333,7 @@ test("setup activates a project only with installation write access and a clean 
     )
     .get() as { reason: string };
   expect(reason.reason).toBe(
-    "Activated automatically after setup checks for @owner: @owner has admin access to example/open-registry. Slopbot installation 42. Clean scan vet_00000000000000000000000000000001.",
+    "Activated automatically after setup checks for @owner: @owner has admin access to example/open-registry. Slopbot installation 42. Admission scan vet_00000000000000000000000000000001.",
   );
   expect((await check()).setup).toMatchObject({
     state: "ready",
@@ -423,7 +423,7 @@ test("an owner records and revokes explicit closure consent with current authori
   ).toBe(true);
 });
 
-test("owner revisions publish presentation at once, rescan skill inputs and apply money prospectively", async () => {
+test("owner revisions publish presentation, require admission and apply money prospectively", async () => {
   const { persistence, call, create, state } = registry();
   await create("open-registry", "example/open-registry");
   state.access = {

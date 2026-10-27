@@ -608,6 +608,19 @@ async function activate() {
   );
 }
 
+/** Explicit test investigation, independent of routine admission refresh. */
+async function requestInvestigation() {
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("Missing project");
+  expect(
+    await queueAutomaticScan(
+      vettingDeps(),
+      project,
+      "Explicit fixture security investigation",
+    ),
+  ).toBe("queued");
+}
+
 test("authenticated source acquisition exceeds the public quota without sharing its credential", async () => {
   await commit(
     Object.fromEntries(
@@ -649,7 +662,7 @@ test("authenticated source acquisition exceeds the public quota without sharing 
   expect(await readdir(config.workDirectory)).toEqual([]);
 });
 
-test("a template update replaces stale queued work without changing its retained assessment", async () => {
+test("a template update preserves the assigned admission scan until an explicit new request", async () => {
   provider.up = false;
   const first = await runScanPass(config);
   const original = await vetting.getAssessment(
@@ -661,6 +674,10 @@ test("a template update replaces stale queued work without changing its retained
   templateInputs.acceptedRevisions = ["1", "2"];
   templateSha256 = digest(JSON.stringify(templateInputs));
   clock = new Date(clock.getTime() + 1000);
+  const unchanged = await runScanPass(config);
+  expect(unchanged.assessments[0].assessmentId).toBe(original.id);
+  expect(await vetting.listAssessments()).toHaveLength(1);
+  await requestInvestigation();
   const next = await runScanPass(config);
   const pending = await vetting.pendingAssessments();
   expect(pending).toHaveLength(1);
@@ -1044,6 +1061,7 @@ test("identical native inputs reuse original execution and reviews before callin
     "Second identical native successor",
   ]) {
     emptyCommit(message);
+    await requestInvestigation();
     const pass = await runScanPass(config);
     expect(pass.assessments[0]).toMatchObject({
       state: "published",
@@ -1112,6 +1130,7 @@ test("an incomplete retained native analysis is never reused as clean", async ()
   expect(await retained.evidence.retained(original.result)).toBe(true);
   const attempts = refuseFreshNativeWork();
   emptyCommit("Same native bytes after incomplete analysis");
+  await requestInvestigation();
   const pass = await runScanPass(config);
   expect(pass.assessments[0]).toMatchObject({
     state: "retry",
@@ -1134,6 +1153,7 @@ for (const change of ["bytes", "path", "legacy"] as const) {
     } else if (change === "path")
       await commit({ "bin/second-helper": original.native }, "New native path");
     else emptyCommit("Legacy native result lacks source binding");
+    await requestInvestigation();
     const pass = await runScanPass(config);
     expect(pass.assessments[0]).toMatchObject({
       state: "retry",
@@ -1179,6 +1199,7 @@ for (const kind of [
       }
       const attempts = refuseFreshNativeWork();
       emptyCommit(`Native successor with ${damage} ${kind}`);
+      await requestInvestigation();
       const pass = await runScanPass(config);
       expect(pass.assessments[0]).toMatchObject({
         state: "retry",
@@ -1222,6 +1243,7 @@ test("scan reuse binds empty new commits to the original retained clean result w
   provider.up = false;
   for (const message of ["First empty commit", "Second empty commit"]) {
     emptyCommit(message);
+    await requestInvestigation();
     const pass = await runScanPass(config);
     expect(pass.assessments[0]).toMatchObject({
       state: "published",
@@ -1265,6 +1287,7 @@ test("scan reuse refuses changed executable bytes and reviews the new inventory"
     },
     "Change executable source",
   );
+  await requestInvestigation();
   clock = new Date(clock.getTime() + 1000);
   const next = await runScanPass(config);
   const current = await vetting.getAssessment(next.assessments[0].assessmentId);
@@ -1294,6 +1317,7 @@ for (const change of ["policy", "template"] as const) {
       templateInputs.acceptedRevisions = ["1", "2"];
       templateSha256 = digest(JSON.stringify(templateInputs));
     }
+    await requestInvestigation();
     const next = await runScanPass(config);
     const current = await vetting.getAssessment(
       next.assessments[0].assessmentId,
@@ -1312,6 +1336,7 @@ for (const originalKind of ["text", "native"] as const) {
     expect((await activate()).status).toBe(200);
     provider.calls = [];
     emptyCommit("Same bytes before pause");
+    await requestInvestigation();
     const transport = config.connection.fetch;
     if (!transport) throw new Error("Missing fixture transport");
     let paused = false;
@@ -1356,6 +1381,7 @@ test("scan reuse requires the original report to remain in private R2", async ()
   await retained.bucket.delete(object.object_key);
   provider.calls = [];
   emptyCommit("Same source after evidence loss");
+  await requestInvestigation();
   const next = await runScanPass(config);
   const current = await vetting.getAssessment(next.assessments[0].assessmentId);
   expect(current?.result).toMatchObject({ reusedAssessmentId: null });
@@ -1374,6 +1400,7 @@ for (const field of [
     await runScanPass(config);
     provider.calls = [];
     emptyCommit("Same source with mismatched lookup response");
+    await requestInvestigation();
     const transport = config.connection.fetch;
     if (!transport) throw new Error("Missing fixture transport");
     config.connection.fetch = (async (input, init) => {
@@ -1538,7 +1565,8 @@ test("malicious-code detection: risky new content is flagged, escalated to the s
 
   // A new commit adds an install hook that steals a key.
   await commit(RISKY_FILES, "Add install hook");
-  expect((await publicVetting()).state).toBe("stale");
+  expect((await publicVetting()).state).toBe("cleared");
+  await requestInvestigation();
   provider.primary = "malicious-suspected";
   provider.calls = [];
   clock = new Date(NOW.getTime() + 60_000);
@@ -1587,6 +1615,7 @@ test("a two-flag pause is reinstated automatically after the service's clean fre
 
   // An unfinished scan must not block a later scan covering new flags.
   await commit({ "README.md": "# Updated fixture\n" }, "Update public guide");
+  await requestInvestigation();
   provider.up = false;
   const interrupted = await runScanPass(config);
   const oldId = interrupted.assessments[0].assessmentId;

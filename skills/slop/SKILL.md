@@ -74,7 +74,7 @@ transfer outside the fixed private Slop trace flow.
 Before installing, read `https://slop.cash/api/v1/projects/<project>`. Stop
 without installing if it answers HTTP 410 (the project is paused by two
 contributor flags, a security finding or a moderator), if `skillsPublished` is
-not `true` (its current revision has no clean security scan), or if the
+not `true` (its skills or repository admission are unavailable), or if the
 project's `status` is not `active`. The installer repeats this check on install,
 update and explicit rollback. Installed `authorize` and `start` use verified
 local provenance without a live GitHub or registry gate. Continue to follow

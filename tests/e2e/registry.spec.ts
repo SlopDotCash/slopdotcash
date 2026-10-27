@@ -650,7 +650,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   // An unscanned revision serves no executable skill (PRD VET-01).
   const unscanned = await request.get(`/projects/${project.id}/skill.md`);
   expect(unscanned.status()).toBe(404);
-  expect(await unscanned.text()).toContain("security vetting");
+  expect(await unscanned.text()).toContain("admission clearance");
   expect(
     await (await request.get(`/api/v1/projects/${project.id}`)).json(),
   ).toMatchObject({ skillsPublished: false, vetting: { state: "queued" } });

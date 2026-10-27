@@ -194,9 +194,14 @@ self-service setup: verify current GitHub authority, complete project terms,
 install Slopbot, and obtain malicious-code clearance before automatic activation.
 PRD section 8 permanently exempts the existing projects captured by migration
 `0075_vetting_grandfathered_projects.sql` from normal scan clearance, including
-future executable changes. Later projects require scans. Record exemption
-explicitly, never as a passed scan; flags, pauses, confirmed-malicious bans
-and fresh-scan reinstatement requirements still apply.
+future executable changes. Later projects require one successful admission scan of their immutable GitHub
+repository. Routine commits, dependencies, Markdown, skill and presentation
+changes keep that admission; do not claim the later content was scanned.
+Keep the original complete assessment and retained evidence. Another repository
+cannot inherit it. Record the existing-project exemption explicitly, never as a
+passed scan; explicit security investigations, flags, pauses, confirmed-malicious
+bans and fresh-scan reinstatement requirements still apply (owner decision,
+27 October 2026, PRD section 8).
 Funding is optional and has a separate readiness state. Owners publish immutable
 revisions; admins handle restrictions and disputes, not routine approval.
 Two distinct contributor flags pause the project. A clean fresh scan reinstates
