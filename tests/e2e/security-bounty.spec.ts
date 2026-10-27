@@ -2657,6 +2657,15 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     "Durable private intake is not activated in this lane",
   );
   test.setTimeout(180_000);
+  // Independent viewport journeys use distinct seeded reporters. The real
+  // same-actor workload cap remains covered by the API integration cases.
+  const reporterRole = test.info().project.name.endsWith("-mobile")
+    ? "reporter-b"
+    : "reporter-a";
+  const otherReporterRole =
+    reporterRole === "reporter-a" ? "reporter-b" : "reporter-a";
+  const reporterToken = TOKENS[reporterRole];
+  const otherReporterToken = TOKENS[otherReporterRole];
   const suffix = projectSuffix();
   const id = `slop-report-${suffix}`;
   const repository = `e2e-security/${id}`;
@@ -2670,7 +2679,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
   });
   const page = await context.newPage();
   try {
-    await signIn(page, TOKENS["reporter-a"]);
+    await signIn(page, reporterToken);
     await page.goto(`/projects/${id}/security`, { waitUntil: "networkidle" });
     await expect(
       page.getByText("No published bounty terms, so no award is promised."),
@@ -2706,7 +2715,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       request,
       "GET",
       "security-submissions",
-      TOKENS["reporter-a"],
+      reporterToken,
     );
     expect(ownList.status).toBe(200);
     const submitted = (
@@ -2782,7 +2791,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
             request,
             "GET",
             `security-submissions/${submissionId}`,
-            TOKENS["reporter-a"],
+            reporterToken,
           );
           return (refreshed.body.submission as { intake: { state: string } })
             .intake.state;
@@ -2825,7 +2834,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       request,
       "POST",
       "security-submissions",
-      TOKENS["reporter-a"],
+      reporterToken,
       payload,
     );
     expect(replay.status).toBe(200);
@@ -2834,14 +2843,14 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       request,
       "GET",
       `security-submissions/${submissionId}`,
-      TOKENS["reporter-b"],
+      otherReporterToken,
     );
     expect(privateRead.status).toBe(404);
     const caseReply = await api(
       request,
       "GET",
       `security-cases/${result.submission.caseId}`,
-      TOKENS["reporter-a"],
+      reporterToken,
     );
     expect(caseReply.body.case).toMatchObject({
       receivedAtSource: "slop-received",
@@ -2872,6 +2881,15 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
     "Automatic intake bindings are off in this lane",
   );
   test.setTimeout(240_000);
+  // Independent viewport journeys use distinct seeded reporters. The real
+  // same-actor workload cap remains covered by the API integration cases.
+  const reporterRole = test.info().project.name.endsWith("-mobile")
+    ? "reporter-b"
+    : "reporter-a";
+  const otherReporterRole =
+    reporterRole === "reporter-a" ? "reporter-b" : "reporter-a";
+  const reporterToken = TOKENS[reporterRole];
+  const otherReporterToken = TOKENS[otherReporterRole];
   const suffix = projectSuffix();
   const program = {
     id: `bounty-intake-${suffix}`,
@@ -2893,7 +2911,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
   };
   const origin = new URL(test.info().project.use.baseURL ?? "").origin;
   // Cookies are carried by hand: the grant cookie is path-scoped and Secure.
-  const jar = new Map<string, string>([[COOKIE, TOKENS["reporter-a"]]]);
+  const jar = new Map<string, string>([[COOKIE, reporterToken]]);
   const remember = (headers: { name: string; value: string }[]) => {
     for (const header of headers) {
       if (header.name.toLowerCase() !== "set-cookie") continue;
@@ -3090,7 +3108,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
     });
     const page = await context.newPage();
     try {
-      await signIn(page, TOKENS["reporter-a"]);
+      await signIn(page, reporterToken);
       await setIntake(request, noProgram.repository, "unavailable");
       await page.goto(`/projects/${noProgram.id}/security`, {
         waitUntil: "networkidle",
@@ -3153,7 +3171,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
         request,
         "GET",
         `security-submissions/${submission.id}`,
-        TOKENS["reporter-a"],
+        reporterToken,
       );
       expect(retained.status).toBe(200);
       expect(retained.body.report).toMatchObject(report);
@@ -3191,7 +3209,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
         request,
         "GET",
         `security-cases/${caseId}`,
-        TOKENS["reporter-a"],
+        reporterToken,
       );
       expect(own.body.case).toMatchObject({
         view: "reporter",
@@ -3216,7 +3234,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
             request,
             "GET",
             `security-cases/${caseId}`,
-            TOKENS["reporter-b"],
+            otherReporterToken,
           )
         ).status,
       ).toBe(404);
@@ -3267,14 +3285,8 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
           .status,
       ).toBe(404);
       expect(
-        (
-          await api(
-            request,
-            "GET",
-            `security-cases/${caseId}`,
-            TOKENS["reporter-a"],
-          )
-        ).status,
+        (await api(request, "GET", `security-cases/${caseId}`, reporterToken))
+          .status,
       ).toBe(200);
     } finally {
       await context.close();
@@ -3287,11 +3299,11 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       recordVideo: { dir: test.info().outputPath("workflow-video") },
     });
     const page = await context.newPage();
-    await signIn(page, TOKENS["reporter-a"]);
+    await signIn(page, reporterToken);
     await page.clock.install();
     await page.goto(`/projects/${program.id}/security`);
     await expect(
-      page.getByText("Submit as @e2e-reporter-a.", { exact: false }),
+      page.getByText(`Submit as @e2e-${reporterRole}.`, { exact: false }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Submit private report", exact: true }),
@@ -3382,7 +3394,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       request,
       "GET",
       `security-cases/${caseId}`,
-      TOKENS["reporter-a"],
+      reporterToken,
     );
     expect(mine.body.case).toMatchObject({
       receivedAtSource: "slop-received",
@@ -3474,7 +3486,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       )
     ).json()) as { count: number; containing: number };
     expect(provider.containing).toBeGreaterThanOrEqual(2);
-    for (const role of ["security", "reporter-a", "finance"] as const) {
+    for (const role of ["security", reporterRole, "finance"] as const) {
       const view = await api(
         request,
         "GET",
@@ -3555,7 +3567,11 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       .toISOString()
       .slice(0, 16);
     await form.getByLabel("Payment deadline (UTC)").fill(deadline);
-    await form.getByLabel(/^I approve this award for @e2e-reporter-a/u).check();
+    await form
+      .getByLabel(
+        new RegExp(`^I approve this award for @e2e-${reporterRole}`, "u"),
+      )
+      .check();
     await form
       .getByLabel("Private reason")
       .fill("Owner award for the confirmed synthetic vault finding.");
@@ -3607,7 +3623,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       request,
       "GET",
       `security-cases/${firstCase}`,
-      TOKENS["reporter-a"],
+      reporterToken,
     );
     expect(reporter.body.case).toMatchObject({
       view: "reporter",
