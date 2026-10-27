@@ -32,6 +32,10 @@ import {
   valuePatch,
 } from "./value-patch";
 import {
+  type AcceptedPatchReplay,
+  collectAcceptedPatchReplay,
+} from "./value-patch-replay";
+import {
   collectRetainedMergeReferences,
   type RetainedMergeReference,
 } from "./value-retained-reference";
@@ -502,6 +506,7 @@ export interface ValueEvidence {
   files: FileChange[];
   mergeCommitEvidence: CommitChangeEvidence | null;
   acceptedRange?: AcceptedValueRange;
+  acceptedPatchReplay?: AcceptedPatchReplay;
   indirectAcceptance?: IndirectValueAcceptance;
   commits: Commit[];
   reviews: Review[];
@@ -738,6 +743,7 @@ export async function collectValueEvidence(
   }
   let mergeCommitEvidence: CommitChangeEvidence | null = null;
   let acceptedRange: AcceptedValueRange | null = null;
+  let acceptedPatchReplay: AcceptedPatchReplay | null = null;
   if (pull.merged_at !== null) {
     if (!pull.merge_commit_sha) {
       limitations.push("Reported merge commit is unavailable");
@@ -799,7 +805,26 @@ export async function collectValueEvidence(
             mergeCommitEvidence,
           );
         }
-        if (!directMerge && !matchingSingleParent && acceptedRange === null) {
+        if (
+          !directMerge &&
+          !matchingSingleParent &&
+          acceptedRange === null &&
+          accepted.limitations.length === 0
+        ) {
+          acceptedPatchReplay = await collectAcceptedPatchReplay(
+            client,
+            repository,
+            pull.head.sha,
+            files,
+            mergeCommitEvidence,
+          );
+        }
+        if (
+          !directMerge &&
+          !matchingSingleParent &&
+          acceptedRange === null &&
+          acceptedPatchReplay === null
+        ) {
           limitations.push(
             "Reported merge neither directly integrates this head nor matches its entire diff; reconcile the accepted range and related PRs",
           );
@@ -1016,6 +1041,7 @@ export async function collectValueEvidence(
     files,
     mergeCommitEvidence,
     ...(acceptedRange === null ? {} : { acceptedRange }),
+    ...(acceptedPatchReplay === null ? {} : { acceptedPatchReplay }),
     ...(indirect.acceptance === null
       ? {}
       : { indirectAcceptance: indirect.acceptance }),
