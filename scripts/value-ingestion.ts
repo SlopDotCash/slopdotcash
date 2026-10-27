@@ -5,14 +5,16 @@ import type {
   LeaderboardInput,
   MergedPullRequestOutcome,
   PenaltyFeedRecord,
+  PenaltyHistoryRecord,
 } from "../src/lib/leaderboard-types";
 import { findIngestedProjectByRepositoryId } from "../src/lib/projects.mjs";
 import {
   findRegisteredRepositoryById,
   REGISTERED_REPOSITORIES,
 } from "../src/lib/repositories.mjs";
+import { assertPenaltyHistory } from "../src/lib/score-penalties";
 import type { GitHubClient } from "../workers/slopbot/github";
-import type { PublishedPenalty as PublishedPenaltyRow } from "../workers/slopbot/penalties";
+import type { PublishedPenaltyHistory as PublishedPenaltyRow } from "../workers/slopbot/penalties";
 import { loadPolicy } from "../workers/slopbot/review";
 import { readValueDecisionFromHistory } from "../workers/slopbot/value-consumption";
 import {
@@ -187,14 +189,52 @@ export async function fetchProjectPenalties(
   projectId: string,
   transport: Fetch = fetch,
 ): Promise<PenaltyFeedRecord[]> {
+  return (await fetchPenaltyRecords(projectId, transport, false)).records;
+}
+
+export async function fetchProjectPenaltyHistory(
+  projectId: string,
+  transport: Fetch = fetch,
+): Promise<PenaltyHistoryRecord[]> {
+  const { records } = await fetchPenaltyRecords(projectId, transport, true);
+  assertPenaltyHistory(records, [projectId]);
+  return records;
+}
+
+/** During the first release the deployed Worker can still serve only v1
+ * active rows. Those remain usable, but cannot establish any reversal. */
+export async function fetchProjectPenaltyState(
+  projectId: string,
+  transport: Fetch = fetch,
+): Promise<{
+  penalties: PenaltyFeedRecord[];
+  history: PenaltyHistoryRecord[] | null;
+}> {
+  const result = await fetchPenaltyRecords(projectId, transport, true, true);
+  if (!result.history) return { penalties: result.records, history: null };
+  assertPenaltyHistory(result.records, [projectId]);
+  return {
+    penalties: result.records.filter((row) => row.reversedAt === null),
+    history: result.records,
+  };
+}
+
+async function fetchPenaltyRecords(
+  projectId: string,
+  transport: Fetch,
+  history: boolean,
+  allowLegacy = false,
+): Promise<{ records: PenaltyFeedRecord[]; history: boolean }> {
   if (!REGISTERED_REPOSITORIES.some((entry) => entry.projectId === projectId))
     throw new Error("Penalty source project is not registered");
   const records: PenaltyFeedRecord[] = [];
   let after = "";
+  let schema: string | undefined;
   for (;;) {
     const url = new URL("/v1/penalties", HISTORY_ORIGIN);
     url.searchParams.set("project", projectId);
     url.searchParams.set("after", after);
+    if (history) url.searchParams.set("history", "1");
     let response: Response;
     try {
       response = await transport(url, {
@@ -228,7 +268,12 @@ export async function fetchProjectPenalties(
       throw new ValueFeedUnavailableError(error);
     }
     if (
-      body?.schemaVersion !== "slop-penalties:v1" ||
+      !(
+        body?.schemaVersion ===
+          (history ? "slop-penalty-history:v1" : "slop-penalties:v1") ||
+        (allowLegacy && body?.schemaVersion === "slop-penalties:v1")
+      ) ||
+      (schema !== undefined && schema !== body.schemaVersion) ||
       body.project !== projectId ||
       !Array.isArray(body.records) ||
       body.records.length > 100 ||
@@ -238,6 +283,7 @@ export async function fetchProjectPenalties(
       )
     )
       throw new Error("Penalty feed page has invalid identity or pagination");
+    schema = String(body.schemaVersion);
     for (const row of body.records as PublishedPenaltyRow[]) {
       if (
         typeof row?.item_node_id !== "string" ||
@@ -253,9 +299,13 @@ export async function fetchProjectPenalties(
         debitThirds: row.debit_thirds,
         period: row.period,
         recordedAt: row.recorded_at,
+        ...(schema === "slop-penalty-history:v1"
+          ? { projectId, reversedAt: row.reversed_at, reversal: row.reversal }
+          : {}),
       });
     }
-    if (body.nextAfter === null) return records;
+    if (body.nextAfter === null)
+      return { records, history: schema === "slop-penalty-history:v1" };
     // The cursor must be the page's last record, or rows between are skipped.
     if (body.nextAfter !== records.at(-1)?.itemNodeId)
       throw new Error("Penalty feed cursor skips records");

@@ -2,14 +2,30 @@
 // and read back through the points API. Each batch keeps the permanent history
 // prefix and publishes whole or not at all.
 // Member reads fail closed and report no points the program has ended.
-import { expect, test } from "bun:test";
+import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { handlePointsApi } from "../backend/points/handler";
-import type { PointsJournal } from "../src/lib/points";
+import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
+import {
+  appendPointAwards,
+  applyPointsSnapshot,
+  type PointsJournal,
+  pointKey,
+  pointMembers,
+  pointRevisionId,
+  reconcilePointPenalties,
+} from "../src/lib/points";
+import {
+  GENERATED_AT,
+  PENALIZED_AUTHOR,
+  penaltyScoreInput,
+} from "../tests/penalty-score-fixture";
 import { MIGRATIONS, sqliteD1 } from "../tests/sqlite-d1";
 import { sha256Hex } from "../workers/identity/crypto";
 import { pointsSql } from "./generate-points";
+
+afterEach(() => setSystemTime());
 
 function checkpoint(): PointsJournal {
   return JSON.parse(readFileSync("data/points/history.json", "utf8"));
@@ -54,6 +70,154 @@ function startPointsApi(migrations = MIGRATIONS) {
     },
   };
 }
+
+test("journal debit corrections preserve the checkpoint, other months, projects and payout recognition", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const history = checkpoint();
+  const prefix = { ...history, revisions: history.revisions.slice(0, 3) };
+  const snapshot = createLeaderboardSnapshot(
+    penaltyScoreInput([
+      {
+        itemNodeId: "PR_local",
+        authorGithubId: "42",
+        category: "spam",
+        tableVersion: "slopbot-penalties-v1",
+        debitThirds: 3,
+        period: "2026-11",
+        recordedAt: "2026-11-10T00:00:00.000Z",
+      },
+    ]),
+  );
+  let journal = applyPointsSnapshot(
+    prefix,
+    snapshot,
+    "a".repeat(64),
+    GENERATED_AT,
+  );
+  const accepted = journal.revisions.find(
+    (r) => r.award.sourceId === "PR_november",
+  )!.award;
+  const payoutId = `payout:2026-11:${PENALIZED_AUTHOR.id}`;
+  journal = appendPointAwards(
+    journal,
+    [
+      {
+        ...accepted,
+        key: pointKey("asi", accepted.actor.id, "payout-received", payoutId),
+        category: "payout-received",
+        amount: 25,
+        sourceId: payoutId,
+        workUnitId: payoutId,
+        sourceUrl: "https://slop.cash/cycles/asi/2026-11",
+        provisional: false,
+      },
+    ],
+    "b".repeat(64),
+    "verified-payout-v1",
+    GENERATED_AT,
+  );
+  journal = appendPointAwards(
+    journal,
+    [
+      {
+        ...accepted,
+        key: pointKey(
+          "eliza",
+          accepted.actor.id,
+          accepted.category,
+          "PR_other",
+        ),
+        projectId: "eliza",
+        sourceId: "PR_other",
+        workUnitId: "other-project",
+        amount: 70,
+        sourceUrl: "https://github.com/elizaOS/eliza/pull/991",
+      },
+    ],
+    "c".repeat(64),
+    "slop-score-v2",
+    GENERATED_AT,
+  );
+  journal = reconcilePointPenalties(journal, "d".repeat(64), GENERATED_AT);
+  const member = (project?: string) =>
+    pointMembers(journal, "2026-11", project).find(
+      (row) => row.actor.id === accepted.actor.id,
+    )!;
+  expect(member()).toMatchObject({ total: 125, monthly: 95, projects: 2 });
+  expect(member("asi")).toMatchObject({ total: 55, monthly: 25 });
+  expect(member("eliza")).toMatchObject({ total: 70, monthly: 70 });
+  const api = startPointsApi();
+  try {
+    api.apply(prefix);
+    const oldRows = api.db
+      .query("SELECT id,payload FROM points_revisions ORDER BY rowid")
+      .all();
+    api.apply(journal);
+    // New accepted earnings consume only the unused part of the same monthly debit.
+    journal = appendPointAwards(
+      journal,
+      [
+        {
+          ...accepted,
+          key: pointKey(
+            "asi",
+            accepted.actor.id,
+            accepted.category,
+            "PR_later",
+          ),
+          sourceId: "PR_later",
+          workUnitId: "later-work",
+          amount: 20,
+          sourceUrl: "https://github.com/SlopDotCash/asi/pull/992",
+        },
+      ],
+      "e".repeat(64),
+      "slop-score-v2",
+      GENERATED_AT,
+    );
+    journal = reconcilePointPenalties(journal, "f".repeat(64), GENERATED_AT);
+    expect(member()).toMatchObject({ total: 125, monthly: 95 });
+    const debits = journal.revisions.filter((r) => r.penalty);
+    expect(debits.map((r) => [r.award.amount, r.decision?.delta])).toEqual([
+      [-10, -10],
+      [-30, -20],
+    ]);
+    expect(new Set(debits.map((r) => r.award.key)).size).toBe(1);
+    expect(member().awards.reduce((sum, award) => sum + award.amount, 0)).toBe(
+      member().total,
+    );
+    api.apply(journal);
+    // The real import boundary refuses a forged positive debit without writes.
+    const forged = structuredClone(journal);
+    const forgedDebit = forged.revisions.filter((r) => r.penalty).at(-1)!;
+    forgedDebit.award.amount = 1;
+    const { id: _oldId, ...contents } = forgedDebit;
+    forgedDebit.id = pointRevisionId(contents);
+    const beforeRefusal = api.db
+      .query("SELECT id,payload FROM points_revisions ORDER BY rowid")
+      .all();
+    expect(() => api.apply(forged)).toThrow("Invalid point award");
+    expect(
+      api.db
+        .query("SELECT id,payload FROM points_revisions ORDER BY rowid")
+        .all(),
+    ).toEqual(beforeRefusal);
+    api.apply(reconcilePointPenalties(journal, "f".repeat(64), GENERATED_AT));
+    expect(
+      api.db
+        .query("SELECT id,payload FROM points_revisions ORDER BY rowid LIMIT 3")
+        .all(),
+    ).toEqual(oldRows);
+    expect(journal.revisions.slice(0, prefix.revisions.length)).toEqual(
+      prefix.revisions,
+    );
+    expect(
+      api.db.query("SELECT COUNT(*) AS n FROM points_revisions").get(),
+    ).toEqual({ n: journal.revisions.length });
+  } finally {
+    api.close();
+  }
+});
 
 test("points publication retains the exact permanent history prefix", async () => {
   const history = checkpoint();

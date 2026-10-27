@@ -465,7 +465,7 @@ function ProfileTimeline({
       href: award.sourceUrl,
       title: award.category.replaceAll("-", " "),
       detail: `${findProject(award.projectId)?.name ?? award.projectId}${award.provisional ? " · Provisional tier" : ""}`,
-      amount: `+${award.amount.toLocaleString()} Points`,
+      amount: `${award.amount < 0 ? "" : "+"}${award.amount.toLocaleString()} Points`,
     })),
   ].sort(
     (a, b) =>
