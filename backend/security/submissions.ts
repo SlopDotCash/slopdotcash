@@ -322,7 +322,7 @@ async function transition(
  * resent), and an idle draft or failure is abandoned. A verified receipt
  * awaiting a current triager remains recoverable with fresh reporter consent.
  */
-async function settle(
+export async function settle(
   deps: SecurityApiDependencies,
   row: SubmissionRow,
 ): Promise<SubmissionRow> {

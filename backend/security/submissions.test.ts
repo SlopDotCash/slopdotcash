@@ -2200,4 +2200,75 @@ describe("optional GitHub forwarding of a saved report", () => {
     expect(sent.body.error).toBe("screening_required");
     expect(t.github.counts.posts).toBe(0);
   });
+  test("a forward that never returned becomes uncertain in the reporter's list and report and reconciles to the saved case", async () => {
+    for (const view of ["list", "report"] as const) {
+      const t = setup({ durable: true });
+      const accepted = await t.create(REPORTER, { report: REPORT });
+      const submission = accepted.body.submission as NonNullable<
+        Body["submission"]
+      >;
+      const original = t.cases()[0];
+      const authorization = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/authorize`,
+        {},
+      );
+      await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+      // GitHub stored the report, then D1 refused the receipt write once.
+      const failAfterCreate = () =>
+        t.setBeforeBatch(() => {
+          if (
+            t.github.advisories.length === 0 ||
+            t.row(submission.id).state !== "submitting"
+          )
+            return failAfterCreate();
+          throw new Error("D1 unavailable");
+        });
+      failAfterCreate();
+      const sent = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/send`,
+        { expectedRevision: submission.revision },
+      );
+      expect(sent.status).toBe(500);
+      expect(t.row(submission.id).state).toBe("submitting");
+      t.advance(61_000);
+      // The page offers "Check again" only for an uncertain or submitted row.
+      const shown =
+        view === "list"
+          ? (
+              (await t.call(REPORTER, "GET", "security-submissions")).body
+                .submissions as NonNullable<Body["submission"]>[]
+            ).find((entry) => entry.id === submission.id)
+          : (
+              await t.call(
+                REPORTER,
+                "GET",
+                `security-submissions/${submission.id}`,
+              )
+            ).body.submission;
+      expect({ view, state: shown?.state }).toEqual({
+        view,
+        state: "uncertain",
+      });
+      const reconciled = await t.reconcile(
+        submission.id,
+        shown?.revision as number,
+      );
+      expect(reconciled.status).toBe(200);
+      expect(reconciled.body.submission?.state).toBe("receipt-verified");
+      expect(t.github.counts.posts).toBe(1);
+      expect(t.cases()).toEqual([original]);
+      const viewed = await t.call(
+        REPORTER,
+        "GET",
+        `security-cases/${original.id}`,
+      );
+      expect(
+        (viewed.body.case as { advisory: { ghsa: string } }).advisory.ghsa,
+      ).toBe(t.github.advisories[0].advisory.ghsa_id);
+    }
+  });
 });
