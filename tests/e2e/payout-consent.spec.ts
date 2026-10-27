@@ -131,6 +131,100 @@ async function setup(
   return () => authorized;
 }
 
+test("payout rows distinguish test networks and retain exact award details at 200% text", async ({
+  page,
+}, info) => {
+  const token = `0x${"7".repeat(40)}`;
+  const amount = "120,987,653,232,098,764.560987653232098764";
+  const netBase = "120987653232098764560987653232098764";
+  const payment = {
+    vault,
+    projectId: "eliza",
+    chain: "base",
+    assetAddress: token,
+    assetDecimals: 18,
+    grossBase: "123456789012345678123456789012345678",
+    netBase,
+    feeBase: "2469135780246913562469135780246914",
+    state: "reserved",
+    transactionId: null,
+    submittedTransactionId: null,
+  };
+  const writes: string[] = [];
+  await page.route("**/api/v1/payments/**", (route) => {
+    if (route.request().method() !== "GET")
+      writes.push(route.request().method());
+    return route.fulfill({
+      json: {
+        githubUserId: "123",
+        wallets: [],
+        payments: [
+          {
+            ...payment,
+            id: "a".repeat(64),
+            network: "base-mainnet",
+            deliveryState: "needs_wallet",
+          },
+          {
+            ...payment,
+            id: "b".repeat(64),
+            network: "base-sepolia",
+            deliveryState: "held",
+          },
+        ],
+        monthlyAwards: [],
+        balances: [],
+        directTransfers: [],
+        walletObservations: [],
+      },
+    });
+  });
+  await page.route("**/api/v1/referrals/me", (route) =>
+    route.fulfill({ json: { enabled: false } }),
+  );
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  const rows = page.locator(".payout-row");
+  await expect(rows).toHaveCount(2);
+  for (const [index, network, state] of [
+    [0, "Base", "Awaiting wallet"],
+    [1, "Base Sepolia (test)", "Held"],
+  ] as const) {
+    const row = rows.nth(index);
+    await expect(row.locator(".payout-main")).toContainText(network);
+    await expect(
+      row
+        .locator(".payout-main")
+        .getByRole("link", { name: "eliza", exact: true }),
+    ).toHaveAttribute("href", "/projects/eliza");
+    await expect(row.getByText(amount, { exact: true })).toBeVisible();
+    await expect(row.getByText(token, { exact: true })).toBeVisible();
+    await expect(row.locator(".payout-pill")).toHaveText(state);
+    await expect(row.locator(".payout-amount small")).toContainText("Gross");
+    await expect(row.locator(".payout-amount small")).toContainText(
+      "fee 2,469,135,780,246,913.562469135780246914",
+    );
+  }
+  await enlargeText(page.locator(".earnings-page"));
+  for (const row of await rows.all()) {
+    expect(
+      await row.evaluate(
+        (element) => element.scrollWidth - element.clientWidth,
+      ),
+    ).toBeLessThanOrEqual(1);
+  }
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - innerWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await expectAccessible(page);
+  expect(writes).toEqual([]);
+  await page.screenshot({
+    path: info.outputPath("payout-network-and-amounts-200.png"),
+    fullPage: true,
+  });
+});
+
 test("a recipient reviews the exact vault and signs consent without claiming payment", async ({
   page,
 }, info) => {
