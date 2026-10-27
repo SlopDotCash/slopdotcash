@@ -2722,7 +2722,9 @@ function commitCreditOwners(
 
 /**
  * Returns the non-bot pull-request author first, then every other non-bot
- * GitHub author of a commit this pull request owns, in actor-ID order.
+ * GitHub author of a non-merge commit this pull request owns, in actor-ID
+ * order. A merge commit, such as GitHub's "Update branch", is not primary
+ * authorship; Slopbot's value evidence excludes it the same way.
  */
 function mergeCreditActors(
   pullRequest: MergedPullRequestOutcome,
@@ -2741,6 +2743,7 @@ function mergeCreditActors(
       ?.integrationBranch;
   for (const commit of sharesCommitCredit ? (pullRequest.commits ?? []) : []) {
     if (
+      (commit.parentCount ?? 1) <= 1 &&
       commit.author &&
       isCreditEligibleCommitAuthor(commit.author) &&
       commit.author.id !== author?.id &&

@@ -158,7 +158,8 @@ require a second maintainer.
 Approved by the repository owner on 2026-10-08 in response to issue #506
 (PRD SCR-04). The merge credit of a pull request into the repository's
 integration branch is shared among its pull-request author and every distinct
-non-bot GitHub user that GitHub links as a commit author. Unlinked commit
+non-bot GitHub user that GitHub links as the author of a non-merge commit. A
+merge commit, such as a branch sync, adds no credit actor. Unlinked commit
 emails, `[bot]` app logins, the vendor coding-agent accounts `claude`, `codex`,
 and `cursoragent` (pinned by node ID), and `Co-authored-by` trailers do not
 count. A commit SHA gives credit

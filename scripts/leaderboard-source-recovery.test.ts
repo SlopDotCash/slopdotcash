@@ -82,6 +82,7 @@ const nodeFor = (pull: (typeof pulls)[number]) => ({
     {
       commit: {
         oid: pull.headRefOid,
+        parents: { totalCount: 1 },
         author: { user: { ...pull.author, __typename: "User" } },
       },
     },
@@ -148,6 +149,7 @@ async function fixture(
         index === 250
           ? retained.headRefOid
           : (index + 1).toString(16).padStart(40, "0"),
+      parents: { totalCount: 1 },
       author: { user: { ...retained.author, __typename: "User" } },
     },
   }));
@@ -322,6 +324,7 @@ async function fixture(
           },
           commits: slice.map(({ commit }) => ({
             sha: commit.oid,
+            parents: [{ sha: "a".repeat(40) }],
             author: {
               node_id: commit.author.user.id,
               type: "User",

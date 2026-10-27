@@ -175,8 +175,16 @@ export interface MergedPullRequestOutcome {
   deletions: number;
   /** Target branch; only integration-branch merges share commit credit. */
   baseRefName: string;
-  /** Complete commit SHAs and linked GitHub authors; null for legacy evidence or non-integration merges. */
-  commits: Array<{ oid: string; author: GitHubActor | null }> | null;
+  /**
+   * Complete commit SHAs and linked GitHub authors; null for legacy evidence or
+   * non-integration merges. The collector records each parent count; older
+   * saved inputs can omit it.
+   */
+  commits: Array<{
+    oid: string;
+    author: GitHubActor | null;
+    parentCount?: number;
+  }> | null;
 }
 
 export interface IssueRecord {

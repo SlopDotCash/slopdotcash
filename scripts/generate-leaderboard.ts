@@ -564,7 +564,7 @@ const SEARCH_REFERENCES_QUERY = `
           commits(first: 100) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { commit { oid author { user { ...LeaderboardActor } } } }
+            nodes { commit { oid parents { totalCount } author { user { ...LeaderboardActor } } } }
           }
         }
       }
@@ -585,7 +585,7 @@ const MORE_OUTCOME_COMMITS_QUERY = `
         commits(first: 100, after: $after) {
           totalCount
           pageInfo { hasNextPage endCursor }
-          nodes { commit { oid author { user { ...LeaderboardActor } } } }
+          nodes { commit { oid parents { totalCount } author { user { ...LeaderboardActor } } } }
         }
       }
     }
@@ -2246,6 +2246,9 @@ async function completeOutcomeCommits(
           return {
             commit: {
               oid: commit.sha,
+              parents: {
+                totalCount: asArray(commit.parents, `${path}.parents`).length,
+              },
               author: {
                 user:
                   author === null
@@ -2470,6 +2473,11 @@ function parseOutcomeCommits(
         author?.login.endsWith("[bot]") === true
           ? { ...author, kind: "Bot" }
           : author,
+      // The scorer gives a merge commit's author no merge credit.
+      parentCount: asNumber(
+        child(commit, "parents", commitPath).totalCount,
+        `${commitPath}.parents.totalCount`,
+      ),
     };
   });
 }
