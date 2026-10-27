@@ -490,6 +490,7 @@ export function useProfileMembership(login: string, enabled = true) {
   return {
     own,
     signedInActor,
+    sessionStatus: session,
     joined: current?.member ?? null,
     joinStatus: current?.status ?? "loading",
   };
