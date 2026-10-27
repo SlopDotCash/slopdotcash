@@ -285,46 +285,6 @@
   margin-top: 0.6rem;
   color: #b9b5aa;
 }
-.route-model-mark {
-  display: inline-block;
-  flex-shrink: 0;
-  width: 1.6rem;
-  height: 1.6rem;
-  object-fit: contain;
-  color: #aaa69b;
-  vertical-align: middle;
-}
-img.route-model-mark {
-  filter: invert(82%) sepia(14%) saturate(399%) hue-rotate(353deg)
-    brightness(89%);
-}
-.route-receipts .receipt-record {
-  padding: 0.9rem 0;
-}
-.route-receipts .receipt-links {
-  gap: 0.4rem 1rem;
-}
-.route-receipts .receipt-links > a {
-  color: #b9b5aa;
-  font-size: 0.84rem;
-}
-.route-receipts .receipt-record summary {
-  font-size: 0.8rem;
-  min-height: 2.2rem;
-}
-.route-receipts .receipt-record summary > span {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-.route-receipts .route-model-mark {
-  width: 1.1rem;
-  height: 1.1rem;
-}
-.route-receipts .receipt-details {
-  border-left: 2px solid #ff7c3b;
-  padding-left: 1rem;
-}
 .route-cycle .cycle-hero {
   align-items: start;
   padding-bottom: 1.5rem;
@@ -469,7 +429,6 @@ img.route-model-mark {
   margin-bottom: 1.5rem;
 }
 .route-guide .empty-state,
-.route-receipts .empty-state,
 .route-cycle .empty-state,
 .route-project .empty-state {
   padding: 1.5rem;
@@ -524,17 +483,6 @@ img.route-model-mark {
   }
   .route-sponsor-grid {
     grid-template-columns: 1fr;
-  }
-  .route-receipts .receipt-record summary {
-    grid-template-columns: minmax(0, 1fr) 1rem;
-  }
-  .route-receipts .receipt-record summary time {
-    grid-column: 1;
-    padding-left: 1.6rem;
-  }
-  .route-receipts .receipt-record summary > svg {
-    grid-column: 2;
-    grid-row: 1 / 3;
   }
   .route-cycle .cycle-hero {
     grid-template-columns: 1fr;
