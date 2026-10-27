@@ -2825,7 +2825,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       page.getByRole("region", { name: "Case actions" }),
     ).toHaveCount(0);
     await expect(
-      report.getByRole("button", { name: "Mark as read", exact: false }),
+      page.getByRole("button", { name: "Notifications", exact: true }),
     ).toBeVisible();
     await expectAccessible(page);
     await page.screenshot({
@@ -2833,14 +2833,17 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       fullPage: true,
     });
     expect(privateReads).toHaveLength(0);
-    await report.getByRole("link", { name: "Open case", exact: true }).focus();
+    await report
+      .getByRole("button", { name: "Open case", exact: true })
+      .focus();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(
       new RegExp(
-        `/security\\?submission=${submissionId}&case=${result.submission.caseId}$`,
+        `/inbox\\?view=reports&submission=${submissionId}&case=${result.submission.caseId}$`,
         "u",
       ),
     );
+    await report.getByText("Read private report", { exact: true }).click();
     await expect(report.getByRole("heading", { level: 4 })).toHaveText(summary);
     await expect(report.locator(".security-report-text")).toHaveText(
       description,

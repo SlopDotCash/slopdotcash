@@ -1454,11 +1454,13 @@ function SubmissionCard({
   onUpdated,
   onOpenCase,
   caseRecord,
+  readReport,
 }: {
   session: Extract<ProjectSessionState, { status: "signed-in" }>;
   submission: Submission;
   caseRecord?: SecurityCase;
   focused: boolean;
+  readReport: boolean;
   onUpdated: (submission: Submission) => void;
   onOpenCase: (caseId: string) => void;
 }) {
@@ -1575,7 +1577,7 @@ function SubmissionCard({
             <PrivateReportDetail
               submission={submission}
               onUpdated={onUpdated}
-              expanded={focused}
+              expanded={focused && readReport}
             />
             {submission.intake.canRetryScreening ? (
               <button
@@ -1721,8 +1723,10 @@ function SubmissionsPanel({
   onKnownCases,
   cases,
   filter,
+  readReport,
 }: {
   filter: ReportFilter;
+  readReport: boolean;
   session: Extract<ProjectSessionState, { status: "signed-in" }>;
   cases: SecurityCase[];
   focusId: string | null;
@@ -1810,6 +1814,7 @@ function SubmissionsPanel({
   const renderSubmission = (submission: Submission) => (
     <SubmissionCard
       session={session}
+      readReport={readReport}
       focused={submission.id === focusId}
       key={submission.id}
       onOpenCase={onOpenCase}
@@ -3205,11 +3210,11 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
       window.history.replaceState(
         window.history.state,
         "",
-        `/security?${query}`,
+        `${embedded ? "/inbox" : "/security"}?${query}`,
       );
       reload();
     },
-    [reload],
+    [reload, embedded],
   );
   const created = (record: SecurityCase) => {
     setSelected(record.id);
@@ -3294,6 +3299,7 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
         ) : null}
         <SubmissionsPanel
           key={session.session.githubId}
+          readReport={!embedded}
           filter={filter}
           session={session}
           focusId={returned.submission}
