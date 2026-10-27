@@ -2,7 +2,7 @@
  * Exercise durable intake and the real consumer with local D1 and GitHub HTTP
  * responses. These cases stop before inference; no model verdict is simulated.
  */
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
@@ -31,6 +31,47 @@ const { privateKey } = generateKeyPairSync("rsa", {
   publicKeyEncoding: { type: "spki", format: "pem" },
 });
 
+/** One active project registered only in D1, with its App installation. */
+function liveRegistration() {
+  const { db, sqlite } = sqliteD1(
+    readdirSync(new URL("../../migrations/", import.meta.url))
+      .filter((path) => path.endsWith(".sql"))
+      .sort(),
+  );
+  const project = assertProjectDefinition(
+    applicationManifest("fresh-registration", repository, {
+      status: "active",
+      rewardAsset: {
+        network: "ethereum",
+        kind: "stablecoin",
+        ...REWARD_ASSET_NETWORKS.ethereum.stablecoin,
+        chainId: REWARD_ASSET_NETWORKS.ethereum.chainId,
+        cluster: null,
+        verifiedAt: at,
+      },
+    }),
+  );
+  const manifest = JSON.stringify(project);
+  const digest = createHash("sha256").update(manifest).digest("hex");
+  sqlite.run(
+    "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES (?,1,?,?,?,?)",
+    [project.id, manifest, digest, "registration workflow", at],
+  );
+  sqlite.run(
+    "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES (?,'active',1,?,?,?,?)",
+    [project.id, manifest, digest, at, at],
+  );
+  sqlite.run(
+    "INSERT INTO project_repositories(repository_key,project_id) VALUES (?,?)",
+    [repository, project.id],
+  );
+  sqlite.run(
+    "INSERT INTO slopbot_installations(installation_id,account_id,account_login,account_type,created_at) VALUES (1,77,'fresh-registration','Organization',?)",
+    [at],
+  );
+  return { db, sqlite, project, digest };
+}
+
 for (const change of [
   "none",
   "removed",
@@ -44,42 +85,7 @@ for (const change of [
   "notice-failed",
 ] as const) {
   test(`live registration reaches the consumer; ${change} authority`, async () => {
-    const { db, sqlite } = sqliteD1(
-      readdirSync(new URL("../../migrations/", import.meta.url))
-        .filter((path) => path.endsWith(".sql"))
-        .sort(),
-    );
-    const project = assertProjectDefinition(
-      applicationManifest("fresh-registration", repository, {
-        status: "active",
-        rewardAsset: {
-          network: "ethereum",
-          kind: "stablecoin",
-          ...REWARD_ASSET_NETWORKS.ethereum.stablecoin,
-          chainId: REWARD_ASSET_NETWORKS.ethereum.chainId,
-          cluster: null,
-          verifiedAt: at,
-        },
-      }),
-    );
-    const manifest = JSON.stringify(project);
-    const digest = createHash("sha256").update(manifest).digest("hex");
-    sqlite.run(
-      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES (?,1,?,?,?,?)",
-      [project.id, manifest, digest, "registration workflow", at],
-    );
-    sqlite.run(
-      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES (?,'active',1,?,?,?,?)",
-      [project.id, manifest, digest, at, at],
-    );
-    sqlite.run(
-      "INSERT INTO project_repositories(repository_key,project_id) VALUES (?,?)",
-      [repository, project.id],
-    );
-    sqlite.run(
-      "INSERT INTO slopbot_installations(installation_id,account_id,account_login,account_type,created_at) VALUES (1,77,'fresh-registration','Organization',?)",
-      [at],
-    );
+    const { db, sqlite, project, digest } = liveRegistration();
     expect(findRegisteredRepositoryById(repository)).toBeNull();
     await recordDelivery(db, job.deliveryId, "pull_request");
     await recordValueRequest(db, job);
@@ -189,21 +195,22 @@ for (const change of [
       expect(outcome).toBe(
         change === "none" || change === "notice-failed"
           ? "open"
-          : change === "early-api-override"
-            ? "budget"
-            : change === "deselected"
-              ? "retry"
-              : "authority",
+          : change === "september" || change === "october"
+            ? "historical"
+            : change === "early-api-override"
+              ? "budget"
+              : change === "deselected"
+                ? "retry"
+                : "authority",
       );
       expect(
         sqlite
           .query("SELECT state,outcome FROM slopbot_value_processing")
           .get(),
       ).toEqual({
-        state:
-          change === "none" || change === "notice-failed"
-            ? "completed"
-            : "waiting",
+        state: ["open", "historical"].includes(outcome)
+          ? "completed"
+          : "waiting",
         outcome,
       });
       if (
@@ -225,3 +232,119 @@ for (const change of [
     }
   });
 }
+
+/** Production on 27 October 2026 had 3,707 requests: 16 pre-November closed-PR
+ * requests waited as `authority` and were retried hourly, oldest first, and
+ * 3,689 later requests had never been read. Replay that shape from the first
+ * November schedule: 30 deliveries for 12 PRs merged in October, 15 November
+ * PRs whose source stays unavailable, and then a new November request.
+ */
+test("old and failing requests cannot starve new valuation requests", async () => {
+  const { db, sqlite } = liveRegistration();
+  const env = {
+    SLOPBOT_DB: db,
+    SLOPBOT_APP_ID: "1",
+    SLOPBOT_APP_PRIVATE_KEY: privateKey,
+    SLOPBOT_APP_USER_ID: "2",
+    SURPLUS_API_KEY: "not-used-before-inference",
+    SLOPBOT_PRODUCER_REVISION: "a".repeat(40),
+    SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only",
+    SLOPBOT_WEBHOOK_SECRET: "unused",
+    SLOPBOT_QUEUE: { send: async () => {} },
+  };
+  const deliveries = [
+    ...Array.from({ length: 30 }, (_, i) => ({
+      at: Date.parse("2026-10-24T05:25:00Z") + i * 10_000,
+      number: 101 + (i % 12),
+    })),
+    ...Array.from({ length: 15 }, (_, i) => ({
+      at: Date.parse("2026-11-01T00:10:00Z") + i * 60_000,
+      number: 201 + i,
+    })),
+    { at: Date.parse("2026-11-01T03:02:00Z"), number: 300 },
+  ].map((delivery, i) => ({ ...delivery, deliveryId: `delivery-${i}` }));
+  const reads = new Map<number, number[]>();
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.origin !== "https://api.github.com")
+      throw new Error("No provider call is authorized in this test");
+    const identity = {
+      id: job.repositoryId,
+      node_id: "R_example",
+      private: false,
+    };
+    if (url.pathname === "/app/installations/1/access_tokens")
+      return Response.json({ token: "local-installation" });
+    if (url.pathname === `/repos/${repository}`) return Response.json(identity);
+    if (url.pathname === "/installation/repositories")
+      return Response.json({ repositories: [identity] });
+    const number = Number(url.pathname.split(`/repos/${repository}/pulls/`)[1]);
+    reads.set(number, [...(reads.get(number) ?? []), Date.now()]);
+    if (number <= 112)
+      return Response.json({
+        state: "closed",
+        merged_at: "2026-10-20T12:00:00Z",
+        closed_at: "2026-10-20T12:00:00Z",
+      });
+    if (number === 300)
+      return Response.json({ state: "open", merged_at: null, closed_at: null });
+    // A November PR whose source GitHub does not return stays retryable.
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+  try {
+    let pending = 0;
+    for (
+      let tick = Date.parse("2026-11-01T00:00:00Z");
+      tick <= Date.parse("2026-11-01T06:00:00Z");
+      tick += 5 * 60_000
+    ) {
+      for (
+        ;
+        pending < deliveries.length && deliveries[pending].at <= tick;
+        pending++
+      ) {
+        const { at: received, deliveryId, number } = deliveries[pending];
+        setSystemTime(new Date(received));
+        await recordDelivery(db, deliveryId, "issue_comment");
+        await recordValueRequest(db, { ...job, deliveryId, number });
+      }
+      setSystemTime(new Date(tick));
+      await worker.scheduled({}, env);
+    }
+    const state = (number: number) =>
+      sqlite
+        .query(
+          `SELECT p.state,p.outcome,count(*) AS deliveries
+           FROM slopbot_value_requests r
+           LEFT JOIN slopbot_value_processing p ON p.delivery_id=r.delivery_id
+           WHERE r.pull_request_number=? GROUP BY p.state,p.outcome`,
+        )
+        .all(number);
+    // The new request is read by the first schedule after it arrives.
+    expect(reads.get(300)).toEqual([Date.parse("2026-11-01T03:05:00Z")]);
+    expect(state(300)).toEqual([
+      { state: "completed", outcome: "open", deliveries: 1 },
+    ]);
+    // One read settles every waiting delivery for a PR closed before the start.
+    for (let number = 101; number <= 112; number++) {
+      expect(reads.get(number)?.length).toBe(1);
+      expect(state(number)).toEqual([
+        {
+          state: "completed",
+          outcome: "historical",
+          deliveries: number <= 106 ? 3 : 2,
+        },
+      ]);
+    }
+    // Unavailable November source is never treated as zero; it keeps retrying.
+    for (let number = 201; number <= 215; number++)
+      expect(state(number)).toEqual([
+        { state: "waiting", outcome: "source-incomplete", deliveries: 1 },
+      ]);
+  } finally {
+    globalThis.fetch = original;
+    setSystemTime();
+    sqlite.close();
+  }
+});
