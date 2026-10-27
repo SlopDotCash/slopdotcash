@@ -63,6 +63,7 @@ import { useAllDirectTransfers } from "./lib/use-direct-transfers";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
   AccountNav,
+  Avatar,
   DataNotice,
   formatDateTime,
   formatMicroUsdc,
@@ -920,13 +921,16 @@ export function AccountPage() {
     <main className="shell route-main account-page">
       <RoutePageHeader icon={<UserRound />} title="Account" />
       <AccountNav current="account" />
-      {!me && (!walletEntry || signedIn) ? (
+      {me || !walletEntry || signedIn ? (
         <div id="profile">
-          <JoinPoints onSignedIn={setSignInNotice} />
+          {me ? (
+            <SocialConnections />
+          ) : (
+            <JoinPoints onSignedIn={setSignInNotice} />
+          )}
         </div>
       ) : null}
       {me && signInNotice ? <p role="status">{signInNotice}</p> : null}
-      {me ? <SocialConnections /> : null}
       {session === "loading" || signedIn || walletEntry ? (
         <DetailsSection
           id="wallets"
@@ -1519,7 +1523,7 @@ export function ContributorStandings({
             {(
               [
                 ["month", "This month (UTC)"],
-                ["lifetime", "Lifetime"],
+                ["lifetime", "Recorded history"],
               ] as const
             ).map(([value, label]) => (
               <button
@@ -1629,23 +1633,33 @@ export function ContributorStandings({
                           className="points-person"
                           href={`/contributors/${encodeURIComponent(m.actor.login)}`}
                         >
-                          <img
-                            alt=""
-                            height={40}
-                            loading="lazy"
-                            onError={(event) => {
-                              event.currentTarget.hidden = true;
-                            }}
-                            src={`https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`}
-                            width={40}
-                          />
+                          {compact ? (
+                            <img
+                              alt=""
+                              height={40}
+                              loading="lazy"
+                              onError={(event) => {
+                                event.currentTarget.hidden = true;
+                              }}
+                              src={`https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`}
+                              width={40}
+                            />
+                          ) : (
+                            <Avatar
+                              actor={{
+                                login: m.actor.login,
+                                avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`,
+                              }}
+                              size="medium"
+                            />
+                          )}
                           {m.actor.login}
                         </a>
                       </td>
                       <td className="points-value">
                         {m.points === null
                           ? pointsMissing
-                          : `${m.points.toLocaleString()} pts`}
+                          : `${m.points.toLocaleString()}${compact ? " pts" : ""}`}
                       </td>
                       <td className="points-value">
                         {m.money === null
