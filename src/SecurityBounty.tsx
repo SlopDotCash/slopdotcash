@@ -2459,7 +2459,7 @@ function AppealTriagePanel({
   );
 }
 
-/** Owner and reviewer decisions shown at once; access tools stay folded. */
+/** Prefer the common decisions without omitting other authorized actions. */
 const PRIMARY_ACTIONS = [
   "request-information",
   "decide",
@@ -2471,6 +2471,52 @@ const PRIMARY_ACTIONS = [
   "consent-payment",
   "appeal",
 ];
+
+/** Keep drafts mounted while the user switches between authorized actions. */
+function CaseActions({
+  record,
+  disclosureRelevant,
+  onDone,
+}: {
+  record: SecurityCase;
+  disclosureRelevant: boolean;
+  onDone: (updated: SecurityCase | null, note: string) => void;
+}) {
+  const actions = record.allowedActions
+    .filter((action) => actionSpec(action, record) !== null)
+    .sort((a, b) => {
+      const primary = (action: string) =>
+        PRIMARY_ACTIONS.includes(action) ||
+        (action === "disclosure" && disclosureRelevant);
+      return Number(primary(b)) - Number(primary(a));
+    });
+  const [selected, setSelected] = useState("");
+  const active = actions.includes(selected) ? selected : (actions[0] ?? "");
+  if (actions.length === 0) return null;
+  return (
+    <section className="case-actions" aria-label="Case actions">
+      <label className="form-field" htmlFor={`case-action-${record.id}`}>
+        Action
+        <select
+          id={`case-action-${record.id}`}
+          value={active}
+          onChange={(event) => setSelected(event.target.value)}
+        >
+          {actions.map((action) => (
+            <option key={action} value={action}>
+              {actionSpec(action, record)?.title}
+            </option>
+          ))}
+        </select>
+      </label>
+      {actions.map((action) => (
+        <div key={`${action}-${record.revision}`} hidden={action !== active}>
+          <ActionForm action={action} record={record} onDone={onDone} />
+        </div>
+      ))}
+    </section>
+  );
+}
 
 function CaseDetail({
   caseId,
@@ -2514,29 +2560,6 @@ function CaseDetail({
     ["resolved", "mitigation-verified"].includes(
       record.remediationState ?? "",
     ) || record.disclosureState !== "embargoed";
-  const form = (action: string) => (
-    <ActionForm
-      action={action}
-      key={`${action}-${record.revision}`}
-      onDone={(updated, saved) => {
-        setNote(saved);
-        if (updated) replace({ case: updated });
-        else reload();
-        onChanged();
-      }}
-      record={record}
-    />
-  );
-  const primary = record.allowedActions.filter(
-    (action) =>
-      PRIMARY_ACTIONS.includes(action) ||
-      (action === "disclosure" && disclosureRelevant),
-  );
-  const more = record.allowedActions.filter(
-    (action) =>
-      ["assign-triager", "revoke-triager", "recognition"].includes(action) ||
-      (action === "disclosure" && !disclosureRelevant),
-  );
   return (
     <article
       aria-labelledby={`case-${record.id}`}
@@ -2651,13 +2674,16 @@ function CaseDetail({
           ) : null}
         </section>
       ) : null}
-      {primary.map(form)}
-      {more.length > 0 ? (
-        <details>
-          <summary>More actions</summary>
-          {more.map(form)}
-        </details>
-      ) : null}
+      <CaseActions
+        record={record}
+        disclosureRelevant={disclosureRelevant}
+        onDone={(updated, saved) => {
+          setNote(saved);
+          if (updated) replace({ case: updated });
+          else reload();
+          onChanged();
+        }}
+      />
       <details className="security-reference">
         <summary>Case details and history</summary>
         <dl className="admin-facts">

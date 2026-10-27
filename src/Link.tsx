@@ -24,7 +24,7 @@ function scrollToTarget(targetId: string): boolean {
   const target = targetId ? document.getElementById(targetId) : null;
   if (!target) return false;
   for (
-    let parent = target.parentElement;
+    let parent: HTMLElement | null = target;
     parent;
     parent = parent.parentElement
   ) {
@@ -81,7 +81,7 @@ export function Link({
 }) {
   const scrollAfterNavigation = () => {
     window.setTimeout(() => {
-      const destination = new URL(href, window.location.href);
+      const destination = new URL(window.location.href);
       if (scrollToTarget(hashTargetId(destination.hash))) return;
       window.scrollTo({ top: 0, behavior: "auto" });
     }, 0);

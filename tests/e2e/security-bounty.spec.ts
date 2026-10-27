@@ -514,6 +514,97 @@ async function expectOutsiderRefused(
   }
 }
 
+test("maintainers can verify or reject a manually linked private report @registry", async ({
+  page,
+  request,
+}) => {
+  const id = `manual-report-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  await listProject(request, TOKENS.security, repository, id, {});
+  const claims = [];
+  for (const advisory of ["GHSA-2c3f-4g5h-6j7m", "GHSA-3c4f-5g6h-7j8m"]) {
+    const claimed = await api(
+      request,
+      "POST",
+      "security-cases",
+      TOKENS["reporter-a"],
+      {
+        mode: "claim",
+        projectId: id,
+        advisory,
+        idempotencyKey: key(),
+      },
+    );
+    expect(claimed.status, JSON.stringify(claimed.body)).toBe(201);
+    claims.push((claimed.body.case as { id: string }).id);
+  }
+  await signIn(page, TOKENS.security);
+  await page.goto("/security", { waitUntil: "networkidle" });
+  await page
+    .getByRole("button", { name: new RegExp(`${id} GHSA-2c3f-4g5h-6j7m`) })
+    .click();
+  const detail = page.locator(`[aria-labelledby="case-${claims[0]}"]`);
+  const verify = detail.getByRole("form", { name: "Verify the GitHub report" });
+  await expect(
+    verify.getByRole("button", { name: "Verify report", exact: true }),
+  ).toBeVisible();
+  const receivedAt = new Date(Date.now() - 60_000).toISOString().slice(0, 16);
+  await verify
+    .getByLabel("Time GitHub received the report (UTC)")
+    .fill(receivedAt);
+  await verify.getByRole("checkbox").check();
+  await verify
+    .getByRole("button", { name: "Verify report", exact: true })
+    .click();
+  await expect(detail.getByRole("status").first()).toHaveText(
+    "Verify the GitHub report: saved.",
+  );
+  const verified = await api(
+    request,
+    "GET",
+    `security-cases/${claims[0]}`,
+    TOKENS.security,
+  );
+  expect(verified.body.case).toMatchObject({
+    submissionState: "verified",
+    receivedAt: `${receivedAt}:00.000Z`,
+    receivedAtSource: "maintainer-attested",
+  });
+
+  await page
+    .getByRole("button", { name: new RegExp(`${id} GHSA-3c4f-5g6h-7j8m`) })
+    .click();
+  const rejectedDetail = page.locator(`[aria-labelledby="case-${claims[1]}"]`);
+  const picker = rejectedDetail.getByLabel("Action", { exact: true });
+  await picker.selectOption("reject-link");
+  const reject = rejectedDetail.getByRole("form", { name: "Reject this link" });
+  const reason = "The advisory does not identify this account as the reporter.";
+  await reject.getByLabel("Private reason").fill(reason);
+  await picker.selectOption("verify-link");
+  await picker.selectOption("reject-link");
+  await expect(reject.getByLabel("Private reason")).toHaveValue(reason);
+  await reject
+    .getByRole("button", { name: "Reject link", exact: true })
+    .click();
+  await expect(rejectedDetail.getByRole("status").first()).toHaveText(
+    "Reject this link: saved.",
+  );
+  const rejected = await api(
+    request,
+    "GET",
+    `security-cases/${claims[1]}`,
+    TOKENS.security,
+  );
+  expect(rejected.body.case).toMatchObject({
+    submissionState: "link-rejected",
+  });
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("manual-report-decision.png"),
+    fullPage: true,
+  });
+});
+
 test("owners publish and control bounty programs with verified funding @registry", async ({
   browser,
   request,
@@ -1400,6 +1491,9 @@ test("private security bounty programs keep cases restricted from intake to awar
     const detail = page.locator(`[aria-labelledby="case-${declared}"]`);
     await expect(detail).toContainText("Waiting for an independent reviewer");
     await expect(detail.getByText(/\(verified from GitHub\)/u)).toBeVisible();
+    await detail
+      .getByLabel("Action", { exact: true })
+      .selectOption("decide-related-party");
     const form = detail.getByRole("form", {
       name: "Related-party award review",
     });
@@ -1728,9 +1822,11 @@ test("private security bounty programs keep cases restricted from intake to awar
         name: new RegExp(`${a.id} GHSA-2c3f-4g5h-6j7m`, "u"),
       })
       .click();
-    const form = page.locator("form").filter({
-      has: page.getByRole("button", { name: "Save disclosure decision" }),
-    });
+    await page
+      .getByRole("region", { name: "Case actions" })
+      .getByLabel("Action", { exact: true })
+      .selectOption("disclosure");
+    const form = page.getByRole("form", { name: "Disclosure", exact: true });
     await form
       .getByLabel("Disclosure state")
       .selectOption("redaction-approved");
@@ -1868,7 +1964,9 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(detail).toContainText("Approved, not paid yet");
     await expect(detail).toContainText("Received by GitHub");
     await expect(detail).not.toContainText("AI summary");
-    await detail.getByText("More actions", { exact: true }).click();
+    await detail
+      .getByLabel("Action", { exact: true })
+      .selectOption("recognition");
     await detail.getByLabel("Show my name publicly").selectOption("opt-in");
     await detail.getByRole("button", { name: "Save my choice" }).click();
     await expect(detail.getByRole("status")).toContainText(
@@ -1990,7 +2088,10 @@ test("private settlement requires visibility consent and produces an unsigned re
   await signIn(page, TOKENS["reporter-a"]);
   await page.goto("/security", { waitUntil: "networkidle" });
   await page.getByRole("button", { name: new RegExp(`^${id} `) }).click();
-  await page.getByText("Accept payment visibility", { exact: true }).click();
+  await page
+    .getByRole("region", { name: "Case actions" })
+    .getByLabel("Action", { exact: true })
+    .selectOption("consent-payment");
   await page
     .getByLabel(/^I understand that chain transactions reveal/u)
     .check();
@@ -2020,7 +2121,10 @@ test("private settlement requires visibility consent and produces an unsigned re
   await signIn(page, TOKENS.finance);
   await page.goto("/security", { waitUntil: "networkidle" });
   await page.getByRole("button", { name: new RegExp(`^${id} `) }).click();
-  await page.getByText("Prepare private payment", { exact: true }).click();
+  await page
+    .getByRole("region", { name: "Case actions" })
+    .getByLabel("Action", { exact: true })
+    .selectOption("prepare-payment");
   await page.getByLabel(/^I approve .* on this network/u).check();
   await page
     .getByRole("button", { name: "Prepare unsigned payment", exact: true })
@@ -2939,8 +3043,17 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     await expect(detail).toContainText(
       "Next step: Choose an award amount or no award.",
     );
+    const actions = page.getByRole("region", { name: "Case actions" });
+    await actions.getByLabel("Action", { exact: true }).selectOption("award");
+    await expect(actions.getByRole("form")).toHaveCount(1);
     const form = page.getByRole("form", { name: "Award" });
     await form.getByLabel("Gross award (USDC)").fill("4000");
+    await actions
+      .getByLabel("Action", { exact: true })
+      .selectOption("request-information");
+    await expect(actions.getByRole("form")).toHaveCount(1);
+    await actions.getByLabel("Action", { exact: true }).selectOption("award");
+    await expect(form.getByLabel("Gross award (USDC)")).toHaveValue("4000");
     await expect(form.getByRole("status")).toHaveText(
       "Researcher 3,000 USDC · Slop 1,000 USDC",
     );

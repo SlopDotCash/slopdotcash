@@ -284,7 +284,17 @@ function internalRoute(pathname: string): Route {
 /** Legacy pages now live as sections of their canonical routes. */
 const LEGACY_SECTIONS = new Map([["wallet", "/account#wallets"]]);
 
-function canonicalPath(): string {
+function canonicalLocation(): string {
+  const awards = /^\/projects\/([^/]+)\/awards\/?$/.exec(
+    window.location.pathname,
+  );
+  if (awards) {
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `/projects/${awards[1]}/funding${window.location.search}${window.location.hash || "#monthly-awards"}`,
+    );
+  }
   const legacy = LEGACY_SECTIONS.get(
     window.location.pathname.replace(/^\/|\/$/gu, ""),
   );
@@ -296,17 +306,21 @@ function canonicalPath(): string {
       `${path}${window.location.search}#${hash}`,
     );
   }
-  return window.location.pathname;
+  return window.location.href;
 }
 
 function useRoute(): Route {
-  const [path, setPath] = useState(canonicalPath);
+  const [href, setHref] = useState(canonicalLocation);
   useEffect(() => {
-    const update = () => setPath(canonicalPath());
+    const update = () => setHref(canonicalLocation());
     window.addEventListener("popstate", update);
-    return () => window.removeEventListener("popstate", update);
+    window.addEventListener("hashchange", update);
+    return () => {
+      window.removeEventListener("popstate", update);
+      window.removeEventListener("hashchange", update);
+    };
   }, []);
-  return useMemo(() => internalRoute(path), [path]);
+  return useMemo(() => internalRoute(new URL(href).pathname), [href]);
 }
 
 /** The title and canonical path of a route; a missing page has no canonical. */
