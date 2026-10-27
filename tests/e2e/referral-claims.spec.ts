@@ -127,6 +127,16 @@ async function setup(page: Page) {
       request: (input: unknown) => w.referralWalletRequest(input),
     };
   });
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: "900000100", githubLogin: "ref", admin: false },
+      },
+    }),
+  );
+  await page.route("**/api/v1/project-appeals", (route) =>
+    route.fulfill({ json: { appeals: [] } }),
+  );
   await page.route("**/api/v1/payments/me", (route) =>
     route.fulfill({
       json: {

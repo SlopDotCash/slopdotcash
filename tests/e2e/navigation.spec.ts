@@ -127,6 +127,15 @@ test("a walletless award leads to wallet setup without changing the award", asyn
   page,
 }, info) => {
   const writes: string[] = [];
+  // The signed-out default above never reaches the payouts read.
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: { session: { githubId: "123", githubLogin: "walletless" } },
+    }),
+  );
+  await page.route("**/api/v1/project-appeals", (route) =>
+    route.fulfill({ json: { appeals: [] } }),
+  );
   await page.route("**/api/v1/payments/me", (route) => {
     if (route.request().method() !== "GET")
       writes.push(route.request().method());
