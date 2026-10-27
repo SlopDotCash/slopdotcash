@@ -1312,9 +1312,11 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   );
   await retry.click();
   await expect(preferences).toContainText("example@example.com");
-  await expect(
-    preferences.getByRole("button", { name: "Turn on activity email" }),
-  ).toBeVisible();
+  const activityEmail = preferences.getByRole("switch", {
+    name: "Activity email",
+  });
+  await expect(activityEmail).toBeEnabled();
+  await expect(activityEmail).not.toBeChecked();
   await expectAccessible(page);
   expect(paymentReads).toEqual([]);
 });
