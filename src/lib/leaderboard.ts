@@ -3931,6 +3931,7 @@ function createSnapshotWithReviewCutoff(
   // takes no second share; the returned reviewers are now credited too.
   const allocateValueReviews = (
     pullRequest: MergedPullRequestReviewRecord,
+    acceptedAt: string,
     candidates: readonly ValueReviewCandidate[],
     awardedReviewers: ReadonlySet<string> = new Set(),
     assessedSizeFloor = 0,
@@ -3948,10 +3949,15 @@ function createSnapshotWithReviewCutoff(
     }
     if (!eligible.length) return [];
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
-    // Review credit keeps the review's submission time. A review outside this
-    // scoring window cannot be published here, so it must not take one of the
-    // five reviewer slots or a share of the pool from a review that can.
+    // Review credit keeps the review's submission time. The allocation covers
+    // the window that ended at acceptance, so every later run that still
+    // scores this pull request selects the same reviewers and divides the
+    // same pool. A review before that window must not take one of the five
+    // reviewer slots or a share of the pool. A review inside it but before
+    // this run's window keeps its slot and share, and its award is omitted
+    // here, not reissued: the journal keeps the earlier award.
     const scoringFrom = parseIsoTime(input.windowFrom);
+    const allocationFrom = parseIsoTime(acceptedAt) - (windowTo - scoringFrom);
     const inWindow: ValueReviewCandidate[] = [];
     for (const candidate of eligible) {
       // Apply the same prospective ban as the ledger before selecting the
@@ -3972,7 +3978,7 @@ function createSnapshotWithReviewCutoff(
         continue;
       }
       const reviewedAt = parseIsoTime(candidate.submittedAt);
-      if (reviewedAt < scoringFrom || reviewedAt >= windowTo) {
+      if (reviewedAt < allocationFrom || reviewedAt >= windowTo) {
         excludeReview(
           pullRequest,
           candidate.review,
@@ -4014,6 +4020,10 @@ function createSnapshotWithReviewCutoff(
       }
       for (const reviewId of credited.repeatedReviewIds)
         exclude(reviewId, "already-awarded-reviewer");
+      if (parseIsoTime(candidate.submittedAt) < scoringFrom) {
+        exclude(candidate.reviewId, "review-credit-outside-window");
+        continue;
+      }
       addScore(entries, ledger, participationBans, {
         id: `${pullRequest.id}:value-review:${candidate.reviewId}`,
         actor: candidate.actor,
@@ -4369,6 +4379,7 @@ function createSnapshotWithReviewCutoff(
     }
     for (const reviewerId of allocateValueReviews(
       pullRequest,
+      pullRequest.mergedAt,
       valueReviewCandidates,
       awardedReviewers,
       assessedSizeFloor,
@@ -4508,6 +4519,7 @@ function createSnapshotWithReviewCutoff(
     }
     allocateValueReviews(
       pull,
+      pull.closedAt,
       candidates,
       new Set<string>(),
       assessedSizeFloor,
