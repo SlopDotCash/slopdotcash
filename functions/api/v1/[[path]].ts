@@ -322,6 +322,9 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       : null;
   const securityResponse = await handleSecurityApi(request, {
     db,
+    // A separate key namespace; contributor trace APIs never read reports.
+    reportStorage: env.PRIVATE_TRACES,
+    reportIntakeEnabled: env.SLOP_PRIVATE_INTAKE_MODE === "on",
     now,
     randomId,
     sessionActor,

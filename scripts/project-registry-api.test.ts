@@ -523,6 +523,25 @@ describe("project registry API", () => {
       ).status,
     ).toBe(422);
     expect((await change({ ...program, settlement })).status).toBe(422);
+    // An explicit after-approval offer can accept reports before the owner
+    // deposits. Publishing it must not invent a balance or a vault.
+    const pledged = await change({
+      ...program,
+      status: "open",
+      fundingPolicy: "after-approval",
+      amount: { ...program.amount, grossMinor: "10000000000" },
+      capacity: { ...program.capacity, awards: null },
+    });
+    expect(pledged.status).toBe(200);
+    const pledgedProgram = (await pledged.json()).project.manifest
+      .securityBounty;
+    expect(pledgedProgram.status).toBe("open");
+    expect(pledgedProgram.funding).toEqual({ state: "pledged" });
+    expect(pledgedProgram.settlement).toBeUndefined();
+    expect(pledgedProgram.capacity.awards).toBeNull();
+    // Restoring the legacy prefunded policy preserves its funding gate.
+    expect((await change({ ...program, status: "open" })).status).toBe(422);
+    expect((await change(program)).status).toBe(200);
     // Exercise owner registration after the chain-verifier boundary. The EVM
     // browser workflow separately proves this boundary against a real chain.
     const current = await persistence.getProject("open-registry");

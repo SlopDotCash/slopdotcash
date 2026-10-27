@@ -1550,3 +1550,40 @@ main h2 {
     grid-template-columns: 1fr;
   }
 }
+/* Private bounty discovery shares the project card rhythm. */
+.security-bounty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface);
+}
+
+.security-bounty-card p {
+  margin: 0;
+}
+.security-bounty-card > .button {
+  margin-top: auto;
+}
+.security-bounty-split {
+  font-size: 0.875rem;
+}
+
+.security-report-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font: inherit;
+  padding: 1rem;
+  background: var(--paper);
+}
+
+.security-agent-setup {
+  width: 100%;
+}
+.security-agent-setup .agent-prompt-box {
+  margin-top: 1rem;
+}

@@ -234,6 +234,28 @@ async function handlePrivateIntake(state, request, response, url) {
     if (JSON.parse(body).model !== "claude-opus-5.5")
       return send(400, { type: "error" });
     state.analysisRequests.push(body);
+    // Exercise the screening transport before the separate case proposal.
+    // This deterministic answer proves routing controls, not model quality.
+    if (
+      JSON.parse(body).system.startsWith(
+        "You screen private vulnerability reports",
+      )
+    )
+      return send(200, {
+        type: "message",
+        role: "assistant",
+        stop_reason: "end_turn",
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              decision: "legitimate",
+              reason:
+                "Fixture screening: the report names a concrete local reproduction for private owner review.",
+            }),
+          },
+        ],
+      });
     // Slopbot's appeal triage drafts a resolution for a moderator.
     if (JSON.parse(body).system.includes("first triage step for appeals"))
       return send(200, {
