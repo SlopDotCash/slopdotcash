@@ -179,29 +179,6 @@ function VaultTotals({
   );
 }
 
-/** Tiles without values while the first read loads or no read exists. */
-function VaultTotalsPlaceholder() {
-  return (
-    <div className="vault-stats" aria-hidden="true">
-      {[
-        "Available",
-        "Reserved for awards",
-        "Deposited",
-        "Paid out",
-        "Withdrawn",
-      ].map((label, index) => (
-        <div
-          key={label}
-          className={`vault-stat vault-stat--placeholder${index === 0 ? " vault-stat--available" : ""}`}
-        >
-          <span>{label}</span>
-          <span>—</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 type VaultTotalsState =
   | { status: "none" }
   | { status: "loading" }
@@ -388,7 +365,6 @@ function VaultTotalsView({
             </>
           )}
         </p>
-        <VaultTotalsPlaceholder />
       </div>
     );
   return (

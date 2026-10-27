@@ -656,3 +656,14 @@ img.route-model-mark {
     grid-template-columns: 1fr;
   }
 }
+
+.route-funding .vault-contract-details {
+  margin-block: 0.5rem;
+}
+.route-funding .vault-contract-details summary {
+  font-size: 0.85rem;
+  color: #b9b5aa;
+}
+.route-funding .vault-contract-details[open] summary {
+  margin-bottom: 0.65rem;
+}
