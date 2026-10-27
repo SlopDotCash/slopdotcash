@@ -2918,6 +2918,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
         { stdio: "pipe" },
       );
       await page.reload({ waitUntil: "networkidle" });
+      await report.getByText("Read private report", { exact: true }).click();
       await expect(report.locator(".security-report-text")).toHaveText(
         description,
       );
@@ -2982,6 +2983,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       });
     }
     await page.reload({ waitUntil: "networkidle" });
+    await report.getByText("Read private report", { exact: true }).click();
     await expect(report.locator(".security-report-text")).toHaveText(
       description,
     );
