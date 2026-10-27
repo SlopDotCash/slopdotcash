@@ -49,6 +49,13 @@ inherits another admission. A row existing is not successful evidence.
 
 Initial and explicitly requested scans still pin the actual current commit and
 template and pass the unchanged acquisition, model, result and evidence rules.
+If a release replaces the template before a pending scan can finish, the next
+refresh queues the current template with the original source commit and
+manifest. The old assignment stays unchanged. The template endpoint cannot
+supply the old bundle. This recovery applies only to a pending assessment;
+a completed clean admission still needs no routine rescan.
+An exempt project's existing pending investigation can recover the same way;
+this does not create a scan requirement or remove the exemption.
 Flag-only reinstatement and confirmed-malicious recovery still require fresh
 current-content/current-pin evidence, cover the active flags, and respect all
 timing and authority gates. The scan-reuse pipeline remains available for an
