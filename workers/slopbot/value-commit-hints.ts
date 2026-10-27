@@ -24,6 +24,17 @@ const label = (text: string) => text.trim().replace(/\s+/gu, " ").toLowerCase();
  * label takes the scope of its definition, and user@SHA names that user's fork.
  */
 export function sameRepositoryCommitHints(repository: string, text: string) {
+  // Attribution and skill revisions identify the agent, not an integration.
+  // Exclude them only from discovery; callers retain the original evidence.
+  text = text
+    .replace(
+      /<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:v[12]|slop-contribution-attribution:v1)\b[\s\S]*?-->/giu,
+      "",
+    )
+    .replace(
+      /^\s*(?:[-*+]\s+)?(?:\*\*)?(?:Contribution skill revision|Skill revision)(?:\*\*)?\s*:[^\r\n]*/gimu,
+      "",
+    );
   const local = (target: string) =>
     target.toLowerCase() === repository.toLowerCase();
   const name = repository.split("/")[1];
