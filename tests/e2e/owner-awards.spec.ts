@@ -219,7 +219,14 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     ),
   ).toBe(true);
   await page.getByLabel("Contribution month").focus();
-  await page.keyboard.press("Tab");
+  // Tab through the native control's month/year segments before the button.
+  for (
+    let remaining = 4;
+    remaining > 0 &&
+    !(await load.evaluate((button) => button === document.activeElement));
+    remaining--
+  )
+    await page.keyboard.press("Tab");
   await expect(load).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(awards).toContainText(
