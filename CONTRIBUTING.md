@@ -165,8 +165,12 @@ complete setup at [`slop.cash/projects/new`](https://slop.cash/projects/new).
 PRD section 4 defines the target flow: a project becomes ready without routine
 admin approval after complete setup, verified GitHub authority, Slopbot
 installation, and a passed malicious-code scan. Funding is optional and has a
-separate status. Owners publish later changes as append-only D1 revisions;
-changed executable content needs a fresh scan. Where the deployed site still
+separate status. Owners publish later changes as append-only D1 revisions.
+One successful admission scan covers routine later changes to the same immutable
+registered repository. Keep its original assessed revision and complete evidence;
+do not describe later content as scanned. Explicit investigations, flags, pauses,
+confirmed-malicious decisions and fresh reinstatement scans remain required under
+PRD section 8. Where the deployed site still
 shows an admin approval step, that step is implementation to migrate. Do not
 open a pull request to add or update a project, and do not add project JSON or
 a per-project skill folder to this repository.

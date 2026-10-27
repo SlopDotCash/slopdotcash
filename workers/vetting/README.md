@@ -3,7 +3,10 @@
 PRD section 8 requires a scan of submitted project code for malicious
 behavior before contributors install or run it: wallet drainers, password
 and credential theft, secret exfiltration, harmful installation scripts and
-agent prompt injection. The result binds the checked revision. A scan is not
+agent prompt injection. The result binds the checked revision. One successful admission scan persists
+for routine later changes to the same immutable repository (PRD section 8,
+27 October 2026). Explicit investigations and fresh reinstatement scans still use
+this complete pipeline; later content is never relabelled as scanned. A scan is not
 a guarantee of safety, and an incomplete scan never establishes clearance.
 Issues #909 and #911; audit findings 8 and 9.
 
@@ -198,12 +201,12 @@ a clean, non-reused scan of the same project, repository, source inventory,
 template, policy, run and report, with all original evidence retained. The
 final review inventory remains separately bound, including original native
 execution evidence. A flag-only pause
-cannot reuse that scan. Any change to executable content produces a new
-digest and a new scan.
+cannot reuse that scan. In an explicitly requested scan, changed executable
+content produces a new digest and cannot reuse the old result.
 
 The signed service calls `POST /api/v1/vetting/refresh` before reading the
-queue. Slop then queues, for the project steward, a scan of every listed
-project whose current content or live pin has no scan, and one fresh scan per
+queue. Slop then queues, for the project steward, an initial admission scan
+for each listed repository without admission, and one fresh scan per
 live pin for a project that contributor flags alone paused. Banned and
 moderator-restricted projects wait for a moderator. An admin can still queue a
 scan by hand.

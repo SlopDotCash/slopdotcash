@@ -38,6 +38,7 @@ Installed skills run without a live source-authorization gate. The optional
 local installation provenance; it does not check main ancestry, releases,
 labels or revocations. Follow the project's access controls and review the
 live GitHub work state before selecting work or submitting a change.
+The admission scan covers only its recorded revision; it does not certify later changes.
 
 Then read the manifests, lockfiles, install and build hooks, download commands
 and agent instruction files you are about to use, before running them. Stop the

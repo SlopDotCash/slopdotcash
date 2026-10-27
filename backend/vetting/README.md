@@ -2,8 +2,8 @@
 
 PRD section 8, VET-01 to VET-08 and MVP-12; issues #909 and #911. Slop serves
 no generated skill, lists no project in `/.well-known/slop/projects.json`, and
-activates no revision unless a malicious-code scan cleared that exact revision
-content at the live pin. The scanner and its model reviews are an external
+activates no project without retained admission clearance for its immutable
+registered repository (or the explicit existing-project exemption). The scanner and its model reviews are an external
 service ([worker](../../workers/vetting/README.md)). This module stores their
 signed results, queues scans automatically, records contributor flags and
 enforces the gate. It fails closed when the service is absent. [Private
@@ -26,71 +26,51 @@ fixed evidence terms in source.
 
 ## Clearance
 
-The content SHA-256 is the key-sorted canonical JSON of the manifest's
-executable fields (`id`, `repositories`, `skill`, `reviewSkill`,
-`contribution`; `src/lib/project-revision-changes.ts`). Status, listing,
-presentation and financial edits keep it. A clearance binds three things (VET-07):
+Each assessment remains permanently bound to its actual project revision,
+content digest, integration-branch commit and skill template. These fields never
+change when later content is admitted. The complete canonical retained evidence
+is checked on every clearance read; missing, corrupt, expired or unauthorized
+evidence fails closed.
 
-- the content SHA-256 of the unbroken run of revisions with the same content;
-- the integration-branch head commit that the queue assigned to the scan;
-- the skill template input digest that the queue assigned to the scan.
+Owner decision #1467 section3.9 requires one successful admission scan when the
+project is added. The latest actual assessment in the uninterrupted history of
+the same immutable repository ID and node ID controls normal admission. Routine
+commits, dependencies, Markdown, skill inputs, template changes and presentation
+updates do not queue another scan or invalidate a clean admission. The public
+clearance names its basis `admission` and shows the original assessed revision;
+it does not say new content was scanned. An explicit later investigation remains
+controlling: pending or incomplete results block admission, and confirmed malice
+requires the existing independent decision. No project or different repository
+inherits another admission. A row existing is not successful evidence.
 
-The template input digest is `templateSha256` in the deployed
-`/skill-templates/index.json`: the SHA-256 of the canonical JSON of the
-contributor and reviewer template files and their digests, the renderer
-sources (`renderer.sources`) and the accepted revisions. These inputs decide
-the generated skill bytes, apart from the provenance commit label. A clearance
-does not bind the site commit, so a site deploy that does not change these
-inputs keeps every clearance, and staging and production share it.
-
-Every check reads the live pin: the current head of the manifest's
-`integrationBranch` on GitHub and the `templateSha256` of the deployed
-template index. Only scans of the same content and of that exact pin count,
-and the newest finished one decides. So an activation revision that changes
-only the status of a cleared revision keeps its clearance. A new commit on the
-integration branch, a change to a template input, or a change to an executable
-field needs a new scan before Slop serves the skill.
-
-A scan covers one repository at one commit. A manifest that names more than
-one repository has no live pin, so its state is `unverified`, an admin cannot
-queue a scan, and Slop serves no skill for it.
+Initial and explicitly requested scans still pin the actual current commit and
+template and pass the unchanged acquisition, model, result and evidence rules.
+Flag-only reinstatement and confirmed-malicious recovery still require fresh
+current-content/current-pin evidence, cover the active flags, and respect all
+timing and authority gates. The scan-reuse pipeline remains available for an
+explicit eligible request, but reused evidence cannot lift a flag pause.
 
 | State | Meaning | Skills, discovery, activation |
 |---|---|---|
-| `unscanned` | No scan of this content | Blocked |
-| `unverified` | Slop could not read the live pin, the manifest names more than one repository, or the retained evidence is missing, changed, expired or outside current policy | Blocked; skill routes return HTTP 503 |
-| `stale` | Scans of this content exist, but none of the live branch head and template | Blocked |
-| `queued` | A scan of the live pin waits for a result | Blocked |
-| `quarantined` | The newest finished scan of the live pin is `incomplete` | Blocked |
-| `cleared` | The newest finished scan of the live pin is `clean` and its required retained objects pass verification | Allowed |
-| `banned` | A malicious scan has no independent reinstatement decision covering it | Blocked; a new scan or commit alone cannot lift it |
+| `unscanned` | No assessment for this repository identity | Blocked |
+| `unverified` | Required evidence is unavailable, or a reinstatement pin cannot be verified | Blocked |
+| `stale` | Required reinstatement evidence does not cover the current pin | Blocked |
+| `queued` | Admission or an explicit investigation waits for a result | Blocked |
+| `quarantined` | Latest controlling assessment is incomplete | Blocked |
+| `cleared` | Retained clean admission evidence, or fresh qualified reinstatement evidence | Allowed subject to registry restrictions |
+| `banned` | Malicious evidence lacks an independent reinstatement decision | Blocked |
 
-Projects registered before the gate are grandfathered.
-`migrations/0075_vetting_grandfathered_projects.sql` records every project
-that existed when it ran in the immutable `vetting_grandfathered_projects`
-table. A grandfathered project is `cleared` with no assessment, so it serves
-skills, lists for discovery and activates without a scan. A confirmed
-malicious finding still bans it, and reinstatement still needs a fresh clean
-scan. The exemption covers future executable changes, but it does not override
-flag pauses or account restrictions. Flag-only reinstatement still requires a
-fresh clean scan. Projects created later follow the rules below. The owner
-approved this permanent exception in canonical PRD section 8 on 24 October 2026.
+The explicit permanent exemption in migration0075 remains separate, with no
+fabricated assessment. It cannot bypass flags, pauses, account restrictions or
+fresh reinstatement evidence, or transfer to another immutable repository.
 
-For projects without the exemption, merging to the integration branch pauses
-skills and discovery until a scan of the new head lands clean. The signed service's
-`POST /api/v1/vetting/refresh` queues that scan automatically; a scan whose
-executable inventory is unchanged reuses the cached clean result. Slop keeps each branch head in the edge cache for 30 seconds. Dynamic
-skills, discovery and public clearance responses use no-store. Each request
-checks current private evidence; an old cache cannot bypass access expiry.
-
-A queued rescan keeps the last finished decision until its result lands.
-The service queue returns only the newest assessment for each project. A
-changed commit, template, revision or active flag set can queue a replacement
-while an older scan is pending. Repeating the current pending request does
-not add a row. Superseded assessments remain unchanged in the audit history;
-they do not establish clearance or prevent the current scan from running.
-Reinstatement after a ban uses the ADM-06 path and the exact reviewed scan
-records described in [Independent reinstatement](#independent-reinstatement).
+The signed `POST /api/v1/vetting/refresh` queues initial admission for a repository
+without an assessment and required fresh flag recovery. It does not schedule
+routine changed-head or changed-template scans. Manual investigation requests
+remain available. Historical #1461 automatic identical-rescan acceptance is
+superseded for routine admission: no new assessment is minted merely to restate
+an unchanged or changed head. Exact-request acquisition and reusable-source
+integrity checks still apply whenever a scan is actually required or requested.
 
 ## Routes
 
@@ -101,7 +81,7 @@ records described in [Independent reinstatement](#independent-reinstatement).
 | `GET /api/v1/vetting/requests`           | signed service | Queued scans with the assigned `commitSha` and `templateSha256`, the revision URL and the template index URL                                                                 |
 | `POST /api/v1/vetting/results`           | signed service | Records one `slop-vetting-result-v2` scan result, or a historical `slop-vetting-result-v1` result                                                                            |
 | `POST /api/v1/vetting/reuse`             | signed service | Reads an original clean scan by the acquired-input inventory digest, without granting clearance or returning trace bodies |
-| `POST /api/v1/vetting/refresh`           | signed service | Body `{}`. Queues automatic scans, for the project steward, of changed or unscanned content and of flag-only pauses. Completes a flag-only reinstatement that a fresh clean scan at the current live pin could not write when it landed. Returns the queued and reinstated assessment ids                                    |
+| `POST /api/v1/vetting/refresh`           | signed service | Body `{}`. Queues initial admission scans and fresh scans for flag-only pauses. Completes a flag-only reinstatement that a fresh clean scan at the current live pin could not write when it landed. Returns the queued and reinstated assessment ids                                    |
 | `GET /api/v1/project-flags/:id`          | member         | The member's own active flag and the project's restriction state                                                                                                              |
 | `POST /api/v1/project-flags/:id`         | member         | Files one flag (`category`, `evidence`, optional GitHub `evidenceUrl`); the second distinct active reporter pauses the project                                              |
 | `POST /api/v1/project-flags/:id/withdraw`| member         | Withdraws the member's active flag; a pause already placed stays until a clean scan                                                                                           |
