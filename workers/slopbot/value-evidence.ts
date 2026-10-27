@@ -20,8 +20,10 @@ import {
 } from "./value-branch-policy";
 import { githubLinkDestinations } from "./value-commit-hints";
 import {
+  needsAddedValueComparison,
   needsFullValueComparison,
   needsRemovedValueComparison,
+  recoverAddedValueComparisons,
   recoverFullValueComparisons,
   recoverRemovedValueComparisons,
   recoverUnchangedValueRenames,
@@ -34,6 +36,7 @@ import type { ValueMergeResolution } from "./value-merge-resolution";
 import {
   addedValuePatchRecovery,
   hasCompleteValuePatch,
+  valueAdditionCount,
   valueDeletionCount,
   valuePatch,
 } from "./value-patch";
@@ -115,6 +118,11 @@ export interface FileChange {
     headSha: string;
     before: { blobSha: string; text: string };
   };
+  addedComparison?: {
+    baseSha: string;
+    headSha: string;
+    after: { blobSha: string; text: string };
+  };
   unchangedRename?: { baseSha: string; headSha: string; blobSha: string };
   addedBinary?: AddedBinaryProof;
 }
@@ -175,7 +183,7 @@ function changeBytes(files: FileChange[]): string {
         file.filename,
         file.previous_filename ?? null,
         file.status,
-        file.additions,
+        valueAdditionCount(file),
         valueDeletionCount(file),
         valuePatch(file) ?? null,
         file.fullComparison
@@ -260,6 +268,13 @@ async function collectCommitChanges(
     )
       limitations.push(`${label} contains repeated file paths`);
     if (commit.parents.length > 0 && limitations.length === 0) {
+      await recoverAddedValueComparisons(
+        client,
+        root.slice("/repos/".length),
+        commit.files,
+        commit.parents[0].sha,
+        commit.sha,
+      );
       await recoverRemovedValueComparisons(
         client,
         root.slice("/repos/".length),
@@ -273,7 +288,9 @@ async function collectCommitChanges(
         commit.files.reduce(
           (sum, file) =>
             sum +
-            (kind === "deletions" ? valueDeletionCount(file) : file.additions),
+            (kind === "deletions"
+              ? valueDeletionCount(file)
+              : valueAdditionCount(file)),
           0,
         ) !== commit.stats[kind]
       )
@@ -726,6 +743,7 @@ export async function collectValueEvidence(
     files.some(
       (file) =>
         needsFullValueComparison(file) ||
+        needsAddedValueComparison(file) ||
         needsRemovedValueComparison(file) ||
         needsAddedBinaryProof(file) ||
         (file.status === "renamed" &&
@@ -738,6 +756,13 @@ export async function collectValueEvidence(
       merge_base_commit?: { sha: string };
     }>(`${root}/compare/${pull.base.sha}...${pull.head.sha}`);
     if (comparison?.merge_base_commit?.sha) {
+      await recoverAddedValueComparisons(
+        client,
+        repository,
+        files,
+        comparison.merge_base_commit.sha,
+        pull.head.sha,
+      );
       await recoverRemovedValueComparisons(
         client,
         repository,
