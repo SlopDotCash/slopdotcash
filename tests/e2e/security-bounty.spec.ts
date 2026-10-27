@@ -63,8 +63,16 @@ async function chooseCaseAction(
     .first()
     .waitFor({ state: "attached" });
   const selector = scope.getByRole("combobox", { name: "Action", exact: true });
-  if (await selector.count()) await selector.selectOption(action);
-  else if (typeof action === "string")
+  if (
+    typeof action === "string" &&
+    (await scope.locator(`[data-case-action-selector="${action}"]`).count())
+  )
+    await scope.locator(`[data-case-action-selector="${action}"]`).click();
+  else if (await selector.count()) {
+    const more = scope.locator(".security-actions details");
+    if (!(await selector.isVisible())) await more.locator("summary").click();
+    await selector.selectOption(action);
+  } else if (typeof action === "string")
     await expect(
       scope.locator(`form[data-case-action="${action}"]`),
     ).toBeVisible();
@@ -679,6 +687,10 @@ test("owners publish and control bounty programs with verified funding @registry
       await page.locator("summary").filter({ hasText: group }).click();
     for (const [label, value] of Object.entries(values))
       await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByRole("button", { name: "Review bounty terms" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Review before publishing" }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Publish bounty terms" }).focus();
     await page.keyboard.press("Enter");
     await expect(
@@ -797,6 +809,7 @@ test("owners publish and control bounty programs with verified funding @registry
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
+    await page.getByRole("button", { name: "Review bounty terms" }).click();
     await page.getByRole("button", { name: "Publish bounty terms" }).click();
     await expect(
       page.getByRole("status").filter({ hasText: "Published revision" }),
@@ -808,6 +821,7 @@ test("owners publish and control bounty programs with verified funding @registry
       split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
     });
     await page.getByLabel("Status", { exact: true }).selectOption("closed");
+    await page.getByRole("button", { name: "Review bounty terms" }).click();
     await page.getByRole("button", { name: "Publish bounty terms" }).click();
     await expect(
       page
@@ -840,6 +854,7 @@ test("owners publish and control bounty programs with verified funding @registry
         response.request().method() === "PUT" &&
         new URL(response.url()).pathname === `/api/v1/projects/${id}`,
     );
+    await page.getByRole("button", { name: "Review bounty terms" }).click();
     await page.getByRole("button", { name: "Publish bounty terms" }).click();
     expect((await refused).status()).toBe(403);
     await expect(
@@ -2640,7 +2655,7 @@ test("home advertises only open security terms with the 75/25 split @registry", 
     exact: true,
   });
   await expect(section.locator(".security-bounty-card")).toHaveCount(1);
-  await expect(section).toContainText("10,000 USDC critical bounty");
+  await expect(section).toContainText("7,500 USDC");
   await expect(section).toContainText("7,500 USDC to the researcher (75%)");
   await expect(section).toContainText("2,500 USDC to slop.cash (25%)");
   await expect(section).toContainText(
@@ -2740,6 +2755,14 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await page
       .getByRole("textbox", { name: /^Description/u })
       .fill(description);
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(
+      page.getByRole("textbox", { name: "Summary", exact: true }),
+    ).toHaveValue(summary);
+    await expect(
+      page.getByRole("textbox", { name: /^Description/u }),
+    ).toHaveValue(description);
     await page.evaluate(() => window.scrollTo({ top: 0 }));
     await page.screenshot({
       path: test.info().outputPath("slop-report-before.png"),
@@ -2751,13 +2774,22 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
         new URL(response.url()).pathname === "/api/v1/security-submissions",
     );
     await page
+      .getByRole("button", { name: "Review report", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Review your private report" }),
+    ).toBeFocused();
+    await expect(page.locator(".report-preview")).toHaveText(description);
+    await page
       .getByRole("button", { name: "Submit private report", exact: true })
       .focus();
     await page.keyboard.press("Enter");
     const response = await created;
     expect(response.status()).toBe(201);
     const payload = response.request().postDataJSON();
-    await expect(page).toHaveURL(/\/inbox\?submission=ss_[A-Za-z0-9_-]+$/u);
+    await expect(page).toHaveURL(
+      /\/inbox\?view=reports&submission=ss_[A-Za-z0-9_-]+$/u,
+    );
     const submissionId = new URL(page.url()).searchParams.get(
       "submission",
     ) as string;
@@ -3420,10 +3452,12 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
     await page.clock.install();
     await page.goto(`/projects/${program.id}/security`);
     await expect(
-      page.getByText(`Submit as @e2e-${reporterRole}.`, { exact: false }),
+      page.getByText(`Draft kept in this tab for @e2e-${reporterRole}.`, {
+        exact: false,
+      }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Submit private report", exact: true }),
+      page.getByRole("button", { name: "Review report", exact: true }),
     ).toBeVisible();
     await openPrivateDelivery(page);
     await expectAccessible(page);
@@ -3646,7 +3680,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       .getByRole("button", { name: "Open case", exact: true })
       .click();
     const detail = page.locator(`[aria-labelledby="case-${firstCase}"]`);
-    await expect(detail).toContainText("AI summary");
+    await expect(detail).toContainText("Advisory assessment");
     await expect(detail).toContainText(
       "Fixture proposal: the withdraw path skips the owner check",
     );

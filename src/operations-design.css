@@ -574,3 +574,72 @@
   padding: 0.85rem;
   line-height: 1.6;
 }
+
+/* Reporting keeps the next action and exact reward readable at narrow widths. */
+.security-offer {
+  margin-block: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border-color, #45423b);
+  border-radius: 0.75rem;
+}
+.security-offer p {
+  margin-block: 0.4rem;
+}
+.security-offer-net strong {
+  font-size: clamp(1.5rem, 4vw, 2.5rem);
+  font-variant-numeric: tabular-nums;
+}
+.security-offer-funding {
+  font-weight: 600;
+}
+.report-composer {
+  max-width: 48rem;
+}
+.report-steps,
+.report-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+.report-steps {
+  padding: 0;
+  list-style: none;
+}
+.report-steps li {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 2px solid transparent;
+}
+.report-steps [aria-current="step"] {
+  border-color: currentColor;
+  font-weight: 700;
+}
+.report-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  padding: 1rem;
+  border: 1px solid var(--border-color, #45423b);
+  border-radius: 0.5rem;
+}
+.report-form-actions {
+  margin-block: 1rem;
+}
+.report-form-actions [aria-pressed="true"] {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.security-page h2,
+.security-page h3,
+.security-page h4 {
+  text-transform: none;
+}
+@media (max-width: 640px) {
+  .security-case-list-selected {
+    display: none;
+  }
+  .report-form-actions > button {
+    max-width: 100%;
+    white-space: normal;
+  }
+}
