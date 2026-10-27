@@ -550,6 +550,11 @@ export function startGitHubApiFixture(port) {
     token: "ghs_slopbotfixtureinstallationtoken",
   };
   const server = createServer(async (request, response) => {
+    // Browser tests can spend seconds in synchronous fixture/database setup
+    // between these control requests. Retiring a pooled idle connection then
+    // races the Node client's next write and surfaces as ECONNRESET. Use a
+    // fresh loopback connection per request rather than retrying mutations.
+    response.setHeader("connection", "close");
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
     const publicControl =
