@@ -95,6 +95,8 @@ let server: ReturnType<typeof Bun.serve>;
 let config: ScanServiceConfig;
 let resultPublicKeys: string;
 let ids = 0;
+let acquisitionRequests: { host: string; authorization: string | null }[];
+let publicGitHubLimit: number;
 /** The inventory items the primary reviewer last received. */
 let reviewedItems: { id: string; text: string }[] = [];
 /** What the synthetic Surplus provider answers on each transport. */
@@ -398,13 +400,28 @@ const flagApi = (request: Request) =>
 async function route(incoming: Request): Promise<Response> {
   const url = new URL(incoming.url);
   const host = incoming.headers.get("x-fixture-host");
+  acquisitionRequests.push({
+    host: host ?? "",
+    authorization: incoming.headers.get("authorization"),
+  });
   const path = url.pathname;
   if (host === "api.surplusintelligence.ai") return surplus(incoming, path);
   if (host === "raw.githubusercontent.com")
     return path.endsWith("/src/render.mjs")
       ? new Response(rendererText)
       : new Response(null, { status: 404 });
-  if (host === "api.github.com") return github(url);
+  if (host === "api.github.com") {
+    const requests = acquisitionRequests.filter((r) => r.host === host);
+    if (
+      requests.length > publicGitHubLimit &&
+      incoming.headers.get("authorization") !== "Bearer fixture-github-key"
+    )
+      return Response.json(
+        { message: "API rate limit exceeded" },
+        { status: 403 },
+      );
+    return github(url);
+  }
   const request = new Request(`${ORIGIN}${path}${url.search}`, incoming);
   if (path === "/skill-templates/index.json")
     return Response.json({
@@ -460,6 +477,8 @@ const profile = (
 });
 
 beforeEach(async () => {
+  acquisitionRequests = [];
+  publicGitHubLimit = Number.POSITIVE_INFINITY;
   clock = NOW;
   root = await mkdtemp(join(tmpdir(), "slop-scan-service-"));
   repository = join(root, "git");
@@ -563,6 +582,47 @@ async function activate() {
     }),
   );
 }
+
+test("authenticated source acquisition exceeds the public quota without sharing its credential", async () => {
+  await commit(
+    Object.fromEntries(
+      Array.from({ length: 65 }, (_, i) => [
+        `src/file-${i}.ts`,
+        `export const value${i} = ${i};\n`,
+      ]),
+    ),
+    "Public repository exceeds the anonymous request allowance",
+  );
+  publicGitHubLimit = 60;
+  provider.up = false;
+  const unauthenticated = await runScanPass(config);
+  expect(unauthenticated.assessments[0]).toMatchObject({
+    state: "retry",
+    step: "acquire",
+  });
+  acquisitionRequests = [];
+  config.githubToken = "fixture-github-key";
+  const authenticated = await runScanPass(config);
+  expect(authenticated.assessments[0]).toMatchObject({
+    state: "retry",
+    step: "primary-review",
+  });
+  const githubRequests = acquisitionRequests.filter(
+    (r) => r.host === "api.github.com",
+  );
+  expect(githubRequests.length).toBeGreaterThan(60);
+  expect(
+    githubRequests.every(
+      (r) => r.authorization === "Bearer fixture-github-key",
+    ),
+  ).toBe(true);
+  expect(
+    acquisitionRequests
+      .filter((r) => r.host !== "api.github.com")
+      .every((r) => r.authorization !== "Bearer fixture-github-key"),
+  ).toBe(true);
+  expect(await readdir(config.workDirectory)).toEqual([]);
+});
 
 test("a provider outage leaves the scan pending; the next pass clears the project with one Surplus review", async () => {
   provider.up = false;
