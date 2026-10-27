@@ -58,7 +58,7 @@ jobs:
               main) release_job="Deploy trusted production bundle" ;;
               development) release_job="Deploy verified development to staging" ;;
             esac
-            deployed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$released/jobs?per_page=100" --paginate --slurp --jq "[.[].jobs[] | select(.name == \"$release_job\" and .conclusion == \"success\")] | length")"
+            deployed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$released/jobs?per_page=100" --paginate --slurp | jq --arg release_job "$release_job" '[.[].jobs[] | select(.name == $release_job and .conclusion == "success")] | length')"
             if [ "$deployed" -eq 0 ]; then
               echo "::notice title=Scanner waits for release::$ref did not complete its deployment job."
               continue
