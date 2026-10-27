@@ -56,16 +56,17 @@ async function referralAccount(
     )
     .first<ClaimCacheRow>();
   if (!cache) return json({ enabled: false });
+  // PRD section 11: no copy announces the program before activation. Only
+  // the owner's explicit activation files live accruals; dry runs do not.
   const latest = await deps.db
     .prepare(
-      "SELECT body FROM referral_accrual_files ORDER BY epoch DESC LIMIT 1",
+      "SELECT body FROM referral_accrual_files WHERE mode='live' ORDER BY epoch DESC LIMIT 1",
     )
     .first<{ body: string }>();
-  const referrer = latest
-    ? (JSON.parse(latest.body).referrers as FileReferrer[]).find(
-        (r) => r.githubId === actor.githubId,
-      )
-    : undefined;
+  if (!latest) return json({ enabled: false });
+  const referrer = (JSON.parse(latest.body).referrers as FileReferrer[]).find(
+    (r) => r.githubId === actor.githubId,
+  );
   const pin = await deps.db
     .prepare(
       "SELECT wallet FROM referral_claim_wallets WHERE referrer_github_id=?",
