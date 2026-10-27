@@ -23,7 +23,9 @@ test("a timed-out launcher stops its descendant server before returning failure"
         args: ["-e", launcher],
         cwd: directory,
         env: process.env,
-        timeoutMs: 1500,
+        // Hosted Windows starts two Node processes through its antivirus.
+        // Give them time to run; the same post-timeout liveness checks apply.
+        timeoutMs: process.platform === "win32" ? 5000 : 1500,
       }),
     ).toBe(1);
     const stoppedAt = readFileSync(heartbeat, "utf8");
