@@ -4,7 +4,12 @@ import {
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
 } from "../../contracts/solana/token-extensions";
-import { ata, concat, message } from "../../contracts/solana/transactions";
+import {
+  ata,
+  concat,
+  createAta,
+  message,
+} from "../../contracts/solana/transactions";
 import type { JupiterRouteExpectation } from "./jupiter-route";
 import { JUPITER_PROGRAM, parseTransaction } from "./solana";
 import { resolveSolanaAccounts } from "./solana-accounts";
@@ -237,4 +242,149 @@ test("simulation must preserve authority and prove the exact debit and minimum c
   expect(() =>
     assertSolanaRouteSimulation(review, 1235, [valid[0], null]),
   ).toThrow("removed");
+});
+
+test("newly created destination ATAs verify the output mint and refuse unrelated ATA creations", async () => {
+  const expected: JupiterRouteExpectation = {
+    program: JUPITER_PROGRAM,
+    wallet: key(1),
+    inputMint: key(2),
+    inputProgram: TOKEN_PROGRAM,
+    outputMint: key(3),
+    outputProgram: TOKEN_PROGRAM,
+    amountIn: 1000n,
+    quotedOut: 2000n,
+    minimumOut: 1990n,
+    slippageBps: 50,
+  };
+  const source = ata(expected.inputMint, expected.wallet, TOKEN_PROGRAM);
+  const destination = ata(expected.outputMint, expected.wallet, TOKEN_PROGRAM);
+  const routeInstruction = {
+    program: JUPITER_PROGRAM,
+    accounts: [
+      { key: TOKEN_PROGRAM, write: false },
+      { key: expected.wallet, write: false },
+      { key: source, write: true },
+      { key: destination, write: true },
+      { key: JUPITER_PROGRAM, write: false },
+      { key: expected.outputMint, write: false },
+      { key: JUPITER_PROGRAM, write: false },
+      { key: key(4), write: false },
+      { key: JUPITER_PROGRAM, write: false },
+    ],
+    data: Uint8Array.from([
+      229,
+      23,
+      203,
+      151,
+      122,
+      227,
+      173,
+      42,
+      1,
+      0,
+      0,
+      0,
+      3,
+      100,
+      0,
+      1,
+      ...u64(1000n),
+      ...u64(2000n),
+      50,
+      0,
+      0,
+    ]),
+  };
+  const mintBytes = new Uint8Array(82);
+  mintBytes[44] = 6;
+  mintBytes[45] = 1;
+  const runCase = async (options: {
+    outputMintState?: RpcAccount | null;
+    extraCreateMint?: string;
+    extraCreateProgram?: string;
+  }) => {
+    const instructions = [
+      createAta(
+        expected.wallet,
+        expected.outputMint,
+        expected.wallet,
+        TOKEN_PROGRAM,
+      ),
+      ...(options.extraCreateMint
+        ? [
+            createAta(
+              expected.wallet,
+              options.extraCreateMint,
+              expected.wallet,
+              options.extraCreateProgram ?? TOKEN_PROGRAM,
+            ),
+          ]
+        : []),
+      routeInstruction,
+    ];
+    const raw = concat(
+      Uint8Array.of(1),
+      new Uint8Array(64),
+      message(expected.wallet, key(5), instructions),
+    );
+    const parsed = parseTransaction(raw);
+    const proof = await resolveSolanaAccounts(raw, parsed, async () => {
+      throw new Error("no lookup tables in this case");
+    });
+    const state = new Map<string, RpcAccount | null>([
+      [expected.wallet, rpcAccount(system, new Uint8Array())],
+      [system, rpcAccount(bpf, new Uint8Array(), true)],
+      [
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        rpcAccount(bpf, new Uint8Array(), true),
+      ],
+      [TOKEN_PROGRAM, rpcAccount(bpf, new Uint8Array(), true)],
+      [TOKEN_2022_PROGRAM, rpcAccount(bpf, new Uint8Array(), true)],
+      [JUPITER_PROGRAM, rpcAccount(bpf, new Uint8Array(), true)],
+      [source, tokenAccount(TOKEN_PROGRAM, 2, 2000n)],
+      [destination, null],
+      [expected.inputMint, rpcAccount(TOKEN_PROGRAM, mintBytes)],
+      [
+        expected.outputMint,
+        options.outputMintState === undefined
+          ? rpcAccount(TOKEN_PROGRAM, mintBytes)
+          : options.outputMintState,
+      ],
+      [key(4), null],
+      [key(9), rpcAccount(TOKEN_PROGRAM, mintBytes)],
+      [ata(key(9), expected.wallet, TOKEN_PROGRAM), null],
+      [ata(expected.outputMint, expected.wallet, TOKEN_2022_PROGRAM), null],
+    ]);
+    const rpc = async <T>(_method: string, params: unknown[]) => {
+      const addresses = params[0] as string[];
+      return {
+        context: { slot: 1234 },
+        value: addresses.map((address) => {
+          if (!state.has(address)) throw new Error(`fixture lacks ${address}`);
+          return state.get(address);
+        }),
+      } as T;
+    };
+    return reviewSolanaRouteAccounts(rpc, raw, parsed, proof, expected);
+  };
+
+  const valid = await runCase({});
+  expect(valid.destination).toBeNull();
+  expect(valid.destinationAddress).toBe(destination);
+
+  for (const invalid of [
+    { outputMintState: null },
+    { outputMintState: rpcAccount(system, new Uint8Array()) },
+    { outputMintState: rpcAccount(TOKEN_PROGRAM, mintBytes, true) },
+    { outputMintState: rpcAccount(TOKEN_2022_PROGRAM, mintBytes) },
+    { extraCreateMint: key(9) },
+    { extraCreateMint: expected.inputMint },
+    {
+      extraCreateMint: expected.outputMint,
+      extraCreateProgram: TOKEN_2022_PROGRAM,
+    },
+  ]) {
+    await expect(runCase(invalid)).rejects.toThrow();
+  }
 });
