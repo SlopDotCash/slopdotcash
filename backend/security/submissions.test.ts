@@ -516,6 +516,7 @@ function setup(
     github,
     intake,
     analyzed,
+    analyzer,
     call,
     raw,
     key,
@@ -2045,6 +2046,50 @@ test("registered researcher can start a private report on a quarantined project"
 });
 
 describe("optional GitHub forwarding of a saved report", () => {
+  test("retained legacy drafts share the screening budget and verify a grant before paid work", async () => {
+    const options = { durable: false };
+    const t = setup(options);
+    const draft = await t.ready();
+    options.durable = true;
+    let calls = 0;
+    t.analyzer.screen = async () => {
+      calls++;
+      return {
+        decision: "needs-information",
+        reason: "More evidence is required.",
+      };
+    };
+    for (let index = 0; index < 10; index++) {
+      const response = await t.send(draft.id, draft.revision);
+      expect(response.status).toBe(409);
+      expect(response.body.error).toBe("screening_required");
+    }
+    const refused = await t.send(draft.id, draft.revision);
+    expect({ status: refused.status, calls }).toEqual({
+      status: 429,
+      calls: 10,
+    });
+    expect(refused.body.error).toBe("intake_rate_limited");
+    expect(t.github.counts.posts).toBe(0);
+
+    const noGrantOptions = { durable: false };
+    const noGrant = setup(noGrantOptions);
+    const unapproved = await noGrant.create();
+    if (!unapproved.body.submission) throw new Error("Missing legacy draft");
+    noGrantOptions.durable = true;
+    let unapprovedCalls = 0;
+    noGrant.analyzer.screen = async () => {
+      unapprovedCalls++;
+      return { decision: "legitimate", reason: "Synthetic screening." };
+    };
+    const missing = await noGrant.send(
+      unapproved.body.submission.id,
+      unapproved.body.submission.revision,
+    );
+    expect(missing.body.error).toBe("grant_required");
+    expect(unapprovedCalls).toBe(0);
+  });
+
   test("preserves the Slop receipt and sends the saved version once after authorization", async () => {
     const t = setup({ durable: true });
     const accepted = await t.create(REPORTER, { report: REPORT });

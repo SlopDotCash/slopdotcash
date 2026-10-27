@@ -2776,9 +2776,21 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       await page.keyboard.press("Enter");
       const retryResponse = await retried;
       expect(retryResponse.status()).toBe(200);
-      expect(await retryResponse.json()).toMatchObject({
-        submission: { intake: { state: "legitimate" } },
-      });
+      await expect
+        .poll(async () => {
+          const refreshed = await api(
+            request,
+            "GET",
+            `security-submissions/${submissionId}`,
+            TOKENS["reporter-a"],
+          );
+          return (refreshed.body.submission as { intake: { state: string } })
+            .intake.state;
+        })
+        .toBe("legitimate");
+      await page
+        .getByRole("button", { name: "Refresh reports", exact: true })
+        .click();
       await expect(retry).not.toBeVisible();
       await expect(report.locator(".security-report-text")).toHaveText(
         description,

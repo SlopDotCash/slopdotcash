@@ -136,6 +136,16 @@ no-store and noindex. Financial roles alone receive no body. Contributor
 trace APIs cannot read this prefix. Bodies are never included in notification
 text, activity mail, public pages, exports, analytics or logs.
 
+Public report creation, evidence revisions and rescreen work share ten
+admissions per account in a rolling hour. An atomic D1 admission precedes each
+R2 write or paid call, including retained legacy drafts. Expired admission
+counters may be removed; case, report and audit history is permanent. Completed
+idempotent replays, reads, human decisions and notification-only retries do not
+spend this budget. A refusal preserves the retained report, appeal access and
+funded obligations. Screening retries return promptly through `waitUntil`;
+Inbox's Refresh reports control reads the eventual state. A failed background
+call remains recoverable within its existing bounded timeout.
+
 The existing Surplus analyzer screens the saved report before owner routing.
 States are `queued`, `running`, `legitimate`, `needs-information`, `spam` and
 `unavailable`. Screening judges plausibility and concrete evidence; it is not

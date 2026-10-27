@@ -724,6 +724,138 @@ describe("durable private report controls", () => {
     expect(revoked.body.report).toBeUndefined();
   });
 
+  test.each(["report", "screen"] as const)(
+    "one report cannot bypass the public work budget through repeated %s calls",
+    async (action) => {
+      const t = fixture();
+      if (action === "report") t.decision("needs-information");
+      else t.failScreening(true);
+      const accepted = await t.create("budget-original");
+      let submission = required(accepted.body.submission);
+      const originalId = submission.id;
+      let refused: Awaited<ReturnType<typeof t.call>> | undefined;
+      for (let index = 1; index <= 10; index++) {
+        const before = { objects: t.objects.size, calls: t.screeningCalls() };
+        const result = await t.call(
+          REPORTER,
+          "POST",
+          `security-submissions/${submission.id}/${action}`,
+          {
+            expectedRevision: submission.intake.revision,
+            ...(action === "report"
+              ? {
+                  report: {
+                    ...REPORT,
+                    description: `${REPORT.description} Revision ${index}.`,
+                  },
+                }
+              : {}),
+          },
+        );
+        if (index < 10) {
+          expect(result.status).toBe(200);
+          submission = required(result.body.submission);
+        } else {
+          refused = result;
+          expect({
+            status: result.status,
+            objects: t.objects.size,
+            calls: t.screeningCalls(),
+          }).toEqual({ status: 429, ...before });
+        }
+      }
+      expect(refused?.body.error).toBe("intake_rate_limited");
+      expect(t.screeningCalls()).toBe(10);
+      const replay = await t.create("budget-original");
+      expect(replay.status).toBe(200);
+      expect(required(replay.body.submission).id).toBe(originalId);
+      const current = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${originalId}`,
+      );
+      const reviewed = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${originalId}/review`,
+        {
+          expectedRevision: required(current.body.submission).intake.revision,
+          decision: "forward",
+          reason:
+            "The maintainer can review retained evidence even when the reporter's model-work budget is exhausted.",
+        },
+      );
+      expect(reviewed.status).toBe(200);
+      expect(t.screeningCalls()).toBe(10);
+      const other = await t.create("other-budget", OTHER);
+      expect(other.status).toBe(201);
+      t.advance(3600_001);
+      const recovered = await t.create("later-budget");
+      expect(recovered.status).toBe(201);
+    },
+  );
+
+  test("concurrent public intake refuses before writing excess private objects or calling the model", async () => {
+    const t = fixture();
+    const results = await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        t.create(`concurrent-budget-${String(index).padStart(2, "0")}`),
+      ),
+    );
+    expect(results.filter((row) => row.status === 201)).toHaveLength(10);
+    expect(results.filter((row) => row.status === 429)).toHaveLength(2);
+    expect(t.objects.size).toBe(10);
+    expect(t.screeningCalls()).toBe(10);
+  });
+
+  test("rolling admission prevents orphan writes across a window boundary", async () => {
+    const t = fixture();
+    expect((await t.create("first-boundary")).status).toBe(201);
+    t.advance(3_599_000);
+    for (let index = 0; index < 9; index++)
+      expect((await t.create(`late-boundary-${index}`)).status).toBe(201);
+    t.advance(2_000);
+    const results = await Promise.all([
+      t.create("new-boundary-A"),
+      t.create("new-boundary-B"),
+    ]);
+    expect(results.map((row) => row.status).sort()).toEqual([201, 429]);
+    expect(t.objects.size).toBe(11);
+    expect(t.screeningCalls()).toBe(11);
+  });
+
+  test("a slow screening retry returns before the browser deadline and remains refreshable", async () => {
+    const t = fixture();
+    t.failScreening(true);
+    const accepted = await t.create();
+    const submission = required(accepted.body.submission);
+    t.failScreening(false);
+    t.beforeScreen(() => new Promise((resolve) => setTimeout(resolve, 16_000)));
+    const pending: Promise<unknown>[] = [];
+    t.deps.waitUntil = (task) => {
+      pending.push(task);
+    };
+    const start = performance.now();
+    const retried = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/screen`,
+      {
+        expectedRevision: submission.intake.revision,
+      },
+    );
+    expect(retried.status).toBe(200);
+    expect(performance.now() - start).toBeLessThan(15_000);
+    await Promise.all(pending);
+    const refreshed = await t.call(
+      REPORTER,
+      "GET",
+      `security-submissions/${submission.id}`,
+    );
+    expect(required(refreshed.body.submission).intake.state).toBe("legitimate");
+    expect(refreshed.body.report).toEqual(REPORT);
+  }, 20_000);
+
   test.each(["queued", "running"] as const)(
     "a retained %s report exposes recovery after its worker is lost",
     async (state) => {

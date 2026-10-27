@@ -198,3 +198,12 @@ WHEN NEW.advisory_ghsa IS NOT NULL AND EXISTS (
  AND s.advisory_ghsa=NEW.advisory_ghsa AND s.state IN ('submitted','receipt-verified')
 )
 BEGIN SELECT RAISE(ABORT,'UNIQUE constraint failed: security_cases.advisory_ghsa'); END;
+
+-- Ephemeral workload admission only; case/report/audit history is unchanged.
+CREATE TABLE security_intake_rate_admissions (
+ id TEXT PRIMARY KEY,
+ actor_github_id TEXT NOT NULL,
+ admitted_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX security_intake_rate_actor_time
+ ON security_intake_rate_admissions(actor_github_id, admitted_at);
