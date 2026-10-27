@@ -73,6 +73,31 @@ including after repository changes. Pending or incomplete normal investigations
 do not remove that exemption; confirmed malicious findings still ban the project
 until the required independent reinstatement decision.
 
+### Explicit owner-approved admission exemptions
+
+A platform administrator may record an explicit human owner decision through
+`POST /api/v1/admin/vetting/exemptions`. This is a separate audited D1 record,
+not a change to the fixed migration-0075 set or a project manifest field.
+The request supplies the current `projectId`, `revision`, `reason`,
+`decisionReference`, and `confirmation: true`. The server checks current
+repository authority and stores the canonical registry digest, immutable
+GitHub repository identity and steward. Ordinary project owners cannot grant themselves
+an exemption.
+
+An active grant clears normal admission for that repository without inventing
+an assessment. Public setup and operator views label it **Owner-approved
+exemption**. It cannot move to another repository or steward. Existing assessments remain
+intact, and assessments requested after the grant control clearance, including
+requests made at the same timestamp. Confirmed malice, contributor flags,
+account restrictions and fresh reinstatement requirements remain controlling.
+
+`POST /api/v1/admin/vetting/exemptions/:id/revoke` requires a new human
+confirmation, reason and decision reference. It retains the grant and
+revocation history, removes the exception from clearance, and restores normal
+admission requirements. Grant and revoke operations invalidate discovery and
+skill caches; normal setup still checks GitHub access and App installation.
+No project receives an exemption merely because its organization is Slop.
+
 The signed `POST /api/v1/vetting/refresh` queues initial admission for a repository
 without an assessment and required fresh flag recovery. It does not schedule
 routine changed-head or changed-template scans. Manual investigation requests
