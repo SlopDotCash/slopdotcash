@@ -207,3 +207,83 @@ test("the header login link keeps the current page as the return route", async (
     `${deployment.site}/login?next=${encodeURIComponent("/how-it-works#faq")}`,
   );
 });
+
+test("closing a pending sign-in window lets the user start again", async ({
+  diagnostics,
+  page,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at https:\/\/[^ ]+\/api\/v1\/points\/me$/u,
+  );
+  const expiresAt = new Date(Date.now() + 240_000).toISOString();
+  const flowId = `flow_${"f".repeat(24)}`;
+  let starts = 0;
+  let joins = 0;
+  await page.context().route(`${deployment.identity}/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/v1/oauth/start") {
+      starts += 1;
+      await route.fulfill({
+        json: {
+          flowId,
+          pollCapability: "p".repeat(48),
+          expiresAt,
+          pollAfterSeconds: 1,
+          authorizationUrl: `${deployment.identity}/v1/oauth/authorize?flow_id=${flowId}&state=${"s".repeat(48)}`,
+        },
+      });
+    } else if (path === "/v1/oauth/authorize") {
+      await route.fulfill({
+        contentType: "text/html",
+        body: "<title>Pending OAuth fixture</title>",
+      });
+    } else {
+      await route.fulfill({
+        status: 202,
+        json: { status: "pending", retryAfterSeconds: 1 },
+      });
+    }
+  });
+  await page.route(`${deployment.site}/**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/v1/points/join") joins += 1;
+    if (url.pathname.startsWith("/api/")) {
+      await route.fulfill({ status: 401, json: {} });
+      return;
+    }
+    await route.fulfill({
+      path: join(
+        process.cwd(),
+        "dist",
+        route.request().resourceType() === "document"
+          ? "index.html"
+          : url.pathname,
+      ),
+    });
+  });
+  await page.goto(`${deployment.site}/login`);
+  for (const attempt of [1, 2]) {
+    const popupEvent = page.waitForEvent("popup");
+    await page
+      .getByRole("button", { name: "Continue with GitHub", exact: true })
+      .click();
+    const popup = await popupEvent;
+    await expect(popup).toHaveURL(/\/v1\/oauth\/authorize\?/u);
+    await popup.close();
+    await expect(
+      page.getByRole("status").filter({
+        hasText: "The GitHub sign-in window was closed. Try again.",
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Continue with GitHub", exact: true }),
+    ).toBeEnabled();
+    expect(starts).toBe(attempt);
+    expect(joins).toBe(0);
+  }
+  await expect(
+    page.getByRole("button", { name: "Cancel", exact: true }),
+  ).toHaveCount(0);
+  await page.goto("about:blank");
+});

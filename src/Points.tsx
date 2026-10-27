@@ -677,6 +677,15 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
           const body = await readBoundedJson(response, 16384, "sign-in");
           if (!body || typeof body !== "object" || Array.isArray(body))
             throw new Error("Sign-in failed. Start again.");
+          // A completed sign-in can close its own window before this poll.
+          // Only a still-pending flow needs recovery when the window is gone.
+          if (
+            response.status === 202 &&
+            "status" in body &&
+            body.status === "pending" &&
+            popup.closed
+          )
+            throw new Error("The GitHub sign-in window was closed. Try again.");
           return {
             status: response.status,
             body: body as Record<string, unknown>,
