@@ -16,26 +16,39 @@ function SectionNav({
   label,
   current,
   links,
+  reload = false,
 }: {
   label: string;
   current: string;
+  reload?: boolean;
   links: readonly { id: string; label: string; href: string }[];
 }) {
   return (
     <nav aria-label={label} className="account-sections route-section-nav">
-      {links.map((link) => (
-        <Link
-          key={link.id}
-          href={link.href}
-          ariaCurrent={current === link.id ? "page" : undefined}
-        >
-          {link.label}
-        </Link>
-      ))}
+      {links.map((link) =>
+        reload ? (
+          <a
+            key={link.id}
+            href={link.href}
+            aria-current={current === link.id ? "page" : undefined}
+          >
+            {link.label}
+          </a>
+        ) : (
+          <Link
+            key={link.id}
+            href={link.href}
+            ariaCurrent={current === link.id ? "page" : undefined}
+          >
+            {link.label}
+          </Link>
+        ),
+      )}
     </nav>
   );
 }
 
+/** Re-read the canonical registry between project pages after an owner revision. */
 export function ProjectNav({
   project,
   current,
@@ -48,6 +61,7 @@ export function ProjectNav({
     <SectionNav
       label="Project navigation"
       current={current}
+      reload
       links={[
         { id: "overview", label: "Overview", href: base },
         { id: "funding", label: "Funds & awards", href: `${base}/funding` },

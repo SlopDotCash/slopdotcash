@@ -544,6 +544,9 @@ test("maintainers can verify or reject a manually linked private report @registr
     .getByRole("button", { name: new RegExp(`${id} GHSA-2c3f-4g5h-6j7m`) })
     .click();
   const detail = page.locator(`[aria-labelledby="case-${claims[0]}"]`);
+  await detail
+    .getByRole("combobox", { name: "Action", exact: true })
+    .selectOption("verify-link");
   const verify = detail.getByRole("form", { name: "Verify the GitHub report" });
   await expect(
     verify.getByRole("button", { name: "Verify report", exact: true }),
@@ -575,6 +578,9 @@ test("maintainers can verify or reject a manually linked private report @registr
     .getByRole("button", { name: new RegExp(`${id} GHSA-3c4f-5g6h-7j8m`) })
     .click();
   const rejectedDetail = page.locator(`[aria-labelledby="case-${claims[1]}"]`);
+  await rejectedDetail
+    .getByRole("combobox", { name: "Action", exact: true })
+    .selectOption("reject-link");
   const reject = rejectedDetail.getByRole("form", { name: "Reject this link" });
   const reason = "The advisory does not identify this account as the reporter.";
   await reject.getByLabel("Private reason").fill(reason);
@@ -618,6 +624,9 @@ test("owners publish and control bounty programs with verified funding @registry
   try {
     await signIn(page, TOKENS.security);
     await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
+    await page
+      .getByText("Security program and private bounty funds", { exact: true })
+      .click();
     await page.getByRole("button", { name: "Set bounty terms" }).click();
     await page.getByLabel("Published gross award (USDC)").fill("100");
     await page.getByLabel(`Source commit (${repository})`).fill("a".repeat(40));
@@ -632,6 +641,12 @@ test("owners publish and control bounty programs with verified funding @registry
       "Researcher protection":
         "Good-faith testing within these rules is authorized.",
     };
+    for (const group of [
+      "Scope and testing",
+      "Award criteria",
+      "Researcher terms",
+    ])
+      await page.locator("summary").filter({ hasText: group }).click();
     for (const [label, value] of Object.entries(values))
       await page.getByLabel(label, { exact: true }).fill(value);
     await page.getByRole("button", { name: "Publish bounty terms" }).focus();
@@ -740,6 +755,9 @@ test("owners publish and control bounty programs with verified funding @registry
     // The refusal is the same when the vault has available funds.
     await expectOutsiderRefused(request, id, repository);
     await page.reload({ waitUntil: "networkidle" });
+    await page
+      .getByText("Security program and private bounty funds", { exact: true })
+      .click();
     await page.getByRole("button", { name: "Edit bounty settings" }).click();
     await page.getByLabel("Status", { exact: true }).selectOption("open");
     await expectAccessible(page);
@@ -1487,6 +1505,9 @@ test("private security bounty programs keep cases restricted from intake to awar
     const detail = page.locator(`[aria-labelledby="case-${declared}"]`);
     await expect(detail).toContainText("Waiting for an independent reviewer");
     await expect(detail.getByText(/\(verified from GitHub\)/u)).toBeVisible();
+    await detail
+      .getByRole("combobox", { name: "Action", exact: true })
+      .selectOption({ label: "Related-party award review" });
     const form = detail.getByRole("form", {
       name: "Related-party award review",
     });
@@ -1815,9 +1836,11 @@ test("private security bounty programs keep cases restricted from intake to awar
         name: new RegExp(`${a.id} GHSA-2c3f-4g5h-6j7m`, "u"),
       })
       .click();
-    const form = page.locator("form").filter({
-      has: page.getByRole("button", { name: "Save disclosure decision" }),
-    });
+    await page
+      .getByRole("region", { name: "Case actions" })
+      .getByRole("combobox", { name: "Action", exact: true })
+      .selectOption({ label: "Disclosure" });
+    const form = page.getByRole("form", { name: "Disclosure", exact: true });
     await form
       .getByLabel("Disclosure state")
       .selectOption("redaction-approved");
@@ -1955,7 +1978,9 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(detail).toContainText("Approved, not paid yet");
     await expect(detail).toContainText("Received by GitHub");
     await expect(detail).not.toContainText("AI summary");
-    await detail.getByText("More actions", { exact: true }).click();
+    await detail
+      .getByRole("combobox", { name: "Action", exact: true })
+      .selectOption("recognition");
     await detail.getByLabel("Show my name publicly").selectOption("opt-in");
     await detail.getByRole("button", { name: "Save my choice" }).click();
     await expect(detail.getByRole("status")).toContainText(
@@ -2077,7 +2102,10 @@ test("private settlement requires visibility consent and produces an unsigned re
   await signIn(page, TOKENS["reporter-a"]);
   await page.goto("/security", { waitUntil: "networkidle" });
   await page.getByRole("button", { name: new RegExp(`^${id} `) }).click();
-  await page.getByText("Accept payment visibility", { exact: true }).click();
+  await page
+    .getByRole("region", { name: "Case actions" })
+    .getByRole("combobox", { name: "Action", exact: true })
+    .selectOption("consent-payment");
   await page
     .getByLabel(/^I understand that chain transactions reveal/u)
     .check();
@@ -2107,7 +2135,10 @@ test("private settlement requires visibility consent and produces an unsigned re
   await signIn(page, TOKENS.finance);
   await page.goto("/security", { waitUntil: "networkidle" });
   await page.getByRole("button", { name: new RegExp(`^${id} `) }).click();
-  await page.getByText("Prepare private payment", { exact: true }).click();
+  await page
+    .getByRole("region", { name: "Case actions" })
+    .getByRole("combobox", { name: "Action", exact: true })
+    .selectOption("prepare-payment");
   await page.getByLabel(/^I approve .* on this network/u).check();
   await page
     .getByRole("button", { name: "Prepare unsigned payment", exact: true })
@@ -2832,6 +2863,11 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     await page
       .getByLabel("CWE IDs (optional)", { exact: true })
       .fill("CWE-284");
+    await cvss.fill("");
+    await severity.selectOption("");
+    await page.getByLabel("CWE IDs (optional)", { exact: true }).fill("");
+    await expect(classification).toHaveAttribute("open", "");
+    await cvss.fill(report.cvssVectorString);
     await page.clock.fastForward(31_000);
     await expect(page.getByRole("alert")).toContainText("is out of date");
     await expect(page.getByRole("alert")).toContainText("Your draft is kept");
@@ -3029,8 +3065,21 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     await expect(detail).toContainText(
       "Next step: Choose an award amount or no award.",
     );
+    const actions = page.getByRole("region", { name: "Case actions" });
+    await actions
+      .getByRole("combobox", { name: "Action", exact: true })
+      .selectOption("award");
+    await expect(actions.getByRole("form")).toHaveCount(1);
     const form = page.getByRole("form", { name: "Award" });
     await form.getByLabel("Gross award (USDC)").fill("4000");
+    await actions
+      .getByRole("combobox", { name: "Action", exact: true })
+      .selectOption("request-information");
+    await expect(actions.getByRole("form")).toHaveCount(1);
+    await actions
+      .getByRole("combobox", { name: "Action", exact: true })
+      .selectOption("award");
+    await expect(form.getByLabel("Gross award (USDC)")).toHaveValue("4000");
     await expect(form.getByRole("status")).toHaveText(
       "Researcher 3,000 USDC · Slop 1,000 USDC",
     );

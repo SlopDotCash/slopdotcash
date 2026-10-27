@@ -73,13 +73,14 @@ test("Account waits for identity, revokes another session and signs out the curr
       },
     }),
   );
-  await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${site}/account#wallets`, { waitUntil: "domcontentloaded" });
   await expect(page.locator("#wallets")).toContainText("Checking your account");
   releaseIdentity();
   await expect(
     page.getByRole("button", { name: "Connect EVM wallet", exact: true }),
   ).toBeVisible();
   const panel = page.locator("#sessions");
+  await panel.locator("summary").click();
   await expect(panel).toContainText("This session");
   await expect(panel).toContainText("Other session");
   await page.screenshot({
@@ -210,22 +211,24 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
   });
   await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });
   const sections = page.getByRole("navigation", { name: "Account sections" });
-  const appealsLink = sections.getByRole("link", { name: "Appeals" });
+  const securityLink = sections.getByRole("link", { name: "Security" });
+  const security = page.locator("#security");
   const appeals = page.getByRole("heading", { name: "Appeals", exact: true });
   const profile = page.locator("#profile");
   const signIn = profile.getByRole("button", { name: "Continue with GitHub" });
   await expect(signIn).toBeEnabled();
-  await expect(appealsLink).toHaveCount(0);
+  await expect(securityLink).toHaveCount(0);
   await expect(appeals).toHaveCount(0);
   const popup = page.waitForEvent("popup");
   await signIn.click();
   const authWindow = await popup;
   await expect(profile).toContainText("You’re signed in.");
   await authWindow.close();
-  await expect(appealsLink).toBeVisible();
+  await expect(securityLink).toBeVisible();
+  await expect(securityLink).toHaveAttribute("href", "#security");
   await expect(appeals).toBeVisible();
   await expect(
-    page.getByRole("form", { name: "Account appeal for demo" }),
+    security.getByRole("form", { name: "Account appeal for demo" }),
   ).toBeVisible();
   await expectAccessible(page);
   const recovery = page.locator("#recovery");
@@ -238,7 +241,13 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
     .fill("appeal-test");
   await recovery.getByRole("button", { name: "Close account" }).click();
   await expect(recovery).toContainText("Your account is closed");
+  await expect(
+    page.getByText("You’re signed in.", { exact: true }),
+  ).toHaveCount(0);
   await expect(appeals).toHaveCount(0);
-  await expect(appealsLink).toHaveCount(0);
+  await expect(
+    page.getByRole("form", { name: "Account appeal for demo" }),
+  ).toHaveCount(0);
+  await expect(securityLink).toHaveCount(0);
   await expect(signIn).toBeEnabled();
 });

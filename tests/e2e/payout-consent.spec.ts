@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { privateKeyToAccount } from "viem/accounts";
 import { verifyEvmBindingSignature } from "../../backend/payments/possession";
 import { evmBindingTypedData } from "../../contracts/evm/adapter";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 const recipient = privateKeyToAccount(`0x${"0".repeat(63)}1`);
@@ -130,25 +131,140 @@ async function setup(
   return () => authorized;
 }
 
+test("payout rows distinguish test networks and retain exact award details at 200% text", async ({
+  page,
+}, info) => {
+  const token = `0x${"7".repeat(40)}`;
+  const amount = "120,987,653,232,098,764.560987653232098764";
+  const netBase = "120987653232098764560987653232098764";
+  const payment = {
+    vault,
+    projectId: "eliza",
+    chain: "base",
+    assetAddress: token,
+    assetDecimals: 18,
+    grossBase: "123456789012345678123456789012345678",
+    netBase,
+    feeBase: "2469135780246913562469135780246914",
+    state: "reserved",
+    transactionId: null,
+    submittedTransactionId: null,
+  };
+  const writes: string[] = [];
+  await page.route("**/api/v1/payments/**", (route) => {
+    if (route.request().method() !== "GET")
+      writes.push(route.request().method());
+    return route.fulfill({
+      json: {
+        githubUserId: "123",
+        wallets: [],
+        payments: [
+          {
+            ...payment,
+            id: "a".repeat(64),
+            network: "base-mainnet",
+            deliveryState: "needs_wallet",
+          },
+          {
+            ...payment,
+            id: "b".repeat(64),
+            network: "base-sepolia",
+            deliveryState: "held",
+          },
+        ],
+        monthlyAwards: [],
+        balances: [],
+        directTransfers: [],
+        walletObservations: [],
+      },
+    });
+  });
+  await page.route("**/api/v1/referrals/me", (route) =>
+    route.fulfill({ json: { enabled: false } }),
+  );
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  const rows = page.locator(".payout-row");
+  await expect(rows).toHaveCount(2);
+  for (const [index, network, state] of [
+    [0, "Base", "Awaiting wallet"],
+    [1, "Base Sepolia (test)", "Held"],
+  ] as const) {
+    const row = rows.nth(index);
+    await expect(row.locator(".payout-main")).toContainText(network);
+    await expect(
+      row
+        .locator(".payout-main")
+        .getByRole("link", { name: "eliza", exact: true }),
+    ).toHaveAttribute("href", "/projects/eliza");
+    await expect(row.getByText(amount, { exact: true })).toBeVisible();
+    await expect(row.getByText(token, { exact: true })).toBeVisible();
+    await expect(row.locator(".payout-pill")).toHaveText(state);
+    await expect(row.locator(".payout-amount small")).toContainText("Gross");
+    await expect(row.locator(".payout-amount small")).toContainText(
+      "fee 2,469,135,780,246,913.562469135780246914",
+    );
+  }
+  await enlargeText(page.locator(".earnings-page"));
+  for (const row of await rows.all()) {
+    expect(
+      await row.evaluate(
+        (element) => element.scrollWidth - element.clientWidth,
+      ),
+    ).toBeLessThanOrEqual(1);
+  }
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - innerWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  await expectAccessible(page);
+  expect(writes).toEqual([]);
+  await page.screenshot({
+    path: info.outputPath("payout-network-and-amounts-200.png"),
+    fullPage: true,
+  });
+});
+
 test("a recipient reviews the exact vault and signs consent without claiming payment", async ({
   page,
 }, info) => {
   const authorized = await setup(page);
+  await expect(
+    page
+      .locator(".payout-row")
+      .getByRole("link", { name: "eliza", exact: true }),
+  ).toHaveAttribute("href", "/projects/eliza");
+  await expect(
+    page.getByText("Gross 1 USDC · fee 0.02 USDC", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Authorize payout wallet" }).click();
   const review = page.getByRole("dialog", {
-    name: "Review payout wallet consent",
+    name: "Authorize payout wallet",
   });
-  await expect(review).toContainText(vault);
-  await expect(review).toContainText(recipient.address);
+  await expect(review.getByText(vault, { exact: true })).toBeVisible();
+  await expect(
+    review.getByText(recipient.address, { exact: true }),
+  ).toBeVisible();
   await expect(review).toContainText("Base");
   await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
+  const restoreText = await enlargeText(review);
+  await expect(review.getByText(vault, { exact: true })).toBeVisible();
+  await expect(
+    review.getByText(recipient.address, { exact: true }),
+  ).toBeVisible();
+  expect(
+    await review.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("payout-consent-review.png"),
     fullPage: true,
   });
+  await restoreText();
   await expect(
-    review.getByRole("heading", { name: "Review payout wallet consent" }),
+    review.getByRole("heading", { name: "Authorize payout wallet" }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
@@ -160,7 +276,7 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
   ).toBeVisible();
   expect(authorized()).toBe(1);
   await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("cell", { name: /^Held/ })).toBeVisible();
+  await expect(page.locator(".payout-pill", { hasText: "Held" })).toBeVisible();
 });
 
 for (const fault of ["account", "domain", "reject"] as const) {
@@ -180,7 +296,9 @@ for (const fault of ["account", "domain", "reject"] as const) {
           : "rejected",
     );
     expect(authorized()).toBe(0);
-    await expect(page.getByRole("cell", { name: /^Held/ })).toBeVisible();
+    await expect(
+      page.locator(".payout-pill", { hasText: "Held" }),
+    ).toBeVisible();
   });
 }
 
@@ -378,7 +496,7 @@ test("payout consent remains readable with enlarged text and Escape restores the
   const action = page.getByRole("button", { name: "Authorize payout wallet" });
   await action.click();
   const dialog = page.getByRole("dialog", {
-    name: "Review payout wallet consent",
+    name: "Authorize payout wallet",
   });
   const bounds = await dialog.boundingBox();
   const viewport = page.viewportSize();

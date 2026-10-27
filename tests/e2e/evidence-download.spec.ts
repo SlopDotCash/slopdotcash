@@ -168,6 +168,7 @@ test("large private evidence downloads with a single-use browser grant @registry
       exact: true,
     }),
   });
+  await item.getByText("Download evidence", { exact: true }).click();
   await item
     .getByRole("textbox")
     .fill("Inspect the complete synthetic disk overlay without execution");
