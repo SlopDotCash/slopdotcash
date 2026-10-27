@@ -428,7 +428,10 @@ project route.
 
 A clean scan result reruns setup for the recorded project creator. It reloads
 current GitHub permission and checks the permanent actor ID, installation,
-restrictions, and exact scan clearance before activation. No owner session or
+restrictions, and retained admission clearance before activation. A routine
+commit or skill edit on the same immutable repository keeps the original
+admission assessment; initial admission and security reinstatement retain their
+separate evidence requirements. No owner session or
 admin action is needed for this check. A failed readiness check leaves the
 project paused and returns an explicit retry state; the owner can retry from
 the setup page. A scan result alone never grants repository authority.

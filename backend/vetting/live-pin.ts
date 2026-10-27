@@ -1,5 +1,5 @@
 /**
- * Reads the live pin a vetting clearance must match (PRD VET-07): the head
+ * Reads the live pin a scan request or fresh reinstatement must match (PRD VET-07): the head
  * commit of the project's integration branch on GitHub and the content
  * digest of the deployed skill template inputs. Every failure throws, so a
  * caller never compares a clearance with a guessed commit.

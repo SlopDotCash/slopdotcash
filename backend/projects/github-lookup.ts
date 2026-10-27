@@ -345,8 +345,8 @@ export async function lookupGitHubRepository(
 const BRANCH = /^[A-Za-z0-9._/-]{1,255}$/u;
 
 /**
- * Reads the current head commit of one branch. Security vetting binds a
- * clearance to this exact commit (PRD VET-07), so every failure throws and
+ * Reads the current head commit of one branch. Security vetting binds an
+ * assessment to this exact commit (PRD VET-07), so every failure throws and
  * never returns a guessed commit.
  */
 export async function readBranchHead(

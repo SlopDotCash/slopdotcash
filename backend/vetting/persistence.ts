@@ -1,6 +1,6 @@
 /**
  * D1 storage for vetting assessments and artifact quarantine records, and the
- * revision-bound clearance rule every executable surface asks before it
+ * repository admission and fresh reinstatement rules every executable surface asks before it
  * serves a project (PRD VET-01, VET-06, VET-07).
  */
 
@@ -11,6 +11,7 @@ import type {
   ProjectEnforcement,
 } from "../../src/lib/project-contracts";
 import { executableManifestContent } from "../../src/lib/project-revision-changes";
+import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type {
   AssessmentState,
   AssessmentSummary,
@@ -125,7 +126,8 @@ function fromRow(row: AssessmentRow): VettingAssessment {
  * The executable content of a manifest: the key-sorted canonical JSON of its
  * scanned fields (`executableManifestContent`). Activation, listing,
  * presentation and financial edits keep the digest, whatever key order the
- * editor sent; a change to the source or the skill inputs needs a fresh scan.
+ * editor sent. It remains the evidence digest even when routine later updates
+ * keep the same repository admission.
  */
 export async function vettedContentSha256(manifest: object): Promise<string> {
   return sha256Hex(
@@ -133,6 +135,21 @@ export async function vettedContentSha256(manifest: object): Promise<string> {
       canonicalJson(executableManifestContent(manifest)),
     ),
   );
+}
+
+/** Admission follows one immutable repository, not a commit or mutable name. */
+function admissionRepository(manifest: object): string | null {
+  const { authority, repositories } = manifest as ProjectDefinition;
+  if (
+    repositories?.length !== 1 ||
+    !authority?.repositoryId ||
+    !authority.repositoryNodeId
+  )
+    return null;
+  return canonicalJson({
+    id: authority.repositoryId,
+    nodeId: authority.repositoryNodeId,
+  });
 }
 
 export function summarize(assessment: VettingAssessment): AssessmentSummary {
@@ -208,9 +225,13 @@ export class CloudflareVettingPersistence {
   }
 
   /** Every revision of a project, oldest first, with its content digest. */
-  async revisionContents(
-    projectId: string,
-  ): Promise<{ revision: number; contentSha256: string }[]> {
+  async revisionContents(projectId: string): Promise<
+    {
+      revision: number;
+      contentSha256: string;
+      repositoryIdentity: string | null;
+    }[]
+  > {
     const rows = await this.db
       .prepare(
         "SELECT revision, manifest FROM project_revisions WHERE project_id = ? ORDER BY revision",
@@ -221,6 +242,7 @@ export class CloudflareVettingPersistence {
       (rows.results ?? []).map(async (row) => ({
         revision: row.revision,
         contentSha256: await vettedContentSha256(JSON.parse(row.manifest)),
+        repositoryIdentity: admissionRepository(JSON.parse(row.manifest)),
       })),
     );
   }
@@ -529,27 +551,21 @@ export class CloudflareVettingPersistence {
       throughRevision,
       readPin,
       forReinstatement,
+      admissionRepository(manifest),
     );
   }
 
-  /**
-   * The clearance of a project's content digest through a revision. A
-   * grandfathered project is cleared without a scan unless a finding bans
-   * it. A confirmed-malicious result bans the project until an independent ADM-06
-   * decision explicitly covers that exact finding with a later clean scan.
-   * A clean scan alone cannot lift it. Otherwise only scans of the unbroken run of
-   * revisions with the same content count, and of those only scans of the
-   * live pin: the current integration-branch head and template digest. The
-   * newest finished one decides (VET-07). A scan of another commit or
-   * template is stale, so a moved branch or a new template is never served
-   * on an old clearance.
-   */
-  async clearance(
+  /** Admission uses the latest actual assessment of this repository identity.
+   * Its original revision, commit and template remain evidence, never a claim
+   * about later content. Explicit reinstatement still requires the current pin.
+   * Malicious findings and retained-evidence checks apply to both paths. */
+  private async clearance(
     projectId: string,
     contentSha256: string,
     throughRevision: number,
     readPin: VettingPinReader,
     forReinstatement = false,
+    repositoryIdentity: string | null,
   ): Promise<VettingClearance> {
     const assessments = await this.projectAssessments(projectId);
     const reviewed = await this.db
@@ -578,42 +594,59 @@ export class CloudflareVettingPersistence {
       )
       .bind(projectId)
       .first<{ found: number }>();
-    if (grandfathered && !malicious && !forReinstatement)
-      return { state: "cleared", assessment: null, grandfathered: true };
-    const window = new Set<number>();
     const revisions = await this.revisionContents(projectId);
+    if (
+      grandfathered &&
+      !malicious &&
+      !forReinstatement &&
+      repositoryIdentity !== null &&
+      revisions[0]?.repositoryIdentity === repositoryIdentity
+    )
+      return { state: "cleared", assessment: null, grandfathered: true };
+    const window = new Map<number, string>();
     for (let index = revisions.length - 1; index >= 0; index -= 1) {
       const revision = revisions[index];
       if (revision.revision > throughRevision) continue;
-      if (revision.contentSha256 !== contentSha256) break;
-      window.add(revision.revision);
+      if (
+        forReinstatement
+          ? revision.contentSha256 !== contentSha256
+          : repositoryIdentity === null ||
+            revision.repositoryIdentity !== repositoryIdentity
+      )
+        break;
+      window.set(revision.revision, revision.contentSha256);
     }
     const relevant = assessments.filter(
       (assessment) =>
-        window.has(assessment.revision) &&
-        assessment.contentSha256 === contentSha256,
+        window.get(assessment.revision) === assessment.contentSha256,
     );
     const latest = relevant.at(-1);
     if (latest === undefined) return { state: "unscanned" };
-    let live: VettingPin;
-    try {
-      live = await readPin();
-    } catch (error) {
-      return {
-        state: "unverified",
-        reason:
-          `Slop could not read the live integration-branch head or skill template digest. ${error instanceof Error ? error.message : ""}`.trim(),
-      };
+    let live: VettingPin | undefined;
+    let pinned = relevant;
+    if (forReinstatement) {
+      try {
+        live = await readPin();
+      } catch (error) {
+        return {
+          state: "unverified",
+          reason:
+            `Slop could not read the live integration-branch head or skill template digest. ${error instanceof Error ? error.message : ""}`.trim(),
+        };
+      }
+      pinned = relevant.filter(
+        (assessment) =>
+          assessment.commitSha === live?.commitSha &&
+          assessment.templateSha256 === live?.templateSha256,
+      );
     }
-    const pinned = relevant.filter(
-      (assessment) =>
-        assessment.commitSha === live.commitSha &&
-        assessment.templateSha256 === live.templateSha256,
-    );
-    const finished = newest(
-      pinned,
-      (assessment) => assessment.state !== "pending",
-    );
+    // An explicit later investigation still controls eligibility; an old clean
+    // admission cannot override a pending or incomplete investigation.
+    const finished = forReinstatement
+      ? newest(pinned, (assessment) => assessment.state !== "pending")
+      : latest.state === "pending"
+        ? undefined
+        : latest;
     if (finished?.state === "clean") {
       if (
         malicious &&
@@ -644,6 +677,7 @@ export class CloudflareVettingPersistence {
       return {
         state: "cleared",
         assessment: summarize(finished),
+        ...(!forReinstatement ? { basis: "admission" as const } : {}),
         ...(forReinstatement
           ? {
               reviewedMaliciousAssessmentIds: findings.map(
@@ -660,6 +694,8 @@ export class CloudflareVettingPersistence {
       (assessment) => assessment.state === "pending",
     );
     if (queued) return { state: "queued", assessment: summarize(queued) };
-    return { state: "stale", assessment: summarize(latest), live };
+    return live
+      ? { state: "stale", assessment: summarize(latest), live }
+      : { state: "unscanned" };
   }
 }
