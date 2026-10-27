@@ -56,6 +56,14 @@ async function setup(
     { address: recipient.address, signature, fault },
   );
   let authorized = 0;
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: { session: { githubId: "123", githubLogin: "qa", admin: false } },
+    }),
+  );
+  await page.route("**/api/v1/project-appeals", (route) =>
+    route.fulfill({ json: { appeals: [] } }),
+  );
   await page.route("**/api/v1/payments/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/me"))
@@ -151,6 +159,14 @@ test("payout rows distinguish test networks and retain exact award details at 20
     submittedTransactionId: null,
   };
   const writes: string[] = [];
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: { session: { githubId: "123", githubLogin: "qa", admin: false } },
+    }),
+  );
+  await page.route("**/api/v1/project-appeals", (route) =>
+    route.fulfill({ json: { appeals: [] } }),
+  );
   await page.route("**/api/v1/payments/**", (route) => {
     if (route.request().method() !== "GET")
       writes.push(route.request().method());
@@ -443,6 +459,14 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
     },
   );
   let completed = 0;
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: { session: { githubId: "123", githubLogin: "qa", admin: false } },
+    }),
+  );
+  await page.route("**/api/v1/project-appeals", (route) =>
+    route.fulfill({ json: { appeals: [] } }),
+  );
   await page.route("**/api/v1/payments/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/me"))
