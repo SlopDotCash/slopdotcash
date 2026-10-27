@@ -297,9 +297,8 @@ redacts the selected file; the uploader stores its exact bytes and performs no
 automatic redaction.
 
 Trace bodies are permanent private R2 objects. D1 stores only safe metadata and
-digests. Contributors, project owners, and the public have no read route. Only
-designated Slop operators may obtain a short-lived audited read grant through a
-separate operator-controlled path.
+digests. No website or API route returns a trace body, including to
+contributors, project owners, operators, and the public.
 
 The contributor upload route is write-only, bounded, authenticated,
 checksum-verified, and fail-closed. Public artifacts contain only safe metadata

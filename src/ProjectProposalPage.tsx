@@ -2302,11 +2302,6 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       </p>
       <div className="manage-intro">
         <h1>Manage project</h1>
-        {project.escrow && (
-          <p>
-            <Link href={`/projects/${project.slug}/awards`}>Review awards</Link>
-          </p>
-        )}
       </div>
       {session.status === "signed-in" ? (
         <ProjectSetupStatusPanel

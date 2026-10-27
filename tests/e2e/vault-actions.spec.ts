@@ -649,7 +649,8 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       return route.fulfill({ json: commitment });
     },
   );
-  await page.goto("/projects/eliza/awards");
+  await page.goto("/projects/eliza/funding");
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
   await page.getByLabel("Contribution month").fill("2026-09");
   await page
     .getByRole("button", { name: "Reserve award for local-contributor" })
@@ -709,6 +710,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     "/api/v1/payments/projects/eliza/monthly/2026-09",
   );
   await page.reload();
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
   await expect(page.getByRole("alert")).toHaveText(
     "Review temporarily unavailable",
   );
