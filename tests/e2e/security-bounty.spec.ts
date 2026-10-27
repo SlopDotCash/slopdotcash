@@ -560,9 +560,11 @@ test("maintainers can verify or reject a manually linked private report @registr
   await verify
     .getByRole("button", { name: "Verify report", exact: true })
     .click();
-  await expect(detail.getByRole("status").first()).toHaveText(
-    "Verify the GitHub report: saved.",
-  );
+  await expect(
+    detail
+      .getByRole("status")
+      .filter({ hasText: "Verify the GitHub report: saved." }),
+  ).toBeVisible();
   const verified = await api(
     request,
     "GET",
@@ -589,9 +591,11 @@ test("maintainers can verify or reject a manually linked private report @registr
   await reject
     .getByRole("button", { name: "Reject link", exact: true })
     .click();
-  await expect(rejectedDetail.getByRole("status").first()).toHaveText(
-    "Reject this link: saved.",
-  );
+  await expect(
+    rejectedDetail
+      .getByRole("status")
+      .filter({ hasText: "Reject this link: saved." }),
+  ).toBeVisible();
   const rejected = await api(
     request,
     "GET",
@@ -965,6 +969,9 @@ test("private security bounty programs keep cases restricted from intake to awar
     await page.clock.install();
     // The page checks readiness on open; no click is needed.
     await page.goto(`/projects/${a.id}/security`);
+    await page
+      .getByText("Private GitHub delivery status", { exact: true })
+      .click();
     const handoff = page.getByRole("link", {
       name: /^(Or report directly|Report privately) on GitHub$/u,
     });
@@ -981,6 +988,9 @@ test("private security bounty programs keep cases restricted from intake to awar
     await page.getByRole("button", { name: "Check again" }).click();
     await expect(handoff).toBeVisible();
     await page.goto(`/projects/${b.id}/security`);
+    await page
+      .getByText("Private GitHub delivery status", { exact: true })
+      .click();
     await expect(page.getByRole("alert")).toContainText(
       "private vulnerability reporting is turned off",
     );
@@ -1022,6 +1032,9 @@ test("private security bounty programs keep cases restricted from intake to awar
     ).toBe(204);
     await refreshReporting(request);
     await page.goto(`/projects/${c.id}/security`);
+    await page
+      .getByText("Private GitHub delivery status", { exact: true })
+      .click();
     await expect(page.getByRole("alert")).toContainText("is out of date");
     await expect(handoff).toHaveCount(0);
     await context.close();
@@ -1050,7 +1063,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     await page.goto(`/projects/${a.id}/security`);
     await expect(page.locator("h1")).toHaveText(/ security bounty$/);
     await expect(page.locator(".route-page-header .route-lead")).toHaveText(
-      "Published award: 10,000 USDC gross per finding. Funded by Slop.",
+      "Published award: 10,000 USDC gross per finding. Payer: Slop.",
     );
     const facts = page.getByRole("region", { name: "Award terms" });
     await expect(facts).toContainText("Researcher · 75%7,500 USDC");
@@ -1553,9 +1566,11 @@ test("private security bounty programs keep cases restricted from intake to awar
       .getByLabel("Private reason")
       .fill("The reporter has no control over the payer or the decision.");
     await form.getByRole("button", { name: "Record review" }).click();
-    await expect(detail.getByRole("status")).toContainText(
-      "Related-party award review: saved.",
-    );
+    await expect(
+      detail
+        .getByRole("status")
+        .filter({ hasText: "Related-party award review: saved." }),
+    ).toBeVisible();
     await expect(detail).toContainText("Approved by an independent reviewer");
     await expectAccessible(page);
     await page.screenshot({
@@ -1803,9 +1818,11 @@ test("private security bounty programs keep cases restricted from intake to awar
     });
     await acknowledge.focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("status")).toHaveText(
-      "Security notice acknowledged.",
-    );
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "Security notice acknowledged." }),
+    ).toBeVisible();
     await expect(
       page.getByText("Acknowledged", { exact: true }).first(),
     ).toBeVisible();
@@ -1895,7 +1912,12 @@ test("private security bounty programs keep cases restricted from intake to awar
       .getByRole("button", { name: "Save disclosure decision" })
       .focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("status")).toContainText("Disclosure: saved.");
+    await expect(
+      page
+        .locator(`[aria-labelledby="case-${caseA}"]`)
+        .getByRole("status")
+        .filter({ hasText: "Disclosure: saved." }),
+    ).toBeVisible();
     await page.getByText("Case details and history", { exact: true }).click();
     await expect(page.locator(".security-history")).toContainText(digest);
     await expect(page.locator(".security-history")).toContainText(
@@ -2020,9 +2042,11 @@ test("private security bounty programs keep cases restricted from intake to awar
       .selectOption("recognition");
     await detail.getByLabel("Show my name publicly").selectOption("opt-in");
     await detail.getByRole("button", { name: "Save my choice" }).click();
-    await expect(detail.getByRole("status")).toContainText(
-      "Public recognition: saved.",
-    );
+    await expect(
+      detail
+        .getByRole("status")
+        .filter({ hasText: "Public recognition: saved." }),
+    ).toBeVisible();
     await expectAccessible(page);
     await page.screenshot({
       path: test.info().outputPath("reporter-case.png"),
@@ -2530,13 +2554,325 @@ test("private bounty obligations continue through role loss, approver replacemen
   });
 });
 
+test("home advertises only open security terms with the 75/25 split @registry", async ({
+  page,
+  request,
+}) => {
+  const id = `home-bounty-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  await listProject(request, TOKENS.security, repository, id, {});
+  const base = (await adminProject(request, id)).manifest;
+  const terms = bountyTerms(repository);
+  const project = {
+    ...base,
+    name: "Security test program",
+    status: "active",
+    reward: {
+      ...(base.reward as object),
+      monthlyCapMinor: "0",
+      monthlyCapDisplay: "$0",
+    },
+    securityBounty: {
+      ...terms,
+      status: "open",
+      fundingPolicy: "after-approval",
+      capacity: { ...(terms.capacity as object), awards: null },
+    },
+  };
+  const closed = {
+    ...project,
+    status: "paused",
+    securityBounty: { ...project.securityBounty, status: "closed" },
+  };
+  // One public project at a time: first verify its published open state.
+  await page.route("**/api/v1/projects", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        projects: [project],
+        restrictions: [],
+      },
+    }),
+  );
+  await page.goto("/", { waitUntil: "networkidle" });
+  const section = page.getByRole("region", {
+    name: "Security bounties",
+    exact: true,
+  });
+  await expect(section.locator(".security-bounty-card")).toHaveCount(1);
+  await expect(section).toContainText("10,000 USDC critical bounty");
+  await expect(section).toContainText("7,500 USDC to the researcher (75%)");
+  await expect(section).toContainText("2,500 USDC to slop.cash (25%)");
+  await expect(section).toContainText(
+    "Pledged; payment requires approval and verified funding.",
+  );
+  const link = section.getByRole("link", {
+    name: "Report privately",
+    exact: true,
+  });
+  await expect(link).toHaveAttribute("href", `/projects/${id}/security`);
+  await link.focus();
+  await expect(link).toBeFocused();
+  await section.getByText("Use your agent", { exact: true }).click();
+  await expect(
+    section.getByRole("status", { name: "Agent prompt" }),
+  ).toContainText(`github.com/${repository}`);
+  await expect(
+    section.getByRole("status", { name: "Agent prompt" }),
+  ).toContainText("/SKILL.md");
+  await expectAccessible(page);
+  await page.evaluate(() => window.scrollTo({ top: 0 }));
+  await page.screenshot({
+    path: test.info().outputPath("home-security-bounty.png"),
+    fullPage: true,
+  });
+  if ((page.viewportSize()?.width ?? 0) >= 640) {
+    await page.evaluate(() => {
+      document.documentElement.style.zoom = "2";
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expectAccessible(page);
+  }
+  await page.unroute("**/api/v1/projects");
+  await page.route("**/api/v1/projects", (route) =>
+    route.fulfill({
+      json: { schemaVersion: "1", projects: [closed], restrictions: [] },
+    }),
+  );
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(section.locator(".security-bounty-card")).toHaveCount(0);
+  await expect(section).toContainText("No paid security bounties are open.");
+});
+
+test("Slop receives a private report before GitHub and keeps it in Inbox @registry", async ({
+  browser,
+  request,
+}) => {
+  test.skip(
+    process.env.SLOP_E2E_PRIVATE_INTAKE !== "1",
+    "Durable private intake is not activated in this lane",
+  );
+  test.setTimeout(180_000);
+  // Independent viewport journeys use distinct seeded reporters. The real
+  // same-actor workload cap remains covered by the API integration cases.
+  const reporterRole = test.info().project.name.endsWith("-mobile")
+    ? "reporter-b"
+    : "reporter-a";
+  const otherReporterRole =
+    reporterRole === "reporter-a" ? "reporter-b" : "reporter-a";
+  const reporterToken = TOKENS[reporterRole];
+  const otherReporterToken = TOKENS[otherReporterRole];
+  const suffix = projectSuffix();
+  const id = `slop-report-${suffix}`;
+  const repository = `e2e-security/${id}`;
+  const summary = `Local vault authorization failure ${suffix}`;
+  const description = `At the reviewed local revision, withdrawing without the owner check can transfer another account's deposit. Reproduce in an isolated test chain with a funded fixture account; no production funds are moved. Private marker ${suffix}.`;
+  await listProject(request, TOKENS.security, repository, id, {});
+  await setIntake(request, repository, "disabled");
+  const context = await browser.newContext({
+    viewport: test.info().project.use.viewport,
+    recordVideo: { dir: test.info().outputPath("slop-report-video") },
+  });
+  const page = await context.newPage();
+  try {
+    await signIn(page, reporterToken);
+    await page.goto(`/projects/${id}/security`, { waitUntil: "networkidle" });
+    await expect(
+      page.getByText("No published bounty terms, so no award is promised."),
+    ).toBeVisible();
+    await page
+      .getByRole("textbox", { name: "Summary", exact: true })
+      .fill(summary);
+    await page
+      .getByRole("textbox", { name: /^Description/u })
+      .fill(description);
+    await page.evaluate(() => window.scrollTo({ top: 0 }));
+    await page.screenshot({
+      path: test.info().outputPath("slop-report-before.png"),
+      fullPage: true,
+    });
+    const created = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/v1/security-submissions",
+    );
+    await page
+      .getByRole("button", { name: "Submit private report", exact: true })
+      .focus();
+    await page.keyboard.press("Enter");
+    const response = await created;
+    expect(response.status()).toBe(201);
+    const payload = response.request().postDataJSON();
+    await expect(page).toHaveURL(/\/inbox\?submission=ss_[A-Za-z0-9_-]+$/u);
+    const submissionId = new URL(page.url()).searchParams.get(
+      "submission",
+    ) as string;
+    const ownList = await api(
+      request,
+      "GET",
+      "security-submissions",
+      reporterToken,
+    );
+    expect(ownList.status).toBe(200);
+    const submitted = (
+      ownList.body.submissions as {
+        id: string;
+        caseId: string;
+        intake: { receivedAt: string };
+      }[]
+    ).find((entry) => entry.id === submissionId);
+    expect(submitted).toBeDefined();
+    const result = { submission: submitted as NonNullable<typeof submitted> };
+    expect(result.submission.caseId).toMatch(/^sc_/u);
+    expect(result.submission.intake.receivedAt).toBeTruthy();
+    expect(JSON.stringify(ownList.body)).not.toContain(description);
+    const report = page.locator(
+      `[aria-labelledby="submission-${submissionId}"]`,
+    );
+    await expect(report).toContainText("Received");
+    await expect(report.getByRole("heading", { level: 4 })).toHaveText(summary);
+    await expect(report.locator(".security-report-text")).toHaveText(
+      description,
+    );
+    expect(result.submission).toMatchObject({ state: "draft", advisory: null });
+    // Model a request/worker ending after persisting intake but before the
+    // queued or running attempt can finish. Recovery uses the retained bytes.
+    for (const state of ["queued", "running"] as const) {
+      const persist = process.env.SLOP_E2E_PERSIST_TO;
+      expect(persist).toBeTruthy();
+      expect(submissionId).toMatch(/^ss_[A-Za-z0-9_-]+$/u);
+      const { execFileSync } = await import("node:child_process");
+      const stale = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+      execFileSync(
+        "node",
+        [
+          "node_modules/wrangler/bin/wrangler.js",
+          "d1",
+          "execute",
+          "slop-private",
+          "--local",
+          "--persist-to",
+          persist as string,
+          "--command",
+          `UPDATE security_submission_intake SET screening_state='${state}',screening_started_at='${stale}',screening_finished_at=NULL,screening_reason=NULL,routed_at=NULL,revision=revision+1 WHERE submission_id='${submissionId}'`,
+        ],
+        { stdio: "pipe" },
+      );
+      await page.reload({ waitUntil: "networkidle" });
+      await expect(report.locator(".security-report-text")).toHaveText(
+        description,
+      );
+      const retry = report.getByRole("button", {
+        name: "Retry screening",
+        exact: true,
+      });
+      await expect(retry).toBeVisible();
+      await page.screenshot({
+        path: test.info().outputPath(`recovery-${state}.png`),
+        fullPage: true,
+      });
+      await retry.focus();
+      const retried = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname ===
+            `/api/v1/security-submissions/${submissionId}/screen`,
+      );
+      await page.keyboard.press("Enter");
+      const retryResponse = await retried;
+      expect(retryResponse.status()).toBe(200);
+      await expect
+        .poll(async () => {
+          const refreshed = await api(
+            request,
+            "GET",
+            `security-submissions/${submissionId}`,
+            reporterToken,
+          );
+          return (refreshed.body.submission as { intake: { state: string } })
+            .intake.state;
+        })
+        .toBe("legitimate");
+      await page
+        .getByRole("button", { name: "Refresh reports", exact: true })
+        .click();
+      await expect(retry).not.toBeVisible();
+      await expect(report.locator(".security-report-text")).toHaveText(
+        description,
+      );
+    }
+    await expectAccessible(page);
+    await page.evaluate(() => window.scrollTo({ top: 0 }));
+    await page.screenshot({
+      path: test.info().outputPath("slop-report-inbox.png"),
+      fullPage: true,
+    });
+    if ((page.viewportSize()?.width ?? 0) >= 640) {
+      await page.evaluate(() => {
+        document.documentElement.style.zoom = "2";
+      });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+      await expectAccessible(page);
+      await page.screenshot({
+        path: test.info().outputPath("slop-report-inbox-zoom.png"),
+        fullPage: true,
+      });
+    }
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(report.locator(".security-report-text")).toHaveText(
+      description,
+    );
+    const replay = await api(
+      request,
+      "POST",
+      "security-submissions",
+      reporterToken,
+      payload,
+    );
+    expect(replay.status).toBe(200);
+    expect((replay.body.submission as { id: string }).id).toBe(submissionId);
+    const privateRead = await api(
+      request,
+      "GET",
+      `security-submissions/${submissionId}`,
+      otherReporterToken,
+    );
+    expect(privateRead.status).toBe(404);
+    const caseReply = await api(
+      request,
+      "GET",
+      `security-cases/${result.submission.caseId}`,
+      reporterToken,
+    );
+    expect(caseReply.body.case).toMatchObject({
+      receivedAtSource: "slop-received",
+      advisory: null,
+    });
+    for (const path of ["/api/v1/projects", `/api/v1/projects/${id}`, "/"]) {
+      const publicText = await (await request.get(path)).text();
+      expect(publicText).not.toContain(description);
+      expect(publicText).not.toContain(submissionId);
+    }
+  } finally {
+    await context.close();
+  }
+});
+
 /**
  * Automatic private intake (PRD section 8 "Private reporting is automatic",
  * SEC-07, SEC-17). Runs only with SLOP_E2E_PRIVATE_INTAKE=1, which turns on
  * the intake bindings against the loopback GitHub fixture; the default
  * registry lane keeps intake off and the manual path above.
  */
-test("automatic private intake files as the reporter and verifies receipt @registry @private-intake", async ({
+test("Slop-first intake preserves private GitHub forwarding and reconciliation @registry @private-intake", async ({
   browser,
   request,
 }) => {
@@ -2545,6 +2881,15 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     "Automatic intake bindings are off in this lane",
   );
   test.setTimeout(240_000);
+  // Independent viewport journeys use distinct seeded reporters. The real
+  // same-actor workload cap remains covered by the API integration cases.
+  const reporterRole = test.info().project.name.endsWith("-mobile")
+    ? "reporter-b"
+    : "reporter-a";
+  const otherReporterRole =
+    reporterRole === "reporter-a" ? "reporter-b" : "reporter-a";
+  const reporterToken = TOKENS[reporterRole];
+  const otherReporterToken = TOKENS[otherReporterRole];
   const suffix = projectSuffix();
   const program = {
     id: `bounty-intake-${suffix}`,
@@ -2566,7 +2911,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
   };
   const origin = new URL(test.info().project.use.baseURL ?? "").origin;
   // Cookies are carried by hand: the grant cookie is path-scoped and Secure.
-  const jar = new Map<string, string>([[COOKIE, TOKENS["reporter-a"]]]);
+  const jar = new Map<string, string>([[COOKIE, reporterToken]]);
   const remember = (headers: { name: string; value: string }[]) => {
     for (const header of headers) {
       if (header.name.toLowerCase() !== "set-cookie") continue;
@@ -2597,17 +2942,81 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     const text = await response.text();
     return { status: response.status(), body: text ? JSON.parse(text) : {} };
   };
-  /** Creates a submission and completes the fixture's GitHub consent. */
+  /** Stores the report, obtains owner routing review, then completes GitHub consent. */
   const authorized = async (projectId = program.id) => {
     const created = await intakeApi("POST", "security-submissions", {
       projectId,
       idempotencyKey: key(),
       origin: "slop",
+      report,
     });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
-    const github = await request.fetch(String(created.body.authorizeUrl), {
-      maxRedirects: 0,
-    });
+    const stored = created.body.submission as {
+      id: string;
+      revision: number;
+      caseId: string;
+      intake: { receivedAt: string };
+    };
+    expect(stored.caseId).toMatch(/^sc_/u);
+    // The fixture does not qualify the model's screening judgment. A current
+    // owner explicitly clears this synthetic report for private forwarding.
+    await expect
+      .poll(async () => {
+        const view = await api(
+          request,
+          "GET",
+          `security-submissions/${stored.id}`,
+          TOKENS.security,
+        );
+        expect(view.status).toBe(200);
+        const intake = (
+          view.body.submission as {
+            intake: { state: string; routingState: string };
+          }
+        ).intake;
+        return intake.state === "legitimate" && intake.routingState !== "routed"
+          ? "running"
+          : intake.state;
+      })
+      .not.toMatch(/^(queued|running)$/u);
+    const current = await api(
+      request,
+      "GET",
+      `security-submissions/${stored.id}`,
+      TOKENS.security,
+    );
+    const reviewable = current.body.submission as {
+      intake: { revision: number };
+    };
+    const reviewed = await api(
+      request,
+      "POST",
+      `security-submissions/${stored.id}/review`,
+      TOKENS.security,
+      {
+        expectedRevision: reviewable.intake.revision,
+        decision: "forward",
+        reason:
+          "The owner reviewed the isolated synthetic reproduction and approved private routing.",
+      },
+    );
+    expect(reviewed.status, JSON.stringify(reviewed.body)).toBe(200);
+    expect(
+      (reviewed.body.submission as { intake: { canForward: boolean } }).intake
+        .canForward,
+    ).toBe(true);
+    const authorization = await intakeApi(
+      "POST",
+      `security-submissions/${stored.id}/authorize`,
+      {},
+    );
+    expect(authorization.status, JSON.stringify(authorization.body)).toBe(200);
+    const github = await request.fetch(
+      String(authorization.body.authorizeUrl),
+      {
+        maxRedirects: 0,
+      },
+    );
     expect(github.status()).toBe(302);
     const callback = new URL(github.headers().location as string);
     const returned = await request.fetch(
@@ -2625,7 +3034,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     expect(returned.status()).toBe(303);
     remember(returned.headersArray());
     expect(jar.has("__Secure-slop_intake_grant")).toBe(true);
-    return created.body.submission as { id: string; revision: number };
+    return stored;
   };
   const advisoryCount = async () =>
     (
@@ -2699,7 +3108,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     });
     const page = await context.newPage();
     try {
-      await signIn(page, TOKENS["reporter-a"]);
+      await signIn(page, reporterToken);
       await setIntake(request, noProgram.repository, "unavailable");
       await page.goto(`/projects/${noProgram.id}/security`, {
         waitUntil: "networkidle",
@@ -2720,19 +3129,19 @@ test("automatic private intake files as the reporter and verifies receipt @regis
         path: test.info().outputPath("report-only-intake.png"),
         fullPage: true,
       });
+      await page
+        .getByText("Private GitHub delivery status", { exact: true })
+        .click();
       await expect(page.getByRole("alert")).toContainText("is out of date");
       // The effective layout of the native desktop review at 200% zoom.
       // Backward keyboard navigation must not hide focus under the header.
       const originalViewport = page.viewportSize();
       await page.setViewportSize({ width: 864, height: 498 });
-      await page.getByRole("textbox", { name: "Summary", exact: true }).click();
-      await page.keyboard.press("Tab");
-      await page.keyboard.press("Shift+Tab");
-      await page.keyboard.press("Shift+Tab");
       const retry = page.getByRole("button", {
         name: "Check again",
         exact: true,
       });
+      await retry.focus();
       await expect(retry).toBeFocused();
       const focus = await retry.evaluate((element) => ({
         top: element.getBoundingClientRect().top,
@@ -2750,6 +3159,28 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       // The page retains the stale observation; current authenticated intake
       // can still proceed once GitHub is available again.
       const submission = await authorized(noProgram.id);
+      await setIntake(request, noProgram.repository, "disabled");
+      const blockedForward = await intakeApi(
+        "POST",
+        `security-submissions/${submission.id}/send`,
+        { expectedRevision: submission.revision },
+      );
+      expect(blockedForward.status).toBe(409);
+      expect(blockedForward.body.error).toBe("intake_unavailable");
+      const retained = await api(
+        request,
+        "GET",
+        `security-submissions/${submission.id}`,
+        reporterToken,
+      );
+      expect(retained.status).toBe(200);
+      expect(retained.body.report).toMatchObject(report);
+      expect(retained.body.submission).toMatchObject({
+        state: "draft",
+        advisory: null,
+        caseId: submission.caseId,
+      });
+      await setIntake(request, noProgram.repository, "enabled");
       const unavailable = await request.fetch(
         `${GITHUB_FIXTURE}/__fixture/slopbot/${noProgram.repository}/unavailable`,
         { method: "PUT" },
@@ -2758,7 +3189,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       let sent = await intakeApi(
         "POST",
         `security-submissions/${submission.id}/send`,
-        { expectedRevision: submission.revision, report },
+        { expectedRevision: submission.revision },
       );
       expect(sent.status, JSON.stringify(sent.body)).toBe(202);
       expect(sent.body.submission).toMatchObject({ state: "submitted" });
@@ -2778,7 +3209,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
         request,
         "GET",
         `security-cases/${caseId}`,
-        TOKENS["reporter-a"],
+        reporterToken,
       );
       expect(own.body.case).toMatchObject({
         view: "reporter",
@@ -2803,7 +3234,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
             request,
             "GET",
             `security-cases/${caseId}`,
-            TOKENS["reporter-b"],
+            otherReporterToken,
           )
         ).status,
       ).toBe(404);
@@ -2813,7 +3244,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       await choice.focus();
       await page.keyboard.press("Enter");
       await expect(
-        page.getByRole("article").filter({ hasText: noProgram.id }),
+        page.locator(`[aria-labelledby="case-${caseId}"]`),
       ).toBeVisible();
       await expectAccessible(page);
       await page.screenshot({
@@ -2854,14 +3285,8 @@ test("automatic private intake files as the reporter and verifies receipt @regis
           .status,
       ).toBe(404);
       expect(
-        (
-          await api(
-            request,
-            "GET",
-            `security-cases/${caseId}`,
-            TOKENS["reporter-a"],
-          )
-        ).status,
+        (await api(request, "GET", `security-cases/${caseId}`, reporterToken))
+          .status,
       ).toBe(200);
     } finally {
       await context.close();
@@ -2874,18 +3299,18 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       recordVideo: { dir: test.info().outputPath("workflow-video") },
     });
     const page = await context.newPage();
-    await signIn(page, TOKENS["reporter-a"]);
+    await signIn(page, reporterToken);
     await page.clock.install();
     await page.goto(`/projects/${program.id}/security`);
     await expect(
-      page.getByText(
-        "The Slop private intake app will file this on GitHub as @e2e-reporter-a",
-      ),
+      page.getByText(`Submit as @e2e-${reporterRole}.`, { exact: false }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Authorize GitHub to submit as you" }),
+      page.getByRole("button", { name: "Submit private report", exact: true }),
     ).toBeVisible();
-    await expect(page.getByText("Slop stores no report text.")).toBeVisible();
+    await page
+      .getByText("Private GitHub delivery status", { exact: true })
+      .click();
     await expectAccessible(page);
     // An expired readiness answer keeps the form and the typed draft.
     const summary = page.getByRole("textbox", { name: "Summary" });
@@ -2936,6 +3361,9 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       history.pushState({}, "", path);
       window.dispatchEvent(new PopStateEvent("popstate"));
     }, `/projects/${otherProgram.id}/security`);
+    await page
+      .getByText("Private GitHub delivery status", { exact: true })
+      .click();
     await expect(
       page.getByRole("link", { name: /Or report directly on GitHub/u }),
     ).toHaveAttribute("href", new RegExp(otherProgram.id));
@@ -2953,22 +3381,23 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     const sent = await intakeApi(
       "POST",
       `security-submissions/${submission.id}/send`,
-      { expectedRevision: submission.revision, report },
+      { expectedRevision: submission.revision },
     );
     expect(sent.status, JSON.stringify(sent.body)).toBe(200);
     expect(sent.body.submission).toMatchObject({ state: "receipt-verified" });
     expect(JSON.stringify(sent.body)).not.toContain(sentinel);
     expect(await advisoryCount()).toBe(before + 1);
     const caseId = (sent.body.submission as { caseId: string }).caseId;
+    expect(caseId).toBe(submission.caseId);
     firstCase = caseId;
     const mine = await api(
       request,
       "GET",
       `security-cases/${caseId}`,
-      TOKENS["reporter-a"],
+      reporterToken,
     );
     expect(mine.body.case).toMatchObject({
-      receivedAtSource: "github-verified",
+      receivedAtSource: "slop-received",
       view: "reporter",
       // The automatic analysis never shows in fields the reporter sees.
       nextStep: "Waiting for the project owner's response.",
@@ -2982,7 +3411,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     );
     expect(maintainer.body.case).toMatchObject({
       submissionState: "verified",
-      receivedAtSource: "github-verified",
+      receivedAtSource: "slop-received",
       nextStep:
         "Review the report and the AI summary, then decide or ask the reporter for information.",
     });
@@ -3002,7 +3431,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     const sent = await intakeApi(
       "POST",
       `security-submissions/${submission.id}/send`,
-      { expectedRevision: submission.revision, report },
+      { expectedRevision: submission.revision },
     );
     expect(sent.body.submission).toMatchObject({ state: "uncertain" });
     const resend = await intakeApi(
@@ -3011,7 +3440,6 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       {
         expectedRevision: (sent.body.submission as { revision: number })
           .revision,
-        report,
       },
     );
     expect(resend.body.error).toBe("reconcile_required");
@@ -3028,6 +3456,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     });
     expect(await advisoryCount()).toBe(before + 1);
     secondCase = (reconciled.body.submission as { caseId: string }).caseId;
+    expect(secondCase).toBe(submission.caseId);
   });
 
   await test.step("the owner triages with the private AI summary and decides a funds-checked 75/25 award", async () => {
@@ -3039,13 +3468,16 @@ test("automatic private intake files as the reporter and verifies receipt @regis
         award: Record<string, string> | null;
         reservation: { grossMinor: string } | null;
       };
-    // The analysis runs after the receipt response; wait for its proposal.
-    for (const id of [firstCase, secondCase])
+    // The full technical analysis is separate from the intake routing screen.
+    for (const id of [firstCase, secondCase]) {
+      const analyzed = await act(request, "security", id, "analyze");
+      expect(analyzed.status, JSON.stringify(analyzed.body)).toBe(200);
       await expect
         .poll(async () => (await ownerCase(id)).analysis?.state, {
           timeout: 30_000,
         })
         .toBe("complete");
+    }
     // Only the configured provider read the report text; D1 and every case
     // view keep the proposal, never the report.
     const provider = (await (
@@ -3054,7 +3486,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       )
     ).json()) as { count: number; containing: number };
     expect(provider.containing).toBeGreaterThanOrEqual(2);
-    for (const role of ["security", "reporter-a", "finance"] as const) {
+    for (const role of ["security", reporterRole, "finance"] as const) {
       const view = await api(
         request,
         "GET",
@@ -3104,7 +3536,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     await page
       .getByRole("button", { name: new RegExp(`^${program.id} ${ghsa} `) })
       .click();
-    const detail = page.locator(".security-case");
+    const detail = page.locator(`[aria-labelledby="case-${firstCase}"]`);
     await expect(detail).toContainText("AI summary");
     await expect(detail).toContainText(
       "Fixture proposal: the withdraw path skips the owner check",
@@ -3135,7 +3567,11 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       .toISOString()
       .slice(0, 16);
     await form.getByLabel("Payment deadline (UTC)").fill(deadline);
-    await form.getByLabel(/^I approve this award for @e2e-reporter-a/u).check();
+    await form
+      .getByLabel(
+        new RegExp(`^I approve this award for @e2e-${reporterRole}`, "u"),
+      )
+      .check();
     await form
       .getByLabel("Private reason")
       .fill("Owner award for the confirmed synthetic vault finding.");
@@ -3145,9 +3581,9 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       fullPage: true,
     });
     await form.getByRole("button", { name: "Record award decision" }).click();
-    await expect(page.getByRole("status").first()).toContainText(
-      "Award: saved.",
-    );
+    await expect(
+      detail.getByRole("status").filter({ hasText: "Award: saved." }),
+    ).toBeVisible();
     await expect(detail).toContainText(
       "3,000 USDC to the researcher · 1,000 USDC to Slop · 4,000 USDC gross",
     );
@@ -3187,7 +3623,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       request,
       "GET",
       `security-cases/${firstCase}`,
-      TOKENS["reporter-a"],
+      reporterToken,
     );
     expect(reporter.body.case).toMatchObject({
       view: "reporter",
@@ -3209,7 +3645,7 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     expect(finance.body.case).not.toHaveProperty("analysis");
   });
 
-  await test.step("without the app the automatic path is refused, never public", async () => {
+  await test.step("without the GitHub app Slop still receives reports privately", async () => {
     await request.fetch(
       `${GITHUB_FIXTURE}/__fixture/intake-app/${program.repository}/missing`,
       { method: "PUT" },
@@ -3225,13 +3661,21 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       state: "ready",
       automatic: "app-not-installed",
     });
-    const refused = await intakeApi("POST", "security-submissions", {
+    const before = await advisoryCount();
+    const accepted = await intakeApi("POST", "security-submissions", {
       projectId: program.id,
       idempotencyKey: key(),
       origin: "slop",
+      report,
     });
-    expect(refused.status).toBe(409);
-    expect(refused.body.error).toBe("intake_unavailable");
+    expect(accepted.status, JSON.stringify(accepted.body)).toBe(201);
+    expect(accepted.body.submission).toMatchObject({
+      state: "draft",
+      advisory: null,
+      caseId: expect.stringMatching(/^sc_/u),
+    });
+    expect(accepted.body).not.toHaveProperty("authorizeUrl");
+    expect(await advisoryCount()).toBe(before);
     // Public outputs carry no report content.
     for (const path of [
       `/projects/${program.id}/terms.json`,

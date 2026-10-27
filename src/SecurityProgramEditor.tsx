@@ -76,7 +76,14 @@ export function SecurityProgramEditor({
   const [commit, setCommit] = useState(
     existing?.scope.sourceRevisions[0]?.commit ?? "",
   );
-  const [awards, setAwards] = useState(String(existing?.capacity.awards ?? 1));
+  const [fundAfterApproval, setFundAfterApproval] = useState(
+    existing?.fundingPolicy === "after-approval",
+  );
+  const [awards, setAwards] = useState(
+    existing?.capacity.awards === null
+      ? ""
+      : String(existing?.capacity.awards ?? 1),
+  );
   const [response, setResponse] = useState(
     existing?.responseTargets ?? {
       acknowledgeHours: 24,
@@ -99,8 +106,12 @@ export function SecurityProgramEditor({
   function publish() {
     void run(
       async () => {
+        const { fundingPolicy: _fundingPolicy, ...previous } = existing ?? {};
         const program: SecurityBountyTerms = {
-          ...(existing ?? {}),
+          ...previous,
+          ...(fundAfterApproval
+            ? { fundingPolicy: "after-approval" as const }
+            : {}),
           version: "1",
           status,
           rewardMode: existing?.rewardMode ?? "separate",
@@ -122,7 +133,7 @@ export function SecurityProgramEditor({
           // The API replaces this with its finalized vault evidence.
           funding: existing?.funding ?? { state: "pledged" },
           capacity: {
-            awards: Number(awards),
+            awards: fundAfterApproval && awards === "" ? null : Number(awards),
             closesAt: existing?.capacity.closesAt ?? null,
             exhaustionRule: text.exhaustionRule.trim(),
           },
@@ -245,9 +256,21 @@ export function SecurityProgramEditor({
                 <option value="open">Open</option>
                 <option value="closed">Closed</option>
               </select>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={fundAfterApproval}
+                  onChange={(event) =>
+                    setFundAfterApproval(event.target.checked)
+                  }
+                />
+                Fund approved awards after review
+              </label>
               <p>
-                Opening requires available funds in the bounty vault. Closing
-                stops new paid reports only.
+                {fundAfterApproval
+                  ? "The offer may open before a deposit. It is a discretionary pledge; funds must be verified before an approved award can be reserved or paid."
+                  : "Opening requires available funds in the bounty vault."}{" "}
+                Closing stops new paid reports only.
               </p>
               <label htmlFor="bounty-amount">
                 Published gross award ({existing?.amount.currency ?? "USDC"})
@@ -286,10 +309,16 @@ export function SecurityProgramEditor({
                 type="number"
                 min="1"
                 max="1000"
-                required
+                required={!fundAfterApproval}
                 value={awards}
                 onChange={(event) => setAwards(event.target.value)}
               />
+              {fundAfterApproval && (
+                <p>
+                  Leave blank to review each first qualifying finding
+                  separately.
+                </p>
+              )}
               <label htmlFor="bounty-commit">
                 Source commit (
                 {existing?.scope.sourceRevisions[0]?.repository ??

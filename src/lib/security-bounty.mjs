@@ -158,13 +158,22 @@ export function assertSecurityBountyTerms(value, { repositories, reward }) {
   const terms = record(value, "");
   exactKeys(
     terms,
-    terms.settlement === undefined ? KEYS : [...KEYS, "settlement"],
+    [
+      ...KEYS,
+      ...(terms.settlement === undefined ? [] : ["settlement"]),
+      ...(terms.fundingPolicy === undefined ? [] : ["fundingPolicy"]),
+    ],
     "",
   );
   if (terms.version !== "1") fail("version");
   if (!SECURITY_PROGRAM_STATUSES.includes(terms.status)) fail("status");
   if (!SECURITY_REWARD_MODES.includes(terms.rewardMode)) fail("rewardMode");
   if (terms.eligibility !== "critical-loss-of-funds") fail("eligibility");
+  if (
+    terms.fundingPolicy !== undefined &&
+    terms.fundingPolicy !== "after-approval"
+  )
+    fail("fundingPolicy");
   const amount = record(terms.amount, "amount");
   exactKeys(
     amount,
@@ -204,7 +213,8 @@ export function assertSecurityBountyTerms(value, { repositories, reward }) {
   }
   const capacity = record(terms.capacity, "capacity");
   exactKeys(capacity, ["awards", "closesAt", "exhaustionRule"], "capacity");
-  integer(capacity.awards, "capacity.awards", 1, 1000);
+  if (!(terms.fundingPolicy === "after-approval" && capacity.awards === null))
+    integer(capacity.awards, "capacity.awards", 1, 1000);
   if (capacity.closesAt !== null)
     timestamp(capacity.closesAt, "capacity.closesAt");
   text(capacity.exhaustionRule, "capacity.exhaustionRule", 1000, 12);
@@ -323,8 +333,13 @@ export function assertSecurityBountyTerms(value, { repositories, reward }) {
       "rewardMode",
       "bounty-only requires a $0 monthly pool with payments disabled",
     );
-  // A pledge is not a balance: paid capacity opens only on verified funds.
-  if (terms.status === "open" && funding.state !== "verified-available")
+  // A discretionary after-approval offer accepts reports before funding.
+  // Neither offer type can reserve or pay an award without verified funds.
+  if (
+    terms.status === "open" &&
+    terms.fundingPolicy !== "after-approval" &&
+    funding.state !== "verified-available"
+  )
     fail("status", "open requires verified available funding");
   return terms;
 }

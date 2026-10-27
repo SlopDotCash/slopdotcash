@@ -18,9 +18,11 @@ A project opts in with the optional `securityBounty` section of its D1
 manifest (`src/lib/security-bounty.mjs`). New terms start paused with pledged
 funding and no unverified vault. Owners edit terms, open, pause or close the
 program in project settings. Each change uses the existing project revision
-route and checks current GitHub authority through Slopbot. Opening requires
-available funds from a current finalized snapshot of the separate, reviewed
-bounty vault. The server sets funding evidence; an owner cannot supply it.
+route and checks current GitHub authority through Slopbot. Historical programs
+require available funds from a current finalized snapshot of the separate,
+reviewed bounty vault before opening. The approved `fundingPolicy:
+"after-approval"` publishes a pledge: the owner may select an award before
+funding, but only a current finalized balance can create its reservation. The server sets funding evidence; an owner cannot supply it.
 The project steward or a repository admin manages contacts and the sponsor.
 Ordinary write access cannot grant or remove private-case roles. Authority
 checks use the stored project's repository before reading private funds.
@@ -40,11 +42,15 @@ public payment totals or receipt route.
 - `amount.grossMinor` is the published gross award per finding, in integer
   minor units divisible by four, so the 75/25 researcher/Slop split is exact.
   Shares are derived, never stored. Awards are discretionary: the owner may
-  award a different amount or none (see "Awards").
+  choose the frozen published amount or none under `after-approval` terms.
+  Historical programs retain their original discretionary-amount rules.
 - `rewardMode: "bounty-only"` requires a `$0` monthly pool with payments
   disabled. `separate` keeps the project's ordinary rewards.
-- `status: "open"` requires `funding.state: "verified-available"` with an
-  evidence reference. A pledge never opens paid capacity. Owner decision
+- `status: "open"` normally requires `funding.state: "verified-available"`
+  with an evidence reference. `fundingPolicy: "after-approval"` explicitly
+  permits pledged terms, with no claim that money is available. Its
+  `capacity.awards: null` means each first qualifying finding is considered
+  separately, not a fixed number of awards. Owner decision
   D10: the funds an owner can reserve are the finalized free balance of the
   program's reviewed bounty vaults (`settlement.deployments`), from a
   `security_vault_snapshots` row in the program asset no older than 30
@@ -68,8 +74,10 @@ public payment totals or receipt route.
 | `POST /api/v1/security-cases` | session | `claim`: a reporter links a GitHub advisory ID. `record`: a technical approver records a verified advisory with GitHub's receipt time. `import`: a maintainer imports direct GitHub reports |
 | `GET /api/v1/security-cases/:id` | session and role | One case; logs the read |
 | `POST /api/v1/security-cases/:id/actions` | session and role | One human decision with `expectedRevision` and `idempotencyKey` |
-| `GET /api/v1/security-submissions` | session | The caller's own automatic submissions: state, attempt, GHSA, GitHub time, failure code, case id |
-| `POST /api/v1/security-submissions` | session | Creates (or replays) a `slop` draft or a `direct` verification and returns the intake App authorization URL |
+| `GET /api/v1/security-submissions` | session | Reporter and current technical case roles: saved reports, screening and routing states, optional GitHub delivery |
+| `POST /api/v1/security-submissions` | session | Saves a `slop` report and receipt without OAuth; `direct` retains the legacy verification path |
+| `GET /api/v1/security-submissions/:id` | current private role | Reads the saved report and records an access audit |
+| `POST /api/v1/security-submissions/:id/{screen,review,report}` | reporter or current technical role, as applicable | Retry screening/routing, record a human routing decision, or save a new immutable report version |
 | `GET /api/v1/security-submissions/authorize/callback` | GitHub redirect | PKCE exchange, `/user` identity binding, grant cookie |
 | `POST /api/v1/security-submissions/:id/{authorize,send,reconcile,verify}` | reporter only | Reauthorize, send privately, reconcile an uncertain send, verify a direct report |
 
@@ -107,10 +115,76 @@ GitHub responses. The existing private-submission workflow tests verify fresh
 send refusal, recovery and replay. These local results do not prove live App
 permissions, scheduled execution or reporter delivery.
 
-## Automatic private intake
+## Durable Slop-first intake
+
+`POST /api/v1/security-submissions` accepts `origin: "slop"`, `projectId`,
+`idempotencyKey` and a structured `report` from the authenticated Slop session.
+New acceptance uses `reportIntakeEnabled` independently of retained reads.
+This flow needs `reportStorage`, wired to the existing private R2 bucket under
+`security-reports/`; it does not need a GitHub reporting grant, PVR readiness,
+or a new provider. Missing private storage refuses acceptance. The source
+receipt, frozen policy, case, submission metadata and reporter Inbox notice
+commit together after the validated report is stored and its digest checked. The case
+uses `receivedAtSource: "slop-received"`, `verifiedBy: "slop"` and no advisory.
+No GitHub receipt is invented. GitHub-backed historical receipts are unchanged.
+
+Migration `0101_durable_security_intake.sql` retains immutable body versions
+as R2 references and SHA-256 digests. D1 contains no report body. Authorized
+reporters and current technical case roles read the body through
+`GET /api/v1/security-submissions/:id`; each read is audited, private,
+no-store and noindex. Financial roles alone receive no body. Contributor
+trace APIs cannot read this prefix. Bodies are never included in notification
+text, activity mail, public pages, exports, analytics or logs.
+
+Public report creation, evidence revisions and rescreen work share ten
+admissions per account in a rolling hour. An atomic D1 admission precedes each
+R2 write or paid call, including retained legacy drafts. Expired admission
+counters may be removed; case, report and audit history is permanent. Completed
+idempotent replays, reads, human decisions and notification-only retries do not
+spend this budget. A refusal preserves the retained report, appeal access and
+funded obligations. Screening retries return promptly through `waitUntil`;
+Inbox's Refresh reports control reads the eventual state. A failed background
+call remains recoverable within its existing bounded timeout.
+
+The existing Surplus analyzer screens the saved report before owner routing.
+States are `queued`, `running`, `legitimate`, `needs-information`, `spam` and
+`unavailable`. Screening judges plausibility and concrete evidence; it is not
+an award, rejection or disclosure decision. A complete legitimate screen
+queues the existing generic private-case email and Inbox link. Held reports
+stay readable to their reporter and current case authorities. They are not
+automatically rejected or awarded. Failed delivery preserves the receipt;
+retrying `/screen` on a legitimate report retries only idempotent routing.
+
+- `POST /:id/screen` retries an unavailable or lost screen, or pending routing.
+- `POST /:id/review` lets a current technical maintainer record `forward` or
+  `request-information` with a private reason and the expected intake revision.
+- `POST /:id/report` lets the reporter add a new immutable report version and
+  rescreen before GitHub delivery or a final case decision. The original receipt
+  time, bytes and terms remain retained. An old model result cannot overwrite
+  the new version or a human routing review.
+- The signed-in submissions list includes the reporter's reports and the
+  current case authorities' reports. The normal case actions and private
+  settlement work without a GitHub advisory.
+
+New legacy-shaped `slop` drafts without a report are refused when durable storage is configured. Unfinished legacy drafts pass the same screen before their first forward.
+
+GitHub forwarding is optional after a legitimate screen or a human `forward`
+review. The existing per-submission reporter OAuth grant sends the exact saved
+version as the reporter, with the same uncertain-send reconciliation. A
+verified GitHub link is stored on the submission; it never rewrites the Slop
+receipt or its terms, and later imports do not create a second case.
+
+The `after-approval` policy preserves the owner's chosen amount as pending
+when a vault or funds are unavailable. The first chosen root cause is held
+against duplicate awards. The owner funds a reviewed bounty vault and repeats
+the award action to create the reservation. New policy awards require the
+owner's confirmed critical, in-scope finding with verified actual or potential
+loss. Existing approved awards and prefunded-program behavior stay unchanged.
+
+## Legacy GitHub-first private intake
 
 PRD section 8 ("Private reporting is automatic"), SEC-07, SEC-10, SEC-17.
-Every `security-submissions` route returns 404 unless
+Legacy OAuth, forwarding and receipt-verification routes return 404 unless
 `SLOP_PRIVATE_INTAKE_MODE=on` and all intake App secrets are set
 (`GITHUB_INTAKE_APP_CLIENT_ID`, `GITHUB_INTAKE_APP_CLIENT_SECRET`,
 `GITHUB_INTAKE_APP_ID`, `GITHUB_INTAKE_APP_PRIVATE_KEY`,
@@ -261,7 +335,9 @@ owner's award decision (`award`, or an `award` object inside `decide`):
 - `decision: "none"` makes the award `ineligible` (shown as "No award"). The
   reporter can appeal it.
 - `decision: "amount"` with `grossMinor`, `paymentDeadline` and confirmation
-  approves that exact gross amount and reserves it in the same batch. The
+  selects that exact gross amount. An `after-approval` program requires the
+  frozen published amount; without verified funds it remains pending.
+  Once funded, the owner repeats the action and reserves the amount in the same batch. The
   reservation insert itself checks that the bounty vault's unreserved
   finalized free balance covers it; otherwise nothing is written
   (`409 insufficient_funds`). A pledge, a program without a reviewed vault,
@@ -379,9 +455,10 @@ the ordinary attester. Missing service configuration fails closed.
   advisory. The inbox action **Acknowledge** records the recipient's
   authenticated response; **Mark read** is a separate state and never
   acknowledges a notice.
-- Automatic intake reads only the reporter's own advisory with the
+- Optional GitHub forwarding reads only the reporter's own advisory with the
   reporter's token; imports and retries read with the slopdotcash App
-  installation token. Slop keeps only digests. The App permission must be
+  installation token. Durable Slop report versions stay in the private R2
+  security-report prefix; legacy GitHub-first reports keep only digests. The App permission must be
   accepted on each installation.
 - Private analysis needs `SURPLUS_API_KEY`; a zero-data-retention
   agreement is not required.

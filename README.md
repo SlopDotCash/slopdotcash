@@ -281,9 +281,11 @@ improvements inside the approved MVP. UI changes are not accepted unless they
 fix a broken user flow. Prove the result with real LLM calls where a model is
 involved, and test the workflow in the agent clients that use it. Only owners
 and maintainers open issues; fix and prove a defect in a pull request.
-Security-sensitive reports must use the target repository’s private reporting
-channel; never publish secrets, private traces, prompts, credentials, private
-keys, or vulnerability details in an issue or pull request.
+Security-sensitive reports go through the project’s private Slop reporting
+page. Sign in, submit the report, and follow its screening and review status in
+Inbox. Slop handles optional authorized private GitHub forwarding. Never publish
+secrets, private traces, prompts, credentials, private keys, or vulnerability
+details in an issue or pull request. See the [private reporting rollout](docs/security/private-reporting-rollout.md).
 
 Slop is experimental software. The repository is licensed under the
 [MIT License](LICENSE).

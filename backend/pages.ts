@@ -58,9 +58,10 @@ export type PagesEnv = {
   /** Optional read-only GitHub token for repository ownership checks. */
   SLOP_GITHUB_READ_TOKEN?: string;
   /**
-   * Automatic private security intake (PRD section 8, SEC-07). Off unless
-   * exactly "on" and every App secret below is set; missing configuration
-   * reports intake as unavailable without a public fallback. Owner decision D10:
+   * Durable private security intake (PRD section 8). Off unless exactly "on".
+   * The existing private bucket accepts Slop reports without GitHub OAuth.
+   * Optional GitHub forwarding additionally needs every App secret below;
+   * missing configuration never enables a public fallback. Owner decision D10:
    * these hold the existing slopdotcash GitHub App (5257625) with "Repository security advisories:
    * read"; there is no separate intake App.
    */
