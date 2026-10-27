@@ -585,3 +585,113 @@ img.route-model-mark {
 .route-funding .vault-contract-details[open] summary {
   margin-bottom: 0.65rem;
 }
+
+/* Shared route navigation and compact default views. */
+[hidden] {
+  display: none !important;
+}
+.project-overview {
+  display: grid;
+  gap: 1.5rem;
+}
+.project-overview--prize {
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 22rem);
+}
+.project-state-summary .project-funding-summary {
+  margin-top: 0.75rem;
+  padding-block: 0;
+}
+.project-resource-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-block: 1rem;
+}
+.asset-details {
+  margin-block: 1rem;
+  font-size: 0.9rem;
+}
+.asset-details code {
+  overflow-wrap: anywhere;
+}
+.vault-ledger-details {
+  margin-top: 1rem;
+}
+.vault-ledger-details[open] > summary {
+  margin-bottom: 0.75rem;
+}
+.site-footer--compact {
+  padding-block: 1.5rem;
+  background: #181713;
+}
+.site-footer--compact .footer-grid {
+  align-items: center;
+  gap: 1rem;
+}
+.site-footer--compact .footer-brand-row {
+  min-width: 0;
+}
+.site-footer--compact .footer-brand-row svg {
+  width: 40px;
+  height: 40px;
+}
+.site-footer--compact .footer-links {
+  font-size: 0.85rem;
+}
+.site-footer--compact .footer-links a {
+  color: var(--text);
+}
+.site-footer--compact a:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 4px;
+}
+@media (max-width: 600px) {
+  .project-overview--prize {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Small compatibility additions for lazy settings in the refreshed account design. */
+.account-wallets > summary,
+#notifications > summary,
+#sessions > summary,
+.standings-page #rules > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.account-wallets > summary > h2 {
+  display: inline;
+  margin: 0;
+  font-size: inherit;
+}
+.account-wallets > .earnings-page {
+  padding-block: 1rem 0;
+}
+.account-page #security > #sessions {
+  margin-block: 1rem;
+}
+.account-page #notifications .inbox-email-settings {
+  margin-top: 1rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.standings-page .points-period button[aria-pressed="true"] {
+  color: var(--orange);
+}
+.inbox-page a.inbox-title {
+  text-decoration: none;
+}
+.inbox-page a.inbox-title:hover {
+  text-decoration: underline;
+}
+.inbox-page details.inbox-delivery > summary {
+  cursor: pointer;
+}
+
+.profile-section > summary,
+.cycle-amounts > summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding-block: 0.7rem;
+}

@@ -225,7 +225,7 @@ test("global standings still accept project, sort and contributor filters", asyn
   await expect(
     standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),
   ).toBeVisible();
-  await standings.getByLabel("Find a contributor").fill("synthetic-slop");
+  await page.getByLabel("Find a contributor").fill("synthetic-slop");
   await expect(
     standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),
   ).toHaveCount(0);

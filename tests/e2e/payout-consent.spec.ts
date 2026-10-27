@@ -136,7 +136,7 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
   const authorized = await setup(page);
   await page.getByRole("button", { name: "Authorize payout wallet" }).click();
   const review = page.getByRole("dialog", {
-    name: "Review payout wallet consent",
+    name: "Authorize payout wallet",
   });
   await expect(review).toContainText(vault);
   await expect(review).toContainText(recipient.address);
@@ -148,7 +148,7 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
     fullPage: true,
   });
   await expect(
-    review.getByRole("heading", { name: "Review payout wallet consent" }),
+    review.getByRole("heading", { name: "Authorize payout wallet" }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
@@ -378,7 +378,7 @@ test("payout consent remains readable with enlarged text and Escape restores the
   const action = page.getByRole("button", { name: "Authorize payout wallet" });
   await action.click();
   const dialog = page.getByRole("dialog", {
-    name: "Review payout wallet consent",
+    name: "Authorize payout wallet",
   });
   const bounds = await dialog.boundingBox();
   const viewport = page.viewportSize();
