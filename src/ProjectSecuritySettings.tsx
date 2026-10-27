@@ -41,7 +41,7 @@ export function ProjectSecuritySettings({
         (result) => {
           if (!active) return;
           if (result.viewer.githubId === actorId && result.canManageBounty)
-            setPermitted(actorId);
+            setPermitted(`${project.id}:${actorId}`);
           else
             setPermissionError(
               "Only the current project steward or a repository administrator can manage this bounty.",
@@ -73,7 +73,7 @@ export function ProjectSecuritySettings({
       open={open}
     >
       <summary>Manage security program and private bounty funds</summary>
-      {opened && permitted !== actorId ? (
+      {opened && permitted !== `${project.id}:${actorId}` ? (
         permissionError ? (
           <div role="alert">
             <p>{permissionError}</p>
@@ -89,7 +89,7 @@ export function ProjectSecuritySettings({
           <p role="status">Checking current project access…</p>
         )
       ) : null}
-      {opened && permitted === actorId ? (
+      {opened && permitted === `${project.id}:${actorId}` ? (
         <SecuritySettingsEditor
           actor={session.session}
           key={`${project.id}:${session.session.githubId}`}
