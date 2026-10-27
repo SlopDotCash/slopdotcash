@@ -162,22 +162,23 @@ win the race to a claim. The watcher, owner pause and poster rotation remain
 required, and none can claw back paid tokens. Keep the real program Off/dry_run
 until the token, funding, independent watcher and explicit activation are ready.
 
-Incident order at launch, from the review (section H-2 and L-2 of
-`docs/security/referral-distributor-ai-review-2026-10-25.md`): pause first,
-so the objection window stops; rotate the poster, so the compromised key
-cannot repost; void the pending root; unpause. A watcher must rebuild every
-posted root from the public accrual file and a human must decide to void by
-day five, because the sequencer can delay a transaction and the contract
-cannot see inside a root.
+Incident order for immediate claims: pause first to block further claims and
+posts, then rotate the poster. Void the latest root only if no claim against
+it has succeeded. Confirm the root and claim counters before unpausing. If a
+claim already succeeded, the root cannot be voided and paid tokens cannot be
+recovered. The watcher must rebuild every posted root from the public accrual
+file; no deadline can guarantee that a human reacts before the first claim.
+The 25 October review describes the earlier timed-window contract, not an
+independent audit of this immediate-claim revision.
 
 Record every transaction hash and the values read back. Captured evidence is
 not committed; publish only reviewed safe deployment evidence.
 
 ## 7. What this rehearsal does not prove
 
-- It is not an audit. The contract has an AI-assisted internal review only
-  (three independent model reviews reconciled against 41 proof tests; every
-  High and Medium finding fixed before the pull request opened).
+- It is not an audit. The 25 October AI-assisted internal review applies to
+  the earlier seven-day-window contract. This immediate-claim revision needs
+  its own source-bound review and test evidence.
 - It does not activate the program. Activation needs the token to exist, the
   funding line agreed, an operating independent
   root watcher, a verified deployment on chain id 4663 with the program token,
