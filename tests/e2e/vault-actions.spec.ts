@@ -30,7 +30,13 @@ import {
   applicationManifest,
   CONTRIBUTION,
 } from "../project-application-manifest";
-import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
+import {
+  escapeRegExp,
+  expect,
+  expectAccessible,
+  serveProjectCycleIndex,
+  test,
+} from "./fixtures";
 
 test.skip(
   process.env.SLOP_E2E_VAULT_ACTIONS !== "1",
@@ -306,6 +312,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     (route) =>
       route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
   );
+  await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/api/v1/projects/eliza", (route) =>
     route.fulfill({ json: { project, revision: 1 } }),
   );
@@ -808,6 +815,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
     (route) =>
       route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
   );
+  await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/api/v1/projects/eliza", (route) =>
     route.fulfill({ json: { project, revision: 1 } }),
   );
