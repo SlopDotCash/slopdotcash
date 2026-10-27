@@ -126,6 +126,42 @@ test("the lifecycle program is the verified same-source artifact, with a safe re
   }
 });
 
+test("a consumer rerun verifies the original producer attempt", async () => {
+  const f = await fixture();
+  try {
+    const { runAttempt: _, ...options } = f.options;
+    const script = `import { prepareTestProgram } from ${JSON.stringify(
+      new URL("./scripts/prepare-test-program.mjs", import.meta.url).href,
+    )}; console.log(JSON.stringify(await prepareTestProgram(${JSON.stringify(f.artifact)}, ${JSON.stringify(options)})));`;
+    const env = {
+      ...process.env,
+      GITHUB_RUN_ATTEMPT: "2",
+      SLOP_SOLANA_ARTIFACT_ATTEMPT: "1",
+    };
+    const receipt = JSON.parse(
+      execFileSync(process.execPath, ["--eval", script], {
+        env,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+    expect(receipt.workflowAttempt).toBe("1");
+    expect(await readFile(f.target)).toEqual(program);
+    await writeFile(f.target, "unchanged after wrong producer attempt");
+    expect(() =>
+      execFileSync(process.execPath, ["--eval", script], {
+        env: { ...env, SLOP_SOLANA_ARTIFACT_ATTEMPT: "3" },
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    ).toThrow();
+    expect(await readFile(f.target, "utf8")).toBe(
+      "unchanged after wrong producer attempt",
+    );
+  } finally {
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});
+
 for (const field of [
   "sourceCommit",
   "solanaSourceTree",
