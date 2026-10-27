@@ -256,9 +256,12 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
       .locator(".payout-row")
       .getByRole("link", { name: "eliza", exact: true }),
   ).toHaveAttribute("href", "/projects/eliza");
-  await expect(
-    page.getByText("Gross 1 USDC · fee 0.02 USDC", { exact: true }),
-  ).toBeVisible();
+  const gross = page.getByRole("region", { name: "Gross amount", exact: true });
+  const fee = page.getByRole("region", { name: "Fee amount", exact: true });
+  await expect(gross).toBeVisible();
+  await expect(gross).toHaveText("Gross 1 USDC");
+  await expect(fee).toBeVisible();
+  await expect(fee).toHaveText("fee 0.02 USDC");
   await page.getByRole("button", { name: "Authorize payout wallet" }).click();
   const review = page.getByRole("dialog", {
     name: "Authorize payout wallet",
