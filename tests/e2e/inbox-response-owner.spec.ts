@@ -171,8 +171,11 @@ for (const mismatch of ["submissions", "cases"] as const) {
     });
     await page.goto("/security", { waitUntil: "networkidle" });
     await expect(page.getByRole("alert")).toContainText(
-      "Your account changed.",
+      "This private response belongs to another account.",
     );
+    await expect(
+      page.getByRole("button", { name: "Retry private session", exact: true }),
+    ).toBeVisible();
     await expect(page.getByText(foreignProject, { exact: false })).toHaveCount(
       0,
     );

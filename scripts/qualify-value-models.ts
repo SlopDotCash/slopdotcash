@@ -11,40 +11,55 @@ import { priceUsage } from "../workers/slopbot/contracts";
 import {
   type CallRecord,
   type ModelEnv,
+  runRoute,
   TRIAGE_ROUTE,
 } from "../workers/slopbot/models";
+import { buildPrompt, confirmedClosure } from "../workers/slopbot/review";
 import { valueModelSource } from "../workers/slopbot/value-model-source";
 import { assessValue } from "../workers/slopbot/value-review";
 import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import { assessWorkUnits } from "../workers/slopbot/value-work-unit-review";
+import { qualificationResponse } from "./qualification-response";
 
 const ENDPOINT = "https://api.surplusintelligence.ai/anthropic/v1/messages";
 const PATH_BUDGET = 1_000_000;
 const OUTPUT_TOKENS = 2048;
+const REVIEW_MARKER = "Synthetic marker-file review qualification";
 
 function requireThat(value: unknown): asserts value {
-  if (!value) throw new Error("Value-model qualification failed");
+  if (!value) throw new Error("Slopbot model qualification failed");
 }
 
 /** Only this process's synthetic qualification traffic passes this boundary.
  * The ordinary model prompt/schema remain intact; output is capped for the
- * two small test cases. A missing cost receipt stops further calls. */
-export function qualificationTransport(fetcher: typeof fetch) {
+ * synthetic cases. A missing cost receipt stops further calls. */
+export function qualificationTransport(
+  fetcher: typeof fetch,
+  purpose: "value" | "general-review" = "value",
+) {
+  const maximumRequests = purpose === "general-review" ? 1 : 2;
   let requests = 0;
   let spent = 0;
   let uncertain = false;
   return {
-    mayCall: async () => !uncertain && requests < 2 && spent < PATH_BUDGET,
+    mayCall: async () =>
+      !uncertain && requests < maximumRequests && spent < PATH_BUDGET,
     fetch: (async (input, init) => {
       const request = new Request(input, init);
       requireThat(request.url === ENDPOINT && request.method === "POST");
       const payload = await request.clone().text();
       requireThat(new TextEncoder().encode(payload).length <= 32_768);
       requireThat(!payload.includes("contentBase64"));
-      requireThat(payload.includes("contentOmittedFromModel"));
+      requireThat(
+        payload.includes(
+          purpose === "general-review"
+            ? REVIEW_MARKER
+            : "contentOmittedFromModel",
+        ),
+      );
       const wire = JSON.parse(payload);
       const step = TRIAGE_ROUTE.find((entry) => entry.model === wire.model);
-      requireThat(step && !uncertain && requests < 2);
+      requireThat(step && !uncertain && requests < maximumRequests);
       wire.max_tokens = OUTPUT_TOKENS;
       const body = JSON.stringify(wire);
       const bound = priceUsage(step.priceKey, {
@@ -65,17 +80,81 @@ export function qualificationTransport(fetcher: typeof fetch) {
         redirect: "error",
         signal: request.signal,
       });
-      const receipt = response.headers.get("x-si-buyer-cost-micro");
-      requireThat(receipt !== null && /^(0|[1-9][0-9]*)$/u.test(receipt));
-      const cost = Number(receipt);
-      requireThat(Number.isSafeInteger(cost));
-      spent += cost;
+      const receipt = await qualificationResponse(response);
+      requireThat(receipt.cost !== null);
+      spent += receipt.cost;
       requireThat(spent <= PATH_BUDGET);
       uncertain = false;
-      return response;
+      return receipt.response;
     }) as typeof fetch,
     requestCount: () => requests,
   };
+}
+
+/** One counterexample exercises the current general-review prompt, without
+ * confirming a closure or invoking any GitHub, storage or notification action. */
+export async function qualifyGeneralReview(
+  env: ModelEnv,
+  dryRun = false,
+  fetcher: typeof fetch = fetch,
+) {
+  const context = {
+    policy: [
+      {
+        path: "CONTRIBUTING.md",
+        text: "Review whether a change has a useful effect. A file path or its existence can be an input to loaders or plugins.",
+        truncated: false,
+      },
+    ],
+    quality: [],
+    itemText: `Title: ${REVIEW_MARKER}
+
+Body: This synthetic pull request adds a zero-byte .plugin-root file. The supplied snapshot does not contain the loader or plugin integration code. No execution results are supplied.
+
+Diff:
+diff --git a/.plugin-root b/.plugin-root
+new file mode 100644
+index 0000000..e69de29`,
+  };
+  const transport = qualificationTransport(fetcher, "general-review");
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = transport.fetch;
+    const result = await runRoute(
+      env,
+      TRIAGE_ROUTE.slice(0, 1),
+      buildPrompt(context, "pull_request"),
+      "medium",
+      dryRun ? async () => false : transport.mayCall,
+    );
+    if (dryRun) requireThat(result.blocked && result.calls.length === 0);
+    else {
+      requireThat(!result.blocked && result.verdict && result.servedBy);
+      requireThat(result.calls.length === 1 && transport.requestCount() === 1);
+      requireThat(
+        result.verdict.limitations.some((limitation) =>
+          /\b(?:loader|loading|marker|path|existence|presence)\b|\.plugin-root/iu.test(
+            limitation,
+          ),
+        ),
+      );
+      // Even identical hypothetical confirmations must fail this production
+      // predicate while the relevant limitation remains. This is not a second
+      // inference or evidence that any positive closure is qualified.
+      requireThat(!confirmedClosure(result.verdict, result.verdict, context));
+    }
+    return {
+      path: "general-review-counterexample",
+      provider: result.servedBy?.provider ?? null,
+      model: result.servedBy?.servedModel ?? null,
+      requests: transport.requestCount(),
+      outcome: dryRun
+        ? "dry-run; no provider calls"
+        : "marker uncertainty preserved",
+    };
+  } finally {
+    globalThis.fetch = original;
+  }
 }
 
 export async function qualifyValueModels(env: ModelEnv, dryRun = false) {
@@ -196,14 +275,15 @@ if (
     !!process.env.SURPLUS_API_KEY;
   if (!dryRun && !authorized) {
     process.stderr.write(
-      "Value-model qualification requires the protected main release.\n",
+      "Slopbot model qualification requires the protected main release.\n",
     );
     process.exitCode = 1;
   } else {
-    await qualifyValueModels(
-      { SURPLUS_API_KEY: process.env.SURPLUS_API_KEY },
-      dryRun,
-    )
+    const env = { SURPLUS_API_KEY: process.env.SURPLUS_API_KEY };
+    await (async () => [
+      ...(await qualifyValueModels(env, dryRun)),
+      await qualifyGeneralReview(env, dryRun),
+    ])()
       .then((results) => {
         for (const result of results)
           process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -211,7 +291,7 @@ if (
       .catch(() => {
         // Provider errors can contain request material. Never serialize them.
         process.stderr.write(
-          "Value-model qualification failed; no publication is permitted.\n",
+          "Slopbot model qualification failed; no publication is permitted.\n",
         );
         process.exitCode = 1;
       });

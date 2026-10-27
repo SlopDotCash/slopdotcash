@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { surplusSecurityAnalyzer } from "../backend/security/analysis";
 import { priceUsage } from "../workers/slopbot/contracts";
+import { qualificationResponse } from "./qualification-response";
 
 const ENDPOINT = "https://api.surplusintelligence.ai/anthropic/v1/messages";
 const MAXIMUM_MICRO_USD = 1_000_000;
@@ -45,17 +46,16 @@ export async function qualifySecurityScreening(
       redirect: "error",
       signal: request.signal,
     });
-    const receipt = response.headers.get("x-si-buyer-cost-micro");
-    requireThat(receipt !== null && /^(0|[1-9][0-9]*)$/u.test(receipt));
-    const cost = Number(receipt);
-    requireThat(Number.isSafeInteger(cost) && cost <= MAXIMUM_MICRO_USD);
-    const value = await response.clone().json();
+    const receipt = await qualificationResponse(response);
+    requireThat(receipt.cost !== null && receipt.cost <= MAXIMUM_MICRO_USD);
+    const value = receipt.value as { model?: unknown } | null;
     requireThat(
-      typeof value.model === "string" &&
+      value !== null &&
+        typeof value.model === "string" &&
         /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u.test(value.model),
     );
     servedModel = value.model;
-    return response;
+    return receipt.response;
   }) as typeof fetch;
   const analyzer = surplusSecurityAnalyzer({
     apiKey: dryRun ? "synthetic-dry-run-no-credential" : apiKey,
