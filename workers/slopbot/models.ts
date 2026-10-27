@@ -214,7 +214,7 @@ function parseJson(text: string | undefined): unknown {
   }
 }
 
-function providerCost(headers: Headers, body?: unknown): number | null {
+export function providerCost(headers: Headers, body?: unknown): number | null {
   const usage = (body as { usage?: { buyer_cost_micro?: unknown } } | null)
     ?.usage;
   // Surplus's canonical receipt is in the body on both fast and long calls.

@@ -497,6 +497,12 @@ HTTP 400 denial does. SDK retries are disabled, so each explicit route attempt
 has one cost record. Provider error bodies are never retained. See the official
 [Surplus response contract](https://www.surplusintelligence.ai/docs/reference/long-running-responses).
 
+The two main-release provider checks use the same receipt parser, so a
+body-only charge can qualify without a legacy header. They bound the response
+body, preserve it for the production parser, and stop on an unknown charge;
+their existing request and spending limits remain. Private screening also
+refuses a body-marked truncated response, even if its text appears complete.
+
 Live Opus and Sol receipt checks passed on 10 October 2026. Controlled local HTTP
 checks covered deadline truncation, fractional costs, error receipts and retry
 count; the real SQLite migrations preserved the receipt and rejected its update.
