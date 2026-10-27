@@ -82,6 +82,9 @@ test("retains edits typed while a project revision is being published", async ({
   await expect(description).toHaveValue(current.headline);
   await description.fill("First description submitted for review");
   await page
+    .getByText("Public revision note (optional)", { exact: true })
+    .click();
+  await page
     .getByLabel("Revision note")
     .fill("Preserve edits made while saving.");
   const started = page.waitForRequest((request) => request.method() === "PUT");

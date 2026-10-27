@@ -228,7 +228,9 @@ test("unactivated referrals stay hidden; stale, paused and unknown claims cannot
   h.set(unknown);
   await section.getByRole("button", { name: "Refresh record" }).click();
   await expect(section).toContainText("The claim record is not available yet.");
+  await section.getByText("Reward details", { exact: true }).click();
   await expect(section.getByText("Unknown", { exact: true })).toHaveCount(4);
+  await expect(section).toContainText("Unknown claimable");
   expect(h.calls).toEqual([]);
 });
 

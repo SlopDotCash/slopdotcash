@@ -240,7 +240,7 @@ export function PayoutConsent({
             <ChainIcon chain={payment.chain} decorative />
             <div>
               <h2 id={headingId} tabIndex={-1} ref={reviewHeading}>
-                Authorize payout
+                Authorize payout wallet
               </h2>
               <p>{networkLabel(payment.network)}</p>
             </div>
@@ -277,10 +277,15 @@ export function PayoutConsent({
               <button
                 key={wallet.id}
                 type="button"
-                className="button primary-button"
+                className="wallet-picker-row"
                 disabled={busy}
                 onClick={() => void authorize(wallet)}
               >
+                {wallet.icon ? (
+                  <img src={wallet.icon} width={32} height={32} alt="" />
+                ) : (
+                  <Wallet size={24} aria-hidden="true" />
+                )}
                 {busy ? "Confirm in your wallet…" : `Sign with ${wallet.name}`}
               </button>
             ))}
