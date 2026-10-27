@@ -153,12 +153,19 @@ test("large private evidence downloads with a single-use browser grant @registry
     `/vetting-evidence?assessmentId=${assessment}&runId=${runId}`,
     { waitUntil: "networkidle" },
   );
+  const retention = page.getByText("Run details and retention", {
+    exact: true,
+  });
+  await retention.focus();
+  await page.keyboard.press("Enter");
   await expect(
     page.getByText(
-      "Case open. Evidence remains available until 90 days after closure.",
+      "Case open. Evidence is retained until 90 days after closure.",
       { exact: false },
     ),
   ).toBeVisible();
+  await retention.focus();
+  await page.keyboard.press("Enter");
   await page
     .getByRole("button", {
       name: `Select Synthetic VM disk overlay, ${sha.slice(0, 12)}`,
