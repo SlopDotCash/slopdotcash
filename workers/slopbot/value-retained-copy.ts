@@ -343,8 +343,9 @@ export async function retainedCopyBindings(sources: readonly WorkUnitSource[]) {
   >();
   const limitations = new Set<string>();
   for (const original of sources) {
-    if (alreadyAcceptedPromotion(original, sources)) continue;
     const integrations = await retainedCopySources(original, sources);
+    if (!integrations.length && alreadyAcceptedPromotion(original, sources))
+      continue;
     const evidence = original.evidence;
     // An exact edit match plus a GitHub PR relationship is an ownership
     // ambiguity even if the acknowledgement is missing, removed, or forged.
