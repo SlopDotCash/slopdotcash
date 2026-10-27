@@ -207,6 +207,7 @@ export async function handleNotificationsApi(
       const page = rows.results.slice(0, LIST_LIMIT);
       const last = page.at(-1);
       const body: NotificationsResponse = {
+        recipientGithubId: actor.githubId,
         nextCursor:
           rows.results.length > LIST_LIMIT && last
             ? JSON.stringify([last.source_at, last.event_key])

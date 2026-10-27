@@ -39,10 +39,21 @@ function open() {
   const { db, sqlite } = sqliteD1(migrations);
   const rows = (recipient: string) =>
     sqlite
-      .query(
+      .query<
+        {
+          event_key: string;
+          kind: string;
+          subject: string;
+          detail: string | null;
+          action_path: string;
+          source_at: string;
+          read_at: string | null;
+        },
+        [string]
+      >(
         "SELECT event_key,kind,subject,detail,action_path,source_at,read_at FROM notifications WHERE recipient_github_id=? ORDER BY source_at,event_key",
       )
-      .all(recipient) as Record<string, string | null>[];
+      .all(recipient);
   return { db, sqlite, rows };
 }
 
@@ -489,10 +500,11 @@ describe("notifications API", () => {
           "INSERT INTO notifications (event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES (?,?,'wallet_changed','base','/account#wallets',?,?)",
         )
         .run(key, recipient, at, at);
-    const call = (request: Request) =>
+    const call = (request: Request, currentActor = actor) =>
       handleNotificationsApi(request, {
         db: db as never,
-        sessionActor: async () => (actor ? { githubId: actor } : null),
+        sessionActor: async () =>
+          currentActor ? { githubId: currentActor } : null,
         now: () => new Date("2026-10-19T13:00:00.000Z"),
       });
     return { call, rows, sqlite };
@@ -568,18 +580,57 @@ describe("notifications API", () => {
       body: JSON.stringify({ eventKeys: keys }),
     });
 
-  test("lists only the signed-in recipient's rows, newest first", async () => {
-    const { call } = setup(APPLICANT);
+  test("binds the response identity to the signed-in recipient's own rows, newest first", async () => {
+    const { call, rows } = setup(APPLICANT);
     const response = (await call(
       new Request(`${origin}/api/v1/notifications`),
     )) as Response;
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
-    const body = await response.json();
+    const body = parseNotificationsResponse(await response.json());
+    expect(body.recipientGithubId).toBe(APPLICANT);
     expect(body.unread).toBe(2);
     expect(
       body.notifications.map((n: { eventKey: string }) => n.eventKey),
     ).toEqual(["wallet-claim:b", "wallet-claim:a"]);
+    for (const recipient of [OTHER, STEWARD, APPLICANT]) {
+      const next = (await call(
+        new Request(`${origin}/api/v1/notifications`),
+        recipient,
+      )) as Response;
+      expect(next.status).toBe(200);
+      const inbox = parseNotificationsResponse(await next.json());
+      expect(inbox.recipientGithubId).toBe(recipient);
+      expect(inbox.notifications.map((n) => n.eventKey).sort()).toEqual(
+        rows(recipient)
+          .map((row) => row.event_key)
+          .sort(),
+      );
+      expect(inbox.unread).toBe(rows(recipient).length);
+    }
+    expect(() =>
+      parseNotificationsResponse({
+        notifications: body.notifications,
+        unread: body.unread,
+        nextCursor: body.nextCursor,
+      }),
+    ).toThrow("The inbox returned an invalid response.");
+    for (const invalid of [
+      null,
+      "",
+      "0",
+      "01",
+      "-1",
+      "1.5",
+      "1e3",
+      " 1",
+      "a",
+      "1".repeat(21),
+      1,
+    ])
+      expect(() =>
+        parseNotificationsResponse({ ...body, recipientGithubId: invalid }),
+      ).toThrow("The inbox returned an invalid response.");
   });
 
   test("marks the recipient's own rows read once and refuses other writes", async () => {
