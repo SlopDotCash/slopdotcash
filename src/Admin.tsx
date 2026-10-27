@@ -244,6 +244,16 @@ function ProjectEditor({
       ...((rest.reward as { kind?: unknown } | undefined)?.kind ===
         "monthly-pool" && assetSelected
         ? {
+            reward: {
+              ...(rest.reward as Record<string, unknown>),
+              chain: choice.network,
+              currency: choice.symbol,
+            },
+            ...(rest.escrow &&
+            typeof rest.escrow === "object" &&
+            !Array.isArray(rest.escrow)
+              ? { escrow: { ...rest.escrow, chain: choice.network } }
+              : {}),
             rewardAsset:
               project.manifest.rewardAsset &&
               project.manifest.rewardAsset.network === choice.network &&
