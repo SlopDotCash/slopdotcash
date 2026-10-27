@@ -66,6 +66,15 @@ const BODY = "Buy cheap followers today at our shop.";
 /** When Slopbot closes the fixture pull request; GitHub's closedAt agrees. */
 const CLOSED_AT = "2026-11-10T00:00:00.000Z";
 
+type ModelReply = {
+  category: Category;
+  confidence: number;
+  evidence?: string[];
+  limitations?: string[];
+  servedModel?: string;
+  status?: number;
+};
+
 type Run = {
   inbox(actor: number, moderators?: string, path?: string): Promise<Response>;
   enableMail(): Promise<void>;
@@ -75,6 +84,22 @@ type Run = {
   deliver: (job: Job) => Promise<string>;
   tick: () => Promise<Job[]>;
   model: (category: Category, confidence: number) => void;
+  modelSequence: (replies: ModelReply[]) => void;
+  modelInputs: { effort: string; item: string }[];
+  onModelCall: (callback: (count: number) => void) => void;
+  emptyComparison: (reportedFiles?: number) => void;
+  nonemptyComparison: () => void;
+  seedDuplicate: () => void;
+  changeDuplicate: (
+    change:
+      | "closed"
+      | "author"
+      | "body"
+      | "node"
+      | "head"
+      | "unavailable"
+      | "kind",
+  ) => void;
   consent: (value: boolean | null) => void;
   revokeOnConfirmation: () => void;
   repositoryConfig: (value: string | null, truncated?: boolean) => void;
@@ -225,12 +250,19 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let pauseAppeal: (() => Promise<void>) | null = null;
   let appealHistoryMode = "normal";
   let historyPrefix = 0;
-  let verdict = { category: "spam" as Category, confidence: 0.97 };
+  let verdict: ModelReply = { category: "spam", confidence: 0.97 };
   let config: string | null = null;
   let configTruncated = false;
   let policyResponse: { status: number; body?: unknown } | null = null;
   let revokeOnConfirmation = false;
   let modelCalls = 0;
+  let replies: ModelReply[] = [];
+  const modelInputs: Run["modelInputs"] = [];
+  let onModelCall: ((count: number) => void) | null = null;
+  let emptyComparison = false;
+  let reportedFiles = 1;
+  let duplicate = false;
+  let duplicateChange: Parameters<Run["changeDuplicate"]>[0] | null = null;
   const consent = (value: boolean | null) => {
     const row = sqlite
       .query("SELECT revision, manifest FROM projects WHERE id = ?")
@@ -277,23 +309,46 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         writes.push(`${request.method} ${path}`);
       if (path === "/v1/messages") {
         if (++modelCalls === 2 && revokeOnConfirmation) consent(false);
+        const input = (await request.json()) as {
+          model: string;
+          output_config: { effort: string };
+          messages: { content: { text: string }[] }[];
+        };
+        modelInputs.push({
+          effort: input.output_config.effort,
+          item: input.messages[0].content[1].text,
+        });
+        const reply = replies.shift() ?? verdict;
+        onModelCall?.(modelCalls);
+        if (reply.status !== undefined)
+          return Response.json(
+            { error: "synthetic provider failure" },
+            { status: reply.status },
+          );
         return Response.json({
           id: "msg_local",
           type: "message",
           role: "assistant",
-          model: "claude-opus-5.5",
+          model: reply.servedModel ?? input.model,
           stop_reason: "end_turn",
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                ...verdict,
+                category: reply.category,
+                confidence: reply.confidence,
                 rule_refs: [
                   { source: "universal", quote: "Buy cheap followers" },
                 ],
-                evidence: ["Buy cheap followers"],
+                evidence: reply.evidence ?? [
+                  reply.category === "empty"
+                    ? "Comparison changed files: 0"
+                    : reply.category === "duplicate" && duplicate
+                      ? "Title, body and complete diff are byte-identical to this item."
+                      : "Buy cheap followers",
+                ],
                 summary: "This pull request advertises a service.",
-                limitations: [],
+                limitations: reply.limitations ?? [],
                 objective_defect: null,
               }),
             },
@@ -327,19 +382,49 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           encoding: "base64",
         });
       }
-      if (path.endsWith("/issues/5") && request.method === "GET")
+      if (
+        duplicate &&
+        path.endsWith("/issues/4") &&
+        duplicateChange === "unavailable"
+      )
+        return new Response(null, { status: 404 });
+      if (
+        (path.endsWith("/issues/5") ||
+          (duplicate && path.endsWith("/issues/4"))) &&
+        request.method === "GET"
+      )
         return Response.json({
-          node_id: "PR_local",
-          number: 5,
-          state,
+          node_id: path.endsWith("/issues/4")
+            ? duplicateChange === "node"
+              ? "PR_changed"
+              : "PR_prior"
+            : "PR_local",
+          number: path.endsWith("/issues/4") ? 4 : 5,
+          state: path.endsWith("/issues/4")
+            ? duplicateChange === "closed"
+              ? "closed"
+              : "open"
+            : state,
           closed_by:
             closerEvidence && closedBy !== null ? { id: closedBy } : null,
           title: "Followers",
-          body: BODY,
-          user: { login: "author", id: AUTHOR, type: "User" },
+          body:
+            path.endsWith("/issues/4") && duplicateChange === "body"
+              ? "Changed original content"
+              : BODY,
+          user: {
+            login: "author",
+            id:
+              path.endsWith("/issues/4") && duplicateChange === "author"
+                ? OUTSIDER
+                : AUTHOR,
+            type: "User",
+          },
           assignees: [],
           labels: labels.map((name) => ({ name })),
-          pull_request: {},
+          ...(path.endsWith("/issues/4") && duplicateChange === "kind"
+            ? {}
+            : { pull_request: {} }),
         });
       if (path.endsWith("/pulls/5") && request.method === "PATCH") {
         const next = ((await request.json()) as { state: string }).state;
@@ -370,11 +455,16 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         }
         return Response.json({ state });
       }
-      if (path.endsWith("/pulls/5"))
+      if (path.endsWith("/pulls/5") || (duplicate && path.endsWith("/pulls/4")))
         return Response.json({
           draft: false,
           merged,
-          head: { sha: head },
+          head: {
+            sha:
+              path.endsWith("/pulls/4") && duplicateChange === "head"
+                ? "d".repeat(40)
+                : head,
+          },
           base: {
             sha: "c".repeat(40),
             ref: "main",
@@ -382,7 +472,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           },
           additions: 1,
           deletions: 0,
-          changed_files: 1,
+          changed_files: reportedFiles,
         });
       if (path.endsWith("/branches/main"))
         return Response.json({ commit: { sha: "c".repeat(40) } });
@@ -391,8 +481,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           base_commit: { sha: "c".repeat(40) },
           merge_base_commit: { sha: "c".repeat(40) },
           files:
-            url.searchParams.get("page") === "1" ||
-            !url.searchParams.has("page")
+            !emptyComparison &&
+            (url.searchParams.get("page") === "1" ||
+              !url.searchParams.has("page"))
               ? [
                   {
                     filename: "README.md",
@@ -771,6 +862,42 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       model: (category, confidence) => {
         verdict = { category, confidence };
       },
+      modelSequence: (sequence) => {
+        replies = [...sequence];
+      },
+      modelInputs,
+      onModelCall: (callback) => {
+        onModelCall = callback;
+      },
+      emptyComparison: (reported = 0) => {
+        emptyComparison = true;
+        reportedFiles = reported;
+      },
+      nonemptyComparison: () => {
+        emptyComparison = false;
+        reportedFiles = 1;
+      },
+      seedDuplicate: () => {
+        duplicate = true;
+        const content = `Title: Followers\n\nBody:\n${BODY}\n\nDiff:\n--- README.md (modified)\n+${BODY}\n`;
+        sqlite.run(
+          `INSERT INTO slopbot_reviews
+           (review_key,installation_id,repository_id,item_kind,item_number,item_node_id,
+            author_id,revision,content_digest,policy_digest,status,created_at)
+           VALUES ('prior-review',1,?,'pull_request',4,'PR_prior',?,? ,? ,?,'completed',?)`,
+          [
+            repositoryId,
+            AUTHOR,
+            head,
+            createHash("sha256").update(content).digest("hex"),
+            "a".repeat(64),
+            at,
+          ],
+        );
+      },
+      changeDuplicate: (change) => {
+        duplicateChange = change;
+      },
       consent,
       revokeOnConfirmation: () => {
         revokeOnConfirmation = true;
@@ -905,6 +1032,258 @@ test("fresh project consent and confirmation permit closure without a repository
   await closedItem(async (run) => {
     expect(await run.review()).toBe("closed (spam)");
     expect(run.sql(PENALTY)).toHaveLength(1);
+  });
+});
+
+for (const category of ["empty", "duplicate"] as const) {
+  test(`${category} prefilter closure requires recorded medium and high model reviews`, async () => {
+    await closedItem(async (run) => {
+      if (category === "empty")
+        run.emptyComparison(7); // Stale PR metadata is not the source count.
+      else run.seedDuplicate();
+      run.model(category, 0.97);
+      expect(await run.review()).toBe(`closed (${category})`);
+      expect(
+        run.sql("SELECT call_kind, outcome FROM slopbot_costs ORDER BY id"),
+      ).toEqual([
+        { call_kind: "triage", outcome: "ok" },
+        { call_kind: "confirm", outcome: "ok" },
+      ]);
+      expect(run.modelInputs.map((input) => input.effort)).toEqual([
+        "medium",
+        "high",
+      ]);
+      // Missing provider receipts stay unknown; two real call records are
+      // still required and no model body ID becomes a billing receipt.
+      expect(
+        run.sql(
+          "SELECT provider_cost_micro_usd, provider_request_id FROM slopbot_costs ORDER BY id",
+        ),
+      ).toEqual([
+        { provider_cost_micro_usd: null, provider_request_id: null },
+        { provider_cost_micro_usd: null, provider_request_id: null },
+      ]);
+      if (category === "empty") {
+        expect(
+          run.modelInputs.every((input) =>
+            input.item.includes("Diff:\nComparison changed files: 0\n"),
+          ),
+        ).toBe(true);
+      } else {
+        expect(run.modelInputs[0].item).toContain('"nodeId":"PR_prior"');
+        expect(run.modelInputs[0].item).toContain(
+          '"authorId":42,"currentAuthorId":42',
+        );
+        expect(run.modelInputs[0].item).toBe(run.modelInputs[1].item);
+        expect(
+          run.sql(
+            "SELECT content_digest FROM slopbot_reviews WHERE item_node_id = 'PR_local'",
+          ),
+        ).toEqual([
+          {
+            content_digest: createHash("sha256")
+              .update(
+                `Title: Followers\n\nBody:\n${BODY}\n\nDiff:\n--- README.md (modified)\n+${BODY}\n`,
+              )
+              .digest("hex"),
+          },
+        ]);
+      }
+    });
+  });
+
+  for (const guard of ["global off", "consent off", "label mode"] as const) {
+    test(`${category} prefilter stays free when ${guard} prevents closure`, async () => {
+      await closedItem(async (run) => {
+        if (category === "empty") run.emptyComparison();
+        else run.seedDuplicate();
+        if (guard === "global off") run.closureEnabled(false);
+        if (guard === "consent off") run.consent(false);
+        if (guard === "label mode")
+          run.repositoryConfig(
+            JSON.stringify({
+              version: 1,
+              audience: "protection",
+              closure: true,
+              categories: { [category]: "label" },
+            }),
+          );
+        expect(await run.review()).not.toStartWith("closed");
+        expect(run.modelInputs).toEqual([]);
+        expect(run.sql("SELECT call_kind FROM slopbot_costs")).toEqual([]);
+        expect(run.writes.some((path) => path.startsWith("PATCH "))).toBe(
+          false,
+        );
+      });
+    });
+  }
+}
+
+for (const change of [
+  "closed",
+  "author",
+  "body",
+  "node",
+  "head",
+  "unavailable",
+  "kind",
+] as const) {
+  test(`duplicate confirmation refuses an original that becomes ${change}`, async () => {
+    await closedItem(async (run) => {
+      run.seedDuplicate();
+      run.model("duplicate", 0.97);
+      run.onModelCall((count) => {
+        if (count === 2) run.changeDuplicate(change);
+      });
+      expect(await run.review()).not.toStartWith("closed");
+      expect(run.modelInputs).toHaveLength(2);
+      expect(run.writes.some((path) => path.startsWith("PATCH "))).toBe(false);
+      expect(run.sql(PENALTY)).toEqual([]);
+    });
+  });
+}
+
+test("duplicate original is rechecked again after publication immediately before close", async () => {
+  await closedItem(async (run) => {
+    run.seedDuplicate();
+    run.model("duplicate", 0.97);
+    const barrier = run.pauseNextFindingLabel();
+    const review = run.review();
+    await barrier.entered;
+    run.changeDuplicate("closed");
+    barrier.release();
+    expect(await review).not.toStartWith("closed");
+    expect(run.writes).not.toContain("PATCH /repos/SlopDotCash/asi/pulls/5");
+    expect(run.currentState()).toBe("open");
+    expect(run.sql(PENALTY)).toEqual([]);
+  });
+});
+
+test("a model's duplicate claim cannot close without a verified same-author open original", async () => {
+  await closedItem(async (run) => {
+    run.model("duplicate", 0.97);
+    expect(await run.review()).not.toStartWith("closed");
+    expect(run.modelInputs).toHaveLength(1);
+    expect(run.writes.some((path) => path.startsWith("PATCH "))).toBe(false);
+  });
+});
+
+for (const result of [
+  "none",
+  "disagree",
+  "uncertain",
+  "ungrounded",
+  "limited",
+  "failed triage",
+  "unverified model",
+  "failed confirmation",
+] as const) {
+  test(`empty prefilter cannot force closure after ${result} model review`, async () => {
+    await closedItem(async (run) => {
+      run.emptyComparison();
+      const valid = { category: "empty" as const, confidence: 0.97 };
+      run.model("empty", 0.97);
+      if (result === "none")
+        run.modelSequence([{ category: "none", confidence: 0.97 }]);
+      if (result === "disagree")
+        run.modelSequence([valid, { category: "spam", confidence: 0.97 }]);
+      if (result === "uncertain")
+        run.modelSequence([{ ...valid, confidence: 0.85 }]);
+      if (result === "ungrounded")
+        run.modelSequence([
+          { ...valid, evidence: ["not present in the item"] },
+        ]);
+      if (result === "limited")
+        run.modelSequence([
+          {
+            ...valid,
+            limitations: ["Source interpretation remains unresolved."],
+          },
+          valid,
+        ]);
+      if (result === "failed triage")
+        run.modelSequence([
+          { ...valid, status: 503 },
+          { ...valid, status: 503 },
+        ]);
+      if (result === "unverified model")
+        run.modelSequence([
+          { ...valid, servedModel: "unknown" },
+          { ...valid, servedModel: "unknown" },
+        ]);
+      if (result === "failed confirmation")
+        run.modelSequence([
+          valid,
+          { ...valid, status: 503 },
+          { ...valid, status: 503 },
+        ]);
+      if (result === "failed triage" || result === "unverified model")
+        await expect(run.review()).rejects.toThrow(
+          "every model route step failed",
+        );
+      else {
+        const outcome = await run.review();
+        expect(outcome).not.toStartWith("closed");
+        if (result === "none") expect(outcome).toBe("no action (none)");
+      }
+      expect(run.writes.some((path) => path.startsWith("PATCH "))).toBe(false);
+      expect(run.currentState()).toBe("open");
+      expect(run.sql(PENALTY)).toEqual([]);
+      expect(run.modelInputs.length).toBeGreaterThan(0);
+      if (result === "failed triage" || result === "unverified model") {
+        expect(
+          run.sql("SELECT outcome FROM slopbot_costs ORDER BY id"),
+        ).toEqual([{ outcome: "failed" }, { outcome: "failed" }]);
+      }
+    });
+  });
+}
+
+test("model triage replaces the prefilter category before category mode and penalty decisions", async () => {
+  await closedItem(async (run) => {
+    run.emptyComparison();
+    run.repositoryConfig(
+      JSON.stringify({
+        version: 1,
+        audience: "protection",
+        closure: true,
+        categories: { empty: "close", spam: "label" },
+      }),
+    );
+    run.model("spam", 0.97);
+    expect(await run.review()).toBe("labeled (spam)");
+    expect(run.modelInputs).toHaveLength(1);
+    expect(run.currentState()).toBe("open");
+    expect(run.sql(PENALTY)).toEqual([]);
+  });
+});
+
+for (const change of ["head", "comparison", "consent"] as const) {
+  test(`empty prefilter confirmation rechecks changed ${change}`, async () => {
+    await closedItem(async (run) => {
+      run.emptyComparison();
+      run.model("empty", 0.97);
+      run.onModelCall((count) => {
+        if (count !== 2) return;
+        if (change === "head") run.head("d".repeat(40));
+        if (change === "comparison") run.nonemptyComparison();
+        if (change === "consent") run.consent(false);
+      });
+      expect(await run.review()).not.toStartWith("closed");
+      expect(run.modelInputs).toHaveLength(2);
+      expect(run.writes.some((path) => path.startsWith("PATCH "))).toBe(false);
+      expect(run.sql(PENALTY)).toEqual([]);
+    });
+  });
+}
+
+test("ordinary review keeps its nonzero comparison input and two-call close path", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.modelInputs).toHaveLength(2);
+    expect(run.modelInputs[0].item).toBe(
+      `<item kind="pull_request">\nTitle: Followers\n\nBody:\n${BODY}\n\nDiff:\n--- README.md (modified)\n+${BODY}\n\n</item>`,
+    );
   });
 });
 
@@ -1738,6 +2117,7 @@ test("a reversed scam penalty suppresses the pending account-review mail", async
 for (const category of ["spam", "duplicate"] as const)
   test(`a ${category} close writes no moderator account-review notice`, async () => {
     await closedItem(async (run) => {
+      if (category === "duplicate") run.seedDuplicate();
       run.model(category, 0.97);
       expect(await run.review()).toBe(`closed (${category})`);
       expect(run.sql(SCAM_NOTICES)).toEqual([]);
