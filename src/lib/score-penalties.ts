@@ -32,6 +32,7 @@ export function penaltyDeductions(
   >[],
   penalties: readonly PublishedPenalty[],
   projectOf: (repository: string) => string,
+  extraCredit?: ReadonlyMap<string, number>,
 ): PenaltyDeductions {
   const key = (actorId: string, repository: string, occurredAt: string) =>
     `${actorId}\0${projectOf(repository)}\0${occurredAt.slice(0, 7)}`;
@@ -40,6 +41,11 @@ export function penaltyDeductions(
     const bucket = key(event.actor.id, event.repository, event.occurredAt);
     available.set(bucket, (available.get(bucket) ?? 0) + eventThirds(event));
   }
+  // Credit the rolling events do not carry, such as a retained award the
+  // snapshot no longer lists, still bounds the month's debit.
+  for (const [bucket, thirds] of extraCredit ?? [])
+    if (Number.isSafeInteger(thirds) && thirds > 0)
+      available.set(bucket, (available.get(bucket) ?? 0) + thirds);
   const byActor = new Map<string, number>();
   const byPenalty = new Map<string, number>();
   for (const penalty of [...penalties].sort(
