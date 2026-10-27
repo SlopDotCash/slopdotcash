@@ -28,6 +28,7 @@ import {
   useState,
 } from "react";
 import { Link } from "./Link";
+import { ProjectSecuritySettings } from "./ProjectSecuritySettings";
 import "./operations-design.css";
 import { decimalBaseUnits } from "./lib/base-units.mjs";
 import { copyText } from "./lib/copy-text";
@@ -184,10 +185,15 @@ function automaticReady(value: Readiness): boolean {
  * (SEC-07). The report draft lives here, so an expired or failed check never
  * discards what the reporter typed; sending checks again first.
  */
-function IntakeHandoff({ project }: { project: ProjectDefinition }) {
+function IntakeHandoff({
+  project,
+  session,
+}: {
+  project: ProjectDefinition;
+  session: ProjectSessionState;
+}) {
   const [state, setState] = useState<ReadinessState>({ status: "checking" });
   const [draft, setDraft] = useState<ReportDraft>(EMPTY_DRAFT);
-  const session = useProjectSession();
   const signedIn = session.status === "signed-in";
   const stateRef = useRef(state);
   useEffect(() => {
@@ -638,10 +644,13 @@ function people(list: SecurityBountyTerms["approvers"]["technical"]): string {
 
 /** Public program terms and the verified private handoff. */
 export function SecurityProgramPage({
-  project,
+  project: initialProject,
 }: {
   project: ProjectDefinition;
 }) {
+  const [project, setProject] = useState(initialProject);
+  const session = useProjectSession();
+  useEffect(() => setProject(initialProject), [initialProject]);
   const terms = project.securityBounty;
   if (terms === undefined)
     return (
@@ -657,7 +666,13 @@ export function SecurityProgramPage({
           lead="No published bounty terms, so no award is promised."
         />
         <ProjectNav project={project} current="security" />
-        <IntakeHandoff project={project} />
+        <IntakeHandoff project={project} session={session} />
+        <ProjectSecuritySettings
+          key={project.id}
+          onProjectChange={setProject}
+          project={project}
+          session={session}
+        />
       </main>
     );
   const money = amounts(terms);
@@ -684,7 +699,13 @@ export function SecurityProgramPage({
         </StatusBadge>
       </RoutePageHeader>
       <ProjectNav project={project} current="security" />
-      <IntakeHandoff project={project} />
+      <IntakeHandoff project={project} session={session} />
+      <ProjectSecuritySettings
+        key={project.id}
+        onProjectChange={setProject}
+        project={project}
+        session={session}
+      />
       <div className="security-program-terms">
         <section aria-labelledby="security-terms" className="admin-card">
           <h2 id="security-terms">Award terms</h2>

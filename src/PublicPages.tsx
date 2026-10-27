@@ -31,6 +31,7 @@ import {
   DataNotice,
   ExternalLinkAnchor,
   formatDate,
+  formatDateTime,
   formatPointsFromThirds,
   monthlyPoolLabel,
   NetworkName,
@@ -369,6 +370,7 @@ function WhoBuildsOnSlop({
         What the {count.format(all.size)} contributors on the leaderboard as of{" "}
         {dateLabel} did elsewhere on GitHub in 2026.
       </p>
+      <DataNotice retry={retry} state={state} />
       <div className="money-summary model-outcomes-summary">
         <span>
           <strong>{percent(all.aiPrimary, all.classifiable)}</strong> build AI
@@ -381,123 +383,127 @@ function WhoBuildsOnSlop({
           outside AI repository this year ({count.format(all.aiExternalPr)} of{" "}
           {count.format(all.size)})
         </span>
-        <span>
-          <strong>{count.format(outside.externalPrsExMass)}</strong> merged pull
-          requests across {count.format(outside.externalReposExMass)} outside
-          repositories since 1 January 2026
-        </span>
-        <span>
-          <strong>{count.format(outside.aiRepoMedianStars)}</strong> stars is
-          the median outside AI repository they work in;{" "}
-          {percentOfRatio(outside.aiRepoShareUnder10)} have fewer than ten
-        </span>
       </div>
-      <div className="who-builds-grid">
-        <section
-          className="who-builds-block"
-          aria-labelledby="who-builds-focus-heading"
-        >
-          <h3 id="who-builds-focus-heading">What they build elsewhere</h3>
+      <details className="audience-data">
+        <summary>Research details</summary>
+        <div className="money-summary model-outcomes-summary">
+          <span>
+            <strong>{count.format(outside.externalPrsExMass)}</strong> merged
+            pull requests across {count.format(outside.externalReposExMass)}{" "}
+            outside repositories since 1 January 2026
+          </span>
+          <span>
+            <strong>{count.format(outside.aiRepoMedianStars)}</strong> stars is
+            the median outside AI repository they work in;{" "}
+            {percentOfRatio(outside.aiRepoShareUnder10)} have fewer than ten
+          </span>
+        </div>
+        <div className="who-builds-grid">
           <section
-            className="plain-table-wrap"
-            aria-label="Focus areas outside Slop"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
-            tabIndex={0}
+            className="who-builds-block"
+            aria-labelledby="who-builds-focus-heading"
           >
-            <table className="plain-table who-builds-table">
-              <thead>
-                <tr>
-                  <th scope="col">Primary focus</th>
-                  <th scope="col" className="who-builds-number">
-                    People
-                  </th>
-                  <th scope="col" className="who-builds-number">
-                    Repos
-                  </th>
-                  <th scope="col" className="who-builds-number">
-                    Merged PRs
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {focusAreas.map((area) => (
-                  <tr key={area.area}>
-                    <th scope="row">{area.area}</th>
-                    <td className="who-builds-number">
-                      {count.format(area.primaryContributors)}
-                    </td>
-                    <td className="who-builds-number">
-                      {count.format(area.repos)}
-                    </td>
-                    <td className="who-builds-number">
-                      {count.format(area.prs)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-        </section>
-        <section
-          className="who-builds-block"
-          aria-labelledby="who-builds-known-heading"
-        >
-          <h3 id="who-builds-known-heading">
-            Well-known repositories they merged into this year
-          </h3>
-          <section
-            className="plain-table-wrap"
-            aria-label="Well-known repositories outside Slop"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
-            tabIndex={0}
-          >
-            <table className="plain-table who-builds-table">
-              <thead>
-                <tr>
-                  <th scope="col">Repository</th>
-                  <th scope="col" className="who-builds-number">
-                    Stars
-                  </th>
-                  <th scope="col" className="who-builds-number">
-                    Merged PRs
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {knownRepositories.map((row) => (
-                  <tr key={row.repo}>
-                    <th scope="row">
-                      <ExternalLinkAnchor href={repositoryUrl(row.repo)}>
-                        {row.repo}
-                      </ExternalLinkAnchor>
+            <h3 id="who-builds-focus-heading">What they build elsewhere</h3>
+            <section
+              className="plain-table-wrap"
+              aria-label="Focus areas outside Slop"
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+              tabIndex={0}
+            >
+              <table className="plain-table who-builds-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Primary focus</th>
+                    <th scope="col" className="who-builds-number">
+                      People
                     </th>
-                    <td className="who-builds-number">
-                      {compact.format(row.stars)}
-                    </td>
-                    <td className="who-builds-number">
-                      {count.format(row.prs)}
-                    </td>
+                    <th scope="col" className="who-builds-number">
+                      Repos
+                    </th>
+                    <th scope="col" className="who-builds-number">
+                      Merged PRs
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {focusAreas.map((area) => (
+                    <tr key={area.area}>
+                      <th scope="row">{area.area}</th>
+                      <td className="who-builds-number">
+                        {count.format(area.primaryContributors)}
+                      </td>
+                      <td className="who-builds-number">
+                        {count.format(area.repos)}
+                      </td>
+                      <td className="who-builds-number">
+                        {count.format(area.prs)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
           </section>
-        </section>
-      </div>
-      <DataNotice retry={retry} state={state} />
-      {footprint && models && footprint.scoredEvents > 0 ? (
-        <p className="model-outcomes-note">
-          Inside Slop, live: {count.format(footprint.contributors)} contributors
-          scored in the last {footprint.windowDays} days, and{" "}
-          {percent(
-            models.totals.mergedPullRequestsWithModel,
-            models.totals.mergedPullRequests,
-          )}{" "}
-          of merged pull requests name the model that did the work (
-          {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
-          {count.format(models.totals.mergedPullRequests)}).
-        </p>
-      ) : null}
+          <section
+            className="who-builds-block"
+            aria-labelledby="who-builds-known-heading"
+          >
+            <h3 id="who-builds-known-heading">
+              Well-known repositories they merged into this year
+            </h3>
+            <section
+              className="plain-table-wrap"
+              aria-label="Well-known repositories outside Slop"
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+              tabIndex={0}
+            >
+              <table className="plain-table who-builds-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Repository</th>
+                    <th scope="col" className="who-builds-number">
+                      Stars
+                    </th>
+                    <th scope="col" className="who-builds-number">
+                      Merged PRs
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {knownRepositories.map((row) => (
+                    <tr key={row.repo}>
+                      <th scope="row">
+                        <ExternalLinkAnchor href={repositoryUrl(row.repo)}>
+                          {row.repo}
+                        </ExternalLinkAnchor>
+                      </th>
+                      <td className="who-builds-number">
+                        {compact.format(row.stars)}
+                      </td>
+                      <td className="who-builds-number">
+                        {count.format(row.prs)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          </section>
+        </div>
+        {footprint && models && footprint.scoredEvents > 0 ? (
+          <p className="model-outcomes-note">
+            Inside Slop, live: {count.format(footprint.contributors)}{" "}
+            contributors scored in the last {footprint.windowDays} days, and{" "}
+            {percent(
+              models.totals.mergedPullRequestsWithModel,
+              models.totals.mergedPullRequests,
+            )}{" "}
+            of merged pull requests name the model that did the work (
+            {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
+            {count.format(models.totals.mergedPullRequests)}).
+          </p>
+        ) : null}
+      </details>
       <p className="who-builds-sources">
         Public GitHub data since 1 January 2026{massNote}.{" "}
         <ExternalLinkAnchor href={pinnedFile(pin.snapshotPath)}>
@@ -533,7 +539,12 @@ export function SponsorsPage({
         lead="Deposit into a project’s vault. Funded awards pay monthly when payments are enabled."
       />
       <section className="custody-proof sponsor-pools">
-        <h2>Projects</h2>
+        <div className="section-heading">
+          <h2>Projects</h2>
+          <Link className="text-button" href="/projects/new">
+            Add a project
+          </Link>
+        </div>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
           {PROJECTS.map((project) => {
             return (
@@ -581,50 +592,37 @@ export function SponsorsPage({
           })}
         </ul>
       </section>
-      <section className="worked-example sponsor-fee">
-        <div>
-          <h2>Fees</h2>
-          <p>
-            Payouts deduct a 2% fee: a 100 USDC award pays 98 USDC to the
-            contributor and 2 USDC in fees.
-          </p>
-          {hasExternalPrize ? (
-            <p>
-              External prize shares use the terms published for that project.
-              The prize sponsor controls eligibility and payment.
-            </p>
-          ) : null}
-        </div>
-        <dl
-          className="equation-card"
-          aria-label="Example: $5,000 in gross escrow awards"
-        >
-          <div>
-            <dt>Example gross awards</dt>
-            <dd>$5,000</dd>
-          </div>
-          <div>
-            <dt>Slop fee, deducted</dt>
-            <dd>$100</dd>
-          </div>
-          <div>
-            <dt>Contributors receive</dt>
-            <dd>$4,900</dd>
-          </div>
-        </dl>
-      </section>
-      <section className="worked-example sponsor-start">
-        <div>
-          <h2>Add your own project.</h2>
-        </div>
-        <ul>
-          <li>
-            <Link href="/projects/new">Add a project</Link>
-          </li>
-        </ul>
-      </section>
       <details className="sponsor-details">
-        <summary>Funding rules</summary>
+        <summary>Funding rules and fees</summary>
+        <section className="worked-example sponsor-fee">
+          <div>
+            <h2>Fees</h2>
+            <p>Ordinary awards deduct 2% in the award asset.</p>
+            {hasExternalPrize ? (
+              <p>
+                External prize shares use the terms published for that project.
+                The prize sponsor controls eligibility and payment.
+              </p>
+            ) : null}
+          </div>
+          <dl
+            className="equation-card"
+            aria-label="Example: $5,000 in gross escrow awards"
+          >
+            <div>
+              <dt>Example gross awards</dt>
+              <dd>$5,000</dd>
+            </div>
+            <div>
+              <dt>Slop fee, deducted</dt>
+              <dd>$100</dd>
+            </div>
+            <div>
+              <dt>Contributors receive</dt>
+              <dd>$4,900</dd>
+            </div>
+          </dl>
+        </section>
         <section className="worked-example sponsor-controls">
           <div>
             <h2>What you decide</h2>

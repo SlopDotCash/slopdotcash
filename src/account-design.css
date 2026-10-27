@@ -296,7 +296,10 @@
 }
 .owner-awards .owner-award-list li {
   display: grid;
-  grid-template-columns: minmax(7rem, 1fr) minmax(8rem, 1fr) minmax(7rem, 1fr) auto;
+  grid-template-columns: minmax(8rem, 1fr) minmax(12rem, 1.5fr) minmax(
+      10rem,
+      1fr
+    );
   align-items: center;
   gap: 0.75rem;
   padding: 1rem;
@@ -325,6 +328,50 @@
 .owner-awards .owner-award-list input {
   width: 100%;
   min-width: 0;
+}
+.owner-award-finalization {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  margin-block: 1rem;
+}
+.owner-award-finalization p {
+  flex: 1 1 20rem;
+  margin: 0;
+}
+.owner-award-finalization p > span:last-child {
+  display: block;
+  margin-top: 0.4rem;
+  color: var(--muted);
+}
+.owner-award-recipient details {
+  margin-top: 0.5rem;
+}
+.owner-awards .owner-award-list .owner-award-breakdown {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.4rem 0.75rem;
+}
+.owner-awards .owner-award-breakdown :is(dt, dd) {
+  margin: 0;
+}
+.owner-award-edit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+.owner-award-edit label {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.owner-vault-recovery {
+  margin-block: 1rem;
+}
+.owner-vault-recovery summary {
+  padding-block: 0.5rem;
 }
 .owner-awards .owner-award-list[aria-label="Final awards"] li {
   grid-template-columns: minmax(7rem, 1fr) 3fr;
@@ -383,7 +430,7 @@
     font-size: 0.8rem;
   }
   .owner-awards .owner-award-list li {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
   .owner-awards .owner-award-list li > button {
     justify-self: end;
@@ -406,4 +453,117 @@
 }
 .owner-awards .owner-award-list li {
   overflow-wrap: anywhere;
+}
+
+.cycle-current-stage {
+  color: var(--muted);
+  margin-block: 0.75rem;
+}
+.cycle-history,
+.cycle-breakdown {
+  margin-block: 0.75rem 1.25rem;
+}
+.cycle-history > summary,
+.cycle-breakdown > summary,
+.cycle-row-history > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.cycle-contributors {
+  min-width: 0;
+  table-layout: fixed;
+}
+.cycle-contributors :is(th, td) {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.cycle-contributors th:nth-child(1) {
+  width: 36%;
+}
+.cycle-contributors th:nth-child(2) {
+  width: 20%;
+}
+.cycle-contributor-state {
+  display: block;
+  color: var(--muted);
+  margin-top: 0.25rem;
+  font-weight: 400;
+}
+.cycle-current-amount {
+  display: block;
+}
+
+.cycle-row-history {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+}
+.cycle-amount-history {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.cycle-amount-history dd {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+.cycle-amount-history small {
+  display: block;
+  color: var(--muted);
+}
+.cycle-row-history .cycle-amount-history {
+  grid-template-columns: 1fr;
+  margin-top: 0.75rem;
+}
+.payment-exceptions {
+  margin-top: 1rem;
+}
+.payment-exceptions > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.payment-exceptions dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1.5rem;
+}
+.payment-exceptions dt {
+  font-weight: 700;
+}
+.payment-exceptions dd {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+}
+.who-builds .model-outcomes-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.audience-data > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.audience-data > .model-outcomes-summary {
+  margin-top: 1rem;
+}
+.points-person > .avatar {
+  width: 40px;
+  height: 40px;
+}
+.compact-standings-period {
+  margin-top: -0.5rem;
+  font-size: 0.8rem;
+}
+@media (max-width: 680px) {
+  .payment-exceptions dl,
+  .who-builds .model-outcomes-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+.owner-award-authorization {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+}
+.owner-award-authorization span {
+  flex-basis: 100%;
+  color: var(--muted);
 }

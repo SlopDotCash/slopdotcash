@@ -123,31 +123,39 @@ function QueueScan({
     });
   };
   return (
-    <div className="admin-actions">
-      <label>
-        Reason for the scan
-        <textarea
-          maxLength={1000}
-          onChange={(event) => setReason(event.target.value)}
-          value={reason}
-        />
-      </label>
-      {error ? (
-        <p className="form-error" role="alert">
-          <CircleAlert aria-hidden="true" /> {error}
-        </p>
-      ) : null}
-      <div>
-        <button
-          className="button secondary-button"
-          disabled={busy}
-          onClick={queue}
-          type="button"
-        >
-          {busy ? "Queuing…" : `Queue scan of revision ${project.revision}`}
-        </button>
-      </div>
-    </div>
+    <details className="admin-actions">
+      <summary>Queue scan of revision {project.revision}</summary>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          queue();
+        }}
+      >
+        <label>
+          Reason for the scan
+          <textarea
+            maxLength={1000}
+            required
+            onChange={(event) => setReason(event.target.value)}
+            value={reason}
+          />
+        </label>
+        {error ? (
+          <p className="form-error" role="alert">
+            <CircleAlert aria-hidden="true" /> {error}
+          </p>
+        ) : null}
+        <div>
+          <button
+            className="button secondary-button"
+            disabled={busy}
+            type="submit"
+          >
+            {busy ? "Queuing…" : `Queue scan of revision ${project.revision}`}
+          </button>
+        </div>
+      </form>
+    </details>
   );
 }
 
@@ -230,13 +238,22 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
           <div>
             <dt>Scan coverage</dt>
             <dd>
-              {Object.entries(result.coverage)
-                .map(([surface, entry]) => `${surface}: ${entry.state}`)
-                .join(", ")}
-              <br />
-              {Object.entries(result.checks)
-                .map(([threat, check]) => `${threat}: ${check}`)
-                .join(", ")}
+              <ul className="scan-coverage-list" aria-label="Scanned surfaces">
+                {Object.entries(result.coverage).map(([surface, entry]) => (
+                  <li key={surface}>
+                    <span>{surface}</span>{" "}
+                    <StatusBadge>{entry.state}</StatusBadge>{" "}
+                    <span>{entry.items} items</span>
+                  </li>
+                ))}
+              </ul>
+              <ul className="scan-coverage-list" aria-label="Scan checks">
+                {Object.entries(result.checks).map(([threat, check]) => (
+                  <li key={threat}>
+                    <span>{threat}</span> <StatusBadge>{check}</StatusBadge>
+                  </li>
+                ))}
+              </ul>
               {result.reusedAssessmentId
                 ? ` · Reused clean scan ${result.reusedAssessmentId} (identical content)`
                 : ""}
@@ -369,7 +386,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
                     key={project.id}
                   >
                     <header>
-                      <h3>{project.name}</h3>
+                      <span>Current clearance</span>
                       <StatusBadge
                         className="admin-badge"
                         tone={
@@ -438,8 +455,15 @@ export function VettingSection({ projectId }: { projectId: string }) {
                     {(state.value.flags ?? []).some(
                       (flag) => flag.projectId === project.id,
                     ) ? (
-                      <>
-                        <h4>Active contributor flags</h4>
+                      <details className="admin-reference">
+                        <summary>
+                          Active contributor flags ·{" "}
+                          {
+                            (state.value.flags ?? []).filter(
+                              (flag) => flag.projectId === project.id,
+                            ).length
+                          }
+                        </summary>
                         <ul>
                           {(state.value.flags ?? [])
                             .filter((flag) => flag.projectId === project.id)
@@ -467,7 +491,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
                           reinstates it. Decide only after a confirmed malicious
                           result.
                         </p>
-                      </>
+                      </details>
                     ) : null}
                     {history.length > 0 ? (
                       <>

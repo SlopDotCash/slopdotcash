@@ -18,6 +18,7 @@ import {
   CANCELED,
   expect,
   expectAccessible,
+  openProjectSecuritySettings,
   projectSuffix,
   test,
 } from "./fixtures";
@@ -624,9 +625,7 @@ test("owners publish and control bounty programs with verified funding @registry
   try {
     await signIn(page, TOKENS.security);
     await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
-    await page
-      .getByText("Security program and private bounty funds", { exact: true })
-      .click();
+    await openProjectSecuritySettings(page);
     await page.getByRole("button", { name: "Set bounty terms" }).click();
     await page.getByLabel("Published gross award (USDC)").fill("100");
     await page.getByLabel(`Source commit (${repository})`).fill("a".repeat(40));
@@ -755,9 +754,7 @@ test("owners publish and control bounty programs with verified funding @registry
     // The refusal is the same when the vault has available funds.
     await expectOutsiderRefused(request, id, repository);
     await page.reload({ waitUntil: "networkidle" });
-    await page
-      .getByText("Security program and private bounty funds", { exact: true })
-      .click();
+    await openProjectSecuritySettings(page);
     await page.getByRole("button", { name: "Edit bounty settings" }).click();
     await page.getByLabel("Status", { exact: true }).selectOption("open");
     await expectAccessible(page);
