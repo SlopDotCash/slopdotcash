@@ -471,7 +471,11 @@ export function NoWalletFound({ solana }: { solana: boolean }) {
       <Wallet aria-hidden="true" size={22} />
       <p>
         <strong>{solana ? "No Solana wallet found" : "No wallet found"}</strong>
-        <span>Use a wallet extension or your wallet app's browser.</span>
+        <span>
+          {solana
+            ? "Use a Solana wallet that can send transactions."
+            : "Use a wallet extension or your wallet app's browser."}
+        </span>
       </p>
     </div>
   );
