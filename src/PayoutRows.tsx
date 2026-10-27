@@ -98,14 +98,14 @@ export function PayoutRow({
 }) {
   return (
     <li className="payout-row">
-      <span className="payout-network" title={networkLabel(network)}>
+      <span className="payout-network">
         <ChainIcon chain={chain} decorative />
-        <span className="visually-hidden">{networkLabel(network)}</span>
       </span>
       <span className="payout-main">
         {amount}
         <small>
-          <a href={`/projects/${encodeURIComponent(projectId)}`}>{projectId}</a>
+          <a href={`/projects/${encodeURIComponent(projectId)}`}>{projectId}</a>{" "}
+          · {networkLabel(network)}
           {note ? ` · ${note}` : ""}
         </small>
       </span>

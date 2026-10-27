@@ -112,6 +112,45 @@ test("project setup shares one sign-in read with its owner inventory", async ({
   await expectAccessible(page);
 });
 
+test("project navigation reads an updated published registry", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  let published = false;
+  const description =
+    "Owner-published project description after this page opened.";
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)(?:\?.*)?$/u,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((project) =>
+            published && project.id === "eliza"
+              ? { ...project, description }
+              : project,
+          ),
+        },
+      }),
+  );
+  await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", { name: "Eliza funding", exact: true }),
+  ).toBeVisible();
+  published = true;
+  await page
+    .getByRole("navigation", { name: "Project navigation" })
+    .getByRole("link", { name: "Overview", exact: true })
+    .focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Eliza", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(description, { exact: true })).toBeVisible();
+  await expectAccessible(page);
+});
+
 test("shared navigation preserves project drafts and account sign-in destinations", async ({
   diagnostics,
   page,
@@ -1822,6 +1861,7 @@ test("lands direct and lazy cross-route hash links on their section", async ({
     await page.goto(`/contributors/${encodeURIComponent(actor.login)}`, {
       waitUntil: "networkidle",
     });
+    await page.getByText("Penalty history · 1", { exact: true }).click();
     await page
       .getByRole("link", { name: "How penalties work", exact: true })
       .click();
