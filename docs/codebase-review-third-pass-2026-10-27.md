@@ -2734,3 +2734,118 @@ The full browser matrix passed with no failed or flaky tests: 326 preview cases,
 Later bounded changes have separate evidence: #1503 passed four desktop/mobile profile-recovery cases; #1504 preserved every parsed ledger value while reducing the prepared artifact from 29,460,889 to 22,652,089 bytes and passing the complete build; #1506 passed an isolated frozen install, typecheck and bundle build after removing unused QR-code dependencies. The original homepage remains unchanged.
 
 The native payout repair in #1505 retains the real payment, amount, fee, network, keyboard and accessibility checks. See [release PR #1493](https://github.com/SlopDotCash/slopdotcash/pull/1493) for native-chain and opt-in private-intake results, final source ancestry, protected real-provider qualification and deployment evidence. This source-verification record does not declare MVP completion or authorize a financial activation.
+
+
+## Reactivated-goal audit: current integration, 27 October 2026
+
+This is the report-before-implementation checkpoint for the reactivated whole-codebase review. The checked-out baseline is `dfc224d2` (tree-equivalent to the then-current `main` release `a835e47c`). This section supplements the exhaustive file, test and visual review above; it does not reclassify historical failed runs as passes or claim an unrelated live deployment is complete.
+
+### Coverage and source continuity
+
+The current tracked tree has 1,152 paths, including 758 source/script/contract paths with TypeScript, JavaScript, Python, Rust or Solidity extensions. The completed review above remains the baseline for unchanged code. The subsequent receipt/cycle evidence removal and private reporting/vetting/response presentation changes are delivered in PRs #1533 and #1546, with their own exact-source desktop/mobile, clipboard, permission and payment evidence. This pass inventories the complete tree again, runs the application's no-unused-locals/no-unused-parameters compiler check, and individually reviews every integration change since `3b13f9c4` below. Previously reviewed historical fixtures and native contracts remain covered by their retained acceptance workflows; absence of a same-named unit test is not treated as a defect.
+
+The 38 newly changed paths are:
+
+- `.github/workflows/deploy.yml`
+- `AGENTS.md`
+- `CLAUDE.md`
+- `CONTRIBUTING.md`
+- `README.md`
+- `backend/notifications/events.ts`
+- `backend/pages.ts`
+- `backend/projects/handler.ts`
+- `backend/security/README.md`
+- `backend/security/analysis.ts`
+- `backend/security/handler.ts`
+- `backend/security/report-intake.test.ts`
+- `backend/security/report-intake.ts`
+- `backend/security/submissions.test.ts`
+- `backend/security/submissions.ts`
+- `docs/security/private-reporting-rollout.md`
+- `docs/slop-product-requirements.md`
+- `functions/api/v1/[[path]].ts`
+- `migrations/0101_durable_security_intake.sql`
+- `protocol/private-trace-v1.md`
+- `scripts/collect-value-evidence.ts`
+- `scripts/project-registry-api.test.ts`
+- `scripts/qualify-security-screening.ts`
+- `skills/project-contributor-template/SKILL.md`
+- `skills/project-contributor-template/references/security-report.md`
+- `skills/project-reviewer-template/SKILL.md`
+- `skills/slop/SKILL.md`
+- `src/App.tsx`
+- `src/Inbox.tsx`
+- `src/SecurityBounty.tsx`
+- `src/SecurityProgramEditor.tsx`
+- `src/design-system.css`
+- `src/lib/security-bounty.d.mts`
+- `src/lib/security-bounty.mjs`
+- `tests/e2e/evidence-download.spec.ts`
+- `tests/e2e/security-bounty.spec.ts`
+- `tests/e2e/site.spec.ts`
+- `tests/github-api-fixture.mjs`
+
+The new homepage bounty section is already part of this baseline. This audit does not add, remove or restyle it. The earlier homepage comparison belongs to its stated historical revision; it must not be cited as a byte comparison for this later owner-directed feature. All new fixes in this pass must leave the current homepage rendering and brand styles unchanged.
+
+### Findings selected for implementation
+
+| ID | Finding and concrete impact | Required change | Acceptance evidence |
+| --- | --- | --- | --- |
+| FA01 | `InboxPage.load()` sets notification state to `loading`; the JSX then removes the independently authenticated `SecurityInbox`. Paging notifications or retrying a notification error destroys `RevisePrivateReport`'s unsaved local text and selection. | Keep the private panel mounted during notification refresh, keyed by the authenticated recipient returned with those same notification rows. A confirmed actor change or signed-out result must dispose of the previous private content and drafts; a separate session lookup can race the notification response. Only bootstrap private access from the session when the initial notification request is unavailable; preserve independent private-report availability. Reset the old account’s pagination on identity change. Do not add persistence of private bodies to storage. | Actual browser: open a saved private report, edit its correction without submitting, page notifications and retry a notification failure, and verify the same text survives. Then switch actors while notifications still return 200, switch back, and sign out: verify the old draft and selection are removed and never restored from browser storage. |
+| FA02 | `listStoredSubmissions` catches unavailable GitHub authority in its first project-discovery pass, but not in per-candidate role resolution or the repeated resolution inside `decorateSubmission`. A later outage converts the whole list to 503, hiding the actor's own durable receipts. | Handle only recognized retryable authority failures across a complete candidate's authorization/decoration. Omit the unverified foreign candidate, keep owned records, and explicitly return `authorityUnavailable`, and show that partial-access state with the existing retry control in the submissions UI. Unknown and storage failures must remain failures. | Real migrated SQLite and HTTP reproduction: healthy listing 200/two records; authority failure on the second or third old read produces 503 with no records; direct owned-record read still returns 200. Regression must prove owned-record preservation, withheld foreign records and explicit unavailable state. |
+| FA03 | `decorateSubmission` loads a case through `rolesFor` and immediately loads it again. Listed foreign candidates also perform role resolution once for selection and again during decoration. | Reuse one freshly loaded case/roles result within this request only. Keep direct reads and mutations independently authorized. Combine this with FA02 at the same canonical boundary rather than introducing a global permission cache. | Existing cross-account, role-revocation, immutable-version and HTTP workflow checks remain. Compare real query/authority calls in the failing listing workflow where useful; do not create a mock-count-only unit suite. |
+| FA04 | The asynchronous screening regression sleeps 16 seconds solely to hold a provider answer pending. Measured baseline: one case, four assertions, 16.27 seconds; the case itself takes 16,130 ms. | Replace elapsed sleep with a deferred promise. Prove the HTTP response returns while the provider is still blocked, then release it, drain the actual background task, and inspect the retained report and completed screening state. | Preserve the existing 15-second browser deadline assertion and the real HTTP/SQL response/state assertions. The provider must not resolve before the response; an immediate answer would remove the regression coverage. |
+
+### Test and error-handling dispositions
+
+The new `backend/security/report-intake.test.ts` contains 28 expanded real HTTP/migrated-SQL cases. They exercise immutable report storage, authorization, billing-rate admission, duplicate suppression, interrupted routing, owner decisions, funding and retry. The changed submission tests exercise actual forwarding and durable state. Their injected provider/transport outputs isolate external services; call counts in these workflows enforce limits on paid work and prevent duplicate sends. They are not standalone mocked-call or literal-shape tests and must not be deleted under the unit-test cleanup request. No new unit-only declaration was found in this integration delta. FA04 removes test waiting without removing behavior coverage.
+
+`screenStoredReport` deliberately converts provider/validation failures into a durable unavailable state; the report stays saved and recoverable. The outer scheduler catch retains that receipt when background work fails. No reproduced success claim or lost record was found at that boundary in this pass, so it is not replaced with speculative propagation that could invite duplicate submissions. In contrast, FA02 is a reproduced whole-list outage and is selected for correction. Reconciliation, signature, privacy, failed-refresh and monetary checks remain fail-closed where they determine authority or payment.
+
+### Consolidation, interface and visual dispositions
+
+- The existing API/domain/UI directories still express separate security and deployment boundaries. Moving the new durable intake code into a monolithic handler would increase coupling; no duplicate implementation was found that justifies it.
+- The current shared `CopyButton`/`CopyIdentifier`, route heading, status badge, private-operation styling and native disclosure patterns remain the presentation standard. Receipt browsing and monthly Evidence blocks remain removed. Full identifiers remain available for explicit copying.
+- New report bodies are escaped and fetched only when an authorized reader opens them. Their privacy, provider-consent, current-state, funding and exact payment information are required; they are not decorative disclaimers to delete.
+- New UI work in this pass is limited to FA01 lifecycle preservation. There is no evidence for another blanket restyle, homepage change, new graphic library or additional confirmation screen. The prior full non-home screenshot inventory plus PR #1546's fresh before/after private-page evidence covers the relevant presentation; the new failing path needs a real browser recording and current screenshots.
+- Automatic refresh may update notifications, but must not remount an unrelated editor. No report submission, evidence read, financial decision, signature, disclosure or confirmation becomes automatic.
+
+### Additional acceptance criteria used by this pass
+
+1. Use current request-scoped authority; never cache a permission across requests.
+2. Keep independent panels mounted through unrelated loading/error states; bind them to the recipient of the same authenticated response and unmount on real sign-out or actor change.
+3. Retain explicit partial-unavailable status rather than silently replacing a failing list with empty success.
+4. Preserve private unsaved text in memory only; do not add durable browser storage for report bodies.
+5. Remove duplicated work at one canonical boundary rather than adding repeated defensive guards.
+6. Drive background-work tests with explicit start/release signals, not wall-clock sleeps.
+7. Measure actual HTTP, SQL, rendered and clipboard behavior; avoid new helper-inventory or mocked-call-only tests.
+8. Preserve raw downloads, immutable data, held awards, current consent and exact payment amounts.
+9. Leave the current homepage and all signing/deployment activation settings unchanged.
+10. Keep source-bound evidence and final validation results separate from prior baselines and live production claims.
+
+### Completed implementation and verification
+
+All four selected findings are implemented in [PR #1554](https://github.com/SlopDotCash/slopdotcash/pull/1554). The application acceptance checkpoint is `c3935d56a571755c299bad53a1c075c4b54d2a2c`; this report completion is documentation only.
+
+| Finding | Implemented result | Verified outcome |
+| --- | --- | --- |
+| FA01 | Private report editors and selected cases survive unrelated notification loading/errors. The authenticated recipient travels with the notification response and keys the private subtree. An initial notification outage bootstraps private access from the independent authenticated session. Account changes and sign-out clear old drafts, selection URLs and notification pagination. | Desktop and 320px mobile exercise initial 503, pending paging, later 503/retry, selected case retention, old-cursor account changes `42 → 43 → 42`, and 401. Corrections survive same-account refresh, return to the saved original after switching back, and never enter local/session storage. |
+| FA02 | An unavailable authority check withholds that foreign candidate while preserving owned receipts. The submissions list visibly states partial access and provides inline retry; an empty partial list retains the notice. | Real HTTP/migrated-SQL regressions retain owned records and withhold inaccessible records. Browser recovery removes the notice after the recheck without discarding the editor. Database failures remain explicit 500 responses. |
+| FA03 | One request-scoped case/roles result supplies each candidate's authorization and displayed permissions. The same helper removes the duplicate case read in direct decoration. | Fresh direct reads and actions refuse revoked authority; no result is cached across requests. Both independent backend reviews found no authority relaxation or foreign-row disclosure. |
+| FA04 | Screening uses explicit provider-start/release signals. The response is required before releasing the provider, followed by background draining and persisted-state checks. | The former 16-second sleep is gone. The focused case completed in 8–12 ms in local runs; the complete 30-case intake file passed 264 assertions in 1.13 seconds. This is a test orchestration improvement, not a claim about real provider latency. |
+
+The final rebase includes the 12 paths changed between `dfc224d2` and `4bc2925e`. A separate read-only review covered staging deployment/hash continuity, service binding order, credential and network isolation, the four-network local release fixture, and the admission browser assertion updates. No additional material finding was identified. Their 13 HTTP/release tests passed 91 assertions, and the native staging release workflow exercised all four generated bindings with zero outbound calls. The final tracked inventory is **1,158 paths, including 764 source/script/contract paths**.
+
+The additional exported-symbol scan inspected 696 JavaScript/TypeScript modules and 2,137 exported declarations. Its sole single-occurrence candidate, `ControlPublisher`, is a live Cloudflare RPC entry point named by `tests/fixtures/value-merge-sdk-pages.toml` and launched by the sandbox workflow. It is retained. Textual occurrence count alone is not dead-code evidence. The actual application no-unused-locals/no-unused-parameters compiler check passed.
+
+Final application verification at `c3935d56`:
+
+- **`bun run verify` passed**: 822 tests, one existing disposable-sandbox-only skip, zero failures, 7,013 assertions, all integration drivers, dependency audit and production build. The skip is not counted as acceptance; native isolation has its separate workflow evidence.
+- Typecheck, repository formatting, unused-code check and AGENTS/CLAUDE byte equality passed. Existing lint warnings remain warnings; this change introduced no new rule suppression or failure allowance.
+- **Six canonical browser cases passed**, with zero failures, skips or flakes: desktop/mobile private lifecycle, historical notification pagination, and delivery/read/acknowledgment distinctions. The lifecycle includes keyboard retry, WCAG AA, 200% text, and no horizontal overflow at either viewport.
+- The standalone production build also passed both new private lifecycle cases. An attempted standalone run of the older registry-dependent specs lacked the frozen registry; it is not used as acceptance. Those specs passed through the canonical prepared-fixture runner. The earlier baseline failing browser run demonstrates the lost editor before the fix.
+- The retained video run uses canonical fixture `6c99c2bc598979b83f347f868175a1f833d25f3f`. SHA-256 comparison covers **564 application, backend, worker and browser-test source paths**. Only the expected frozen registry and its generated historical promotion projection differ. Every other compared source byte matches the reviewed application head.
+
+[The attached evidence archive](https://github.com/SlopDotCash/slopdotcash/releases/tag/pr-evidence-1554-c3935d56) contains synthetic before/after screenshots, desktop/mobile videos, 200% text captures, browser diagnostics, the six-case results and source comparisons. No real private report content or signing material is included.
+
+The earlier private reporting, vetting and response presentation cleanup remains intact: shared inline copy icons with feedback, normalized controls and panels, compact details, and retained privacy/payment information. This final integration fix does not change the homepage, funding behavior, payout authority, automatic screening policy or activation settings. Main delivery is tracked by PR #1554 and its reviewed integration-to-main promotion; the test-evidence release above is not a production deployment claim.

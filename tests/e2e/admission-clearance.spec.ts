@@ -179,6 +179,8 @@ test("admin distinguishes retained admission from the current revision and can r
   );
   await page.goto("/vetting-evidence?assessmentId=admission-1&runId=run-1");
   // A signed-in evidence deep link loads its exact inventory automatically.
+  await page.getByText("Run details and retention", { exact: true }).focus();
+  await page.keyboard.press("Enter");
   await expect(
     page.getByText("Admission evidence is retained permanently.", {
       exact: false,

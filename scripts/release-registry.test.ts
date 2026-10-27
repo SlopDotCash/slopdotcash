@@ -68,7 +68,7 @@ function shell(workflow: string, name: string) {
     .join("\n");
 }
 
-test("release carries the checked D1 registry and history into canonical attester setup", async () => {
+test("release carries the checked D1 registry and history into mainnet and staging attester setup", async () => {
   const root = await mkdtemp(join(tmpdir(), "slop-release-registry-"));
   const prepare = join(root, "prepare");
   const deploy = join(root, "deploy");
@@ -114,7 +114,13 @@ test("release carries the checked D1 registry and history into canonical atteste
   };
   const [initial] = assertProjectRegistry([base]);
   const [registered] = assertProjectRegistry([
-    { ...base, escrow: { ...base.escrow, deployments: [deployment] } },
+    {
+      ...base,
+      escrow: {
+        ...base.escrow,
+        deployments: [deployment, { ...deployment, network: "base-sepolia" }],
+      },
+    },
   ]);
   for (const [index, manifest] of [initial, registered].entries()) {
     if (!manifest) throw new Error("Missing fixture project");
@@ -181,10 +187,12 @@ test("release carries the checked D1 registry and history into canonical atteste
         "scripts/prepare-payment-deployments.ts",
         "workers/payment-executor/configure.mjs",
         "workers/payment-executor/release-plan.mjs",
+        "workers/payment-executor/release-staging.mjs",
         "workers/payment-executor/mainnet-execution.mjs",
         "workers/payment-executor/signer-stacks.mjs",
         "workers/payments/registry-database.mjs",
         "wrangler.toml",
+        "wrangler.staging.toml",
         "package.json",
       ]) {
         await mkdir(dirname(join(folder, path)), { recursive: true });
@@ -247,7 +255,7 @@ test("release carries the checked D1 registry and history into canonical atteste
       REGISTRY_SHA256: outputs.registry_sha256,
       REVISIONS_SHA256: outputs.revisions_sha256,
     };
-    const verify = () =>
+    const verify = (staging = false) =>
       run(
         deploy,
         [
@@ -255,7 +263,12 @@ test("release carries the checked D1 registry and history into canonical atteste
           "-euo",
           "pipefail",
           "-c",
-          shell(workflow, "Verify downloaded registry snapshot"),
+          shell(
+            workflow,
+            staging
+              ? "Verify downloaded staging registry snapshot"
+              : "Verify downloaded registry snapshot",
+          ),
         ],
         env,
       );
@@ -266,17 +279,26 @@ test("release carries the checked D1 registry and history into canonical atteste
         `import { writeFile } from "node:fs/promises";
 import { HISTORICAL_PROJECTS } from "./src/lib/projects.mjs";
 import { mainnetReleasePlan } from "./workers/payment-executor/release-plan.mjs";
+import { stagingReleasePlan } from "./workers/payment-executor/release-staging.mjs";
 import { readRegistryDatabase, readMonthlySchedule } from "./workers/payments/registry-database.mjs";
 const plans = mainnetReleasePlan({registry: HISTORICAL_PROJECTS,
   registryDatabase: await readRegistryDatabase(), monthlySchedule: await readMonthlySchedule()});
 const base = plans.find(item => item.network === "base-mainnet");
 await writeFile("pins.json", base.config.vars.PAYMENT_DEPLOYMENTS);
 await writeFile("release-config.json", JSON.stringify(base.config));
+const staging = stagingReleasePlan({registry: HISTORICAL_PROJECTS,
+  registryDatabase: await readRegistryDatabase("wrangler.staging.toml"),
+  monthlySchedule: await readMonthlySchedule("wrangler.staging.toml")});
+await writeFile("staging-pins.json", JSON.stringify(staging.flatMap(item => JSON.parse(item.config.vars.PAYMENT_DEPLOYMENTS))));
 process.stdout.write(String(base.pinCount));`,
       ]);
     expect((await derive(prepare)).stdout).toBe("1");
     expect((await derive(deploy)).stdout).toBe("0");
+    expect(
+      JSON.parse(await readFile(join(deploy, "staging-pins.json"), "utf8")),
+    ).toEqual([]);
     expect((await verify()).code).not.toBe(0);
+    expect((await verify(true)).code).not.toBe(0);
     const freshPins = join(prepare, "pins.json");
     const configure = () =>
       run(deploy, [
@@ -308,6 +330,11 @@ process.stdout.write(String(base.pinCount));`,
     expect(files).toEqual([registry, revisions]);
     const target = download.match(/ {10}path: (.+)/)?.[1];
     expect(target).toBe("src/lib");
+    const stagingDownload = step(
+      workflow,
+      "Download checked staging registry snapshot",
+    );
+    expect(stagingDownload.match(/ {10}path: (.+)/)?.[1]).toBe(target);
     const transfer = async () => {
       for (const file of files ?? [])
         await cp(
@@ -318,7 +345,21 @@ process.stdout.write(String(base.pinCount));`,
     await transfer();
     const restored = await verify();
     expect(restored.code, restored.stderr).toBe(0);
+    const stagingRestored = await verify(true);
+    expect(stagingRestored.code, stagingRestored.stderr).toBe(0);
     expect((await derive(deploy)).stdout).toBe("1");
+    const stagingPins = JSON.parse(
+      await readFile(join(deploy, "staging-pins.json"), "utf8"),
+    );
+    expect(stagingPins).toEqual(
+      JSON.parse(await readFile(join(prepare, "staging-pins.json"), "utf8")),
+    );
+    expect(
+      stagingPins.map((pin: { network: string; vault: string }) => [
+        pin.network,
+        pin.vault,
+      ]),
+    ).toEqual([["base-sepolia", deployment.vault]]);
     const configured = await configure();
     expect(configured.code, configured.stderr).toBe(0);
     const config = JSON.parse(
@@ -343,6 +384,7 @@ process.stdout.write(String(base.pinCount));`,
     // A valid but stale history and a modified module both stop before import.
     await writeFile(join(deploy, revisions), "[]\n");
     expect((await verify()).code).not.toBe(0);
+    expect((await verify(true)).code).not.toBe(0);
     await transfer();
     await writeFile(
       join(deploy, registry),
@@ -351,9 +393,13 @@ process.stdout.write(String(base.pinCount));`,
     const tampered = await verify();
     expect(tampered.code).not.toBe(0);
     expect(tampered.stderr).not.toContain("UNVERIFIED_MODULE_EXECUTED");
+    const stagingTampered = await verify(true);
+    expect(stagingTampered.code).not.toBe(0);
+    expect(stagingTampered.stderr).not.toContain("UNVERIFIED_MODULE_EXECUTED");
     await transfer();
     await rm(join(deploy, revisions));
     expect((await verify()).code).not.toBe(0);
+    expect((await verify(true)).code).not.toBe(0);
   } finally {
     server.stop(true);
     database.sqlite.close();
