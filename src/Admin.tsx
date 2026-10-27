@@ -1039,11 +1039,9 @@ function FeeConversionsSection() {
                 <div key={route.network}>
                   <dt>{networkName(route.network)}</dt>
                   <dd>
-                    <StatusBadge
-                      tone={route.status === "usdc" ? "success" : "neutral"}
-                    >
+                    <StatusBadge tone="neutral">
                       {route.status === "usdc"
-                        ? "Converts to USDC"
+                        ? "USDC conversion policy"
                         : "Not converted"}
                     </StatusBadge>
                   </dd>
