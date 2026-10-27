@@ -1290,6 +1290,22 @@ main h2 {
   height: 18px;
 }
 
+@media (max-width: 600px) {
+  .wallet-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .wallet-card-main {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .wallet-card-action {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
 .wallet-card-action svg {
   width: 20px;
   height: 20px;
