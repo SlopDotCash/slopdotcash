@@ -1,9 +1,9 @@
 /** Protected scheduled entry point. Source bytes and model output never enter job logs. */
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { d1PublicationJournal } from "../workers/vetting/publication-journal";
+import { servicePublicationJournal } from "../workers/vetting/publication-journal";
 import { runScanPass, serviceConfigFrom } from "../workers/vetting/run";
 import type { ScannerProfile } from "../workers/vetting/scanners";
 import { signedServiceHeaders } from "../workers/vetting/service";
@@ -30,23 +30,8 @@ async function main() {
     throw new Error("The workflow read-only GitHub credential is required");
   const production = branch === "refs/heads/main";
   const origin = production ? "https://slop.cash" : "https://staging.slop.cash";
-  const wrangler = Bun.TOML.parse(
-    await readFile(
-      production ? "wrangler.toml" : "wrangler.staging.toml",
-      "utf8",
-    ),
-  ) as {
-    d1_databases: { binding: string; database_id: string }[];
-  };
-  const database = wrangler.d1_databases.filter((d) => d.binding === "SLOP_DB");
-  if (database.length !== 1) throw new Error("Ambiguous scanner database");
-  const journal = d1PublicationJournal({
-    accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "",
-    databaseId: database[0].database_id,
-    token: env.CLOUDFLARE_API_TOKEN ?? "",
-  });
-  // Check schema and access before acquiring source or spending model tokens.
-  await journal.has("controller-readiness");
+  // The publication journal is recorded through the signed service, so this
+  // job holds no account-wide Cloudflare credential of its own (#1411 C-09).
   stage = "rate-cards";
   const rates = JSON.parse(env.VETTING_RATE_CARDS ?? "null") as {
     primary: ScannerProfile["rateCard"];
@@ -94,6 +79,16 @@ async function main() {
     );
     stage = "scanner-config";
     const config = await serviceConfigFrom(configPath, env);
+    const journal = servicePublicationJournal({
+      origin: config.connection.origin,
+      signer: config.connection,
+    });
+    // Confirm the signed journal route answers before acquiring source or
+    // spending model tokens. This probe reads the intent table, so it proves the
+    // route, its signature and a readable journal; a refusal stops the pass here
+    // and is reported under this stage.
+    stage = "journal";
+    await journal.has("controller-readiness");
     config.journal = journal;
     stage = "bridge";
     const path = "/api/v1/vetting/sandbox";

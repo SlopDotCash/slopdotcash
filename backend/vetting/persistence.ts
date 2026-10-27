@@ -16,6 +16,8 @@ import type {
   AdmissionExemption,
   AssessmentState,
   AssessmentSummary,
+  PublicationIntent,
+  PublicationReceipt,
   VettingClearance,
   VettingPin,
 } from "../../src/lib/vetting-contracts";
@@ -370,6 +372,77 @@ export class CloudflareVettingPersistence {
       .bind(id)
       .first<AssessmentRow>();
     return row === null ? null : fromRow(row);
+  }
+
+  /**
+   * Publication journal reads: the scanner controller asks the service whether a
+   * publication is already recorded, then reserves and completes it here. The
+   * service is the only writer of these two tables (#1411 C-09).
+   */
+  async hasPublicationIntent(assessmentId: string): Promise<boolean> {
+    return (
+      (await this.db
+        .prepare(
+          "SELECT assessment_id FROM vetting_publication_intents WHERE assessment_id = ?",
+        )
+        .bind(assessmentId)
+        .first()) !== null
+    );
+  }
+
+  /** Reserves one publication. A second reservation for the same assessment conflicts. */
+  async reservePublicationIntent(
+    intent: PublicationIntent,
+  ): Promise<"reserved" | "conflict"> {
+    {
+      const row = await this.db
+        .prepare(
+          `INSERT INTO vetting_publication_intents(assessment_id,result_sha256,origin,disposition)
+           VALUES(?,?,?,?) ON CONFLICT(assessment_id) DO NOTHING RETURNING assessment_id`,
+        )
+        .bind(
+          intent.assessmentId,
+          intent.resultSha256,
+          intent.origin,
+          intent.disposition,
+        )
+        .first();
+      // ON CONFLICT DO NOTHING settles a second reservation by returning no row.
+      return row ? "reserved" : "conflict";
+    }
+  }
+
+  /**
+   * Records the receipt of a reserved publication. A receipt without its intent
+   * is refused, and one receipt per assessment is the rule: a second is reported
+   * as a duplicate rather than replacing the first.
+   */
+  async completePublicationReceipt(
+    receipt: PublicationReceipt,
+  ): Promise<"recorded" | "missing" | "duplicate"> {
+    try {
+      const row = await this.db
+        .prepare(
+          `INSERT INTO vetting_publication_receipts(assessment_id,outcome,http_status)
+           SELECT assessment_id,?,? FROM vetting_publication_intents
+           WHERE assessment_id = ? AND result_sha256 = ? AND origin = ? AND disposition = ?
+           RETURNING assessment_id`,
+        )
+        .bind(
+          receipt.outcome,
+          receipt.httpStatus,
+          receipt.assessmentId,
+          receipt.resultSha256,
+          receipt.origin,
+          receipt.disposition,
+        )
+        .first();
+      return row ? "recorded" : "missing";
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE/u.test(error.message))
+        return "duplicate";
+      throw error;
+    }
   }
 
   /** Every revision of a project, oldest first, with its content digest. */
