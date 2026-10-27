@@ -3,6 +3,7 @@ import {
   fetchProjectPenaltyState,
   loadParticipationBans,
   loadValueInputs,
+  penaltyFeedProjects,
   VALUE_FEED_UNAVAILABLE_EXIT_CODE,
   ValueFeedUnavailableError,
 } from "./value-ingestion";
@@ -22,6 +23,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type DeploymentTier, deploymentTier } from "../src/lib/deployment";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import {
   assertPublishableLeaderboardSnapshot,
@@ -303,6 +305,8 @@ export interface GenerateOptions {
   evaluatedContributions?: ScoreEvent[];
   retainedReviewEvents?: ScoreEvent[];
   retainedReviewAttributions?: ModelAttribution[];
+  /** The site this build publishes; staging reads its registry from staging. */
+  deploymentTier?: DeploymentTier;
   /** Shared only across the one complete-census retry in runGenerator. */
   sourceRecovery?: {
     unavailableSources: UnavailableSource[];
@@ -4239,11 +4243,20 @@ export async function generateLeaderboardFromGitHub(
   const penalties: NonNullable<LeaderboardInput["penalties"]>[number][] = [];
   const penaltyHistory: NonNullable<LeaderboardInput["penaltyHistory"]> = [];
   let hasPenaltyHistory = false;
+  const feedProjects = await penaltyFeedProjects(
+    options.deploymentTier ?? "production",
+  );
   for (const projectId of [
     ...new Set(
       REGISTERED_REPOSITORIES.map((repository) => repository.projectId),
     ),
   ].sort()) {
+    if (feedProjects !== null && !feedProjects.has(projectId)) {
+      console.warn(
+        `[penalties] ${projectId}: staging-only project; the production penalty feed has no record of it`,
+      );
+      continue;
+    }
     // Reconstruct state at the GitHub cutoff when a close/reversal happens
     // during collection. Later evidence belongs to the next publication.
     const state = await fetchProjectPenaltyState(projectId);
@@ -4434,6 +4447,7 @@ if (import.meta.main) {
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
     ...arguments_,
+    deploymentTier: deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
     evaluatedContributions: loadEvaluatorAwardEvents(),
     retainedReviewEvents: acceptedReviewHistory.events,
     retainedReviewAttributions: acceptedReviewHistory.attributions,

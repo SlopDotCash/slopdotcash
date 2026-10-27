@@ -86,10 +86,11 @@ to `"true"` after the explicit production qualification and activation review.
    The read-only `GET /v1/penalties?project=ID&after=NODE_ID` returns the
    project's unreversed debits (item node ID, author ID, category, table
    version, thirds, period) in pages of 100; no review key, verdict or source
-   text. `scripts/generate-leaderboard.ts` reads it for each project with a
-   closed, unmerged pull request in its census and binds each debit to that
-   pull request: GitHub supplies the author and the closure month. The
-   published score subtracts the debit once from that author's score for the
+   text. `scripts/generate-leaderboard.ts` reads it for each registered
+   project and binds each debit to a closed, unmerged pull request in its
+   census: GitHub supplies the author and the closure month. A staging build
+   does not read it for a project that the production registry does not list.
+   The published score subtracts the debit once from that author's score for the
    same project and UTC month, never below zero (`src/lib/score-penalties.ts`).
    A reversed debit is absent from the feed, so the next snapshot restores the
    score. Closed reward cycles bind their own snapshot bytes, so a debit never
