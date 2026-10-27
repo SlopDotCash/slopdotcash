@@ -12,7 +12,7 @@ import {
 import { ata } from "../../contracts/solana/transactions";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
-import type { ConversionRow } from "./core";
+import { type ConversionRow, runNetwork } from "./core";
 import { NativeGasJournal } from "./native-gas";
 import {
   createSolanaClient,
@@ -63,8 +63,13 @@ async function fixture(
     badDebit?: boolean;
     redirect?: boolean;
     wrongTable?: boolean;
+    /** Input held in the fee wallet's canonical associated account. */
+    holding?: bigint;
+    /** Input held in another token account that the fee wallet owns. */
+    otherHolding?: bigint;
   } = {},
 ) {
+  const holding = options.holding ?? 20000000n;
   const { db, sqlite } = sqliteD1();
   const seed = new Uint8Array(32).fill(31),
     publicKey = ed25519.getPublicKey(seed),
@@ -92,7 +97,7 @@ async function fixture(
     [wallet, account("11111111111111111111111111111111", new Uint8Array())],
     [input, account(TOKEN_2022_PROGRAM, inputData)],
     [output, account(TOKEN_PROGRAM, outputData)],
-    [source, token(input, TOKEN_2022_PROGRAM, 20000000n)],
+    [source, token(input, TOKEN_2022_PROGRAM, holding)],
     [destination, token(output, TOKEN_PROGRAM, 0n)],
     [event, null],
     ...[JUPITER_PROGRAM, TOKEN_PROGRAM, TOKEN_2022_PROGRAM].map(
@@ -255,7 +260,7 @@ async function fixture(
                     token(
                       input,
                       TOKEN_2022_PROGRAM,
-                      options.badDebit ? 9999999n : 10000000n,
+                      holding - (options.badDebit ? 10000001n : 10000000n),
                     ),
                     token(output, TOKEN_PROGRAM, 2000000n),
                   ]
@@ -263,6 +268,29 @@ async function fixture(
           },
         };
         break;
+      case "getTokenAccountsByOwner": {
+        expect(params[0]).toBe(wallet);
+        const holdings =
+          params[1].mint === input
+            ? [
+                { pubkey: source, account: states.get(source) },
+                ...(options.otherHolding === undefined
+                  ? []
+                  : [
+                      {
+                        pubkey: key(20),
+                        account: token(
+                          input,
+                          TOKEN_2022_PROGRAM,
+                          options.otherHolding,
+                        ),
+                      },
+                    ]),
+              ]
+            : [{ pubkey: destination, account: states.get(destination) }];
+        result = { context: { slot: 100 }, value: holdings };
+        break;
+      }
       case "getFeeForMessage":
         result = { context: { slot: 100 }, value: 5000 };
         break;
@@ -292,8 +320,10 @@ async function fixture(
         result = receipt;
         break;
       case "sendTransaction":
+        // Each prepare test checks this count; prepare must never broadcast.
         broadcasts++;
-        throw new Error("prepare must never broadcast");
+        result = solanaBase58(solanaBase64Bytes(params[0]).slice(1, 65));
+        break;
       default:
         throw new Error(`Unexpected RPC ${method}`);
     }
@@ -344,6 +374,7 @@ async function fixture(
     });
   return {
     sqlite,
+    config,
     client: restart(),
     restart,
     journal,
@@ -535,5 +566,44 @@ test("a substituted lookup or extra token debit refuses before reserving or sign
     } finally {
       f.sqlite.close();
     }
+  }
+});
+
+test("a fee in another fee-wallet token account does not block the swap of the canonical holding", async () => {
+  // claim_fees may pay any token account of the mint that the fee wallet
+  // owns; a reviewed route debits only the canonical associated account.
+  const f = await fixture({ holding: 10000000n, otherHolding: 5000000n });
+  try {
+    expect(await f.client.balance(f.input)).toBe(10000000n);
+    await f.store.releaseLock("solana", f.run, f.now());
+    let ids = 0;
+    const result = await runNetwork(f.config.networks[0], {
+      mode: "live",
+      limits: f.config.limits,
+      store: f.store,
+      now: f.now,
+      randomId: () => (ids++ === 0 ? f.run : `holding-row-${ids}`),
+      projectTokens: async () => [f.input],
+      client: () => f.client,
+      log: () => {},
+    });
+    expect(result.records).toMatchObject({ submitted: 1, failed: 0 });
+    expect(
+      f.sqlite
+        .query(
+          "SELECT state, amount_in, token_balance_before, reason FROM fee_conversions",
+        )
+        .all(),
+    ).toEqual([
+      {
+        state: "submitted",
+        amount_in: "10000000",
+        token_balance_before: "10000000",
+        reason: null,
+      },
+    ]);
+    expect(f.broadcasts()).toBe(1);
+  } finally {
+    f.sqlite.close();
   }
 });
