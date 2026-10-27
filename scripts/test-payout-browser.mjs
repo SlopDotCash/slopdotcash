@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import AxeBuilder from "@axe-core/playwright";
+import { expect } from "@playwright/test";
 import { chromium } from "playwright";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -118,11 +119,20 @@ try {
     .getByRole("navigation", { name: "Account navigation" })
     .getByRole("link", { name: "Payouts", exact: true })
     .click();
-  for (let attempt = 0; attempt < 15; attempt++) {
-    await page.reload({ waitUntil: "networkidle" });
-    if (await page.getByText("Paid", { exact: true }).count()) break;
-    await page.waitForTimeout(1000);
-  }
+  // Settlement runs after wallet authorization. Wait for its finalized API
+  // receipt before reloading the page, without timing repeated page refreshes.
+  await expect
+    .poll(
+      async () =>
+        (
+          await (
+            await fetch("http://127.0.0.1:18548/api/v1/payments/me")
+          ).json()
+        ).payments[0].state,
+      { timeout: 15000 },
+    )
+    .toBe("paid");
+  await page.reload({ waitUntil: "networkidle" });
   await page.getByText("Paid", { exact: true }).waitFor({ timeout: 10000 });
   const paid = await (
     await fetch("http://127.0.0.1:18548/api/v1/payments/me")
