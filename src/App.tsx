@@ -5,7 +5,9 @@ import {
   ChevronRight,
   Clipboard,
   ExternalLink,
+  FolderGit2,
   Plus,
+  Wallet,
 } from "lucide-react";
 import {
   lazy,
@@ -57,11 +59,15 @@ import {
   formatDate,
   formatDateTime,
   formatMicroUsdc,
+  MetricGrid,
+  MetricTile,
   monthlyPoolPointsOnly,
   monthlyPoolUnfunded,
   NotFound,
   paymentStateLabel,
+  RoutePageHeader,
   reviewBudgetLabel,
+  StatusBadge,
   vaultStateLabel,
 } from "./Presentation";
 import { ProjectRiskFlag } from "./ProjectRiskFlag";
@@ -1189,64 +1195,68 @@ function ProjectFundingPage({
   const [registered, setRegistered] = useState<ProjectDefinition | null>(null);
   const project = registered ?? original;
   return (
-    <main className="shell route-main funding-page">
-      <p className="breadcrumb">
-        <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-        <span>/</span>Funding
-      </p>
-      <h1>{project.name} funding</h1>
+    <main className="shell route-main funding-page route-funding">
+      <RoutePageHeader
+        title={<>{project.name} funding</>}
+        icon={<Wallet />}
+        eyebrow={
+          <>
+            <Link href={`/projects/${project.slug}`}>{project.name}</Link>
+            <span> / </span>Funding
+          </>
+        }
+        actions={
+          <MetricGrid
+            className={`route-funding-summary${project.escrow ? "" : " route-funding-summary--unfunded"}`}
+          >
+            <MetricTile
+              label={
+                project.reward.kind === "monthly-pool"
+                  ? "Monthly target"
+                  : "Advertised prize"
+              }
+              value={
+                monthlyPoolPointsOnly(project.reward)
+                  ? "$0 (Points only)"
+                  : project.reward.kind === "monthly-pool"
+                    ? project.reward.monthlyCapDisplay
+                    : (project.reward.externalOpportunity
+                        ?.advertisedAmountDisplay ?? "External")
+              }
+            />
+            {!project.escrow ? (
+              <MetricTile
+                label="Committed"
+                value={formatMicroUsdc(project.reward.committedMinor)}
+                detail={fundingStateLabel(project)}
+              />
+            ) : null}
+          </MetricGrid>
+        }
+      />
       <section className="funding-records">
-        <dl className="funding-status-grid">
-          <div>
-            <dt>
-              {project.reward.kind === "monthly-pool"
-                ? "Monthly target"
-                : "Advertised prize"}
-            </dt>
-            <dd>
-              {monthlyPoolPointsOnly(project.reward)
-                ? "$0 (Points only)"
-                : project.reward.kind === "monthly-pool"
-                  ? project.reward.monthlyCapDisplay
-                  : (project.reward.externalOpportunity
-                      ?.advertisedAmountDisplay ?? "External")}
-            </dd>
+        {!project.escrow ? (
+          <div className="route-funding-status">
+            <StatusBadge>Payments: {paymentStateLabel(project)}</StatusBadge>
+            <StatusBadge>Project vault: {vaultStateLabel(project)}</StatusBadge>
           </div>
-          {!project.escrow ? (
-            <>
-              <div>
-                <dt>Funding</dt>
-                <dd>{fundingStateLabel(project)}</dd>
-              </div>
-              <div>
-                <dt>Committed</dt>
-                <dd>{formatMicroUsdc(project.reward.committedMinor)}</dd>
-              </div>
-              <div>
-                <dt>Payments</dt>
-                <dd>{paymentStateLabel(project)}</dd>
-              </div>
-              <div>
-                <dt>Project vault</dt>
-                <dd>{vaultStateLabel(project)}</dd>
-              </div>
-            </>
-          ) : null}
-        </dl>
+        ) : null}
         {project.reward.kind === "external-prize-share" ? (
           <p>The organizer pays this prize.</p>
         ) : project.escrow ? (
           <EscrowFunding project={project} onRegistered={setRegistered} />
         ) : (
-          <div>
-            <EmptyState text="This project has no vault yet." />
-            <p>
-              Choose a monthly amount in{" "}
-              <Link href={`/projects/${project.slug}/manage`}>
-                project settings
-              </Link>{" "}
-              to enable vault setup.
-            </p>
+          <div className="route-empty">
+            <Wallet aria-hidden="true" />
+            <div>
+              <p>This project has no vault yet.</p>
+              <Link
+                className="button secondary-button"
+                href={`/projects/${project.slug}/manage`}
+              >
+                Set up funding
+              </Link>
+            </div>
           </div>
         )}
       </section>
@@ -1280,7 +1290,7 @@ function ProjectPage({
     ? project.headline.slice(headlinePrefix.length)
     : null;
   return (
-    <main>
+    <main className="route-project">
       <section className="project-hero">
         <div className="shell">
           <DataNotice state={state} retry={retry} />
@@ -1291,23 +1301,26 @@ function ProjectPage({
           </p>
           <div className="project-hero-grid">
             <div>
-              <h1>
-                {project.status === "paused" ||
-                (project.reward.kind === "monthly-pool" &&
-                  project.reward.paymentMode !== "enabled") ||
-                monthlyPoolPointsOnly(project.reward) ? (
-                  project.name
-                ) : headlineAction ? (
-                  <>
-                    Make money{" "}
-                    <span className="project-headline-action">
-                      {headlineAction}
-                    </span>
-                  </>
-                ) : (
-                  project.headline
-                )}
-              </h1>
+              <div className="route-project-title">
+                <FolderGit2 aria-hidden="true" />
+                <h1>
+                  {project.status === "paused" ||
+                  (project.reward.kind === "monthly-pool" &&
+                    project.reward.paymentMode !== "enabled") ||
+                  monthlyPoolPointsOnly(project.reward) ? (
+                    project.name
+                  ) : headlineAction ? (
+                    <>
+                      Make money{" "}
+                      <span className="project-headline-action">
+                        {headlineAction}
+                      </span>
+                    </>
+                  ) : (
+                    project.headline
+                  )}
+                </h1>
+              </div>
               <p className="hero-copy">
                 {monthlyPoolPointsOnly(project.reward)
                   ? project.contribution?.approvedScope ||

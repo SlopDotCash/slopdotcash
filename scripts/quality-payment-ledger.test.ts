@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import {
   type LeaderboardSnapshot,
   PAYMENT_REVIEW_POLICY,
@@ -14,10 +15,11 @@ import { createPaymentProjectView } from "../src/lib/project-view";
 import { sha256 } from "./source-correction";
 
 const archived = JSON.parse(
-  readFileSync(
-    "tests/fixtures/history/cycles/eliza/2026-09/source-snapshot.json",
-    "utf8",
-  ),
+  gunzipSync(
+    readFileSync(
+      "tests/fixtures/history/cycles/eliza/2026-09/source-snapshot.json.gz",
+    ),
+  ).toString("utf8"),
 ) as LeaderboardSnapshot;
 const dir = mkdtempSync(join(tmpdir(), "quality-payment-ledger-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

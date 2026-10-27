@@ -35,7 +35,12 @@ import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { PayoutConsent } from "./PayoutConsent";
-import { formatCycleMonth } from "./Presentation";
+import {
+  formatCycleMonth,
+  NetworkName,
+  RoutePageHeader,
+  StatusBadge,
+} from "./Presentation";
 import { ReferralClaims } from "./ReferralClaims";
 
 function chainDefaultNetwork(chain: EscrowChain): string {
@@ -377,12 +382,18 @@ export function EarningsPage({
       {walletsOnly ? (
         <h2 id={heading}>Wallets</h2>
       ) : (
-        <h1 id={heading}>Your payouts</h1>
-      )}
-      {walletsOnly ? null : (
-        <p>
-          <a href="/account#wallets">Manage payout wallets</a>
-        </p>
+        <RoutePageHeader
+          icon={<WalletIcon />}
+          title={<span id={heading}>Your payouts</span>}
+          actions={
+            <a
+              className="button secondary-button button-small"
+              href="/account#wallets"
+            >
+              Manage payout wallets
+            </a>
+          }
+        />
       )}
       <dialog
         ref={dialog}
@@ -743,7 +754,9 @@ export function EarningsPage({
                               ({formatCycleMonth(award.period)})
                             </td>
                             <td data-label="Network">
-                              {networkLabel(award.network)}
+                              <NetworkName chain={award.chain}>
+                                {networkLabel(award.network)}
+                              </NetworkName>
                             </td>
                             <td data-label="Gross award">
                               {formatAssetAmount(award.grossBase, award)}
@@ -755,11 +768,13 @@ export function EarningsPage({
                               {formatAssetAmount(award.netBase, award)}
                             </td>
                             <td data-label="Status">
-                              {award.state === "underfunded"
-                                ? "Approved, underfunded"
-                                : award.state === "conflict"
-                                  ? "Approved, conflict: cannot be reserved"
-                                  : "Approved, awaiting reservation"}
+                              <StatusBadge tone="warning">
+                                {award.state === "underfunded"
+                                  ? "Approved, underfunded"
+                                  : award.state === "conflict"
+                                    ? "Approved, conflict: cannot be reserved"
+                                    : "Approved, awaiting reservation"}
+                              </StatusBadge>
                             </td>
                           </tr>
                         ))}
@@ -773,7 +788,9 @@ export function EarningsPage({
                               </a>
                             </td>
                             <td data-label="Network">
-                              {networkLabel(payment.network)}
+                              <NetworkName chain={payment.chain}>
+                                {networkLabel(payment.network)}
+                              </NetworkName>
                             </td>
                             <td data-label="Gross award">
                               {formatAssetAmount(payment.grossBase, payment)}
@@ -785,15 +802,23 @@ export function EarningsPage({
                               {formatAssetAmount(payment.netBase, payment)}
                             </td>
                             <td data-label="Status">
-                              {
+                              <StatusBadge
+                                tone={
+                                  payment.deliveryState === "paid"
+                                    ? "success"
+                                    : "warning"
+                                }
+                              >
                                 {
-                                  paid: "Paid",
-                                  needs_wallet: `Awaiting wallet: add or confirm your ${NETWORK_NAMES[payment.chain]} wallet`,
-                                  ready: "Payment queued",
-                                  submitted: "Submitted",
-                                  held: "Held",
-                                }[payment.deliveryState]
-                              }
+                                  {
+                                    paid: "Paid",
+                                    needs_wallet: `Awaiting wallet: add or confirm your ${NETWORK_NAMES[payment.chain]} wallet`,
+                                    ready: "Payment queued",
+                                    submitted: "Submitted",
+                                    held: "Held",
+                                  }[payment.deliveryState]
+                                }
+                              </StatusBadge>
                               <PayoutConsent
                                 key={
                                   data.wallets.find(

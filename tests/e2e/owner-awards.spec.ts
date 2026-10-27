@@ -2,6 +2,7 @@
 
 import type { Page } from "@playwright/test";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 /** Monthly awards are on the funding page of a project that has a vault policy. */
@@ -224,20 +225,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     "No allocation is proposed for this month yet.",
   );
   // Native month controls must shrink within the form at 200% text size.
-  await page.evaluate(() => {
-    const typography = [
-      ...document.querySelectorAll<HTMLElement>("body *"),
-    ].map((el) => ({
-      el,
-      font: getComputedStyle(el).fontSize,
-      line: getComputedStyle(el).lineHeight,
-    }));
-    for (const { el, font, line } of typography) {
-      el.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-      if (line !== "normal")
-        el.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-    }
-  });
+  await enlargeText(page.locator("body"));
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,

@@ -10,6 +10,100 @@ import type { ProjectSessionState } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 
+type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";
+
+/** Page framing for inner routes; no global or homepage typography changes. */
+export function RoutePageHeader({
+  title,
+  icon,
+  eyebrow,
+  lead,
+  actions,
+  children,
+}: {
+  title: ReactNode;
+  icon?: ReactNode;
+  eyebrow?: ReactNode;
+  lead?: ReactNode;
+  actions?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <header className="route-page-header">
+      <div className="route-page-heading">
+        {eyebrow ? <div className="route-eyebrow">{eyebrow}</div> : null}
+        <div className="route-title-row">
+          {icon ? (
+            <span className="route-page-icon" aria-hidden="true">
+              {icon}
+            </span>
+          ) : null}
+          <h1>{title}</h1>
+        </div>
+        {lead ? <p className="route-lead">{lead}</p> : null}
+        {children}
+      </div>
+      {actions ? <div className="route-page-actions">{actions}</div> : null}
+    </header>
+  );
+}
+
+/** A word and optional decorative icon always accompany the status color. */
+export function StatusBadge({
+  tone = "neutral",
+  icon,
+  children,
+  className = "",
+}: {
+  tone?: RouteTone;
+  icon?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <span className={`route-badge route-badge--${tone} ${className}`}>
+      {icon ? <span aria-hidden="true">{icon}</span> : null}
+      {children}
+    </span>
+  );
+}
+
+export function MetricGrid({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return <dl className={`route-metrics ${className}`}>{children}</dl>;
+}
+
+/** Use inside MetricGrid so each value keeps its semantic label. */
+export function MetricTile({
+  label,
+  value,
+  detail,
+  tone = "neutral",
+  icon,
+}: {
+  label: ReactNode;
+  value: ReactNode;
+  detail?: ReactNode;
+  tone?: RouteTone;
+  icon?: ReactNode;
+}) {
+  return (
+    <div className={`route-metric route-metric--${tone}`}>
+      <dt>
+        {icon ? <span aria-hidden="true">{icon}</span> : null}
+        {label}
+      </dt>
+      <dd>{value}</dd>
+      {detail ? <dd className="route-metric-detail">{detail}</dd> : null}
+    </div>
+  );
+}
+
 export function DataNotice({
   state,
   retry,
@@ -103,8 +197,14 @@ export function NotFound({
   as?: "main" | "section";
 }) {
   return (
-    <Element className={Element === "main" ? "shell not-found" : "not-found"}>
-      <h1>{title}</h1>
+    <Element
+      className={
+        Element === "main"
+          ? "shell not-found route-not-found"
+          : "not-found route-not-found"
+      }
+    >
+      <RoutePageHeader title={title} icon={<CircleAlert />} />
       {children}
       <Link className="button primary-button" href="/">
         See open projects <ArrowRight aria-hidden="true" />

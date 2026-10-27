@@ -47,7 +47,10 @@ import type {
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { MonthlyReleaseResult } from "../../workers/payment-executor/monthly-release";
-import type { D1TransactionalDatabase as D1Database } from "../d1";
+import {
+  type D1TransactionalDatabase as D1Database,
+  isConstraintFailure,
+} from "../d1";
 import { githubHeaders } from "../github";
 import { notifyMonthlyUnderfunded } from "../notifications/events";
 import {
@@ -1038,8 +1041,16 @@ export function monthlyOwnerService(deps: {
           )
           .run();
         changed = inserted.meta?.changes;
-      } catch {
+      } catch (error) {
         // A concurrent change took this sequence, or the month was frozen.
+        if (
+          !isConstraintFailure(error) &&
+          !(
+            error instanceof Error &&
+            error.message.includes("monthly allocations frozen")
+          )
+        )
+          throw error;
         throw new MonthlyPaymentError(
           409,
           "allocations_changed",
@@ -1075,7 +1086,8 @@ export function monthlyOwnerService(deps: {
           )
           .run();
         changed = inserted.meta?.changes;
-      } catch {
+      } catch (error) {
+        if (!isConstraintFailure(error)) throw error;
         throw new MonthlyPaymentError(
           409,
           "setting_changed",

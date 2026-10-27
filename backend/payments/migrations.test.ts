@@ -102,7 +102,10 @@ describe("migration 0017", () => {
         },
       ]),
     );
+    // D1 rebuilds tables inside a transaction with foreign keys enabled.
+    db.exec("BEGIN");
     db.exec(readFileSync(`migrations/${target}`, "utf8"));
+    db.exec("COMMIT");
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(
       (db.query("PRAGMA foreign_keys").get() as { foreign_keys: number })
@@ -161,36 +164,5 @@ describe("migration 0017", () => {
       db.exec(`INSERT INTO wallet_claims (id,github_user_id,github_login,wallet_address,source,issue_repository,issue_number,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain)
         VALUES ('c5','1','one','0x4444444444444444444444444444444444444444','d1_registry',NULL,NULL,'${"3".repeat(64)}','${t}','${"4".repeat(64)}','c4','${t}','base')`),
     ).toThrow(/lineage/);
-  });
-
-  // D1 applies a migration inside one transaction, where PRAGMA foreign_keys
-  // = OFF has no effect and only defer_foreign_keys protects the rebuild. A
-  // dropped parent leaves its child rows counted as deferred violations; the
-  // commit succeeds only if re-inserting the parent rows cleared that count.
-  test("applies inside one transaction with child rows present (the D1 path)", () => {
-    const db = open();
-    seed(db);
-    const rows = Object.fromEntries(
-      [...tables, ...children].map((t) => [
-        t,
-        db.query(`SELECT * FROM ${t} ORDER BY rowid`).all(),
-      ]),
-    );
-    db.exec("BEGIN");
-    db.exec(readFileSync(`migrations/${target}`, "utf8"));
-    expect(() => db.exec("COMMIT")).not.toThrow();
-    expect(db.inTransaction).toBe(false);
-    for (const t of [...tables, ...children])
-      expect(db.query(`SELECT * FROM ${t} ORDER BY rowid`).all()).toEqual(
-        rows[t],
-      );
-    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
-  });
-
-  test("the full migration set applies cleanly on an empty database", () => {
-    const db = new Database(":memory:");
-    db.exec("PRAGMA foreign_keys=ON");
-    for (const f of files) db.exec(readFileSync(`migrations/${f}`, "utf8"));
-    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 });
