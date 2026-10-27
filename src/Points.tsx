@@ -468,9 +468,12 @@ export function useProfileMembership(login: string, enabled = true) {
       update("unavailable");
       return () => c.abort();
     }
-    void fetch(`/api/v1/points/member?login=${encodeURIComponent(login)}`, {
-      signal: c.signal,
-    })
+    void fetchWithDeadline(
+      `/api/v1/points/member?login=${encodeURIComponent(login)}`,
+      {
+        signal: c.signal,
+      },
+    )
       .then(async (r) => {
         if (r.status === 404) {
           update("absent");
@@ -490,6 +493,7 @@ export function useProfileMembership(login: string, enabled = true) {
   return {
     own,
     signedInActor,
+    sessionStatus: session,
     joined: current?.member ?? null,
     joinStatus: current?.status ?? "loading",
   };
