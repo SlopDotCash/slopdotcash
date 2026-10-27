@@ -16,9 +16,9 @@ import {
   type FeeConverterConfig,
   type FeeConverterEnv,
   isTokenAddress,
+  type Network,
   type NetworkConfig,
   networkKey,
-  normalizeToken,
   parseConfig,
 } from "./config";
 import {
@@ -58,33 +58,16 @@ export function chainClient(
   network: NetworkConfig,
   overrides: {
     fetch?: typeof fetch;
-    chainIdOverride?: number;
     localBlockhash?: boolean;
-    /** Local validator harness only; the hosted Worker never sets it. */
-    allowSolanaLive?: boolean;
     nativeGas?: NativeGasJournal;
     now?: () => Date;
   } = {},
 ): ChainClient {
-  // Role separation is verified, but Solana still lacks approved native
-  // transaction/day ceilings and durable cost accounting (PRD section 6).
-  if (
-    config.mode === "live" &&
-    network.network === "solana" &&
-    !overrides.allowSolanaLive
-  )
-    throw new Error(
-      "Live Solana fee signing needs native transaction/day limits and durable accounting",
-    );
   // dry_run never loads a key, so it cannot sign even when one is present.
   // A network without a verified USDC target never signs either: it only
   // reconciles recorded sends, which needs no key.
   const signs = config.mode === "live" && network.definition.usdc !== null;
-  if (
-    signs &&
-    network.definition.family === "evm" &&
-    (!network.nativeBudget || !overrides.nativeGas)
-  )
+  if (signs && (!network.nativeBudget || !overrides.nativeGas))
     throw new Error(
       "Live fee signing needs native limits and the durable budget journal",
     );
@@ -100,7 +83,6 @@ export function chainClient(
         kyberClientId: config.kyberClientId,
         privateKey: secret,
         fetch: overrides.fetch,
-        chainIdOverride: overrides.chainIdOverride,
         nativeGas: overrides.nativeGas,
         now: overrides.now,
       })
@@ -112,7 +94,17 @@ export function chainClient(
         keypair: secret,
         fetch: overrides.fetch,
         localBlockhash: overrides.localBlockhash,
+        recoveryRpcUrl: env.SOLANA_RECOVERY_RPC_URL,
+        nativeGas: overrides.nativeGas,
       });
+}
+
+/** Project manifests store validated addresses; anything else is corrupt
+ * registry data that must stop the run, not disappear from it. */
+function storedAddress(network: Network, value: string): string {
+  if (!isTokenAddress(network, value))
+    throw new Error(`A stored ${network} project address is malformed`);
+  return value;
 }
 
 export async function runOnce(
@@ -146,31 +138,28 @@ export async function runOnce(
                 n.network,
                 n.definition.escrowNetworks,
               )
-            )
-              .filter((token) => isTokenAddress(n.network, token))
-              .map((token) => normalizeToken(n.network, token)),
+            ).map((token) => storedAddress(n.network, token)),
           projectVaults: async (n) =>
-            (await projectVaults(env.FEE_DB, n.definition.escrowNetworks))
-              .filter((entry) => isTokenAddress(n.network, entry.vault))
-              .map((entry) => ({
+            (await projectVaults(env.FEE_DB, n.definition.escrowNetworks)).map(
+              (entry) => ({
                 ...entry,
-                vault: normalizeToken(n.network, entry.vault),
-              })),
+                vault: storedAddress(n.network, entry.vault),
+              }),
+            ),
           client: (n, runId) =>
             chainClient(env, config, n, {
               ...overrides,
               now,
-              nativeGas:
-                n.nativeBudget && n.definition.family === "evm"
-                  ? new NativeGasJournal(
-                      env.FEE_DB,
-                      n.network,
-                      n.feeWallet,
-                      runId,
-                      n.nativeBudget,
-                      now,
-                    )
-                  : undefined,
+              nativeGas: n.nativeBudget
+                ? new NativeGasJournal(
+                    env.FEE_DB,
+                    n.network,
+                    n.feeWallet,
+                    runId,
+                    n.nativeBudget,
+                    now,
+                  )
+                : undefined,
             }),
           log: (event) => console.log(JSON.stringify(event)),
         }),

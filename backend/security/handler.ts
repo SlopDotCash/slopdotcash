@@ -15,13 +15,22 @@ import {
   type SecurityBountyTerms,
   securityBountySplit,
 } from "../../src/lib/security-bounty.mjs";
-import { type ApiError, fail } from "../api-error";
-import { pathParts } from "../api-path";
 import type {
   D1Result,
   D1QueryStatement as D1Statement,
   D1TransactionalDatabase,
 } from "../d1";
+import { GHSA, GITHUB_LOGIN } from "../github";
+import {
+  apiErrorResponse,
+  exactKeys,
+  fail,
+  isSameOriginJsonWrite,
+  json as jsonResponse,
+  PROJECT_ID,
+  pathParts,
+  requireActor,
+} from "../http";
 import { notifySecurityCase } from "../notifications/events";
 import {
   hasParticipationBan,
@@ -29,7 +38,10 @@ import {
 } from "../projects/account-bans";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
 import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
-import { publicRestrictionOf } from "../projects/enforcement";
+import {
+  projectRestriction,
+  publicRestrictionOf,
+} from "../projects/enforcement";
 import type { RepositoryAccessReader } from "../projects/setup";
 import { readJsonObject } from "../trace/validation";
 import type { AdvisoryReader, GithubPrivateReport } from "./advisories";
@@ -186,12 +198,8 @@ export type FrozenTerms = {
   capacityAwards: number;
 };
 
-export const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
 const CASE_ID = /^sc_[A-Za-z0-9_-]{8,72}$/u;
-export const GHSA =
-  /^GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}$/u;
 const GITHUB_ID = /^[1-9]\d{0,19}$/u;
-const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{16,80}$/u;
 const ROOT_CAUSE = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -211,15 +219,9 @@ export function json(
   body: Record<string, unknown>,
   cacheControl = "private, no-store",
 ): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "cache-control": cacheControl,
-      "content-type": "application/json; charset=utf-8",
-      "referrer-policy": "no-referrer",
-      "x-content-type-options": "nosniff",
-      "x-robots-tag": "noindex",
-    },
+  return jsonResponse(status, body, {
+    cacheControl,
+    headers: { "x-robots-tag": "noindex" },
   });
 }
 
@@ -295,29 +297,7 @@ function timestampField(
   return value;
 }
 
-export function exactKeys(
-  body: Record<string, unknown>,
-  required: string[],
-  optional: string[] = [],
-): void {
-  const allowed = new Set([...required, ...optional]);
-  if (
-    required.some((key) => !Object.hasOwn(body, key)) ||
-    Object.keys(body).some((key) => !allowed.has(key))
-  )
-    fail(400, "invalid_request", "Request body has unexpected fields");
-}
-
-export async function requireActor(
-  request: Request,
-  deps: SecurityApiDependencies,
-): Promise<Actor> {
-  const actor = await deps.sessionActor(request);
-  if (actor === null) fail(401, "unauthorized", "Sign in with GitHub");
-  return actor;
-}
-
-export async function currentReportingProject(
+async function currentReportingProject(
   deps: Pick<SecurityApiDependencies, "db">,
   projectId: string,
 ): Promise<{ manifest: ProjectDefinition; revision: number } | null> {
@@ -328,6 +308,58 @@ export async function currentReportingProject(
   if (row === null) return null;
   const manifest = JSON.parse(row.manifest) as ProjectDefinition;
   return { manifest, revision: row.revision };
+}
+
+/**
+ * A moderator quarantine or ban applies a paused, retired revision. The
+ * project stays registered, so its existing private cases keep their
+ * analysis and appeal triage (PRD section 8). The retained before
+ * and after revisions must prove that enforcement caused retirement; an
+ * owner's earlier retirement or an unapplied restriction cannot grant it.
+ */
+async function restrictionRetired(
+  deps: Pick<SecurityApiDependencies, "db">,
+  projectId: string,
+): Promise<boolean> {
+  const persistence = new CloudflareProjectPersistence(deps.db);
+  const restriction = projectRestriction(
+    projectId,
+    await persistence.listEnforcements(),
+  );
+  if (restriction.state === "clear") return false;
+  for (const record of [...restriction.records].reverse()) {
+    if (record.stateAfter === "clear") break;
+    if (
+      (record.action !== "quarantine" && record.action !== "ban") ||
+      record.result !== "revision_appended" ||
+      record.afterRevision === null
+    )
+      continue;
+    const [before, after] = await Promise.all([
+      persistence.getRevisionText(projectId, record.beforeRevision),
+      persistence.getRevisionText(projectId, record.afterRevision),
+    ]);
+    if (
+      before === null ||
+      after === null ||
+      before.manifestSha256 !== record.beforeManifestSha256 ||
+      after.manifestSha256 !== record.afterManifestSha256
+    )
+      fail(
+        500,
+        "internal_error",
+        "The restriction revision evidence is missing",
+      );
+    const previous = JSON.parse(before.manifestText) as ProjectDefinition;
+    const applied = JSON.parse(after.manifestText) as ProjectDefinition;
+    if (
+      previous.listingTier !== "retired" &&
+      applied.status === "paused" &&
+      applied.listingTier === "retired"
+    )
+      return true;
+  }
+  return false;
 }
 
 /** Reporting needs a registered repository, not financial terms. */
@@ -341,9 +373,14 @@ export async function reportingContext(
   deps: Pick<SecurityApiDependencies, "db" | "repositoryAccess">,
   projectId: string,
   contacts = false,
+  existingCase = false,
 ): Promise<ReportingContext> {
   const project = await currentReportingProject(deps, projectId);
-  if (project === null || project.manifest.listingTier === "retired")
+  if (
+    project === null ||
+    (project.manifest.listingTier === "retired" &&
+      !(existingCase && (await restrictionRetired(deps, projectId))))
+  )
     fail(
       404,
       "project_not_found",
@@ -2895,10 +2932,13 @@ async function automaticAction(
   body: Record<string, unknown>,
 ): Promise<Response> {
   exactKeys(body, ["action", "expectedRevision", "idempotencyKey"]);
+  // A receipt check imports every new report in the repository, so it stays
+  // closed with new intake when the project is retired.
   const terms = await reportingContext(
     deps,
     row.project_id,
     action === "check-receipt",
+    action !== "check-receipt",
   );
   if (action === "check-receipt") {
     requireAction(row, roles, action);
@@ -3265,12 +3305,7 @@ export async function handleSecurityApi(
   )
     return null;
   try {
-    if (
-      request.method !== "GET" &&
-      (request.headers.get("origin") !== new URL(request.url).origin ||
-        request.headers.get("content-type")?.split(";")[0] !==
-          "application/json")
-    )
+    if (request.method !== "GET" && !isSameOriginJsonWrite(request))
       fail(403, "origin_forbidden", "Requests must come from this site");
     if (
       request.method === "GET" &&
@@ -3312,28 +3347,10 @@ export async function handleSecurityApi(
     }
     return json(404, { error: "not_found" });
   } catch (caught) {
-    const error =
-      typeof caught === "object" && caught !== null
-        ? (caught as Partial<ApiError>)
-        : {};
-    const status =
-      Number.isSafeInteger(error.status) &&
-      Number(error.status) >= 400 &&
-      Number(error.status) <= 599
-        ? Number(error.status)
-        : 500;
     // Never log case content, identifiers or the request body.
-    if (status >= 500) console.error("security case API failure");
-    return json(status, {
-      error:
-        typeof error.code === "string" &&
-        /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
-          ? error.code
-          : "internal_error",
-      message:
-        status >= 500 || typeof error.message !== "string"
-          ? "Internal error"
-          : error.message,
+    return apiErrorResponse(caught, {
+      label: "security case API failure",
+      respond: json,
     });
   }
 }

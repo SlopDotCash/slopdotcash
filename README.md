@@ -17,7 +17,7 @@
 ## Product requirements
 
 Read the [canonical Slop PRD](docs/slop-product-requirements.md) before selecting work.
-It includes MVP delivery, acceptance, open decisions, and issue coverage.
+It defines MVP scope, acceptance, and recorded owner decisions.
 The repository PRD is authoritative. Google Docs provides a formatted mirror.
 
 ## What is Slop?
@@ -26,14 +26,14 @@ Slop is a GitHub-native incentive network for open-source work. Project owners
 publish a concrete goal, an acceptance policy, and a reward pool. Contributors
 use any agent, model, or development workflow to complete the work. Maintainers
 accept outcomes in the project’s own repository, and Slop turns that public
-history into a transparent score, review process, and payment record.
+history into public Points, review state, and a payment record.
 
 There is no private task marketplace and no platform claim on an issue. GitHub
 remains the place where work is proposed, reviewed, merged, and audited.
 
 > Accepted work can earn according to the project’s published pool, scoring
-> version, review process, and final creator approval. Projections are not
-> wages, guarantees, or balances owed.
+> version, and the owner's monthly allocation. Projections are not wages,
+> guarantees, or balances owed.
 
 ## How it works
 
@@ -44,17 +44,17 @@ remains the place where work is proposed, reviewed, merged, and audited.
    exactly.
 3. **Ship on GitHub.** The agent follows the target repository’s rules, selects
    live work, tests the result, and prepares public evidence.
-4. **Get accepted.** Maintainers decide what merges. Slop scores accepted
+4. **Get accepted.** Maintainers decide what merges. Slopbot sizes accepted
    outcomes—not commits, comments, token volume, or busywork.
 5. **Build your record.** Leaderboards and contributor profiles show accepted
-   work, score, review state, and verified settlement history.
+   work, Points, review state, and verified settlement history.
 
 ```mermaid
 flowchart LR
   A["Fund public work"] --> B["Contributors and agents ship"]
   B --> C["Maintainers verify outcomes"]
-  C --> D["Slop publishes score and review state"]
-  D --> E["Creators settle approved rewards"]
+  C --> D["Slop publishes Points and review state"]
+  D --> E["Vaults pay approved rewards"]
   E --> A
 ```
 
@@ -90,64 +90,53 @@ payments stay disabled. Reward, receipt, funding, and deployment states turn on
 only after their separate authority and operational checks pass. For the full
 review checklist, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Score v2
+## Points
 
-Accepted work from August 2026 uses integer-thirds effort tiers instead of
-account caps or diminishing merge credit. Claude review agents propose effort,
-complexity, impact, review load, and logical work-unit grouping; maintainers
-ratify the score in an immutable exact-head GitHub record. A valid finalized
-private trace receives a fixed evidence bonus. Usage remains diagnostic and
-never changes score, rank, reward share, or payment. See
-[the complete score contract](protocol/scoring-v2.md).
+Slop shows one public measure: Points. Slopbot reviews each accepted pull
+request, estimates its size and value, and assigns accepted-work Points. A
+maintainer `slop-score` record can correct that assessment. Useful reviews earn
+separate credit. Usage evidence is diagnostic and never changes Points, rank,
+reward share, or payment. See the [scoring contract](protocol/scoring-v2.md)
+and the [Points rules](protocol/points-v1.md).
 
 ## What the public record means
 
 Slop uses precise financial states:
 
-- **Projected** — a live estimate based on accepted score.
-- **Under review** — a frozen monthly proposal that can still change.
-- **Approved** — immutable payout intents after public review.
+- **Projected** — a live estimate based on accepted-work Points.
+- **Under review** — the month's private proposal. The owner can change it
+  until the cutoff, 72 hours after the month ends. There is no public review.
+- **Approved** — the frozen final allocation.
 - **Scheduled** — a funded award is reserved in the project vault and waits for
   execution.
 - **Paid** — finalized chain evidence reconciles the exact vault transfers.
-- **Unclaimed / held / held below $2 / excluded** — visible unresolved states
-  with reasons; sub-$2 awards accrue instead of being discarded.
+- **Unclaimed / held / excluded** — visible unresolved states with reasons. A
+  funded award without a wallet stays reserved.
 
 The project vault contract is the only funding mode. Anyone may deposit into a
 vault; all free funds are refundable only to the project owner's refund
-destination. Slop does not create wallets, custody project funds, or hold a
-key that can move vault funds or payments. Slop holds two narrow kinds of key:
-the identity attester key, which only co-signs a wallet binding that the
-contributor's wallet also signs, and one fee-wallet key per network, which only
-converts fees already in Slop's fee wallet. A 2% fee is deducted from each
-gross award, and the same 2% fee applies to a withdrawal of unused funds. Legacy
-Squads and Sablier funding and its 1% fee are removed; their records stay in
-git history.
+destination. Slop does not create wallets or custody project funds. Its
+services hold three narrow kinds of key: the identity attester key, which
+co-signs wallet bindings that the contributor's wallet also signs and signs
+bounded monthly allocations; one fee-wallet key per network, which only claims
+fees into Slop's fee wallet and converts them; and the referral root-posting
+key, which posts referral reward roots and moves no tokens. The
+[funding guide](funding/README.md) and [AGENTS.md](AGENTS.md) record their
+limits and risks. A 2% fee is deducted from each gross award, and the same 2%
+fee applies to a withdrawal of unused funds. Legacy Squads and Sablier funding
+and its 1% fee are removed; their records stay in git history.
 
 ## Repository architecture
 
 The D1 project registry is the only project and repository inventory. Never
 hardcode a second list. `bun run projects:sync` snapshots it; generated
 registries, pages, raw Markdown endpoints, and downloadable skills derive from
-that snapshot.
+that snapshot. The [repository map](AGENTS.md#repository-map) lists each
+directory.
 
-```text
-skills/         canonical contributor and CI reviewer skills
-evaluations/    reviewed awards for useful otherwise-unscored work
-cycles/         append-only monthly reward and settlement records
-funding/        append-only direct-funding evidence
-disclosures/    payouts sent outside the verified settlement flow
-protocol/       public privacy and attribution contracts
-backend/        project registry API and private trace storage boundary
-workers/        narrowly scoped Cloudflare services
-src/            React product and strict browser/domain contracts
-scripts/        ingestion, packaging, rewards, settlement, and evidence
-tests/          real-browser end-to-end, accessibility, and installer coverage
-```
-
-Generated files under `public/brand/`, `public/downloads/`,
-`public/projects/`, `public/protocol/`, and `public/data/cycles/` come from
-`prepare:site`; do not edit them by hand.
+Generated files under `public/downloads/`, `public/projects/`,
+`public/protocol/`, and `public/data/cycles/` come from `prepare:site`; do not
+edit them by hand.
 
 ## Local development
 
@@ -183,10 +172,11 @@ bun run verify
 bun run test:e2e
 ```
 
-`bun run verify` checks project, evaluation, funding, cycle, and protocol
-integrity; audits dependencies; runs type, format, and lint checks; and
-produces the static build. It also runs the Slopbot unit suite; browser behavior
-is covered by `bun run test:e2e`.
+`bun run verify` checks the committed source records (brand tokens, projects,
+skills, evaluations, disclosures, contribution quality, cycles, and protocol
+identity); audits dependencies; runs type, format, and lint checks; and
+produces the static build. It also runs the Slopbot unit suite; browser
+behavior is covered by `bun run test:e2e`.
 
 ## Trust and deployment
 
@@ -205,15 +195,15 @@ they do not replace source authorization.
 ## Contributing
 
 Start with [CONTRIBUTING.md](CONTRIBUTING.md). This repository has a $1,000
-monthly Slop contributor pool. Star and fork the repository first. Accepted work
-is reproduced bugs, security, verification, vault, settlement, and scoring
-correctness, and measured improvements inside the approved MVP. UI changes are
-not accepted unless they fix a broken user flow. Prove the result with real LLM
-calls where a model is involved, and test the workflow in the agent clients
-that use it. Security-sensitive reports must
-use the target repository’s private reporting channel; never publish secrets,
-private traces, prompts, credentials, private keys, or vulnerability details in
-an issue or pull request.
+monthly Slop contributor pool. Accepted work is reproduced bugs, security,
+verification, vault, settlement, and scoring correctness, and measured
+improvements inside the approved MVP. UI changes are not accepted unless they
+fix a broken user flow. Prove the result with real LLM calls where a model is
+involved, and test the workflow in the agent clients that use it. Only owners
+and maintainers open issues; fix and prove a defect in a pull request.
+Security-sensitive reports must use the target repository’s private reporting
+channel; never publish secrets, private traces, prompts, credentials, private
+keys, or vulnerability details in an issue or pull request.
 
 Slop is experimental software. The repository is licensed under the
 [MIT License](LICENSE).
@@ -231,15 +221,10 @@ files never select the source.
 and CI. The former checks source records; the latter checks types, formatting
 and lint. Live chain verification and browser checks remain separate.
 
-- `bun run check:unused` checks application locals and parameters; review exports,
-  generated entry points, CLI tools, and configuration before removing dependencies.
-- `bun run quality:simulate -- PREPARATION EVIDENCE PROPOSAL OUTPUT` recalculates
-  a saved quality proposal against its exact source and budget. It creates a new
-  output file and never authorizes payments or trusts imported output amounts.
-- Edit shared contributor and reviewer rules in the canonical generic
-  project-skill templates. Project skills are generated from those templates
-  and each project's D1 revision; never commit a per-project skill copy.
-  Project-specific instructions live in the D1 revision.
+Edit shared contributor and reviewer rules in the canonical generic
+project-skill templates. Project skills are generated from those templates and
+each project's D1 revision; never commit a per-project skill copy.
+Project-specific instructions live in the D1 revision.
 
 Browser evidence is retained separately under `test-results/preview` and
 `test-results/pages`, with matching `playwright-report/` subdirectories. CI keeps
@@ -256,11 +241,12 @@ acceptance requirements.
 
 ## Project vault payouts
 
-The project vault protocol is being qualified on Base, Solana, Robinhood Chain
-and Ethereum test networks. Projects select one chain and one asset. A gross
-100-USDC award pays 98 to the contributor and 2 in fees. Unused vault
-withdrawals incur 2% and go only to the owner's refund destination, while
-funded unpaid awards remain reserved until their recipients register a wallet. GitHub remains the
-only login. See [the canonical PRD](docs/slop-product-requirements.md) for the authority model,
-acceptance tests and deployment gates. Existing project payment history and
-production activation are not changed by adding this implementation.
+The project vault contracts are deployed on Base, Ethereum, Robinhood Chain and
+Solana mainnet ([deployment record](contracts/DEPLOY-MAINNET.md)). A deployment
+is not a project activation; each project still needs its own reviewed
+activation. Projects select one chain and one asset. A gross 100-USDC award
+pays 98 to the contributor and 2 in fees. Unused vault withdrawals incur 2% and
+go only to the owner's refund destination, while funded unpaid awards remain
+reserved until their recipients register a wallet. GitHub remains the only
+login. See [the canonical PRD](docs/slop-product-requirements.md) for the
+authority model, acceptance tests and deployment gates.

@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import type { ProjectRecord } from "../backend/projects/contracts";
 import {
   handleProjectArtifactRequest,
   type SkillPublicationDependencies,
   type SkillTemplateIndex,
 } from "../backend/projects/skill-publication";
+import type { ProjectRecord } from "../src/lib/project-contracts";
 import { PROJECT_SKILL_TEMPLATES } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/project-skill-publication.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
@@ -69,7 +69,6 @@ async function served(path: string): Promise<Uint8Array> {
     getProject: async (id) => (id === PROJECT_ID ? record : null),
     listProjects: async () => [record],
     listEnforcements: async () => [],
-    enforcementGeneration: async () => 0,
     loadTemplate: async () => ({
       index,
       readFile: async (file) => new Uint8Array(readFileSync(join(ROOT, file))),

@@ -1,4 +1,4 @@
-import { sha256Hex } from "./github";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { CallRecord } from "./models";
 import type { D1Database } from "./persistence";
 import { reconcileValueBudget } from "./value-budget";

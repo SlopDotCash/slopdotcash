@@ -2,6 +2,8 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { readLimitedBody } from "../../backend/trace/validation";
+import { readRecord } from "../../src/lib/record-validation.mjs";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 const MAX_FILES = 1024;
@@ -9,11 +11,13 @@ const SHA = /^[0-9a-f]{40}$/u;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const hash = (bytes: Uint8Array, algorithm = "sha256") =>
   createHash(algorithm).update(bytes).digest("hex");
-const object = (value: unknown): Record<string, unknown> => {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid GitHub object");
-  return value as Record<string, unknown>;
-};
+const object = (value: unknown) => readRecord(value, "GitHub object");
+
+/** The pinned input is outside the acquisition policy, so a retry of the
+ * same pin cannot pass. Outages and changed bytes are not refusals. */
+export class AcquisitionRefusal extends Error {
+  override name = "AcquisitionRefusal";
+}
 
 export async function acquireRepository(input: {
   repository: string;
@@ -26,7 +30,9 @@ export async function acquireRepository(input: {
     input.repository.split("/").some((part) => part === "." || part === "..") ||
     !SHA.test(input.commitSha)
   )
-    throw new Error("An exact repository and commit SHA are required");
+    throw new AcquisitionRefusal(
+      "An exact repository and commit SHA are required",
+    );
   const fetcher = input.fetch ?? fetch;
   let transferred = 0;
   const deadline = AbortSignal.timeout(120_000);
@@ -46,23 +52,13 @@ export async function acquireRepository(input: {
     );
     if (!response.ok || response.body === null)
       throw new Error("Immutable source is unavailable");
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        transferred += value.byteLength;
-        if (size > limit || transferred > MAX_BYTES * 2)
-          throw new Error("Source transfer limit exceeded");
-        chunks.push(value);
-      }
-    } finally {
-      await reader.cancel();
-    }
-    return object(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    // Each read stays within its own limit and the cumulative transfer cap.
+    const bytes = await readLimitedBody(
+      response,
+      Math.min(limit, MAX_BYTES * 2 - transferred),
+    );
+    transferred += bytes.byteLength;
+    return object(JSON.parse(new TextDecoder().decode(bytes)));
   };
   const commit = await get(`commits/${input.commitSha}`, 1024 * 1024);
   if (
@@ -79,7 +75,7 @@ export async function acquireRepository(input: {
   )
     throw new Error("Incomplete commit tree");
   if (tree.tree.length > MAX_FILES)
-    throw new Error("Source entry limit exceeded");
+    throw new AcquisitionRefusal("Source entry limit exceeded");
   const names = new Set<string>();
   const entries = tree.tree.map((value) => {
     const row = object(value);
@@ -98,7 +94,7 @@ export async function acquireRepository(input: {
       names.has(row.path) ||
       !SHA.test(String(row.sha))
     )
-      throw new Error("Invalid source tree path or digest");
+      throw new AcquisitionRefusal("Invalid source tree path or digest");
     names.add(row.path);
     if (
       !(
@@ -108,7 +104,7 @@ export async function acquireRepository(input: {
           ["100644", "100755", "120000"].includes(String(row.mode)))
       )
     )
-      throw new Error("Unsupported source tree entry");
+      throw new AcquisitionRefusal("Unsupported source tree entry");
     return {
       path: row.path,
       gitSha: String(row.sha),
@@ -212,7 +208,8 @@ export async function acquireRepository(input: {
       )
         throw new Error("Blob bytes do not match the Git object");
       bytes += content.length;
-      if (bytes > MAX_BYTES) throw new Error("Source byte limit exceeded");
+      if (bytes > MAX_BYTES)
+        throw new AcquisitionRefusal("Source byte limit exceeded");
       const sha256 = hash(content);
       if (!stored.has(sha256)) {
         await writeFile(join(directory, "objects", sha256), content, {

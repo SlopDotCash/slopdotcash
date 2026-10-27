@@ -6,7 +6,7 @@ import {
   recoverTransactionAddress,
   serializeTransaction,
 } from "viem";
-import { isCanonicalEvmReceipt } from "../../contracts/evm/adapter";
+import { evmRpc, isCanonicalEvmReceipt } from "../../contracts/evm/adapter";
 import {
   type Attempt,
   type ExecutorEnvironment,
@@ -137,23 +137,8 @@ export async function reconcileBindingWinner(
   )
     throw new Error("Stored binding identity differs");
   decodeFunctionData({ abi: storedBindingAbi, data: original.data });
-  const rpc = async (method: string, params: unknown[]) => {
-    const response = await fetch(deployment.rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) throw new Error("Binding reconciliation RPC unavailable");
-    const body = (await response.json()) as {
-      id?: unknown;
-      error?: unknown;
-      result?: unknown;
-    };
-    if (body.id !== 1 || body.error || !Object.hasOwn(body, "result"))
-      throw new Error("Binding reconciliation RPC failed");
-    return body.result;
-  };
+  const rpc = (method: string, params: unknown[]) =>
+    evmRpc(deployment, method, params);
   const finalized = (await rpc("eth_getBlockByNumber", [
     "finalized",
     false,

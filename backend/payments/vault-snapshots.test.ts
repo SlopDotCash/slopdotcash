@@ -204,6 +204,7 @@ describe("GET /api/v1/payments/projects/:id/vault", () => {
       put: async (r: Request, response: Response) => {
         stored.set(r.url, response);
       },
+      delete: async () => false,
     };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (() => {

@@ -93,7 +93,7 @@ type Run = {
   reopen: (senderId?: number, occurredAt?: string) => Promise<Job>;
   head: (sha: string) => void;
   loseNextLabelDelete: () => void;
-  maintainerPermission: (value: boolean) => void;
+  maintainerPermission: (value: boolean | "unavailable") => void;
   writes: string[];
   comments: string[];
   labels: string[];
@@ -188,7 +188,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let closeOptions: { loseResponse?: boolean; afterWrite?: () => void } = {};
   let head = "b".repeat(40);
   let loseLabelDelete = false;
-  let maintainerPermission = true;
+  let maintainerPermission: boolean | "unavailable" = true;
   let pauseReopen: (() => Promise<void>) | null = null;
   let pauseFindingLabel: (() => Promise<void>) | null = null;
   let loseFindingLabelResponse = false;
@@ -382,12 +382,14 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           id: Number(user[1]),
         });
       if (path.endsWith("/permission"))
-        return Response.json({
-          permission:
-            path.includes("/maintainer/") && maintainerPermission
-              ? "write"
-              : "read",
-        });
+        return maintainerPermission === "unavailable"
+          ? new Response(null, { status: 503 })
+          : Response.json({
+              permission:
+                path.includes("/maintainer/") && maintainerPermission
+                  ? "write"
+                  : "read",
+            });
       if (path.endsWith("/issues/5/comments") && request.method === "GET") {
         if (appealHistoryMode === "unavailable")
           return new Response(null, { status: 503 });
@@ -771,26 +773,26 @@ const APPEAL =
   "SELECT draft, escalation IS NOT NULL AS escalated, resolution, resolved_by FROM slopbot_appeals";
 const day = 24 * 60 * 60 * 1000;
 
-test("project closure consent is fresh and never overrides repository or production opt-outs", async () => {
-  // Synthetic decisions exercise authorization only, not model qualification.
-  for (const boundary of [
-    "absent",
-    "revoked",
-    "during confirmation",
-    "production off",
-    "file off",
-    "category off",
-    "invalid file",
-    "truncated file",
-    "non-file",
-    "unreadable file",
-    "redirect",
-    "empty success",
-    "forbidden",
-    "rate limited",
-    "server failure",
-    "malformed response",
-  ]) {
+// Each real consent boundary owns its fixture and the unchanged test timeout.
+for (const boundary of [
+  "absent",
+  "revoked",
+  "during confirmation",
+  "production off",
+  "file off",
+  "category off",
+  "invalid file",
+  "truncated file",
+  "non-file",
+  "unreadable file",
+  "redirect",
+  "empty success",
+  "forbidden",
+  "rate limited",
+  "server failure",
+  "malformed response",
+]) {
+  test(`project closure consent respects the ${boundary} boundary`, async () => {
     await closedItem(async (run) => {
       if (boundary === "absent") {
         run.consent(null);
@@ -851,7 +853,10 @@ test("project closure consent is fresh and never overrides repository or product
       expect(run.writes.some((path) => path.startsWith("PATCH "))).toBe(false);
       expect(run.sql(PENALTY)).toEqual([]);
     });
-  }
+  });
+}
+
+test("fresh project consent and confirmation permit closure without a repository file", async () => {
   // No file, no completed-review quota and a new installation: explicit
   // consent plus independent confirmation can reach the existing close path.
   await closedItem(async (run) => {
@@ -1831,6 +1836,11 @@ test("unknown label DELETE retries preserve one reversal and current maintainer 
         "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'human_reopen'",
       ),
     ).toEqual([{ n: 1 }]);
+    // A GitHub outage retries the job instead of dropping the decision.
+    run.maintainerPermission("unavailable");
+    await expect(run.deliver(reopened)).rejects.toThrow(
+      "appeal job was retried",
+    );
     run.maintainerPermission(false);
     expect(await run.deliver(reopened)).toBe(
       "reopen by a non-maintainer recorded as no decision",

@@ -4,14 +4,10 @@ import {
   type ProjectD1Database,
 } from "../../backend/projects/cloudflare-persistence";
 import type { R2Bucket } from "../../backend/trace/cloudflare-persistence";
-import { sha256Hex } from "../../backend/trace/validation";
-import {
-  EVIDENCE_OPERATOR_GITHUB_IDS,
-  EVIDENCE_POLICY_AUTHORITY_GITHUB_ID,
-} from "../../backend/vetting/evidence";
 import { CloudflareVettingPersistence } from "../../backend/vetting/persistence";
 import { onRequest as pagesArtifact } from "../../functions/[[path]]";
 import { onRequest as pagesApi } from "../../functions/api/v1/[[path]]";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   REPOSITORY_READ_HEADER,
   REPOSITORY_READ_URL,
@@ -121,29 +117,9 @@ async function run(env: Environment, inputs: Inputs) {
       throw error;
     }
   }) as typeof fetch;
-  const policy = JSON.stringify({
-    version: "disposable-flag-qualification-only",
-    policyAuthorityGithubId: EVIDENCE_POLICY_AUTHORITY_GITHUB_ID,
-    operatorGithubIds: [...EVIDENCE_OPERATOR_GITHUB_IDS],
-    postClosureRetentionSeconds: 90 * 86400,
-    readGrantDurationSeconds: 900,
-    maxObjectBytes: 8 * 1024 * 1024,
-    maxRunBytes: 64 * 1024 * 1024,
-    maxObjects: 1024,
-    accessPolicyReference: "fixture:access",
-    retentionPolicyReference: "fixture:retention",
-    recoveryPolicyReference: "fixture:recovery",
-    externalControls: {
-      evidenceReference: "fixture:not-an-operational-attestation",
-      attestedByGithubId: EVIDENCE_POLICY_AUTHORITY_GITHUB_ID,
-      attestedAt: now,
-      validUntil: new Date(Date.now() + 3600000).toISOString(),
-    },
-  });
   const pagesEnv = {
     SLOP_DB: db,
     VETTING_EVIDENCE: env.EVIDENCE_SOURCE,
-    VETTING_EVIDENCE_POLICY: policy,
     VETTING_RESULT_PUBLIC_KEYS: keys.publicKey,
     ADMIN_GITHUB_IDS: actors.admin.id,
     PROJECT_MODERATOR_GITHUB_IDS: actors.admin.id,

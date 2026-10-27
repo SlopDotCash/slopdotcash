@@ -596,25 +596,17 @@ export interface PostRow {
   finalizedAt: string | null;
 }
 
+/** The distributor state the poster checks before it signs. */
 export interface ChainState {
   chainId: number;
   token: string;
-  owner: string;
   poster: string;
   paused: boolean;
   epochCap: bigint;
-  activeTotal: bigint;
   totalClaimed: bigint;
   balance: bigint;
   nextEpoch: number;
   hasPendingRoot: boolean;
-  latest: {
-    index: number;
-    root: string;
-    total: bigint;
-    postedAt: number;
-    voided: boolean;
-  } | null;
 }
 
 export interface PreparedPost {
@@ -635,12 +627,6 @@ export interface PosterClient {
   /** The signer, lowercase, or null when no key is loaded. */
   address(): string | null;
   state(): Promise<ChainState>;
-  epochAt(index: number): Promise<{
-    root: string;
-    total: bigint;
-    postedAt: number;
-    voided: boolean;
-  }>;
   /** Simulates the post at the latest block, then signs it. */
   prepare(
     epoch: number,
@@ -959,22 +945,26 @@ async function postWithinGasBudget(
   // The conditional D1 batch repeats the budget check and commits raw bytes and
   // reservation together. A losing concurrent signer can never broadcast its bytes.
   await store.insertPost(row, prepared.maximumNativeWei, config.gas);
-  try {
-    await client.broadcast(prepared.rawTx);
-  } catch (error) {
-    await store.updatePost(row.id, {
-      state: "unknown",
-      reason: message(error),
-      updatedAt: deps.now().toISOString(),
-    });
-  }
-  deps.log({
-    event: "referral_post_submitted",
+  const sent = {
     period: candidate.period,
     epoch,
     merkleRoot: candidate.merkleRoot,
     totalBase: total.toString(),
     txId: prepared.txId,
-  });
+  };
+  try {
+    await client.broadcast(prepared.rawTx);
+  } catch (error) {
+    // The node may still hold the bytes. The next run resends them
+    // unchanged; this run never reports them as posted.
+    await store.updatePost(row.id, {
+      state: "unknown",
+      reason: message(error),
+      updatedAt: deps.now().toISOString(),
+    });
+    deps.log({ event: "referral_post_unknown", ...sent });
+    return { status: "in_flight", reconciled };
+  }
+  deps.log({ event: "referral_post_submitted", ...sent });
   return { status: "posted", reconciled };
 }

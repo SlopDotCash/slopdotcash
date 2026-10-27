@@ -3,7 +3,7 @@ import { GitHubClient } from "./github";
 import { registeredProject, registeredRepository } from "./registry";
 import type { ReviewEnv } from "./review";
 import { readValueDecision } from "./value-consumption";
-import { collectValueEvidence } from "./value-evidence";
+import { collectValueEvidence, findRepository } from "./value-evidence";
 import { collectValueGroup } from "./value-group-collection";
 import {
   claimValueRequest,
@@ -72,11 +72,7 @@ export async function consumeValueRequest(
     )
       return await finish("budget");
     const { monthly, maximum, start } = settings;
-    const repository = repositories.find((entry) =>
-      [entry.id, ...entry.aliases].some(
-        (id) => id.toLowerCase() === `${job.owner}/${job.repo}`.toLowerCase(),
-      ),
-    );
+    const repository = findRepository(repositories, `${job.owner}/${job.repo}`);
     if (!repository) return await finish("authority");
     const github = await GitHubClient.forInstallation(
       env.SLOPBOT_APP_ID,
@@ -285,9 +281,16 @@ export async function consumeValueRequest(
         : null,
     );
     return await finish("published", true);
-  } catch {
-    // Do not persist provider/source exception bodies. A lost lease also refuses
-    // this transition, leaving recovery to the new owner or the lease expiry.
+  } catch (error) {
+    // Do not persist or log provider/source exception bodies. A lost lease also
+    // refuses this transition, leaving recovery to the new owner or the lease expiry.
+    console.error(
+      JSON.stringify({
+        event: "value_request_retry",
+        delivery: job.deliveryId,
+        kind: error instanceof Error ? error.name : "unknown",
+      }),
+    );
     return await finish("retry");
   }
 }

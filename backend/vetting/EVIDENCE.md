@@ -5,26 +5,17 @@ contributor traces, their permanent storage rule, or contributor read grants.
 D1 migrations 0034 through 0036 store immutable object receipts, run policy snapshots,
 chunk layouts, completion records, grants and access audit records. Raw bytes remain outside Git and public responses.
 
-The service is inactive without the bucket and `VETTING_EVIDENCE_POLICY` JSON.
-The deployment authority must supply all policy fields: `version`,
-`policyAuthorityGithubId`, `operatorGithubIds`, `postClosureRetentionSeconds`,
-`readGrantDurationSeconds`,
-`maxObjectBytes`, `maxRunBytes`, `maxObjects`, `accessPolicyReference`,
-`retentionPolicyReference`, `recoveryPolicyReference`, and `externalControls`.
-The external-controls record requires `attestedByGithubId` equal to the configured
-policy authority, `evidenceReference`, `attestedAt`, and `validUntil`. Its time
-window must be current. These values come from trusted deployment configuration,
-not from a service upload or browser request. The parser accepts only the
-recorded identities from [the approved policy](#approved-production-policy):
-`policyAuthorityGithubId` must be `18633264`, and `operatorGithubIds` must name
-exactly `18633264` and `202660855`, in any order. A policy that names another
-owner or reader, omits either reader, or repeats one is inactive, so evidence
-upload, grants and reads fail closed. Changing these identities is a code
-change, not a configuration change.
+The service is inactive without the bucket. The evidence terms are fixed in
+source as `EVIDENCE_POLICY` in `evidence.ts`; there is no deployment policy
+setting and no operator attestation. Changing the owner, readers, durations or
+limits is a reviewed code change. The policy owner is `18633264`, and the
+readers are exactly `18633264` and `202660855` (see
+[the approved policy](#approved-production-policy)). Each run stores a copy of
+the terms it used.
 
-`readGrantDurationSeconds` controls the read token, database expiry and download
-cookie only. Set it to 900 for the approved 15-minute operator grant.
-`postClosureRetentionSeconds` must be 7776000 (90 days). Migration 0066 records
+`readGrantDurationSeconds` (900, the approved 15-minute operator grant) controls
+the read token, database expiry and download cookie only.
+`postClosureRetentionSeconds` is 7776000 (90 days). Migration 0066 records
 an immutable case closure when a clean scan is accepted, in the same transaction.
 Existing clean assessments receive their original completion time as closure.
 Incomplete and malicious assessments stay open until the policy owner calls
@@ -38,21 +29,10 @@ Evidence remains readable while the case is open. The operator overview returns
 `expiresAt: null` then, and the closure time plus 90 days afterward. At that
 boundary new grants and reads are refused. The old upload-based `expires_at`
 column stays in immutable run history but no longer determines current access.
-The old `accessDurationSeconds` and `evidenceAccessDurationSeconds` policy fields
-are rejected; deployment must supply both explicit durations.
 
 The backup worker implements separately gated R2 deletion after its snapshot
 completes, plus one-year audit retention. See
-[the storage workflow](../../workers/vetting-backup/README.md). Hosted backup,
-deletion and restoration qualification remain required before attestation.
-
-The attestation is an operator assertion. The storage worker performs configured
-backup and retention work, but this does not prove hosted access controls or
-successful recovery. Access expiry is enforced independently; it is not proof
-of physical retention compliance. VET-03 acceptance stays open
-until the responsible humans approve and demonstrate those controls. Policy
-references must identify the approved public access and retention terms; private
-operational evidence must not be published with those terms.
+[the storage workflow](../../workers/vetting-backup/README.md).
 
 ## Approved production policy
 
@@ -72,12 +52,6 @@ and [retention and recovery terms](https://github.com/SlopDotCash/slopdotcash/is
 These terms apply only to scanner evidence. They do not change permanent
 contributor-trace storage. Keep production and staging stores separate;
 preview deployments have no evidence-store binding.
-
-Policy approval is not an external-controls attestation. Before activation,
-configure and verify the case-closure retention schedule, daily backup job,
-backup expiry, access logging, and restoration. Do not fill `externalControls`
-with an assertion that these controls operate until that assertion has evidence.
-The existing bucket and its binding alone do not meet this requirement.
 
 ## Write and inspect exact bytes
 

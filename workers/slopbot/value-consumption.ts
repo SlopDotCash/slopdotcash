@@ -1,18 +1,20 @@
 /** Internal journal consumer. The database connection is the authority boundary;
  * a digest alone never authenticates records copied from an arbitrary host.
  */
+
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   REGISTERED_REPOSITORIES,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
 import { VALUE_RUBRIC_VERSION } from "../../src/lib/value-assessment";
-import { sha256Hex } from "./github";
 import type { D1Database } from "./persistence";
 import {
   type ValueContextSelection,
   validValueContextSelections,
 } from "./value-context";
 import {
+  findRepository,
   type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
@@ -34,17 +36,14 @@ export async function readValueDecision(
   db: D1Database,
   evidence: ValueEvidence,
   policy: { sha: string; text: string },
-  repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
+  repositories: readonly TargetRepository[],
 ) {
   return readValueDecisionFromHistory(
     (after) =>
       valueHistory(
         db,
-        repositories.find((entry) =>
-          [entry.id, ...entry.aliases].some(
-            (id) => id.toLowerCase() === evidence.repository.toLowerCase(),
-          ),
-        )?.id ?? evidence.repository,
+        findRepository(repositories, evidence.repository)?.id ??
+          evidence.repository,
         evidence.pull.number,
         after,
         evidence.repositoryNodeId,
@@ -71,11 +70,7 @@ export async function readValueDecisionFromHistory(
   const history: PublicRecord[] = [];
   let cursor = 0;
   let more = true;
-  const repository = repositories.find((entry) =>
-    [entry.id, ...entry.aliases].some(
-      (id) => id.toLowerCase() === evidence.repository.toLowerCase(),
-    ),
-  );
+  const repository = findRepository(repositories, evidence.repository);
   if (!repository) throw new Error("Value source repository is not registered");
   let previous: PublicRecord | null = null;
   let latest: ValueJournalRecord | null = null;

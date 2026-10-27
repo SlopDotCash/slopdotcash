@@ -1,4 +1,4 @@
-// Slopbot v2 contracts (draft, docs/slopbot-v2-proposal.md). Everything a model
+// Slopbot v2 contracts (protocol/slopbot-v2.md). Everything a model
 // returns is untrusted until it passes validateVerdict; everything a repository
 // publishes is untrusted until it passes parseRepositoryConfig.
 
@@ -83,14 +83,7 @@ export type ConfigResult =
   | { ok: true; config: RepositoryConfig }
   | { ok: false; config: RepositoryConfig; problem: string };
 
-export function parseRepositoryConfig(text: string | null): ConfigResult {
-  if (text === null) {
-    return {
-      ok: false,
-      config: labelOnlyConfig(),
-      problem: `${CONFIG_PATH} is missing`,
-    };
-  }
+export function parseRepositoryConfig(text: string): ConfigResult {
   let raw: unknown;
   try {
     raw = JSON.parse(text);

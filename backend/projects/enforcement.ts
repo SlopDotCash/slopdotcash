@@ -14,8 +14,6 @@
  * reinstate it on the owner's appeal after a fresh clean scan.
  */
 
-import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
-import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type {
   AppealState,
   EnforcementAction,
@@ -23,7 +21,9 @@ import type {
   ProjectEnforcement,
   ProjectRecord,
   RestrictionState,
-} from "./contracts";
+} from "../../src/lib/project-contracts";
+import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
+import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 
 export const ENFORCEMENT_ACTIONS: readonly EnforcementAction[] = [
   "quarantine",
@@ -150,8 +150,15 @@ export function projectAppealState(
   return projectAppealOpen(restriction.records) ? "requested" : "none";
 }
 
-/** True when records, oldest first, end with an undecided project appeal. */
-function projectAppealOpen(records: ProjectEnforcement[]): boolean {
+/**
+ * True when records, oldest first, end with an undecided project appeal.
+ * With `kept`, an appeal that confirmed malicious Bans kept also counts:
+ * the moderator decision on those Bans closes it.
+ */
+function projectAppealOpen(
+  records: ProjectEnforcement[],
+  kept = false,
+): boolean {
   const newestFirst = [...records].reverse();
   const boundary =
     newestFirst.find(
@@ -159,8 +166,9 @@ function projectAppealOpen(records: ProjectEnforcement[]): boolean {
         // An ordinary ban can retain the pending project appeal. A new
         // malicious result or a decision that closes it starts a new boundary.
         (record.action === "ban" &&
-          (record.actorRole === "vetting-service" ||
-            record.appealAfter !== "requested")) ||
+          (record.actorRole === "vetting-service"
+            ? !(kept && record.appealAfter === "requested")
+            : record.appealAfter !== "requested")) ||
         ["quarantine", "reinstate", "deny_reinstatement"].includes(
           record.action,
         ),
@@ -189,7 +197,10 @@ export function accountAppealState(
   const boundary =
     newestFirst.find(
       (record) =>
-        ["ban", "quarantine"].includes(record.action) ||
+        (record.action === "ban" &&
+          (record.maintainerBans ?? []).some(
+            (account) => account.githubId === githubId,
+          )) ||
         // A denial decides the open project appeal when there is one, and
         // the account appeals only when there is not (PRD section 8).
         (record.action === "deny_reinstatement" &&
@@ -365,6 +376,47 @@ function requireIndependentModerator(
     );
 }
 
+/**
+ * A decision on account appeals needs a moderator who did not ban any of the
+ * accounts it decides and is not one of them (ELG-02). Releases, denials and
+ * malicious-result bans use this one rule; the 0072 trigger repeats the ban
+ * half for each release.
+ */
+function requireIndependentAccountModerator(
+  restriction: ProjectRestriction,
+  actor: GithubActor,
+  accountGithubIds: ReadonlySet<string>,
+): void {
+  if (
+    accountGithubIds.has(actor.githubId) ||
+    activeAccountBans(restriction.records).some(
+      ({ account, record }) =>
+        accountGithubIds.has(account.githubId) &&
+        record.actor?.githubId === actor.githubId,
+    )
+  )
+    throw new EnforcementRefusal(
+      403,
+      "independent_review_required",
+      "A moderator who did not ban this account must decide its appeal.",
+    );
+}
+
+/** Accounts among `accounts` whose own appeal is open. */
+function openAccountAppeals(
+  restriction: ProjectRestriction,
+  accounts: readonly GithubActor[],
+): Set<string> {
+  return new Set(
+    accounts
+      .filter(
+        (account) =>
+          accountAppealState(restriction, account.githubId) === "requested",
+      )
+      .map((account) => account.githubId),
+  );
+}
+
 function revisionTo(
   current: ProjectDefinition,
   next: ProjectDefinition,
@@ -415,17 +467,29 @@ export function planEnforcement(input: {
         );
       if (action === "ban" && restriction.state === "banned" && !deciding)
         refuse("already_restricted", "The project is already banned");
-      // Deciding a confirmed malicious result bans the maintainer too, and
-      // closes an open appeal as denied, so the same independence applies.
-      if (deciding && restriction.appeal === "requested")
-        requireIndependentModerator(restriction, actor);
+      // Deciding a confirmed malicious result bans the maintainer too. It
+      // closes the open or kept project appeal, any kept appeal when no
+      // account appeal is open, and the open appeal of each account it bans
+      // again. Each appeal it closes needs its own independence.
+      const closesProjectAppeal =
+        deciding &&
+        restriction.appeal === "requested" &&
+        (projectAppealOpen(restriction.records, true) ||
+          openAccountAppeals(restriction, restriction.bannedMaintainers)
+            .size === 0);
+      const reBanned = deciding
+        ? openAccountAppeals(restriction, input.responsibleAccounts ?? [])
+        : new Set<string>();
+      if (closesProjectAppeal) requireIndependentModerator(restriction, actor);
+      requireIndependentAccountModerator(restriction, actor, reBanned);
       return {
         stateAfter: action === "ban" ? "banned" : "quarantined",
-        // An escalation keeps an open appeal open for independent review.
+        // An escalation, or a decision that closes no appeal, keeps the open
+        // account appeals open for independent review.
         appealAfter:
           restriction.appeal !== "requested"
             ? "none"
-            : deciding
+            : closesProjectAppeal || reBanned.size > 0
               ? "denied"
               : "requested",
         bansMaintainer: deciding,
@@ -481,6 +545,7 @@ export function planEnforcement(input: {
           "Record an appeal before reinstating an account",
         );
       const releasedIds = new Set(selected.map((account) => account.githubId));
+      requireIndependentAccountModerator(restriction, actor, releasedIds);
       const appealStillOpen =
         projectAppealState(restriction) === "requested" ||
         restriction.bannedMaintainers.some(
@@ -499,16 +564,24 @@ export function planEnforcement(input: {
     case "reinstate":
     case "deny_reinstatement": {
       // An account-only appeal cannot authorize project reinstatement.
+      const projectAppeal = projectAppealState(restriction);
       const appeal =
-        action === "reinstate"
-          ? projectAppealState(restriction)
-          : restriction.appeal;
+        action === "reinstate" ? projectAppeal : restriction.appeal;
       if (restriction.state === "clear" || appeal !== "requested")
         refuse(
           "no_open_appeal",
           "Record a reinstatement request before a decision",
         );
-      requireIndependentModerator(restriction, actor);
+      // A denial with no open project appeal decides the open account
+      // appeals, so it needs independence from those account bans instead.
+      if (action === "reinstate" || projectAppeal === "requested")
+        requireIndependentModerator(restriction, actor);
+      else
+        requireIndependentAccountModerator(
+          restriction,
+          actor,
+          openAccountAppeals(restriction, restriction.bannedMaintainers),
+        );
       if (action === "deny_reinstatement") {
         if (deciding)
           refuse(
@@ -569,7 +642,7 @@ export function enforcementRevisionReason(
 export const FLAG_PAUSE_THRESHOLD = 2;
 
 /** The rule a signed clean scan cites when it lifts a flag-only pause. */
-export const SCAN_REINSTATEMENT_RULE = "clean-fresh-scan-after-flags";
+const SCAN_REINSTATEMENT_RULE = "clean-fresh-scan-after-flags";
 
 /**
  * True when the restriction in force is a quarantine that two contributor

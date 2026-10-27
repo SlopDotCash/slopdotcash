@@ -1507,7 +1507,10 @@ jobs:
           converter_secrets="$RUNNER_TEMP/slop-fee-converter-secrets.json"
           ./node_modules/.bin/wrangler secret list \
             --config workers/fee-converter/wrangler.toml > "$converter_secrets"
-          node - "$converter_secrets" workers/fee-converter/wrangler.toml <<'NODE'
+          # Bun 1.3.14 exits 0 and prints no error when a CommonJS script read
+          # from stdin throws. Require the final summary line as well, so any
+          # refused check stops the release before the upload.
+          converter_preflight="$(bun - "$converter_secrets" workers/fee-converter/wrangler.toml <<'NODE'
           const { readFileSync } = require("node:fs");
           const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
           if (!Array.isArray(value)) throw new TypeError("fee-converter secret inventory must be an array");
@@ -1516,6 +1519,7 @@ jobs:
             ...networks.map((n) => `FEE_WALLET_KEY_${n}`),
             ...networks.map((n) => `RPC_URL_${n}`),
             "JUPITER_API_KEY",
+            "SOLANA_RECOVERY_RPC_URL",
           ]);
           const names = value.map((entry) => entry?.name);
           if (names.some((name) => !allowed.has(name))) {
@@ -1530,15 +1534,23 @@ jobs:
           const mode = read("FEE_CONVERTER_MODE");
           if (!["off", "dry_run", "live"].includes(mode)) throw new TypeError("invalid FEE_CONVERTER_MODE");
           const enabled = read("FEE_CONVERTER_NETWORKS").split(",").map((n) => n.trim()).filter(Boolean);
-          if (mode === "live" && enabled.includes("solana")) {
-            throw new TypeError("Live Solana fee signing needs native transaction/day limits and durable accounting");
-          }
+          // Use the Worker's actual parser: live signing on every converting
+          // network requires that network's own approved native limits.
+          const { parseConfig } = require("./workers/fee-converter/config.ts");
+          parseConfig(Bun.TOML.parse(toml).vars);
           if (mode === "live") {
             const missing = enabled.filter((n) => !names.includes(`FEE_WALLET_KEY_${n.toUpperCase()}`));
             if (missing.length > 0) throw new TypeError(`live fee conversion lacks keys for: ${missing.join(", ")}`);
           }
           console.log(`fee-converter mode ${mode}; networks ${enabled.join(",") || "none"}`);
           NODE
+          )"
+          printf '%s\n' "$converter_preflight"
+          converter_preflight_complete='^fee-converter mode (off|dry_run|live); networks [a-z,]+$'
+          if ! [[ "$converter_preflight" =~ $converter_preflight_complete ]]; then
+            echo "::error::The fee-converter release preflight did not complete."
+            exit 1
+          fi
 
           converter_upload="$RUNNER_TEMP/slop-fee-converter-upload.log"
           ./node_modules/.bin/wrangler versions upload \

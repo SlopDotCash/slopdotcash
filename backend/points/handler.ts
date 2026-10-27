@@ -1,12 +1,20 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   type DeploymentTier,
   deploymentOrigins,
 } from "../../src/lib/deployment";
 import { POINTS_RULE } from "../../src/lib/points";
-import { randomToken, sha256Hex } from "../../workers/identity/crypto";
+import type { GithubActor } from "../../src/lib/project-contracts";
+import { randomToken } from "../../workers/identity/crypto";
 import { consumeExactRateLimit } from "../../workers/identity/rate-limit";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
+import {
+  cookieValue,
+  isSameOriginJsonWrite,
+  json as jsonResponse,
+} from "../http";
+import { consumeIdentityAssertion } from "../identity-assertion";
 import { handleX, type XConfiguration } from "./x";
 
 export interface PointsDependencies {
@@ -20,25 +28,12 @@ export interface PointsDependencies {
   x?: XConfiguration;
   xFetch?: (input: string, init: RequestInit) => Promise<Response>;
 }
-const cookieName = "__Host-slop_points";
-const headers = {
-  "content-type": "application/json; charset=utf-8",
-  "cache-control": "no-store",
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "no-referrer",
-};
+const SESSION_COOKIE = "__Host-slop_points";
 function json(status: number, body: unknown, cookie?: string) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...headers, ...(cookie ? { "set-cookie": cookie } : {}) },
+  return jsonResponse(status, body, {
+    cacheControl: "no-store",
+    headers: cookie ? { "set-cookie": cookie } : undefined,
   });
-}
-function cookie(request: Request) {
-  return (request.headers.get("cookie") ?? "")
-    .split(";")
-    .map((x) => x.trim())
-    .find((x) => x.startsWith(`${cookieName}=`))
-    ?.slice(cookieName.length + 1);
 }
 /**
  * Resolves the signed-in GitHub account from the site session cookie. Other
@@ -48,8 +43,8 @@ export async function sessionGithubActor(
   request: Request,
   db: D1Database,
   now: string,
-): Promise<{ githubId: string; githubLogin: string } | null> {
-  const token = cookie(request);
+): Promise<GithubActor | null> {
+  const token = cookieValue(request, SESSION_COOKIE);
   if (!token || !/^[A-Za-z0-9_-]{40,128}$/.test(token)) return null;
   const member = await db
     .prepare(
@@ -62,7 +57,7 @@ export async function sessionGithubActor(
     : null;
 }
 function sessionCookie(token: string, seconds: number) {
-  return `${cookieName}=${token}; Path=/; Max-Age=${seconds}; Secure; HttpOnly; SameSite=Strict`;
+  return `${SESSION_COOKIE}=${token}; Path=/; Max-Age=${seconds}; Secure; HttpOnly; SameSite=Strict`;
 }
 type Member = {
   actor_id: string;
@@ -109,9 +104,7 @@ export async function handlePointsApi(
     return json(403, { error: "origin_forbidden" });
   if (
     request.method !== "GET" &&
-    (request.method !== "POST" ||
-      request.headers.get("origin") !== url.origin ||
-      request.headers.get("content-type")?.split(";")[0] !== "application/json")
+    (request.method !== "POST" || !isSameOriginJsonWrite(request))
   )
     return json(403, { error: "origin_forbidden" });
   try {
@@ -170,37 +163,21 @@ export async function handlePointsApi(
         typeof value.public !== "boolean"
       )
         return json(400, { error: "invalid_request" });
-      const response = await deps.identity.fetch(
-        new Request("https://identity.internal/v1/assertions/consume", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${value.assertion}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({ audience: "slop-points-web" }),
-        }),
+      const identity = await consumeIdentityAssertion(
+        deps.identity,
+        value.assertion,
+        "slop-points-web",
       );
-      if (!response.ok) return json(401, { error: "identity_expired" });
-      const identity = (await readBoundedJson(
-        response,
-        16384,
-        "identity",
-      )) as Record<string, unknown>;
-      const {
-        githubActorId: id,
-        githubNodeId: node,
-        githubLogin: login,
-      } = identity;
+      if (identity === "expired")
+        return json(401, { error: "identity_expired" });
+      const node = identity === "invalid" ? null : identity.githubNodeId;
       if (
-        identity.audience !== "slop-points-web" ||
-        typeof id !== "string" ||
-        !/^\d+$/.test(id) ||
+        identity === "invalid" ||
         typeof node !== "string" ||
-        !/^[A-Za-z0-9_=-]{4,256}$/.test(node) ||
-        typeof login !== "string" ||
-        !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(login)
+        !/^[A-Za-z0-9_=-]{4,256}$/.test(node)
       )
         return json(401, { error: "invalid_identity" });
+      const { githubId: id, githubLogin: login } = identity;
       // A closed account opens again only when this sign-in asks to reopen
       // it, so closing is never undone by an ordinary sign-in.
       const closed = await deps.db
@@ -263,7 +240,7 @@ export async function handlePointsApi(
       route === "/sessions/revoke" ||
       route === "/account/close"
     ) {
-      const token = cookie(request);
+      const token = cookieValue(request, SESSION_COOKIE);
       if (!token || !/^[A-Za-z0-9_-]{40,128}$/.test(token))
         return route === "/me" && request.method === "GET"
           ? json(200, null)
@@ -457,6 +434,7 @@ export async function handlePointsApi(
     return json(404, { error: "not_found" });
   } catch {
     // error-policy:J1 A failed database/identity operation never fabricates a balance.
+    console.error("points API failure");
     return json(503, { error: "points_unavailable" });
   }
 }

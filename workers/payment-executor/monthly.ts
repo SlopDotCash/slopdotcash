@@ -1,5 +1,6 @@
 /** Idempotent authorization for the ordinary monthly allocation, never a payment key. */
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { hexToBytes } from "@noble/hashes/utils.js";
 import { recoverAddress } from "viem";
 import {
   type MonthlyAttestationPlan,
@@ -37,9 +38,7 @@ interface Intent {
 const bytes = (hex: string) => {
   if (!/^(?:[a-f0-9]{2})+$/.test(hex))
     throw new Error("Invalid authorization encoding");
-  return Uint8Array.from(hex.match(/../g) ?? [], (pair) =>
-    Number.parseInt(pair, 16),
-  );
+  return hexToBytes(hex);
 };
 
 /**

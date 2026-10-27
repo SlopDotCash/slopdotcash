@@ -31,10 +31,35 @@ export async function dispatchFailureAlert(
     .bind(new Date().toISOString(), notice.callId)
     .first();
   if (!claimed) return;
-  let outcome = "ambiguous";
+  const accepted = await deliverNotice(
+    notify,
+    SLOPBOT_FAILURE_NOTICE_PATH,
+    notice,
+    (outcome) =>
+      db
+        .prepare(
+          `INSERT INTO slopbot_provider_failure_receipts(call_id,outcome,recorded_at) VALUES (?,?,?)`,
+        )
+        .bind(notice.callId, outcome, new Date().toISOString())
+        .run(),
+  );
+  if (!accepted)
+    throw new Error("Provider failure notice needs operator reconciliation");
+}
+
+/** Sends one claimed notice and records its outcome. Acceptance may precede a
+ * transport error, so a failed send is ambiguous and is never resent blindly.
+ */
+export async function deliverNotice(
+  notify: { fetch(request: Request): Promise<Response> },
+  path: string,
+  notice: unknown,
+  record: (outcome: "accepted" | "ambiguous") => Promise<unknown>,
+): Promise<boolean> {
+  let outcome: "accepted" | "ambiguous" = "ambiguous";
   try {
     const response = await notify.fetch(
-      new Request(`https://notify.internal${SLOPBOT_FAILURE_NOTICE_PATH}`, {
+      new Request(`https://notify.internal${path}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(notice),
@@ -42,14 +67,8 @@ export async function dispatchFailureAlert(
     );
     if (response.status === 202) outcome = "accepted";
   } catch {
-    // Delivery may have preceded the transport failure. Never resend blindly.
+    // Retain the durable claim for operator reconciliation.
   }
-  await db
-    .prepare(
-      `INSERT INTO slopbot_provider_failure_receipts(call_id,outcome,recorded_at) VALUES (?,?,?)`,
-    )
-    .bind(notice.callId, outcome, new Date().toISOString())
-    .run();
-  if (outcome !== "accepted")
-    throw new Error("Provider failure notice needs operator reconciliation");
+  await record(outcome);
+  return outcome === "accepted";
 }

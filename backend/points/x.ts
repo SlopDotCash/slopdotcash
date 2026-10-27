@@ -1,11 +1,12 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   decryptPkceVerifier,
   encryptPkceVerifier,
   pkceChallenge,
   randomToken,
-  sha256Hex,
 } from "../../workers/identity/crypto";
+import { cookieValue, json as jsonResponse } from "../http";
 import type { PointsDependencies } from "./handler";
 
 export interface XConfiguration {
@@ -13,22 +14,10 @@ export interface XConfiguration {
   clientSecret: string;
 }
 const flowCookie = "__Host-slop_x_flow";
-function cookie(request: Request, name: string) {
-  return (request.headers.get("cookie") ?? "")
-    .split(";")
-    .map((s) => s.trim())
-    .find((s) => s.startsWith(`${name}=`))
-    ?.slice(name.length + 1);
-}
 function json(status: number, body: unknown) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "content-type": "application/json",
-      "cache-control": "no-store",
-      "referrer-policy": "no-referrer",
-      "x-content-type-options": "nosniff",
-    },
+  return jsonResponse(status, body, {
+    cacheControl: "no-store",
+    headers: { "content-type": "application/json" },
   });
 }
 function flowHeader(value: string, seconds: number) {
@@ -50,7 +39,7 @@ async function session(
   deps: PointsDependencies,
   now: string,
 ) {
-  const token = cookie(request, "__Host-slop_points");
+  const token = cookieValue(request, "__Host-slop_points");
   if (!token || !/^[A-Za-z0-9_-]{40,128}$/.test(token)) return null;
   const hash = await sha256Hex(token);
   const row = await deps.db
@@ -107,7 +96,7 @@ export async function handleX(
   }
   if (route === "/callback" && request.method === "GET") {
     const state = url.searchParams.get("state") ?? "",
-      cap = cookie(request, flowCookie) ?? "";
+      cap = cookieValue(request, flowCookie) ?? "";
     // Every failed return names a fixed stage. Never log provider bodies,
     // OAuth codes, tokens, cookies, or identities.
     let stage = "callback";

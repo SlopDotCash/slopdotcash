@@ -66,35 +66,49 @@ export async function loadRegistryPaymentDeployments(
   const inventory = JSON.parse(row.items) as { id: string; manifest: string }[];
   // Sharing a vault would leak private amounts through ordinary counters.
   // Validate both inventories even when this worker serves only one scope.
+  const failures: Error[] = [];
   const vaultScopes = new Map<string, string>();
   for (const project of inventory) {
-    let policies: ReadonlyArray<
-      readonly [
-        string,
-        { deployments: readonly EscrowDeployment[] } | undefined,
-      ]
-    >;
+    let manifest: {
+      escrow?: unknown;
+      securityBounty?: { settlement?: unknown };
+    };
     try {
-      const manifest = JSON.parse(project.manifest);
-      policies = [
-        [
-          "ordinary",
+      manifest = JSON.parse(project.manifest);
+    } catch {
+      // The scoped read below reports an unreadable manifest.
+      continue;
+    }
+    for (const [scopeName, read] of [
+      [
+        "ordinary",
+        () =>
           manifest.escrow === undefined
             ? undefined
             : assertEscrowPolicy(manifest.escrow),
-        ],
-        [
-          "security-bounty",
+      ],
+      [
+        "security-bounty",
+        () =>
           manifest.securityBounty?.settlement === undefined
             ? undefined
             : assertSecurityEscrowPolicy(manifest.securityBounty.settlement),
-        ],
-      ] as const;
-    } catch {
-      // The scoped read below reports malformed policy without dropping other projects.
-      continue;
-    }
-    for (const [scopeName, policy] of policies) {
+      ],
+    ] as const) {
+      let policy: { deployments: readonly EscrowDeployment[] } | undefined;
+      try {
+        policy = read();
+      } catch (error) {
+        // The scoped read below reports this Worker's own scope; the other
+        // scope's malformed policy would otherwise escape the sharing check.
+        if (scopeName !== scope)
+          failures.push(
+            new Error(`Project ${project.id} ${scopeName} policy invalid`, {
+              cause: error,
+            }),
+          );
+        continue;
+      }
       for (const d of policy?.deployments ?? []) {
         const key = `${d.network}:${d.programId ? d.vault : d.vault.toLowerCase()}`;
         if (vaultScopes.has(key))
@@ -107,11 +121,7 @@ export async function loadRegistryPaymentDeployments(
   }
   const selected = new Set<string>(networks);
   const deployments: PaymentDeployment[] = [];
-  const failures: Error[] = [];
-  for (const project of JSON.parse(row.items) as {
-    id: string;
-    manifest: string;
-  }[]) {
+  for (const project of inventory) {
     try {
       const manifest = JSON.parse(project.manifest) as {
         id?: unknown;
@@ -131,14 +141,10 @@ export async function loadRegistryPaymentDeployments(
           : assertEscrowPolicy(policy);
       for (const deployment of approved.deployments)
         if (selected.has(deployment.network))
-          deployments.push(
-            // The record keeps the manifest's null fields; the adapters treat
-            // a null field as absent, as they did for the generated variable.
-            {
-              ...paymentDeploymentRecord(project.id, deployment),
-              ...(scope === "security-bounty" ? { payoutPolicy: scope } : {}),
-            } as unknown as PaymentDeployment,
-          );
+          deployments.push({
+            ...paymentDeploymentRecord(project.id, deployment),
+            ...(scope === "security-bounty" ? { payoutPolicy: scope } : {}),
+          });
     } catch (error) {
       failures.push(
         new Error(`Project ${project.id} escrow deployments unavailable`, {

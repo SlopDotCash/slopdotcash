@@ -1,3 +1,4 @@
+import { readBoundedBytes } from "../../src/lib/browser-json";
 import { isRecord } from "../../src/lib/record-validation.mjs";
 
 export { isRecord } from "../../src/lib/record-validation.mjs";
@@ -61,7 +62,7 @@ export function validIdempotencyKey(value: unknown): value is string {
   return typeof value === "string" && IDEMPOTENCY_PATTERN.test(value);
 }
 
-export function validContentType(value: string): value is TraceContentType {
+function validContentType(value: string): value is TraceContentType {
   const base = value.split(";", 1)[0].trim().toLowerCase();
   return TRACE_CONTENT_TYPES.some((item) => item === base);
 }
@@ -142,51 +143,24 @@ export async function readLimitedBody(
   limit: number,
 ): Promise<Uint8Array> {
   const declared = request.headers.get("content-length");
-  if (declared !== null) {
-    if (!/^\d+$/u.test(declared)) {
-      throw new RequestBodyError(
-        400,
-        "invalid_content_length",
-        "Content-Length must contain only decimal digits",
-      );
-    }
-    const size = Number(declared);
-    if (!Number.isSafeInteger(size) || size > limit)
+  if (declared !== null && !/^\d+$/u.test(declared))
+    throw new RequestBodyError(
+      400,
+      "invalid_content_length",
+      "Content-Length must contain only decimal digits",
+    );
+  if (request.body === null) return new Uint8Array();
+  try {
+    return await readBoundedBytes(request, limit, "Request body");
+  } catch (error) {
+    if (error instanceof RangeError)
       throw new RequestBodyError(
         413,
         "payload_too_large",
         `Request body exceeds ${limit} bytes`,
       );
+    throw error;
   }
-  if (request.body === null) return new Uint8Array();
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > limit) {
-        await reader.cancel("body too large");
-        throw new RequestBodyError(
-          413,
-          "payload_too_large",
-          `Request body exceeds ${limit} bytes`,
-        );
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
 }
 
 export { sha256Hex } from "../../src/lib/async-sha256.mjs";

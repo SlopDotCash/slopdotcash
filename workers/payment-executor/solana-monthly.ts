@@ -1,5 +1,6 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import {
   OBLIGATION_DISCRIMINATOR,
   OBLIGATION_SIZE,
@@ -41,10 +42,8 @@ import {
   solanaTransactionStatus,
 } from "./solana";
 
-const hex = (value: Uint8Array) =>
-  Array.from(value, (b) => b.toString(16).padStart(2, "0")).join("");
 const discriminator = (name: string) =>
-  hex(sha256(encoder.encode(`account:${name}`)).slice(0, 8));
+  bytesToHex(sha256(encoder.encode(`account:${name}`)).slice(0, 8));
 function u32(value: number) {
   const result = new Uint8Array(4);
   new DataView(result.buffer).setUint32(0, value, true);
@@ -65,7 +64,7 @@ async function submit(
   key: string,
   instructions: Instruction[],
 ) {
-  const fingerprint = hex(
+  const fingerprint = bytesToHex(
     sha256(
       encoder.encode(
         JSON.stringify([
@@ -318,7 +317,7 @@ export async function submitSolanaMonthly(
   if (
     root !== plan.allocationRoot ||
     total !== plan.totalGrossBase ||
-    hex(signed) !== plan.messageHex
+    bytesToHex(signed) !== plan.messageHex
   )
     throw new Error("Monthly allocation mismatch");
   const period = u32(Number(plan.request.period.replace("-", "")));
@@ -358,9 +357,7 @@ export async function submitSolanaMonthly(
       throw new Error("Monthly gas signer must be separate from attester");
     if (!/^[0-9a-f]{128}$/.test(signatureHex))
       throw new Error("Invalid monthly signature");
-    const signature = Uint8Array.from(signatureHex.match(/../g) ?? [], (s) =>
-      Number.parseInt(s, 16),
-    );
+    const signature = hexToBytes(signatureHex);
     if (!ed25519.verify(signature, signed, bytes(authority), { zip215: false }))
       throw new Error("Invalid monthly authority");
     // Ed25519 native instruction: key at 16, signature at 48, message at 112.
@@ -398,8 +395,8 @@ export async function submitSolanaMonthly(
   }
   if (
     solanaPubkey(record, 8) !== config.projectPda ||
-    hex(record.slice(40, 44)) !== hex(period) ||
-    hex(record.slice(44, 76)) !== root ||
+    bytesToHex(record.slice(40, 44)) !== bytesToHex(period) ||
+    bytesToHex(record.slice(44, 76)) !== root ||
     solanaUint(record, 84) !== BigInt(total) ||
     int64(record, 100) !== BigInt(frozenAt)
   )

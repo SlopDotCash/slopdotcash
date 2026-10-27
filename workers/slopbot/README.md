@@ -296,16 +296,11 @@ one notice key. The action and email dispatcher recheck moderator access and
 appeal status; a resolved appeal no longer asks for a decision. Verify actual
 provider delivery separately from local queue acceptance.
 
-## Not yet implemented
+## Value assessment evidence
 
-- Maintainer dashboard and Automation row (LDR-04).
-
-## Value assessment work in progress
-
-The owner approved automatic **provisional** value scores under PRD SCR-06.
-Payout approval stays human. See
-[`slop-value-scoring-plan.md`](../../docs/slop-value-scoring-plan.md) for the
-separate delivery checklist. This does not activate the closure switch.
+The owner approved automatic **provisional** value scores (PRD section 5 and
+[`protocol/scoring-v2.md`](../../protocol/scoring-v2.md)). Payout approval
+stays human. This does not activate the closure switch.
 
 `value-evidence.ts` collects paginated submitted changes, reported merge changes,
 commit identities and discussion evidence. It reports missing patches, source
@@ -340,6 +335,31 @@ publication can reproduce the local collector's empty resolution array so that
 an unchanged source keeps its original digest. Nonempty resolution evidence is
 never copied from the submitted assessment into the fresh source.
 
+For copied work, a maintainer's short merge reference must resolve through
+GitHub in the same repository to the exact accepted merge. GitHub must also
+show that the commenter merged that pull request and that the comment came
+after the merge. A GitHub error in these merge-record lookups stops
+collection. Short and full merge references use one order rule: the closed PR
+must have a lower GitHub PR number than the accepted PR. GitHub numbers PRs in
+creation order, so a duplicate opened after the accepted PR, even during its
+review, is never the original. PR numbers do not show when commits entered a
+PR: an earlier PR that later receives the copied commits can still take
+retained credit when the merger acknowledges it. Collection binds the
+resolution to the original comment, actor, timestamps and repository/PR
+identities. Import and publication refresh it. Collection skips
+indirect-accepted sources. More than 16 hints in the merge comments, counted
+for each comment and including all-digit hints, is a limitation, not an empty
+result. Missing, ambiguous or changed evidence cannot assign the copied work;
+complete edits, author retention and unique original attribution remain
+required. A different or unlinked primary author on either commit is a
+limitation. Full merge references add no request. Commit hints drop foreign
+GitHub URLs in any `https://`, `http://` or `www.` spelling, foreign
+`owner/repo@SHA` and `user@SHA` forms, reference-style labels, and the labels
+of plain Markdown links and quoted `<a href>` links to GitHub. Other link
+forms, for example a link with a title, can still give a hint from the label,
+so the GitHub merge record is the authority. No acknowledgement text or
+historical capture is rewritten.
+
 Historical resolution evidence must
 remain source-bound and pass the joint record's freshness and publication gates.
 Do not strip limitations or substitute a full first-parent merge diff to make
@@ -349,44 +369,16 @@ Raw evidence stays outside the repository. `value-review.ts` shares the strict
 value rubric with the hosted model route. It does not publish scores or approve
 awards. Source-bound publication, ingestion and complete historical calibration
 must pass before this route can be activated. The September/October review uses
-the owner's existing ChatGPT subscription; it does not authorize paid API calls.
+the owner's existing ChatGPT or Claude subscription; it does not authorize paid API calls.
 A hosted service still requires its own supported runtime credentials.
 
-Local evidence checks used real GitHub sources: Eliza #34772 has matching full
-submitted and squash diffs; Delta Star #218 correctly requires ancestry review;
-Delta Star #215 reports an omitted original-file patch instead of claiming full
-coverage. These checks do not prove model execution or score publication.
-
-Installation was verified on 10 October 2026: the owner installed the registered
-App on elizaOS (installation `169856061`) with all repositories selected. This
-proves App access, not worker deployment, model connectivity or score delivery.
-
-## Runtime verification (10 October 2026)
-
-The owner-supplied Surplus key passed live structured calls for
-`claude-opus-5.5` and `gpt-6.1-sol` through the Anthropic endpoint above.
-An unavailable primary model also exercised the live Sol fallback. These
-checks used the same `runStructuredRoute` function as the worker. The endpoint
-reports the served model; that report is not independent model attestation.
-
-The marketplace response did not follow the requested schema when it was
-provided only in `output_config`. The route now includes the exact schema in
-the trusted prompt and still rejects every response that fails local validation.
-Provider error bodies are not persisted. A model identity mismatch also fails.
-
-A fresh read of Eliza #34772 resolved co-authors through GitHub's pinned commit
-mapping, collected complete diff and discussion evidence, and produced a valid
-Opus value assessment covering all three formal reviews. Email addresses used
-to join co-author identities are omitted from the evidence export. This was a
-local, read-only runtime test. A first schema-valid result double-credited the
-same review finding. The rubric now requires explicit `duplicateOf` references
-to earlier review identities; a duplicate cannot receive positive credit. A
-subsequent live result identified the repeated finding correctly. Validation of
-superseded heads still needs evidence of distinct retained value. Schema validity
-alone is not semantic calibration. The test did not publish a score, run the hosted queue,
-activate billing, or approve a payout. Hosted delivery and historical calibration
-remain on the value-scoring acceptance checklist.
-
+The model route includes the exact schema in the trusted prompt and rejects
+every response that fails local validation. Provider error bodies are not
+persisted. A model identity mismatch fails. The endpoint reports the served
+model; that report is not independent model attestation. The rubric requires
+explicit `duplicateOf` references to earlier review identities; a duplicate
+cannot receive positive credit. Schema validity alone is not semantic
+calibration.
 
 ## Provisional assessment journal
 
@@ -549,9 +541,10 @@ repository set; callers must keep it consistent across the operation.
 When GitHub omits an added text-file patch, the collector can recover it from
 the full file at the immutable submitted or accepted commit. It verifies the
 Git blob SHA-1, UTF-8 bytes, byte length and exact added-line count before
-constructing the empty-file diff. Recovery is limited to 16 reads, 512 KiB per
-file and 2 MiB total across both ranges. Binary, modified, oversized or invalid
-files keep their missing-diff limitation. Publication uses the same collector
+constructing the empty-file diff. Recovery is limited to 16 reads and 2 MiB
+total across both ranges. Each file must fit the remaining shared budget.
+Decoded bytes consume that budget even when later validation refuses them.
+Binary, modified, oversized or invalid files keep their missing-diff limitation. Publication uses the same collector
 and rechecks the recovered source. The recovered bodies stay in private source
 evidence; journal records contain their source digest, not the patch bodies.
 
@@ -840,9 +833,11 @@ interruption recovery and dead-letter operations still require hosted verificati
 
 ### Subscription assessment provenance
 
-The historical review may use the owner's existing ChatGPT subscription. A
-trusted internal publisher can supply `SubscriptionResult` with a separate
-`provenance` declaration: channel `chatgpt-subscription`, provider `openai`,
+The historical review may use the owner's existing ChatGPT or Claude
+subscription. A trusted internal publisher can supply `SubscriptionResult`
+with a separate `provenance` declaration: channel `chatgpt-subscription` with
+provider `openai`, or channel `claude-subscription` with provider `anthropic`
+(owner decision, 26 October 2026, for the SlopDotCash/slopdotcash slice),
 declared model and client, `identityEvidence: self-reported`, and null
 `exactVariant` and `apiReceipt`. This records the declared session identity;
 it does not claim that a provider response verified the model or billing.

@@ -1,5 +1,6 @@
 /** NOT-01: a session owner may opt in only to their currently verified destination. */
 import { readBoundedJson } from "../../src/lib/browser-json";
+import { isSameOriginJsonWrite, json } from "../http";
 import type { NotificationsDependencies } from "./handler";
 
 export type EmailEligibility =
@@ -9,14 +10,6 @@ export type EmailPreferencesDependencies = NotificationsDependencies & {
   eligibility(githubId: string): Promise<EmailEligibility | null>;
 };
 const PATH = "/api/v1/notifications/email";
-const headers = {
-  "content-type": "application/json; charset=utf-8",
-  "cache-control": "private, no-store",
-  "referrer-policy": "no-referrer",
-  "x-content-type-options": "nosniff",
-};
-const json = (status: number, value: unknown) =>
-  new Response(JSON.stringify(value), { status, headers });
 export async function handleEmailPreferences(
   request: Request,
   deps: EmailPreferencesDependencies,
@@ -25,11 +18,7 @@ export async function handleEmailPreferences(
   if (url.pathname !== PATH) return null;
   if (!["GET", "POST"].includes(request.method))
     return json(405, { error: "method_not_allowed" });
-  if (
-    request.method === "POST" &&
-    (request.headers.get("origin") !== url.origin ||
-      request.headers.get("content-type")?.split(";")[0] !== "application/json")
-  )
+  if (request.method === "POST" && !isSameOriginJsonWrite(request))
     return json(403, { error: "origin_forbidden" });
   const actor = await deps.sessionActor(request);
   if (!actor) return json(401, { error: "not_signed_in" });

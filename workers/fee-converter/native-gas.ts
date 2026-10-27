@@ -1,4 +1,11 @@
+import { sha256 } from "@noble/hashes/sha2.js";
 import type { Network } from "./config";
+import {
+  type ExpiryCoverage,
+  type ExpiryCoverageStore,
+  type ExpiryProof,
+  matchingCompletedCoverage,
+} from "./solana-expiry";
 import type { FeeD1Database } from "./store";
 
 export interface NativeGasLimits {
@@ -31,6 +38,7 @@ export interface NativeAttempt {
   tx_id: string | null;
   conversion_id: string | null;
   actual_wei: string | null;
+  solana_blockhash_slot: number | null;
   settled_day: string | null;
   receipt_block_hash: string | null;
 }
@@ -84,11 +92,30 @@ export class NativeGasJournal {
       .run();
   }
 
+  /** Solana has no account nonce; allocate a journal sequence under the revision fence.
+   * Reserve the whole approved transaction ceiling until a finalized receipt.
+   */
+  async reserveSolana(intentHash: string, blockhashSlot?: number) {
+    if (this.network !== "solana")
+      throw new Error("Solana reservation needs its own network journal");
+    const rows = await this.rows();
+    const nonce = rows.reduce((n, row) => Math.max(n, row.nonce + 1), 0);
+    if (!Number.isSafeInteger(nonce))
+      throw new Error("Native journal sequence exhausted");
+    return this.reserve({
+      nonce,
+      intentHash,
+      maximumWei: this.limits.perTransaction,
+      solanaBlockhashSlot: blockhashSlot,
+    });
+  }
+
   async reserve(input: {
     nonce: number;
     intentHash: string;
     maximumWei: string;
     replaces?: string;
+    solanaBlockhashSlot?: number;
   }) {
     const revision = await this.db
       .prepare("SELECT gas_revision FROM fee_converter_locks WHERE network=?")
@@ -149,8 +176,8 @@ export class NativeGasJournal {
     const id = crypto.randomUUID();
     const result = await this.db
       .prepare(`INSERT INTO fee_native_gas
-      (id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,per_day_wei,state,created_at)
-      SELECT ?,?,?,?,?,?,?,?,?,'reserved',? WHERE ${LEASE}
+      (id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,per_day_wei,state,created_at,solana_blockhash_slot)
+      SELECT ?,?,?,?,?,?,?,?,?,'reserved',?,? WHERE ${LEASE}
       AND (SELECT gas_revision FROM fee_converter_locks WHERE network=?)=?`)
       .bind(
         id,
@@ -163,6 +190,7 @@ export class NativeGasJournal {
         this.limits.perTransaction,
         this.limits.perDay,
         this.now().toISOString(),
+        input.solanaBlockhashSlot ?? null,
         ...this.lease(),
         this.network,
         revision.gas_revision,
@@ -239,6 +267,102 @@ export class NativeGasJournal {
       .bind(this.network)
       .all<RecordedNativeSend>();
     return results;
+  }
+
+  expiryCoverageStore(): ExpiryCoverageStore {
+    return {
+      read: async (txId, operator) => {
+        const row = await this.db
+          .prepare(
+            "SELECT scan_json FROM fee_solana_expiry_scans WHERE tx_id=? AND operator=?",
+          )
+          .bind(txId, operator)
+          .first<{ scan_json: string }>();
+        return row ? (JSON.parse(row.scan_json) as ExpiryCoverage) : null;
+      },
+      save: async (previous, next, page) => {
+        await this.db
+          .prepare(
+            "INSERT INTO fee_solana_expiry_scan_steps(tx_id,operator,prior_revision,revision,fee_wallet,run_id,scan_json,page_json,observed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+          )
+          .bind(
+            next.txId,
+            next.operator,
+            previous?.revision ?? 0,
+            next.revision,
+            this.feeWallet,
+            this.runId,
+            JSON.stringify(next),
+            JSON.stringify(page),
+            this.now().toISOString(),
+          )
+          .run();
+      },
+    };
+  }
+
+  async resolveSolanaExpiry(send: RecordedNativeSend, proof: ExpiryProof) {
+    if (
+      this.network !== "solana" ||
+      proof.txId !== send.txId ||
+      proof.providers.length !== 2 ||
+      proof.providers[0].operator === proof.providers[1].operator
+    )
+      throw new Error("Solana expiry needs two independent observations");
+    const row = (await this.rows()).find(
+      (r) => r.tx_id === send.txId && r.fee_wallet === this.feeWallet,
+    );
+    if (!row || row.solana_blockhash_slot !== proof.blockhashSlot)
+      throw new Error(
+        "Solana expiry anchor differs from the signed reservation",
+      );
+    for (const provider of proof.providers) {
+      const retained = await this.expiryCoverageStore().read(
+        send.txId,
+        provider.operator,
+      );
+      if (
+        !retained?.complete ||
+        !provider.coverage?.complete ||
+        JSON.stringify(retained) !== JSON.stringify(provider.coverage)
+      )
+        throw new Error(
+          "Solana expiry lacks positive retained block-history coverage",
+        );
+    }
+    if (
+      !matchingCompletedCoverage(
+        proof.providers[0].coverage,
+        proof.providers[1].coverage,
+      )
+    )
+      throw new Error("Solana completed provider histories disagree");
+    const json = JSON.stringify(proof);
+    const digest = Array.from(sha256(new TextEncoder().encode(json)), (b) =>
+      b.toString(16).padStart(2, "0"),
+    ).join("");
+    await this.db
+      .prepare(
+        "INSERT INTO fee_solana_expiry_proofs(tx_id,fee_wallet,run_id,proof_json,proof_sha256,observed_at) VALUES(?,?,?,?,?,?)",
+      )
+      .bind(
+        send.txId,
+        this.feeWallet,
+        this.runId,
+        json,
+        digest,
+        this.now().toISOString(),
+      )
+      .run();
+  }
+
+  async solanaExpiryResolved(txId: string) {
+    return !!(await this.db
+      .prepare(
+        "SELECT tx_id FROM fee_solana_expiry_proofs WHERE tx_id=? AND fee_wallet=?",
+      )
+      .bind(txId, this.feeWallet)
+      .first());
   }
 
   async settle(send: RecordedNativeSend, cost: NativeReceiptCost) {

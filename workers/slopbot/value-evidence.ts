@@ -12,6 +12,7 @@ import {
   matchesHistoricalIntegrationBranch,
   type ValueBranchPolicy,
 } from "./value-branch-policy";
+import { githubLinkDestinations } from "./value-commit-hints";
 import {
   needsFullValueComparison,
   recoverFullValueComparisons,
@@ -32,6 +33,10 @@ import {
   recoverRemovedValueComparisons,
 } from "./value-removed-file";
 import { recoverUnchangedValueRenames } from "./value-rename";
+import {
+  collectRetainedMergeReferences,
+  type RetainedMergeReference,
+} from "./value-retained-reference";
 
 // Shared by the installation worker and the historical reviewer. Missing or
 // moving evidence prevents assessment; pagination limits never imply coverage.
@@ -368,17 +373,10 @@ async function relatedPullRequests(
   for (const text of sourceTexts) {
     // Link destinations own the reference scope. In release notes, a label
     // such as #412 may point to an upstream repository rather than this one.
-    const referencesText = text
-      .replace(
-        /<a\b[^>]*\bhref=(["'])(https:\/\/(?:redirect\.)?github\.com\/[^"']+)\1[^>]*>[\s\S]*?<\/a>/giu,
-        "$2",
-      )
-      .replace(
-        /\[[^\]\n]*\]\((https:\/\/(?:redirect\.)?github\.com\/[^\s)]+)\)/gu,
-        "$1",
-      );
+    // owner/repo starts only at a name boundary, so each run is read once.
+    const referencesText = githubLinkDestinations(text);
     for (const match of referencesText.matchAll(
-      /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu,
+      /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu,
     )) {
       const targetRepository = match[1] ?? match[3] ?? repository;
       const targetNumber = Number(match[2] ?? match[4]);
@@ -456,6 +454,23 @@ async function relatedPullRequests(
     limitations: [...new Set(limitations)],
   };
 }
+/** True when `id` names the repository or one of its aliases, ignoring case. */
+export function namesRepository(
+  repository: Pick<TargetRepository, "id" | "aliases">,
+  id: string,
+): boolean {
+  const key = id.toLowerCase();
+  return [repository.id, ...repository.aliases].some(
+    (name) => name.toLowerCase() === key,
+  );
+}
+/** The registered repository that `id` names, ignoring case. */
+export function findRepository(
+  repositories: readonly TargetRepository[],
+  id: string,
+): TargetRepository | undefined {
+  return repositories.find((repository) => namesRepository(repository, id));
+}
 /** Captured attribution policy must match the independently selected registry.
  * A matching source digest alone does not establish project authority.
  */
@@ -466,9 +481,7 @@ export function valueEvidenceMatchesRepository(
   const policy = evidence.repositoryPolicy;
   return (
     policy !== null &&
-    [repository.id, ...repository.aliases].some(
-      (id) => id.toLowerCase() === evidence.repository.toLowerCase(),
-    ) &&
+    namesRepository(repository, evidence.repository) &&
     policy.id === repository.id &&
     policy.projectId === repository.projectId &&
     policy.integrationBranch === repository.integrationBranch &&
@@ -503,6 +516,7 @@ export interface ValueEvidence {
   historicalBranchPolicy?: ValueBranchPolicy;
   commitAttribution: CommitAttribution[];
   mergeResolutions?: ValueMergeResolution[];
+  retainedMergeReferences?: RetainedMergeReference[];
   relatedPullRequests: RelatedPullRequest[];
   contextFiles?: {
     path: string;
@@ -587,9 +601,7 @@ export async function collectValueEvidence(
   if (!repositoryIdentity) throw new Error("Repository identity unavailable");
   if (
     repositoryPolicy !== null &&
-    (![repositoryPolicy.id, ...repositoryPolicy.aliases].some(
-      (id) => id.toLowerCase() === repository.toLowerCase(),
-    ) ||
+    (!namesRepository(repositoryPolicy, repository) ||
       (repositoryPolicy.expectedNodeId !== null &&
         repositoryPolicy.expectedNodeId !== repositoryIdentity.node_id))
   )
@@ -886,6 +898,19 @@ export async function collectValueEvidence(
       collectCommitChanges(client, root, sha, "Indirect integration commit"),
   );
   limitations.push(...indirect.limitations);
+  // Retained copies never use an indirect-accepted source. A reference there
+  // could not authorize credit; it would only change the source digest.
+  const retained =
+    indirect.acceptance === null
+      ? await collectRetainedMergeReferences(client, {
+          repository,
+          repositoryNodeId: repositoryIdentity.node_id,
+          repositoryDatabaseId: repositoryIdentity.id,
+          pull,
+          comments,
+        })
+      : { references: [], limitations: [] };
+  limitations.push(...retained.limitations);
   if (indirect.acceptance !== null) {
     evidenceUrls.push(
       indirect.acceptance.observationUrl,
@@ -1000,6 +1025,9 @@ export async function collectValueEvidence(
     reviews,
     comments,
     reviewComments,
+    ...(retained.references.length
+      ? { retainedMergeReferences: retained.references }
+      : {}),
     limitations,
     evidenceUrls,
     eligibleReviewIds,

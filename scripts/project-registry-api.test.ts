@@ -11,10 +11,7 @@ import {
   CloudflareProjectPersistence,
   ENFORCEMENT_COLUMNS,
 } from "../backend/projects/cloudflare-persistence";
-import type {
-  ProjectEnforcement,
-  RepositoryControl,
-} from "../backend/projects/contracts";
+import type { RepositoryControl } from "../backend/projects/contracts";
 import type { EdgeCache } from "../backend/projects/edge-cache";
 import {
   EnforcementRefusal,
@@ -25,12 +22,12 @@ import {
   handleProjectApi,
   type ProjectApiDependencies,
 } from "../backend/projects/handler";
-import { vettingScanRequester } from "../backend/projects/setup";
 import type { SkillTemplateIndex } from "../backend/projects/skill-publication";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
 import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { readSecurityProgramFunds } from "../backend/security/program-funds";
+import { vettingScanRequester } from "../backend/vetting/handler";
 import {
   CloudflareVettingPersistence,
   type VettingPin,
@@ -42,7 +39,10 @@ import {
   allocationFundingMinor,
   deriveAllocationFundingBasis,
 } from "../src/lib/allocation-funding";
-import type { RepositoryAccess } from "../src/lib/project-contracts";
+import type {
+  ProjectEnforcement,
+  RepositoryAccess,
+} from "../src/lib/project-contracts";
 import { rewardFields, slugify } from "../src/lib/project-proposal";
 import { PROJECT_SKILL_TEMPLATES } from "../src/lib/project-schema.mjs";
 import {
@@ -1121,6 +1121,19 @@ describe("generated skill publication", () => {
     const reviewer = `review-${id}-contributions`;
     expect(reviewer.length).toBeLessThanOrEqual(64);
     expect(Object.keys(files ?? {})).toContain(`downloads/${reviewer}.skill`);
+    for (const path of ["skill-manifest.json", "review-skill-manifest.json"]) {
+      const manifest = JSON.parse(new TextDecoder().decode(files?.[path]));
+      expect(manifest.telemetry.policy).toContain(
+        "From November 2026, monthly and external-prize reward shares use accepted-work Points only.",
+      );
+      expect(manifest.telemetry.policy).toContain(
+        "Optional traces add no payment weight. Older calculations and funded awards stay unchanged; unpaid September–October work stays subject to the reviewed historical reconciliation.",
+      );
+      expect(manifest.telemetry.policy).not.toContain("earns the trace bonus");
+      expect(manifest.telemetry.policy).toContain(
+        "Missing evidence never blocks submission.",
+      );
+    }
   });
 
   test("historical clean metadata cannot publish skills without canonical closure", async () => {

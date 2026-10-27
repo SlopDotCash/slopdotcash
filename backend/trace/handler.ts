@@ -1,9 +1,12 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
+import { encodeBase64Url } from "../../src/lib/byte-encoding";
 import {
   type DeploymentTier,
   deploymentOrigins,
 } from "../../src/lib/deployment";
 import { chainFamily } from "../../src/lib/escrow-policy.mjs";
+import type { GithubActor } from "../../src/lib/project-contracts";
 import {
   assertWalletPossessionChallenge,
   isSignableSolanaAddress,
@@ -23,8 +26,13 @@ import {
   type WalletChain,
 } from "../../src/lib/wallets";
 import { isBindingRecoveryInput } from "../../workers/payment-executor/binding-recovery";
-import { type ApiError, fail } from "../api-error";
-import { pathParts } from "../api-path";
+import {
+  type ApiError,
+  apiErrorResponse,
+  fail,
+  json as jsonResponse,
+  pathParts,
+} from "../http";
 import { canonicalWalletClaimDigests } from "../payments/wallet-registration";
 import { signApiToken, verifyApiToken } from "./auth";
 import {
@@ -33,6 +41,7 @@ import {
   type AuthenticatedActor,
   MAX_TRACE_BYTES,
   OPERATOR_GRANT_TTL_SECONDS,
+  type PrivateIntakeStatus,
   type TracePersistence,
   type TraceUploadIntent,
   type WalletClaim,
@@ -46,7 +55,6 @@ import {
   normalizedContentType,
   readJsonObject,
   readTraceBody,
-  sha256Hex,
   validEventKind,
   validGitSha,
   validIdempotencyKey,
@@ -62,36 +70,22 @@ export type TraceApiDependencies = {
   authSecret: string;
   operatorGithubIds: ReadonlySet<string>;
   /** Existing site session; used only for the explicit same-origin operator routes. */
-  operatorSession?: (
-    request: Request,
-  ) => Promise<{ githubId: string; githubLogin: string } | null>;
+  operatorSession?: (request: Request) => Promise<GithubActor | null>;
   /** Named observation-only service binding, never the default signing entrypoint. */
   bindingRecovery?: { fetch(request: Request): Promise<Response> };
   now: () => Date;
   randomId: () => string;
-  verifyIdentityAssertion: (
-    assertion: string,
-  ) => Promise<{ githubId: string; githubLogin: string } | null>;
-  privateIntakeStatus: () => Promise<
-    | { status: "verified"; enabled: boolean; verifiedAt: string }
-    | { status: "rate_limited"; resetAt: string }
-    | { status: "unavailable" }
-  >;
+  verifyIdentityAssertion: (assertion: string) => Promise<GithubActor | null>;
+  privateIntakeStatus: () => Promise<PrivateIntakeStatus>;
 };
 
-export const TRACE_API_CONTRACT_VERSION = "private-trace-v1-opaque-hmac-v1";
+const TRACE_API_CONTRACT_VERSION = "private-trace-v1-opaque-hmac-v1";
 const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 function json(status: number, body: Record<string, unknown> | null): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-      "referrer-policy": "no-referrer",
-      "x-content-type-options": "nosniff",
-      "x-slop-trace-api-contract": TRACE_API_CONTRACT_VERSION,
-    },
+  return jsonResponse(status, body, {
+    cacheControl: "no-store",
+    headers: { "x-slop-trace-api-contract": TRACE_API_CONTRACT_VERSION },
   });
 }
 
@@ -127,27 +121,12 @@ async function readPrivateIntakeStatus(
   deps: TraceApiDependencies,
 ): Promise<Response> {
   const status = await deps.privateIntakeStatus();
-  if (status.status === "verified") {
-    if (!validIsoTimestamp(status.verifiedAt)) {
-      return json(503, { error: "private_intake_unavailable" });
-    }
+  if (status.status === "verified" && validIsoTimestamp(status.verifiedAt)) {
     return json(200, {
       enabled: status.enabled,
       source: "github-public-status",
       verifiedAt: status.verifiedAt,
     });
-  }
-  if (status.status === "rate_limited") {
-    if (!validIsoTimestamp(status.resetAt)) {
-      return json(503, { error: "private_intake_unavailable" });
-    }
-    return json(503, {
-      error: "private_intake_rate_limited",
-      resetAt: status.resetAt,
-    });
-  }
-  if (status.status === "unavailable") {
-    return json(503, { error: "private_intake_unavailable" });
   }
   return json(503, { error: "private_intake_unavailable" });
 }
@@ -896,12 +875,7 @@ async function deriveUploadCapability(
       ),
     ),
   );
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
+  return encodeBase64Url(bytes);
 }
 
 async function createTraceIntent(
@@ -1692,32 +1666,10 @@ async function handleTraceApiInternal(
     if (actor === null) fail(401, "unauthorized", "Authentication failed");
     return await route(actor);
   } catch (caught) {
-    const error =
-      typeof caught === "object" && caught !== null
-        ? (caught as Partial<ApiError>)
-        : {};
-    const status =
-      Number.isSafeInteger(error.status) &&
-      Number(error.status) >= 400 &&
-      Number(error.status) <= 599
-        ? Number(error.status)
-        : 500;
-    if (status >= 500) {
-      console.error(
-        "private trace API failure",
-        describeApiFailure(request, parts, status, caught),
-      );
-    }
-    const response = json(status, {
-      error:
-        typeof error.code === "string" &&
-        /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
-          ? error.code
-          : "internal_error",
-      message:
-        status >= 500 || typeof error.message !== "string"
-          ? "Internal error"
-          : error.message,
+    const response = apiErrorResponse(caught, {
+      label: "private trace API failure",
+      respond: json,
+      detail: (status) => describeApiFailure(request, parts, status, caught),
     });
     return publicWalletRead
       ? publicBrowserResponse(deps, request, response)

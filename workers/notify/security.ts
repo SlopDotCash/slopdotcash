@@ -6,6 +6,7 @@ import {
   securityNotificationAccess,
 } from "../../backend/security/handler";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { EMAIL_ADDRESS, SENDER_ADDRESS } from "./contracts";
 import { encodeQuotedPrintable } from "./handler";
 
 type Destination = {
@@ -43,8 +44,6 @@ type Delivery = {
   acknowledged_at: string | null;
   escalation_of: string | null;
 };
-const EMAIL =
-  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/u;
 const ID = /^[1-9]\d{0,19}$/u;
 const MAX_ATTEMPTS = 5;
 /**
@@ -54,13 +53,17 @@ const MAX_ATTEMPTS = 5;
  */
 const RECEIPT_TEMPLATE = "security-receipt-v1";
 
-/** A secret, never a manifest or browser input. Missing/invalid config sends nothing. */
-export function parseSecurityMailConfig(
-  raw: string | undefined,
-): SecurityMailConfig | null {
-  if (!raw) return null;
+/**
+ * A mail pilot secret, never a manifest or browser input: the inbox URL and
+ * each recipient's operator-verified destination. A security pilot names a
+ * distinct backup recipient for each one. Returns null when malformed.
+ */
+export function parseMailPilotConfig(raw: string, backup: boolean): unknown {
   try {
-    const config = JSON.parse(raw) as SecurityMailConfig;
+    const config = JSON.parse(raw) as {
+      inboxUrl: string;
+      recipients: Record<string, Partial<Destination>>;
+    };
     if (Object.keys(config).sort().join() !== "inboxUrl,recipients")
       return null;
     const url = new URL(config.inboxUrl);
@@ -79,19 +82,17 @@ export function parseSecurityMailConfig(
       Array.isArray(config.recipients)
     )
       return null;
+    const keys = backup
+      ? "backupGithubId,email,evidenceReference,verifiedAt"
+      : "email,evidenceReference,verifiedAt";
     for (const [id, value] of Object.entries(config.recipients)) {
-      if (
-        !ID.test(id) ||
-        !value ||
-        Object.keys(value).sort().join() !==
-          "backupGithubId,email,evidenceReference,verifiedAt"
-      )
+      if (!ID.test(id) || !value || Object.keys(value).sort().join() !== keys)
         return null;
       if (
         typeof value.email !== "string" ||
-        !EMAIL.test(value.email) ||
-        !ID.test(value.backupGithubId) ||
-        value.backupGithubId === id
+        !EMAIL_ADDRESS.test(value.email) ||
+        (backup &&
+          (!ID.test(value.backupGithubId ?? "") || value.backupGithubId === id))
       )
         return null;
       if (
@@ -110,6 +111,69 @@ export function parseSecurityMailConfig(
   } catch {
     return null;
   }
+}
+export function parseSecurityMailConfig(
+  raw: string,
+): SecurityMailConfig | null {
+  return parseMailPilotConfig(raw, true) as SecurityMailConfig | null;
+}
+
+/**
+ * Marks stale claims ambiguous, because a process can stop after the
+ * provider accepted, then claims each due row just before it is processed.
+ * Concurrent workers claim once before any network operation.
+ */
+export async function* claimDueDeliveries<T extends { id: string }>(
+  db: SecurityD1Database,
+  channel: "security" | "activity",
+  now: Date,
+): AsyncGenerator<T> {
+  const at = now.toISOString();
+  await db
+    .prepare(`UPDATE ${channel}_notification_outbox SET state = 'ambiguous', updated_at = ?
+    WHERE state = 'sending' AND claimed_at < ?`)
+    .bind(at, new Date(now.getTime() - 5 * 60_000).toISOString())
+    .run();
+  const pending = await db
+    .prepare(
+      `SELECT * FROM ${channel}_notification_outbox WHERE state IN ('queued','retrying') AND next_attempt_at <= ? ORDER BY created_at, id LIMIT 25`,
+    )
+    .bind(at)
+    .all<T>();
+  for (const row of pending.results ?? []) {
+    const claim = await db
+      .prepare(`UPDATE ${channel}_notification_outbox SET state = 'sending', claimed_at = ?, updated_at = ?, attempts = attempts + 1
+      WHERE id = ? AND state IN ('queued','retrying') AND next_attempt_at <= ?`)
+      .bind(at, at, row.id, at)
+      .run();
+    if (claim.meta?.changes === 1) yield row;
+  }
+}
+
+/** A plain-text inbox notice with a stable opaque per-attempt Message-ID:
+ * no case id, project, actor or amount.
+ */
+export function inboxNoticeMime(notice: {
+  from: string;
+  to: string;
+  subject: string;
+  date: Date;
+  deliveryId: string;
+  attempt: number;
+  text: string;
+}): string {
+  return [
+    `From: ${notice.from}`,
+    `To: ${notice.to}`,
+    `Subject: ${notice.subject}`,
+    `Date: ${notice.date.toUTCString()}`,
+    `Message-ID: <slop-notice-${notice.deliveryId}-${notice.attempt}@slop.cash>`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=utf-8",
+    "Content-Transfer-Encoding: quoted-printable",
+    "",
+    encodeQuotedPrintable(notice.text),
+  ].join("\r\n");
 }
 
 export async function recordDelivery(
@@ -170,23 +234,18 @@ function mime(
   row: Delivery,
   email: string,
 ): string {
-  // Stable opaque per-delivery Message-ID: no case id, project, actor or amount.
-  return [
-    `From: ${deps.fromAddress}`,
-    `To: ${email}`,
-    "Subject: Slop private inbox notice",
-    `Date: ${deps.now().toUTCString()}`,
-    `Message-ID: <slop-notice-${row.id}-${row.attempts + 1}@slop.cash>`,
-    "MIME-Version: 1.0",
-    "Content-Type: text/plain; charset=utf-8",
-    "Content-Transfer-Encoding: quoted-printable",
-    "",
-    encodeQuotedPrintable(
+  return inboxNoticeMime({
+    from: deps.fromAddress,
+    to: email,
+    subject: "Slop private inbox notice",
+    date: deps.now(),
+    deliveryId: row.id,
+    attempt: row.attempts + 1,
+    text:
       row.template_version === RECEIPT_TEMPLATE
         ? `Your private Slop inbox has a new notice.\n\nSign in: ${deps.config.inboxUrl}\n\nDo not reply with evidence, approvals or payment details.\n`
         : `Your private Slop inbox needs attention.\n\nSign in: ${deps.config.inboxUrl}\n\nAcknowledge the notice in Slop. Do not reply with evidence, approvals or payment details.\n`,
-    ),
-  ].join("\r\n");
+  });
 }
 
 /** A backup gets only a generic notice and must currently have access to this case. */
@@ -226,29 +285,16 @@ async function escalate(deps: SecurityMailDependencies, row: Delivery) {
 export async function dispatchSecurityMail(
   deps: SecurityMailDependencies,
 ): Promise<void> {
-  if (!/^[a-z0-9][a-z0-9._-]*@slop\.cash$/u.test(deps.fromAddress))
+  if (!SENDER_ADDRESS.test(deps.fromAddress))
     throw new Error("Invalid mail sender");
   const now = deps.now();
   const at = now.toISOString();
   // A process can stop after the provider accepted. Never automatically resend.
-  await deps.db
-    .prepare(`UPDATE security_notification_outbox SET state = 'ambiguous', updated_at = ?
-    WHERE state = 'sending' AND claimed_at < ?`)
-    .bind(at, new Date(now.getTime() - 5 * 60_000).toISOString())
-    .run();
-  const pending = await deps.db
-    .prepare(
-      `SELECT * FROM security_notification_outbox WHERE state IN ('queued','retrying') AND next_attempt_at <= ? ORDER BY created_at, id LIMIT 25`,
-    )
-    .bind(at)
-    .all<Delivery>();
-  for (const row of pending.results ?? []) {
-    const claim = await deps.db
-      .prepare(`UPDATE security_notification_outbox SET state = 'sending', claimed_at = ?, updated_at = ?, attempts = attempts + 1
-      WHERE id = ? AND state IN ('queued','retrying') AND next_attempt_at <= ?`)
-      .bind(at, at, row.id, at)
-      .run();
-    if (claim.meta?.changes !== 1) continue;
+  for await (const row of claimDueDeliveries<Delivery>(
+    deps.db,
+    "security",
+    now,
+  )) {
     let access: Awaited<ReturnType<typeof securityNotificationAccess>>;
     try {
       access = await securityNotificationAccess(

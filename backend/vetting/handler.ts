@@ -1,4 +1,3 @@
-import { pathParts } from "../api-path";
 /**
  * Community project security vetting API (PRD VET-01 to VET-08, MVP-12).
  *
@@ -11,23 +10,28 @@ import { pathParts } from "../api-path";
  * revision can be cleared.
  */
 
-import type { ProjectSetupStatus } from "../../src/lib/project-contracts";
-import type { ProjectDefinition } from "../../src/lib/projects.mjs";
-import { type ApiError, fail } from "../api-error";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type {
   GithubActor,
-  ProjectPersistence,
   ProjectRecord,
+  ProjectSetupStatus,
   WebSession,
-} from "../projects/contracts";
+} from "../../src/lib/project-contracts";
+import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import {
+  type ApiError,
+  apiErrorResponse,
+  fail,
+  isSameOriginJsonWrite,
+  json as jsonResponse,
+  PROJECT_ID,
+  pathParts,
+} from "../http";
+import type { ProjectPersistence } from "../projects/contracts";
 import { type EdgeCache, purgeProjectCache } from "../projects/edge-cache";
 import { pausedByFlagsOnly, projectRestriction } from "../projects/enforcement";
-import {
-  isRecord,
-  readJsonObject,
-  readLimitedBody,
-  sha256Hex,
-} from "../trace/validation";
+import type { ScanRequester } from "../projects/setup";
+import { isRecord, readJsonObject, readLimitedBody } from "../trace/validation";
 import type { VettingEvidence } from "./evidence";
 import type { ProjectFlagStore } from "./flags";
 import {
@@ -37,17 +41,16 @@ import {
   type VettingPin,
   vettedContentSha256,
 } from "./persistence";
-import { MAX_VETTING_RESULT_BYTES, VettingResultError } from "./result";
+import { MAX_VETTING_RESULT_BYTES } from "./result";
 import {
   isScanResult,
   parseRecordedVettingResult,
   recordedResultProblems,
 } from "./scan-result";
 
-export const VETTING_SIGNATURE_CONTEXT = "slop-vetting:v1";
+const VETTING_SIGNATURE_CONTEXT = "slop-vetting:v1";
 /** Signed requests older or newer than this are refused. */
 const SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
-const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
 
 export type VettingApiDependencies = {
   vetting: CloudflareVettingPersistence;
@@ -79,15 +82,7 @@ export type VettingApiDependencies = {
 };
 
 function json(status: number, body: Record<string, unknown>): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-      "referrer-policy": "no-referrer",
-      "x-content-type-options": "nosniff",
-    },
-  });
+  return jsonResponse(status, body, { cacheControl: "no-store" });
 }
 
 function base64Bytes(value: string): Uint8Array | null {
@@ -102,6 +97,11 @@ function base64Bytes(value: string): Uint8Array | null {
 
 type ServiceKey = { sha256: string; key: CryptoKey };
 
+function invalidServiceKeys(): ServiceKey[] {
+  console.error("VETTING_RESULT_PUBLIC_KEYS holds an invalid key");
+  return [];
+}
+
 /** The configured service keys; an empty list means the service is unavailable. */
 async function serviceKeys(value: string | undefined): Promise<ServiceKey[]> {
   const keys: ServiceKey[] = [];
@@ -109,7 +109,7 @@ async function serviceKeys(value: string | undefined): Promise<ServiceKey[]> {
     if (entry.trim() === "") continue;
     const raw = base64Bytes(entry);
     // A malformed key makes the whole configuration unusable, never partly trusted.
-    if (raw === null || raw.length !== 32) return [];
+    if (raw === null || raw.length !== 32) return invalidServiceKeys();
     try {
       keys.push({
         sha256: await sha256Hex(raw),
@@ -122,7 +122,7 @@ async function serviceKeys(value: string | undefined): Promise<ServiceKey[]> {
         ),
       });
     } catch {
-      return [];
+      return invalidServiceKeys();
     }
   }
   return keys;
@@ -304,11 +304,13 @@ async function requestAssessment(
  * "conflict" when this revision already has a queued scan. Throws
  * `pin_unavailable` when the live pin cannot be read.
  */
-export async function queueAssessment(
-  deps: Pick<
-    VettingApiDependencies,
-    "vetting" | "livePin" | "now" | "randomId"
-  >,
+async function queueAssessment(
+  deps: Pick<VettingApiDependencies, "livePin" | "now" | "randomId"> & {
+    vetting: Pick<
+      CloudflareVettingPersistence,
+      "createAssessment" | "getAssessment"
+    >;
+  },
   project: ProjectRecord,
   requestedBy: GithubActor,
   reason: string,
@@ -333,7 +335,7 @@ export async function queueAssessment(
     templateSha256: pin.templateSha256,
     requestedBy,
     requestedAt: deps.now().toISOString(),
-    requestReason: reason,
+    requestReason: reason.slice(0, 1000),
   };
   if (!/^vet_[a-f0-9]{32}$/u.test(assessment.id))
     fail(500, "internal_error", "Assessment id is invalid");
@@ -349,7 +351,7 @@ export async function queueAssessment(
  * of an automatic scan name the project steward, and its reason says it was
  * automatic; no person pressed a button.
  */
-export function stewardActor(manifest: ProjectDefinition): GithubActor {
+function stewardActor(manifest: ProjectDefinition): GithubActor {
   return {
     githubId: manifest.steward.github.actorId,
     githubLogin: manifest.steward.github.login,
@@ -383,6 +385,43 @@ export async function queueAutomaticScan(
   } catch {
     return "unavailable";
   }
+}
+
+/**
+ * Queues an owner's setup scan through the same assessment row, live pin and
+ * service-key gate as the operator route.
+ */
+export function vettingScanRequester(input: {
+  vetting: Pick<
+    CloudflareVettingPersistence,
+    "createAssessment" | "getAssessment"
+  >;
+  serviceAvailable: () => Promise<boolean>;
+  livePin: (manifest: ProjectDefinition) => Promise<VettingPin>;
+  now: () => Date;
+  randomId: () => string;
+}): ScanRequester {
+  return async (project, actor, reason) => {
+    if (!(await input.serviceAvailable()))
+      return {
+        state: "unavailable",
+        message:
+          "The security scan service is not available yet, so the scan cannot be queued. Check again later.",
+      };
+    let queued: Awaited<ReturnType<typeof queueAssessment>>;
+    try {
+      queued = await queueAssessment(input, project, actor, reason);
+    } catch (error) {
+      if ((error as Partial<ApiError> | null)?.code !== "pin_unavailable")
+        throw error;
+      return {
+        state: "unavailable",
+        message:
+          "Slop could not read the integration-branch head or the skill template, so the scan cannot be queued. Check again later.",
+      };
+    }
+    return { state: queued === "conflict" ? "already_queued" : "queued" };
+  };
 }
 
 /** Automatic scans one signed refresh may queue. */
@@ -455,8 +494,6 @@ async function refreshQueue(
           await purgeProjectCache(
             deps.cache,
             new URL(request.url).origin,
-            project.id,
-            [project.manifest.skill.id, project.manifest.reviewSkill.id],
             await deps.projects.enforcementGeneration(),
           );
           break;
@@ -512,7 +549,7 @@ async function serviceQueue(
     fail(
       503,
       "evidence_unavailable",
-      "Private evidence storage, access policy and current external-control attestation are required before acquisition",
+      "Private evidence storage is required before acquisition",
     );
   const origin = new URL(request.url).origin;
   const pending = await deps.vetting.pendingAssessments();
@@ -618,7 +655,15 @@ async function serviceResult(
   }
   if (
     result.disposition === "clean" &&
-    !(await deps.evidence?.retained(result))
+    !(await deps.evidence
+      ?.retained(result)
+      .catch(() =>
+        fail(
+          503,
+          "evidence_unavailable",
+          "Slop could not read the retained evidence. Retry later.",
+        ),
+      ))
   )
     fail(
       422,
@@ -656,8 +701,6 @@ async function serviceResult(
   await purgeProjectCache(
     deps.cache,
     new URL(request.url).origin,
-    project.id,
-    [project.manifest.skill.id, project.manifest.reviewSkill.id],
     await deps.projects.enforcementGeneration(),
   );
   // Accept the scan even if a separate GitHub readiness check is unavailable.
@@ -696,13 +739,7 @@ export async function handleVettingApi(
   const route = `${request.method} ${parts.join("/")}`;
   try {
     // Admin writes ride the session cookie, so they must come from this site.
-    if (
-      admin &&
-      request.method !== "GET" &&
-      (request.headers.get("origin") !== new URL(request.url).origin ||
-        request.headers.get("content-type")?.split(";")[0] !==
-          "application/json")
-    )
+    if (admin && request.method !== "GET" && !isSameOriginJsonWrite(request))
       fail(403, "origin_forbidden", "Requests must come from this site");
     switch (route) {
       case "GET admin/vetting":
@@ -754,31 +791,11 @@ export async function handleVettingApi(
     }
     return json(404, { error: "not_found" });
   } catch (caught) {
-    const error =
-      caught instanceof VettingResultError
-        ? caught
-        : typeof caught === "object" && caught !== null
-          ? (caught as Partial<ApiError>)
-          : {};
-    const status =
-      Number.isSafeInteger(error.status) &&
-      Number(error.status) >= 400 &&
-      Number(error.status) <= 599
-        ? Number(error.status)
-        : 500;
-    if (status >= 500 && status !== 503) console.error("vetting API failure");
-    return json(status, {
-      error:
-        typeof error.code === "string" &&
-        /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
-          ? error.code
-          : "internal_error",
-      message:
-        status >= 500 && status !== 503
-          ? "Internal error"
-          : typeof error.message === "string"
-            ? error.message
-            : "Request failed",
+    return apiErrorResponse(caught, {
+      label: "vetting API failure",
+      respond: json,
+      // Unavailable-service refusals tell the caller to retry later.
+      publicMessage: (status) => status === 503,
     });
   }
 }

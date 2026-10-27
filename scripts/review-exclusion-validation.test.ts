@@ -46,3 +46,60 @@ test("excluded reviews cannot share a scored source ID or URL in their repositor
   ];
   expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
 });
+
+test("cached exclusion identities must agree with the rest of the snapshot", () => {
+  const snapshot = snapshotFixture("2026-07-30T00:00:00.000Z");
+  const review = snapshot.ledger.find(
+    (event) => event.source.kind === "review",
+  );
+  if (!review) throw new Error("Fixture must contain a scored review");
+  const exclusion = {
+    id: "PR_excluded:review-exclusion:REVIEW_unscored",
+    pullRequestId: "PR_excluded",
+    pullRequestNumber: review.source.number,
+    reviewId: "REVIEW_unscored",
+    repository: review.repository,
+    url: `${review.source.url}00`,
+    reason: "unchanged-outcome" as const,
+  };
+  snapshot.reviewExclusions = [{ ...exclusion, reviewer: review.actor }];
+  expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+
+  snapshot.reviewExclusions = [
+    {
+      ...exclusion,
+      reviewer: { ...review.actor, url: "https://github.com/someone-else" },
+    },
+  ];
+  expect(() => assertLeaderboardSnapshot(snapshot)).toThrow(
+    "canonical GitHub profile",
+  );
+
+  snapshot.reviewExclusions = [
+    { ...exclusion, reviewer: { ...review.actor, id: "U_other" } },
+  ];
+  expect(() => assertLeaderboardSnapshot(snapshot)).toThrow(
+    "maps to multiple actor IDs",
+  );
+
+  snapshot.reviewExclusions = [
+    {
+      ...exclusion,
+      reviewer: {
+        ...review.actor,
+        login: "renamed-reviewer",
+        url: "https://github.com/renamed-reviewer",
+      },
+    },
+  ];
+  expect(() => assertLeaderboardSnapshot(snapshot)).toThrow(
+    "changes identity inside the snapshot",
+  );
+
+  snapshot.reviewExclusions = [
+    { ...exclusion, reviewerLogin: "someone" } as typeof exclusion,
+  ];
+  expect(() => assertLeaderboardSnapshot(snapshot)).toThrow(
+    "must contain exactly the review exclusion fields",
+  );
+});
