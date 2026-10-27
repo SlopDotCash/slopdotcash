@@ -546,11 +546,17 @@ and policy mirrors; explain why application acceptance does not apply to the
 prose itself. Keep required repository checks. Do not fabricate UI or
 deployment evidence.
 
-Rebase onto current `origin/development`, install the lockfile, run `bun run
-verify`, and run real-browser E2E against the exact head. UI changes require
-desktop and mobile review, keyboard and 200% zoom checks, WCAG AA, working copy
-feedback, raw Markdown and archive downloads, valid GitHub links, zero
-first-party request failures, and zero application console errors.
+Rebase onto current `origin/development`, install the lockfile, and prepare the
+ledger with `bun run leaderboard:generate`. Local pull-request checks may use
+the validated public-snapshot preparation in
+[Local review checks](README.md#local-review-checks) instead of live ingestion.
+Stop if ledger preparation fails; never use a leftover ledger. Releases still
+collect fresh GitHub data through the normal release workflow. Run `bun run
+verify`, `bun run format:check`, and real-browser E2E against the exact head.
+UI changes require desktop and mobile review, keyboard and 200% zoom checks,
+WCAG AA, working copy feedback, raw Markdown and archive downloads, valid
+GitHub links, zero first-party request failures, and zero application console
+errors.
 
 Attach exact-head evidence to the issue or PR: screenshots, accessibility
 results, console/network logs, uploaded UI walkthrough and evidence videos, detailed
