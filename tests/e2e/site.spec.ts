@@ -1274,19 +1274,20 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   expect(legacySkillResponse.status()).toBe(301);
   // The legacy lowercase path names no project; it reaches the bootstrap skill.
   expect(legacySkillResponse.headers().location).toBe("/SKILL.md");
-  const fundingRouteResponse = await request.get("/projects/eliza/funding", {
-    maxRedirects: 0,
-  });
-  expect(fundingRouteResponse.status()).toBe(200);
-  expect(await fundingRouteResponse.text()).toContain('<div id="root"></div>');
-  const trailingFundingRouteResponse = await request.get(
+  // A direct visit, a reload and the return after sign-in load these pages
+  // through the Pages rules in public/_redirects, not through in-app links.
+  for (const path of [
+    "/projects/eliza/funding",
     "/projects/eliza/funding/",
-    { maxRedirects: 0 },
-  );
-  expect(trailingFundingRouteResponse.status()).toBe(200);
-  expect(await trailingFundingRouteResponse.text()).toContain(
-    '<div id="root"></div>',
-  );
+    "/projects/eliza/awards",
+    "/projects/eliza/awards/",
+    "/operator/traces",
+    "/operator/traces/",
+  ]) {
+    const routeResponse = await request.get(path, { maxRedirects: 0 });
+    expect(routeResponse.status(), path).toBe(200);
+    expect(await routeResponse.text(), path).toContain('<div id="root"></div>');
+  }
 
   const [
     bootstrapResponse,
