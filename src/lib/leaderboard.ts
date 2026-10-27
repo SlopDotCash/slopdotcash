@@ -615,9 +615,9 @@ export function isBotActor(actor: GitHubActor | null): boolean {
 export function isRecognizedTestFile(path: string): boolean {
   const normalized = path.toLowerCase();
   if (
-    normalized.includes("/__snapshots__/") ||
-    normalized.includes("/fixtures/") ||
-    normalized.includes("/testdata/")
+    /(^|\/)__snapshots__\//.test(normalized) ||
+    /(^|\/)fixtures\//.test(normalized) ||
+    /(^|\/)testdata\//.test(normalized)
   ) {
     return false;
   }
