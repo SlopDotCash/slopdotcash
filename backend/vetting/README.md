@@ -95,7 +95,9 @@ An active grant clears normal admission for that repository without inventing
 an assessment. Public setup and operator views label it **Owner-approved
 exemption**. It cannot move to another repository or steward. Existing assessments remain
 intact, and assessments requested after the grant control clearance, including
-requests made at the same timestamp. Confirmed malice, contributor flags,
+requests made at the same timestamp. A template-only replacement of a request
+that the grant covers stays covered, because it keeps that request's source
+assignment. Confirmed malice, contributor flags,
 account restrictions and fresh reinstatement requirements remain controlling.
 
 `POST /api/v1/admin/vetting/exemptions/:id/revoke` requires a new human

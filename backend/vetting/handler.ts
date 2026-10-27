@@ -48,6 +48,7 @@ import type { ProjectFlagStore } from "./flags";
 import {
   type CloudflareVettingPersistence,
   summarize,
+  TEMPLATE_REPLACEMENT_REASON,
   type VettingAssessment,
   type VettingPin,
   vettedContentSha256,
@@ -791,7 +792,7 @@ async function refreshQueue(
         // above remains valid and never reaches this branch.
         if (pending.templateSha256 !== live.templateSha256) {
           templateRetry = pending;
-          reason = "Automatic replacement of an unavailable queued template";
+          reason = TEMPLATE_REPLACEMENT_REASON;
         }
       }
     }
