@@ -489,7 +489,10 @@ async function callModel(
   return result;
 }
 
-function buildPrompt(context: Context, itemKind: string) {
+export function buildPrompt(
+  context: Pick<Context, "policy" | "quality" | "itemText">,
+  itemKind: string,
+) {
   const files = context.policy
     .map((f) => `<file name="${f.path}">\n${f.text}\n</file>`)
     .join("\n");
