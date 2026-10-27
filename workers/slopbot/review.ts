@@ -1820,23 +1820,31 @@ async function isMaintainer(
   return exemption === "exempt";
 }
 
-/** The newest Slopbot finding on the item, or null when there is none. */
+/** The newest Slopbot finding on the item, or null when there is none. A
+ * confirmed close is a finding even when its run failed after GitHub closed
+ * the item: the retry skips a closed item and never completes that review.
+ */
 async function latestFinding(
   db: store.D1Database,
   itemNodeId: string,
 ): Promise<Category | null> {
   const row = await db
     .prepare(
-      `SELECT verdict FROM slopbot_reviews
-       WHERE item_node_id = ? AND status = 'completed' AND verdict IS NOT NULL
-         AND action IN ('close', 'label', 'hold')
-       ORDER BY completed_at DESC, review_key DESC LIMIT 1`,
+      `SELECT category FROM (
+         SELECT json_extract(verdict, '$.category') AS category,
+           completed_at AS at, review_key FROM slopbot_reviews
+         WHERE item_node_id = ?1 AND status = 'completed' AND verdict IS NOT NULL
+           AND action IN ('close', 'label', 'hold')
+         UNION ALL
+         SELECT json_extract(detail, '$.category'), created_at, review_key
+         FROM slopbot_actions WHERE item_node_id = ?1 AND action = 'close')
+       ORDER BY at DESC, review_key DESC LIMIT 1`,
     )
     .bind(itemNodeId)
-    .first<{ verdict: string }>();
-  if (row === null) return null;
-  const category = (JSON.parse(row.verdict) as Verdict).category;
-  return category === "none" ? null : category;
+    .first<{ category: Category | null }>();
+  if (row === null || row.category === null || row.category === "none")
+    return null;
+  return row.category;
 }
 
 /** Whether the current close of this item is Slopbot's. GET issue supplies
