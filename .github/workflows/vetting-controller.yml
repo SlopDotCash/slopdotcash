@@ -3,11 +3,21 @@ on:
   schedule:
     - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
+  workflow_run:
+    workflows: [slop.cash]
+    types: [completed]
+    branches: [main, development]
 permissions:
   contents: read
 jobs:
   dispatch:
-    if: github.event_name == 'schedule' && vars.VETTING_CONTROLLER_SCHEDULE == 'enabled'
+    if: >-
+      vars.VETTING_CONTROLLER_SCHEDULE == 'enabled' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.id == github.event.repository.id &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -17,15 +27,40 @@ jobs:
       - name: Dispatch protected scanner branches
         env:
           GH_TOKEN: ${{ github.token }}
+          TRIGGER_EVENT: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
-          for ref in main development; do
+          refs="main development"
+          if [ "$TRIGGER_EVENT" = workflow_run ]; then
+            case "$RELEASE_REF" in main|development) refs="$RELEASE_REF" ;; *) exit 1 ;; esac
+          fi
+          for ref in $refs; do
             # The scan job requires the isolated runner of the exact branch
             # head. Dispatch only after the release of that head succeeded.
             head="$(gh api "repos/$GITHUB_REPOSITORY/commits/heads/$ref" --jq .sha)"
-            released="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?branch=$ref&head_sha=$head&status=success&per_page=100" --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")] | length')"
-            if [ "$released" -eq 0 ]; then
+            if [ "$TRIGGER_EVENT" = workflow_run ]; then
+              if [ "$head" != "$RELEASE_SHA" ]; then
+                echo "::notice title=Scanner waits for release::$ref advanced after this release; its new head must deploy before scanning."
+                continue
+              fi
+              released="$RELEASE_RUN_ID"
+            else
+              released="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?branch=$ref&head_sha=$head&status=success&per_page=100" --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // empty')"
+            fi
+            if [ -z "$released" ]; then
               echo "::notice title=Scanner waits for release::$ref head $head has no successful release yet. Its isolated runner is not deployed, so no scan is dispatched."
+              continue
+            fi
+            case "$ref" in
+              main) release_job="Deploy trusted production bundle" ;;
+              development) release_job="Deploy verified development to staging" ;;
+            esac
+            deployed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$released/jobs?per_page=100" --paginate --slurp --jq "[.[].jobs[] | select(.name == \"$release_job\" and .conclusion == \"success\")] | length")"
+            if [ "$deployed" -eq 0 ]; then
+              echo "::notice title=Scanner waits for release::$ref did not complete its deployment job."
               continue
             fi
             active="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow vetting-controller.yml --branch "$ref" --event workflow_dispatch --json status --jq '[.[] | select(.status != "completed")] | length')"
