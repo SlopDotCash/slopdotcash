@@ -64,6 +64,9 @@ jobs:
   solana-verifiable:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    outputs:
+      artifact-id: ${{ steps.program.outputs.artifact-id }}
+      build-attempt: ${{ steps.manifest.outputs.attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -89,6 +92,7 @@ jobs:
           cp contracts/solana/docker-target/deploy/slop_escrow.so \
             "$RUNNER_TEMP/solana-verifiable/slop_escrow.so"
       - name: Bind the program artifact to its source and build
+        id: manifest
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -126,7 +130,9 @@ jobs:
           (output / "SHA256SUMS").write_text(f"{digest}  slop_escrow.so\n")
           print(json.dumps(manifest, indent=2))
           PY
+          echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: program
         with:
           name: solana-verifiable-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/solana-verifiable/
@@ -244,14 +250,23 @@ jobs:
             --require-hashes \
             --requirement "$RUNNER_TEMP/slop-python-requirements.txt"
 
+      - name: Require the paired producer artifact
+        env:
+          ARTIFACT_ID: ${{ needs.solana-verifiable.outputs.artifact-id }}
+          BUILD_ATTEMPT: ${{ needs.solana-verifiable.outputs.build-attempt }}
+        run: |
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BUILD_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: solana-verifiable-${{ github.event.pull_request.head.sha || github.sha }}
+          artifact-ids: ${{ needs.solana-verifiable.outputs.artifact-id }}
+          merge-multiple: true
           path: ${{ runner.temp }}/solana-verifiable
       - run: bash contracts/solana/scripts/bootstrap-linux.sh
       - run: bun run test:contracts:solana
         env:
           SLOP_SOLANA_TEST_ARTIFACT: ${{ runner.temp }}/solana-verifiable
+          SLOP_SOLANA_ARTIFACT_ATTEMPT: ${{ needs.solana-verifiable.outputs.build-attempt }}
       - name: Verify the lifecycle-tested program matches the retained artifact
         run: |
           set -euo pipefail

@@ -23,7 +23,8 @@ export async function prepareTestProgram(
     ),
     expectedImage = process.env.SLOP_SOLANA_BUILD_IMAGE,
     runId = process.env.GITHUB_RUN_ID,
-    runAttempt = process.env.GITHUB_RUN_ATTEMPT,
+    runAttempt = process.env.SLOP_SOLANA_ARTIFACT_ATTEMPT ??
+      process.env.GITHUB_RUN_ATTEMPT,
   } = {},
 ) {
   const root = await realpath(repositoryRoot);
