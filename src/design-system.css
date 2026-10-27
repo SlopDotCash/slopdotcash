@@ -1464,7 +1464,7 @@ main h2 {
 }
 .cycle-contributors {
   min-width: 0;
-  table-layout: fixed;
+  table-layout: auto;
 }
 .cycle-contributors :is(th, td) {
   vertical-align: top;
@@ -1475,6 +1475,10 @@ main h2 {
 }
 .cycle-contributors th:nth-child(2) {
   width: 20%;
+}
+.cycle-contributors :is(th, td):nth-child(2) {
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 .cycle-contributor-state {
   display: block;
