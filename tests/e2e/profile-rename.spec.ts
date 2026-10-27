@@ -558,8 +558,17 @@ for (const scenario of [
     assertCycleIndex(cycles);
     assertProfiles(profiles);
     const login = scenario === "current member" ? "alice2" : "alice";
-    await page.route(`${site}/api/v1/points/**`, (route) =>
-      route.fulfill({
+    let releaseMembership = () => {};
+    const membershipReady = new Promise<void>((resolve) => {
+      releaseMembership = resolve;
+    });
+    await page.route(`${site}/api/v1/points/**`, async (route) => {
+      if (
+        scenario === "reassigned login" &&
+        new URL(route.request().url()).pathname.endsWith("/member")
+      )
+        await membershipReady;
+      return route.fulfill({
         json: new URL(route.request().url()).pathname.endsWith("/member")
           ? {
               actor: { id: archived.id, login },
@@ -568,8 +577,8 @@ for (const scenario of [
               welcome: 5,
             }
           : null,
-      }),
-    );
+      });
+    });
     await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
       route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
     );
@@ -583,12 +592,32 @@ for (const scenario of [
         await route.fulfill({ json: profiles });
       });
     try {
+      const directoryResponse =
+        scenario === "reassigned login"
+          ? page.waitForResponse("**/data/profiles.json")
+          : null;
       const memberResponse = page.waitForResponse((response) =>
         new URL(response.url()).pathname.endsWith("/points/member"),
       );
       await page.goto(`${site}/contributors/${login}`, {
         waitUntil: "domcontentloaded",
       });
+      if (scenario === "reassigned login") {
+        if (directoryResponse) await (await directoryResponse).finished();
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) => {
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve()),
+              );
+            }),
+        );
+        await expect(
+          page.getByText("Checking contributor…", { exact: true }),
+        ).toBeVisible();
+        expect(walletRequests).toEqual([]);
+        releaseMembership();
+      }
       await (await memberResponse).finished();
       if (scenario === "delayed directory") {
         await expect(
@@ -637,6 +666,7 @@ for (const scenario of [
         expect(walletRequests).toEqual([]);
       }
     } finally {
+      releaseMembership();
       releaseDirectory();
     }
   });
