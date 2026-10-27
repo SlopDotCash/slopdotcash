@@ -484,18 +484,35 @@ Known operators are the Solana public service, PublicNode, Alchemy and Helius.
 Do not disguise aliases of one operator as independent services.
 
 Before signing, Solana prices the exact message with `getFeeForMessage`,
-reserves rent for every classic associated-account creation even if the
-account exists, checks a simulation for unexplained wallet debit, and
-rechecks the 10-times-value rule using a current wSOL/USDC quote. Jupiter
-requests legacy routes so every inspected account is in the signed static
-keys; routes requiring address lookup tables remain unavailable. Receipts
-must match the stored signed bytes and finalized block. Costs include
-priority fees, failed transaction fees and new account rent; wrapped-SOL
-principal is excluded from rent. A live Solana record with a signature but
-no journal record stops each whole Solana run, including status
-reconciliation. Solana has no import path for such records. The value-only `FEE_CONVERTER_SOLANA_FEE_MICRO`
-estimate supplies no native spending limit. No keeper or referral budget
-supplies a default.
+reserves rent for each admitted classic SPL or metadata-only Token-2022
+associated-account creation even if the account exists, checks simulation
+for unexplained wallet debit, and rechecks the 10-times-value rule using a
+current wSOL/USDC quote. Jupiter requests V2 exact-input instructions and
+permits versioned messages. It resolves every address lookup table at
+finalized commitment, rejects inactive or not-yet-warm entries, and retains
+the complete account order, table digests and message hash with the native
+reservation (`0096_fee_solana_accounts.sql`).
+
+The complete resolved route is reviewed before signing: every account is
+read at finalized commitment, every token holding and its mint must use an
+admitted token program and extension set, and the instruction must bind the
+fee wallet, canonical input/output accounts, exact amount, minimum output
+and bounded slippage. Simulation must show the exact input debit and minimum
+output credit without changing the accounts' authority fields. This uses
+the pinned minimal Jupiter wire schema in `jupiter-route-schema.ts`; the IDL
+source digest records the schema source, not a program-code attestation.
+
+Finalized swap receipts must match the signed bytes, retained loaded-account
+order, token programs, exact input debit and minimum output credit. Recovery
+loads the same immutable proof from D1. An expired journaled send with missing
+history remains pending until independent retained histories prove absence.
+Costs include priority fees, failed transaction fees and new account rent;
+wrapped-SOL principal is excluded from rent. A live Solana record with a
+signature but no journal record stops each whole Solana run, including status
+reconciliation. Solana has no import path for such records. The value-only
+`FEE_CONVERTER_SOLANA_FEE_MICRO` estimate supplies no native spending limit.
+No keeper or referral budget supplies a default. These source changes do not
+activate a network or qualify a deployed program or live aggregator route.
 
 Before each approval, swap, fee claim or replacement, price the final gas
 limit and fee fields, include Base's additional allowance, and recheck the
@@ -689,12 +706,22 @@ approval signatures, persisted bytes, database reopen, finality before a fresh
 swap, matching token proceeds, lost-send recovery and refusal after a claim
 loses its network lease. It is not live Kyber, Circle or production evidence.
 
-The Solana check uses a local
-`solana-test-validator` (port 28899) that clones the mainnet Jupiter and
-Whirlpool programs and one JUP/USDC route. It uses the normal native-budget
-and signing-journal path with a generated local wallet.
-They need `anvil` and `solana-test-validator` on `PATH` and never touch a real
-chain.
+The Solana check uses a local `solana-test-validator` (default port 28899).
+It captures real Jupiter V2 quote and unsigned swap responses, resolves their
+lookup tables at finalized commitment, and clones the route's public programs
+and accounts. The default input is classic SPL JUP.
+`SLOP_FEE_TEST_PORT` selects another local port range.
+The captured responses stay bound to the requested wallet and quote while
+execution runs against the isolated snapshot. The harness selects stable
+on-chain AMMs instead of expiring oracle-price routes. It retains the original
+lookup evidence, rebases only table extension timing for the fresh local bank,
+and normalizes fixture rent epochs; lookup addresses and authority stay intact.
+Generated throwaway wallets
+exercise a real local receipt, the normal native budget, signing journal,
+finalized conversion, restart reconciliation and duplicate refusal.
+These checks require `anvil` and `solana-test-validator` on `PATH`. Public
+mainnet access is read-only; every signed transaction is sent only to the
+local validator. Local results do not qualify a production deployment.
 
 The registry discovery includes ordinary `escrow.deployments` and private
 bounty `securityBounty.settlement.deployments`. Both supply fee assets and

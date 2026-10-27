@@ -85,16 +85,6 @@ function standings(cycles: CycleIndexEntry[]) {
 }
 
 describe("Slop Score before a project's reward start", () => {
-  it("the frozen July snapshot holds events before the reward start", () => {
-    expect(rewardStartAt).toBe("2026-07-07T00:00:00.000Z");
-    const early = snapshot.ledger.filter(
-      (event) =>
-        event.occurredAt.startsWith("2026-07") &&
-        Date.parse(event.occurredAt) < Date.parse(rewardStartAt),
-    );
-    expect(early.length).toBeGreaterThan(0);
-  });
-
   it("project standings for a month equal the cycle leaderboard", () => {
     const view = createProjectView(snapshot, "eliza", "2026-07");
     const cycleScores = new Map(

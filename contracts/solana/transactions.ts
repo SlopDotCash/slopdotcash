@@ -3,8 +3,9 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { solanaBase58 } from "./adapter";
+import { CLASSIC_TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from "./token";
 
-const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+const TOKEN = CLASSIC_TOKEN_PROGRAM,
   ASSOCIATED = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
   SYSTEM = "11111111111111111111111111111111";
 const encoder = new TextEncoder();
@@ -115,19 +116,26 @@ function message(
     ...compiled,
   );
 }
-function ata(mint: string, owner: string) {
-  return pda(ASSOCIATED, [bytes(owner), bytes(TOKEN), bytes(mint)]);
+function ata(mint: string, owner: string, tokenProgram = TOKEN) {
+  if (tokenProgram !== TOKEN && tokenProgram !== TOKEN_2022_PROGRAM)
+    throw new Error("Unsupported mint token program");
+  return pda(ASSOCIATED, [bytes(owner), bytes(tokenProgram), bytes(mint)]);
 }
-function createAta(payer: string, mint: string, owner: string): Instruction {
+function createAta(
+  payer: string,
+  mint: string,
+  owner: string,
+  tokenProgram = TOKEN,
+): Instruction {
   return {
     program: ASSOCIATED,
     accounts: [
       { key: payer, write: true },
-      { key: ata(mint, owner), write: true },
+      { key: ata(mint, owner, tokenProgram), write: true },
       { key: owner, write: false },
       { key: mint, write: false },
       { key: SYSTEM, write: false },
-      { key: TOKEN, write: false },
+      { key: tokenProgram, write: false },
     ],
     data: Uint8Array.of(1),
   };
