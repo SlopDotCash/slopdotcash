@@ -13,6 +13,7 @@ import {
   type PointsJournal,
   pointKey,
   pointMembers,
+  pointRevisionId,
   reconcilePointPenalties,
 } from "../src/lib/points";
 import {
@@ -186,6 +187,21 @@ test("journal debit corrections preserve the checkpoint, other months, projects 
       member().total,
     );
     api.apply(journal);
+    // The real import boundary refuses a forged positive debit without writes.
+    const forged = structuredClone(journal);
+    const forgedDebit = forged.revisions.filter((r) => r.penalty).at(-1)!;
+    forgedDebit.award.amount = 1;
+    const { id: _oldId, ...contents } = forgedDebit;
+    forgedDebit.id = pointRevisionId(contents);
+    const beforeRefusal = api.db
+      .query("SELECT id,payload FROM points_revisions ORDER BY rowid")
+      .all();
+    expect(() => api.apply(forged)).toThrow("Invalid point award");
+    expect(
+      api.db
+        .query("SELECT id,payload FROM points_revisions ORDER BY rowid")
+        .all(),
+    ).toEqual(beforeRefusal);
     api.apply(reconcilePointPenalties(journal, "f".repeat(64), GENERATED_AT));
     expect(
       api.db
