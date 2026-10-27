@@ -81,8 +81,10 @@ export async function ownsValueRequest(
 /** Outcomes are fixed codes, never model output or provider exception text.
  * Incomplete evidence and budget/authority blocks remain retryable, not zero.
  * The consumer reads the PR from GitHub after its claim, so the outcome also
- * settles every waiting or unread delivery for the same PR received by the
- * claim time. A later delivery keeps its own request.
+ * settles every waiting or unread delivery received by the claim time that
+ * names the same installation, repository and PR: every input of the outcome
+ * is then the same. A later delivery, or one under another installation or
+ * repository name, keeps its own request.
  */
 export async function finishValueRequest(
   db: D1Database,
@@ -108,6 +110,8 @@ export async function finishValueRequest(
        JOIN slopbot_value_requests claimed ON claimed.delivery_id=owner.delivery_id
        JOIN slopbot_value_requests r ON r.repository_id=claimed.repository_id
          AND r.pull_request_number=claimed.pull_request_number
+         AND r.installation_id=claimed.installation_id
+         AND r.owner=claimed.owner AND r.repo=claimed.repo
          AND (r.delivery_id=owner.delivery_id OR r.received_at<=?3)
        WHERE owner.delivery_id=?1 AND owner.claim_token=?2
          AND owner.state='running' AND owner.lease_until>?7
