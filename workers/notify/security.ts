@@ -339,9 +339,13 @@ export async function dispatchSecurityMail(
     }
     await recordDelivery(deps, row, "provider-accepted");
   }
+  // A row this dispatcher suppressed (revoked role) sent nothing and never
+  // escalates. Provider evidence of suppression is a failed delivery.
   const waiting = await deps.db
     .prepare(`SELECT * FROM security_notification_outbox
-    WHERE acknowledged_at IS NULL AND escalation_of IS NULL AND state NOT IN ('queued','retrying','sending','suppressed')
+    WHERE acknowledged_at IS NULL AND escalation_of IS NULL AND state NOT IN ('queued','retrying','sending')
+    AND (state <> 'suppressed' OR EXISTS (SELECT 1 FROM security_notification_delivery_events e
+      WHERE e.delivery_id = security_notification_outbox.id AND e.state = 'suppressed' AND e.evidence_reference IS NOT NULL))
     AND NOT EXISTS (SELECT 1 FROM security_notification_outbox escalation WHERE escalation.escalation_of = security_notification_outbox.id)
     ORDER BY COALESCE(escalation_checked_at, created_at), id LIMIT 100`)
     .all<Delivery>();
@@ -365,7 +369,10 @@ export async function dispatchSecurityMail(
       access.acknowledgeHours > 0 &&
       now.getTime() >=
         Date.parse(row.created_at) + access.acknowledgeHours * 3600_000;
-    if (overdue || ["bounced", "exhausted", "ambiguous"].includes(row.state))
+    if (
+      overdue ||
+      ["bounced", "suppressed", "exhausted", "ambiguous"].includes(row.state)
+    )
       await escalate(deps, row);
   }
 }
