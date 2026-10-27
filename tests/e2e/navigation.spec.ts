@@ -176,7 +176,10 @@ test("a walletless award leads to wallet setup without changing the award", asyn
     });
   });
   await page.goto(`${site}/earnings`, { waitUntil: "networkidle" });
-  const award = page.getByRole("row").filter({ hasText: "Awaiting wallet" });
+  const award = page
+    .getByRole("list", { name: "Payment history", exact: true })
+    .getByRole("listitem")
+    .filter({ hasText: "Awaiting wallet" });
   await expect(award).toContainText("0.98");
   await expect(award).not.toContainText("Paid");
   await page.screenshot({ path: info.outputPath("walletless-award.png") });
