@@ -216,6 +216,26 @@ export default { fetch(request, env, ctx) {
     "PASS: exact-byte one-use read, actor/digest binding, reason, 60-second expiry and atomic audit",
   );
 
+  // Keep the storage-outage recovery check after removing the operator UI.
+  const unavailableGrant = await (await create()).json();
+  const storedKey = `traces/sha256/${digests[0].slice(0, 2)}/${digests[0]}`;
+  await bucket.delete(storedKey);
+  const unavailable = await read(unavailableGrant.grant);
+  assert.equal(unavailable.status, 503);
+  assert.equal((await unavailable.json()).error, "object_unavailable");
+  await bucket.put(storedKey, contents[0], {
+    customMetadata: { sha256: digests[0] },
+    httpMetadata: { contentType: "text/plain" },
+  });
+  const recoveryGrant = await (await create()).json();
+  const recovered = await read(recoveryGrant.grant);
+  assert.equal(recovered.status, 200);
+  assert.equal(hash(Buffer.from(await recovered.arrayBuffer())), digests[0]);
+  assert.equal((await read(recoveryGrant.grant)).status, 403);
+  console.log(
+    "PASS: unavailable trace object refuses, then recovers with a new one-use grant",
+  );
+
   for (const extra of [
     { origin: null },
     { origin: "https://evil.example" },

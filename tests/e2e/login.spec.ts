@@ -142,6 +142,12 @@ for (const [next, expected] of [
     await expect(main.locator("h1, h2")).toHaveCount(1);
     const action = main.getByRole("button", { name: "Continue with GitHub" });
     await expect(main.getByRole("checkbox")).toHaveCount(0);
+    await expect(
+      main.getByText(
+        "Signing in makes your Slop membership and any connected X profile link public.",
+        { exact: true },
+      ),
+    ).toBeVisible();
     const popup = page.waitForEvent("popup");
     await action.click();
     await (await popup).close();
