@@ -42,7 +42,12 @@ import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { paymentStack } from "./configure.mjs";
-import { type JournalStore, pendingStoredBindings } from "./core";
+import {
+  bindingCandidates,
+  bindStoredDestination,
+  type JournalStore,
+  pendingStoredBindings,
+} from "./core";
 import worker, { PaymentSignerJournal, runDestinationBindings } from "./index";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -436,6 +441,7 @@ try {
   const journalNames: string[] = [];
   const env = {
     ...vars,
+    PAYMENT_DEPLOYMENTS: vars.PAYMENT_DEPLOYMENTS,
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_RPC_URLS: JSON.stringify({
@@ -644,6 +650,37 @@ try {
   });
   assert.equal(authorized.status, 200, await authorized.clone().text());
 
+  // The real authorization/contract path must stop before signing when the
+  // per-operation native envelope cannot fit, without consuming its nonce.
+  let overLimitSignatures = 0;
+  const boundedEnv = {
+    PAYMENTS_DB: db,
+    PAYMENT_DEPLOYMENTS: JSON.stringify(
+      JSON.parse(env.PAYMENT_DEPLOYMENTS).map((p: object) => ({
+        ...p,
+        maxNativeCostWei: "1",
+      })),
+    ),
+    PAYMENT_RPC_URLS: env.PAYMENT_RPC_URLS,
+    JOURNAL: journal,
+    SIGNER: {
+      address: attester,
+      async signTransaction() {
+        overLimitSignatures++;
+        throw new Error("Over-limit transaction reached signer");
+      },
+    },
+  };
+  const [boundedCandidate] = await bindingCandidates(boundedEnv);
+  assert(boundedCandidate);
+  await assert.rejects(
+    bindStoredDestination(boundedEnv, boundedCandidate),
+    /native cost limit/,
+  );
+  assert.equal(overLimitSignatures, 0);
+  assert.deepEqual(bindEntries(), []);
+  assert.equal(await nonce(attester), 0);
+
   // Failure: an uncertain send. The broadcast is lost twice. The attester
   // journals one signed binding before its first broadcast; each later run
   // finds that entry and broadcasts the same bytes again. It never signs a
@@ -652,10 +689,40 @@ try {
   // cancellation fee would exceed that ceiling, so the later guard cases hold.
   await rpc("anvil_setNextBlockBaseFeePerGas", ["0x10c388d00"]);
   await mine(1);
+  const unlimitedPins = env.PAYMENT_DEPLOYMENTS;
+  env.PAYMENT_DEPLOYMENTS = JSON.stringify(
+    JSON.parse(unlimitedPins).map((pin: object) => ({
+      ...pin,
+      maxNativeCostWei: "5000000000000000",
+    })),
+  );
   dropBroadcast = true;
   await bindingHeld();
   const held = bindEntries();
   assert.equal(held.length, 1);
+  assert.equal(
+    (held[0] as unknown as { maxNativeCostWei: string }).maxNativeCostWei,
+    "5000000000000000",
+  );
+  const beforeTightened = bindingBroadcasts;
+  env.PAYMENT_DEPLOYMENTS = JSON.stringify(
+    JSON.parse(unlimitedPins).map((pin: object) => ({
+      ...pin,
+      maxNativeCostWei: "1",
+    })),
+  );
+  await bindingHeld();
+  assert.equal(
+    bindingBroadcasts,
+    beforeTightened,
+    "A tighter current native cap prevents another broadcast",
+  );
+  assert.deepEqual(
+    bindEntries(),
+    held,
+    "A changed config must not replace the original signed bound",
+  );
+  env.PAYMENT_DEPLOYMENTS = unlimitedPins;
   assert(
     (parseTransaction(held[0].rawTransaction).maxFeePerGas ?? 0n) * 9n >
       80_000_000_000n,
