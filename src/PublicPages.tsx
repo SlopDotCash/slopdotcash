@@ -723,6 +723,24 @@ export function SponsorsPage({
 
 const RECEIPTS_PAGE_SIZE = 25;
 
+function ModelMark({ model }: { model: string }) {
+  const key = model.toLowerCase();
+  const mark = key.startsWith("claude")
+    ? claudeMark
+    : key.startsWith("gpt") || key.startsWith("o1") || key.startsWith("o3")
+      ? chatgptMark
+      : key.startsWith("grok")
+        ? grokMark
+        : key.startsWith("muse") || key.startsWith("llama")
+          ? metaMark
+          : null;
+  return mark ? (
+    <img className="route-model-mark" src={mark} alt="" aria-hidden="true" />
+  ) : (
+    <Cpu className="route-model-mark" aria-hidden="true" />
+  );
+}
+
 export function ReceiptsPage({
   state,
   retry,

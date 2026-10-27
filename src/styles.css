@@ -141,24 +141,6 @@ textarea:focus-visible {
   padding-block: clamp(60px, 8vw, 110px);
 }
 
-.evidence-page-hero {
-  max-width: 920px;
-  margin-bottom: 56px;
-}
-
-.evidence-page-hero h1 {
-  max-width: 900px;
-  margin: 12px 0 22px;
-  font-size: clamp(44px, 7vw, 92px);
-  line-height: 0.94;
-}
-
-.evidence-page-hero > p:last-child {
-  max-width: 70ch;
-  color: var(--muted);
-  line-height: 1.65;
-}
-
 .mechanism-flow {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -457,10 +439,6 @@ textarea:focus-visible {
   .mechanism-flow li:nth-child(2n + 1) {
     border-left: 1px solid var(--line);
   }
-
-  .evidence-page-hero h1 {
-    font-size: clamp(42px, 14vw, 64px);
-  }
 }
 
 .hero {
@@ -530,7 +508,6 @@ p {
 }
 
 .project-hero h1,
-.proposal-intro h1,
 .not-found h1,
 .profile-hero h1,
 .cycle-hero h1 {
@@ -1268,8 +1245,7 @@ small {
   font-size: clamp(46px, 6vw, 82px);
 }
 
-.cycle-hero p,
-.proposal-intro p {
+.cycle-hero p {
   max-width: 720px;
   color: var(--muted);
   font-size: 14px;
@@ -2422,13 +2398,6 @@ small {
 .receipt-page {
   padding-block: 48px 80px;
 }
-.receipt-page .evidence-page-hero {
-  margin-bottom: 32px;
-}
-.receipt-page .evidence-page-hero h1 {
-  font-size: clamp(36px, 5vw, 56px);
-  line-height: 1.05;
-}
 .receipt-search {
   display: grid;
   gap: 8px;
@@ -2731,8 +2700,7 @@ small {
 }
 
 .proposal-facts,
-.proposal-preview dl,
-.funding-status-grid {
+.proposal-preview dl {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: 14px 24px;
@@ -2740,16 +2708,14 @@ small {
 }
 
 .proposal-facts dt,
-.proposal-preview dt,
-.funding-status-grid dt {
+.proposal-preview dt {
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
 }
 
 .proposal-facts dd,
-.proposal-preview dd,
-.funding-status-grid dd {
+.proposal-preview dd {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
   font-family: var(--brand-font-data);
@@ -2932,7 +2898,6 @@ small {
   }
 }
 
-.proposal-intro p a,
 .payout-status a {
   color: var(--ink);
   font-weight: 700;
