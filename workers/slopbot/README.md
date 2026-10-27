@@ -332,6 +332,11 @@ two-parent merge in an isolated bare repository with no global configuration,
 hooks or configured merge drivers. Only the difference between that automatic
 tree and the recorded tree becomes resolution scope. A clean branch sync adds
 no claims. The record binds the Git version, parents, trees and patch digest.
+New merge recipes use `git-2.56.0-v2`, whose patches retain full object IDs.
+Unrelated objects in a supplied repository therefore cannot change the patch
+digest by changing Git's automatic abbreviation length. Historical
+`git-2.56.0-v1` recipes retain their original abbreviated-index rendering when
+Points ingestion reconstructs them; stored records are not rewritten.
 If Git automatically moves a file added on the other parent, collection also
 records its original path and ancestor commits. The blob and file mode must
 match in the source parent, automatic tree, resolved tree and accepted head.
@@ -1420,7 +1425,7 @@ part to preserve exact line endings. Existing JSON-only clients are unchanged.
 The bundle is allowed only for a joint assessment from one public repository.
 The publisher re-reads the live registry, App selection, full GitHub source and
 policy before calling the sandbox's fixed named merge verifier. It re-reads
-source again before publication. A server-created `git-2.56.0-v1` recipe binds
+source again before publication. A server-created `git-2.56.0-v2` recipe binds
 the exact collector inputs in the existing joint journal. No client patch,
 tree, digest assertion or local assessment can bypass these checks.
 

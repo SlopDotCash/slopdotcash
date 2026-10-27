@@ -8,8 +8,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ValueEvidence } from "../workers/slopbot/value-evidence";
 import {
+  LEGACY_MERGE_PROFILE,
   MERGE_GIT_VERSION,
+  MERGE_PROFILE,
   type ValueMergeInput,
+  type ValueMergeProfile,
 } from "../workers/slopbot/value-merge-profile";
 import type { ValueMergeResolution } from "../workers/slopbot/value-merge-resolution";
 
@@ -19,6 +22,7 @@ import type { ValueMergeResolution } from "../workers/slopbot/value-merge-resolu
 export async function collectVerifiedMergeResolutions(
   input: ValueMergeInput,
   repository: string,
+  profile: ValueMergeProfile = MERGE_PROFILE,
 ): Promise<ValueMergeResolution[]> {
   const env = {
     PATH: process.env.PATH,
@@ -83,6 +87,7 @@ export async function collectVerifiedMergeResolutions(
   const resolved = await collectMergeResolutions(
     input as ValueEvidence,
     repository,
+    profile,
   );
   return resolved.mergeResolutions ?? [];
 }
@@ -90,7 +95,10 @@ export async function collectVerifiedMergeResolutions(
 export async function collectMergeResolutions(
   evidence: ValueEvidence,
   repository: string,
+  profile: ValueMergeProfile = MERGE_PROFILE,
 ): Promise<ValueEvidence> {
+  if (profile !== MERGE_PROFILE && profile !== LEGACY_MERGE_PROFILE)
+    throw new Error("Unsupported merge reconstruction profile");
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
   );
@@ -173,6 +181,7 @@ export async function collectMergeResolutions(
       const resolvedTree = read("rev-parse", `${commit.sha}^{tree}`).trim();
       const patch = read(
         "diff",
+        ...(profile === MERGE_PROFILE ? ["--full-index"] : []),
         "--no-ext-diff",
         "--no-textconv",
         "--binary",
