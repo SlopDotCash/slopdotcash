@@ -84,6 +84,22 @@ export class NativeGasJournal {
     ).results;
   }
 
+  /** True when every attempt belongs to a send row that closed as failed. */
+  private async closedSends(attempts: readonly NativeAttempt[]) {
+    const ids = [...new Set(attempts.map((r) => r.conversion_id))];
+    if (ids.includes(null)) return false;
+    // A legacy approval hash without bytes still holds its nonce.
+    const { results } = await this.db
+      .prepare(
+        `SELECT id FROM fee_conversions WHERE network=? AND state='failed'
+          AND id IN (SELECT value FROM json_each(?))
+          AND NOT (approval_tx_id IS NOT NULL AND raw_tx IS NULL AND tx_id IS NULL)`,
+      )
+      .bind(this.network, JSON.stringify(ids))
+      .all<{ id: string }>();
+    return results.length === ids.length;
+  }
+
   async recoverUnsigned() {
     // No broadcast can precede the atomic signed-record commit. A successor
     // can retire only the uncommitted reservation; a stale holder cannot commit it.
@@ -162,7 +178,15 @@ export class NativeGasJournal {
         throw new Error(
           "Native replacement reservation does not match an unresolved send",
         );
-    } else if (sameNonce.length)
+    } else if (
+      sameNonce.length &&
+      // A swap that closed as failed with its nonce still unused (dropped
+      // after its router deadline) frees that nonce for the next send. Only
+      // one transaction can use a nonce, so the group keeps one liability,
+      // its largest maximum, until a canonical receipt settles it.
+      (sameNonce.some((r) => r.state !== "signed" || r.actual_wei !== null) ||
+        !(await this.closedSends(sameNonce)))
+    )
       throw new Error("Native gas nonce is already reserved");
     const day = this.now().toISOString().slice(0, 10);
     let spent = 0n;
