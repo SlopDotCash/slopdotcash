@@ -1575,7 +1575,6 @@ async function ownerSetupWorkflow(
       await expect(funds.getByRole("alert")).toHaveCount(0);
       privateUnavailable = false;
       expect(privateErrors).toBe(1);
-      await page.getByRole("button", { name: "Edit bounty settings" }).click();
       await page.getByLabel("Status", { exact: true }).selectOption("open");
       await page.getByRole("button", { name: "Publish bounty terms" }).click();
       await expect(

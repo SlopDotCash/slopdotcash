@@ -1009,7 +1009,7 @@ test("a rejected signature after a wallet change keeps the verified wallet activ
       fullPage: true,
     });
     const addressLines = await saved
-      .locator(".wallet-card-rows span[title]")
+      .locator(".wallet-card-rows .compact-identifier > summary")
       .evaluateAll((addresses) =>
         addresses.map((address) => {
           const range = document.createRange();

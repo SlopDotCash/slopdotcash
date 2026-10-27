@@ -933,7 +933,12 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
       submission = route.request().postDataJSON();
       return route.fulfill({
         json: {
-          project: { id: "eliza", revision: 3, status: "paused" },
+          project: {
+            id: "eliza",
+            revision: 3,
+            status: "paused",
+            manifest: { ...project, ...submission?.manifest },
+          },
           changes: {
             presentation: [],
             executable: ["contribution"],
@@ -1419,22 +1424,22 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await page
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("An updated description without a financial configuration change.");
-  await expect(changes).toContainText("headline");
-  await expect(changes).not.toContainText("rewardAsset");
+  await expect(changes).toContainText("Short description");
+  await expect(changes).not.toContainText("Reward asset");
   await page.getByRole("button", { name: "Close and keep draft" }).click();
   await page.getByRole("button", { name: "All projects", exact: true }).click();
   await page.getByRole("button", { name: "Open ASI", exact: true }).click();
   await page.getByRole("button", { name: "Edit project", exact: true }).click();
-  await expect(changes).not.toContainText("rewardAsset");
+  await expect(changes).not.toContainText("Reward asset");
   await page.screenshot({
     path: test.info().outputPath("admin-no-implicit-asset.png"),
     fullPage: true,
   });
   await page.getByRole("button", { name: "Use this reward asset" }).click();
-  await expect(changes).toContainText("rewardAsset");
+  await expect(changes).toContainText("Reward asset");
   await page.getByLabel("Discovery placement").selectOption("community");
   await expect(page.getByLabel("Project status")).toHaveValue("paused");
-  await expect(changes).toContainText("listingTier");
+  await expect(changes).toContainText("Discovery placement");
 });
 
 test("serves byte-consistent bootstrap and read-only site artifacts", {
