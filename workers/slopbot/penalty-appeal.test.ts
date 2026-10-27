@@ -87,6 +87,7 @@ type Run = {
   modelSequence: (replies: ModelReply[]) => void;
   modelInputs: { effort: string; item: string }[];
   onModelCall: (callback: (count: number) => void) => void;
+  onReviewComment: (callback: () => void) => void;
   emptyComparison: (reportedFiles?: number) => void;
   nonemptyComparison: () => void;
   seedDuplicate: () => void;
@@ -259,6 +260,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let replies: ModelReply[] = [];
   const modelInputs: Run["modelInputs"] = [];
   let onModelCall: ((count: number) => void) | null = null;
+  let onReviewComment: (() => void) | null = null;
   let emptyComparison = false;
   let reportedFiles = 1;
   let duplicate = false;
@@ -556,7 +558,10 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
             appealResponse = null;
             return new Response(null, { status: 503 });
           }
-        } else comments.push(body);
+        } else {
+          onReviewComment?.();
+          comments.push(body);
+        }
         return Response.json({ id: 900 + comments.length }, { status: 201 });
       }
       if (/\/issues\/comments\/\d+$/u.test(path)) {
@@ -869,6 +874,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       onModelCall: (callback) => {
         onModelCall = callback;
       },
+      onReviewComment: (callback) => {
+        onReviewComment = callback;
+      },
       emptyComparison: (reported = 0) => {
         emptyComparison = true;
         reportedFiles = reported;
@@ -1158,6 +1166,26 @@ test("duplicate original is rechecked again after publication immediately before
     expect(run.sql(PENALTY)).toEqual([]);
   });
 });
+
+for (const closureEnabled of [true, false]) {
+  test(`a changed original after the review comment prevents a duplicate label (closure ${closureEnabled})`, async () => {
+    await closedItem(async (run) => {
+      run.seedDuplicate();
+      run.closureEnabled(closureEnabled);
+      run.model("duplicate", 0.97);
+      run.onReviewComment(() => run.changeDuplicate("closed"));
+      expect(await run.review()).toBe(
+        "related original or review source changed before label",
+      );
+      expect(run.writes).not.toContain(
+        "POST /repos/SlopDotCash/asi/issues/5/labels",
+      );
+      expect(run.writes).not.toContain("PATCH /repos/SlopDotCash/asi/pulls/5");
+      expect(run.currentState()).toBe("open");
+      expect(run.sql(PENALTY)).toEqual([]);
+    });
+  });
+}
 
 test("a model's duplicate claim cannot close without a verified same-author open original", async () => {
   await closedItem(async (run) => {
