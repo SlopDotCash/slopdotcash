@@ -1123,6 +1123,13 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
 test("reaches and reads older inbox notifications without losing the page", async ({
   page,
 }) => {
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: "4242", githubLogin: "example", admin: false },
+      },
+    }),
+  );
   const notifications = Array.from({ length: 101 }, (_, i) => ({
     eventKey: `project-revision:sample:${i}`,
     kind: "project_revision",
