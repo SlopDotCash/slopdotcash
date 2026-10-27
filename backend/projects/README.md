@@ -302,8 +302,14 @@ rate limit, and caches each answer for five minutes. The browser never calls
   (`0027_project_enforcement_owner_appeals.sql`). A moderator may also file
   it at `/admin`. An account named in the current project ban can use the same
   route even if it is no longer the owner and did not list the project. Its
-  record uses `banned-account` and `account-request`. Filing does not lift a
-  restriction or grant project access. Only a moderator decides the appeal.
+  record uses `banned-account` and `account-request`. A banned account
+  files this account appeal while the project is clear. It also files an
+  account appeal while a project appeal is open and no later confirmed
+  malicious result kept that project appeal. This rule also applies to a
+  banned moderator that files at `/admin`. In other states, a banned steward
+  or applicant, or a banned moderator at `/admin`, files a project appeal.
+  Filing does not lift a restriction or grant project access. Only a
+  moderator decides the appeal.
 - Reinstatement needs an open reinstatement request and a moderator who did
   not place the restriction. Both preview and confirmation require a clean
   scan of the current restricted revision, requested after the latest restriction,
@@ -353,7 +359,9 @@ rate limit, and caches each answer for five minutes. The browser never calls
   longer lifts account bans. A moderator who did not ban an account, and who
   is not that account, uses `reinstate_accounts` to select accounts cleared
   by the evidence. The decision leaves the project
-  restriction and other accounts unchanged. Each release references its exact
+  restriction and other accounts unchanged. The project appeal also stays
+  open, including an appeal that malicious results kept for the moderator
+  decision. Each release references its exact
   ban in `project_account_reinstatements`; the existing enforcement journal
   records its reason and evidence. Migration 0072 preserves releases already
   made under the former project-wide rule. Signed-in accounts can use

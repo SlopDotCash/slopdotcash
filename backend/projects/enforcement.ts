@@ -546,8 +546,11 @@ export function planEnforcement(input: {
         );
       const releasedIds = new Set(selected.map((account) => account.githubId));
       requireIndependentAccountModerator(restriction, actor, releasedIds);
+      // A release decides only account appeals. The project appeal, open or
+      // kept by malicious results, stays open for its own decision.
       const appealStillOpen =
-        projectAppealState(restriction) === "requested" ||
+        (restriction.state !== "clear" &&
+          projectAppealOpen(restriction.records, true)) ||
         restriction.bannedMaintainers.some(
           (account) =>
             !releasedIds.has(account.githubId) &&
