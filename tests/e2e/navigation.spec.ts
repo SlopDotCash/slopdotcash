@@ -1,6 +1,7 @@
 /** Browser regressions for retained routes and fragment navigation (PRD 7). */
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { PROJECTS } from "../../src/lib/projects.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
 
 const { site } = deploymentOrigins(
@@ -40,6 +41,37 @@ test.beforeEach(async ({ page }) => {
       },
     }),
   );
+});
+
+test("retained awards URLs resolve during client navigation with query and fragment intact", async ({
+  page,
+}, info) => {
+  const project = PROJECTS.find((entry) => entry.id === "eliza");
+  if (!project) throw new Error("Missing project fixture");
+  await page.route("**/api/v1/projects/eliza", (route) =>
+    route.fulfill({ json: { revision: 1, project } }),
+  );
+  await page.goto("/how-it-works", { waitUntil: "networkidle" });
+  for (const [suffix, expected] of [
+    ["?period=2026-10", "?period=2026-10#monthly-awards"],
+    ["/?period=2026-09#retained-receipt", "?period=2026-09#retained-receipt"],
+  ]) {
+    // Link dispatches this same event after pushState. A network navigation
+    // would exercise only the Pages redirect and miss the client router.
+    await page.evaluate((path) => {
+      history.pushState({}, "", path);
+      dispatchEvent(new PopStateEvent("popstate"));
+    }, `/projects/eliza/awards${suffix}`);
+    await expect(page).toHaveURL(`/projects/eliza/funding${expected}`);
+    await expect(
+      page.getByRole("heading", { name: "Eliza funding", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("This project has no vault yet."),
+    ).toBeVisible();
+  }
+  await expectAccessible(page);
+  await page.screenshot({ path: info.outputPath("retained-awards-route.png") });
 });
 
 test("same-route fragment navigation opens the named account disclosure", async ({
@@ -144,7 +176,10 @@ test("a walletless award leads to wallet setup without changing the award", asyn
     });
   });
   await page.goto(`${site}/earnings`, { waitUntil: "networkidle" });
-  const award = page.getByRole("row").filter({ hasText: "Awaiting wallet" });
+  const award = page
+    .getByRole("list", { name: "Payment history", exact: true })
+    .getByRole("listitem")
+    .filter({ hasText: "Awaiting wallet" });
   await expect(award).toContainText("0.98");
   await expect(award).not.toContainText("Paid");
   await page.screenshot({ path: info.outputPath("walletless-award.png") });
@@ -156,5 +191,32 @@ test("a walletless award leads to wallet setup without changing the award", asyn
     page.getByRole("button", { name: "Connect EVM wallet", exact: true }),
   ).toBeVisible();
   expect(writes).toEqual([]);
+  await expectAccessible(page);
+});
+
+test("signed-out account history navigation reveals lazy wallet setup", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowResponse(401, "GET", "/api/v1/payments/me");
+  await page.route("**/api/v1/payments/me", (route) =>
+    route.fulfill({ status: 401, json: { error: "unauthorized" } }),
+  );
+  await page.route("**/api/v1/points/me", (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.goto("/account", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", { name: "Account", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("#wallets")).toHaveCount(0);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/account#wallets");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page.locator("#wallets")).toHaveAttribute("open", "");
+  await expect(
+    page.locator("#wallets").getByRole("link", { name: "Sign in with GitHub" }),
+  ).toBeVisible();
   await expectAccessible(page);
 });

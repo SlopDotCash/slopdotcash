@@ -1,8 +1,47 @@
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
-import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
+
+test("switching contributor views preserves a pending ranking read and the shared search", async ({
+  page,
+}) => {
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let observed: () => void = () => {};
+  const requested = new Promise<void>((resolve) => {
+    observed = resolve;
+  });
+  let rankingReads = 0;
+  await page.route("**/data/leaderboard.json?**", async (route) => {
+    rankingReads++;
+    observed();
+    await held;
+    await route.continue();
+  });
+  try {
+    await page.goto("/points", { waitUntil: "domcontentloaded" });
+    await requested;
+    const search = page.getByLabel("Find a contributor");
+    await search.fill("profile");
+    await page.getByRole("button", { name: "People", exact: true }).click();
+    await expect(
+      page.getByRole("region", { name: "People", exact: true }),
+    ).toBeVisible();
+    await expect(search).toHaveValue("profile");
+    await page.getByRole("button", { name: "Rankings", exact: true }).click();
+    release();
+    await expect(
+      page.locator(".points-coverage-details > summary"),
+    ).toBeVisible();
+    await expect(search).toHaveValue("profile");
+    expect(rankingReads).toBe(1);
+  } finally {
+    release();
+  }
+});
 
 test(
   "points history is usable, accessible and independent of payments",
@@ -16,9 +55,8 @@ test(
       page.getByRole("columnheader", { name: "Points", exact: true }),
     ).toHaveAttribute("aria-sort", "descending");
     // The period states the snapshot's exact bounds and source coverage.
-    const coverage = page.locator(".points-coverage");
     await page.locator(".points-coverage-details > summary").click();
-    await expect(coverage).toBeVisible();
+    const coverage = page.locator(".points-coverage");
     await expect(coverage).toHaveText(
       /^(This month ranks .+ UTC to .+ UTC\. )?Snapshot window: .+ UTC to .+ UTC\. Source: [\d,]+ merged pull requests and [\d,]+ closed issues across [\d,]+ repositories\.$/u,
     );
@@ -47,8 +85,9 @@ test(
       page.getByRole("button", { name: "Lifetime", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await page.goto("/points?sort=points&period=lifetime");
-    const people = page.getByRole("region", { name: "People", exact: true });
-    await expect(people.getByText(/^[\d,]+ people$/u)).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "People", exact: true }),
+    ).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
     if ((page.viewportSize()?.width ?? 0) <= 390) {
       const scroller = page.getByRole("region", {
@@ -93,7 +132,20 @@ test(
     });
     // Match the repository's 200% text-enlargement fixture without reducing
     // a 320px viewport below the supported reflow width through CSS zoom.
-    await enlargeText(page.locator("body"));
+    await page.evaluate(() => {
+      const typography = [...document.querySelectorAll<HTMLElement>("body *")]
+        .filter((el) => el instanceof HTMLElement)
+        .map((el) => ({
+          el,
+          font: getComputedStyle(el).fontSize,
+          line: getComputedStyle(el).lineHeight,
+        }));
+      for (const { el, font, line } of typography) {
+        el.style.fontSize = `${Number.parseFloat(font) * 2}px`;
+        if (line !== "normal")
+          el.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
+      }
+    });
     expect(
       await page.evaluate(() => {
         const overflow =

@@ -14,6 +14,11 @@ test("verified activity email preference persists and can be withdrawn @registry
     recordVideo: { dir: test.info().outputPath("email-preference-video") },
   });
   const page = await context.newPage();
+  const paymentReads: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/payments/me")
+      paymentReads.push(request.url());
+  });
   // Firefox can render this page without resolving its navigation lifecycle
   // wait. Check the visible page and loaded fonts before starting the flow.
   await page.goto("/how-it-works", { waitUntil: "commit" });
@@ -25,6 +30,10 @@ test("verified activity email preference persists and can be withdrawn @registry
     document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
   }, token);
   await page.goto("/inbox", { waitUntil: "networkidle" });
+  await page
+    .getByRole("link", { name: "Email preferences", exact: true })
+    .click();
+  await expect(page).toHaveURL(/account#notifications$/);
   const preferences = page.getByRole("region", { name: "Email preferences" });
   await expect(preferences).toContainText("applicant@example.com");
   // Restore opt-out before exercising the complete consent workflow.
@@ -89,5 +98,6 @@ test("verified activity email preference persists and can be withdrawn @registry
   await expect(
     preferences.getByRole("button", { name: "Turn on activity email" }),
   ).toBeVisible();
+  expect(paymentReads).toEqual([]);
   await context.close();
 });

@@ -147,13 +147,11 @@ export function ProjectSetupStatusPanel({
         )
       ) : (
         <>
-          <p role="status">{setup.nextAction.message}</p>
-          {setup.activatedRevision !== null ? (
-            <p>
-              The project is live.{" "}
-              <Link href={`/projects/${setup.slug}`}>View project</Link>
-            </p>
-          ) : null}
+          {setup.state !== "ready" ? (
+            <p role="status">{setup.nextAction.message}</p>
+          ) : (
+            <Link href={`/projects/${setup.slug}`}>View project</Link>
+          )}
           <div className="handoff-actions">
             {setup.nextAction.kind === "install_slopbot" &&
             setup.nextAction.href ? (
