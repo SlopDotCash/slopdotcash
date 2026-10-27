@@ -165,6 +165,37 @@ The dev server then reads the project registry, public direct-payment totals,
 and any published snapshot in `/data/` that is not generated locally from
 `https://slop.cash`, read-only. Do not commit the synced registry files.
 
+### Local sign-in
+
+Sign-in works only on a product origin, so the plain dev server links to
+slop.cash. To sign in on localhost with real GitHub and return to localhost, run
+the identity Worker and the API on this machine:
+
+1. Create your own GitHub App (not the production App). Set the callback to
+   `http://localhost:4466/v1/oauth/callback`. Turn webhooks off and request no
+   permissions.
+2. Put its client ID and a new client secret in `.env` as
+   `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`.
+3. In two terminals, run:
+
+```bash
+bun run dev:backend
+bun run dev:local
+```
+
+Open `http://localhost:4466`, not `127.0.0.1`: the origin must match the callback.
+If you use another port, set `SLOP_DEV_ORIGIN` (for example
+`http://localhost:4467`) for the backend and use the same callback and port for
+the dev server.
+
+The backend keeps its data in `.slop-dev/` (ignored by Git; delete it to start
+over). Only sign-in and the API run locally, on an empty database. Project and
+published data still come from slop.cash, read-only. X connections and payment
+networks are not configured. Safari does not accept the session cookie over
+`http://localhost`, so use Chrome, Edge, or Firefox. The backend listens on
+`127.0.0.1` only and is never deployed.
+
+
 ### Local review checks
 
 Install the lockfile before preparing the ledger input:

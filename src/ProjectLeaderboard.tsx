@@ -142,7 +142,7 @@ export function CycleAllocation({
   );
 }
 
-export function RewardValue({
+function RewardValue({
   leader,
   view,
 }: {

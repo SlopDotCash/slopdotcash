@@ -17,6 +17,8 @@ type Env = {
   IDENTITY_POLL_LIMITER: RateLimitBinding;
   GITHUB_APP_CLIENT_ID: string;
   IDENTITY_PUBLIC_ORIGIN?: string;
+  /** "1" only for the local development backend, which serves a local origin over HTTP. */
+  IDENTITY_ALLOW_LOOPBACK?: "1";
   GITHUB_APP_CLIENT_SECRET: string;
   IDENTITY_STATE_KEY: string;
   IDENTITY_ASSERTION_KEY: string;
@@ -159,6 +161,7 @@ export async function applyIdentityRateLimit(
     | "IDENTITY_POLL_LIMITER"
     | "IDENTITY_STATE_KEY"
     | "IDENTITY_PUBLIC_ORIGIN"
+    | "IDENTITY_ALLOW_LOOPBACK"
   >,
   now: () => Date = () => new Date(),
 ): Promise<Response | null> {
@@ -169,6 +172,7 @@ export async function applyIdentityRateLimit(
       identityPublicOrigin(
         env.IDENTITY_PUBLIC_ORIGIN,
         deploymentTier(env.SLOP_ENVIRONMENT),
+        { loopback: env.IDENTITY_ALLOW_LOOPBACK === "1" },
       ) ||
     request.method !== "POST"
   ) {
@@ -237,7 +241,7 @@ async function resolveGithubIdentity(
           client_secret: env.GITHUB_APP_CLIENT_SECRET,
           code,
           code_verifier: pkceVerifier,
-          redirect_uri: `${identityPublicOrigin(env.IDENTITY_PUBLIC_ORIGIN, deploymentTier(env.SLOP_ENVIRONMENT))}/v1/oauth/callback`,
+          redirect_uri: `${identityPublicOrigin(env.IDENTITY_PUBLIC_ORIGIN, deploymentTier(env.SLOP_ENVIRONMENT), { loopback: env.IDENTITY_ALLOW_LOOPBACK === "1" })}/v1/oauth/callback`,
         }),
         signal: AbortSignal.timeout(10_000),
       },
@@ -455,6 +459,7 @@ function dependencies(env: Env) {
     assertionSecret: env.IDENTITY_ASSERTION_KEY,
     githubClientId: env.GITHUB_APP_CLIENT_ID,
     publicOrigin: env.IDENTITY_PUBLIC_ORIGIN,
+    allowLoopback: env.IDENTITY_ALLOW_LOOPBACK === "1",
     now: () => new Date(),
     randomToken,
     resolveGithubIdentity: (code: string, pkceVerifier: string) =>
