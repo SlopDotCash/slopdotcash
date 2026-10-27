@@ -41,6 +41,7 @@ import {
   type PointsMember,
   pointMembers,
 } from "./lib/points";
+import { recentPoints } from "./lib/profile-activity";
 import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
@@ -490,6 +491,9 @@ export function useProfileMembership(login: string, enabled = true) {
   };
 }
 
+/** The profile shows points earned over this many recent days beside the total. */
+const RECENT_POINTS_DAYS = 30;
+
 export function ProfilePoints({
   actorId,
   login,
@@ -544,6 +548,15 @@ export function ProfilePoints({
           ? named[0]
           : undefined
       : undefined;
+  // A known actor with no Points record and no membership has none.
+  const pointsKnown =
+    state.status === "ready" &&
+    (m || identity || recorded || (actorId && joinStatus === "absent"));
+  const pointsUnavailable = pointsKnown
+    ? null
+    : state.status === "loading"
+      ? "Loading…"
+      : "Unavailable";
   if (
     notFoundWhenUnrecorded &&
     state.status === "ready" &&
@@ -589,25 +602,30 @@ export function ProfilePoints({
           </>
         }
         summary={
-          <div>
-            <strong>
-              {state.status === "ready" &&
-              (m ||
-                identity ||
-                recorded ||
-                // A known actor with no Points record and no membership has none.
-                (actorId && joinStatus === "absent"))
-                ? (
+          <>
+            <div>
+              <strong>
+                {pointsUnavailable ??
+                  recentPoints(
+                    m?.awards ?? [],
+                    new Date(),
+                    RECENT_POINTS_DAYS,
+                  ).toLocaleString()}
+              </strong>
+              <span>points · {RECENT_POINTS_DAYS} days</span>
+            </div>
+            <div>
+              <strong>
+                {pointsUnavailable ??
+                  (
                     (m?.total ?? 0) +
                     (identity?.welcome ?? 0) +
                     (identity?.socialPoints ?? 0)
-                  ).toLocaleString()
-                : state.status === "loading"
-                  ? "Loading…"
-                  : "Unavailable"}
-            </strong>
-            <span>total points</span>
-          </div>
+                  ).toLocaleString()}
+              </strong>
+              <span>total points</span>
+            </div>
+          </>
         }
       >
         {children}

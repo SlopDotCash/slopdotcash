@@ -1795,6 +1795,10 @@ small {
     column-gap: 18px;
   }
 
+  .profile-totals div:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
   .profile-totals div {
     padding: 16px 8px 16px 0;
   }
@@ -3222,7 +3226,7 @@ small {
   font-size: 28px;
 }
 
-.profile-page .profile-totals div:first-child strong {
+.profile-page .profile-totals div:nth-child(2) strong {
   color: var(--brand-color-accent);
 }
 
@@ -3357,13 +3361,6 @@ small {
 
 .activity-chart {
   margin: 0 0 24px;
-}
-
-.activity-chart figcaption {
-  margin-bottom: 10px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .activity-bars {

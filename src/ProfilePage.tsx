@@ -21,7 +21,6 @@ import {
   formatPointsFromThirds,
 } from "./Presentation";
 import { useProfiles } from "./Profiles";
-import { RewardValue } from "./ProjectLeaderboard";
 
 /** The categories of the published penalty table (PRD section 7). */
 const PENALTY_CATEGORY_LABELS: Record<string, string> = {
@@ -183,7 +182,6 @@ export function ProfilePage({
                           <strong>{view.project.name}</strong>
                           <small title="Accepted-work points">
                             {formatPointsFromThirds(leader.scoreThirds)} points
-                            · <RewardValue leader={leader} view={view} />
                           </small>
                         </span>
                         <span className="project-bar-track" aria-hidden="true">

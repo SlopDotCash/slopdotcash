@@ -143,6 +143,7 @@ export function ProfileActivity({
         />
       ) : null}
       {badges}
+      {awards ? <ActivityChart awards={awards} /> : null}
       <div className="profile-totals">
         {summary}
         <div>
@@ -162,7 +163,6 @@ export function ProfileActivity({
           </button>
         </p>
       ) : null}
-      {awards ? <ActivityChart awards={awards} /> : null}
       {state.status === "error" ? (
         <p role="status">
           PR counts are unavailable.{" "}
@@ -252,12 +252,11 @@ function ActivityChart({ awards }: { awards: PointsMember["awards"] }) {
   const days = dailyPoints(awards, new Date(), ACTIVITY_DAYS);
   const max = Math.max(...days.map((entry) => entry.points));
   if (max <= 0) return null;
-  const total = days.reduce((sum, entry) => sum + entry.points, 0);
   return (
-    <figure className="activity-chart">
-      <figcaption>
-        {total.toLocaleString()} points in the last {ACTIVITY_DAYS} days
-      </figcaption>
+    <figure
+      className="activity-chart"
+      aria-label={`Points per day, last ${ACTIVITY_DAYS} days`}
+    >
       <div className="activity-bars" aria-hidden="true">
         {days.map((entry) => (
           <span
