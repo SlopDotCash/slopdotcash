@@ -84,12 +84,14 @@ export async function prepareE2eFixture() {
     symlinkSync(
       join(repositoryRoot, "node_modules"),
       join(workspace, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
     );
     if (process.env.SLOP_E2E_SOLANA_VAULT === "1") {
       for (const directory of ["node_modules", "target"]) {
         symlinkSync(
           join(repositoryRoot, "contracts", "solana", directory),
           join(workspace, "contracts", "solana", directory),
+          process.platform === "win32" ? "junction" : "dir",
         );
       }
     }
