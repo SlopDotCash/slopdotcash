@@ -1,0 +1,135 @@
+import { useEffect, useState } from "react";
+import { errorMessage } from "./lib/errors";
+import { type ProjectSessionState, projectApiRequest } from "./lib/project-api";
+import type { ProjectDefinition } from "./lib/projects.mjs";
+import { OwnerBountyVault } from "./OwnerBountyVault";
+import { SecurityProgramEditor } from "./SecurityProgramEditor";
+
+type Revision = { revision: number; project: ProjectDefinition };
+
+/** Existing owner controls, loaded only after opening the Security workspace. */
+export function ProjectSecuritySettings({
+  project,
+  onProjectChange,
+  session,
+}: {
+  project: ProjectDefinition;
+  onProjectChange: (project: ProjectDefinition) => void;
+  session: ProjectSessionState;
+}) {
+  const [opened, setOpened] = useState(
+    () => window.location.hash === "#security-settings",
+  );
+  const [open, setOpen] = useState(opened);
+  if (session.status !== "signed-in") return null;
+  return (
+    <details
+      className="proposal-advanced"
+      id="security-settings"
+      onToggle={(event) => {
+        setOpen(event.currentTarget.open);
+        if (event.currentTarget.open) setOpened(true);
+      }}
+      open={open}
+    >
+      <summary>Manage security program and private bounty funds</summary>
+      {opened ? (
+        <SecuritySettingsEditor
+          actor={session.session}
+          key={`${project.id}:${session.session.githubId}`}
+          onProjectChange={onProjectChange}
+          project={project}
+        />
+      ) : null}
+    </details>
+  );
+}
+
+function SecuritySettingsEditor({
+  actor,
+  project,
+  onProjectChange,
+}: {
+  actor: { githubId: string; githubLogin: string };
+  project: ProjectDefinition;
+  onProjectChange: (project: ProjectDefinition) => void;
+}) {
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | { status: "error"; message: string }
+    | { status: "ready"; value: Revision }
+  >({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const [published, setPublished] = useState<number | null>(null);
+  useEffect(() => {
+    let active = true;
+    setState({ status: "loading" });
+    projectApiRequest<Revision>(
+      "GET",
+      `projects/${encodeURIComponent(project.id)}?reload=${attempt}`,
+    ).then(
+      (value) => {
+        if (!active) return;
+        setState({ status: "ready", value });
+        onProjectChange(value.project);
+      },
+      (error: unknown) => {
+        if (active)
+          setState({
+            status: "error",
+            message: errorMessage(error, "Cannot read the current revision."),
+          });
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [project.id, attempt, onProjectChange]);
+  if (state.status === "loading")
+    return <p role="status">Loading current security settings…</p>;
+  if (state.status === "error")
+    return (
+      <div className="form-error" role="alert">
+        <p>{state.message}</p>
+        <button
+          className="button secondary-button"
+          onClick={() => setAttempt((value) => value + 1)}
+          type="button"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  const current = state.value;
+  const update = (value: Revision) => {
+    setState({ status: "ready", value });
+    onProjectChange(value.project);
+  };
+  return (
+    <div className="security-owner-settings">
+      <SecurityProgramEditor
+        actor={actor}
+        key={`${current.project.id}:${current.revision}`}
+        onPublished={(result) => {
+          update({
+            project: result.project.manifest,
+            revision: result.project.revision,
+          });
+          setPublished(result.project.revision);
+        }}
+        project={current.project}
+        revision={current.revision}
+      />
+      {published !== null ? (
+        <p role="status">Published revision {published}.</p>
+      ) : null}
+      {current.project.securityBounty ? (
+        <OwnerBountyVault
+          key={current.project.id}
+          onRegistered={update}
+          project={current.project}
+        />
+      ) : null}
+    </div>
+  );
+}

@@ -25,6 +25,11 @@ const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
 
+async function openGoal(page: Page) {
+  if (!(await page.getByLabel("Goal", { exact: true }).isVisible()))
+    await page.getByText("Project goal", { exact: true }).click();
+}
+
 const LICENSE_TEXT = "MIT License\n\nCopyright (c) Example Research\n";
 const COMMIT = "c".repeat(40);
 
@@ -285,6 +290,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   await page
     .getByLabel("Short description")
     .fill("Reproducible protein-folding benchmarks.");
+  await openGoal(page);
   await page.getByLabel("Goal").fill("Make protein research reproducible.");
   await page
     .getByLabel("Acceptance criteria")
@@ -301,10 +307,10 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(page.getByLabel("Copyright model")).toHaveValue("unknown");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
   // Funding is optional; asset and vault details follow the choice.
-  await expect(page.getByLabel("No monthly funding")).toBeChecked();
+  await expect(page.getByLabel("Points only")).toBeChecked();
   await expect(page.getByLabel("Network")).toHaveCount(0);
   await expect(page.getByLabel(/review budget/iu)).toHaveCount(0);
-  await page.getByLabel("Pay contributors a monthly amount").check();
+  await page.getByLabel("Monthly rewards").check();
   await page.getByLabel("Network").selectOption("solana");
   await expect(page.getByLabel(/USD$/u)).toHaveCount(0);
   await page.getByLabel("Monthly amount (USDC)").fill("2500");
@@ -370,9 +376,16 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(
     page.getByRole("heading", { name: "Project created" }),
   ).toBeVisible();
+  await expect(page.getByText("Referred by @example-referrer.")).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Setup steps" }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("article", { name: "Listing preview" }),
-  ).toContainText("@example-referrer");
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Project created" }),
+  ).toBeFocused();
   await expect(
     page.getByRole("heading", {
       name: "Setup status: Waiting for the security scan",
@@ -460,9 +473,8 @@ test("drafts a project through the setup steps and creates it without an admin",
   });
   expect(posted?.reward).not.toHaveProperty("reviewBudget");
 
-  // Starting over must remove the completed submission without a reload.
-  await page.getByRole("button", { name: "Start over" }).click();
-  await page.getByRole("button", { name: "Clear draft" }).click();
+  // A completed setup offers the next action instead of the old wizard.
+  await page.getByRole("button", { name: "Add another project" }).click();
   await expect(
     page.getByRole("heading", { name: "Project created" }),
   ).toHaveCount(0);
@@ -478,6 +490,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   await page
     .getByLabel("Short description")
     .fill("Reproducible protein-folding benchmarks.");
+  await openGoal(page);
   await page.getByLabel("Goal").fill("Make protein research reproducible.");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
   await page.getByRole("button", { name: "Next: Review" }).click();
@@ -508,7 +521,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   // to be a listing. Clearing it needs a second confirmation.
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "4. Review", exact: true }),
+    page.getByRole("heading", { name: "Review", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("navigation", { name: "Setup steps" })
@@ -642,12 +655,13 @@ test("Robinhood Chain drafts a USDG escrow manifest", async ({
   await page
     .getByLabel("Short description")
     .fill("Reproducible protein-folding benchmarks.");
+  await openGoal(page);
   await page.getByLabel("Goal").fill("Make protein research reproducible.");
   await page
     .getByLabel("Acceptance criteria")
     .fill("Accepted pull requests with verified tests.");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
-  await page.getByLabel("Pay contributors a monthly amount").check();
+  await page.getByLabel("Monthly rewards").check();
   const network = page.getByLabel("Network");
   await network.selectOption("robinhood");
   await page.getByLabel("Monthly amount (USDG)").fill("1000");
@@ -789,6 +803,9 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
 
   signedIn = true;
   await page.reload();
+  await page
+    .getByText("Choose from your GitHub repositories", { exact: true })
+    .click();
   const picker = page.getByLabel("Your repositories");
   await expect(picker.locator("option")).toHaveText([
     "Choose a repository",
@@ -810,7 +827,7 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
   await expect(page.getByLabel("Goal")).toHaveValue(description);
   // Ownership terms stay Unknown and folded away unless the maintainer opens them.
   const terms = page.locator("details", {
-    has: page.getByText("Ownership and contribution terms (optional)"),
+    has: page.getByText("Additional legal terms (optional)"),
   });
   await expect(terms).not.toHaveAttribute("open", "");
   await expect(page.getByLabel("Copyright model")).toHaveValue("unknown");
@@ -824,7 +841,7 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
   await page.getByRole("button", { name: "Next: Contribution rules" }).click();
   await expect(page.getByLabel("Project name")).toHaveValue("Open Protein");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
-  await expect(page.getByLabel("No monthly funding")).toBeChecked();
+  await expect(page.getByLabel("Points only")).toBeChecked();
   await expectAccessible(page);
 });
 
@@ -901,6 +918,7 @@ for (const [name, expectedId] of [
     await page
       .getByLabel("Short description")
       .fill("Reproducible protein-folding benchmarks.");
+    await openGoal(page);
     await page.getByLabel("Goal").fill("Make protein research reproducible.");
     await page.getByRole("button", { name: "Next: Rewards" }).click();
     await page.getByRole("button", { name: "Next: Review" }).click();

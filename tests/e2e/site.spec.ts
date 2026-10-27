@@ -98,8 +98,13 @@ test("project setup shares one sign-in read with its owner inventory", async ({
     route.fulfill({ json: { repositories: [] } }),
   );
   await page.goto("/projects/new", { waitUntil: "networkidle" });
-  await page.getByText("Your projects", { exact: true }).click();
-  await expect(page.getByText("You have no projects yet.")).toBeVisible();
+  await expect(page.getByText("Your projects", { exact: true })).toHaveCount(0);
+  await page
+    .getByText("Choose from your GitHub repositories", { exact: true })
+    .click();
+  await expect(
+    page.getByText("@example owns no public repositories. Enter one below."),
+  ).toBeVisible();
   await page.screenshot({
     path: test.info().outputPath("project-setup.png"),
     fullPage: true,
@@ -725,6 +730,13 @@ test("renders contributor and cycle records from validated public data", {
         exact: true,
       }),
     ).toBeVisible();
+    const history = page.locator("details.cycle-history");
+    if (await history.count()) {
+      await expect(history).not.toHaveAttribute("open", "");
+      await history.locator(":scope > summary").focus();
+      await page.keyboard.press("Enter");
+      await expect(history).toHaveAttribute("open", "");
+    }
     await expect(
       page.getByRole("heading", { name: "Contributors", exact: true }),
     ).toBeVisible();
@@ -1721,19 +1733,20 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   // The page's records must finish loading before keyboard navigation
   // leaves it, or the move cancels the read.
   await page.reload({ waitUntil: "networkidle" });
-  await expect(page.getByText("$4,900", { exact: true })).toBeVisible();
+  await expect(page.getByText("$4,900", { exact: true })).not.toBeVisible();
   const audience = page
     .locator("summary")
     .filter({ hasText: "Audience report ·" });
   await audience.focus();
   await page.keyboard.press("Enter");
   await expect(audience.locator("..")).toHaveAttribute("open", "");
-  const rules = page.getByText("Funding rules", {
+  const rules = page.getByText("Funding rules and fees", {
     exact: true,
   });
   await rules.focus();
   await page.keyboard.press("Enter");
   await expect(rules.locator("..")).toHaveAttribute("open", "");
+  await expect(page.getByText("$4,900", { exact: true })).toBeVisible();
   const pools = page.getByRole("list", {
     name: "Project funding pools",
     exact: true,
