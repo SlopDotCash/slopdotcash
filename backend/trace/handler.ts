@@ -40,7 +40,6 @@ import {
   type AuditInput,
   type AuthenticatedActor,
   MAX_TRACE_BYTES,
-  OPERATOR_GRANT_TTL_SECONDS,
   type PrivateIntakeStatus,
   type TracePersistence,
   type TraceUploadIntent,
@@ -69,7 +68,7 @@ export type TraceApiDependencies = {
   persistence: TracePersistence;
   authSecret: string;
   operatorGithubIds: ReadonlySet<string>;
-  /** Existing site session; used only for the explicit same-origin operator routes. */
+  /** Existing site session; used only for same-origin operator binding recovery. */
   operatorSession?: (request: Request) => Promise<GithubActor | null>;
   /** Named observation-only service binding, never the default signing entrypoint. */
   bindingRecovery?: { fetch(request: Request): Promise<Response> };
@@ -1152,59 +1151,6 @@ async function appendEvent(
   });
 }
 
-async function createReadGrant(
-  request: Request,
-  actor: AuthenticatedActor,
-  deps: TraceApiDependencies,
-  sha256: string,
-): Promise<Response> {
-  assertOperator(actor);
-  if (!validSha256(sha256)) fail(400, "invalid_digest", "Invalid trace digest");
-  const object = await deps.persistence.getTraceObject(sha256);
-  if (object === null) fail(404, "not_found", "Trace not found");
-  const body = await readJsonObject(request);
-  const reason = body.reason;
-  if (typeof reason !== "string" || reason.length < 8 || reason.length > 500) {
-    fail(
-      400,
-      "invalid_request",
-      "An access reason of 8-500 characters is required",
-    );
-  }
-  const requestId = deps.randomId();
-  const grant = `${deps.randomId()}.${deps.randomId()}`;
-  const tokenHash = await sha256Hex(new TextEncoder().encode(grant));
-  const createdAt = deps.now();
-  const expiresAt = new Date(
-    createdAt.getTime() + OPERATOR_GRANT_TTL_SECONDS * 1000,
-  );
-  await deps.persistence.createReadGrant(
-    {
-      tokenHash,
-      traceSha256: sha256,
-      operatorGithubId: actor.githubId,
-      reason,
-      requestId,
-      createdAt: createdAt.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-    },
-    {
-      id: deps.randomId(),
-      actorGithubId: actor.githubId,
-      action: "trace.read_grant.created",
-      target: `sha256:${sha256}`,
-      requestId,
-      createdAt: createdAt.toISOString(),
-      details: { reason, expiresAt: expiresAt.toISOString() },
-    },
-  );
-  return json(201, {
-    grant,
-    expiresAt: expiresAt.toISOString(),
-    traceObjectId: `sha256:${sha256}`,
-  });
-}
-
 async function reconcileWalletBinding(
   request: Request,
   actor: AuthenticatedActor,
@@ -1283,59 +1229,6 @@ async function reconcileWalletBinding(
   return json(200, result);
 }
 
-async function readTrace(
-  request: Request,
-  actor: AuthenticatedActor,
-  deps: TraceApiDependencies,
-  sha256: string,
-): Promise<Response> {
-  assertOperator(actor);
-  if (!validSha256(sha256)) fail(400, "invalid_digest", "Invalid trace digest");
-  const grant = request.headers.get("x-trace-read-grant");
-  if (grant === null || grant.length < 20 || grant.length > 300) {
-    fail(403, "read_grant_required", "A one-time trace read grant is required");
-  }
-  const tokenHash = await sha256Hex(new TextEncoder().encode(grant));
-  const object = await deps.persistence.getTraceObject(sha256);
-  if (object === null) fail(404, "not_found", "Trace not found");
-  const bytes = await deps.persistence.readTraceBytes(object);
-  if (bytes === null)
-    fail(503, "object_unavailable", "Trace object is unavailable");
-  const requestId = deps.randomId();
-  const consumedAt = deps.now().toISOString();
-  const consumed = await deps.persistence.consumeReadGrant(
-    tokenHash,
-    sha256,
-    actor.githubId,
-    consumedAt,
-    {
-      id: deps.randomId(),
-      actorGithubId: actor.githubId,
-      action: "trace.read_grant.consumed",
-      target: `sha256:${sha256}`,
-      requestId,
-      createdAt: consumedAt,
-      details: { sizeBytes: object.sizeBytes },
-    },
-  );
-  if (!consumed)
-    fail(403, "invalid_read_grant", "Trace read grant is invalid or expired");
-  const responseBody =
-    bytes instanceof Uint8Array ? bytes.slice().buffer : bytes;
-  return new Response(responseBody, {
-    status: 200,
-    headers: {
-      "cache-control": "no-store",
-      "content-disposition": `attachment; filename="trace-${sha256}.txt"`,
-      "content-length": String(object.sizeBytes),
-      "content-security-policy": "default-src 'none'; sandbox",
-      "content-type": object.contentType,
-      "x-content-type-options": "nosniff",
-      "x-trace-sha256": sha256,
-    },
-  });
-}
-
 function matchAuthenticatedRoute(
   request: Request,
   parts: string[],
@@ -1409,23 +1302,6 @@ function matchAuthenticatedRoute(
   }
   if (
     request.method === "POST" &&
-    parts.length === 4 &&
-    parts[0] === "operator" &&
-    parts[1] === "traces" &&
-    parts[3] === "grant"
-  ) {
-    return (actor) => createReadGrant(request, actor, deps, parts[2]);
-  }
-  if (
-    request.method === "GET" &&
-    parts.length === 3 &&
-    parts[0] === "operator" &&
-    parts[1] === "traces"
-  ) {
-    return (actor) => readTrace(request, actor, deps, parts[2]);
-  }
-  if (
-    request.method === "POST" &&
     parts.length === 2 &&
     parts[0] === "operator" &&
     parts[1] === "wallet-claims"
@@ -1433,20 +1309,6 @@ function matchAuthenticatedRoute(
     return (actor) => createFallbackWalletClaim(request, actor, deps);
   }
   return null;
-}
-
-function isOperatorTraceRoute(
-  request: Request,
-  parts: readonly string[],
-): boolean {
-  return (
-    parts[0] === "operator" &&
-    parts[1] === "traces" &&
-    ((request.method === "POST" &&
-      parts.length === 4 &&
-      parts[3] === "grant") ||
-      (request.method === "GET" && parts.length === 3))
-  );
 }
 
 function isBindingRecoveryRoute(
@@ -1558,8 +1420,7 @@ async function handleTraceApiInternal(
     return json(400, { error: "https_required" });
   }
   const operatorSessionRoute =
-    (isOperatorTraceRoute(request, parts) ||
-      isBindingRecoveryRoute(request, parts)) &&
+    isBindingRecoveryRoute(request, parts) &&
     request.headers.get("authorization") === null &&
     (deploymentOrigins(deps.tier).browserOrigins.has(requestUrl.origin) ||
       isLocal);
@@ -1639,15 +1500,7 @@ async function handleTraceApiInternal(
       fail(403, "forbidden", "Same-origin operator session is required");
     let actor: AuthenticatedActor | null;
     if (operatorSessionRoute) {
-      const origin = request.headers.get("origin");
-      // Browsers omit Origin on same-origin GET. Fetch Metadata supplies the
-      // browser-controlled origin relation for that exact read route only.
-      const sameOrigin =
-        origin === requestUrl.origin ||
-        (origin === null &&
-          request.method === "GET" &&
-          request.headers.get("sec-fetch-site") === "same-origin");
-      if (!sameOrigin)
+      if (request.headers.get("origin") !== requestUrl.origin)
         fail(403, "origin_not_allowed", "Same-origin access is required");
       const member = await deps.operatorSession?.(request);
       if (!member) fail(401, "unauthorized", "Authentication failed");
