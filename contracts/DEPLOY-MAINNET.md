@@ -470,8 +470,9 @@ tree. It calls the container build command directly and does not run the later
 host IDL extraction. Use a successful run at the exact reviewed commit; a PR
 artifact does not prove the final main build or authorize an upgrade. Download
 and verify its checksum before the isolated qualification and the steps below.
-The existing validator job remains separate lifecycle evidence. Neither job
-uses a signing key, performs a public deployment or proves mainnet acceptance.
+The validator job also compares its lifecycle-tested program byte for byte
+with that retained artifact and refuses a difference. Neither job uses a
+production signing key, performs a public deployment or proves mainnet acceptance.
 
 ### 3. Record the current deployed program
 

@@ -214,6 +214,7 @@ jobs:
           retention-days: 30
 
   solana:
+    needs: solana-verifiable
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -244,6 +245,16 @@ jobs:
 
       - run: bash contracts/solana/scripts/bootstrap-linux.sh
       - run: bun run test:contracts:solana
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: solana-verifiable-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/solana-verifiable
+      - name: Verify the lifecycle-tested program matches the retained artifact
+        run: |
+          set -euo pipefail
+          (cd "$RUNNER_TEMP/solana-verifiable" && sha256sum --check SHA256SUMS)
+          cmp contracts/solana/target/deploy/slop_escrow.so \
+            "$RUNNER_TEMP/solana-verifiable/slop_escrow.so"
       - name: Retain safe validator failure evidence
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
