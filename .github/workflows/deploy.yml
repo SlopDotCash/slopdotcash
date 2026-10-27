@@ -416,6 +416,13 @@ jobs:
         env:
           BROWSER_SHARD: ${{ matrix.shard }}
         run: node scripts/run-e2e.mjs --shard="$BROWSER_SHARD"
+      - name: Verify automatic private intake
+        if: matrix.lane == 'registry-1'
+        env:
+          SLOP_E2E_PRIVATE_INTAKE: "1"
+        # This fixture seeds D1 through a second local Wrangler process.
+        # Keep its browser projects sequentially to avoid competing SQLite writers.
+        run: node scripts/run-e2e.mjs --grep '@private-intake' --workers=1
       - name: Upload browser diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -1013,7 +1020,6 @@ jobs:
           // private analysis secrets (PRD sections 6, 8 and 11). They stay inert
           // until their feature is enabled; any other name still fails closed.
           const optional = [
-            "ANTHROPIC_SECURITY_API_KEY",
             "PAYMENT_RPC_URLS",
             "GITHUB_INTAKE_APP_CLIENT_ID",
             "GITHUB_INTAKE_APP_CLIENT_SECRET",
