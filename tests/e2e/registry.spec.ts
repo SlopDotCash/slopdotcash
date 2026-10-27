@@ -587,6 +587,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     automaticClosure: true,
   });
   await returningOwner.reload({ waitUntil: "networkidle" });
+  await openSettings(returningOwner, "Contribution rules");
   await expect(consent).not.toBeChecked();
   await expectAccessible(returningOwner);
   await returningOwner.goto("/projects/new", { waitUntil: "networkidle" });
@@ -836,11 +837,11 @@ test("the applicant's inbox lists each decision and revision once and keeps the 
 
   await revised.getByRole("button", { name: /^Mark as read/u }).click();
   await expect(page.getByRole("status")).toHaveText("Marked as read.");
-  await expect(revised.locator(".inbox-state")).toHaveText("Read");
+  await expect(revised.getByText("Read", { exact: true })).toHaveText("Read");
   await expect(revised.getByRole("button")).toHaveCount(0);
   // The read state is stored, not kept only in the page.
   await page.reload();
-  await expect(revised.locator(".inbox-state")).toHaveText("Read");
+  await expect(revised.getByText("Read", { exact: true })).toHaveText("Read");
 
   // The request client sends no Secure cookie over local http.
   const cookie = `__Host-slop_points=${APPLICANT_TOKEN}`;

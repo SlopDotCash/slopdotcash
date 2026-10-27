@@ -3,6 +3,46 @@ import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
 import { expect, expectAccessible, test } from "./fixtures";
 
+test("switching contributor views preserves a pending ranking read and the shared search", async ({
+  page,
+}) => {
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let observed: () => void = () => {};
+  const requested = new Promise<void>((resolve) => {
+    observed = resolve;
+  });
+  let rankingReads = 0;
+  await page.route("**/data/leaderboard.json?**", async (route) => {
+    rankingReads++;
+    observed();
+    await held;
+    await route.continue();
+  });
+  try {
+    await page.goto("/points", { waitUntil: "domcontentloaded" });
+    await requested;
+    const search = page.getByLabel("Find a contributor");
+    await search.fill("profile");
+    await page.getByRole("button", { name: "People", exact: true }).click();
+    await expect(
+      page.getByRole("region", { name: "People", exact: true }),
+    ).toBeVisible();
+    await expect(search).toHaveValue("profile");
+    await page.getByRole("button", { name: "Rankings", exact: true }).click();
+    release();
+    await expect(
+      page.getByText("Period and source coverage", { exact: true }),
+    ).toBeVisible();
+    await expect(search).toHaveValue("profile");
+    expect(rankingReads).toBe(1);
+  } finally {
+    release();
+  }
+});
+
 test(
   "points history is usable, accessible and independent of payments",
   { tag: ["@pages"] },

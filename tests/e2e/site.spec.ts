@@ -5,7 +5,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { APIRequestContext } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { communityProjects } from "../../src/lib/home-projects";
@@ -23,6 +23,17 @@ import { expect, expectAccessible, test } from "./fixtures";
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
+
+async function openOwnerSettings(page: Page, label: string) {
+  const summary = page
+    .getByText(label, { exact: true })
+    .locator("xpath=self::summary");
+  if (
+    (await summary.locator("xpath=parent::details").getAttribute("open")) ===
+    null
+  )
+    await summary.click();
+}
 
 // Preview serves frozen data; registry.spec.ts exercises these routes on D1.
 test.beforeEach(async ({ page }) => {
@@ -325,6 +336,7 @@ test("token amounts keep asset precision when publishing an unrelated project ed
   expect(published?.manifest.reward.monthlyCapMinor).toBe("1000000000000000");
   expect(published?.monthlyAmount).toBeUndefined();
   await expect(page.getByLabel("Monthly amount (TEST)")).toHaveValue("0.001");
+  await openOwnerSettings(page, "Monthly rewards");
   await page.getByLabel("Monthly amount (TEST)").fill("0.0000000000000000001");
   await page
     .getByRole("button", { name: "Publish changes", exact: true })
@@ -646,17 +658,20 @@ test("makes the public project draft boundary unmistakable", async ({
   // The form must finish loading before it is edited.
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(
-    page.getByRole("link", { name: "Vault funding" }),
+    page
+      .getByRole("navigation", { name: "Project navigation" })
+      .getByRole("link", { name: "Funds & awards" }),
   ).toHaveAttribute("href", "/projects/eliza/funding");
   await expect(page.getByLabel("Draft total, USDC")).toHaveCount(0);
   await expect(
     page.getByRole("link", { name: "Sign in to publish changes" }),
   ).toHaveAttribute("href", /\/login\?next=%2Fprojects%2Feliza%2Fmanage$/u);
   await page.getByLabel("Short description").fill("Eliza-only draft");
+  await openOwnerSettings(page, "Public revision note (optional)");
   await page
     .getByLabel("Revision note")
     .fill("Clarify the project focus for contributors.");
-  const changes = page.getByRole("region", { name: "Changes" });
+  const changes = page.getByRole("region", { name: "Review changes" });
   await expect(changes).toContainText("Eliza-only draft");
   await expect(changes).toContainText(
     PROJECTS.find((project) => project.id === "eliza")?.headline ?? "",
@@ -773,16 +788,18 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   );
   const scope =
     "Fix reproducible defects and provide the affected workflow evidence.";
+  await openOwnerSettings(page, "Contribution rules");
   await page.getByLabel("Acceptance criteria").fill(scope);
+  await openOwnerSettings(page, "Public revision note (optional)");
   await page
     .getByLabel("Revision note")
     .fill("Clarify acceptance evidence for maintainers.");
-  await expect(page.getByRole("region", { name: "Changes" })).toContainText(
-    scope,
-  );
-  await expect(page.getByRole("region", { name: "Changes" })).not.toContainText(
-    "No changes yet",
-  );
+  await expect(
+    page.getByRole("region", { name: "Review changes" }),
+  ).toContainText(scope);
+  await expect(
+    page.getByRole("region", { name: "Review changes" }),
+  ).not.toContainText("No changes yet");
   revision = 2;
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toContainText(
@@ -793,7 +810,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   ).toBeDisabled();
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(scope);
   await page.getByRole("button", { name: "Use this draft" }).click();
-  const review = page.getByRole("region", { name: "Changes" });
+  const review = page.getByRole("region", { name: "Review changes" });
   const proposed = review.getByText(scope, { exact: true });
   await review.scrollIntoViewIfNeeded();
   await page.screenshot({
@@ -829,9 +846,9 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await review.screenshot({
     path: test.info().outputPath("criteria-review-200-percent-text.png"),
   });
-  await expect(page.getByRole("region", { name: "Changes" })).toContainText(
-    "Needs a new security scan: Contribution rules.",
-  );
+  await expect(
+    page.getByRole("region", { name: "Review changes" }),
+  ).toContainText("Needs a new security scan: Contribution rules.");
   await page.getByRole("button", { name: "Publish changes" }).click();
   await expect(page.getByText("Published revision 3.")).toBeVisible();
   await expect(
@@ -847,9 +864,9 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
     project.contribution?.approvedScope ?? "",
   );
-  await expect(page.getByRole("region", { name: "Changes" })).toContainText(
-    "No changes yet",
-  );
+  await expect(
+    page.getByRole("region", { name: "Review changes" }),
+  ).toHaveCount(0);
   // PRD section 8: an exempt project publishes skill changes without a new
   // scan, so the change list must not say that it needs one.
   Object.assign(setup.checks.scan, {
@@ -859,8 +876,9 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   });
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByText("Exempt", { exact: true })).toBeVisible();
+  await openOwnerSettings(page, "Contribution rules");
   await page.getByLabel("Acceptance criteria").fill(scope);
-  const exemptChanges = page.getByRole("region", { name: "Changes" });
+  const exemptChanges = page.getByRole("region", { name: "Review changes" });
   await expect(exemptChanges).toContainText(
     "Publishes now: Contribution rules.",
   );

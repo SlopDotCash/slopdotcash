@@ -1817,6 +1817,9 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await page.goto(`${origin}/projects/${id}/manage`, {
       waitUntil: "networkidle",
     });
+    await page
+      .getByText("Security program and private bounty funds", { exact: true })
+      .click();
     const setup = page.getByRole("region", {
       name: "Set up bounty vault",
       exact: true,
@@ -1842,6 +1845,9 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await setup.getByRole("button", { name: "Create vault in wallet" }).click();
     await expect.poll(() => sends.length).toBe(1);
     await page.reload({ waitUntil: "networkidle" });
+    await page
+      .getByText("Security program and private bounty funds", { exact: true })
+      .click();
     await rpc("anvil_mine", ["0x40"]);
     await setup
       .getByRole("button", { name: "Check vault registration" })
@@ -1972,6 +1978,9 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await page.goto(`${origin}/projects/${id}/manage`, {
       waitUntil: "networkidle",
     });
+    await page
+      .getByText("Security program and private bounty funds", { exact: true })
+      .click();
     await expect(
       page.getByRole("region", { name: "Bounty funds", exact: true }),
     ).toContainText("Available for new awards: 10 USDC");

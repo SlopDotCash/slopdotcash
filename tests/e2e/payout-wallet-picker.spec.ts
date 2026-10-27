@@ -220,25 +220,19 @@ test("modal routes EVM to MetaMask and Solana to Backpack despite Phantom global
     ),
   ).toEqual([]);
   const evm = await openPicker(page, "EVM");
-  await expect(
-    evm.getByRole("button", { name: "Backpack Detected" }),
-  ).toHaveCount(0);
+  await expect(evm.getByRole("button", { name: "Backpack" })).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("wallet-modal.png"),
     fullPage: true,
   });
-  await evm
-    .getByRole("button", { name: "MetaMask Detected", exact: true })
-    .click();
+  await evm.getByRole("button", { name: "MetaMask", exact: true }).click();
   await expect(evm).not.toBeVisible();
   await expect(
     page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
   ).toBeVisible();
   const solana = await openPicker(page, "Solana");
-  await solana
-    .getByRole("button", { name: "Backpack Detected", exact: true })
-    .click();
+  await solana.getByRole("button", { name: "Backpack", exact: true }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Solana wallet confirmed" }),
   ).toBeVisible();
@@ -302,9 +296,7 @@ test("wallet rejection stops registration and permits reopening the modal", asyn
   await providers(page, true);
   await page.goto("/account#wallets");
   const dialog = await openPicker(page, "EVM");
-  await dialog
-    .getByRole("button", { name: "MetaMask Detected", exact: true })
-    .click();
+  await dialog.getByRole("button", { name: "MetaMask", exact: true }).click();
   await expect(page.getByRole("alert")).toBeVisible();
   expect(writes).toEqual([]);
   await openPicker(page, "EVM");
@@ -318,7 +310,7 @@ test("repeated announcements do not duplicate options and removed Solana wallet 
   await page.goto("/account#wallets");
   const dialog = await openPicker(page, "Solana");
   await expect(
-    dialog.getByRole("button", { name: "Backpack Detected", exact: true }),
+    dialog.getByRole("button", { name: "Backpack", exact: true }),
   ).toBeVisible();
   await page.evaluate(() => {
     const testWindow = window as unknown as {
@@ -329,15 +321,15 @@ test("repeated announcements do not duplicate options and removed Solana wallet 
     testWindow.removeBackpack();
   });
   await expect(
-    dialog.getByRole("button", { name: "Backpack Detected", exact: true }),
+    dialog.getByRole("button", { name: "Backpack", exact: true }),
   ).toHaveCount(0);
   await dialog.getByRole("button", { name: "Close wallet picker" }).click();
   const base = await openPicker(page, "EVM");
   await expect(
-    base.getByRole("button", { name: "MetaMask Detected", exact: true }),
+    base.getByRole("button", { name: "MetaMask", exact: true }),
   ).toHaveCount(1);
   await expect(
-    base.getByRole("button", { name: "Phantom Detected", exact: true }),
+    base.getByRole("button", { name: "Phantom", exact: true }),
   ).toHaveCount(1);
 });
 
@@ -362,7 +354,7 @@ test("no wallets offers official install links in either network modal", async (
       dialog.getByRole("link", { name: "Phantom Install", exact: false }),
     ).toHaveAttribute("href", "https://phantom.com/download");
     await expect(
-      dialog.getByRole("button", { name: "Detected", exact: false }),
+      dialog.locator(".wallet-picker-list").getByRole("button"),
     ).toHaveCount(0);
     await dialog.getByRole("button", { name: "Close wallet picker" }).click();
   }
@@ -387,9 +379,7 @@ test("legacy wallet browser remains connectable through the modal", async ({
   );
   await page.goto("/account#wallets");
   const dialog = await openPicker(page, "EVM");
-  await dialog
-    .getByRole("button", { name: "MetaMask Detected", exact: true })
-    .click();
+  await dialog.getByRole("button", { name: "MetaMask", exact: true }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
   ).toBeVisible();
@@ -403,24 +393,24 @@ test("conflicting EIP-6963 UUID removes both providers without wallet requests",
   await page.goto("/account#wallets");
   const dialog = await openPicker(page, "EVM");
   await expect(
-    dialog.getByRole("button", { name: "MetaMask Detected", exact: true }),
+    dialog.getByRole("button", { name: "MetaMask", exact: true }),
   ).toHaveCount(1);
   await page.evaluate(() =>
     (window as unknown as { announceImpostor(): void }).announceImpostor(),
   );
   await expect(
-    dialog.getByRole("button", { name: "MetaMask Detected", exact: true }),
+    dialog.getByRole("button", { name: "MetaMask", exact: true }),
   ).toHaveCount(0);
   // Phantom keeps its own valid UUID and stays available.
   await expect(
-    dialog.getByRole("button", { name: "Phantom Detected", exact: true }),
+    dialog.getByRole("button", { name: "Phantom", exact: true }),
   ).toHaveCount(1);
   // A later genuine reannouncement cannot restore the blocked UUID.
   await page.evaluate(() =>
     (window as unknown as { announceWallets(): void }).announceWallets(),
   );
   await expect(
-    dialog.getByRole("button", { name: "MetaMask Detected", exact: true }),
+    dialog.getByRole("button", { name: "MetaMask", exact: true }),
   ).toHaveCount(0);
   expect(writes).toEqual([]);
   expect(
@@ -522,24 +512,20 @@ test("mixed standard and legacy discovery keeps every distinct wallet", async ({
   );
   await page.goto("/account#wallets");
   const base = await openPicker(page, "EVM");
-  await expect(base.getByRole("button", { name: /Detected$/u })).toHaveText([
-    "MetaMaskDetected",
-    "Coinbase WalletDetected",
-  ]);
+  await expect(
+    base.locator(".wallet-picker-list").getByRole("button"),
+  ).toHaveText(["MetaMask", "Coinbase Wallet"]);
   await base
-    .getByRole("button", { name: "Coinbase Wallet Detected", exact: true })
+    .getByRole("button", { name: "Coinbase Wallet", exact: true })
     .click();
   await expect(
     page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
   ).toBeVisible();
   const solana = await openPicker(page, "Solana");
-  await expect(solana.getByRole("button", { name: /Detected$/u })).toHaveText([
-    "PhantomDetected",
-    "SolflareDetected",
-  ]);
-  await solana
-    .getByRole("button", { name: "Solflare Detected", exact: true })
-    .click();
+  await expect(
+    solana.locator(".wallet-picker-list").getByRole("button"),
+  ).toHaveText(["Phantom", "Solflare"]);
+  await solana.getByRole("button", { name: "Solflare", exact: true }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Solana wallet confirmed" }),
   ).toBeVisible();
@@ -584,7 +570,7 @@ for (const scenario of [
       await page.goto("/account#wallets");
       const dialog = await openPicker(page, chain);
       await expect(
-        dialog.getByRole("button", { name: /Detected$/u }),
+        dialog.locator(".wallet-picker-list").getByRole("button"),
       ).toHaveCount(2);
       if (scenario.textScale === 2)
         await page.evaluate(() => {
@@ -656,9 +642,7 @@ async function chooseMetaMask(page: Page, action: "Change" | "Connect") {
     .getByRole("button", { name: `${action} EVM wallet`, exact: true })
     .click();
   const dialog = page.getByRole("dialog", { name: "Connect an EVM wallet" });
-  await dialog
-    .getByRole("button", { name: "MetaMask Detected", exact: true })
-    .click();
+  await dialog.getByRole("button", { name: "MetaMask", exact: true }).click();
   await expect(dialog).not.toBeVisible();
 }
 

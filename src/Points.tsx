@@ -1138,6 +1138,7 @@ function readPeopleView() {
 }
 export function PointsPage() {
   const [peopleView, setPeopleView] = useState(readPeopleView);
+  const [peopleVisited, setPeopleVisited] = useState(readPeopleView);
   const [query, setQuery] = useState(
     () => new URLSearchParams(window.location.search).get("q") ?? "",
   );
@@ -1154,6 +1155,7 @@ export function PointsPage() {
     };
   }, []);
   useEffect(() => {
+    if (peopleView) setPeopleVisited(true);
     const url = new URL(window.location.href);
     if (peopleView) url.searchParams.set("view", "people");
     else {
@@ -1194,11 +1196,14 @@ export function PointsPage() {
           />
         </label>
       </div>
-      {peopleView ? (
-        <People query={query} />
-      ) : (
+      <div hidden={peopleView}>
         <ContributorStandings searchQuery={query} />
-      )}
+      </div>
+      {peopleVisited ? (
+        <div hidden={!peopleView}>
+          <People query={query} />
+        </div>
+      ) : null}
       <DetailsSection
         className="points-panel"
         id="rules"
