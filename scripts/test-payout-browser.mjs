@@ -98,26 +98,21 @@ try {
   await page.getByRole("heading", { name: "Your payouts" }).waitFor();
   await page.getByRole("link", { name: "Manage payout wallets" }).click();
   await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Connect Base wallet" }).waitFor();
-  await page
-    .getByRole("button", { name: "Connect Robinhood Chain wallet" })
-    .waitFor();
-  // Empty networks use direct connection buttons; detailed headings appear
-  // only once a wallet or network history exists.
+  await page.getByRole("button", { name: "Connect EVM wallet" }).waitFor();
   await page.getByRole("button", { name: "Connect Solana wallet" }).waitFor();
-  await page.getByRole("button", { name: "Connect Ethereum wallet" }).waitFor();
   await page.screenshot({
     path: "evidence/payout-desktop-before.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Connect Base wallet" }).focus();
+  await page.getByRole("button", { name: "Connect EVM wallet" }).focus();
   await page.keyboard.press("Enter");
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Browser wallet Detected" })
-    .click();
+    .focus();
+  await page.keyboard.press("Enter");
   await page
-    .getByText("Base wallet confirmed.", { exact: false })
+    .getByText("EVM wallet confirmed.", { exact: false })
     .waitFor({ timeout: 60000 });
   await page
     .getByRole("navigation", { name: "Account sections" })
@@ -143,21 +138,8 @@ try {
   )
     throw new Error("Wrong payment result");
   await page.getByRole("link", { name: "Manage payout wallets" }).click();
-  // The same signer registers a separate Robinhood Chain claim from the
-  // keyboard; the Base lineage and its paid receipt stay unchanged.
-  await page
-    .getByRole("button", { name: "Connect Robinhood Chain wallet" })
-    .focus();
-  await page.keyboard.press("Enter");
-  // The picker offers the same EVM wallet for Robinhood Chain; choose it from the keyboard.
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Browser wallet Detected" })
-    .focus();
-  await page.keyboard.press("Enter");
-  await page
-    .getByText("Robinhood Chain wallet confirmed.", { exact: false })
-    .waitFor({ timeout: 60000 });
+  // One family connection signs a distinct claim for each EVM chain.
+  // Reopening Wallets must retain those claims and the finalized Base payment.
   const both = await (
     await fetch("http://127.0.0.1:18548/api/v1/payments/me")
   ).json();
@@ -165,6 +147,10 @@ try {
   if (
     walletOn("base").length !== 1 ||
     walletOn("robinhood").length !== 1 ||
+    walletOn("ethereum").length !== 1 ||
+    !walletOn("ethereum")[0].authorized ||
+    walletOn("ethereum")[0].claimId === walletOn("base")[0].claimId ||
+    walletOn("ethereum")[0].claimId === walletOn("robinhood")[0].claimId ||
     !walletOn("robinhood")[0].authorized ||
     walletOn("robinhood")[0].claimId === walletOn("base")[0].claimId ||
     both.payments[0].state !== "paid" ||
