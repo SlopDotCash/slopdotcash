@@ -220,7 +220,7 @@ test("shared navigation preserves project drafts and account sign-in destination
   ).toBe(true);
 });
 
-test("security reports recover a failed list and share one session across submissions", async ({
+test("security reports recover a failed list and revalidate identity per private request", async ({
   page,
   diagnostics,
 }) => {
@@ -296,8 +296,11 @@ test("security reports recover a failed list and share one session across submis
   await expect(page.getByRole("article")).toHaveCount(3);
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(lists).toBe(3);
-  expect(initialSessionReads).toBe(1);
-  expect(reads).toBe(2);
+  // One bootstrap read plus identity checks before and after each of the two
+  // private feeds. Three submission cards must not add per-card session reads.
+  expect(initialSessionReads).toBe(5);
+  // Reload repeats those five reads; retrying the failed feed adds two checks.
+  expect(reads).toBe(12);
   await test.info().attach("security-read-counts", {
     body: JSON.stringify({
       lists,
