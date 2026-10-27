@@ -1580,7 +1580,17 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(fundingUrl);
   await page.waitForLoadState("networkidle");
-  await page.goBack({ waitUntil: "networkidle" });
+  // Client-side history navigation can retain an earlier networkidle state.
+  // Await the new snapshot body before leaving the restored sponsors route.
+  await Promise.all([
+    page
+      .waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/data/leaderboard.json",
+      )
+      .then((response) => response.finished()),
+    page.goBack({ waitUntil: "networkidle" }),
+  ]);
   await expect(page).toHaveURL(/\/sponsors$/u);
   await expect(pools).toBeVisible();
   const home = page.getByRole("link", { name: "Slop home", exact: true });
@@ -1592,7 +1602,17 @@ test("opens the sponsors page directly and through keyboard navigation", async (
     timeout: 60_000,
   });
   await page.waitForLoadState("networkidle");
-  await page.goBack({ waitUntil: "networkidle" });
+  // Client-side history navigation can retain an earlier networkidle state.
+  // Await the new snapshot body before leaving the restored sponsors route.
+  await Promise.all([
+    page
+      .waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/data/leaderboard.json",
+      )
+      .then((response) => response.finished()),
+    page.goBack({ waitUntil: "networkidle" }),
+  ]);
   await expect(page).toHaveURL(/\/sponsors$/u);
 });
 
