@@ -21,7 +21,38 @@ export function ProjectSecuritySettings({
     () => window.location.hash === "#security-settings",
   );
   const [open, setOpen] = useState(opened);
-  if (session.status !== "signed-in") return null;
+  const [permitted, setPermitted] = useState<string | null>(null);
+  const actorId =
+    session.status === "signed-in" ? session.session.githubId : null;
+  useEffect(() => {
+    let active = true;
+    setPermitted(null);
+    if (actorId)
+      projectApiRequest<{
+        viewer: { githubId: string };
+        programs: { projectId: string; roles: string[] }[];
+      }>("GET", "security-cases").then(
+        (result) => {
+          if (
+            active &&
+            result.viewer.githubId === actorId &&
+            result.programs.some(
+              (entry) =>
+                entry.projectId === project.id &&
+                entry.roles.includes("security-maintainer"),
+            )
+          )
+            setPermitted(actorId);
+        },
+        () => {
+          /* No owner controls without a current authority result. */
+        },
+      );
+    return () => {
+      active = false;
+    };
+  }, [actorId, project.id]);
+  if (session.status !== "signed-in" || permitted !== actorId) return null;
   return (
     <details
       className="proposal-advanced"

@@ -2001,6 +2001,7 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
     await expect(funding.getByRole("status")).toContainText("finalized");
     await page.getByLabel("Status", { exact: true }).selectOption("open");
+    await page.getByRole("button", { name: "Review bounty terms" }).click();
     await page.getByRole("button", { name: "Publish bounty terms" }).click();
     await expect(
       page.getByRole("status").filter({ hasText: "Published revision" }),

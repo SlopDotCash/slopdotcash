@@ -23,11 +23,13 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { Link } from "./Link";
+import { PrivateReportForm } from "./PrivateReportForm";
 import {
   GRANT_ERRORS,
   githubSubmissionStatus,
@@ -36,6 +38,7 @@ import {
   submissionStatus,
 } from "./PrivateReportSummary";
 import { ProjectSecuritySettings } from "./ProjectSecuritySettings";
+import { SecurityOffer } from "./SecurityOffer";
 import "./operations-design.css";
 import "./private-report-design.css";
 import { decimalBaseUnits, formatBaseUnits } from "./lib/base-units.mjs";
@@ -187,7 +190,6 @@ function IntakeHandoff({
   session: ProjectSessionState;
 }) {
   const [state, setState] = useState<ReadinessState>({ status: "checking" });
-  const [draft, setDraft] = useState<ReportDraft>(EMPTY_DRAFT);
   const check = useCallback((): Promise<Readiness | null> => {
     setState((current) =>
       current.status === "checked"
@@ -255,12 +257,7 @@ function IntakeHandoff({
         Never post exploit details publicly.
       </p>
       {state.status === "checked" && state.value.storedIntake === true ? (
-        <AutomaticReportForm
-          session={session}
-          draft={draft}
-          onDraft={setDraft}
-          project={project}
-        />
+        <AutomaticReportForm session={session} project={project} />
       ) : state.status === "checking" ? (
         <p role="status">Checking private intake…</p>
       ) : (
@@ -415,6 +412,7 @@ function ReportFields({
   draft: ReportDraft;
   onChange: (draft: ReportDraft) => void;
 }) {
+  const fieldId = useId();
   const [classificationOpen, setClassificationOpen] = useState(
     Boolean(draft.severity || draft.cvss || draft.cwe),
   );
@@ -425,6 +423,7 @@ function ReportFields({
       <label>
         Summary
         <input
+          id={`${fieldId}-summary`}
           autoComplete="off"
           maxLength={1024}
           minLength={8}
@@ -436,6 +435,7 @@ function ReportFields({
       <label>
         Description
         <textarea
+          id={`${fieldId}-description`}
           maxLength={65000}
           minLength={20}
           onChange={(event) => set("description")(event.target.value)}
@@ -502,18 +502,12 @@ function ReportFields({
  * A rejected request leaves the typed evidence in the form for recovery.
  */
 function AutomaticReportForm({
-  draft,
-  onDraft,
-  project,
   session,
+  project,
 }: {
   session: ProjectSessionState;
-  draft: ReportDraft;
-  onDraft: (draft: ReportDraft) => void;
   project: ProjectDefinition;
 }) {
-  const [key] = useState(requestKey);
-  const { busy, error, run } = useAction();
   if (session.status !== "signed-in")
     return (
       <SignInPanel
@@ -522,39 +516,17 @@ function AutomaticReportForm({
         purpose="Sign in to report through Slop."
       />
     );
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    void run(async () => {
-      const body = await projectApiRequest<{
-        submission: Submission;
-      }>("POST", "security-submissions", {
-        projectId: project.id,
-        idempotencyKey: key,
-        origin: "slop",
-        report: reportBody(draft),
-      });
-      clearDraft(body.submission.id);
-      window.location.assign(
-        `/inbox?submission=${encodeURIComponent(body.submission.id)}`,
-      );
-      return "navigating";
-    });
-  };
   return (
-    <form className="security-form" onSubmit={submit}>
-      <p>
-        Submit as @{session.session.githubLogin}. Slop keeps the report private,
-        screens its evidence with Surplus Intelligence, and notifies the project
-        owner when it is ready for review. You can follow its status in your
-        Inbox. GitHub authorization is optional and is requested separately if
-        you choose private GitHub delivery.
-      </p>
-      <ReportFields draft={draft} onChange={onDraft} />
-      <FormError message={error} />
-      <button className="button primary-button" disabled={busy} type="submit">
-        {busy ? "Submitting…" : "Submit private report"}
-      </button>
-    </form>
+    <PrivateReportForm
+      key={`${project.id}:${session.session.githubId}`}
+      project={project}
+      owner={session.session.githubId}
+      login={session.session.githubLogin}
+      body={reportBody}
+      fields={(draft, change) => (
+        <ReportFields draft={draft} onChange={change} />
+      )}
+    />
   );
 }
 
@@ -628,6 +600,12 @@ export function SecurityProgramPage({
         </StatusBadge>
       </RoutePageHeader>
       <ProjectNav project={project} current="security" />
+      <SecurityOffer project={project} />
+      <p>
+        <a href="#security-scope">
+          Check covered source and safe testing rules
+        </a>
+      </p>
       <IntakeHandoff project={project} session={session} />
       <ProjectSecuritySettings
         key={project.id}
@@ -676,10 +654,11 @@ export function SecurityProgramPage({
             </Fact>
           </dl>
           <p>
-            Awards are discretionary. The owner decides whether to award and how
-            much; critical bugs and potential loss of funds are priorities, not
-            an automatic payout. No other payout fee applies. The terms in force
-            when Slop receives your report apply to your case.
+            Awards are discretionary. The owner decides whether to award; fixed
+            after-approval awards use the amount published at receipt; critical
+            bugs and potential loss of funds are priorities, not an automatic
+            payout. No other payout fee applies. The terms in force when Slop
+            receives your report apply to your case.
           </p>
         </section>
         <section aria-labelledby="security-scope" className="admin-card">
@@ -881,6 +860,30 @@ type SecurityCase = {
   triagers?: (GithubActor & { revokedAt: string | null })[];
   events?: CaseEvent[];
 };
+
+type ReportFilter = "all" | "review" | "waiting" | "award" | "resolved";
+function matchesReport(record: SecurityCase, filter: ReportFilter): boolean {
+  if (filter === "review")
+    return record.allowedActions.some((action) =>
+      ["decide", "verify-link", "request-information"].includes(action),
+    );
+  if (filter === "waiting") return record.receiptState === "needs-information";
+  if (filter === "award")
+    return (
+      record.allowedActions.some((action) =>
+        ["award", "prepare-payment"].includes(action),
+      ) || Boolean(record.award && record.paymentState !== "paid")
+    );
+  if (filter === "resolved")
+    return (
+      record.paymentState === "paid" ||
+      ["rejected", "duplicate", "out-of-scope"].includes(
+        record.receiptState ?? "",
+      ) ||
+      record.awardState === "ineligible"
+    );
+  return true;
+}
 
 type CaseList = {
   viewer: GithubActor;
@@ -1704,7 +1707,9 @@ function SubmissionsPanel({
   onOpenCase,
   onKnownCases,
   cases,
+  filter,
 }: {
+  filter: ReportFilter;
   session: Extract<ProjectSessionState, { status: "signed-in" }>;
   cases: SecurityCase[];
   focusId: string | null;
@@ -1779,11 +1784,16 @@ function SubmissionsPanel({
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
   if (shown.length === 0 && !grantError && !authorityUnavailable) return null;
-  const ordered = [...shown].sort(
-    (a, b) =>
-      Number(b.id === focusId) - Number(a.id === focusId) ||
-      Number(reportNeedsAction(b)) - Number(reportNeedsAction(a)),
-  );
+  const ordered = shown
+    .filter((submission) => {
+      const record = cases.find((record) => record.id === submission.caseId);
+      return record ? matchesReport(record, filter) : filter === "all";
+    })
+    .sort(
+      (a, b) =>
+        Number(b.id === focusId) - Number(a.id === focusId) ||
+        Number(reportNeedsAction(b)) - Number(reportNeedsAction(a)),
+    );
   const renderSubmission = (submission: Submission) => (
     <SubmissionCard
       session={session}
@@ -2055,10 +2065,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             name: "severity",
             label: "Severity",
             kind: "select",
-            // The AI proposal is listed first, so the form starts with it.
-            options: [...SEVERITY_OPTIONS].sort(([value]) =>
-              value === proposal?.proposedSeverity ? -1 : 1,
-            ),
+            options: [["", "Choose severity"], ...SEVERITY_OPTIONS],
           },
           {
             name: "loss",
@@ -2469,6 +2476,7 @@ function ActionForm({
             <label key={field.name}>
               {field.label}
               <select
+                required
                 onChange={(event) => set(event.target.value)}
                 value={String(values[field.name])}
               >
@@ -2611,7 +2619,7 @@ function AnalysisPanel({
     });
   return (
     <section aria-labelledby={`analysis-${record.id}`}>
-      <h4 id={`analysis-${record.id}`}>AI summary</h4>
+      <h4 id={`analysis-${record.id}`}>Advisory assessment</h4>
       {analysis === null ? (
         <p className="admin-status">No analysis yet.</p>
       ) : analysis.state === "running" ? (
@@ -2796,18 +2804,29 @@ function CaseActions({
   if (!active) return null;
   return (
     <section className="security-actions" aria-label="Case actions">
-      {actions.length > 1 ? (
-        <>
-          <span
-            id={`case-action-title-${record.id}`}
-            className="visually-hidden"
-          >
-            {actionSpec(active, record)?.title}
-          </span>
-          <label className="form-field" htmlFor={`case-action-${record.id}`}>
-            <span className="visually-hidden">Action</span>
+      <fieldset className="report-form-actions">
+        <legend>Review actions</legend>
+        {actions
+          .filter((action) => PRIMARY_ACTIONS.includes(action))
+          .map((action) => (
+            <button
+              type="button"
+              className="button secondary-button"
+              aria-pressed={active === action}
+              data-case-action-selector={action}
+              onClick={() => setSelected(action)}
+              key={action}
+            >
+              {actionSpec(action, record)?.title}
+            </button>
+          ))}
+      </fieldset>
+      {actions.some((action) => !PRIMARY_ACTIONS.includes(action)) ? (
+        <details open={!PRIMARY_ACTIONS.includes(active)}>
+          <summary>Other case actions</summary>
+          <label>
+            Action
             <select
-              id={`case-action-${record.id}`}
               value={active}
               onChange={(event) => setSelected(event.target.value)}
             >
@@ -2818,18 +2837,11 @@ function CaseActions({
               ))}
             </select>
           </label>
-        </>
+        </details>
       ) : null}
       {actions.map((action) => (
         <div hidden={action !== active} key={`${action}-${record.revision}`}>
-          <ActionForm
-            action={action}
-            record={record}
-            onDone={onDone}
-            headingId={
-              actions.length > 1 ? `case-action-title-${record.id}` : undefined
-            }
-          />
+          <ActionForm action={action} record={record} onDone={onDone} />
         </div>
       ))}
     </section>
@@ -2951,6 +2963,26 @@ function CaseDetail({
             : ""}
         </Fact>
       </dl>
+      {record.award && record.terms ? (
+        <section className="security-offer" aria-label="Award and payment">
+          <h4>Award and payment</h4>
+          <dl className="admin-facts">
+            <Fact term="Researcher receives">
+              {money(record.award.researcherMinor, record.terms)}
+            </Fact>
+            <Fact term="Total award">
+              {money(record.award.grossMinor, record.terms)}
+            </Fact>
+            <Fact term="Slop share">
+              {money(record.award.slopMinor, record.terms)}
+            </Fact>
+            <Fact term="Payment status">
+              {PAYMENT_LABELS[record.paymentState] ?? record.paymentState}
+            </Fact>
+          </dl>
+          <p>Approval and funding are separate from finalized payment.</p>
+        </section>
+      ) : null}
       {owner ? (
         <AnalysisPanel
           onRetry={() => {
@@ -3119,7 +3151,8 @@ function CheckReceipt({
 }
 
 /** The signed-in private case inbox. */
-export function SecurityInbox() {
+export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
+  const [filter, setFilter] = useState<ReportFilter>("all");
   const session = useProjectSession();
   const [list, reload] = useSecurityData<CaseList>(
     session.status === "signed-in" ? "security-cases" : null,
@@ -3228,8 +3261,27 @@ export function SecurityInbox() {
     body = (
       <>
         {note ? <p role="status">{note}</p> : null}
+        {maintained.size > 0 ? (
+          <label>
+            Show reports
+            <select
+              value={filter}
+              onChange={(event) => {
+                setFilter(event.target.value as ReportFilter);
+                setSelected(null);
+              }}
+            >
+              <option value="all">All reports</option>
+              <option value="review">Needs your review</option>
+              <option value="waiting">Waiting for researcher</option>
+              <option value="award">Award and payment</option>
+              <option value="resolved">Resolved</option>
+            </select>
+          </label>
+        ) : null}
         <SubmissionsPanel
           key={session.session.githubId}
+          filter={filter}
           session={session}
           focusId={returned.submission}
           grantError={returned.error}
@@ -3256,9 +3308,15 @@ export function SecurityInbox() {
                 : "You have no private security cases."}
             </p>
           ) : (
-            <ul className="security-case-list">
+            <ul
+              className={`security-case-list${selected ? " security-case-list-selected" : ""}`}
+            >
               {list.value.cases
-                .filter((record) => !knownSubmissionCases.includes(record.id))
+                .filter(
+                  (record) =>
+                    !knownSubmissionCases.includes(record.id) &&
+                    matchesReport(record, filter),
+                )
                 .map((record) => (
                   <li key={record.id}>
                     <button
@@ -3277,7 +3335,25 @@ export function SecurityInbox() {
             </ul>
           )}
           {selected ? (
-            <CaseDetail caseId={selected} key={selected} onChanged={reload} />
+            <>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  setSelected(null);
+                  const query = new URLSearchParams(window.location.search);
+                  query.delete("case");
+                  window.history.replaceState(
+                    window.history.state,
+                    "",
+                    `${window.location.pathname}?${query}`,
+                  );
+                }}
+              >
+                Back to reports
+              </button>
+              <CaseDetail caseId={selected} key={selected} onChanged={reload} />
+            </>
           ) : null}
         </section>
         <details
@@ -3346,6 +3422,15 @@ export function SecurityInbox() {
       </>
     );
   }
+  if (embedded)
+    return (
+      <section
+        className="security-page operations-page"
+        aria-label="Private security reports"
+      >
+        {body}
+      </section>
+    );
   return (
     <main className="shell route-main admin-page security-page operations-page">
       <RoutePageHeader icon={<LockKeyhole />} title="Security cases" />
