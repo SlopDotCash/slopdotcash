@@ -2597,6 +2597,10 @@ This addendum is recorded before deleting the newly adopted file. It changes the
 
 The newly adopted fee-converter cap cases perform a real `runNetwork`→SQL-state workflow and stay. Their preliminary direct `h.chain.quote` call and `quote.priceImpactBps` assertion repeat the helper in isolation before the workflow repeats it; remove those two statements only, retaining both exact-cap and above-cap persisted outcomes. The newly adopted registry browser case also repeats the same 200% typography mutation; use the shared TT06 helper without changing its outcome assertions. Newly adopted trace-route refusal/upload-retention and registry browser revision scenarios cross real boundaries and stay.
 
+## Final rebase addition: TT11 — release-plan shape-only unit suite
+
+PR1475 introduced `scripts/mainnet-release-plan.test.ts` after the initial inventory. Its two declarations call configuration builders directly and compare arrays, fields, literal secrets and object identity under hypothetical activation; they execute no release, native runtime, HTTP request or persisted operation. Remove the63-line unit file under the user's non-contract unit-test rule. There are no explicit path consumers in workflows or scripts. Retain `mainnet-release-publication.test.js`, which writes and verifies actual prepared/released configuration files, and the native attester bootstrap workflow. Retain `points-history-retry.test.ts`, whose actual loopback HTTP server exercises bounded published-history reads and refuses persistent/unrecognized503 failures. No release policy or activation is changed by this test-only deletion.
+
 ## Implementation results
 
 Report-first checkpoint: this section is intentionally unfilled at the report commit. Implementation, disposition of all finding IDs, final source revision, measured changes, validations and any remaining environment limits will be added after the selected work is completed.
