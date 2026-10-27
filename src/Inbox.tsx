@@ -163,9 +163,15 @@ export default function InboxPage() {
     },
     [cursor, acceptRecipient],
   );
+  const needsReports =
+    focusId !== null ||
+    (state.status === "ready" &&
+      state.value.notifications.some(
+        (notice) => notice.kind === "security_report_received",
+      ));
   const loadReports = useCallback(() => {
     const current = ++reportsGeneration.current;
-    if (recipient === null) return;
+    if (recipient === null || !needsReports) return;
     setReportsError(null);
     void projectApiRequest<{ submissions: Submission[] }>(
       "GET",
@@ -199,7 +205,7 @@ export default function InboxPage() {
     return () => {
       reportsGeneration.current++;
     };
-  }, [recipient, acceptRecipient]);
+  }, [recipient, acceptRecipient, needsReports]);
   useEffect(loadReports, [loadReports]);
   const visibleReports =
     reportOwner === recipient && recipient !== null ? reports : [];
