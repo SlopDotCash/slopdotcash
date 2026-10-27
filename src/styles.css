@@ -365,19 +365,6 @@ textarea:focus-visible {
   line-height: 1.55;
 }
 
-.account-sections {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 20px;
-  margin-bottom: 24px;
-  font-weight: 700;
-}
-
-.account-sections a {
-  text-decoration: underline;
-  text-underline-offset: 5px;
-}
-
 .connection-row {
   display: flex;
   flex-wrap: wrap;

@@ -55,6 +55,28 @@ function chainDefaultNetwork(chain: EscrowChain): string {
 }
 
 type WalletFamily = "evm" | "solana";
+/**
+ * Offered when no wallet of the family is detected. Any wallet that announces
+ * itself (EIP-6963 or Wallet Standard) is detected without being listed here.
+ */
+const WALLET_DOWNLOADS: Record<
+  WalletFamily,
+  readonly { name: string; href: string }[]
+> = {
+  evm: [
+    { name: "MetaMask", href: "https://metamask.io/download" },
+    { name: "Rabby", href: "https://rabby.io" },
+    {
+      name: "Coinbase Wallet",
+      href: "https://www.coinbase.com/wallet/downloads",
+    },
+    { name: "Phantom", href: "https://phantom.com/download" },
+  ],
+  solana: [
+    { name: "Phantom", href: "https://phantom.com/download" },
+    { name: "Solflare", href: "https://solflare.com/download" },
+  ],
+};
 /** One wallet covers every chain of its family; each chain is still confirmed on its own. */
 const WALLET_FAMILIES: readonly {
   id: WalletFamily;
@@ -420,33 +442,24 @@ export function EarningsPage({
                 <small>Detected</small>
               </button>
             ))}
-          {!wallets.some((wallet) => wallet.family === picker) && (
+          {picker && !wallets.some((wallet) => wallet.family === picker) && (
             <>
               <p>No wallet found. Install one, then reload.</p>
-              <a
-                className="wallet-picker-row"
-                href="https://metamask.io/download"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <WalletIcon size={24} aria-hidden="true" />
-                <span>MetaMask</span>
-                <small>
-                  Install <ExternalLink size={16} aria-hidden="true" />
-                </small>
-              </a>
-              <a
-                className="wallet-picker-row"
-                href="https://phantom.com/download"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <WalletIcon size={24} aria-hidden="true" />
-                <span>Phantom</span>
-                <small>
-                  Install <ExternalLink size={16} aria-hidden="true" />
-                </small>
-              </a>
+              {WALLET_DOWNLOADS[picker].map((download) => (
+                <a
+                  key={download.name}
+                  className="wallet-picker-row"
+                  href={download.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <WalletIcon size={24} aria-hidden="true" />
+                  <span>{download.name}</span>
+                  <small>
+                    Install <ExternalLink size={16} aria-hidden="true" />
+                  </small>
+                </a>
+              ))}
             </>
           )}
         </div>

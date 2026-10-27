@@ -34,6 +34,9 @@ export function AccountAppeals() {
       active = false;
     };
   }, [reload]);
+  const restricted = appeals ?? [];
+  // Nothing to appeal: show the section only for a restriction or a failed read.
+  if (!error && restricted.length === 0) return null;
   return (
     <section id="appeals" aria-labelledby="account-appeals-heading">
       <h2 id="account-appeals-heading">Appeals</h2>
@@ -48,14 +51,10 @@ export function AccountAppeals() {
             Try again
           </button>
         </p>
-      ) : appeals === null ? (
-        <p role="status">Loading account restrictions…</p>
-      ) : appeals.length === 0 ? (
-        <p>No account restrictions.</p>
       ) : (
         <>
           <p>A ban stops new participation. Funded awards are kept.</p>
-          {appeals.map((appeal) => (
+          {restricted.map((appeal) => (
             <AccountAppealForm
               key={appeal.projectId}
               appeal={appeal}

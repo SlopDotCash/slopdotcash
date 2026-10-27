@@ -834,17 +834,6 @@ export function AccountPage() {
   return (
     <main className="shell route-main points-page">
       <h1>Account</h1>
-      <nav className="account-sections" aria-label="Account sections">
-        {signedOut ? <a href="#profile">Sign in</a> : null}
-        {me ? <a href="#connections">Connections</a> : null}
-        <a href="#wallets">Wallets</a>
-        <a href="/earnings">Payouts</a>
-        <a href="/inbox">Inbox</a>
-        {accountSession.status === "signed-in" ? (
-          <a href="#appeals">Appeals</a>
-        ) : null}
-        {signedOut ? <a href="#recovery">Recovery</a> : null}
-      </nav>
       {signedOut ? (
         <div id="profile">
           <JoinPoints />

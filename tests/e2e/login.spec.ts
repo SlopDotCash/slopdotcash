@@ -147,21 +147,15 @@ for (const [next, expected] of [
     await (await popup).close();
     await expect(page).toHaveURL(expected);
     await page.goto(`${deployment.site}/account`);
-    // Signed in, the account page has no sign-in panel; its section links
-    // include Connections, which only a member sees.
-    const sections = page.getByRole("navigation", {
-      name: "Account sections",
-    });
-    await expect(
-      sections.getByRole("link", { name: "Connections" }),
-    ).toBeVisible();
+    // Signed in, the account page has no sign-in panel; the Connections
+    // region is the member's own.
+    const connections = page.getByRole("region", { name: "Connections" });
+    await expect(connections).toBeVisible();
     await expect(page.locator("#profile")).toHaveCount(0);
     // Membership is always public, so the account page offers no visibility choice.
     await expect(page.getByRole("main").getByRole("checkbox")).toHaveCount(0);
     await page.reload();
-    await expect(
-      sections.getByRole("link", { name: "Connections" }),
-    ).toBeVisible();
+    await expect(connections).toBeVisible();
     await page.goto(
       `${deployment.site}/login?next=${encodeURIComponent(next)}`,
     );
