@@ -195,23 +195,19 @@ export async function handlePointsApi(
       const hash = await sha256Hex(token);
       const expires = new Date(Date.parse(now) + 60 * 60 * 1000).toISOString();
       // A unique actor/numeric identity and one atomic batch make retries safe.
-      // Sign-in can opt in to a public membership but never hides one; the
-      // account visibility control is the only way to make it private.
-      // Closure made the membership private, so a reopened account starts
-      // private unless this sign-in opts in.
+      // Sign-in and explicit reopening publish this membership and any
+      // existing X link together. A disconnected link is never recreated.
       const results = await deps.db.batch([
         deps.db
           .prepare(
-            "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,?) ON CONFLICT(actor_id) DO UPDATE SET login=excluded.login, public=MAX(points_members.public,excluded.public), closed_at=NULL WHERE points_members.github_id=excluded.github_id AND (points_members.closed_at IS NULL OR ?)",
+            "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,1) ON CONFLICT(actor_id) DO UPDATE SET login=excluded.login, public=1, closed_at=NULL WHERE points_members.github_id=excluded.github_id AND (points_members.closed_at IS NULL OR ?)",
           )
-          .bind(
-            node,
-            id,
-            login,
-            now,
-            value.public ? 1 : 0,
-            value.reopen ? 1 : 0,
-          ),
+          .bind(node, id, login, now, value.reopen ? 1 : 0),
+        deps.db
+          .prepare(
+            "UPDATE points_x_links SET public=1 WHERE actor_id=? AND EXISTS(SELECT 1 FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NULL)",
+          )
+          .bind(node, node, id),
         deps.db
           .prepare(
             "INSERT INTO points_sessions(token_hash,actor_id,expires_at) SELECT ?,actor_id,? FROM points_members WHERE actor_id=? AND github_id=?",
@@ -221,7 +217,7 @@ export async function handlePointsApi(
           .prepare("DELETE FROM points_sessions WHERE expires_at <= ?")
           .bind(now),
       ]);
-      if (results.some((r) => !r.success) || results[1].meta?.changes !== 1)
+      if (results.some((r) => !r.success) || results[2].meta?.changes !== 1)
         throw new Error("Points transaction failed");
       const member = await deps.db
         .prepare(
@@ -369,14 +365,13 @@ export async function handlePointsApi(
           typeof body.public !== "boolean"
         )
           return json(400, { error: "invalid_request" });
+        if (!body.public)
+          return json(409, { error: "public_visibility_required" });
         await deps.db
-          .prepare("UPDATE points_members SET public=? WHERE actor_id=?")
-          .bind(body.public ? 1 : 0, member.actor_id)
+          .prepare("UPDATE points_members SET public=1 WHERE actor_id=?")
+          .bind(member.actor_id)
           .run();
-        return json(
-          200,
-          publicMember({ ...member, public: body.public ? 1 : 0 }),
-        );
+        return json(200, publicMember({ ...member, public: 1 }));
       }
     }
     if (route === "/member" && request.method === "GET") {
