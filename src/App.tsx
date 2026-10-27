@@ -223,7 +223,7 @@ const ROUTES: Record<
     privateTitle: "Security cases",
   },
   project: { snapshot: true, registry: "cached" },
-  "funding-project": { snapshot: true, registry: "current" },
+  "funding-project": { snapshot: false, registry: "current" },
   "manage-project": { snapshot: false, registry: "current" },
   "security-program": { snapshot: false, registry: "current" },
   "owner-awards": {

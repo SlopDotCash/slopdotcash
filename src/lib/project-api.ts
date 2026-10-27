@@ -220,34 +220,45 @@ export type ProjectSessionState =
   | { status: "error"; message: string }
   | { status: "signed-in"; session: ProjectSession };
 
-/** Reads the site sign-in session once per mount. */
-export function useProjectSession(): ProjectSessionState {
-  const [state, setState] = useState<ProjectSessionState>({
-    status: "checking",
-  });
+/** Reads the site session on mount and when the caller needs fresh identity. */
+export function useProjectSession(revision = 0): ProjectSessionState {
+  const [snapshot, setSnapshot] = useState<{
+    revision: number;
+    state: ProjectSessionState;
+  }>({ revision, state: { status: "checking" } });
   useEffect(() => {
     let active = true;
     currentProjectSession().then(
       (session) => {
         if (!active) return;
-        setState(
-          session === null
-            ? { status: "signed-out" }
-            : { status: "signed-in", session },
-        );
+        setSnapshot({
+          revision,
+          state:
+            session === null
+              ? { status: "signed-out" }
+              : { status: "signed-in", session },
+        });
       },
       (error: unknown) => {
         if (active)
-          setState({
-            status: "error",
-            message:
-              error instanceof Error ? error.message : "Something went wrong.",
+          setSnapshot({
+            revision,
+            state: {
+              status: "error",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Something went wrong.",
+            },
           });
       },
     );
     return () => {
       active = false;
     };
-  }, []);
-  return state;
+  }, [revision]);
+  // Never show the old actor while a requested identity check is pending.
+  return snapshot.revision === revision
+    ? snapshot.state
+    : { status: "checking" };
 }

@@ -119,15 +119,16 @@ export interface PaymentDeploymentIdentity {
 }
 /** The attester must still have this long to submit a binding authorization. */
 const BINDING_SUBMISSION_WINDOW_SECONDS = 600;
+function directTransferQuery(column: "project_id" | "github_user_id") {
+  return `SELECT json_group_array(json_object('projectId',project_id,'contributionMonth',contribution_month,'githubUserId',github_user_id,'login',github_login,'network',network,'chain',chain,'recipient',recipient,'amountMicro',amount_micro,'transactionId',transaction_id,'blockTime',block_time)) items FROM (SELECT * FROM payment_direct_transfers WHERE ${column}=? ORDER BY block_time,transaction_id)`;
+}
 async function directTransfers(
   db: D1Database,
   column: "project_id" | "github_user_id",
   value: string,
 ): Promise<DirectTransfer[]> {
   const row = await db
-    .prepare(
-      `SELECT json_group_array(json_object('projectId',project_id,'contributionMonth',contribution_month,'githubUserId',github_user_id,'login',github_login,'network',network,'chain',chain,'recipient',recipient,'amountMicro',amount_micro,'transactionId',transaction_id,'blockTime',block_time)) items FROM (SELECT * FROM payment_direct_transfers WHERE ${column}=? ORDER BY block_time,transaction_id)`,
-    )
+    .prepare(directTransferQuery(column))
     .bind(value)
     .first<{ items: string }>();
   return JSON.parse(row?.items ?? "[]") as DirectTransfer[];
@@ -1057,32 +1058,31 @@ export async function handlePaymentsApi(
       });
     }
     if (path === "/me" && request.method === "GET") {
-      const walletRows = await deps.db
-        .prepare(
-          "SELECT json_group_array(json_object('chain',w.chain,'claimId',w.id,'address',w.wallet_address,'authorized',json(CASE WHEN a.claim_id IS NULL THEN 'false' ELSE 'true' END))) items FROM wallet_claims w LEFT JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.github_user_id=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
-        )
-        .bind(member.githubId)
-        .first<{ items: string }>();
-      const paymentRows = await deps.db
-        .prepare(
-          "SELECT json_group_array(json_object('id',o.id,'vault',o.vault,'projectId',project_id,'network',network,'chain',chain,'assetAddress',asset_address,'assetDecimals',asset_decimals,'grossBase',gross_base,'feeBase',fee_base,'state',o.state,'transactionId',paid_transaction,'submittedTransactionId',(SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id=o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),'deliveryState',CASE WHEN o.state='paid' THEN 'paid' WHEN q.state='submitted' THEN 'submitted' WHEN q.state='held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END)) items FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id=o.id WHERE github_user_id=?",
-        )
-        .bind(member.githubId)
-        .first<{ items: string }>();
-      const payments = JSON.parse(
-        paymentRows?.items ?? "[]",
-      ) as AccountPayment[];
-      // Frozen monthly awards that the vault has not reserved yet. A reserved
-      // award is in `payments` under the same source digest, so it is left
-      // out here; the state matches the owner's view (monthly.ts).
-      const monthlyRows = await deps.db
-        .prepare(
-          "SELECT json_group_array(json_object('projectId',project_id,'period',period,'network',network,'assetAddress',asset,'assetDecimals',decimals,'grossBase',gross,'feeBase',fee,'netBase',net,'state',state)) items FROM (SELECT r.project_id,r.period,r.network,json_extract(r.snapshot,'$.asset') asset,COALESCE((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id=r.project_id AND v.network=r.network AND v.vault=r.vault AND lower(v.asset_address)=lower(json_extract(r.snapshot,'$.asset'))),CASE WHEN lower(json_extract(b.manifest,'$.rewardAsset.address'))=lower(json_extract(r.snapshot,'$.asset')) THEN json_extract(b.manifest,'$.rewardAsset.decimals') END) decimals,json_extract(a.value,'$.grossBase') gross,json_extract(a.value,'$.feeBase') fee,json_extract(a.value,'$.netBase') net,CASE WHEN EXISTS(SELECT 1 FROM payment_obligations c WHERE c.network=r.network AND c.vault=r.vault AND c.source_digest=json_extract(a.value,'$.sourceDigest')) THEN 'conflict' WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END state FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period, json_each(r.snapshot,'$.awards') a WHERE json_extract(a.value,'$.githubUserId')=? AND NOT EXISTS(SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id=r.project_id AND e.period=r.period AND e.source_digest=json_extract(a.value,'$.sourceDigest')) AND NOT EXISTS(SELECT 1 FROM payment_obligations o WHERE o.network=r.network AND o.vault=r.vault AND o.source_digest=json_extract(a.value,'$.sourceDigest') AND o.github_user_id=json_extract(a.value,'$.githubUserId') AND o.gross_base=json_extract(a.value,'$.grossBase')) ORDER BY r.period DESC,r.project_id)",
-        )
-        .bind(member.githubId)
-        .first<{ items: string }>();
+      // An award moves from monthlyAwards to payments when its reservation is
+      // indexed. Read both, and the rest of this account, in one SQLite snapshot.
+      const accountRows = await deps.db
+        .prepare(`SELECT
+          (SELECT json_group_array(json_object('chain',w.chain,'claimId',w.id,'address',w.wallet_address,'authorized',json(CASE WHEN a.claim_id IS NULL THEN 'false' ELSE 'true' END))) items FROM wallet_claims w LEFT JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.github_user_id=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)) AS wallets,
+          (SELECT json_group_array(json_object('id',o.id,'vault',o.vault,'projectId',project_id,'network',network,'chain',chain,'assetAddress',asset_address,'assetDecimals',asset_decimals,'grossBase',gross_base,'feeBase',fee_base,'state',o.state,'transactionId',paid_transaction,'submittedTransactionId',(SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id=o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),'deliveryState',CASE WHEN o.state='paid' THEN 'paid' WHEN q.state='submitted' THEN 'submitted' WHEN q.state='held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END)) items FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id=o.id WHERE github_user_id=?) AS payments,
+          (SELECT json_group_array(json_object('projectId',project_id,'period',period,'network',network,'assetAddress',asset,'assetDecimals',decimals,'grossBase',gross,'feeBase',fee,'netBase',net,'state',state)) items FROM (SELECT r.project_id,r.period,r.network,json_extract(r.snapshot,'$.asset') asset,COALESCE((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id=r.project_id AND v.network=r.network AND v.vault=r.vault AND lower(v.asset_address)=lower(json_extract(r.snapshot,'$.asset'))),CASE WHEN lower(json_extract(b.manifest,'$.rewardAsset.address'))=lower(json_extract(r.snapshot,'$.asset')) THEN json_extract(b.manifest,'$.rewardAsset.decimals') END) decimals,json_extract(a.value,'$.grossBase') gross,json_extract(a.value,'$.feeBase') fee,json_extract(a.value,'$.netBase') net,CASE WHEN EXISTS(SELECT 1 FROM payment_obligations c WHERE c.network=r.network AND c.vault=r.vault AND c.source_digest=json_extract(a.value,'$.sourceDigest')) THEN 'conflict' WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END state FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period, json_each(r.snapshot,'$.awards') a WHERE json_extract(a.value,'$.githubUserId')=? AND NOT EXISTS(SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id=r.project_id AND e.period=r.period AND e.source_digest=json_extract(a.value,'$.sourceDigest')) AND NOT EXISTS(SELECT 1 FROM payment_obligations o WHERE o.network=r.network AND o.vault=r.vault AND o.source_digest=json_extract(a.value,'$.sourceDigest') AND o.github_user_id=json_extract(a.value,'$.githubUserId') AND o.gross_base=json_extract(a.value,'$.grossBase')) ORDER BY r.period DESC,r.project_id)) AS monthlyAwards,
+          (${directTransferQuery("github_user_id")}) AS directTransfers,
+          (SELECT json_group_array(json_object('chain',chain,'address',address,'proofLevel',proof_level,'sourceUrl',source_url,'observedAt',observed_at)) items FROM (SELECT * FROM wallet_observations WHERE github_user_id=? ORDER BY observed_at DESC)) AS walletObservations`)
+        .bind(...Array(5).fill(member.githubId))
+        .first<
+          Record<
+            | "wallets"
+            | "payments"
+            | "monthlyAwards"
+            | "directTransfers"
+            | "walletObservations",
+            string
+          >
+        >();
+      if (accountRows === null)
+        throw new Error("Payment account projection is unavailable");
+      const payments = JSON.parse(accountRows.payments) as AccountPayment[];
       const monthlyAwards = (
-        JSON.parse(monthlyRows?.items ?? "[]") as Omit<
+        JSON.parse(accountRows.monthlyAwards) as Omit<
           AccountMonthlyAward,
           "chain"
         >[]
@@ -1131,25 +1131,12 @@ export async function handlePaymentsApi(
         .map(({ net, ...asset }) => ({ ...asset, netBase: net.toString() }));
       const account: PaymentsAccount = {
         githubUserId: member.githubId,
-        wallets: JSON.parse(walletRows?.items ?? "[]"),
+        wallets: JSON.parse(accountRows.wallets),
         payments,
         monthlyAwards,
         balances,
-        directTransfers: await directTransfers(
-          deps.db,
-          "github_user_id",
-          member.githubId,
-        ),
-        walletObservations: JSON.parse(
-          (
-            await deps.db
-              .prepare(
-                "SELECT json_group_array(json_object('chain',chain,'address',address,'proofLevel',proof_level,'sourceUrl',source_url,'observedAt',observed_at)) items FROM (SELECT * FROM wallet_observations WHERE github_user_id=? ORDER BY observed_at DESC)",
-              )
-              .bind(member.githubId)
-              .first<{ items: string }>()
-          )?.items ?? "[]",
-        ),
+        directTransfers: JSON.parse(accountRows.directTransfers),
+        walletObservations: JSON.parse(accountRows.walletObservations),
       };
       return json(200, account);
     }

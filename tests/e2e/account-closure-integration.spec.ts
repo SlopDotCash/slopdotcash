@@ -62,6 +62,7 @@ for (const withObligations of [false, true])
           reject(error);
         });
       });
+      let dropClosureResponse = withObligations;
       const failures: string[] = [];
       const retiredRequests: string[] = [];
       page.on("request", (request) => {
@@ -108,6 +109,14 @@ for (const withObligations of [false, true])
           url: `${started.url}/${url.origin === SITE ? "site" : "identity"}${url.pathname}${url.search}`,
           maxRedirects: 0,
         });
+        if (
+          dropClosureResponse &&
+          url.pathname === "/api/v1/points/account/close"
+        ) {
+          dropClosureResponse = false;
+          await route.abort("failed");
+          return;
+        }
         // Browser redirect chains skip route interception. Start a new local
         // navigation for each redirect so external OAuth stays in this fixture.
         const location = response.headers().location;
@@ -180,7 +189,14 @@ for (const withObligations of [false, true])
       await recovery
         .getByRole("button", { name: "Close account", exact: true })
         .click();
-      await expect(recovery).toContainText("Your account is closed");
+      if (withObligations) {
+        await expect(recovery.getByRole("alert")).toContainText(
+          "Could not confirm whether your account closed.",
+        );
+        await page.reload();
+      } else {
+        await expect(recovery).toContainText("Your account is closed");
+      }
       const closed = await readState();
       expect(closed.retained).toEqual(before.retained);
       expect(closed.member.public).toBe(0);

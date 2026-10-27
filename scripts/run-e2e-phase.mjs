@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 function prefixLines(stream, label, output) {
   let pending = "";
@@ -25,6 +25,7 @@ export function runE2ePhase({
     const child = spawn(command, args, {
       cwd,
       env,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
     let settled = false;
@@ -38,7 +39,31 @@ export function runE2ePhase({
       process.stderr.write(
         `[${label}] exceeded the ${timeoutMs}ms phase deadline\n`,
       );
-      child.kill("SIGKILL");
+      if (child.pid) {
+        if (process.platform === "win32") {
+          const result = spawnSync(
+            "taskkill",
+            ["/pid", String(child.pid), "/T", "/F"],
+            {
+              stdio: "ignore",
+              timeout: 5000,
+            },
+          );
+          if (result.error || result.status !== 0)
+            process.stderr.write(
+              `[${label}] process cleanup failed: ${result.error?.message ?? `taskkill exited ${result.status}`}\n`,
+            );
+        } else {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch (error) {
+            if (error.code !== "ESRCH")
+              process.stderr.write(
+                `[${label}] process cleanup failed: ${error.message}\n`,
+              );
+          }
+        }
+      }
       // A descendant can retain an inherited pipe after the launcher exits.
       // Do not wait for close to enforce the failed phase's deadline.
       child.stdout.destroy();
