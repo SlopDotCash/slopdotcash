@@ -791,7 +791,7 @@ try {
     /exact/,
   );
   // Bounded monthly commitment: the owner sets a cap and turns it on; after the
-  // cutoff anyone submits the period's allocation with the authority's signature.
+  // period ends the owner submits the period's allocation with the authority's signature.
   const now = Number(
     (
       (await rpc("eth_getBlockByNumber", ["latest", false])) as {
@@ -799,8 +799,8 @@ try {
       }
     ).timestamp,
   );
-  // The open period is the month before the month that contains now - 72 hours.
-  const shifted = new Date((now - 259_200) * 1000);
+  // Any closed calendar month is eligible for owner finalization.
+  const shifted = new Date(now * 1000);
   const open = new Date(
     Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() - 1, 1),
   );
@@ -838,13 +838,13 @@ try {
     "false",
   ]);
   await assert.rejects(
-    simulate(vault, monthly, donor),
+    simulate(vault, monthly, owner),
     new RegExp(selector("MonthlyDisabled()")),
     "the owner can opt out after creation",
   );
   await send(vault, "setMonthlyCommitment(uint128,bool)", ["50000000", "true"]);
   await assert.rejects(
-    simulate(vault, monthly, donor),
+    simulate(vault, monthly, owner),
     new RegExp(selector("MonthlyCapExceeded()")),
     "60 is above the owner's 50 cap",
   );
@@ -868,7 +868,7 @@ try {
         entries,
         signDigest(digest, recipientKey),
       ),
-      donor,
+      owner,
     ),
     new RegExp(selector("InvalidAttestation()")),
     "only the identity authority attests",
@@ -907,9 +907,9 @@ try {
       return fn(monthlyJournal);
     },
   };
-  const gasAccount = mnemonicToAccount(
+  const ownerAccount = mnemonicToAccount(
     "test test test test test test test test test test test junk",
-    { addressIndex: 4 },
+    { addressIndex: 0 },
   );
   const monthlyEnv = {
     PAYMENTS_DB: {
@@ -931,7 +931,7 @@ try {
       },
     ]),
     PAYMENT_RPC_URLS: JSON.stringify({ anvil: rpcUrl }),
-    SIGNER: gasAccount,
+    SIGNER: ownerAccount,
     JOURNAL: monthlyJournal,
     ALLOW_LOCAL_TEST_CHAIN: true,
   };
@@ -963,12 +963,36 @@ try {
     }),
     /authority signature/,
   );
+  await assert.rejects(
+    simulate(vault, monthly, donor),
+    new RegExp(selector("Unauthorized()")),
+    "a funded third party cannot admit a month even with the attester signature",
+  );
+  assert.deepEqual(
+    await submitEvmMonthly(
+      {
+        ...monthlyEnv,
+        SIGNER: mnemonicToAccount(
+          "test test test test test test test test test test test junk",
+          { addressIndex: 4 },
+        ),
+      },
+      monthlyAuthorization,
+    ),
+    { transactionId: null, alreadyCommitted: false, notAdmitted: true },
+    "the service leaves owner admission pending without signing",
+  );
+  assert.equal(
+    records.size,
+    0,
+    "refused admission creates no transaction journal",
+  );
   const submitted = await submitEvmMonthly(monthlyEnv, monthlyAuthorization);
   assert.equal(submitted.alreadyCommitted, false);
   assert.ok(submitted.transactionId);
   const monthlyTx = submitted.transactionId;
   await rpc("anvil_mine", ["0x1"]);
-  const nonceAfter = await rpc("eth_getTransactionCount", [donor, "latest"]);
+  const nonceAfter = await rpc("eth_getTransactionCount", [owner, "latest"]);
   assert.deepEqual(
     await submitEvmMonthly(monthlyEnv, monthlyAuthorization),
     submitted,
@@ -980,7 +1004,7 @@ try {
     alreadyCommitted: true,
   });
   assert.equal(
-    await rpc("eth_getTransactionCount", [donor, "latest"]),
+    await rpc("eth_getTransactionCount", [owner, "latest"]),
     nonceAfter,
     "a committed monthly retry spends no gas",
   );
@@ -1006,7 +1030,7 @@ try {
     );
   }
   await assert.rejects(
-    simulate(vault, monthly, donor),
+    simulate(vault, monthly, owner),
     new RegExp(selector("MonthlyAlreadyCommitted()")),
     "one commitment per period; the signature cannot replay",
   );
@@ -1245,7 +1269,7 @@ try {
     "An event before the bound still verifies after the rollback",
   );
   console.log(
-    "EVM adapter integration passed: real factory deployment, permissionless owner-keyed vault creation, separate ordinary and bounty vaults, permissionless deposit, 18-decimal vault beyond uint64, readVaultTotals, 2% withdrawal fee, vault-bound award, wallet-accepted immediate and cancellable binding, payment, fee claim, signed capped once-per-period monthly commitment from any sender, owner opt-out, finalized gating, wrong chain/vault/award/index/delay/purpose rejection, immediate authority rotation.",
+    "EVM adapter integration passed: real factory deployment, permissionless owner-keyed vault creation, separate ordinary and bounty vaults, permissionless deposit, 18-decimal vault beyond uint64, readVaultTotals, 2% withdrawal fee, vault-bound award, wallet-accepted immediate and cancellable binding, payment, fee claim, signed capped once-per-period monthly commitment by the owner, owner opt-out, finalized gating, wrong chain/vault/award/index/delay/purpose rejection, immediate authority rotation.",
   );
 } finally {
   anvil.kill("SIGTERM");
