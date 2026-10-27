@@ -11,6 +11,7 @@ import {
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import {
+  Keypair,
   PublicKey,
   SystemProgram,
   sendAndConfirmTransaction,
@@ -203,4 +204,99 @@ test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reser
   assert.equal(totals.freeBalance, (deposited - gross - reserved).toString());
   assert.equal(totals.reserved, reserved.toString());
   assert.equal(totals.accruedFees, "0");
+
+  const recipient = Keypair.generate();
+  const destination = getAssociatedTokenAddressSync(
+    mint,
+    recipient.publicKey,
+    false,
+    tokenProgram,
+  );
+  await sendAndConfirmTransaction(
+    provider.connection,
+    new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        payer.publicKey,
+        destination,
+        recipient.publicKey,
+        mint,
+        tokenProgram,
+      ),
+    ),
+    [payer],
+    { commitment: "confirmed", preflightCommitment: "confirmed" },
+  );
+  const actor = bn(77).toArrayLike(Buffer, "le", 8);
+  const binding = pda(Buffer.from("wallet"), project.toBuffer(), actor);
+  await provider.connection.confirmTransaction(
+    await program.methods
+      .bindWallet(
+        bn(77),
+        [...network],
+        bn(0),
+        [...digest("metadata-recipient-binding")],
+        bn(Math.floor(Date.now() / 1000) + 3600),
+      )
+      .accountsStrict({
+        payer: payer.publicKey,
+        identityAuthority: configIdentity.publicKey,
+        destination: recipient.publicKey,
+        project,
+        binding,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([configIdentity, recipient])
+      .rpc(),
+    "confirmed",
+  );
+  const pay = (selectedProgram) =>
+    program.methods
+      .pay(bn(1))
+      .accountsStrict({
+        project,
+        obligation: pda(Buffer.from("award"), project.toBuffer(), award),
+        binding,
+        mint,
+        vault,
+        destination,
+        tokenProgram: selectedProgram,
+        veto: pda(
+          Buffer.from("veto"),
+          project.toBuffer(),
+          actor,
+          bn(1).toArrayLike(Buffer, "le", 8),
+        ),
+      })
+      .rpc();
+  await assert.rejects(pay(TOKEN_PROGRAM_ID));
+  assert.equal(await balance(destination), 0n);
+  assert.equal(
+    (await program.account.project.fetch(project)).reserved.toString(),
+    reserved.toString(),
+  );
+  await provider.connection.confirmTransaction(
+    await pay(tokenProgram),
+    "finalized",
+  );
+  assert.equal(await balance(destination), 98_000_000n);
+  await assert.rejects(pay(tokenProgram), /AlreadyPaid/);
+  const paid = await program.account.project.fetch(project);
+  assert.equal(paid.reserved.toString(), "0");
+  assert.equal(paid.accruedFees.toString(), "2000000");
+  assert.equal(await balance(vault), deposited - gross - 98_000_000n);
+  await provider.connection.confirmTransaction(
+    await program.methods
+      .claimFees()
+      .accountsStrict({
+        project,
+        mint,
+        vault,
+        feeAccount: feeAddress,
+        tokenProgram,
+      })
+      .rpc(),
+    "finalized",
+  );
+  assert.equal(await balance(feeAddress), 10_000_000n);
+  assert.equal(await balance(vault), deposited - gross - reserved);
 });
