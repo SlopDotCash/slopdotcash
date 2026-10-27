@@ -92,6 +92,8 @@ export interface Environment {
    * (staging keeper topology). A production EVM attester always has it.
    */
   SCHEDULED_BINDINGS?: string;
+  /** One consumed nonce per vault/actor for reviewed staging qualification only. */
+  TEST_BINDING_NONCE_LIMIT?: string;
   /** Dedicated test-only key; each independently deployed role has a different secret. */
   TEST_SIGNER_PRIVATE_KEY?: `0x${string}`;
   TEST_SOLANA_SIGNER_SEED?: string;
@@ -112,6 +114,7 @@ export class PaymentSignerJournal {
   ) {}
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const bindingNonceLimit = testBindingNonceLimit(this.env);
     // This observation-only path must run before database or secret access,
     // including the ordinary/private environment copy below.
     if (url.pathname === "/v1/reconcile-binding") {
@@ -222,6 +225,9 @@ export class PaymentSignerJournal {
           PAYMENT_DEPLOYMENTS: this.env.PAYMENT_DEPLOYMENTS,
           PAYMENT_RPC_URLS: this.env.PAYMENT_RPC_URLS,
           JOURNAL: this.state.storage,
+          ...(bindingNonceLimit
+            ? { BINDING_NONCE_LIMIT: bindingNonceLimit }
+            : {}),
         };
         const candidates = await bindingCandidates(environment);
         if (
@@ -683,6 +689,7 @@ export async function runMonthlyAttester(env: Environment) {
  * requests its bindings itself.
  */
 export async function runDestinationBindings(env: Environment) {
+  testBindingNonceLimit(env);
   if (!scheduledBindings(env)) return null;
   const response = await env.JOURNAL.get(
     env.JOURNAL.idFromName(
@@ -704,6 +711,21 @@ export async function runDestinationBindings(env: Environment) {
   )) as BindingRunReport;
   if (report.failed !== 0) throw new Error("Destination binding incomplete");
   return report;
+}
+
+export function testBindingNonceLimit(env: Environment): 1 | undefined {
+  if (env.TEST_BINDING_NONCE_LIMIT === undefined) return undefined;
+  if (
+    env.TEST_BINDING_NONCE_LIMIT !== "1" ||
+    signerStack(env.SIGNER_STACK) !== "test" ||
+    env.SIGNER_ROLE !== "attester" ||
+    env.CHAIN_FAMILY !== "evm" ||
+    env.SCHEDULED_BINDINGS !== "on"
+  )
+    throw new Error(
+      "Single-nonce bindings require a scheduled test EVM attester",
+    );
+  return 1;
 }
 
 /**
@@ -803,6 +825,7 @@ function privateAttesterEnvironment(env: Environment): Environment {
 /** Service bindings only. workers_dev and preview URLs must remain disabled in both deployments. */
 export default {
   async scheduled(_event: unknown, env: Environment) {
+    testBindingNonceLimit(env);
     // The binding run follows the indexing of new awards and runs even when
     // a monthly step fails; either failure fails the scheduled run.
     const failures: unknown[] = [];

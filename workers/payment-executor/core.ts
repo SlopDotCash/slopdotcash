@@ -71,6 +71,8 @@ export interface JournalStore {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
   transaction<T>(callback: (store: JournalStore) => Promise<T>): Promise<T>;
+  /** Required only for bounded legacy-history admission under the test nonce limit. */
+  list?<T>(options: { prefix: string; limit: number }): Promise<Map<string, T>>;
 }
 export interface ExecutorEnvironment {
   PAYMENTS_DB: D1Database;
@@ -86,6 +88,8 @@ export interface ExecutorEnvironment {
    * sends (owner decision, 25 October 2026). The clock measures the wait.
    */
   FEE_BUMP?: { now(): Date };
+  /** Validated test-stack staging control; never enabled for production. */
+  BINDING_NONCE_LIMIT?: 1;
 }
 export type PublicEvmExecutorEnvironment = Omit<
   ExecutorEnvironment,
@@ -143,6 +147,8 @@ export interface Attempt {
   fingerprint: string;
   rawTransaction: Hex;
   transactionId: Hex;
+  /** Stable vault/actor budget for the optional one-nonce test qualification. */
+  bindingNonceBudgetKey?: string;
 }
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
@@ -456,7 +462,7 @@ async function assertPayable(
       `Award is inside its commit delay until ${new Date(Number(payableAt) * 1000).toISOString()}; retry after it ends`,
     );
 }
-/** A finalized reverted attempt changed nothing, so a fresh attempt may replace it. */
+/** A finalized revert may be retried unless the test binding policy keeps its nonce held. */
 async function retireRevertedAttempt(
   env: PublicEvmExecutorEnvironment,
   config: Deployment,
@@ -486,9 +492,78 @@ async function retireRevertedAttempt(
       ...current,
       revert: proof,
     });
+    if (env.BINDING_NONCE_LIMIT === 1 && key.startsWith(STORED_BINDING))
+      return false; // Keep the consumed nonce and its revert proof held.
     await store.put(key, null);
     return true;
   });
+}
+
+async function assertBindingNonceBudget(store: JournalStore, attempt: Attempt) {
+  if (!attempt.bindingNonceBudgetKey)
+    throw new Error("Legacy test binding requires operator review");
+  const budget = await store.get<{
+    nonce: number;
+    transactionId: string;
+    fingerprint: string;
+  }>(attempt.bindingNonceBudgetKey);
+  const tx = parseTransaction(attempt.rawTransaction);
+  if (
+    !budget ||
+    budget.nonce !== tx.nonce ||
+    budget.transactionId !== attempt.transactionId ||
+    budget.fingerprint !== attempt.fingerprint
+  )
+    throw new Error("Test binding nonce budget differs from signed attempt");
+}
+async function reserveBindingNonceBudget(
+  store: JournalStore,
+  config: Deployment,
+  actor: string | undefined,
+) {
+  if (!actor || !/^[1-9][0-9]*$/.test(actor))
+    throw new Error("Test binding actor unavailable");
+  const key = `bind:test-nonce:${digest(JSON.stringify([config.chainId, config.vault.toLowerCase(), actor]))}`;
+  if (await store.get(key))
+    throw new Error(
+      "Test binding nonce already consumed; operator review required",
+    );
+  if (!store.list) throw new Error("Test binding history cannot be reviewed");
+  const prior = await store.list<Attempt | null>({
+    prefix: STORED_BINDING,
+    limit: 1000,
+  });
+  if (!(prior instanceof Map) || prior.size >= 1000)
+    throw new Error("Test binding history exceeds review bound");
+  // Cancellation/supersession recovery moves the original into this archive
+  // and clears its active key. Include it before admitting a different claim.
+  const observations = await store.list<{ attempt: Attempt }>({
+    prefix: "binding-observed:",
+    limit: 1000 - prior.size,
+  });
+  if (!(observations instanceof Map) || observations.size >= 1000 - prior.size)
+    throw new Error("Test binding history exceeds review bound");
+  const attempts = [
+    ...prior.values(),
+    ...[...observations.values()].map((record) => {
+      if (!record?.attempt) throw new Error("Legacy test binding is malformed");
+      return record.attempt;
+    }),
+  ];
+  for (const attempt of attempts) {
+    if (
+      !attempt ||
+      attempt.network !== config.network ||
+      attempt.vault.toLowerCase() !== config.vault.toLowerCase()
+    )
+      continue;
+    const data = parseTransaction(attempt.rawTransaction).data;
+    if (!data || data.length < 74)
+      throw new Error("Legacy test binding is malformed");
+    if (BigInt(`0x${data.slice(10, 74)}`).toString() === actor)
+      throw new Error("Legacy test binding history requires operator review");
+  }
+  return key;
 }
 
 async function signAndSubmit(
@@ -500,6 +575,7 @@ async function signAndSubmit(
   input: Pick<Input, "network" | "vault" | "idempotencyKey"> & {
     obligationId?: string;
     monthlyPeriod?: string;
+    githubUserId?: string;
   },
   /** Journal list that records the key in the same transaction as the signed bytes. */
   pendingList?: string,
@@ -507,6 +583,12 @@ async function signAndSubmit(
   beforeBroadcast?: (attempt: Attempt) => Promise<void>,
 ) {
   let attempt = await env.JOURNAL.get<Attempt>(key);
+  if (
+    attempt &&
+    env.BINDING_NONCE_LIMIT === 1 &&
+    key.startsWith(STORED_BINDING)
+  )
+    await assertBindingNonceBudget(env.JOURNAL, attempt);
   if (attempt && attempt.fingerprint !== fingerprint)
     throw new Error("Idempotency key reused for another operation");
   if (!attempt) {
@@ -547,8 +629,14 @@ async function signAndSubmit(
       if (existing) {
         if (existing.fingerprint !== fingerprint)
           throw new Error("Idempotency collision");
+        if (env.BINDING_NONCE_LIMIT === 1 && key.startsWith(STORED_BINDING))
+          await assertBindingNonceBudget(store, existing);
         return existing;
       }
+      const bindingNonceBudgetKey =
+        env.BINDING_NONCE_LIMIT === 1 && key.startsWith(STORED_BINDING)
+          ? await reserveBindingNonceBudget(store, config, input.githubUserId)
+          : undefined;
       const nonce = Math.max(
         chainNonce,
         (await store.get<number>(nonceKey)) ?? 0,
@@ -574,7 +662,14 @@ async function signAndSubmit(
         fingerprint,
         rawTransaction,
         transactionId: transactionHash(rawTransaction),
+        ...(bindingNonceBudgetKey ? { bindingNonceBudgetKey } : {}),
       };
+      if (bindingNonceBudgetKey)
+        await store.put(bindingNonceBudgetKey, {
+          nonce,
+          transactionId: next.transactionId,
+          fingerprint,
+        });
       await store.put(key, next);
       await store.put(nonceKey, nonce + 1);
       if (pendingList) {
@@ -1536,6 +1631,8 @@ export async function bindStoredDestination(
   const key = `${STORED_BINDING}${operation.slice(2)}`;
   const journaled = { ...input, idempotencyKey: operation.slice(2) };
   const existing = await env.JOURNAL.get<Attempt | null>(key);
+  if (env.BINDING_NONCE_LIMIT === 1 && existing === null)
+    throw new Error("Retired test binding requires operator review");
   if (existing && (await env.JOURNAL.get(cancellationKey(existing)))) {
     const result = await reconcileStoredBinding(env, key);
     return result.transactionId
@@ -1932,6 +2029,8 @@ async function reconcileStoredBinding(
       throw new Error("Recorded binding receipt is not canonical");
     return { settled: BigInt(receipt.blockNumber) <= BigInt(finalized.number) };
   }
+  if (env.BINDING_NONCE_LIMIT === 1)
+    await assertBindingNonceBudget(env.JOURNAL, attempt);
   const cancellation = await cancelObsoleteStoredBinding(
     env,
     deployment,

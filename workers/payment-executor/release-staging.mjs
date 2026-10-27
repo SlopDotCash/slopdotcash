@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { paymentDeployments } from "../../scripts/prepare-payment-deployments.ts";
+import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { HISTORICAL_PROJECTS } from "../../src/lib/projects.mjs";
 import {
   readMonthlySchedule,
@@ -47,7 +48,10 @@ export function stagingReleasePlan({
   registry,
   registryDatabase,
   monthlySchedule,
+  singleNonceBindings = false,
 }) {
+  if (typeof singleNonceBindings !== "boolean")
+    throw new Error("Invalid staging binding nonce policy");
   return Object.entries(STAGING_MONTHLY_RELEASES).flatMap(
     ([network, binding]) => {
       if (!paymentDeployments(registry, "testnet", network).length) return [];
@@ -55,6 +59,8 @@ export function stagingReleasePlan({
         stack: "test",
         environment: "staging",
         topology: "keeper",
+        singleNonceBindings:
+          singleNonceBindings && ESCROW_NETWORKS[network].family === "evm",
         network,
         registry,
         registryDatabase,
@@ -83,6 +89,7 @@ export async function releaseStagingPayments({
   sha,
   registry,
   provider,
+  singleNonceBindings = false,
 }) {
   if (!/^[a-f0-9]{40}$/.test(sha ?? ""))
     throw new Error("Exact staging source required");
@@ -109,6 +116,7 @@ export async function releaseStagingPayments({
     registry,
     registryDatabase,
     monthlySchedule,
+    singleNonceBindings,
   });
   await mkdir(directory, { recursive: true });
   const run = async (args) => {
@@ -198,6 +206,12 @@ export async function releaseStagingPayments({
   return proof;
 }
 
+export function stagingBindingNoncePolicy(value) {
+  if (value === undefined || value === "") return false;
+  if (value === "1") return true;
+  throw new Error("Unknown staging binding nonce policy");
+}
+
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
@@ -224,5 +238,8 @@ if (
     sha: process.env.GITHUB_SHA,
     registry: HISTORICAL_PROJECTS,
     provider: runStagingWrangler,
+    singleNonceBindings: stagingBindingNoncePolicy(
+      process.env.SLOP_STAGING_BINDING_NONCE_LIMIT,
+    ),
   });
 }

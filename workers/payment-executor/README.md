@@ -34,7 +34,29 @@ The production EVM attester refuses `/v1/pay`, so this run is its only
 binding path. A test-stack EVM attester with `SCHEDULED_BINDINGS=on` (the
 staging keeper topology) runs the same binding with its test key and test
 journal, and likewise refuses `/v1/pay`. Without it, a test attester has no
-scheduled binding; any other value stops the run. Each run first passes the stack, network and preflight
+scheduled binding; any other value stops the run.
+
+For bounded public-testnet qualification (PRD sections 6 and 11), the normal
+staging release may opt in with `SLOP_STAGING_BINDING_NONCE_LIMIT=1`. Absent or
+empty keeps ordinary staging behavior; other values refuse release. This emits
+`TEST_BINDING_NONCE_LIMIT=1` only on staging EVM attesters. Production and other
+roles reject that runtime policy. Before a qualification creates its first
+vault, verify the released service has the policy, and keep it enabled until
+the qualification is reconciled. Changing the repository variable or releasing
+it requires the reviewed operator plan; source changes alone do not activate it.
+
+The limit records one nonce per vault and GitHub actor atomically with the
+existing signed transaction and nonce cursor. A finalized revert stays held;
+it cannot allocate another nonce. Same-nonce reconciliation, bounded fee
+variants and approved self-cancellation keep their existing rules. Existing
+unmarked binding attempts and retired history require operator review before
+any new signature, rather than being counted as a fresh attempt. An already
+signed same-nonce cancellation remains available for reconciliation and
+rebroadcast under its original checks. The first admission scans at most 1,000
+stored binding records; unavailable or larger history fails closed. The
+original Durable Object namespace, signed attempts and archives are retained.
+
+Each run first passes the stack, network and preflight
 checks of every pinned vault. After the run indexes the finalized vault
 events, it reads from D1 each reserved award on a pinned vault whose
 contributor has a current signed wallet authorization and a stored binding
