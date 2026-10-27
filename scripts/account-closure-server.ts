@@ -2,7 +2,11 @@
 import { resolve } from "node:path";
 import { onRequest } from "../functions/api/v1/[[path]]";
 import { deploymentOrigins, deploymentTier } from "../src/lib/deployment";
-import { ME, seedAccountClosure } from "../tests/account-closure-fixture";
+import {
+  ME,
+  OTHER,
+  seedAccountClosure,
+} from "../tests/account-closure-fixture";
 import { randomToken } from "../workers/identity/crypto";
 import { handleIdentityRequest } from "../workers/identity/handler";
 import { D1IdentityPersistence } from "../workers/identity/persistence";
@@ -23,12 +27,15 @@ const identity = {
   now: () => new Date(),
   randomToken,
   resolveGithubIdentity: async (code: string) =>
-    code === "local-identity-code"
-      ? {
-          githubActorId: ME.github,
-          githubNodeId: ME.actor,
-          githubLogin: ME.login,
-        }
+    code === "local-identity-code" || code === "local-other-code"
+      ? (() => {
+          const actor = code === "local-identity-code" ? ME : OTHER;
+          return {
+            githubActorId: actor.github,
+            githubNodeId: actor.actor,
+            githubLogin: actor.login,
+          };
+        })()
       : null,
 };
 const env = {
@@ -48,6 +55,11 @@ const retained = [
   "points_telegram_claims",
 ];
 const state = () => ({
+  assertions: sqlite
+    .query(
+      "SELECT github_actor_id, consumed_at FROM identity_assertions ORDER BY created_at",
+    )
+    .all(),
   retained: Object.fromEntries(
     retained.map((table) => [
       table,

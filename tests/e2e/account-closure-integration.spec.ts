@@ -1,10 +1,26 @@
 /** Browser -> Pages -> SQLite -> identity handlers; external GitHub is synthetic. */
+
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
 
+// Keep the real browser isolation policy when serving the built static files.
+function readBuiltSiteHeaders() {
+  return Object.fromEntries(
+    readFileSync("dist/_headers", "utf8")
+      .split("\n\n")[0]
+      .split("\n")
+      .slice(1)
+      .map((line) => {
+        const colon = line.indexOf(":");
+        return [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
+      }),
+  );
+}
 const { site: SITE, identity: IDENTITY } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
@@ -15,6 +31,7 @@ for (const withObligations of [false, true])
     diagnostics,
     page,
   }, info) => {
+    const staticHeaders = readBuiltSiteHeaders();
     const droppedClosure = new RegExp(
       `^console Failed to load resource: net::ERR_FAILED at ${escapeRegExp(SITE)}/api/v1/points/account/close$`,
       "u",
@@ -40,6 +57,8 @@ for (const withObligations of [false, true])
       stderr += String(chunk);
     });
     const lines = createInterface({ input: child.stdout });
+    let releaseJoin = () => {};
+    let releasePoll = () => {};
     try {
       const started = await new Promise<{
         url: string;
@@ -69,6 +88,19 @@ for (const withObligations of [false, true])
         });
       });
       let dropClosureResponse = withObligations;
+      let interactiveGitHub = false;
+      let otherIdentity = false;
+      let pendingReplies = 0;
+      let joins = 0;
+      let holdJoin = false;
+      let holdCompletedPoll = false;
+      let completedPollHeld = false;
+      const pollReleased = new Promise<void>((resolve) => {
+        releasePoll = resolve;
+      });
+      const joinReleased = new Promise<void>((resolve) => {
+        releaseJoin = resolve;
+      });
       const completedCallbacks: string[] = [];
       const failures: string[] = [];
       const retiredRequests: string[] = [];
@@ -96,10 +128,15 @@ for (const withObligations of [false, true])
             "state",
             url.searchParams.get("state") ?? "",
           );
-          callback.searchParams.set("code", "local-identity-code");
+          callback.searchParams.set(
+            "code",
+            otherIdentity ? "local-other-code" : "local-identity-code",
+          );
           await route.fulfill({
             contentType: "text/html",
-            body: `<script>location.replace(${JSON.stringify(callback.href)})</script>`,
+            body: interactiveGitHub
+              ? `<button onclick='location.replace(${JSON.stringify(callback.href)})'>Authorize synthetic GitHub</button>`
+              : `<script>location.replace(${JSON.stringify(callback.href)})</script>`,
           });
           return;
         }
@@ -112,10 +149,37 @@ for (const withObligations of [false, true])
         }
         if (url.origin !== SITE && url.origin !== IDENTITY)
           throw new Error(`Unexpected network origin: ${url.origin}`);
+        if (url.origin === SITE && !url.pathname.startsWith("/api/")) {
+          const path = join(
+            process.cwd(),
+            "dist",
+            url.pathname === "/" ? "index.html" : url.pathname,
+          );
+          await route.fulfill({
+            path: existsSync(path)
+              ? path
+              : join(process.cwd(), "dist/index.html"),
+            headers: staticHeaders,
+          });
+          return;
+        }
+        if (url.pathname === "/api/v1/points/join") joins++;
         const response = await route.fetch({
           url: `${started.url}/${url.origin === SITE ? "site" : "identity"}${url.pathname}${url.search}`,
           maxRedirects: 0,
         });
+        if (
+          url.pathname === "/v1/oauth/poll" &&
+          response.status() === 200 &&
+          holdCompletedPoll
+        ) {
+          completedPollHeld = true;
+          await pollReleased;
+        }
+        if (url.pathname === "/api/v1/points/join" && holdJoin)
+          await joinReleased;
+        if (url.pathname === "/v1/oauth/poll" && response.status() === 202)
+          pendingReplies++;
         if (url.pathname === "/v1/oauth/callback" && response.status() === 200)
           completedCallbacks.push(await response.text());
         if (
@@ -155,7 +219,13 @@ for (const withObligations of [false, true])
       expect(before.retained.security_cases).toHaveLength(
         withObligations ? 1 : 0,
       );
-      await page.goto(`${SITE}/account`);
+      const loaded = await page.goto(`${SITE}/account`);
+      expect(loaded?.headers()["cross-origin-opener-policy"]).toBe(
+        "same-origin",
+      );
+      expect(loaded?.headers()["content-security-policy"]).toContain(
+        "script-src 'self'",
+      );
       const connections = page.getByRole("region", { name: "Connections" });
       await expect(connections.getByRole("checkbox")).toHaveCount(0);
       await expect(page.getByText(/Telegram/i)).toHaveCount(0);
@@ -270,26 +340,169 @@ for (const withObligations of [false, true])
       ).toBeVisible();
       const destination = "/account?source=github-login#connections";
       await page.goto(`${SITE}/login?next=${encodeURIComponent(destination)}`);
+      interactiveGitHub = true;
+      otherIdentity = true;
+      holdCompletedPoll = true;
+      const initialPendingReplies = pendingReplies;
+      const initialJoins = joins;
+      const cancelledPopup = page.waitForEvent("popup");
+      await page
+        .getByRole("button", { name: "Continue with GitHub", exact: true })
+        .click();
+      const cancelledWindow = await cancelledPopup;
+      await expect(
+        cancelledWindow.getByRole("button", {
+          name: "Authorize synthetic GitHub",
+        }),
+      ).toBeVisible();
+      expect(await cancelledWindow.evaluate(() => window.opener)).toBeNull();
+      await expect
+        .poll(() => pendingReplies)
+        .toBeGreaterThan(initialPendingReplies);
+      await cancelledWindow
+        .getByRole("button", { name: "Authorize synthetic GitHub" })
+        .click();
+      await expect.poll(() => completedPollHeld).toBe(true);
+      const cancel = page.getByRole("button", {
+        name: "Cancel sign-in",
+        exact: true,
+      });
+      await cancel.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("status")).toContainText(
+        "Sign-in cancelled.",
+      );
+      holdCompletedPoll = false;
+      releasePoll();
+      await expect.poll(() => cancelledWindow.isClosed()).toBe(true);
+      expect(joins).toBe(initialJoins);
+      expect((await readState()).assertions).toContainEqual({
+        github_actor_id: "4200",
+        consumed_at: null,
+      });
+      otherIdentity = false;
+      const retryPendingReplies = pendingReplies;
       const returnPopup = page.waitForEvent("popup");
       await page
         .getByRole("button", { name: "Continue with GitHub", exact: true })
         .click();
       const returnWindow = await returnPopup;
+      await expect(
+        returnWindow.getByRole("button", {
+          name: "Authorize synthetic GitHub",
+        }),
+      ).toBeVisible();
+      await expect
+        .poll(() => pendingReplies)
+        .toBeGreaterThan(retryPendingReplies);
+      await expect(
+        page.getByRole("button", { name: "Waiting for GitHub…" }),
+      ).toBeVisible();
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = "200%";
+      });
+      await expectAccessible(page);
+      await page.screenshot({
+        path: info.outputPath("isolated-popup-pending-200.png"),
+        fullPage: true,
+      });
+      holdJoin = true;
+      await returnWindow
+        .getByRole("button", { name: "Authorize synthetic GitHub" })
+        .click();
+      await expect(
+        page.getByRole("button", { name: "Signing in…", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Cancel sign-in", exact: true }),
+      ).toHaveCount(0);
+      releaseJoin();
       await expect.poll(() => returnWindow.isClosed()).toBe(true);
       await expect(page).toHaveURL(`${SITE}${destination}`);
       await expect(
         page.getByRole("button", { name: "Your account", exact: true }),
       ).toBeVisible();
-      expect(completedCallbacks).toHaveLength(3);
+      expect(completedCallbacks).toHaveLength(4);
+      expect(joins).toBe(initialJoins + 1);
+      await page
+        .getByRole("button", { name: "Your account", exact: true })
+        .click();
+      await expect(
+        page.getByRole("region", { name: "Your account details", exact: true }),
+      ).toContainText(`@${started.login}`);
+      await page.keyboard.press("Escape");
       for (const body of completedCallbacks) {
         expect(body).toContain('id="close-window"');
-        expect(body).not.toContain(`href="${SITE}"`);
+        expect(body).toContain(`href="${SITE}"`);
       }
       await page.screenshot({
         path: info.outputPath("popup-closed-return-preserved.png"),
         fullPage: true,
       });
+      await page.waitForLoadState("networkidle");
+      if (!withObligations) {
+        // A tab opened outside script may refuse window.close after navigation.
+        // It must retain a keyboard-accessible exit, with the callback CSP intact.
+        const manual = await context.newPage();
+        await manual.route(`${SITE}/__fixture/history`, (route) =>
+          route.fulfill({
+            contentType: "text/html",
+            headers: staticHeaders,
+            body: "<title>Previous page</title><p>Previous page</p>",
+          }),
+        );
+        await manual.goto(`${SITE}/__fixture/history`);
+        const startedFlow = await fetch(
+          `${started.url}/identity/v1/oauth/start`,
+          {
+            method: "POST",
+            headers: { origin: SITE, "content-type": "application/json" },
+            body: JSON.stringify({ audience: "slop-points-web" }),
+          },
+        );
+        expect(startedFlow.status).toBe(201);
+        const flow = (await startedFlow.json()) as { authorizationUrl: string };
+        interactiveGitHub = false;
+        const callback = manual.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname === "/v1/oauth/callback",
+        );
+        await manual.goto(flow.authorizationUrl);
+        const completed = await callback;
+        expect(completed.headers()["content-security-policy"]).toMatch(
+          /script-src 'nonce-[^']+'/u,
+        );
+        await expect(
+          manual.getByRole("heading", { name: "Signed in", exact: true }),
+        ).toBeVisible();
+        expect(await manual.evaluate(() => window.opener)).toBeNull();
+        expect(
+          await manual.evaluate(() => window.history.length),
+        ).toBeGreaterThan(1);
+        await manual
+          .getByRole("button", { name: "Close window", exact: true })
+          .click();
+        await manual
+          .getByRole("link", { name: "Return to Slop", exact: true })
+          .focus();
+        await expect(
+          manual.getByRole("link", { name: "Return to Slop", exact: true }),
+        ).toBeFocused();
+        await expectAccessible(manual);
+        await manual.screenshot({
+          path: info.outputPath("standalone-completion-fallback.png"),
+          fullPage: true,
+        });
+        await manual.keyboard.press("Enter");
+        await expect(manual).toHaveURL(`${SITE}/`);
+        await manual.waitForLoadState("networkidle");
+        await manual.close();
+      }
+      await page.goto("about:blank");
     } finally {
+      releasePoll();
+      releaseJoin();
+      await context.unrouteAll({ behavior: "wait" });
       lines.close();
       child.kill("SIGTERM");
     }
