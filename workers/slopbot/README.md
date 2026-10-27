@@ -1455,16 +1455,15 @@ replace a joint decision with minimum or zero credit. Old journal records and
 JSON clients retain their existing path; frozen financial records are not
 rewritten. The September/October publication hold remains in force.
 
-The following no-change promotion behavior is proposed and awaits explicit
-owner confirmation before merge or activation. A historical branch promotion
-with missing branch authority remains held on
+Under the owner-delegated classification recorded in PRD section 7, a
+historical branch promotion with missing branch authority remains held on
 its own. If its base, submitted head and accepted merge have the same complete,
 hash-verified tree, collection may retain that proof for joint review. Joint
 preparation then requires one earlier complete accepted source for every
 imported commit. It retains the original claims and authors without giving the
 promotion a second claim or using it to authorize new branch work. Missing
 originals, changed trees and incomplete evidence remain unresolved (PRD
-section 7, proposed clarification).
+section 7, owner delegation of 27 October 2026).
 
 Trusted ingestion jobs explicitly build checksum-pinned Git through
 `scripts/install-value-merge-git.ts`. The consumer does not download tools.
