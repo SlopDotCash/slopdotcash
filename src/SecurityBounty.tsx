@@ -550,6 +550,10 @@ export function SecurityProgramPage({
   project: ProjectDefinition;
 }) {
   const [project, setProject] = useState(initialProject);
+  const [published, setPublished] = useState<{
+    projectId: string;
+    revision: number;
+  } | null>(null);
   const [sessionEpoch, setSessionEpoch] = useState(0);
   const session = useProjectSession(sessionEpoch);
   useEffect(() => {
@@ -573,10 +577,16 @@ export function SecurityProgramPage({
           lead="No published bounty terms, so no award is promised."
         />
         <ProjectNav project={project} current="security" />
+        {published?.projectId === project.id ? (
+          <p role="status">Published revision {published.revision}.</p>
+        ) : null}
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
           key={project.id}
           onProjectChange={setProject}
+          onPublishedRevision={(revision) =>
+            setPublished({ projectId: project.id, revision })
+          }
           project={project}
           session={session}
         />
@@ -606,6 +616,9 @@ export function SecurityProgramPage({
         </StatusBadge>
       </RoutePageHeader>
       <ProjectNav project={project} current="security" />
+      {published?.projectId === project.id ? (
+        <p role="status">Published revision {published.revision}.</p>
+      ) : null}
       <SecurityOffer project={project} />
       <p>
         <a href="#security-scope">
@@ -717,6 +730,9 @@ export function SecurityProgramPage({
         <ProjectSecuritySettings
           key={project.id}
           onProjectChange={setProject}
+          onPublishedRevision={(revision) =>
+            setPublished({ projectId: project.id, revision })
+          }
           project={project}
           session={session}
         />

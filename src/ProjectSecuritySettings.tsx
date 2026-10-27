@@ -11,10 +11,12 @@ type Revision = { revision: number; project: ProjectDefinition };
 export function ProjectSecuritySettings({
   project,
   onProjectChange,
+  onPublishedRevision,
   session,
 }: {
   project: ProjectDefinition;
   onProjectChange: (project: ProjectDefinition) => void;
+  onPublishedRevision: (revision: number) => void;
   session: ProjectSessionState;
 }) {
   const [opened, setOpened] = useState(
@@ -94,6 +96,7 @@ export function ProjectSecuritySettings({
           actor={session.session}
           key={`${project.id}:${session.session.githubId}`}
           onProjectChange={onProjectChange}
+          onPublishedRevision={onPublishedRevision}
           project={project}
         />
       ) : null}
@@ -105,10 +108,12 @@ function SecuritySettingsEditor({
   actor,
   project,
   onProjectChange,
+  onPublishedRevision,
 }: {
   actor: { githubId: string; githubLogin: string };
   project: ProjectDefinition;
   onProjectChange: (project: ProjectDefinition) => void;
+  onPublishedRevision: (revision: number) => void;
 }) {
   const [state, setState] = useState<
     | { status: "loading" }
@@ -116,7 +121,6 @@ function SecuritySettingsEditor({
     | { status: "ready"; value: Revision }
   >({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
-  const [published, setPublished] = useState<number | null>(null);
   useEffect(() => {
     let active = true;
     setState({ status: "loading" });
@@ -172,14 +176,11 @@ function SecuritySettingsEditor({
             project: result.project.manifest,
             revision: result.project.revision,
           });
-          setPublished(result.project.revision);
+          onPublishedRevision(result.project.revision);
         }}
         project={current.project}
         revision={current.revision}
       />
-      {published !== null ? (
-        <p role="status">Published revision {published}.</p>
-      ) : null}
       {current.project.securityBounty ? (
         <OwnerBountyVault
           key={current.project.id}
