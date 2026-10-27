@@ -4235,12 +4235,67 @@ html:has(.security-page) {
   overflow-wrap: normal;
 }
 .payout-consent-dialog h2 {
+  margin: 0;
   font-size: 1.3rem;
+}
+.consent-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.consent-head p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.consent-route {
+  display: grid;
+  justify-items: stretch;
+  gap: 6px;
+}
+.consent-party {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--brand-color-surface);
+}
+.consent-party dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.consent-party dd {
+  margin: 0;
+}
+.consent-arrow {
+  justify-self: center;
+  color: var(--muted);
+}
+.consent-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.consent-error {
+  color: var(--danger);
 }
 .payout-consent-dialog .wallet-address {
   max-width: none;
-  margin: 0.25rem 0 1rem;
-  font-size: 0.875rem;
+  margin: 0;
+  font-family: var(--brand-font-data);
+  font-size: 1rem;
 }
 
 .referral-claims {
