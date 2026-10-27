@@ -32,9 +32,15 @@ test("Account Wallets restores all saved networks and public records after reloa
   page,
 }, info) => {
   const writes: string[] = [];
+  let authorized = false;
   await page.route("**/api/v1/payments/**", async (route) => {
     if (route.request().method() !== "GET") writes.push(route.request().url());
-    await route.fulfill({ json: account });
+    await route.fulfill({
+      json: {
+        ...account,
+        wallets: account.wallets.map((wallet) => ({ ...wallet, authorized })),
+      },
+    });
   });
   await page.goto("/account#wallets", { waitUntil: "networkidle" });
   for (let visit = 0; visit < 2; visit++) {
@@ -56,6 +62,19 @@ test("Account Wallets restores all saved networks and public records after reloa
     ).toHaveCount(0);
     if (visit === 0) await page.reload({ waitUntil: "networkidle" });
   }
+  // Each network can legitimately retain a different confirmed address.
+  authorized = true;
+  await page.reload({ waitUntil: "networkidle" });
+  for (const [, network] of wallets)
+    await expect(
+      page.getByRole("img", { name: `${network}, confirmed`, exact: true }),
+    ).toHaveCount(1);
+  await expect(page.getByRole("img", { name: /not confirmed$/u })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("article", { name: "EVM wallet", exact: true }),
+  ).toHaveAttribute("data-state", "attention");
   expect(writes).toEqual([]);
   await expectAccessible(page);
   await page.screenshot({

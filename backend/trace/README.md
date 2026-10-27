@@ -100,6 +100,8 @@ The API does not return a transferable operator token. No new secret is needed.
 
 The website has no operator page for traces. Use the two routes below. Keep a
 downloaded file private. If a transfer fails, request a new grant.
+The former `/operator/traces` page, with or without a trailing slash, returns
+HTTP 404. This does not change the authenticated API routes.
 
 The route contract is:
 
