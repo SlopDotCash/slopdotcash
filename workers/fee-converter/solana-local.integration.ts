@@ -1,32 +1,38 @@
 // Live cycle against a local solana-test-validator with a throwaway keypair.
-// The validator clones the mainnet Jupiter and Whirlpool programs and the
-// accounts of one JUP/USDC Whirlpool route; the fee wallet's JUP account is
-// written locally, so no mainnet token moves. Jupiter's public API is only
-// read for the route and the unsigned transaction.
+// The validator clones the public programs, lookup tables and accounts of
+// one current Jupiter route. Only a throwaway funder receives seeded tokens;
+// a real local token transfer funds the fee wallet. No mainnet token moves.
 //   bun workers/fee-converter/solana-local.integration.ts
 
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import { solanaBase58 } from "../../contracts/solana/adapter";
+import {
+  solanaBase58,
+  solanaBase64,
+  solanaBase64Bytes,
+} from "../../contracts/solana/adapter";
+import { inspectMintAccount } from "../../contracts/solana/token";
 import {
   ata,
   concat,
   createAta,
   le,
   message,
-  TOKEN,
 } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { runOnce } from "./index";
 import { parseTransaction } from "./solana";
+import { resolveSolanaAccounts } from "./solana-accounts";
 import { sqliteD1 } from "./sqlite-d1";
 
-const JUP = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
+const selected = process.env.SLOP_FEE_TEST_TOKEN ?? "jup";
+if (selected !== "jup")
+  throw new Error("Select jup");
+const INPUT_MINT = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const JUPITER = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
-const WHIRLPOOL = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
 const BUILTIN = new Set([
   "11111111111111111111111111111111",
   "ComputeBudget111111111111111111111111111111",
@@ -38,33 +44,92 @@ const BUILTIN = new Set([
   "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
 ]);
 const JUPITER_API = "https://api.jup.ag/swap/v1";
-const PORT = 28899;
+const PORT = Number(process.env.SLOP_FEE_TEST_PORT ?? "28899");
+if (!Number.isInteger(PORT) || PORT < 1024 || PORT > 65000)
+  throw new Error("Invalid local validator port");
 const RPC = `http://127.0.0.1:${PORT}`;
-const AMOUNT = 30_000_000n; // 30 JUP
-
-// One deterministic, legacy, single-pool route so the cloned accounts match.
-const routeParams =
-  "&dexes=Whirlpool&onlyDirectRoutes=true&asLegacyTransaction=true";
+const AMOUNT = 30_000_000n;
+const quoteCache = new Map<string, unknown>();
+let capturedSwap: unknown;
+let capturedQuote: unknown;
+let capturedWallet = "";
+let captureComplete = false;
+// Capture real provider responses before cloning. Replay only exact requests
+// during local execution, so changing market routes cannot escape the snapshot.
 const pinnedRoute: typeof fetch = (async (
   input: RequestInfo | URL,
   init?: RequestInit,
 ) => {
-  const url = String(input);
-  if (url.startsWith(`${JUPITER_API}/quote?`)) {
-    const pinned = new URL(url);
-    for (const [key, value] of new URLSearchParams(routeParams.slice(1)))
-      pinned.searchParams.set(key, value);
-    return fetch(pinned.toString(), init);
+  const url = new URL(String(input));
+  if (url.href.startsWith(`${JUPITER_API}/quote?`)) {
+    url.searchParams.set("asLegacyTransaction", "false");
+    url.searchParams.set("instructionVersion", "V2");
+    url.searchParams.set("dexes", "Whirlpool");
+    url.searchParams.set("onlyDirectRoutes", "true");
+    url.searchParams.sort();
+    const cached = quoteCache.get(url.href);
+    if (cached) return Response.json(cached);
+    if (captureComplete && url.searchParams.get("inputMint") === INPUT_MINT)
+      throw new Error("Uncaptured input route request after local snapshot");
+    const response = await fetch(url, init);
+    if (!response.ok) throw new Error(`Jupiter quote HTTP ${response.status}`);
+    const body = await response.json();
+    if (body.error) throw new Error(String(body.error));
+    quoteCache.set(url.href, body);
+    return Response.json(body);
   }
-  if (url === `${JUPITER_API}/swap` && typeof init?.body === "string") {
+  if (url.href === `${JUPITER_API}/swap` && typeof init?.body === "string") {
     const body = JSON.parse(init.body);
-    return fetch(url, {
+    if (capturedSwap) {
+      if (
+        JSON.stringify(body.quoteResponse) !== JSON.stringify(capturedQuote) ||
+        body.userPublicKey !== capturedWallet ||
+        body.asLegacyTransaction !== false
+      )
+        throw new Error("Swap differs from the captured local route");
+      return Response.json(capturedSwap);
+    }
+    const response = await fetch(url, {
       ...init,
-      body: JSON.stringify({ ...body, asLegacyTransaction: true }),
+      body: JSON.stringify({
+        ...body,
+        asLegacyTransaction: false,
+        dynamicComputeUnitLimit: false,
+        skipUserAccountsRpcCalls: true,
+      }),
     });
+    if (!response.ok) throw new Error(`Jupiter swap HTTP ${response.status}`);
+    capturedSwap = await response.json();
+    capturedQuote = body.quoteResponse;
+    capturedWallet = body.userPublicKey;
+    return Response.json(capturedSwap);
   }
-  return fetch(input, init);
+  const response = await fetch(input, init);
+  if (
+    url.origin === RPC &&
+    typeof init?.body === "string" &&
+    JSON.parse(init.body).method === "simulateTransaction"
+  ) {
+    const details = await response.clone().json();
+    if (details.result?.value?.err || details.error)
+      writeFileSync(
+        join(dir, "failed-simulation.json"),
+        JSON.stringify(details, null, 2),
+      );
+  }
+  return response;
 }) as typeof fetch;
+async function mainnetRpc<T>(method: string, params: unknown[]): Promise<T> {
+  const response = await fetch("https://api.mainnet-beta.solana.com", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const body = await response.json();
+  if (!response.ok || body.error || body.result === undefined)
+    throw new Error(`Mainnet snapshot failed: ${method}`);
+  return body.result;
+}
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
   const response = await fetch(RPC, {
@@ -92,13 +157,24 @@ const wallet = solanaBase58(publicKey);
 const keypair = JSON.stringify([...seed, ...publicKey]);
 const fundingSeed = crypto.getRandomValues(new Uint8Array(32));
 const fundingWallet = solanaBase58(ed25519.getPublicKey(fundingSeed));
-const fundingAccount = ata(JUP, fundingWallet);
-console.log(`throwaway fee wallet ${wallet}`);
+const mintState = await mainnetRpc<{ value: unknown }>("getAccountInfo", [
+  INPUT_MINT,
+  { encoding: "base64", commitment: "finalized" },
+]);
+const tokenProgram = inspectMintAccount(
+  mintState.value,
+  INPUT_MINT,
+).tokenProgram;
+const fundingAccount = ata(INPUT_MINT, fundingWallet, tokenProgram);
+console.log(`throwaway ${selected} fee wallet ${wallet}`);
 
+await pinnedRoute(
+  `${JUPITER_API}/quote?inputMint=${INPUT_MINT}&outputMint=${USDC}&amount=${AMOUNT}&slippageBps=100&swapMode=ExactIn&restrictIntermediateTokens=true`,
+);
 // Learn the route's accounts from an unsigned Jupiter transaction for this wallet.
 const quote = await (
   await pinnedRoute(
-    `${JUPITER_API}/quote?inputMint=${JUP}&outputMint=${USDC}&amount=${AMOUNT}&slippageBps=50&swapMode=ExactIn&restrictIntermediateTokens=true`,
+    `${JUPITER_API}/quote?inputMint=${INPUT_MINT}&outputMint=${USDC}&amount=${AMOUNT}&slippageBps=50&swapMode=ExactIn&restrictIntermediateTokens=true`,
   )
 ).json();
 const built = (await (
@@ -109,26 +185,93 @@ const built = (await (
       quoteResponse: quote,
       userPublicKey: wallet,
       wrapAndUnwrapSol: false,
+      asLegacyTransaction: false,
     }),
   })
 ).json()) as { swapTransaction: string };
-const parsed = parseTransaction(
-  Uint8Array.from(atob(built.swapTransaction), (c) => c.charCodeAt(0)),
+const raw = solanaBase64Bytes(built.swapTransaction);
+const parsed = parseTransaction(raw);
+const proof = await resolveSolanaAccounts(raw, parsed, mainnetRpc);
+const jupAccount = ata(INPUT_MINT, wallet, tokenProgram);
+const candidateKeys = [
+  ...new Set([
+    ...proof.keys,
+    ...proof.tables.map((t) => t.address),
+    INPUT_MINT,
+    USDC,
+  ]),
+].filter((key) => key !== wallet && key !== jupAccount && !BUILTIN.has(key));
+const snapshot = await mainnetRpc<{
+  context: { slot: number };
+  value: ({
+    executable: boolean;
+    owner: string;
+    lamports: number;
+    data: [string, string];
+    rentEpoch: number;
+  } | null)[];
+}>("getMultipleAccounts", [
+  candidateKeys,
+  { commitment: "finalized", encoding: "base64" },
+]);
+const programs = candidateKeys.filter((_, i) => snapshot.value[i]?.executable);
+if (!programs.includes(JUPITER))
+  throw new Error("Snapshot has no executable Jupiter program");
+const tableKeys = new Set(proof.tables.map((table) => table.address));
+const clones = candidateKeys.filter(
+  (key, i) => !snapshot.value[i]?.executable && !tableKeys.has(key),
 );
-const jupAccount = ata(JUP, wallet);
-const clones = [...new Set(parsed.staticKeys)].filter(
-  (key) =>
-    key !== wallet &&
-    key !== jupAccount &&
-    !BUILTIN.has(key) &&
-    key !== JUPITER &&
-    key !== WHIRLPOOL,
-);
+captureComplete = true;
 console.log(
   `route ${quote.routePlan?.[0]?.swapInfo?.ammKey}; cloning ${clones.length} accounts`,
 );
 
 const dir = mkdtempSync(join(tmpdir(), "fee-converter-solana-"));
+writeFileSync(
+  join(dir, "route-evidence.json"),
+  JSON.stringify(
+    {
+      selected,
+      wallet,
+      tokenProgram,
+      quote,
+      built,
+      proof,
+      snapshot,
+      candidateKeys,
+      programs,
+      clones,
+    },
+    null,
+    2,
+  ),
+);
+console.log(`local evidence ${dir}`);
+// Local bank slots start at zero. Preserve the captured lookup addresses,
+// authority and deactivation state, but rebase only extension timing so the
+// table is warm locally without warping oracle clocks years into the future.
+// Normalize the local fixture rent epoch; RPC u64::MAX cannot round-trip
+// through JSON.parse/stringify as a safe JavaScript integer.
+const tableFiles = proof.tables.flatMap((table, i) => {
+  const original = snapshot.value[candidateKeys.indexOf(table.address)];
+  if (!original) throw new Error("Captured lookup table account is missing");
+  const data = solanaBase64Bytes(original.data[0]);
+  new DataView(data.buffer, data.byteOffset).setBigUint64(12, 0n, true);
+  data[20] = 0;
+  const path = join(dir, `lookup-${i}.json`);
+  writeFileSync(
+    path,
+    JSON.stringify({
+      pubkey: table.address,
+      account: {
+        ...original,
+        rentEpoch: 0,
+        data: [solanaBase64(data), "base64"],
+      },
+    }),
+  );
+  return ["--account", table.address, path];
+});
 const accountFile = join(dir, "jup-account.json");
 writeFileSync(
   accountFile,
@@ -136,8 +279,8 @@ writeFileSync(
     pubkey: fundingAccount,
     account: {
       lamports: 2_039_280,
-      data: [tokenAccount(JUP, fundingWallet, AMOUNT), "base64"],
-      owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      data: [tokenAccount(INPUT_MINT, fundingWallet, AMOUNT), "base64"],
+      owner: tokenProgram,
       executable: false,
       rentEpoch: 0,
       space: 165,
@@ -160,30 +303,31 @@ const validator = Bun.spawn(
     "--rpc-port",
     String(PORT),
     "--faucet-port",
-    "29900",
+    String(PORT + 41),
     "--gossip-port",
-    "28931",
+    String(PORT + 32),
     "--dynamic-port-range",
-    "28901-28930",
+    `${PORT + 2}-${PORT + 31}`,
     "--url",
     "https://api.mainnet-beta.solana.com",
-    "--clone-upgradeable-program",
-    JUPITER,
-    "--clone-upgradeable-program",
-    WHIRLPOOL,
-    "--clone",
-    JUP,
-    "--clone",
-    USDC,
+    ...programs.flatMap((key) => ["--clone-upgradeable-program", key]),
     ...clones.flatMap((key) => ["--maybe-clone", key]),
+    ...tableFiles,
     "--account",
     fundingAccount,
     accountFile,
   ],
-  { stdout: "ignore", stderr: "inherit" },
+  {
+    stdout: Bun.file(join(dir, "validator.stdout.log")),
+    stderr: Bun.file(join(dir, "validator.stderr.log")),
+  },
 );
 try {
   for (let i = 0; ; i++) {
+    if (validator.exitCode !== null)
+      throw new Error(
+        `Local validator exited ${validator.exitCode}; see ${dir}/validator.stderr.log and validator.stdout.log`,
+      );
     try {
       if ((await rpc<string>("getHealth", [])) === "ok") break;
     } catch {}
@@ -204,7 +348,7 @@ try {
     await Bun.sleep(500);
   }
 
-  for (const mint of [JUP, USDC]) {
+  for (const mint of [INPUT_MINT, USDC]) {
     const info = await rpc<{ value: { owner: string } | null }>(
       "getAccountInfo",
       [mint, { encoding: "base64" }],
@@ -240,9 +384,9 @@ try {
     [{ commitment: "confirmed" }],
   );
   const incoming = message(fundingWallet, latest.value.blockhash, [
-    createAta(fundingWallet, JUP, wallet),
+    createAta(fundingWallet, INPUT_MINT, wallet, tokenProgram),
     {
-      program: TOKEN,
+      program: tokenProgram,
       accounts: [
         { key: fundingAccount, write: true },
         { key: jupAccount, write: true },
@@ -280,7 +424,8 @@ try {
       mainnet: false,
     }),
   );
-  const { db, sqlite } = sqliteD1();
+  const databasePath = join(dir, "journal.sqlite");
+  let { db, sqlite } = sqliteD1(databasePath);
   const env = {
     FEE_DB: db,
     FEE_CONVERTER_MODE: "live",
@@ -304,7 +449,7 @@ try {
     FEE_CONVERTER_MAX_PRICE_IMPACT_BPS: "200",
     FEE_CONVERTER_RUN_CAP_MICRO: "1000000000",
     FEE_CONVERTER_DAILY_CAP_MICRO: "5000000000",
-    FEE_CONVERTER_ALLOWLIST: JSON.stringify({ solana: [JUP] }),
+    FEE_CONVERTER_ALLOWLIST: JSON.stringify({ solana: [INPUT_MINT] }),
   };
   const overrides = {
     fetch: pinnedRoute,
@@ -325,6 +470,11 @@ try {
     state(),
   );
   if (state().state !== "submitted") throw new Error("send was not submitted");
+  // Drop the database connection and every client from the send run. The
+  // next run must recover its signature, route proof and limits from disk.
+  sqlite.close();
+  ({ db, sqlite } = sqliteD1(databasePath, false));
+  env.FEE_DB = db;
   for (let i = 0; i < 60 && state().state === "submitted"; i++) {
     await Bun.sleep(2_000);
     await runOnce(env, undefined, overrides);
@@ -344,7 +494,7 @@ try {
     [jupAccount],
   );
   console.log(
-    `local USDC ${usdc.value.amount}; JUP left ${jupLeft.value.amount}`,
+    `local USDC ${usdc.value.amount}; input left ${jupLeft.value.amount}`,
   );
   if (
     rows.length !== 1 ||
@@ -399,7 +549,9 @@ try {
       networkFeeLamports: receipt.meta.fee,
     }),
   );
-  console.log("PASS: Solana local live cycle");
+  console.log(
+    `PASS: ${selected} Solana local live cycle (${parsed.legacy ? "legacy" : "v0"}, ${proof.tables.length} lookup tables)`,
+  );
 } finally {
   validator.kill();
 }
