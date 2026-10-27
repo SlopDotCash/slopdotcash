@@ -4,7 +4,12 @@
  * in the manifest; page views never read chain.
  */
 
-import { TOKEN as SPL_TOKEN_PROGRAM } from "../../contracts/solana/transactions";
+import {
+  readTokenMint,
+  TOKEN_PROGRAM,
+  type TokenMintReading,
+} from "../../contracts/solana/token-extensions";
+import { decodeBase58Bytes } from "../../src/lib/base58";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   REWARD_ASSET_NETWORKS,
@@ -145,24 +150,28 @@ async function solanaMetadata(
 ): Promise<TokenMetadata> {
   const result = (await rpc(fetcher, url, "getAccountInfo", [
     address,
-    { encoding: "jsonParsed", commitment: "finalized" },
-  ])) as {
-    value?: {
-      owner?: unknown;
-      data?: { parsed?: { type?: unknown; info?: { decimals?: unknown } } };
-    } | null;
-  } | null;
+    { encoding: "base64", commitment: "finalized" },
+  ])) as { value?: unknown } | null;
   const account = result?.value;
   if (!account)
     throw new TokenMetadataError("No account exists at that mint address");
-  // The classic SPL Token program; Token-2022 mints are not accepted.
-  if (account.owner !== SPL_TOKEN_PROGRAM)
+  // The shared reader refuses every owner, layout and extension outside classic SPL
+  // Token and the approved metadata-only Token-2022 subset.
+  let mint: TokenMintReading;
+  try {
+    mint = readTokenMint(account, decodeBase58Bytes(address));
+  } catch (error) {
+    throw new TokenMetadataError(
+      error instanceof Error
+        ? error.message
+        : "The account is not a token mint",
+    );
+  }
+  // Vault creation, funding and the monthly commitment use the classic Token program
+  // only, so owner setup refuses a Token-2022 mint until they support it.
+  if (mint.program !== TOKEN_PROGRAM)
     throw new TokenMetadataError("The mint is not a classic SPL Token mint");
-  const parsed = account.data?.parsed;
-  const decimals = parsed?.info?.decimals;
-  if (parsed?.type !== "mint" || !Number.isSafeInteger(decimals))
-    throw new TokenMetadataError("The account is not an SPL mint");
-  return { decimals: decimals as number, symbol: null };
+  return { decimals: mint.decimals, symbol: null };
 }
 
 export function rpcTokenMetadataReader(

@@ -7,6 +7,12 @@ import {
   type PayoutPolicy,
 } from "../../src/lib/payments/contracts";
 import type { VaultTotals } from "../vault-totals";
+import {
+  readTokenAccount,
+  readTokenMint,
+  TOKEN_PROGRAM,
+  type TokenMintReading,
+} from "./token-extensions";
 
 export interface SolanaEscrowConfig {
   payoutPolicy?: PayoutPolicy;
@@ -43,7 +49,6 @@ export type SolanaProgramConfig = Omit<
   SolanaEscrowConfig,
   "payoutPolicy" | "projectPda" | "projectId" | "vault" | "mint" | "owner"
 >;
-const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 /** Project account size: 257 bytes of core state, the pending identity authority, its
  * effective time and confirmation, the i64 rotation delay, then the u8 purpose, the u64
  * monthly cap, the monthly on/off switch, the u64 accrued fees and the u64 outstanding
@@ -57,10 +62,6 @@ export const OBLIGATION_DISCRIMINATOR = "a8ce8d6a584caca7";
 export const PROJECT_DISCRIMINATOR = "cda8bdcab5f78e13";
 /** Config size: discriminator, identity authority, fee recipient, rotation authority and bump. */
 export const CONFIG_SIZE = 105;
-/** Classic SPL Token mint size. */
-const MINT_SIZE = 82;
-/** Classic SPL Token account size: mint (0), owner (32), amount u64 (64), ... */
-const TOKEN_ACCOUNT_SIZE = 165;
 type Obj = Record<string, unknown>;
 const object = (value: unknown): Obj => {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -197,27 +198,11 @@ function account(
   return bytes;
 }
 
-/** Reads a classic SPL Token account (owned by the Token program) as raw bytes. */
-function tokenProgramAccount(value: unknown, size: number): Uint8Array {
-  const info = object(value);
-  if (info.owner !== TOKEN_PROGRAM)
-    throw new Error("Not a classic SPL Token account");
-  const data = list(info.data);
-  if (data[1] !== "base64") throw new Error("Wrong account encoding");
-  const bytes = decode(string(data[0]));
-  if (bytes.length !== size) throw new Error("Token account layout mismatch");
-  return bytes;
-}
-/** Decimals of an initialized classic SPL mint (byte 44; byte 45 is `is_initialized`). */
-function mintDecimals(mint: Uint8Array): number {
-  if (mint[45] !== 1) throw new Error("Mint is not initialized");
-  return mint[44];
-}
-/** Reads the mint's decimals at finalized commitment. */
-export async function solanaMintDecimals(
+/** Reads the mint account at finalized commitment under the approved token programs. */
+async function liveMint(
   config: { rpcUrl: string },
   mint: string,
-): Promise<number> {
+): Promise<TokenMintReading> {
   const response = object(
     await rpc(config, "getAccountInfo", [
       mint,
@@ -225,7 +210,22 @@ export async function solanaMintDecimals(
     ]),
   );
   if (response.value === null) throw new Error("Mint account missing");
-  return mintDecimals(tokenProgramAccount(response.value, MINT_SIZE));
+  return readTokenMint(response.value, decodeBase58Bytes(mint));
+}
+/**
+ * Reads a classic SPL mint's decimals at finalized commitment. Vault creation, funding
+ * and the monthly commitment build classic Token program instructions, and the program
+ * refuses a Token-2022 mint at `initialize`, so these paths refuse Token-2022 until the
+ * program and those builders support it.
+ */
+export async function solanaMintDecimals(
+  config: { rpcUrl: string },
+  mint: string,
+): Promise<number> {
+  const reading = await liveMint(config, mint);
+  if (reading.program !== TOKEN_PROGRAM)
+    throw new Error("Not a classic SPL Token account");
+  return reading.decimals;
 }
 
 /** Verify finalized program bytes, loader, upgrade authority and singleton Config. */
@@ -779,20 +779,21 @@ export function solanaPaymentAdapter(
         const expected = net === 0n ? [] : [{ to: accounts[5], amount: net }];
         if (children.length !== expected.length)
           throw new Error("Unexpected payout instructions");
-        // Any classic SPL mint is accepted, so the transfer decimals must equal the mint's.
-        const decimals = await solanaMintDecimals(config, config.mint);
+        // Only the mint's own token program may carry the transfer, and the transfer
+        // decimals must equal that mint's.
+        const mintReading = await liveMint(config, config.mint);
         children.forEach((child, i) => {
           const parsed = object(child.parsed),
             info = object(parsed.info),
             amount = object(info.tokenAmount);
           if (
-            child.programId !== TOKEN_PROGRAM ||
+            child.programId !== mintReading.program ||
             parsed.type !== "transferChecked" ||
             info.source !== config.vault ||
             info.mint !== config.mint ||
             info.authority !== config.projectPda ||
             info.destination !== expected[i].to ||
-            amount.decimals !== decimals ||
+            amount.decimals !== mintReading.decimals ||
             amount.amount !== expected[i].amount.toString()
           )
             throw new Error("Payout transfer differs from award");
@@ -886,7 +887,8 @@ export async function readVaultTotals(config: {
     PROJECT_DISCRIMINATOR,
   );
   if (pubkey(project, 168) !== mint) throw new Error("Project mint changed");
-  const decimals = mintDecimals(tokenProgramAccount(mintInfo, MINT_SIZE));
+  const mintReading = readTokenMint(mintInfo, decodeBase58Bytes(mint));
+  const decimals = mintReading.decimals;
   const time = await rpc(config, "getBlockTime", [slot]);
   if (!Number.isSafeInteger(time))
     throw new Error("Missing finalized block time");
@@ -900,7 +902,10 @@ export async function readVaultTotals(config: {
   const free = deposited - paid - payoutFees - withdrawnGross - reserved;
   if (free < 0n) throw new Error("Project counters exceed deposits");
   // As on EVM, fail closed when the vault holds less than the counters owe.
-  const vaultAccount = tokenProgramAccount(vaultInfo, TOKEN_ACCOUNT_SIZE);
+  const vaultReading = readTokenAccount(vaultInfo);
+  if (vaultReading.program !== mintReading.program)
+    throw new Error("Vault token program differs from the mint");
+  const vaultAccount = vaultReading.raw;
   if (
     pubkey(vaultAccount, 0) !== mint ||
     pubkey(vaultAccount, 32) !== config.projectPda ||
