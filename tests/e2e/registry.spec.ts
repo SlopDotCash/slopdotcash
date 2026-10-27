@@ -694,7 +694,8 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   );
   expect(diagnostics.count(refused)).toBe(1);
 
-  // A signed clean claim still lacks canonical runtime closure.
+  // A signed clean claim still lacks canonical runtime closure. Rejection
+  // leaves this newer investigation queued; it cannot revive the old result.
   await queueScan(admin, project.id, "Rescan after the gap");
   await postVettingResult(request, project.id, project.repository, "clean");
   await admin.reload();
@@ -702,7 +703,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     admin
       .getByRole("article", { name: `Security vetting for ${project.id}` })
       .locator(".admin-badge"),
-  ).toHaveText("Quarantined");
+  ).toHaveText("Queued");
   for (const path of [
     "skill.md",
     "SKILL.md",
@@ -719,6 +720,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     revision: 1,
     skillsPublished: false,
     project: { status: "paused" },
+    vetting: { state: "queued" },
   });
   const card = admin.locator(".admin-card", {
     has: admin.getByText(project.id, { exact: true }),
@@ -730,7 +732,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     .fill("Activation remains blocked without canonical closure");
   await card.getByRole("button", { name: "Save revision 2" }).click();
   await expect(card.getByRole("alert")).toContainText(
-    "Security vetting is quarantined",
+    "Security vetting is queued",
   );
   expect(diagnostics.count(refused)).toBe(2);
   await postVettingResult(
