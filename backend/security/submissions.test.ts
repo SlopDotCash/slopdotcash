@@ -122,7 +122,7 @@ function setup(
   const manifest = JSON.stringify({
     id: PROJECT,
     status: "active",
-    repositories: [{ id: REPO }],
+    repositories: [{ id: REPO, githubUrl: `https://github.com/${REPO}` }],
     authority: { repositoryId: "700000001", repositoryNodeId: "R_700000001" },
     steward: { github: owner },
     ...(options.noProgram ? {} : { securityBounty: PROGRAM }),
@@ -464,7 +464,9 @@ function setup(
     addProject: (id: string, repository: string) => {
       const other = JSON.parse(manifest);
       other.id = id;
-      other.repositories = [{ id: repository }];
+      other.repositories = [
+        { id: repository, githubUrl: `https://github.com/${repository}` },
+      ];
       other.authority = {
         repositoryId: "700000002",
         repositoryNodeId: "R_700000002",
