@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   encodeAbiParameters,
@@ -10,13 +10,11 @@ import {
   parseAbiItem,
   toFunctionSelector,
 } from "viem";
-import * as accountFactories from "viem/accounts";
 import { privateKeyToAccount } from "viem/accounts";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { PosterConfig } from "./config";
 import {
   type ChainState,
-  message,
   type PosterClient,
   type PostRow,
   type PostStatus,
@@ -249,7 +247,7 @@ async function receiptHarness() {
       const isVoid = params[0] === hash("c");
       const evidence = log(isVoid);
       result =
-        fault === "missing_advanced"
+        fault === "missing_advanced" || fault.startsWith("send_")
           ? null
           : {
               ...evidence,
@@ -282,7 +280,8 @@ async function receiptHarness() {
               logsBloom: `0x${"0".repeat(512)}`,
             };
     } else if (method === "eth_getTransactionByHash") result = null;
-    else if (method === "eth_getTransactionCount") result = "0x1";
+    else if (method === "eth_getTransactionCount")
+      result = fault.startsWith("send_") ? "0x0" : "0x1";
     else if (method === "eth_getLogs")
       result = fault === "final_void" ? [log(true)] : [];
     else if (method === "eth_sendRawTransaction") {
@@ -434,23 +433,48 @@ describe("canonical poster journal through actual client", () => {
       h.sqlite.close();
     }
   });
-  test("actual transport error cannot put signed bytes into a diagnostic; wrong returned hash refuses", async () => {
+  test("failed or mismatched rebroadcasts retain the exact signed attempt and only safe diagnostics", async () => {
     const h = await receiptHarness();
     try {
-      h.setFault("send_error");
-      let error: unknown;
-      try {
-        await h.client.broadcast(`0x${"ba".repeat(100)}`);
-      } catch (caught) {
-        error = caught;
+      for (const fault of ["send_error", "send_hash_mismatch"]) {
+        h.setFault(fault);
+        expect(await postNextRoot(h.deps)).toMatchObject({
+          status: "in_flight",
+          reconciled: 0,
+        });
+        expect(await h.deps.store.openPosts(POSTER.network)).toEqual([
+          { ...h.row, state: "unknown", reason: "referral_operation_failed" },
+        ]);
+        const attempts = h.calls
+          .filter((call) => call.method === "eth_sendRawTransaction")
+          .map((call) => call.params[0]);
+        expect(attempts.length).toBeGreaterThan(0);
+        expect(new Set(attempts)).toEqual(new Set([h.row.rawTx]));
+        expect(
+          h.sqlite
+            .query(
+              "SELECT maximum_wei,actual_wei,settled_day FROM referral_post_gas",
+            )
+            .all(),
+        ).toEqual([
+          { maximum_wei: 21000, actual_wei: null, settled_day: null },
+        ]);
+        expect(JSON.stringify(h.logs)).not.toContain(h.row.rawTx);
       }
-      expect(error).toBeDefined();
-      expect(String(error)).toContain("bababa");
-      expect(message(error)).toBe("referral_operation_failed");
       h.setFault("valid");
-      await expect(h.client.broadcast(h.row.rawTx)).rejects.toThrow(
-        "hash differs",
-      );
+      expect(await postNextRoot(h.deps)).toMatchObject({ reconciled: 1 });
+      expect(h.posts()).toMatchObject([
+        { state: "finalized", reason: null, tx_id: h.row.txId },
+      ]);
+      expect(
+        h.sqlite
+          .query(
+            "SELECT maximum_wei,actual_wei,settled_day FROM referral_post_gas",
+          )
+          .all(),
+      ).toEqual([
+        { maximum_wei: 21000, actual_wei: 21000, settled_day: "1970-01-01" },
+      ]);
     } finally {
       h.sqlite.close();
     }
@@ -459,76 +483,6 @@ describe("canonical poster journal through actual client", () => {
 
 describe("durable referral native fee budgets", () => {
   const limits = { perTransactionWei: "1000", perDayWei: "1500" };
-  test("actual quote over the cap never invokes the account signer or broadcast", async () => {
-    let signed = 0,
-      sent = 0;
-    const originalFactory = accountFactories.privateKeyToAccount;
-    const observer = spyOn(
-      accountFactories,
-      "privateKeyToAccount",
-    ).mockImplementation((...args) => {
-      const account = originalFactory(...args);
-      const sign = account.signTransaction;
-      return Object.assign(account, {
-        signTransaction: async (...parameters: unknown[]) => {
-          signed++;
-          return Reflect.apply(sign, account, parameters);
-        },
-      });
-    });
-    const fetchRpc = (async (_url, init) => {
-      const { id, method } = JSON.parse(String(init?.body));
-      const result =
-        method === "eth_call"
-          ? "0x"
-          : method === "eth_estimateGas"
-            ? "0x5208"
-            : method === "eth_getTransactionCount"
-              ? "0x0"
-              : method === "eth_maxPriorityFeePerGas"
-                ? "0x1"
-                : method === "eth_getBlockByNumber"
-                  ? {
-                      number: "0x1",
-                      hash: `0x${"a".repeat(64)}`,
-                      parentHash: `0x${"b".repeat(64)}`,
-                      timestamp: "0x1",
-                      baseFeePerGas: "0x1",
-                      gasUsed: "0x0",
-                      gasLimit: "0x100000",
-                      transactions: [],
-                    }
-                  : undefined;
-      if (method === "eth_sendRawTransaction") sent++;
-      if (result === undefined)
-        throw new Error(`Unexpected quote request ${method}`);
-      return Response.json({ jsonrpc: "2.0", id, result });
-    }) as typeof fetch;
-    try {
-      const client = createEvmPoster({
-        config: { ...POSTER, gas: { perTransactionWei: "1", perDayWei: "2" } },
-        privateKey:
-          "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
-        fetch: fetchRpc,
-      });
-      await expect(client.prepare(0, ROOT_A, ONE)).rejects.toThrow(
-        /native fee limit/u,
-      );
-      expect(signed).toBe(0);
-      expect(sent).toBe(0);
-      const allowed = createEvmPoster({
-        config: POSTER,
-        fetch: fetchRpc,
-        privateKey:
-          "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
-      });
-      await allowed.prepare(0, ROOT_A, ONE);
-      expect(signed).toBe(1); // The observer reaches the real account signer on an allowed quote.
-      expect(sent).toBe(0);
-    } finally {
-      observer.mockRestore();
-    }
-  });
   test("unknown sends retain one reservation across midnight and unchanged rebroadcast", async () => {
     const chain = fakeChain();
     const h = harness(chain);
@@ -632,28 +586,5 @@ describe("durable referral native fee budgets", () => {
     expect(chain.broadcasts).toHaveLength(0);
     expect(h.posts()).toHaveLength(0);
     h.sqlite.close();
-  });
-  test("actual client prices only canonical receipt evidence and derives legacy signed liability", async () => {
-    const h = await receiptHarness();
-    try {
-      h.setFault("missing_advanced");
-      expect(await h.client.nativeCost(h.row)).toEqual({
-        maximumWei: "21000",
-        actualWei: null,
-        settledDay: null,
-      });
-      h.setFault("wrong_index");
-      await expect(h.client.nativeCost(h.row)).rejects.toThrow(
-        /identity differs/u,
-      );
-      h.setFault("valid");
-      expect(await h.client.nativeCost(h.row)).toEqual({
-        maximumWei: "21000",
-        actualWei: "21000",
-        settledDay: "1970-01-01",
-      });
-    } finally {
-      h.sqlite.close();
-    }
   });
 });

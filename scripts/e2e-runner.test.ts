@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,5 +50,58 @@ test("a completed phase preserves successful and failed child exit codes", async
         timeoutMs: 5000,
       }),
     ).toBe(status);
+  }
+});
+
+test("an occupied fixture port rejects startup and lets the caller release and reuse it", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "slop-fixture-startup-"));
+  const result = join(directory, "result.json");
+  const fixture = pathToFileURL(
+    join(process.cwd(), "tests/github-api-fixture.mjs"),
+  ).href;
+  const script = `
+    import assert from "node:assert/strict";
+    import { writeFileSync } from "node:fs";
+    import { createServer } from "node:http";
+    import { startGitHubApiFixture } from ${JSON.stringify(fixture)};
+    const owned = createServer();
+    await new Promise(resolve => owned.listen(0, "127.0.0.1", resolve));
+    const port = owned.address().port;
+    let refusal;
+    try {
+      await startGitHubApiFixture(port);
+      throw new Error("Occupied port unexpectedly started");
+    } catch (error) {
+      assert.equal(error.code, "EADDRINUSE");
+      refusal = error.code;
+    } finally {
+      await new Promise((resolve, reject) => owned.close(error => error ? reject(error) : resolve()));
+    }
+    const recovered = await startGitHubApiFixture(port);
+    try {
+      const response = await fetch("http://127.0.0.1:" + port + "/missing");
+      assert.equal(response.status, 404);
+      writeFileSync(${JSON.stringify(result)}, JSON.stringify({ refusal, rebound: response.status }));
+    } finally {
+      await new Promise((resolve, reject) => recovered.close(error => error ? reject(error) : resolve()));
+    }
+  `;
+  try {
+    expect(
+      await runE2ePhase({
+        label: "fixture-startup-regression",
+        command: "node",
+        args: ["--input-type=module", "-e", script],
+        cwd: directory,
+        env: process.env,
+        timeoutMs: 5000,
+      }),
+    ).toBe(0);
+    expect(JSON.parse(readFileSync(result, "utf8"))).toEqual({
+      refusal: "EADDRINUSE",
+      rebound: 404,
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
