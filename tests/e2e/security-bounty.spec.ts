@@ -2730,6 +2730,60 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       description,
     );
     expect(result.submission).toMatchObject({ state: "draft", advisory: null });
+    // Model a request/worker ending after persisting intake but before the
+    // queued or running attempt can finish. Recovery uses the retained bytes.
+    for (const state of ["queued", "running"] as const) {
+      const persist = process.env.SLOP_E2E_PERSIST_TO;
+      expect(persist).toBeTruthy();
+      expect(submissionId).toMatch(/^ss_[A-Za-z0-9_-]+$/u);
+      const { execFileSync } = await import("node:child_process");
+      const stale = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+      execFileSync(
+        "node",
+        [
+          "node_modules/wrangler/bin/wrangler.js",
+          "d1",
+          "execute",
+          "slop-private",
+          "--local",
+          "--persist-to",
+          persist as string,
+          "--command",
+          `UPDATE security_submission_intake SET screening_state='${state}',screening_started_at='${stale}',screening_finished_at=NULL,screening_reason=NULL,routed_at=NULL,revision=revision+1 WHERE submission_id='${submissionId}'`,
+        ],
+        { stdio: "pipe" },
+      );
+      await page.reload({ waitUntil: "networkidle" });
+      await expect(report.locator(".security-report-text")).toHaveText(
+        description,
+      );
+      const retry = report.getByRole("button", {
+        name: "Retry screening",
+        exact: true,
+      });
+      await expect(retry).toBeVisible();
+      await page.screenshot({
+        path: test.info().outputPath(`recovery-${state}.png`),
+        fullPage: true,
+      });
+      await retry.focus();
+      const retried = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname ===
+            `/api/v1/security-submissions/${submissionId}/screen`,
+      );
+      await page.keyboard.press("Enter");
+      const retryResponse = await retried;
+      expect(retryResponse.status()).toBe(200);
+      expect(await retryResponse.json()).toMatchObject({
+        submission: { intake: { state: "legitimate" } },
+      });
+      await expect(retry).not.toBeVisible();
+      await expect(report.locator(".security-report-text")).toHaveText(
+        description,
+      );
+    }
     await expectAccessible(page);
     await page.evaluate(() => window.scrollTo({ top: 0 }));
     await page.screenshot({

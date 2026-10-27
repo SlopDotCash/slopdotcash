@@ -380,6 +380,7 @@ type Submission = {
     reviewedAt: string | null;
     canReview: boolean;
     canForward: boolean;
+    canRetryScreening: boolean;
     canAuthorize?: boolean;
     canRevise?: boolean;
   } | null;
@@ -1628,9 +1629,7 @@ function SubmissionCard({
             onUpdated={onUpdated}
             expanded={focused}
           />
-          {submission.intake.state === "unavailable" ||
-          (submission.intake.canForward &&
-            submission.intake.routingState === "pending") ? (
+          {submission.intake.canRetryScreening ? (
             <button
               className="text-button"
               disabled={busy}
