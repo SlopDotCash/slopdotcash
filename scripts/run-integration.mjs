@@ -29,6 +29,12 @@ const drivers = [
     ["workers/payment-executor/bootstrap-workflow.mjs"],
     childEnvironment(),
   ],
+  [
+    "staging-monthly-release",
+    "node",
+    ["workers/payment-executor/staging-release.workflow.mjs"],
+    childEnvironment(),
+  ],
 ];
 const statuses = await Promise.all(
   drivers.map(([label, command, args, env = process.env]) =>
