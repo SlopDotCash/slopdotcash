@@ -102,7 +102,9 @@ async function watchPaymentIdentity(page: Page) {
           const row = link.closest(".money-summary");
           if (
             link.textContent === "Disclosure" &&
-            link.href.includes(`/disclosures/${nextProject}-2026-07-`) &&
+            link.href.endsWith(
+              `/api/v1/payments/projects/${nextProject}/direct-transfers`,
+            ) &&
             row?.textContent?.includes(firstAmount)
           )
             leaks.push({ ...sample, mutatedRow: row.outerHTML });
@@ -125,6 +127,7 @@ async function watchPaymentIdentity(page: Page) {
 
 for (const navigation of ["project links", "browser history"] as const) {
   test(`direct payments keep project identity through ${navigation}`, async ({
+    context,
     page,
   }, info) => {
     await fixtures(page);
@@ -155,6 +158,14 @@ for (const navigation of ["project links", "browser history"] as const) {
           .click();
       } else await page.goto(`${site}/projects/${firstProject}`);
       await expect(page.getByText(firstAmount, { exact: true })).toBeVisible();
+      await expect(
+        page
+          .locator(".payment-history")
+          .getByRole("link", { name: "Disclosure" }),
+      ).toHaveAttribute(
+        "href",
+        `${site}/api/v1/payments/projects/${firstProject}/direct-transfers`,
+      );
       await watchPaymentIdentity(page);
       const documentToken = await page.evaluate(() => performance.timeOrigin);
       const beforeNavigation = nextRequests;
@@ -202,6 +213,37 @@ for (const navigation of ["project links", "browser history"] as const) {
         observed.leaks,
         "A's amount must never acquire B's route or disclosure identity",
       ).toEqual([]);
+      const disclosure = page
+        .locator(".payment-history")
+        .getByRole("link", { name: "Disclosure" });
+      const disclosureUrl = `${site}/api/v1/payments/projects/${nextProject}/direct-transfers`;
+      await expect(disclosure).toHaveAttribute("href", disclosureUrl);
+      const summary = page.locator(".payment-history .money-summary");
+      await expect(summary.locator("strong")).toHaveText(nextAmount);
+      await expect(summary.locator("span")).toHaveText(
+        "Paid Sep 1, 2026 for August 2026 work · 1 transfers · Disclosure",
+      );
+      await page.screenshot({
+        path: info.outputPath("direct-payment-disclosure.png"),
+        fullPage: true,
+      });
+      // The first popup navigation is routed at context scope, unlike the
+      // original page's API fixtures. Follow the actual keyboard-opened link.
+      await context.route(disclosureUrl, (route) =>
+        route.fulfill({ json: payments(nextProject) }),
+      );
+      await disclosure.focus();
+      const [popup, response] = await Promise.all([
+        page.waitForEvent("popup"),
+        context.waitForEvent("response", {
+          predicate: (response) => response.url() === disclosureUrl,
+        }),
+        page.keyboard.press("Enter"),
+      ]);
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual(payments(nextProject));
+      await expect(popup).toHaveURL(disclosureUrl);
+      await popup.close();
     } finally {
       nextResponse.release();
     }
@@ -286,7 +328,7 @@ test("a late previous payment request cannot overwrite a retried project", async
       page.locator(".payment-history a").filter({ hasText: "Disclosure" }),
     ).toHaveAttribute(
       "href",
-      /disclosures\/slopdotcash-2026-08-direct-payments\.json$/,
+      `${site}/api/v1/payments/projects/${nextProject}/direct-transfers`,
     );
     const observed = await page.evaluate(() => {
       const value = (
