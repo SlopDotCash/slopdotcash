@@ -519,7 +519,6 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       solanaFundingConfig: (projectId, network, vault) =>
         solanaFundingConfig(projectId, network, vault, "ordinary"),
       edgeCache: cache,
-      operatorIds: [...walletOperatorGithubIds],
       // Binding consent names a vault recorded in the D1 project registry for
       // a served network; a vault of any other network is unknown.
       paymentDeployments: async () =>

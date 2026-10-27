@@ -352,7 +352,8 @@ describe("notification events", () => {
     const paidAt = "2026-10-19T12:00:00.000Z";
     await indexPaymentEvent(d1, adapter, reserved, reservedAt);
     await indexPaymentEvent(d1, adapter, reserved, "2026-10-19T11:30:00.000Z");
-    // A new wallet that is not yet confirmed makes the worker hold the payout.
+    // An unsigned replacement leaves the old wallet usable. Once the new
+    // wallet signs, an uncertain old attempt holds the payout and notifies once.
     const next = await registerPaymentWallet(
       d1,
       member,
@@ -360,6 +361,20 @@ describe("notification events", () => {
       NEXT_ADDRESS,
       changedAt,
     );
+    await expect(
+      dispatchPayment(
+        d1,
+        {
+          async submit(payment) {
+            expect(payment.destination).toBe(ADDRESS);
+            throw new Error("Old attempt is uncertain");
+          },
+        },
+        "obligation-1",
+        heldAt,
+      ),
+    ).rejects.toThrow("Old attempt is uncertain");
+    authorize(next.claimId, 2);
     const executor = {
       submit: async () => {
         throw new Error("A held payout must not be submitted");
@@ -371,7 +386,6 @@ describe("notification events", () => {
     expect(await dispatchPayment(d1, executor, "obligation-1", heldAt)).toBe(
       "unavailable",
     );
-    authorize(next.claimId, 2);
     await indexPaymentEvent(d1, adapter, paid, paidAt);
     await indexPaymentEvent(d1, adapter, paid, "2026-10-19T12:30:00.000Z");
     expect(

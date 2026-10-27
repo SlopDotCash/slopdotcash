@@ -88,9 +88,11 @@ extends the new size and review bands to unpaid work from 1 September through
 scope at `2026-09-01T00:00:00.000Z`. Preserve original Points and frozen terms for approved
 or funded awards, including scheduled and paid awards. Keep source IDs, source
 dates and all separate eligibility and penalty dates. Historical assessment uses
-subscriptions only: the ChatGPT subscription, or the Claude subscription for the
-SlopDotCash/slopdotcash slice (owner decision, 26 October 2026). Paid API
-assessment still starts on 1 November.
+subscriptions only: ChatGPT subscription subagents; the SlopDotCash/slopdotcash
+slice may use a Claude subscription subagent (26 October 2026) or a Codex
+subscription session or subagent using GPT-6.1 Sol (27 October 2026). Disclose
+the provider, model and client; a subscription declaration is not an API
+receipt or billing proof. Paid API assessment still starts on 1 November.
 
 Historical publication is on hold until the complete subscription assessment
 journal and exact Points changes are reconciled. Normal generation keeps
