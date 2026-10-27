@@ -71,8 +71,10 @@ alias only.
   - The referral root-posting key (PRD section 11, "Referral program", owner
     decision of 25 October 2026). It posts cumulative Merkle roots to the
     ReferralDistributor and is separate from the contract owner key. It does
-    not transfer tokens; referrers claim their own tokens after the void
-    window. The accrual job may run only in off or dry_run until the program
+    not transfer tokens; referrers claim their own tokens immediately after a
+    root is posted (owner decision, 26 October 2026). The owner can void the
+    latest root only before its first successful claim; paid tokens cannot be
+    clawed back. There is no guaranteed intervention window. The accrual job may run only in off or dry_run until the program
     token exists, the funding line is agreed, an independent root watcher is
     operating, and the owner explicitly activates posting. Counsel review is
     not required (owner decision, 26 October 2026). Root
