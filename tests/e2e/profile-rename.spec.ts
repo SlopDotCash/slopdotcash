@@ -808,3 +808,108 @@ test(
     }
   },
 );
+
+test("profile history previews retain every payment and cycle behind keyboard controls", async ({
+  page,
+}, info) => {
+  const site = await serveProfileSite(page);
+  const { current, cycles } = await profileRecords(page);
+  const original = JSON.stringify(cycles.cycles[0]);
+  for (const month of ["01", "03", "05"]) {
+    cycles.cycles.push(
+      JSON.parse(
+        original
+          .replaceAll("2026-07", `2026-${month}`)
+          .replaceAll(
+            "2026-08",
+            `2026-${String(Number(month) + 1).padStart(2, "0")}`,
+          ),
+      ),
+    );
+  }
+  assertCycleIndex(cycles);
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route(
+    `${site}/api/v1/payments/actors/1/direct-transfers`,
+    (route) =>
+      route.fulfill({
+        json: {
+          totalMicro: "10000000",
+          transfers: Array.from({ length: 5 }, (_, index) => ({
+            projectId: "eliza",
+            githubUserId: "1",
+            login: current.login,
+            amountMicro: "2000000",
+            contributionMonth: "2026-08",
+            network: "base-sepolia",
+            chain: "base",
+            recipient: "synthetic-recipient",
+            transactionId: `synthetic-profile-payment-${index}`,
+            blockTime: `2026-08-${17 + index}T12:00:00.000Z`,
+          })),
+        },
+      }),
+  );
+  await page.goto(`${site}/contributors/${current.login}`, {
+    waitUntil: "networkidle",
+  });
+  const payouts = page.getByRole("region", { name: "Payouts", exact: true });
+  const history = page.locator(".profile-section", {
+    has: page.getByRole("heading", { name: "Past cycles", exact: true }),
+  });
+  await expect(payouts.locator(".profile-card-heading > span")).toHaveText(
+    "$14 USDC",
+  );
+  await expect(payouts.locator("li")).toHaveCount(3);
+  await expect(history.locator(".profile-projects > a")).toHaveCount(3);
+  await page.screenshot({
+    path: info.outputPath("profile-history-preview.png"),
+    fullPage: true,
+  });
+  await payouts
+    .getByRole("button", { name: "Show all 9 payouts", exact: true })
+    .focus();
+  await page.keyboard.press("Enter");
+  await expect(payouts.locator("li")).toHaveCount(9);
+  await expect(
+    payouts.getByRole("link").filter({ hasText: "Verified settlement" }),
+  ).toHaveCount(4);
+  await expect(
+    payouts.getByRole("link").filter({ hasText: "Direct transfer" }),
+  ).toHaveCount(5);
+  await history
+    .getByRole("button", { name: "Show all 4 cycles", exact: true })
+    .focus();
+  await page.keyboard.press("Space");
+  await expect(history.locator(".profile-projects > a")).toHaveCount(4);
+  await expect(history.getByRole("link").last()).toHaveAttribute(
+    "href",
+    "/cycles/eliza/2026-01",
+  );
+  await expectAccessible(page);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: info.outputPath("profile-history-expanded.png"),
+    fullPage: true,
+  });
+  await payouts
+    .getByRole("button", { name: "Show recent payouts", exact: true })
+    .click();
+  await history
+    .getByRole("button", { name: "Show recent cycles", exact: true })
+    .click();
+  await expect(payouts.locator("li")).toHaveCount(3);
+  await expect(history.locator(".profile-projects > a")).toHaveCount(3);
+  await expect(payouts.locator(".profile-card-heading > span")).toHaveText(
+    "$14 USDC",
+  );
+});

@@ -155,6 +155,9 @@ test("large private evidence downloads with a single-use browser grant @registry
   await page
     .getByRole("button", { name: "Inspect evidence inventory" })
     .click();
+  await page
+    .getByText("Run identifiers and retention", { exact: true })
+    .click();
   await expect(
     page.getByText(
       "Case open. Evidence remains available until 90 days after closure.",
@@ -167,6 +170,7 @@ test("large private evidence downloads with a single-use browser grant @registry
       exact: true,
     }),
   });
+  await item.getByText("Download evidence", { exact: true }).click();
   await item
     .getByRole("textbox")
     .fill("Inspect the complete synthetic disk overlay without execution");

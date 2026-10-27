@@ -497,7 +497,7 @@ export function OwnerVaultSetup({
       ) : null}
       {active ? (
         <>
-          <dl>
+          <dl className="transaction-amounts">
             <dt>Network</dt>
             <dd>{networkLabel(active.input.network)}</dd>
             <dt>Owner wallet</dt>

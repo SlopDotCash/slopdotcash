@@ -252,6 +252,7 @@ export default function OwnerAwards({
       : null;
   return (
     <section
+      id="monthly-awards"
       className="section owner-awards"
       aria-labelledby="monthly-awards-heading"
     >
@@ -281,7 +282,7 @@ export default function OwnerAwards({
         </>
       ) : (
         <>
-          <form onSubmit={load}>
+          <form className="inline-form" onSubmit={load}>
             <label>
               Contribution month
               <input
@@ -318,8 +319,8 @@ export default function OwnerAwards({
           {view && (
             <div>
               <h3>{view.period} awards</h3>
-              <p>
-                Automatic monthly payment is{" "}
+              <p className="monthly-allocation-status">
+                Automatic allocation finalization is{" "}
                 <strong>{view.automatic ? "on" : "off"}</strong>.{" "}
                 {view.automatic
                   ? cutoffPassed
@@ -338,8 +339,8 @@ export default function OwnerAwards({
                 onClick={() => void toggleAutomatic()}
               >
                 {view.automatic
-                  ? "Turn off automatic payment"
-                  : "Turn on automatic payment"}
+                  ? "Turn off automatic finalization"
+                  : "Turn on automatic finalization"}
               </button>
               {!view.proposal ? (
                 <p>No allocation is proposed for this month yet.</p>
@@ -357,17 +358,20 @@ export default function OwnerAwards({
                   {view.proposal.allocations.length === 0 ? (
                     <p>No one has an allocation this month.</p>
                   ) : (
-                    <ul className="owner-award-list" aria-label="Allocations">
+                    <ul
+                      className="owner-award-list owner-award-list--editable"
+                      aria-label="Allocations"
+                    >
                       {view.proposal.allocations.map((row) => {
                         const id = `allocation-${row.githubUserId}`;
                         return (
                           <li key={row.githubUserId}>
                             <h4>{row.login}</h4>
-                            <dl>
+                            <dl className="award-proposed">
                               <dt>Proposed</dt>
                               <dd>{amount(row.proposedGrossBase)}</dd>
                             </dl>
-                            <label htmlFor={id}>
+                            <label className="visually-hidden" htmlFor={id}>
                               Award for {row.login}
                               {decimals === null ? " (base units)" : ""}
                             </label>
@@ -439,6 +443,8 @@ export default function OwnerAwards({
                           <dl>
                             <dt>Award</dt>
                             <dd>{amount(award.grossBase)}</dd>
+                            <dt>Fee</dt>
+                            <dd>{amount(award.feeBase)}</dd>
                             <dt>Contributor receives</dt>
                             <dd>{amount(award.netBase)}</dd>
                             <dt>Status</dt>

@@ -67,12 +67,14 @@ export function useHashScroll(href: string): void {
 }
 
 export function Link({
+  ariaCurrent,
   ariaLabel,
   children,
   className,
   href,
   onNavigate,
 }: {
+  ariaCurrent?: "page";
   ariaLabel?: string;
   children: ReactNode;
   className?: string;
@@ -88,6 +90,7 @@ export function Link({
   };
   return (
     <a
+      aria-current={ariaCurrent}
       aria-label={ariaLabel}
       className={className}
       href={href}

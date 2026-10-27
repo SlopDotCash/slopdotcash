@@ -149,27 +149,50 @@ function VaultTotals({
           )}
         </div>
         <div className="vault-stat">
-          <dt>Deposited</dt>
-          <dd>{value(snapshot.totalDeposited)}</dd>
-        </div>
-        <div className="vault-stat">
           <dt>Paid out</dt>
           <dd>{value(snapshot.totalPaid)}</dd>
-          <dd className="vault-stat-note">
-            + {value(snapshot.totalPayoutFees)} fees
-          </dd>
-        </div>
-        <div className="vault-stat">
-          <dt>Withdrawn</dt>
-          <dd>{value(snapshot.totalGrossWithdrawn)}</dd>
-          <dd className="vault-stat-note">
-            incl. {value(snapshot.totalWithdrawalFees)} fees
-          </dd>
         </div>
       </dl>
+      <details className="vault-ledger-details">
+        <summary>Ledger details</summary>
+        <dl className="transaction-amounts">
+          <div>
+            <dt>Deposited</dt>
+            <dd>{value(snapshot.totalDeposited)}</dd>
+          </div>
+          <div>
+            <dt>Payout fees</dt>
+            <dd>{value(snapshot.totalPayoutFees)}</dd>
+          </div>
+          <div>
+            <dt>Withdrawn (gross)</dt>
+            <dd>{value(snapshot.totalGrossWithdrawn)}</dd>
+          </div>
+          <div>
+            <dt>Withdrawal fees</dt>
+            <dd>{value(snapshot.totalWithdrawalFees)}</dd>
+          </div>
+          <div>
+            <dt>Finalized block</dt>
+            <dd>{snapshot.blockNumber}</dd>
+          </div>
+          <div>
+            <dt>Vault</dt>
+            <dd>
+              <code>{snapshot.vault}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>Asset contract</dt>
+            <dd>
+              <code>{snapshot.assetAddress}</code>
+            </dd>
+          </div>
+        </dl>
+      </details>
       <p className="vault-finality">
         <ShieldCheck aria-hidden="true" size={15} />
-        <span>Finalized block {snapshot.blockNumber}</span>
+        <span>Finalized</span>
         <span>{formatDateTime(snapshot.blockTime)}</span>
         <NetworkName chain={snapshot.chain}>
           {networkLabel(snapshot.network)}
@@ -183,13 +206,7 @@ function VaultTotals({
 function VaultTotalsPlaceholder() {
   return (
     <div className="vault-stats" aria-hidden="true">
-      {[
-        "Available",
-        "Reserved for awards",
-        "Deposited",
-        "Paid out",
-        "Withdrawn",
-      ].map((label, index) => (
+      {["Available", "Reserved for awards", "Paid out"].map((label, index) => (
         <div
           key={label}
           className={`vault-stat vault-stat--placeholder${index === 0 ? " vault-stat--available" : ""}`}

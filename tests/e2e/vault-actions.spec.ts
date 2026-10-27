@@ -710,6 +710,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     "/api/v1/payments/projects/eliza/monthly/2026-09",
   );
   await page.reload();
+  await expect(ownerActions).toBeVisible();
   await page.getByRole("button", { name: "Review monthly awards" }).click();
   await expect(page.getByRole("alert")).toHaveText(
     "Review temporarily unavailable",
@@ -872,7 +873,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   const cap = formatBaseUnits(project.reward.monthlyCapMinor, 6);
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   const monthly = page.getByRole("region", {
-    name: "Automatic monthly payment · Base Sepolia (test)",
+    name: "Vault monthly authorization · Base Sepolia (test)",
   });
   await monthly
     .getByRole("button", { name: "Connect MetaMask", exact: true })
@@ -1500,7 +1501,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await page.reload({ waitUntil: "networkidle" });
     unknownSend = false;
     const monthlyControls = page.getByRole("region", {
-      name: "Automatic monthly payment · Base Sepolia (test)",
+      name: "Vault monthly authorization · Base Sepolia (test)",
       exact: true,
     });
     await monthlyControls

@@ -31,11 +31,12 @@ import {
   UNRESERVED_AWARD_STATES,
 } from "./lib/payments/contracts";
 import { apiRequest } from "./lib/project-api";
+import { findProject } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { PayoutConsent } from "./PayoutConsent";
-import { formatCycleMonth } from "./Presentation";
+import { AccountNav, formatCycleMonth } from "./Presentation";
 import { ReferralClaims } from "./ReferralClaims";
 
 function chainDefaultNetwork(chain: EscrowChain): string {
@@ -171,8 +172,11 @@ function account(value: unknown): PaymentsAccount {
 
 export function EarningsPage({
   walletsOnly = false,
+  headingId,
 }: {
   walletsOnly?: boolean;
+  /** An enclosing settings disclosure supplies the wallet heading. */
+  headingId?: string;
 } = {}) {
   const wallets = usePayoutWallets();
   const [picker, setPicker] = useState<WalletFamily | null>(null);
@@ -371,14 +375,15 @@ export function EarningsPage({
       className={
         walletsOnly ? "earnings-page" : "shell route-main earnings-page"
       }
-      aria-labelledby={heading}
-      id={walletsOnly ? "wallets" : undefined}
+      aria-labelledby={headingId ?? heading}
+      id={walletsOnly && !headingId ? "wallets" : undefined}
     >
-      {walletsOnly ? (
+      {walletsOnly && headingId ? null : walletsOnly ? (
         <h2 id={heading}>Wallets</h2>
       ) : (
-        <h1 id={heading}>Your payouts</h1>
+        <h1 id={heading}>Payouts</h1>
       )}
+      {!walletsOnly ? <AccountNav current="payouts" /> : null}
       {walletsOnly ? null : (
         <p>
           <a href="/account#wallets">Manage payout wallets</a>
@@ -424,7 +429,6 @@ export function EarningsPage({
                   <WalletIcon size={24} aria-hidden="true" />
                 )}
                 <span>{wallet.name}</span>
-                <small>Detected</small>
               </button>
             ))}
           {!wallets.some((wallet) => wallet.family === picker) && (
@@ -490,7 +494,6 @@ export function EarningsPage({
       {data && (
         <>
           {(error || loadError) && <p>Showing the last verified data.</p>}
-          {!walletsOnly && <ReferralClaims />}
           {walletsOnly ? (
             <>
               <section aria-label="Payout wallets" className="wallet-cards">
@@ -738,7 +741,8 @@ export function EarningsPage({
                               <a
                                 href={`/projects/${encodeURIComponent(award.projectId)}`}
                               >
-                                {award.projectId}
+                                {findProject(award.projectId)?.name ??
+                                  award.projectId}
                               </a>{" "}
                               ({formatCycleMonth(award.period)})
                             </td>
@@ -769,7 +773,8 @@ export function EarningsPage({
                               <a
                                 href={`/projects/${encodeURIComponent(payment.projectId)}`}
                               >
-                                {payment.projectId}
+                                {findProject(payment.projectId)?.name ??
+                                  payment.projectId}
                               </a>
                             </td>
                             <td data-label="Network">
@@ -788,12 +793,20 @@ export function EarningsPage({
                               {
                                 {
                                   paid: "Paid",
-                                  needs_wallet: `Awaiting wallet: add or confirm your ${NETWORK_NAMES[payment.chain]} wallet`,
+                                  needs_wallet: "Awaiting wallet",
                                   ready: "Payment queued",
                                   submitted: "Submitted",
                                   held: "Held",
                                 }[payment.deliveryState]
                               }
+                              {payment.deliveryState === "needs_wallet" ? (
+                                <p>
+                                  <a href="/account#wallets">
+                                    Confirm {NETWORK_NAMES[payment.chain]}{" "}
+                                    wallet
+                                  </a>
+                                </p>
+                              ) : null}
                               <PayoutConsent
                                 key={
                                   data.wallets.find(
@@ -856,7 +869,7 @@ export function EarningsPage({
                               <a
                                 href={`/projects/${encodeURIComponent(t.projectId)}`}
                               >
-                                {t.projectId}
+                                {findProject(t.projectId)?.name ?? t.projectId}
                               </a>
                             </td>
                             <td data-label="Month">{t.contributionMonth}</td>
@@ -891,6 +904,7 @@ export function EarningsPage({
                   </section>
                 </section>
               )}
+              <ReferralClaims />
             </>
           )}
         </>

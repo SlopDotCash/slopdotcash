@@ -34,6 +34,7 @@ export function AccountAppeals() {
       active = false;
     };
   }, [reload]);
+  if (appeals?.length === 0 && !error) return null;
   return (
     <section id="appeals" aria-labelledby="account-appeals-heading">
       <h2 id="account-appeals-heading">Appeals</h2>
@@ -50,8 +51,6 @@ export function AccountAppeals() {
         </p>
       ) : appeals === null ? (
         <p role="status">Loading account restrictions…</p>
-      ) : appeals.length === 0 ? (
-        <p>No account restrictions.</p>
       ) : (
         <>
           <p>A ban stops new participation. Funded awards are kept.</p>

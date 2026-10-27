@@ -185,7 +185,7 @@ test("social membership preserves past points and discloses public connections w
   });
   const community = page.getByRole("region", { name: "People", exact: true });
   await page.goto(`${site}/points#people`);
-  await community.getByLabel("GitHub username").fill("social-member");
+  await page.getByLabel("Find a contributor").fill("social-member");
   await expect(
     community.getByRole("link", { name: "X · @social_member" }),
   ).toBeVisible();
@@ -206,7 +206,7 @@ test("social membership preserves past points and discloses public connections w
     .click();
   await disconnected;
   await page.goto(`${site}/points#people`);
-  await community.getByLabel("GitHub username").fill("social-member");
+  await page.getByLabel("Find a contributor").fill("social-member");
   await expect(
     community.getByRole("link", { name: "X · @social_member" }),
   ).toHaveCount(0);
@@ -224,7 +224,7 @@ test("social membership preserves past points and discloses public connections w
   await page.goto(`${site}/account`);
   await expect(
     social.getByText(
-      "Connecting X is optional. Your X profile link will be public when your Slop membership is public.",
+      "Connecting X is optional. Your X profile link will be public.",
       { exact: true },
     ),
   ).toBeVisible();

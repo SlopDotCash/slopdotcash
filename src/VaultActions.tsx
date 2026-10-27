@@ -492,7 +492,7 @@ export function VaultActions({
           </fieldset>
           {review ? (
             <section aria-label="Review vault action">
-              <dl>
+              <dl className="transaction-amounts">
                 <dt>Current free balance</dt>
                 <dd>
                   {review.freeBalance === null

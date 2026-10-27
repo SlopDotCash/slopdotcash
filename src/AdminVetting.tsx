@@ -217,13 +217,31 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
           <div>
             <dt>Scan coverage</dt>
             <dd>
-              {Object.entries(result.coverage)
-                .map(([surface, entry]) => `${surface}: ${entry.state}`)
-                .join(", ")}
-              <br />
-              {Object.entries(result.checks)
-                .map(([threat, check]) => `${threat}: ${check}`)
-                .join(", ")}
+              <div className="table-scroll">
+                <table className="scan-coverage">
+                  <caption>Checks and coverage</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Check</th>
+                      <th scope="col">Result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(result.coverage).map(([surface, entry]) => (
+                      <tr key={surface}>
+                        <th scope="row">{surface}</th>
+                        <td>{entry.state}</td>
+                      </tr>
+                    ))}
+                    {Object.entries(result.checks).map(([threat, check]) => (
+                      <tr key={threat}>
+                        <th scope="row">{threat}</th>
+                        <td>{check}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               {result.reusedAssessmentId
                 ? ` · Reused clean scan ${result.reusedAssessmentId} (identical content)`
                 : ""}

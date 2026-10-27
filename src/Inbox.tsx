@@ -1,7 +1,6 @@
 /** Signed-in inbox for account, project and payment events (PRD NOT-01). */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { InboxEmail } from "./InboxEmail";
 import { loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
@@ -15,7 +14,7 @@ import {
   parseNotificationsResponse,
 } from "./lib/notifications";
 import { useAction } from "./lib/use-action";
-import { formatDateTime } from "./Presentation";
+import { AccountNav, formatDateTime } from "./Presentation";
 
 type InboxState =
   | { status: "loading" }
@@ -129,6 +128,7 @@ export default function InboxPage() {
   return (
     <main className="shell route-main inbox-page">
       <h1>Inbox</h1>
+      <AccountNav current="inbox" />
       {state.status === "loading" ? (
         <p role="status">Loading your inbox…</p>
       ) : null}
@@ -199,8 +199,11 @@ export default function InboxPage() {
           {actionError}
         </p>
       ) : null}
-      {/* Optional settings follow the notices and their actions (PRD section 7). */}
-      {state.status === "ready" ? <InboxEmail /> : null}
+      {state.status === "ready" ? (
+        <p>
+          <a href="/account#notifications">Email preferences</a>
+        </p>
+      ) : null}
     </main>
   );
 }
@@ -269,22 +272,29 @@ function InboxItem({
   const title = notificationTitle(n);
   return (
     <li className={unread ? "inbox-item inbox-unread" : "inbox-item"}>
-      <p className="inbox-state">{unread ? "Unread" : "Read"}</p>
-      <p className="inbox-title">{title}</p>
+      <div className="inbox-item-heading">
+        <span className="visually-hidden">{unread ? "Unread" : "Read"}</span>
+        <a
+          className="inbox-title"
+          href={n.actionPath}
+          aria-label={`${title}: ${notificationAction(n)}`}
+        >
+          {title}
+        </a>
+        <time className="inbox-meta" dateTime={n.sourceAt}>
+          {formatDateTime(n.sourceAt)}
+        </time>
+      </div>
       {n.detail ? <p className="inbox-detail">{n.detail}</p> : null}
-      <p className="inbox-meta">
-        <time dateTime={n.sourceAt}>{formatDateTime(n.sourceAt)}</time>
-        {n.emailDelivery ? (
-          <>
-            {" · "}
-            <span className="inbox-delivery">
-              {emailDeliveryLabel(n.emailDelivery)}
-            </span>
-          </>
-        ) : null}
-      </p>
+      {n.emailDelivery === "failed" || n.emailDelivery === "uncertain" ? (
+        <p className="inbox-meta">{emailDeliveryLabel(n.emailDelivery)}</p>
+      ) : n.emailDelivery ? (
+        <details className="inbox-delivery inbox-meta">
+          <summary>Email delivery</summary>
+          <p>{emailDeliveryLabel(n.emailDelivery)}</p>
+        </details>
+      ) : null}
       <div className="inbox-actions">
-        <a href={n.actionPath}>{notificationAction(n)}</a>
         {n.kind === "security_case" && n.acknowledgedAt !== undefined ? (
           n.acknowledgedAt ? (
             <p>Acknowledged</p>

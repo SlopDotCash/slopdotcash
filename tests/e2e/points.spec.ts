@@ -15,6 +15,7 @@ test(
       page.getByRole("columnheader", { name: "Points", exact: true }),
     ).toHaveAttribute("aria-sort", "descending");
     // The period states the snapshot's exact bounds and source coverage.
+    await page.getByText("Period and source coverage", { exact: true }).click();
     const coverage = page.locator(".points-coverage");
     await expect(coverage).toHaveText(
       /^(This month ranks .+ UTC to .+ UTC\. )?Snapshot window: .+ UTC to .+ UTC\. Source: [\d,]+ merged pull requests and [\d,]+ closed issues across [\d,]+ repositories\.$/u,
@@ -44,8 +45,9 @@ test(
       page.getByRole("button", { name: "Lifetime", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await page.goto("/points?sort=points&period=lifetime");
-    const people = page.getByRole("region", { name: "People", exact: true });
-    await expect(people.getByText(/^[\d,]+ people$/u)).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "People", exact: true }),
+    ).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
     if ((page.viewportSize()?.width ?? 0) <= 390) {
       const scroller = page.getByRole("region", {

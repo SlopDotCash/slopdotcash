@@ -197,9 +197,11 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await expect(awards).toContainText("finalized at Dec 4, 2026, 00:00 UTC.");
   await expect(awards.getByLabel("Award for second-contributor")).toBeEnabled();
   await awards
-    .getByRole("button", { name: "Turn off automatic payment" })
+    .getByRole("button", { name: "Turn off automatic finalization" })
     .click();
-  await expect(awards).toContainText("Automatic monthly payment is off");
+  await expect(awards).toContainText(
+    "Automatic allocation finalization is off",
+  );
   await page.screenshot({
     path: info.outputPath("owner-monthly-allocations.png"),
     fullPage: true,

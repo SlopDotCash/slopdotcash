@@ -27,6 +27,8 @@ export function GeneratedSkillPreview({
   registry?: { revision: number; manifestSha256: string };
   draft?: boolean;
 }) {
+  const [selectedRole, setSelectedRole] = useState("Contributor skill");
+  const [selectedPath, setSelectedPath] = useState("SKILL.md");
   const manifestText = JSON.stringify(manifest);
   const [digestState, setDigestState] = useState<{
     source: string;
@@ -102,26 +104,45 @@ export function GeneratedSkillPreview({
       </p>
     );
   }
+  const preview =
+    previews.find(({ role }) => role === selectedRole) ?? previews[0];
+  const paths = Object.keys(preview.files);
+  const path = paths.includes(selectedPath) ? selectedPath : paths[0];
   return (
-    <>
-      {previews.map(({ role, files }) => (
-        <details key={role}>
-          <summary>Preview generated {role.toLowerCase()}</summary>
-          {Object.entries(files).map(([path, contents]) => (
-            <div key={path}>
-              <h4>{path}</h4>
-              {/* A read-only text area keeps long code keyboard-scrollable. */}
-              <textarea
-                aria-label={`${role} ${path}`}
-                className="admin-code"
-                readOnly
-                spellCheck={false}
-                value={decoder.decode(contents)}
-              />
-            </div>
-          ))}
-        </details>
-      ))}
-    </>
+    <details className="skill-preview">
+      <summary>Preview generated skills</summary>
+      <div className="skill-preview-controls">
+        <label>
+          Skill
+          <select
+            value={preview.role}
+            onChange={(event) => setSelectedRole(event.target.value)}
+          >
+            {previews.map(({ role }) => (
+              <option key={role}>{role}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          File
+          <select
+            value={path}
+            onChange={(event) => setSelectedPath(event.target.value)}
+          >
+            {paths.map((entry) => (
+              <option key={entry}>{entry}</option>
+            ))}
+          </select>
+        </label>
+        {draft ? <span className="admin-status">Draft preview</span> : null}
+      </div>
+      <textarea
+        aria-label={`${preview.role} ${path}`}
+        className="admin-code"
+        readOnly
+        spellCheck={false}
+        value={decoder.decode(preview.files[path])}
+      />
+    </details>
   );
 }

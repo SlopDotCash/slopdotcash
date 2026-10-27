@@ -929,7 +929,7 @@ test("reaches and reads older inbox notifications without losing the page", asyn
   await expect(page.locator(".inbox-item")).toHaveCount(100);
 });
 
-test("the inbox keeps read, acknowledged and email outcomes distinct and puts email settings after the notices", async ({
+test("the inbox keeps delivery, read and acknowledgment distinct and links to account email preferences", async ({
   page,
 }) => {
   const notice = (
@@ -972,34 +972,90 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await page.route("**/api/v1/notifications/email", (route) =>
     route.fulfill({ json: { enabled: false, availability: "unverified" } }),
   );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: "4242", githubLogin: "example", admin: false },
+      },
+    }),
+  );
+  await page.route("**/api/v1/project-appeals", (route) =>
+    route.fulfill({ json: { appeals: [] } }),
+  );
+  await page.route("**/api/v1/payments/me", (route) =>
+    route.fulfill({
+      json: {
+        githubUserId: "4242",
+        wallets: [],
+        payments: [],
+        monthlyAwards: [],
+        balances: [],
+        directTransfers: [],
+        walletObservations: [],
+      },
+    }),
+  );
   await page.goto("/inbox", { waitUntil: "networkidle" });
   const item = (subject: string) =>
     page.locator(".inbox-item", { hasText: subject });
-  await expect(item("delivery-1").locator(".inbox-delivery")).toHaveText(
-    "Email: sent",
+  const sent = item("delivery-1");
+  await expect(sent.locator(".visually-hidden").first()).toHaveText("Read");
+  await expect(
+    sent.getByText("Email: sent", { exact: true }),
+  ).not.toBeVisible();
+  await sent.getByText("Email delivery", { exact: true }).click();
+  await expect(sent.getByText("Email: sent", { exact: true })).toBeVisible();
+  await expect(sent.getByText("Email: delivered", { exact: true })).toHaveCount(
+    0,
   );
-  await expect(item("delivery-1").locator(".inbox-state")).toHaveText("Read");
-  await expect(item("delivery-2").locator(".inbox-delivery")).toHaveText(
-    "Email: delivered",
+  const delivered = item("delivery-2");
+  await expect(delivered.locator(".visually-hidden").first()).toHaveText(
+    "Unread",
   );
-  await expect(item("delivery-2").locator(".inbox-state")).toHaveText("Unread");
-  await expect(item("delivery-3").locator(".inbox-delivery")).toHaveText(
-    "Email: failed",
-  );
-  await expect(item("delivery-4").locator(".inbox-delivery")).toHaveText(
-    "Email: uncertain",
-  );
-  await expect(item("delivery-5").locator(".inbox-delivery")).toHaveText(
-    "Email: queued",
-  );
+  await delivered.getByText("Email delivery", { exact: true }).click();
+  await expect(
+    delivered.getByText("Email: delivered", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    item("delivery-3").getByText("Email: failed", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    item("delivery-4").getByText("Email: uncertain", { exact: true }),
+  ).toBeVisible();
+  const queued = item("delivery-5");
+  await expect(
+    queued.getByText("Email: queued", { exact: true }),
+  ).not.toBeVisible();
+  await queued.getByText("Email delivery", { exact: true }).click();
+  await expect(
+    queued.getByText("Email: queued", { exact: true }),
+  ).toBeVisible();
   await expect(item("delivery-6").locator(".inbox-delivery")).toHaveCount(0);
-  // A private notice stays generic: the provider-accepted email does not
-  // stand in for the explicit acknowledgment.
+  // Reading a private notice or accepting its email does not acknowledge it.
   const security = item("case-0001");
-  await expect(security.locator(".inbox-delivery")).toHaveText("Email: sent");
+  await expect(security.locator(".visually-hidden").first()).toHaveText("Read");
+  await security.getByText("Email delivery", { exact: true }).click();
+  await expect(
+    security.getByText("Email: sent", { exact: true }),
+  ).toBeVisible();
   await expect(
     security.getByRole("button", { name: /^Acknowledge:/u }),
   ).toBeVisible();
+  await expect(security.getByText("Acknowledged", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("region", { name: "Email preferences" }),
+  ).toHaveCount(0);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("inbox-delivery-states.png"),
+    fullPage: true,
+  });
+  await page
+    .getByRole("link", { name: "Email preferences", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/account#notifications$/u);
   const preferences = page.getByRole("region", { name: "Email preferences" });
   await expect(preferences).toContainText(
     "No verified email address is on file.",
@@ -1007,31 +1063,32 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await expect(
     preferences.getByRole("button", { name: "Retry email preferences" }),
   ).toHaveCount(0);
-  // Optional settings come after the notices and their actions.
-  const order = await page.evaluate(() => {
-    const list = document.querySelector(".inbox-list");
-    const settings = document.querySelector(
-      "[aria-labelledby='inbox-email-heading']",
-    );
-    return list && settings
-      ? list.compareDocumentPosition(settings) &
-          Node.DOCUMENT_POSITION_FOLLOWING
-      : 0;
-  });
-  expect(order).toBeGreaterThan(0);
-  await expectAccessible(page);
-  await page.screenshot({
-    path: test.info().outputPath("inbox-delivery-states.png"),
-    fullPage: true,
-  });
   await page.unroute("**/api/v1/notifications/email");
   await page.route("**/api/v1/notifications/email", (route) =>
     route.fulfill({ json: { enabled: false, availability: "unavailable" } }),
   );
   await page.reload();
+  const retry = preferences.getByRole("button", {
+    name: "Retry email preferences",
+  });
+  await expect(retry).toBeVisible();
+  await page.unroute("**/api/v1/notifications/email");
+  await page.route("**/api/v1/notifications/email", (route) =>
+    route.fulfill({
+      json: {
+        enabled: false,
+        availability: "verified",
+        email: "example@example.com",
+        destinationVersion: "a".repeat(64),
+      },
+    }),
+  );
+  await retry.click();
+  await expect(preferences).toContainText("example@example.com");
   await expect(
-    preferences.getByRole("button", { name: "Retry email preferences" }),
+    preferences.getByRole("button", { name: "Turn on activity email" }),
   ).toBeVisible();
+  await expectAccessible(page);
 });
 
 test("an admin leaves an unset reward asset unchanged until choosing it", async ({

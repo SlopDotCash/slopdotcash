@@ -338,7 +338,7 @@ export default function OwnerCommitment({
           {review && (
             <section aria-label="Commitment review">
               <h3>{review.plan.award.login}</h3>
-              <dl>
+              <dl className="transaction-amounts">
                 <dt>Gross reserved</dt>
                 <dd>
                   {formatBaseUnits(review.plan.award.gross, review.decimals)}

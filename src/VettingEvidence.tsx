@@ -105,7 +105,17 @@ export default function VettingEvidencePage() {
               key={`${run.assessmentId}/${run.runId}`}
             >
               <h2>{run.runId}</h2>
-              <p>Assessment: {run.assessmentId}</p>
+              <details className="security-reference">
+                <summary>Run identifiers and retention</summary>
+                <p>Assessment: {run.assessmentId}</p>
+                <p>Storage inventory SHA-256: {run.manifestSha256}</p>
+                <p>
+                  {run.expiresAt === null
+                    ? "Case open. Evidence remains available until 90 days after closure."
+                    : `Access expires: ${run.expiresAt}.`}{" "}
+                  Policy: {run.policy.version}.
+                </p>
+              </details>
               {run.assembly ? (
                 <p>
                   Evidence assembly:{" "}
@@ -113,15 +123,6 @@ export default function VettingEvidencePage() {
                   {run.assembly.reason} Clean admission is unavailable.
                 </p>
               ) : null}
-              <p style={{ overflowWrap: "anywhere" }}>
-                Storage inventory SHA-256: {run.manifestSha256}
-              </p>
-              <p>
-                {run.expiresAt === null
-                  ? "Case open. Evidence remains available until 90 days after closure."
-                  : `Access expires: ${run.expiresAt}.`}{" "}
-                Policy: {run.policy.version}.
-              </p>
               {run.objects.map((object) => (
                 <EvidenceItem key={object.sha256} run={run} object={object} />
               ))}
@@ -206,38 +207,48 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
       <p>
         {object.kind} · {object.sizeBytes} bytes · {object.state}
       </p>
-      <p>SHA-256: {object.sha256}</p>
-      <form className="admin-section" onSubmit={inspect}>
-        <label className="form-field">
-          Reason to inspect {object.label}
-          <input
-            required
-            minLength={8}
-            maxLength={500}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
+      <details className="evidence-access">
+        <summary>
+          {object.streamed || object.contentType === "application/octet-stream"
+            ? "Download evidence"
+            : "Read evidence"}
+        </summary>
+        <p>SHA-256: {object.sha256}</p>
+        <form className="admin-section" onSubmit={inspect}>
+          <label className="form-field">
+            Reason to inspect {object.label}
+            <input
+              required
+              minLength={8}
+              maxLength={500}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </label>
+          <button
+            className="button secondary-button"
+            type="submit"
+            disabled={busy || object.state !== "stored-unverified"}
+          >
+            {busy
+              ? "Verifying evidence…"
+              : object.streamed ||
+                  object.contentType === "application/octet-stream"
+                ? `Download ${object.label}`
+                : `Read ${object.label}`}
+          </button>
+        </form>
+        {error ? <p role="alert">{error}</p> : null}
+        {status ? <p role="status">{status}</p> : null}
+        {content !== null ? (
+          <textarea
+            className="admin-code"
+            aria-label={`${object.label} verified content`}
+            readOnly
+            value={content}
           />
-        </label>
-        <button
-          className="button secondary-button"
-          type="submit"
-          disabled={busy || object.state !== "stored-unverified"}
-        >
-          {busy
-            ? "Verifying evidence…"
-            : object.streamed ||
-                object.contentType === "application/octet-stream"
-              ? `Download ${object.label}`
-              : `Read ${object.label}`}
-        </button>
-      </form>
-      {error ? <p role="alert">{error}</p> : null}
-      {status ? <p role="status">{status}</p> : null}
-      {content !== null ? (
-        <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-          {content}
-        </pre>
-      ) : null}
+        ) : null}
+      </details>
     </article>
   );
 }

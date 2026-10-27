@@ -129,6 +129,90 @@ export function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
 }
 
+function SectionNav({
+  label,
+  current,
+  links,
+}: {
+  label: string;
+  current: string;
+  links: readonly { id: string; label: string; href: string }[];
+}) {
+  return (
+    <nav aria-label={label} className="section-nav">
+      {links.map((link) => (
+        <Link
+          key={link.id}
+          href={link.href}
+          ariaCurrent={current === link.id ? "page" : undefined}
+        >
+          {link.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+/** Shared project context; each destination retains its own access checks. */
+export function ProjectNav({
+  project,
+  current,
+}: {
+  project: Pick<ProjectDefinition, "slug">;
+  current: "overview" | "funding" | "settings" | "security";
+}) {
+  const base = `/projects/${project.slug}`;
+  return (
+    <SectionNav
+      label="Project navigation"
+      current={current}
+      links={[
+        { id: "overview", label: "Overview", href: base },
+        { id: "funding", label: "Funds & awards", href: `${base}/funding` },
+        { id: "settings", label: "Settings", href: `${base}/manage` },
+        { id: "security", label: "Security", href: `${base}/security` },
+      ]}
+    />
+  );
+}
+
+export function AccountNav({
+  current,
+}: {
+  current: "account" | "payouts" | "inbox" | "security";
+}) {
+  return (
+    <SectionNav
+      label="Account navigation"
+      current={current}
+      links={[
+        { id: "payouts", label: "Payouts", href: "/earnings" },
+        { id: "inbox", label: "Inbox", href: "/inbox" },
+        { id: "security", label: "Security cases", href: "/security" },
+        { id: "account", label: "Settings", href: "/account" },
+      ]}
+    />
+  );
+}
+
+export function EvidenceNav({
+  current,
+}: {
+  current: "models" | "receipts" | "cycles";
+}) {
+  return (
+    <SectionNav
+      label="Public records"
+      current={current}
+      links={[
+        { id: "models", label: "Models", href: "/models" },
+        { id: "receipts", label: "Receipts", href: "/receipts" },
+        { id: "cycles", label: "Cycles", href: "/cycles" },
+      ]}
+    />
+  );
+}
+
 /** Previous and next controls for one zero-based page of a long list. */
 export function Pager({
   page,

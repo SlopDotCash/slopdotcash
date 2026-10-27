@@ -13,6 +13,7 @@ import {
 } from "react";
 import { identityPublicOrigin } from "../workers/identity/contracts";
 import { AccountAppeals } from "./AccountAppeals";
+import { InboxEmail } from "./InboxEmail";
 import { Link } from "./Link";
 import {
   browserDeployment,
@@ -50,6 +51,7 @@ import { useAction } from "./lib/use-action";
 import { useAllDirectTransfers } from "./lib/use-direct-transfers";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
+  AccountNav,
   DataNotice,
   formatDateTime,
   formatMicroUsdc,
@@ -833,6 +835,15 @@ export function LoginPage() {
 export function AccountPage() {
   const accountSession = useProjectSession();
   const { me, session } = usePoints();
+  const signedIn = me !== null || accountSession.status === "signed-in";
+  const [walletEntry, setWalletEntry] = useState(
+    () => window.location.hash === "#wallets",
+  );
+  useEffect(() => {
+    const update = () => setWalletEntry(window.location.hash === "#wallets");
+    window.addEventListener("hashchange", update);
+    return () => window.removeEventListener("hashchange", update);
+  }, []);
   const [closedNotice, setClosedNotice] = useState("");
   useEffect(() => {
     if (me) setClosedNotice("");
@@ -840,49 +851,113 @@ export function AccountPage() {
   return (
     <main className="shell route-main points-page">
       <h1>Account</h1>
-      <nav className="account-sections" aria-label="Account sections">
-        <a href="#profile">Profile</a>
-        {me ? <a href="#connections">Connections</a> : null}
-        <a href="#wallets">Wallets</a>
-        <a href="/earnings">Payouts</a>
-        <a href="/inbox">Inbox</a>
-        {me ? <a href="#sessions">Sessions</a> : null}
-        {accountSession.status === "signed-in" ? (
-          <a href="#appeals">Appeals</a>
-        ) : null}
-        <a href="#recovery">{me ? "Recovery and closure" : "Recovery"}</a>
-      </nav>
-      <div id="profile">
-        <JoinPoints />
-      </div>
-      <div id="connections">
-        <SocialConnections />
-      </div>
-      {session === "loading" ? (
-        <section id="wallets">
-          <h2>Wallets</h2>
-          <p role="status">Checking your account…</p>
-        </section>
-      ) : (
-        <EarningsPage walletsOnly key={me?.actor.id ?? "signed-out"} />
-      )}
-      {me ? <AccountSessions /> : null}
+      <AccountNav current="account" />
+      {signedIn ? (
+        <nav className="account-sections" aria-label="Account sections">
+          <a href="#profile">Profile</a>
+          <a href="#wallets">Wallets</a>
+          <a href="#notifications">Notifications</a>
+          <a href="#security">Security</a>
+        </nav>
+      ) : null}
+      {!walletEntry || signedIn ? (
+        <div id="profile">
+          <JoinPoints />
+        </div>
+      ) : null}
+      {me ? <SocialConnections /> : null}
+      {session === "loading" || signedIn || walletEntry ? (
+        <DetailsSection
+          id="wallets"
+          className="points-panel account-wallets"
+          summary={<h2 id="wallets-heading">Wallets</h2>}
+          lazy
+        >
+          {session === "loading" ? (
+            <p role="status">Checking your account…</p>
+          ) : (
+            <EarningsPage
+              walletsOnly
+              headingId="wallets-heading"
+              key={me?.actor.id ?? "signed-out"}
+            />
+          )}
+        </DetailsSection>
+      ) : null}
+      {signedIn ? (
+        <DetailsSection
+          id="notifications"
+          className="points-panel"
+          summary="Email preferences"
+          lazy
+        >
+          <InboxEmail />
+        </DetailsSection>
+      ) : null}
       {accountSession.status === "signed-in" ? <AccountAppeals /> : null}
-      <section id="recovery">
-        <h2>{me ? "Recovery and closure" : "Recovery"}</h2>
-        {closedNotice ? <p role="status">{closedNotice}</p> : null}
-        <p>
-          Lost access to your account?{" "}
-          <a href={`${CONTACT_MAILTO}?subject=Account%20recovery`}>
-            Request private account recovery
-          </a>
-          .
-        </p>
-        {me ? (
-          <AccountClosure login={me.actor.login} onClosed={setClosedNotice} />
-        ) : null}
+      <section id="security" className="points-panel">
+        <h2>{me ? "Security" : "Recovery"}</h2>
+        {me ? <AccountSessions /> : null}
+        <div id="recovery">
+          {closedNotice ? <p role="status">{closedNotice}</p> : null}
+          <p>
+            Lost access to your account?{" "}
+            <a href={`${CONTACT_MAILTO}?subject=Account%20recovery`}>
+              Request private account recovery
+            </a>
+            .
+          </p>
+          {me ? (
+            <DetailsSection id="close-account" summary="Close account">
+              <AccountClosure
+                login={me.actor.login}
+                onClosed={setClosedNotice}
+              />
+            </DetailsSection>
+          ) : null}
+        </div>
       </section>
     </main>
+  );
+}
+
+/** Keep existing section links useful while optional content stays folded. */
+function DetailsSection({
+  id,
+  summary,
+  children,
+  className,
+  lazy = false,
+}: {
+  id?: string;
+  summary: ReactNode;
+  children: ReactNode;
+  className?: string;
+  lazy?: boolean;
+}) {
+  const details = useRef<HTMLDetailsElement>(null);
+  const [activated, setActivated] = useState(!lazy);
+  useEffect(() => {
+    const reveal = () => {
+      if (id && window.location.hash === `#${id}` && details.current)
+        details.current.open = true;
+    };
+    reveal();
+    window.addEventListener("hashchange", reveal);
+    return () => window.removeEventListener("hashchange", reveal);
+  }, [id]);
+  return (
+    <details
+      id={id}
+      className={className}
+      ref={details}
+      onToggle={(event) => {
+        if (event.currentTarget.open) setActivated(true);
+      }}
+    >
+      <summary>{summary}</summary>
+      {activated ? children : null}
+    </details>
   );
 }
 /**
@@ -989,8 +1064,16 @@ function AccountSessions() {
     };
   }, [attempt]);
   return (
-    <section id="sessions">
-      <h2>Sessions</h2>
+    <DetailsSection
+      id="sessions"
+      summary={
+        error
+          ? "Sessions · unavailable"
+          : sessions
+            ? `Sessions · ${sessions.length} active`
+            : "Sessions"
+      }
+    >
       {error ? (
         <p role="alert">{error}</p>
       ) : sessions === null ? (
@@ -1033,7 +1116,7 @@ function AccountSessions() {
       >
         Refresh sessions
       </button>
-    </section>
+    </DetailsSection>
   );
 }
 
@@ -1047,13 +1130,80 @@ const POINT_CATEGORIES: readonly (readonly [string, string])[] = [
   ["Merged PR before scoring began", "10 each"],
   ["Verified payout", "25 per project and month"],
 ];
+function readPeopleView() {
+  return (
+    new URLSearchParams(window.location.search).get("view") === "people" ||
+    window.location.hash === "#people"
+  );
+}
 export function PointsPage() {
+  const [peopleView, setPeopleView] = useState(readPeopleView);
+  const [query, setQuery] = useState(
+    () => new URLSearchParams(window.location.search).get("q") ?? "",
+  );
+  useEffect(() => {
+    const restore = () => {
+      setPeopleView(readPeopleView());
+      setQuery(new URLSearchParams(window.location.search).get("q") ?? "");
+    };
+    window.addEventListener("popstate", restore);
+    window.addEventListener("hashchange", restore);
+    return () => {
+      window.removeEventListener("popstate", restore);
+      window.removeEventListener("hashchange", restore);
+    };
+  }, []);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (peopleView) url.searchParams.set("view", "people");
+    else {
+      url.searchParams.delete("view");
+      if (url.hash === "#people") url.hash = "";
+    }
+    if (query) url.searchParams.set("q", query);
+    else url.searchParams.delete("q");
+    window.history.replaceState(window.history.state, "", url);
+  }, [peopleView, query]);
   return (
     <main className="shell route-main points-page">
       <h1>Leaderboard</h1>
-      <ContributorStandings />
-      <section className="points-panel" id="rules">
-        <h2>Ways to earn Points</h2>
+      <div className="points-controls" id="people">
+        <fieldset className="points-period">
+          <legend>View</legend>
+          <button
+            type="button"
+            aria-pressed={!peopleView}
+            onClick={() => setPeopleView(false)}
+          >
+            Rankings
+          </button>
+          <button
+            type="button"
+            aria-pressed={peopleView}
+            onClick={() => setPeopleView(true)}
+          >
+            People
+          </button>
+        </fieldset>
+        <label>
+          Find a contributor
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+      </div>
+      {peopleView ? (
+        <People query={query} />
+      ) : (
+        <ContributorStandings searchQuery={query} />
+      )}
+      <DetailsSection
+        className="points-panel"
+        id="rules"
+        summary="Points rules and downloads"
+      >
         <p>{POINTS_NOTICE}</p>
         <ul aria-label="Point categories" className="points-rules">
           {POINT_CATEGORIES.map(([activity, points]) => (
@@ -1067,8 +1217,7 @@ export function PointsPage() {
         <a href="/data/points.json" download>
           Download points index
         </a>
-      </section>
-      <People />
+      </DetailsSection>
     </main>
   );
 }
@@ -1100,21 +1249,26 @@ function StandingsCoverage({
         ? monthStart
         : snapshot.window.from;
   return (
-    <p className="points-meta points-coverage">
-      {rankedFrom !== null &&
-      Date.parse(rankedFrom) < Date.parse(snapshot.window.to)
-        ? `This month ranks ${formatDateTime(rankedFrom)} to ${formatDateTime(snapshot.window.to)}. `
-        : null}
-      Snapshot window: {formatDateTime(snapshot.window.from)} to{" "}
-      {formatDateTime(snapshot.window.to)}. Source
-      {projectId ? " (all projects)" : ""}:{" "}
-      {countFormat.format(counts.mergedPullRequests)} merged pull requests and{" "}
-      {countFormat.format(counts.closedIssues)} closed issues across{" "}
-      {countFormat.format(snapshot.repositories.length)} repositories.
-      {month === null
-        ? ` Includes ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
-        : null}
-    </p>
+    <DetailsSection
+      summary="Period and source coverage"
+      className="points-coverage-details"
+    >
+      <p className="points-meta points-coverage">
+        {rankedFrom !== null &&
+        Date.parse(rankedFrom) < Date.parse(snapshot.window.to)
+          ? `This month ranks ${formatDateTime(rankedFrom)} to ${formatDateTime(snapshot.window.to)}. `
+          : null}
+        Snapshot window: {formatDateTime(snapshot.window.from)} to{" "}
+        {formatDateTime(snapshot.window.to)}. Source
+        {projectId ? " (all projects)" : ""}:{" "}
+        {countFormat.format(counts.mergedPullRequests)} merged pull requests and{" "}
+        {countFormat.format(counts.closedIssues)} closed issues across{" "}
+        {countFormat.format(snapshot.repositories.length)} repositories.
+        {month === null
+          ? ` Includes ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
+          : null}
+      </p>
+    </DetailsSection>
   );
 }
 
@@ -1124,11 +1278,14 @@ export function ContributorStandings({
   projectId,
   compact = false,
   title,
+  searchQuery,
   showDataNotice = !scoreState,
 }: {
   projectId?: string;
   compact?: boolean;
   title?: string;
+  /** A page-level search shared by rankings and the people directory. */
+  searchQuery?: string;
   scoreState?: DataState;
   retryScore?: () => void;
   /** Shows score loading, error and stale states for a caller's shared read. */
@@ -1153,7 +1310,15 @@ export function ContributorStandings({
     };
   }, [projectId]);
   const [filters, setFilters] = useState(readFilters);
-  const { sort, period, query, page } = filters;
+  const { sort, period, page } = filters;
+  const query = searchQuery ?? filters.query;
+  const previousQuery = useRef(searchQuery);
+  useEffect(() => {
+    if (previousQuery.current !== searchQuery) {
+      previousQuery.current = searchQuery;
+      setFilters((current) => ({ ...current, page: 0 }));
+    }
+  }, [searchQuery]);
   const project = projectId ?? filters.project;
   const setSort = (sort: "points" | "money") =>
     setFilters((v) => ({ ...v, sort, page: 0 }));
@@ -1299,17 +1464,19 @@ export function ContributorStandings({
               </select>
             </label>
           ) : null}
-          <label>
-            Find a contributor
-            <input
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setPage(0);
-              }}
-              type="search"
-            />
-          </label>
+          {searchQuery === undefined ? (
+            <label>
+              Find a contributor
+              <input
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setPage(0);
+                }}
+                type="search"
+              />
+            </label>
+          ) : null}
         </div>
       ) : null}
       {!compact && scores.status === "ready" ? (
@@ -1481,6 +1648,7 @@ function SocialConnections() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: version explicitly refreshes the server state after account mutations.
   useEffect(() => {
     setData(null);
+    setMessage("");
     if (!me || !productOrigin()) return;
     const c = new AbortController();
     void requestJson("/api/v1/points/x/me", { signal: c.signal })
@@ -1532,7 +1700,7 @@ function SocialConnections() {
   }
   if (!me) return null;
   return (
-    <section className="points-panel" aria-label="Connections">
+    <section id="connections" className="points-panel" aria-label="Connections">
       <h2>Connections</h2>
       {outcome === "connected" ? (
         <p role="status">X connected.</p>
@@ -1547,17 +1715,16 @@ function SocialConnections() {
       {!data ? (
         <>
           <p role="status">{message || "Loading connection details…"}</p>
-          <button type="button" onClick={() => setVersion((v) => v + 1)}>
-            Retry X details
-          </button>
+          {message ? (
+            <button type="button" onClick={() => setVersion((v) => v + 1)}>
+              Retry X details
+            </button>
+          ) : null}
         </>
       ) : (
         <>
           {!data.account && data.configured ? (
-            <p>
-              Connecting X is optional. Your X profile link will be public when
-              your Slop membership is public.
-            </p>
+            <p>Connecting X is optional. Your X profile link will be public.</p>
           ) : null}
           <div className="connection-row">
             <strong>X</strong>
@@ -1645,13 +1812,19 @@ const PEOPLE_PAGE_SIZE = 24;
  * One people view: public members and everyone with a recorded pull request.
  * People without score stay discoverable without receiving a rank.
  */
-function People() {
+function People({ query }: { query: string }) {
   const { state, me } = usePoints();
   const census = useProfiles();
   const [members, setMembers] = useState<MemberState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
-  const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
+  const pageQuery = useRef(query);
+  useEffect(() => {
+    if (pageQuery.current !== query) {
+      pageQuery.current = query;
+      setPage(0);
+    }
+  }, [query]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: retries and membership changes refresh public visibility.
   useEffect(() => {
     if (!productOrigin()) {
@@ -1697,19 +1870,8 @@ function People() {
   const pages = Math.max(1, Math.ceil(matches.length / PEOPLE_PAGE_SIZE));
   const current = Math.min(page, pages - 1);
   return (
-    <section className="points-panel" id="people" aria-labelledby="people-h">
+    <section className="points-panel" aria-labelledby="people-h">
       <h2 id="people-h">People</h2>
-      <label>
-        GitHub username{" "}
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setPage(0);
-          }}
-        />
-      </label>
       {census.state.status === "loading" ? (
         <p role="status">Loading contributors…</p>
       ) : census.state.status === "error" ? (
