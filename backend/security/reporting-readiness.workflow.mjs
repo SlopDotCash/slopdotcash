@@ -226,9 +226,9 @@ export default { async fetch(request, env) {
       .run();
     await db
       .prepare(
-        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,manifest=excluded.manifest,manifest_sha256=excluded.manifest_sha256,updated_at=excluded.updated_at",
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,revision=excluded.revision,manifest=excluded.manifest,manifest_sha256=excluded.manifest_sha256,updated_at=excluded.updated_at",
       )
-      .bind(manifest.id, "paused", number, bytes, hash, at, at)
+      .bind(manifest.id, manifest.status, number, bytes, hash, at, at)
       .run();
   }
   await revision(1);
@@ -390,14 +390,23 @@ export default { async fetch(request, env) {
   checks.push("immutable database and node identity mismatch refuse");
 
   state.installed = false;
-  assert.deepEqual(await refresh(), { checked: 1, failed: 1 });
+  assert.deepEqual(await refresh(), { checked: 1, failed: 0 });
   assert.equal((await readiness()).automatic, "app-not-installed");
   assert.equal((await readiness()).stale, true);
   checks.push(
     "App revocation preserves old fact without claiming current access",
   );
 
+  manifest.status = "active";
   await revision(2);
+  assert.deepEqual(await refresh(), { checked: 1, failed: 1 });
+  assert.equal((await readiness()).automatic, "app-not-installed");
+  checks.push(
+    "active App revocation still fails the refresh without granting access",
+  );
+
+  manifest.status = "paused";
+  await revision(3);
   assert.equal((await readiness()).state, "unavailable");
   assert.equal((await readiness()).checkedAt, null);
   checks.push("new registry revision cannot inherit earlier readiness");
