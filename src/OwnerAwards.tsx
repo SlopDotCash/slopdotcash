@@ -90,7 +90,7 @@ export default function OwnerAwards({
       : `${formatBaseUnits(value, decimals)}${symbol ? ` ${symbol}` : ""}`;
 
   const accept = useCallback(
-    (body: MonthlyOwnerView, month: string) => {
+    (body: MonthlyOwnerView, month: string, clearDrafts = true) => {
       if (
         body.projectId !== project.id ||
         body.period !== month ||
@@ -100,7 +100,7 @@ export default function OwnerAwards({
       )
         throw new Error("The award response could not be verified.");
       setView(body);
-      setDrafts({});
+      if (clearDrafts) setDrafts({});
     },
     [project.id],
   );
@@ -196,7 +196,12 @@ export default function OwnerAwards({
         "Monthly allocation",
       );
       if (body) {
-        accept(body as unknown as MonthlyOwnerView, view.period);
+        accept(body as unknown as MonthlyOwnerView, view.period, false);
+        setDrafts((previous) => {
+          const next = { ...previous };
+          delete next[githubUserId];
+          return next;
+        });
         setNotice("Allocation saved privately.");
       }
     });
