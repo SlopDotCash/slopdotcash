@@ -2612,7 +2612,7 @@ test("home advertises only open security terms with the 75/25 split @registry", 
   await expect(section).toContainText("7,500 USDC to the researcher (75%)");
   await expect(section).toContainText("2,500 USDC to slop.cash (25%)");
   await expect(section).toContainText(
-    "Pledged; payment requires approval and verified funding.",
+    "Pledged; payment requires owner approval and verified funding.",
   );
   const link = section.getByRole("link", {
     name: "Report privately",
