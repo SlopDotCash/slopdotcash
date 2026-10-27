@@ -376,7 +376,8 @@ async function createContributorWalletClaim(
     );
   }
   if (
-    current?.walletAddress === walletAddress &&
+    current?.source === "d1_registry" &&
+    current.walletAddress === walletAddress &&
     current.githubLogin.toLowerCase() === actor.githubLogin.toLowerCase()
   ) {
     return json(200, publicWalletClaim(current));
