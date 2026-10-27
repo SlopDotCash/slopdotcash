@@ -20,6 +20,15 @@ Qualified reports create the existing generic private Inbox/email notice. The ow
 
 Run the repository quality gate and browser matrix against the final reviewed source. Include a private report with GitHub unavailable, provider failure and recovery, incomplete/spam screening and owner override, revoked or unrelated accounts, retry/replay, report revision, and a chosen but unfunded award. Prove that later verified funding permits the same existing settlement path without a second commission. Preserve old funded-case tests. Fixture inference proves control flow only; it is not real provider qualification or delivery evidence.
 
+The protected main release calls the actual private-screening implementation
+once with a public synthetic authorization-bypass report before publication.
+The gate caps its request and output with a conservative $1 bound, requires the
+provider cost receipt and returned model identity, and logs only provider,
+model, count and outcome. It never reads private reports or sends notifications.
+A dry run proves the transport boundary without a provider call; it is not real
+model qualification. This case proves the plausible-report path only; it does
+not claim comprehensive model quality or live report/email delivery.
+
 ## Live setup
 
 1. Verify `lalalune`'s current authority on the repository and the Slop GitHub App installation. The organization name remains the repository owner; the intended program contact is a separate identity. The read-only GitHub credential observed during implementation cannot authorize registration. Do not bypass this check through direct D1 writes.
