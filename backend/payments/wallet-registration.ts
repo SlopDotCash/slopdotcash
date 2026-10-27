@@ -14,13 +14,21 @@ export async function registerPaymentWallet(
   const tip = () =>
     db
       .prepare(
-        "SELECT id,wallet_address,github_login FROM wallet_claims w WHERE github_user_id=? AND chain=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
+        "SELECT id,wallet_address,github_login,source FROM wallet_claims w WHERE github_user_id=? AND chain=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
       )
       .bind(actor.githubId, chain)
-      .first<{ id: string; wallet_address: string; github_login: string }>();
+      .first<{
+        id: string;
+        wallet_address: string;
+        github_login: string;
+        source: string;
+      }>();
   const current = await tip();
+  // Only a registry claim can be confirmed. A historical issue or profile
+  // claim for the same address gets a registry successor instead.
   if (
-    current?.wallet_address === address &&
+    current?.source === "d1_registry" &&
+    current.wallet_address === address &&
     current.github_login.toLowerCase() === actor.githubLogin.toLowerCase()
   )
     return { claimId: current.id };
