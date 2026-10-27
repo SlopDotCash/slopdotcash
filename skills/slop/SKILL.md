@@ -59,6 +59,10 @@ main ancestry, release status, pull-request labels and revocation lists are not
 installation gates. Verify canonical bytes against GitHub at the selected
 immutable revision. Reject missing or extra files and mismatched source bytes.
 Installed skills run locally without repeating live source authorization.
+At each work-session start, attempt a five-second advisory check of the
+project's `skill-manifest.json` revision against installed `PROVENANCE.json`.
+Offer verified update instructions when they differ; never force installation
+or block work because a version is older or the check is unavailable.
 This requires one verified update to a template containing the offline behavior;
 historical template bytes keep their original behavior. Ordinary updates cannot
 decrease the D1 project revision; explicit rollback rechecks retained bytes and
