@@ -355,6 +355,20 @@ def canonical_authorization_receipt_bytes(
         ):
             raise ValueError("candidate authorization receipt has an invalid schema")
         recorded_authorization = {"kind": kind, "develop": develop, "pull": pull}
+    elif kind == "release":
+        run = authorization.get("run")
+        attempt = authorization.get("attempt")
+        if (
+            set(authorization) != {"kind", "develop", "run", "attempt"}
+            or not isinstance(run, int)
+            or isinstance(run, bool)
+            or run <= 0
+            or not isinstance(attempt, int)
+            or isinstance(attempt, bool)
+            or attempt <= 0
+        ):
+            raise ValueError("release authorization receipt has an invalid schema")
+        recorded_authorization = {"kind": kind, "develop": develop, "run": run, "attempt": attempt}
     else:
         raise ValueError("authorization receipt has an invalid kind")
     receipt = {

@@ -928,22 +928,20 @@ for (const scenario of [
   });
 }
 
-// Registration appends the successor claim at once, and only a confirmed
-// current claim is paid (backend/payments/wallet-registration.ts, dispatch.ts).
-test("a rejected signature after a wallet change shows the saved unconfirmed address and paused payouts", async ({
+// Pending registration leaves the verified wallet active until authorization.
+test("a rejected signature after a wallet change keeps the verified wallet active", async ({
   page,
+  diagnostics,
 }, info) => {
+  diagnostics.allowCanceledBackgroundReads();
   const wallets = savedEvm(true);
+  // Keep the merged layout regression meaningful: a distinct, already verified
+  // Ethereum wallet leaves three chain rows even when the Base change is rejected.
+  wallets[2] = {
+    ...wallets[2],
+    address: "0x3333333333333333333333333333333333333333",
+  };
   const writes = await payments(page, wallets);
-  await page.route("**/api/v1/payments/wallets/register", async (route) => {
-    wallets[0] = {
-      chain: "base",
-      claimId: "fixture",
-      address: evmAddress,
-      authorized: false,
-    };
-    await route.fallback();
-  });
   await providers(page, false, {
     connected: savedAddress,
     rejectSignature: 1,
@@ -954,12 +952,13 @@ test("a rejected signature after a wallet change shows the saved unconfirmed add
     .getByRole("button", { name: "Register wallet account", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText(
-    `Wallet signature rejected by user. Your new Base address ${evmAddress} is saved but not confirmed. Payouts to your earlier address ${savedAddress} are paused. Connect your wallet again to confirm the new address, or to confirm the earlier address again.`,
+    `Wallet signature rejected by user. Your new Base address ${evmAddress} is saved but not confirmed. Your verified address ${savedAddress} remains active for payouts. Connect your new wallet again to confirm the replacement.`,
   );
   const saved = page.getByRole("region", { name: "Payout wallets" });
-  await expect(saved).toContainText(evmAddress);
+  await expect(saved).toContainText(savedAddress);
+  await expect(saved).not.toContainText(evmAddress);
   await expect(
-    saved.getByRole("img", { name: "Base, not confirmed", exact: true }),
+    saved.getByRole("img", { name: "Base, confirmed", exact: true }),
   ).toBeVisible();
   await expect(
     saved.getByRole("img", { name: "Robinhood Chain, confirmed", exact: true }),

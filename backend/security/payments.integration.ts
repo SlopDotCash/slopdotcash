@@ -1301,6 +1301,18 @@ try {
             .get(successor.body.claimId)?.supersedes_claim_id,
           claimId,
         );
+        const successorChallenge = await accountCall("wallets/challenge", {
+          claimId: successor.body.claimId,
+        });
+        assert.equal(successorChallenge.status, 200);
+        const successorAuthorization = await accountCall("wallets/authorize", {
+          claimId: successor.body.claimId,
+          challengeId: successorChallenge.body.challengeId,
+          signature: await successorWallet.signMessage({
+            message: successorChallenge.body.message,
+          }),
+        });
+        assert.equal(successorAuthorization.status, 200);
         const staleBroadcasts = oldBroadcasts();
         privateAttester.restart();
         let staleRefused = false;
@@ -1335,21 +1347,9 @@ try {
         assert.equal(await nonce(), 1);
         await unchanged();
 
-        // A current ordinary authorization may be signed at nonce2, but the
+        // A current ordinary binding may be signed at nonce2, but the
         // obsolete private nonce1 still prevents it from landing. The original
         // fee is at the existing ceiling, so cancellation must remain held.
-        const successorChallenge = await accountCall("wallets/challenge", {
-          claimId: successor.body.claimId,
-        });
-        assert.equal(successorChallenge.status, 200);
-        const successorAuthorization = await accountCall("wallets/authorize", {
-          claimId: successor.body.claimId,
-          challengeId: successorChallenge.body.challengeId,
-          signature: await successorWallet.signMessage({
-            message: successorChallenge.body.message,
-          }),
-        });
-        assert.equal(successorAuthorization.status, 200);
         const ordinaryChallenge = await accountCall("wallets/bind-challenge", {
           claimId: successor.body.claimId,
           network,
