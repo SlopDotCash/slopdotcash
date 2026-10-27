@@ -2585,6 +2585,14 @@ The deleted trace workflow is primarily real D1/R2/operator-grant/browser accept
 
 ---
 
+## Post-rebase addition: TT10 — newly introduced callback-only collector tests
+
+The reviewed development adopted after the report checkpoint adds `scripts/leaderboard-node-recovery.test.ts` in PR1469. This file was not present in the3e355a33 inventory. Root and the test auditor independently reviewed all203lines: four source declarations expand to eight cases, replace both `generate` and `write` with callbacks, and return the same preloaded historical snapshot regardless of their invented node IDs. They assert client identity, callback counters, mock requests and classification, without running the complete collector or writing a publication.
+
+Selected disposition: delete this new non-contract unit suite under the user's explicit rule. Its `missing`/`harness` helpers and loaded snapshot are file-local, so no shared fixture deletion follows. Keep the actual source-node recovery fix, rate-budget enforcement and fail-closed publication behavior. Existing collector/CLI workflow coverage remains, but this review does **not** claim that another end-to-end scenario proves this exact vanished-node retry branch. The coordinator's live source/release verification remains separate evidence. No replacement literal/helper test will be added.
+
+This addendum is recorded before deleting the newly adopted file. It changes the final inventory relative to the report baseline, not the historical baseline counts above.
+
 ## Implementation results
 
 Report-first checkpoint: this section is intentionally unfilled at the report commit. Implementation, disposition of all finding IDs, final source revision, measured changes, validations and any remaining environment limits will be added after the selected work is completed.
