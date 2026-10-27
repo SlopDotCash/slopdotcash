@@ -228,6 +228,22 @@ export function enforcementStatement(
     );
 }
 
+/** Every repository path a manifest claims, lowercased: each repository id
+ * and its aliases. The registry treats this whole set as claimed, so the
+ * live key index must carry all of it — a rename or transfer appends the
+ * current path as an alias while the id keeps the original path. */
+function repositoryKeys(manifest: ProjectDefinition): string[] {
+  return [
+    ...new Set(
+      manifest.repositories.flatMap((repository) =>
+        [repository.id, ...(repository.aliases ?? [])].map((path) =>
+          path.toLowerCase(),
+        ),
+      ),
+    ),
+  ];
+}
+
 /** Constraint failures are expected races; anything else is a real fault. */
 function isConstraintConflict(error: unknown): boolean {
   return (
@@ -397,12 +413,12 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           input.referrer?.githubId ?? null,
           input.referrer?.githubLogin ?? null,
         ),
-      ...input.manifest.repositories.map((repository) =>
+      ...repositoryKeys(input.manifest).map((key) =>
         this.db
           .prepare(
             "INSERT INTO project_repositories (repository_key, project_id) VALUES (?, ?)",
           )
-          .bind(repository.id.toLowerCase(), input.manifest.id),
+          .bind(key, input.manifest.id),
       ),
     ];
     try {
@@ -458,17 +474,13 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           application.referrer?.githubLogin ?? null,
           application.id,
         ),
-      ...application.manifest.repositories.map((repository) =>
+      ...repositoryKeys(application.manifest).map((key) =>
         this.db
           .prepare(
             `INSERT INTO project_repositories (repository_key, project_id)
              SELECT ?, ? WHERE ${pending}`,
           )
-          .bind(
-            repository.id.toLowerCase(),
-            application.projectId,
-            application.id,
-          ),
+          .bind(key, application.projectId, application.id),
       ),
       this.db
         .prepare(
@@ -570,6 +582,27 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
                 ),
             ]
           : []),
+        // Index every repository path the new manifest claims, so a
+        // revision that records a rename or transfer (an appended alias)
+        // keeps the project resolvable under its current name. Guarded on
+        // the revision row landing, like the application approval above;
+        // OR IGNORE makes unchanged paths no-ops.
+        ...repositoryKeys(input.manifest).map((key) =>
+          this.db
+            .prepare(
+              `INSERT OR IGNORE INTO project_repositories (repository_key, project_id)
+               SELECT ?, ? WHERE EXISTS (SELECT 1 FROM project_revisions
+                 WHERE project_id = ? AND revision = ? AND manifest_sha256 = ? AND created_at = ?)`,
+            )
+            .bind(
+              key,
+              input.projectId,
+              input.projectId,
+              nextRevision,
+              input.manifestSha256,
+              input.at,
+            ),
+        ),
         notifyProjectRevision(
           this.db,
           input.projectId,
