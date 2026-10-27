@@ -74,7 +74,13 @@ The flow for one queued assessment:
 
 A service failure publishes nothing: an unavailable source or a failed
 primary or specialist review leaves the assessment pending, and the next pass
-retries it. A clean result is never published without its retained evidence;
+retries it. A policy refusal of the bound assignment, such as an entry or
+byte limit, instead publishes an incomplete result and notifies each owner
+once. It records the fixed refusal reason and observed limit counters. Every
+surface is unsupported, every threat check is not run, and the configured
+primary review is explicitly not started; no source inspection or model call
+is claimed. This does not establish clearance or confirm malice. A clean
+result is never published without its retained evidence;
 a refused evidence upload leaves it pending too. An incomplete result is
 published even when the evidence upload fails, because the intake needs
 retained evidence only for a clean result: the quarantine is recorded and the

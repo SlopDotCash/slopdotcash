@@ -1,11 +1,14 @@
 /** Read-only signed queue and revision/template acquisition. No result-write capability. */
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readLimitedBody } from "../../backend/trace/validation";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { readRecord } from "../../src/lib/record-validation.mjs";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
-import { AcquisitionRefusal, acquireRepository } from "./acquire";
+import {
+  AcquisitionRefusal,
+  acquireRepository,
+  readAcquisitionBody,
+} from "./acquire";
 import {
   serviceOrigin,
   signedVettingFetch,
@@ -38,6 +41,16 @@ export type QueuedAssessment = {
   commitSha: string;
   templateSha256: string;
 };
+/** A refusal bound to the assignment reread by acquisition itself. */
+export class QueuedAcquisitionRefusal extends AcquisitionRefusal {
+  constructor(
+    readonly assessment: QueuedAssessment,
+    readonly repository: string,
+    refusal: AcquisitionRefusal,
+  ) {
+    super(refusal.reason, refusal.capacity);
+  }
+}
 export type QueueConnection = VettingConnection;
 /** A pinned input of at most 1 MiB. */
 async function pinnedBytes(response: Response): Promise<Uint8Array> {
@@ -45,7 +58,7 @@ async function pinnedBytes(response: Response): Promise<Uint8Array> {
     await response.body?.cancel();
     throw new Error("Pinned input unavailable");
   }
-  return readLimitedBody(response, 1024 * 1024);
+  return readAcquisitionBody(response, 1024 * 1024);
 }
 async function bytes(
   fetcher: typeof fetch,
@@ -166,11 +179,16 @@ export async function acquireQueuedAssessment(
   )
     throw new Error("Manifest pin mismatch");
   const manifest = assertProjectDefinition(JSON.parse(revision.manifestText));
-  if (
-    manifest.id !== assessment.projectId ||
-    manifest.repositories.length !== 1
-  )
-    throw new AcquisitionRefusal("Unsupported repository inventory");
+  if (manifest.id !== assessment.projectId)
+    throw new Error("Manifest project mismatch");
+  const refusal = (error: AcquisitionRefusal) =>
+    new QueuedAcquisitionRefusal(
+      assessment,
+      manifest.repositories[0].id,
+      error,
+    );
+  if (manifest.repositories.length !== 1)
+    throw refusal(new AcquisitionRefusal("Unsupported repository inventory"));
   const repositoryIdentity = json(
     await bytes(
       fetcher,
@@ -191,7 +209,9 @@ export async function acquireQueuedAssessment(
       manifest.repositories[0].id.toLowerCase() ||
     repositoryIdentity.private !== false
   )
-    throw new AcquisitionRefusal("Immutable repository identity mismatch");
+    throw refusal(
+      new AcquisitionRefusal("Immutable repository identity mismatch"),
+    );
   const index = json(
     await bytes(fetcher, `${origin}/skill-templates/index.json`),
   );
@@ -250,6 +270,9 @@ export async function acquireQueuedAssessment(
     commitSha: assessment.commitSha,
     directory,
     fetch: fetcher,
+  }).catch((error: unknown) => {
+    if (error instanceof AcquisitionRefusal) throw refusal(error);
+    throw error;
   });
   try {
     const sourceInventoryBytes = await readFile(
@@ -282,7 +305,11 @@ export async function acquireQueuedAssessment(
       const content = await bytes(fetcher, source.url);
       templateBytes += content.byteLength;
       if (templateBytes > 32 * 1024 * 1024)
-        throw new AcquisitionRefusal("Template acquisition size limit");
+        throw new AcquisitionRefusal("Template acquisition size limit", {
+          unit: "bytes",
+          observed: templateBytes,
+          maximum: 32 * 1024 * 1024,
+        });
       if (sha256(content) !== source.sha256)
         throw new Error("Template file bytes changed");
       const objectPath = join(acquired.directory, "objects", source.sha256);
@@ -336,6 +363,7 @@ export async function acquireQueuedAssessment(
     };
   } catch (error) {
     await rm(acquired.directory, { recursive: true, force: true });
+    if (error instanceof AcquisitionRefusal) throw refusal(error);
     throw error;
   }
 }

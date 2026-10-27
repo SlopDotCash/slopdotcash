@@ -61,6 +61,7 @@ export const SCAN_THREATS = [
 export type ScanThreat = (typeof SCAN_THREATS)[number];
 
 const SURFACE_STATES = ["complete", "partial", "unsupported"] as const;
+const SCAN_REVIEW_STATUSES = [...REVIEW_STATUSES, "not-started"] as const;
 const CHECK_STATES = ["passed", "flagged", "not-run"] as const;
 const RISKS = ["low", "ambiguous", "high"] as const;
 const FINDING_CATEGORIES = [...SCAN_THREATS, "other"] as const;
@@ -72,7 +73,7 @@ export type ScanReview = {
   promptPolicyRevision: string;
   inputManifestSha256: string;
   runId: string;
-  status: (typeof REVIEW_STATUSES)[number];
+  status: (typeof SCAN_REVIEW_STATUSES)[number];
   verdict: (typeof REVIEW_VERDICTS)[number] | null;
   /** The reviewer's own risk call; null when the review did not run. */
   risk: (typeof RISKS)[number] | null;
@@ -166,7 +167,7 @@ function review(value: unknown, name: string): ScanReview {
     "risk",
     "findingCount",
   ]);
-  const status = oneOf(item.status, `${name}.status`, REVIEW_STATUSES);
+  const status = oneOf(item.status, `${name}.status`, SCAN_REVIEW_STATUSES);
   const completed = status === "completed";
   if (!completed && (item.verdict !== null || item.risk !== null))
     reject(`${name}.verdict and risk must be null when the review did not run`);
@@ -576,5 +577,7 @@ export function resultReviewers(
     ...(result.specialistReview
       ? [{ ...result.specialistReview, reviewer: "specialist" }]
       : []),
-  ].map(({ reviewer, provider, model }) => ({ reviewer, provider, model }));
+  ]
+    .filter((review) => review.status !== "not-started")
+    .map(({ reviewer, provider, model }) => ({ reviewer, provider, model }));
 }
