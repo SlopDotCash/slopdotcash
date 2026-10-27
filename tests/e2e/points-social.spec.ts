@@ -171,7 +171,9 @@ test("social membership preserves past points and connection privacy without new
   ).toHaveCount(0);
   const social = page.getByRole("region", { name: "Connections" });
   await expect(social.getByRole("checkbox")).toHaveCount(1);
-  await expect(social).toContainText("Connections grant no authority.");
+  await expect(social).toContainText(
+    "Slop requests no posting or messaging access.",
+  );
   await expect(page.getByText(/Telegram/i)).toHaveCount(0);
   await expect(social).not.toContainText("+10 points");
   await page.screenshot({
@@ -193,9 +195,7 @@ test("social membership preserves past points and connection privacy without new
   await expect(
     community.getByRole("link", { name: "X · @social_member" }),
   ).toBeVisible();
-  await page
-    .getByRole("link", { name: "Account settings", exact: true })
-    .click();
+  await page.goto(`${site}/account`);
   await expect(social.getByRole("checkbox")).toHaveCount(1);
   await expectAccessible(page);
   await page.screenshot({

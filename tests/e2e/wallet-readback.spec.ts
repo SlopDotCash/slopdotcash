@@ -43,9 +43,7 @@ test("Account Wallets restores all saved networks and public records after reloa
         .getByRole("article")
         .filter({ has: page.getByRole("heading", { name, exact: true }) });
       await expect(card).toContainText(address);
-      await expect(card).toContainText(
-        "Confirm this wallet to enable automatic payments",
-      );
+      await expect(card).toContainText("Not confirmed");
       await expect(
         card.getByRole("link", { name: "View public record" }),
       ).toHaveAttribute(

@@ -168,6 +168,12 @@ pre {
   padding: 0;
 }
 
+.button-small {
+  min-height: var(--brand-size-button-small);
+  padding: 0 14px;
+  font-size: 14px;
+}
+
 /* Plain buttons inside panels and forms share the secondary treatment. */
 .points-panel button:not(.button),
 .funding-workbench button:not(.button),

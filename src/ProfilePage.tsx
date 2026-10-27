@@ -106,13 +106,17 @@ export function ProfilePage({
         <p className="data-notice" role="status">
           {profiles.state.status === "loading" ||
           membership.joinStatus === "loading"
-            ? "Checking current contributor identity…"
+            ? "Checking contributor…"
             : profiles.state.status === "error"
-              ? "Current contributor identity is unavailable. Contribution and wallet records are not shown."
-              : "Current contributor identity could not be verified. Contribution and wallet records are not shown."}
+              ? "Contributor records are unavailable."
+              : "This contributor could not be verified."}
         </p>
         {profiles.state.status === "error" ? (
-          <button type="button" onClick={profiles.retry}>
+          <button
+            className="button secondary-button button-small"
+            type="button"
+            onClick={profiles.retry}
+          >
             Retry profile
           </button>
         ) : null}
@@ -207,9 +211,9 @@ export function ProfilePage({
           </ExternalLinkAnchor>
         ) : currentWallet.status === "loading" ? (
           <span>Checking wallet…</span>
-        ) : (
+        ) : membership.own ? (
           <Link href="/account#wallets">Add a payout wallet</Link>
-        )}
+        ) : null}
       </ContributorIdentity>
       <ProfilePoints
         key={login.toLowerCase()}

@@ -100,16 +100,16 @@ test("an unavailable registry with no last good copy shows an error, never an em
     route.fulfill({ status: 404, body: "Not Found" }),
   );
   await page.goto("/");
-  // With no last good registry, the failure is an alert with its status and
-  // a retry, never a list.
+  // With no last good registry, the failure is an alert with a retry, never
+  // a list.
   const alert = page.getByRole("alert");
-  await expect(alert).toContainText("503");
+  await expect(alert).toContainText("Project data could not load.");
   await expect(alert.getByRole("button")).toBeVisible();
   await expect(page.locator("#projects")).toHaveCount(0);
   await expectAccessible(page);
   for (const [path, heading] of [
     ["/account", "Account"],
-    ["/login", "Log in to slop.cash"],
+    ["/login", "Log in"],
   ]) {
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 1 })).toContainText(
@@ -142,11 +142,10 @@ test("a failed registry read keeps the last good projects with a stale label", a
   );
   await page.goto("/", { waitUntil: "networkidle" });
   const notice = page
-    .getByRole("complementary", { name: "Project registry status" })
+    .getByRole("complementary", { name: "Project data status" })
     .getByRole("status");
   await expect(notice).toContainText("Projects may be outdated");
   await expect(notice).toContainText("Oct 16, 2026");
-  await expect(notice).toContainText("HTTP 503");
   await expect(notice.getByRole("button", { name: "Try again" })).toBeVisible();
   expect(published).toEqual([200]);
   // The last good list is shown, never an outage page or an empty list.
@@ -201,7 +200,7 @@ test("a failed registry read keeps the last good projects with a stale label", a
     page.getByRole("heading", { name: "Projects are unavailable" }),
   ).toBeVisible();
   await expect(page.getByRole("alert")).toContainText(
-    "This page needs the current project registry.",
+    "This page needs current project data.",
   );
   await expect(notice).toHaveCount(0);
 
@@ -252,8 +251,8 @@ test("a failed snapshot refresh keeps the last good scores with a stale label", 
   await expect(page.locator(".project-card").first()).toBeVisible();
   // With no prior home snapshot, a failed first read is an error, never empty.
   await expect(
-    page.getByRole("alert").filter({ hasText: "Live totals unavailable" }),
-  ).toContainText("snapshot returned 503");
+    page.getByRole("alert").filter({ hasText: "Data could not load." }),
+  ).toBeVisible();
   await page.goBack();
   await expect(
     page.getByRole("heading", { level: 1, name: project.name }),
@@ -261,12 +260,11 @@ test("a failed snapshot refresh keeps the last good scores with a stale label", 
   const notice = page
     .locator(".project-hero")
     .getByRole("status")
-    .filter({ hasText: "Refresh failed" });
+    .filter({ has: page.getByRole("button", { name: "Retry" }) });
   await expect(notice).toContainText("Points may be outdated");
-  await expect(notice).toContainText("Refresh failed: snapshot returned 503");
   await expect(notice.getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(scoreRows).toHaveCount(rowCount);
-  await expect(page.getByText("Live totals unavailable")).toHaveCount(0);
+  await expect(page.getByText("Data could not load.")).toHaveCount(0);
   await page.screenshot({
     path: test.info().outputPath("stale-snapshot-project.png"),
     fullPage: true,

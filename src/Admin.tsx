@@ -41,18 +41,18 @@ export function SignInPanel({
 }: {
   state: Exclude<ProjectSessionState, { status: "signed-in" }>;
   next: string;
-  purpose: string;
+  purpose?: string;
 }) {
   if (state.status === "checking") {
     return (
       <p aria-live="polite" className="admin-status">
-        Checking your GitHub session…
+        Checking sign-in…
       </p>
     );
   }
   return (
     <div className="sign-in-panel">
-      <p>{purpose}</p>
+      {purpose ? <p>{purpose}</p> : null}
       {state.status === "error" ? (
         <p className="form-error" role="alert">
           <CircleAlert aria-hidden="true" /> {state.message}
@@ -206,7 +206,9 @@ function ProjectEditor({
       return [
         field,
         skillStarted && (value.length < minimum || value.length > 2000)
-          ? `${CONTRIBUTION_LABELS[field].label} must be ${minimum} to 2000 characters.`
+          ? minimum
+            ? `${CONTRIBUTION_LABELS[field].label} must be ${minimum} to 2000 characters.`
+            : `${CONTRIBUTION_LABELS[field].label} must be at most 2000 characters.`
           : null,
       ];
     }),
@@ -337,11 +339,12 @@ function ProjectEditor({
   };
   return (
     <form className="admin-editor" onSubmit={save}>
-      <p role="status">
-        {draftError
-          ? "This browser cannot preserve your draft. Keep this editor open until saved."
-          : "Draft kept in this tab."}
-      </p>
+      {draftError ? (
+        <p role="status">
+          This browser cannot preserve your draft. Keep this editor open until
+          saved.
+        </p>
+      ) : null}
       <fieldset className="admin-fieldset" disabled={projectFields === null}>
         <legend>Project details</legend>
         {(
@@ -393,9 +396,9 @@ function ProjectEditor({
           </select>
         </label>
         <p className="admin-status">
-          Setup checks activate the project: verified authority, Slopbot
-          installation and a passing <a href="#admin-vetting">security scan</a>{" "}
-          or the existing-project exemption.
+          Activation needs verified authority, Slopbot, and a{" "}
+          <a href="#admin-vetting">passed scan</a> or the existing-project
+          exemption.
         </p>
       </fieldset>
       <fieldset className="admin-fieldset">
@@ -430,9 +433,8 @@ function ProjectEditor({
           </select>
         </label>
         <p className="admin-status">
-          Changing placement pauses the project for review. Featuring starts
-          after security clearance and activation. The revision records your
-          reason.
+          Changing placement pauses the project. Featured needs security
+          clearance and activation.
         </p>
       </fieldset>
       <details
@@ -470,7 +472,7 @@ function ProjectEditor({
         <legend>Reward asset</legend>
         {!assetSelected ? (
           <p>
-            No reward asset is set. The values below are suggestions.{" "}
+            No reward asset is set.{" "}
             <button
               type="button"
               className="button secondary-button"
@@ -555,19 +557,20 @@ function ProjectEditor({
             </label>
           </>
         ) : null}
-        <p className="admin-status">
-          {project.manifest.rewardAsset
-            ? `Stored: ${project.manifest.rewardAsset.symbol}, ${project.manifest.rewardAsset.decimals} decimals, verified ${formatDateTime(project.manifest.rewardAsset.verifiedAt)}.`
-            : "No reward asset is stored yet."}{" "}
-          A changed token is read from chain once when you save.
-        </p>
+        {project.manifest.rewardAsset ? (
+          <p className="admin-status">
+            Stored: {project.manifest.rewardAsset.symbol},{" "}
+            {project.manifest.rewardAsset.decimals} decimals, verified{" "}
+            {formatDateTime(project.manifest.rewardAsset.verifiedAt)}.
+          </p>
+        ) : null}
       </fieldset>
       <details>
         <summary>
           Advanced project settings (revision {project.revision})
         </summary>
         <label>
-          Other manifest fields
+          Other fields
           <textarea
             className="admin-manifest"
             onChange={(event) => setText(event.target.value)}
@@ -661,7 +664,7 @@ function ProjectEditor({
 
 /** Public reads are edge cached for 30 seconds and purged on each write. */
 const SAVED_NOTE =
-  "Saved. The public site shows the change within a minute. Leaderboard, points, and profile data follow at the next release.";
+  "Saved. Pages update within a minute; points at the next release.";
 
 /** Delisting keeps history: the project becomes paused and retired. */
 function DelistButton({
@@ -708,7 +711,7 @@ function DelistButton({
       ) : null}
       {confirming ? (
         <div>
-          <span>Hide this project from every page and list?</span>
+          <span>Hide this project everywhere?</span>
           <button
             className="button danger-button"
             disabled={busy}
@@ -867,7 +870,7 @@ function ProjectsSection({
                     onClick={() => setEditing(project.id)}
                     type="button"
                   >
-                    Edit manifest
+                    Edit project
                   </button>
                 )}
                 <DelistButton
@@ -947,7 +950,6 @@ export default function AdminPage() {
     body = (
       <SignInPanel
         next={`${window.location.pathname}${window.location.search}`}
-        purpose="Sign in with GitHub to open the admin console."
         state={state}
       />
     );
@@ -980,9 +982,6 @@ export default function AdminPage() {
     <main className="shell route-main admin-page">
       <div className="admin-intro">
         <h1>Admin</h1>
-        {state.status === "signed-in" ? (
-          <p>Signed in as @{state.session.githubLogin}.</p>
-        ) : null}
       </div>
       {body}
     </main>

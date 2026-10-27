@@ -449,13 +449,13 @@ export async function captureAssemblyConsole(
       await page
         .getByRole("button", { name: "Inspect evidence inventory" })
         .click();
-      await page.getByText(/Canonical assembly: Retained/).waitFor();
+      await page.getByText(/Evidence assembly: Retained/).waitFor();
       assert.match(
-        await page.getByText(/Canonical assembly: Retained/).innerText(),
+        await page.getByText(/Evidence assembly: Retained/).innerText(),
         /Clean admission is unavailable/,
       );
       await page
-        .getByText(/Canonical assembly: Retained/)
+        .getByText(/Evidence assembly: Retained/)
         .scrollIntoViewIfNeeded();
       await page.screenshot({
         path: join(directory, "assembly-status.png"),

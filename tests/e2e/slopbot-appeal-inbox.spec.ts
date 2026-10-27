@@ -93,9 +93,7 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
   );
   await page.reload({ waitUntil: "networkidle" });
   await expect(
-    item.getByText(
-      "The contribution appeal was resolved. No decision is needed.",
-    ),
+    item.getByText("The contribution appeal was resolved."),
   ).toBeVisible();
   await expect(
     item.getByText("A contribution appeal needs your decision on GitHub."),

@@ -906,15 +906,12 @@ test("private security bounty programs keep cases restricted from intake to awar
     });
     const page = await context.newPage();
     await page.goto(`/projects/${a.id}/security`);
-    await expect(page.locator("h1")).toHaveText("Security bounty");
+    await expect(page.locator("h1")).toHaveText(/ security bounty$/);
     await expect(page.locator(".security-lead")).toHaveText(
       "Published award: 10,000 USDC gross per finding, 7,500 USDC to the researcher. Funded by Slop.",
     );
     const facts = page.getByRole("region", { name: "Award terms" });
     await expect(facts).toContainText("Researcher · 75%7,500 USDC");
-    await expect(facts).toContainText(
-      "Published gross award per finding10,000 USDC",
-    );
     await expect(facts).toContainText("Awards are discretionary.");
     await expect(facts).toContainText("Slop · 25%2,500 USDC");
     await expect(facts).toContainText("Bounty only.");
@@ -927,9 +924,6 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(page.locator(".security-lead")).toContainText(
       "100,000 USDC gross per finding, 75,000 USDC to the researcher",
     );
-    await expect(
-      page.getByRole("region", { name: "Award terms" }),
-    ).toContainText("Published gross award per finding100,000 USDC");
     // The project page links the program.
     await page.goto(`/projects/${a.id}`);
     await expect(
@@ -2543,14 +2537,11 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       });
       await expect(
         page.getByRole("heading", {
-          name: "Report a security issue",
-          exact: true,
+          name: /^Report a security issue in /,
         }),
       ).toBeVisible();
       await expect(
-        page.getByText(
-          "This project has no published bounty terms. You can report privately. No award is promised.",
-        ),
+        page.getByText("No published bounty terms, so no award is promised."),
       ).toBeVisible();
       await expect(
         page.getByRole("textbox", { name: "Summary", exact: true }),

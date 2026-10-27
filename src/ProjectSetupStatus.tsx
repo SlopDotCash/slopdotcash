@@ -19,7 +19,7 @@ const HEADINGS: Record<ProjectSetupStatus["state"], string> = {
   ready: "Ready",
   action_required: "Action needed",
   waiting: "Waiting for the security scan",
-  retry: "Check again",
+  retry: "Unavailable",
   restricted: "Closed to contributors",
 };
 
@@ -76,13 +76,19 @@ function StatusBadge({
 export function ProjectSetupStatusPanel({
   projectId,
   initial,
+  onSetup,
 }: {
   projectId: string;
   initial?: ProjectSetupStatus;
+  /** Tells the page the current setup, such as the scan exemption. */
+  onSetup?: (setup: ProjectSetupStatus) => void;
 }) {
   const [setup, setSetup] = useState<ProjectSetupStatus | null>(
     initial ?? null,
   );
+  useEffect(() => {
+    if (setup !== null) onSetup?.(setup);
+  }, [onSetup, setup]);
   const [busy, setBusy] = useState(initial === undefined);
   const [error, setError] = useState<string | null>(null);
   const check = useCallback(
@@ -123,7 +129,7 @@ export function ProjectSetupStatusPanel({
           <p role="status">{setup.nextAction.message}</p>
           {setup.activatedRevision !== null ? (
             <p>
-              The project is now active as revision {setup.activatedRevision}.{" "}
+              The project is live.{" "}
               <Link href={`/projects/${setup.slug}`}>View project</Link>
             </p>
           ) : null}
@@ -203,7 +209,7 @@ export function ProjectSetupStatusPanel({
                 <StatusBadge
                   label={
                     setup.checks.scan.exempt
-                      ? "Grandfathered"
+                      ? "Exempt"
                       : SCAN[setup.checks.scan.state]
                   }
                   tone={
@@ -226,9 +232,7 @@ export function ProjectSetupStatusPanel({
               </dt>
               <dd>
                 {setup.funding.mode === "none" ? (
-                  <span className="setup-funding-note">
-                    Not configured · points only
-                  </span>
+                  <span className="setup-funding-note">Points only</span>
                 ) : (
                   <>
                     <strong>
@@ -246,7 +250,7 @@ export function ProjectSetupStatusPanel({
                       ]?.name ?? setup.funding.network}
                     </span>
                     <a href={`/projects/${setup.slug}/funding`}>
-                      View vault funds and automatic payment
+                      Vault funding
                     </a>
                   </>
                 )}

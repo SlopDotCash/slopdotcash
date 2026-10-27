@@ -67,7 +67,6 @@ function UnsignedPaymentRequest({ request }: { request: unknown }) {
   return (
     <details>
       <summary>Unsigned owner request</summary>
-      <p>For the vault owner to review and sign.</p>
       <div className="inbox-actions">
         <button
           className="text-button"
@@ -121,11 +120,11 @@ function amounts(terms: SecurityBountyTerms) {
 }
 
 const PROGRAM_STATUS_LABELS: Record<SecurityBountyTerms["status"], string> = {
-  draft: "Not open for paid reports; private reporting stays open",
-  "pending-approval": "Not open for paid reports; private reporting stays open",
+  draft: "Not open for paid reports",
+  "pending-approval": "Not open for paid reports",
   open: "Open for paid reports",
-  paused: "Paused — no new paid reports; private reporting stays open",
-  closed: "Closed — no new paid reports; private reporting stays open",
+  paused: "Paused — no new paid reports",
+  closed: "Closed — no new paid reports",
 };
 
 type Readiness = {
@@ -153,11 +152,9 @@ type ReadinessState =
 
 const BLOCKED_INTAKE: Record<Exclude<Readiness["state"], "ready">, string> = {
   disabled:
-    "GitHub private vulnerability reporting is turned off for this repository. Slop cannot hand you to a private report form.",
-  forbidden:
-    "GitHub refused the readiness check. Slop cannot confirm that private reporting is available.",
-  unavailable:
-    "A current private reporting check is not available. Slop cannot confirm that private reporting is available.",
+    "GitHub private vulnerability reporting is turned off for this repository.",
+  forbidden: "GitHub refused the private reporting check.",
+  unavailable: "Private reporting status is unavailable.",
 };
 
 function automaticReady(value: Readiness): boolean {
@@ -259,11 +256,7 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
   return (
     <section aria-labelledby="security-report" className="admin-card">
       <h2 id="security-report">Report a vulnerability privately</h2>
-      <p>
-        Report security findings privately through Slop, including uncertain
-        severity or potential loss of funds. Keep exploit details out of public
-        posts.
-      </p>
+      <p>Never post exploit details publicly.</p>
       {state.status === "checking" ? (
         <p aria-live="polite" className="admin-status">
           Loading private reporting status…
@@ -277,13 +270,13 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
         <div aria-live="polite" className="security-handoff">
           {state.stale ? (
             <div className="form-error" role="alert">
-              <CircleAlert aria-hidden="true" /> The readiness check from{" "}
+              <CircleAlert aria-hidden="true" /> Private reporting status from{" "}
               {state.value.checkedAt
                 ? formatUtc(state.value.checkedAt)
                 : "an unknown time"}{" "}
               is out of date.
               {state.value.automatic === "ready" && signedIn
-                ? " Your draft is kept; sending checks again first."
+                ? " Your draft is kept."
                 : ""}
               {checkAgain(state.rechecking)}
             </div>
@@ -293,10 +286,10 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
               {state.value.checkedAt
                 ? formatUtc(state.value.checkedAt)
                 : "an unknown time"}
-              ).{" "}
+              ).
               {state.value.paidParticipation === "open"
-                ? "This program accepts paid reports."
-                : "This program does not accept new paid reports now. Private reporting stays open."}
+                ? ""
+                : " No new paid reports now."}
             </p>
           )}
           {state.stale ? null : (
@@ -326,10 +319,9 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
             ]
           }{" "}
           {state.stale && state.value.checkedAt
-            ? ` The last verified observation (${formatUtc(state.value.checkedAt)}) is out of date.`
+            ? ` Status from ${formatUtc(state.value.checkedAt)} is out of date.`
             : ""}
-          Do not use a public channel. Keep your notes private and check again
-          later.
+          Check again later.
           {checkAgain(state.rechecking)}
         </div>
       )}
@@ -338,11 +330,7 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
         state.value.automatic === "ready") ? (
         <>
           {(state.stale || state.value.state !== "ready") && (
-            <p className="admin-status">
-              {state.stale ? "The public observation is out of date. " : ""}You
-              can keep preparing your report. Slop checks GitHub before
-              authorization and sending.
-            </p>
+            <p className="admin-status">You can still prepare your report.</p>
           )}
           <AutomaticReportForm
             draft={draft}
@@ -353,9 +341,7 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
         </>
       ) : null}
       <p>
-        Already reported on GitHub?{" "}
-        <Link href="/security">Verify it on your private Slop page</Link>. Your
-        original GitHub receipt time stays the same.
+        Already reported on GitHub? <Link href="/security">Verify it</Link>.
       </p>
     </section>
   );
@@ -415,7 +401,7 @@ const FAILURE_LABELS: Record<string, string> = {
   "grant-expired": "Your GitHub authorization expired. Authorize again.",
   "already-recorded": "This advisory already has a verified private case.",
   "not-private-report":
-    "This advisory is not a live private vulnerability report you filed, so it cannot be verified automatically. Link it for a maintainer to verify instead.",
+    "This advisory is not a live private report you filed. Link it for a maintainer to verify instead.",
   unverifiable:
     "GitHub has this report, but Slop could not confirm it within 24 hours. Link the advisory for a maintainer to verify instead.",
 };
@@ -455,9 +441,9 @@ function IntakeConsent({ login }: { login: string | null }) {
 function IntakeReferenceNote() {
   return (
     <p className="field-hint">
-      Slop stores no report text. It adds one line, “Report reference:” and a
-      random code, to the end of the description to find the report again; the
-      line names neither you nor Slop and stays if the advisory is published.
+      Slop stores no report text. It adds a “Report reference:” line with a
+      random code to your description. The line names neither you nor Slop and
+      stays if the advisory is published.
     </p>
   );
 }
@@ -560,8 +546,8 @@ function AutomaticReportForm({
   if (session.status !== "signed-in")
     return (
       <p>
-        <Link href="/security">Sign in with GitHub</Link> to send a report
-        privately through Slop, or report directly on GitHub.
+        <Link href="/security">Sign in with GitHub</Link> to report through
+        Slop.
       </p>
     );
   const submit = (event: FormEvent) => {
@@ -619,14 +605,11 @@ export function SecurityProgramPage({
     return (
       <main className="shell route-main admin-page security-page">
         <div className="admin-intro">
-          <p>
+          <h1>
+            Report a security issue in{" "}
             <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-          </p>
-          <h1>Report a security issue</h1>
-          <p>
-            This project has no published bounty terms. You can report
-            privately. No award is promised.
-          </p>
+          </h1>
+          <p>No published bounty terms, so no award is promised.</p>
         </div>
         <IntakeHandoff project={project} />
       </main>
@@ -636,10 +619,10 @@ export function SecurityProgramPage({
   return (
     <main className="shell route-main admin-page security-page">
       <div className="admin-intro">
-        <p>
-          <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-        </p>
-        <h1>Security bounty</h1>
+        <h1>
+          <Link href={`/projects/${project.slug}`}>{project.name}</Link>{" "}
+          security bounty
+        </h1>
         <p className="security-lead">
           Published award: {money.gross} gross per finding, {money.researcher}{" "}
           to the researcher. Funded by {terms.sponsor.name}.
@@ -660,14 +643,13 @@ export function SecurityProgramPage({
           </div>
         </section>
         <dl className="admin-facts">
-          <Fact term="Published gross award per finding">{money.gross}</Fact>
           <Fact term="Currency">
             {terms.amount.currency}
             {terms.amount.network ? ` on ${terms.amount.network}` : ""}
           </Fact>
           <Fact term="Funding">
             {terms.funding.state === "pledged"
-              ? "Pledged. A pledge is not a verified balance."
+              ? "Pledged, not verified."
               : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
           </Fact>
           <Fact term="Capacity">
@@ -676,23 +658,19 @@ export function SecurityProgramPage({
             {terms.capacity.closesAt
               ? `; closes ${formatUtc(terms.capacity.closesAt)}`
               : ""}
-            . {terms.capacity.exhaustionRule} An approved award reserves money
-            only from the bounty vault's finalized free balance.
+            . {terms.capacity.exhaustionRule}
           </Fact>
           <Fact term="Other work">
             {terms.rewardMode === "bounty-only"
-              ? "Bounty only. Other accepted work earns no bounty and no monthly pool cash, also when it fixes a reported issue."
-              : "The project's ordinary contribution rewards are separate. One outcome is never paid twice."}
+              ? "Bounty only. Other work, including fixes, earns no monthly pool cash."
+              : "Contribution rewards are separate; one outcome is never paid twice."}
           </Fact>
         </dl>
         <p>
-          Awards are discretionary. The project owner decides whether to award
-          and how much; critical bugs and potential loss of funds are
-          priorities, not an automatic payout, and a pledge is not a payment
-          guarantee. Proven potential loss counts; nobody needs to lose funds.
-          An AI summary helps triage but never decides. No additional payout fee
-          applies. The policy in force when GitHub received your report stays
-          fixed for your case.
+          Awards are discretionary. The owner decides whether to award and how
+          much; critical bugs and potential loss of funds are priorities, not an
+          automatic payout. No other payout fee applies. The terms in force when
+          GitHub receives your report apply to your case.
         </p>
       </section>
       <section aria-labelledby="security-scope" className="admin-card">
@@ -752,8 +730,7 @@ export function SecurityProgramPage({
           <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
           <Fact term="Disputes">
             Contact {people(terms.approvers.dispute)}. {terms.dispute.process} A
-            Slop moderator decides escalated appeals and related-party awards;
-            nobody reviews their own decision.
+            Slop moderator decides escalated appeals.
           </Fact>
           <Fact term="Response targets">
             Acknowledge within {terms.responseTargets.acknowledgeHours} hours;
@@ -766,11 +743,11 @@ export function SecurityProgramPage({
           <Fact term="Safe harbor">{terms.safeHarbor}</Fact>
         </dl>
         <p>
-          Slop does not publish cases or store report text; rejected, duplicate,
-          disputed and paid reports stay private, and you decide separately
-          whether your name is public. GitHub repository administrators and
-          security managers can read the advisory under GitHub's rules. A
-          public-chain payment shows its addresses, amount and time.
+          Slop never publishes cases; rejected, duplicate, disputed and paid
+          reports stay private, and you decide separately whether your name is
+          public. Repository administrators and security managers can read the
+          advisory on GitHub. A public-chain payment shows its addresses, amount
+          and time.
         </p>
       </section>
     </main>
@@ -1102,10 +1079,6 @@ function ImportReports({
           value={projectId}
         />
       ) : null}
-      <p>
-        Reports that researchers sent on GitHub directly get a case with
-        GitHub's own author and receipt time. Nothing is typed in.
-      </p>
       {note ? (
         <p className="admin-status" role="status">
           {note}
@@ -1280,8 +1253,8 @@ function submissionStatus(submission: Submission): string {
     case "uncertain":
       return submission.reconcileAfter &&
         Date.parse(submission.reconcileAfter) > Date.now()
-        ? `We could not confirm GitHub received it yet. GitHub may still be saving it; check again after ${formatUtc(submission.reconcileAfter)}.`
-        : "We could not confirm GitHub received it. Check again.";
+        ? `Not confirmed by GitHub yet. Check again after ${formatUtc(submission.reconcileAfter)}.`
+        : "Not confirmed by GitHub. Check again.";
     case "submitted":
       return "Received by GitHub. Confirming…";
     case "receipt-verified":
@@ -1795,7 +1768,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             kind: "text",
             optional: true,
             initial: proposal?.rootCauseKey ?? "",
-            hint: "Lowercase words and hyphens. Required to confirm. One root cause gets one award.",
+            hint: "Lowercase words and hyphens. Required to confirm.",
           },
           {
             name: "duplicateOf",
@@ -1809,7 +1782,6 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             label: "Private evidence reference (optional)",
             kind: "text",
             optional: true,
-            hint: "The decision binds the digest of the advisory text the AI read.",
           },
           REASON,
         ],
@@ -1838,7 +1810,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             label: `Gross award (${record.terms.currency})`,
             kind: "amount",
             decimals,
-            hint: `The researcher receives 75% and Slop 25%. Available to reserve: ${available}. Use a whole number of minor units divisible by four.`,
+            hint: `Available to reserve: ${available}.`,
             when: { field: "decision", values: ["amount"] },
           },
           {
@@ -1877,7 +1849,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
           },
           {
             name: "evidenceReference",
-            label: "Private exact-head test or deployment evidence",
+            label: "Private test or deployment evidence",
             kind: "text",
             optional: true,
             hint: "Required for resolved and for deployed mitigation.",
@@ -1904,7 +1876,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             name: "evidenceReference",
             label: "Private disclosure approval evidence",
             kind: "text",
-            hint: "Reference the human approval and exact content version in the private advisory. Do not paste the content here.",
+            hint: "Reference the approval in the private advisory. Do not paste the content here.",
           },
           {
             name: "redactedContentDigest",
@@ -1918,7 +1890,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             label: "Approved embargo change",
             kind: "textarea",
             optional: true,
-            hint: "Leave blank if unchanged. This does not publish content or schedule disclosure.",
+            hint: "Leave blank if unchanged.",
           },
           REASON,
         ],
@@ -2050,7 +2022,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             label:
               action === "consent-payment"
                 ? "I understand that chain transactions reveal my GitHub actor number, wallet, time and amounts. My report stays private."
-                : `I approve ${awardText(record)} on this network. The reporter must have accepted chain visibility. This prepares an unsigned owner request; it does not pay.`,
+                : `I approve ${awardText(record)} on this network. This prepares an unsigned request; it does not pay.`,
             kind: "checkbox",
           },
         ],
@@ -2323,14 +2295,13 @@ function AnalysisPanel({
             <Fact term="Remediation">{analysis.remediation ?? "—"}</Fact>
           </dl>
           <p className="field-hint">
-            A proposal from {analysis.model ?? "the analysis model"}. The report
-            text can try to influence it; you decide the finding and any award.
+            AI proposal. The report text can try to influence it; you decide.
           </p>
         </>
       ) : (
         <p className="admin-status">
           {analysis.state === "unavailable"
-            ? "Analysis is unavailable right now. Run it again later."
+            ? "Analysis unavailable. Run it again later."
             : "The analysis failed."}
         </p>
       )}
@@ -2411,8 +2382,8 @@ function AppealTriagePanel({
           </dl>
           <p>{triage.rationale}</p>
           <p className="field-hint">
-            A draft from {triage.model ?? "Slopbot"}. The appeal text can try to
-            influence it; a moderator decides the appeal.
+            Slopbot draft. The appeal text can try to influence it; a moderator
+            decides.
           </p>
         </>
       ) : (
@@ -2624,7 +2595,6 @@ function CaseDetail({
         <summary>Case details and history</summary>
         <dl className="admin-facts">
           <Fact term="Case">{record.id}</Fact>
-          <Fact term="Your role">{record.viewerRoles.join(", ")}</Fact>
           <Fact term="Program terms at receipt">
             {record.terms
               ? `${money(record.terms.grossMinor, record.terms)} published gross per finding (policy revision ${record.policyRevision ?? "—"})`
@@ -2650,13 +2620,6 @@ function CaseDetail({
             <>
               <Fact term="Root cause">{record.rootCauseKey ?? "—"}</Fact>
               <Fact term="Duplicate of">{record.duplicateOf ?? "—"}</Fact>
-              <Fact term="Evidence digest">
-                {record.evidenceDigest ? (
-                  <code>{record.evidenceDigest}</code>
-                ) : (
-                  "—"
-                )}
-              </Fact>
               <Fact term="Triagers">
                 {(record.triagers ?? [])
                   .filter((entry) => entry.revokedAt === null)
@@ -2776,7 +2739,7 @@ export default function SecurityCasesPage() {
     body = (
       <SignInPanel
         next="/security"
-        purpose="Sign in with GitHub to report privately and see your security cases."
+        purpose="Sign in to see your security cases."
         state={session}
       />
     );
@@ -2784,7 +2747,7 @@ export default function SecurityCasesPage() {
     body = (
       <SignInPanel
         next="/security"
-        purpose="Your session ended. Sign in again to continue."
+        purpose="Your session ended."
         state={{ status: "signed-out" }}
       />
     );
@@ -2816,8 +2779,7 @@ export default function SecurityCasesPage() {
           <h2 id="security-cases">Your cases</h2>
           {list.value.authorityUnavailable ? (
             <p className="form-error" role="status">
-              Some maintainer access could not be checked. Your available cases
-              are shown.{" "}
+              Some maintainer access could not be checked.{" "}
               <button className="text-button" onClick={reload} type="button">
                 Retry access check
               </button>
@@ -2826,7 +2788,7 @@ export default function SecurityCasesPage() {
           {list.value.cases.length === 0 ? (
             <p className="admin-status">
               {list.value.authorityUnavailable
-                ? "No cases are available in this result. Retry the access check."
+                ? "No cases to show. Retry the access check."
                 : "You have no private security cases."}
             </p>
           ) : (
@@ -2862,10 +2824,6 @@ export default function SecurityCasesPage() {
         {automatic ? (
           <section aria-labelledby="security-link" className="admin-section">
             <h2 id="security-link">Already reported on GitHub? Verify it</h2>
-            <p className="admin-status">
-              GitHub’s own record proves you are the author and keeps the
-              original receipt time.
-            </p>
             <DirectVerifyForm
               onUnavailable={() => setDirectUnavailable(true)}
               programProjects={programProjects}
@@ -2873,9 +2831,8 @@ export default function SecurityCasesPage() {
             {linkFallback || directUnavailable ? (
               <>
                 <p className="admin-status">
-                  GitHub could not verify this report automatically. Link it
-                  instead; a maintainer verifies the link and the original
-                  GitHub receipt time.
+                  GitHub could not verify this report. Link it for a maintainer
+                  to verify.
                 </p>
                 <ClaimForm
                   onCreated={created}
@@ -2887,10 +2844,7 @@ export default function SecurityCasesPage() {
         ) : automatic === false ? (
           <section aria-labelledby="security-link" className="admin-section">
             <h2 id="security-link">Link a report you submitted on GitHub</h2>
-            <p className="admin-status">
-              A maintainer verifies the link and the original GitHub receipt
-              time.
-            </p>
+            <p className="admin-status">A maintainer verifies the link.</p>
             <ClaimForm onCreated={created} programProjects={programProjects} />
           </section>
         ) : null}
@@ -2921,17 +2875,6 @@ export default function SecurityCasesPage() {
     <main className="shell route-main admin-page security-page">
       <div className="admin-intro">
         <h1>Security cases</h1>
-        <details>
-          <summary>Who can access a case?</summary>
-          <p>
-            Private. Only the reporter, the program's security maintainers,
-            assigned triagers, its finance approvers (award fields only) and its
-            independent dispute reviewers (appealed or related-party cases only)
-            can see a case. The AI summary is shown only to maintainers and
-            triagers. Slop admins have no automatic access. Slop never publishes
-            cases or counts them.
-          </p>
-        </details>
       </div>
       {body}
     </main>
