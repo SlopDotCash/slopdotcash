@@ -1286,6 +1286,34 @@ test("model triage replaces the prefilter category before category mode and pena
   });
 });
 
+test("a limited model replacement for a prefilter stays held instead of labeling", async () => {
+  await closedItem(async (run) => {
+    run.emptyComparison();
+    run.repositoryConfig(
+      JSON.stringify({
+        version: 1,
+        audience: "protection",
+        closure: true,
+        categories: { empty: "close", spam: "label" },
+      }),
+    );
+    run.modelSequence([
+      {
+        category: "spam",
+        confidence: 0.97,
+        limitations: ["The source interpretation remains unresolved."],
+      },
+    ]);
+    expect(await run.review()).toStartWith("held for maintainer");
+    expect(run.modelInputs).toHaveLength(1);
+    expect(run.writes).not.toContain(
+      "POST /repos/SlopDotCash/asi/issues/5/labels",
+    );
+    expect(run.currentState()).toBe("open");
+    expect(run.sql(PENALTY)).toEqual([]);
+  });
+});
+
 for (const change of ["head", "comparison", "consent"] as const) {
   test(`empty prefilter confirmation rechecks changed ${change}`, async () => {
     await closedItem(async (run) => {
