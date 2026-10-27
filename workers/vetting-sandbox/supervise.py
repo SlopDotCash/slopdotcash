@@ -13,7 +13,6 @@ import sys
 import time
 
 COMMANDS = {
-    "shell": ["/bin/sh", "/analysis/artifact"],
     "python": ["python3", "/analysis/artifact"],
     "node": ["node", "--max-old-space-size=128", "/analysis/artifact"],
     "binary": ["/analysis/artifact"],

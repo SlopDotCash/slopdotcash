@@ -3,10 +3,10 @@ import { browserDeployment } from "./browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 import { isEscrowChain } from "./escrow-policy.mjs";
 import type { DirectTransfer } from "./payments/contracts";
+import { CANONICAL_UINT } from "./record-validation.mjs";
 import { usePublicResource } from "./use-public-resource";
 
-const money = (v: unknown) =>
-  typeof v === "string" && /^(0|[1-9]\d*)$/u.test(v);
+const money = (v: unknown) => typeof v === "string" && CANONICAL_UINT.test(v);
 
 /** Validates one direct transfer from the payments API. */
 export function isDirectTransfer(t: unknown): t is DirectTransfer {

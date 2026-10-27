@@ -13,6 +13,7 @@ import {
   type VaultConnection,
   walletVaultConfig,
 } from "./evm-vault-actions";
+import { apiRequest } from "./project-api";
 import { sendSolanaWalletTransaction } from "./solana-vault-actions";
 
 export type ReadyMonthlyRelease = Extract<
@@ -24,17 +25,15 @@ export async function requestMonthlyRelease(
   check?: { planId: string; transactionId: string },
 ) {
   if (!view.deployment) throw new Error("The vault is unavailable.");
-  const response = await fetch(
-    `/api/v1/payments/projects/${encodeURIComponent(view.projectId)}/monthly/${view.period}/reserve-release`,
+  const response = await apiRequest(
+    `payments/projects/${encodeURIComponent(view.projectId)}/monthly/${view.period}/reserve-release`,
     {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: {
         network: view.deployment.network,
         manifestSha256: view.manifestSha256,
         ...check,
-      }),
-      signal: AbortSignal.timeout(120000),
+      },
+      timeoutMs: 120_000,
     },
   );
   const value = (await readBoundedJson(
@@ -66,7 +65,7 @@ export async function requestMonthlyRelease(
     );
   return value;
 }
-export function solanaReleaseMessage(
+function solanaReleaseMessage(
   plan: Extract<ReadyMonthlyRelease, { family: "solana" }>,
 ) {
   const { deployment, capture, prepared, signatureHex } = plan;

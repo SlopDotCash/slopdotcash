@@ -15,12 +15,18 @@ import type {
 } from "./leaderboard";
 import type { RepositoryId, TargetRepository } from "./repositories.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
-export type GitHubActorKind =
-  | "Bot"
-  | "Mannequin"
-  | "Organization"
-  | "User"
-  | "Unknown";
+/**
+ * Closed value sets that the snapshot validator checks; each type below is
+ * derived from its list, so the two cannot differ.
+ */
+export const GITHUB_ACTOR_KINDS = [
+  "Bot",
+  "Mannequin",
+  "Organization",
+  "User",
+  "Unknown",
+] as const;
+export type GitHubActorKind = (typeof GITHUB_ACTOR_KINDS)[number];
 
 export interface GitHubActor {
   id: string;
@@ -29,6 +35,9 @@ export interface GitHubActor {
   url: string;
   kind: GitHubActorKind;
 }
+
+/** The stable identity of an actor in cycle and reward records. */
+export type ActorRef = Pick<GitHubActor, "id" | "login">;
 
 export interface GitHubLabel {
   id: string;
@@ -198,12 +207,14 @@ export interface IssueRecord {
   }>;
 }
 
-export type EvidenceCategory =
-  | "screenshot"
-  | "video"
-  | "logs"
-  | "trajectory"
-  | "domain-artifact";
+export const EVIDENCE_CATEGORIES = [
+  "screenshot",
+  "video",
+  "logs",
+  "trajectory",
+  "domain-artifact",
+] as const;
+export type EvidenceCategory = (typeof EVIDENCE_CATEGORIES)[number];
 
 export interface EvidenceFinding {
   category: EvidenceCategory;
@@ -269,8 +280,15 @@ export interface AttributionAssessmentOptions {
   verifyRunReceipt?: (value: unknown) => ProjectRunReceipt;
 }
 
+export const COVERAGE_STATUSES = [
+  "complete",
+  "partial",
+  "missing",
+  "invalid",
+] as const;
+
 export interface AttributionCoverage {
-  status: "complete" | "partial" | "missing" | "invalid";
+  status: (typeof COVERAGE_STATUSES)[number];
   eligibleSourceCount: number;
   validSourceCount: number;
   missingSourceCount: number;
@@ -278,13 +296,15 @@ export interface AttributionCoverage {
   humanOnlySourceCount: number;
 }
 
-export type ScoreCategory =
-  | "merged-pull-request"
-  | "resolved-issue"
-  | "material-test-change"
-  | "evidence"
-  | "substantive-review"
-  | "evaluated-contribution";
+export const SCORE_CATEGORIES = [
+  "merged-pull-request",
+  "resolved-issue",
+  "material-test-change",
+  "evidence",
+  "substantive-review",
+  "evaluated-contribution",
+] as const;
+export type ScoreCategory = (typeof SCORE_CATEGORIES)[number];
 
 export interface ScoreEvent {
   id: string;
@@ -451,9 +471,17 @@ export interface LeaderboardEntry {
   reportedModels: string[];
 }
 
+export const WORK_ITEM_CLAIM_SOURCES = [
+  "assignee",
+  "label",
+  "claim-comment",
+  "pull-request",
+  "none",
+] as const;
+
 export interface WorkItemClaimStatus {
   status: "claimed" | "unclaimed";
-  source: "assignee" | "label" | "claim-comment" | "pull-request" | "none";
+  source: (typeof WORK_ITEM_CLAIM_SOURCES)[number];
   kind: "implementation" | "review" | null;
   actors: GitHubActor[];
   claimedAt: string | null;
@@ -479,17 +507,32 @@ export interface WorkItemModelStatus {
   provenance: "self-reported" | "none";
 }
 
+export const WORK_ITEM_CANDIDATE_EXCLUSIONS = [
+  "active-review-request",
+  "already-approved",
+  "blocked",
+  "bot-authored",
+  "changes-requested",
+  "claimed",
+  "draft",
+  "security-sensitive",
+  "untriaged",
+  "unknown-author",
+] as const;
 export type WorkItemCandidateExclusion =
-  | "active-review-request"
-  | "already-approved"
-  | "blocked"
-  | "bot-authored"
-  | "changes-requested"
-  | "claimed"
-  | "draft"
-  | "security-sensitive"
-  | "untriaged"
-  | "unknown-author";
+  (typeof WORK_ITEM_CANDIDATE_EXCLUSIONS)[number];
+
+export const WORK_ITEM_PRIORITIES = [
+  "urgent",
+  "high",
+  "normal",
+  "low",
+] as const;
+export const WORK_ITEM_ACTIONABILITIES = [
+  "actionable",
+  "blocked",
+  "draft",
+] as const;
 
 export interface WorkItemSelection {
   status: "candidate" | "excluded";
@@ -507,8 +550,8 @@ export interface WorkItem {
   createdAt: string;
   updatedAt: string;
   labels: string[];
-  priority: "urgent" | "high" | "normal" | "low";
-  actionability: "actionable" | "blocked" | "draft";
+  priority: (typeof WORK_ITEM_PRIORITIES)[number];
+  actionability: (typeof WORK_ITEM_ACTIONABILITIES)[number];
   isDraft: boolean | null;
   reviewDecision: string | null;
   activeReviewRequestCount: number | null;

@@ -2113,10 +2113,31 @@ async function enforceProject(
       "expectedSequence",
     ),
     actor: { githubId: session.githubId, githubLogin: session.githubLogin },
-    actorRole: () => "project-moderator",
+    actorRole: (_project, restriction) =>
+      body.action === "request_reinstatement" &&
+      filesAccountAppeal(restriction, session.githubId)
+        ? "banned-account"
+        : "project-moderator",
     decisionSource: "admin-panel",
     mode,
   });
+}
+
+/**
+ * A banned account files its own account appeal while the project is clear
+ * or a project appeal is already open, on the owner route and at /admin.
+ */
+function filesAccountAppeal(
+  restriction: ProjectRestriction,
+  githubId: string,
+): boolean {
+  return (
+    restriction.bannedMaintainers.some(
+      (account) => account.githubId === githubId,
+    ) &&
+    (restriction.state === "clear" ||
+      projectAppealState(restriction) === "requested")
+  );
 }
 
 /**
@@ -2153,7 +2174,13 @@ async function requestReinstatement(
 ): Promise<Response> {
   const session = await requireSession(request, deps);
   const body = await readJsonObject(request);
-  exactKeys(body, ["projectId", "reason", "evidenceReference"]);
+  exactKeys(
+    body,
+    ["projectId", "reason", "evidenceReference"],
+    ["appealScope"],
+  );
+  if (body.appealScope !== undefined && body.appealScope !== "account")
+    fail(400, "invalid_request", "Unsupported appeal scope");
   if (typeof body.projectId !== "string" || !PROJECT_ID.test(body.projectId))
     fail(404, "not_found", "Project not found");
   return await recordEnforcement(deps, {
@@ -2166,9 +2193,21 @@ async function requestReinstatement(
     expectedSequence: null,
     actor: { githubId: session.githubId, githubLogin: session.githubLogin },
     actorRole: async (project, restriction) => {
-      const isBannedAccount = restriction.bannedMaintainers.some(
-        (account) => account.githubId === session.githubId,
-      );
+      if (body.appealScope === "account") {
+        if (
+          !restriction.bannedMaintainers.some(
+            (account) => account.githubId === session.githubId,
+          )
+        )
+          return fail(
+            403,
+            "forbidden",
+            "Only a currently banned account can file an account appeal",
+          );
+        return "banned-account";
+      }
+      if (filesAccountAppeal(restriction, session.githubId))
+        return "banned-account";
       const ownerRole =
         String(project.manifest.steward.github.actorId) === session.githubId
           ? "project-steward"
@@ -2176,14 +2215,13 @@ async function requestReinstatement(
               session.githubId
             ? "project-applicant"
             : null;
+      if (ownerRole !== null) return ownerRole;
       if (
-        isBannedAccount &&
-        (restriction.state === "clear" ||
-          projectAppealState(restriction) === "requested")
+        restriction.bannedMaintainers.some(
+          (account) => account.githubId === session.githubId,
+        )
       )
         return "banned-account";
-      if (ownerRole !== null) return ownerRole;
-      if (isBannedAccount) return "banned-account";
       return fail(
         403,
         "forbidden",
@@ -2254,6 +2292,7 @@ async function recordEnforcement(
   const plan = planEnforcement({
     action,
     actor,
+    actorRole,
     project,
     restriction,
     listedBefore,
@@ -2744,7 +2783,8 @@ export async function handleProjectApi(
       respond: json,
       publicMessage: (_status, error, caught) =>
         caught instanceof GithubLookupError ||
-        error.code === "vault_setup_unavailable",
+        error.code === "vault_setup_unavailable" ||
+        error.code === "vault_network_unavailable",
     });
   }
 }

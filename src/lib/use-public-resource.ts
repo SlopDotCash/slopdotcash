@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { errorMessage } from "./errors";
 
 export type PublicResourceState<T> =
   | { status: "loading" }
@@ -9,7 +10,7 @@ export type PublicResourceState<T> =
 export function usePublicResource<T extends object>(
   enabled: boolean,
   load: (signal: AbortSignal, attempt: number) => Promise<T>,
-  errorMessage: string,
+  fallbackMessage: string,
   timeoutMs = 12_000,
 ): [PublicResourceState<T>, () => void] {
   const [attempt, setAttempt] = useState(0);
@@ -34,7 +35,7 @@ export function usePublicResource<T extends object>(
         if (active)
           setState({
             status: "error",
-            message: error instanceof Error ? error.message : errorMessage,
+            message: errorMessage(error, fallbackMessage),
           });
       })
       .finally(() => window.clearTimeout(timeout));
@@ -43,6 +44,6 @@ export function usePublicResource<T extends object>(
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [enabled, load, errorMessage, timeoutMs, attempt]);
+  }, [enabled, load, fallbackMessage, timeoutMs, attempt]);
   return [state, useCallback(() => setAttempt((value) => value + 1), [])];
 }

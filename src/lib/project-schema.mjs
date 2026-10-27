@@ -1,10 +1,19 @@
+import { decimalBaseUnits, formatBaseUnits } from "./base-units.mjs";
 import {
   assertEscrowPolicy,
+  ESCROW_PAYOUT_FEE_BASIS_POINTS,
   isBaseUnits,
   isEscrowChain,
   maxBaseUnitsForChain,
 } from "./escrow-policy.mjs";
-import { exactKeys, readRecord as record } from "./record-validation.mjs";
+import {
+  boundedText,
+  CANONICAL_UINT,
+  exactKeys,
+  isCanonicalUint,
+  readRecord as record,
+  timestamp,
+} from "./record-validation.mjs";
 /**
  * Validates untrusted project folders before they enter discovery, ingestion,
  * skills, or money-shaped views. The schema is intentionally narrow so a pull
@@ -104,9 +113,18 @@ const OPTIONAL_PROJECT_KEYS = [
 ];
 export const MAX_MONTHLY_CAP_MINOR = 1_000_000_000_000_000n;
 
+/**
+ * The platform fee of a new reward policy: 10% of an external prize share,
+ * the escrow payout fee for a vault project, and 1% for a pool without one.
+ */
+export function expectedRewardFeeBasisPoints(kind, escrow) {
+  if (kind === "external-prize-share") return 1000;
+  return escrow ? ESCROW_PAYOUT_FEE_BASIS_POINTS : 100;
+}
+
 /** Formats cent-precise USDC minor units without floating-point conversion. */
 export function formatMonthlyCapDisplay(value) {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+  if (!isCanonicalUint(value)) {
     throw new TypeError("monthly cap must be canonical integer minor units");
   }
   const amount = BigInt(value);
@@ -118,23 +136,6 @@ export function formatMonthlyCapDisplay(value) {
     .replace(/\B(?=(\d{3})+(?!\d))/gu, ",");
   const cents = Number((amount % 1_000_000n) / 10_000n);
   return `$${whole}${cents === 0 ? "" : `.${String(cents).padStart(2, "0")}`}`;
-}
-
-/** Formats integer base units of an asset with `decimals`, without floats. */
-export function formatAssetAmount(value, decimals) {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
-    throw new TypeError("amount must be canonical integer base units");
-  }
-  const scale = 10n ** BigInt(decimals);
-  const amount = BigInt(value);
-  const whole = (amount / scale)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/gu, ",");
-  const fraction =
-    decimals === 0
-      ? ""
-      : (amount % scale).toString().padStart(decimals, "0").replace(/0+$/u, "");
-  return fraction === "" ? whole : `${whole}.${fraction}`;
 }
 
 /**
@@ -153,10 +154,7 @@ export function parseAssetAmount(value, decimals) {
       `amount has more decimal places than the asset's ${decimals}`,
     );
   }
-  return (
-    BigInt(match[1]) * 10n ** BigInt(decimals) +
-    BigInt(fraction.padEnd(decimals, "0") || "0")
-  ).toString();
+  return decimalBaseUnits(match[1], fraction, decimals).toString();
 }
 
 /**
@@ -169,19 +167,11 @@ export function monthlyAmountDisplay(value, rewardAsset) {
   if (!isBaseUnits(value)) {
     throw new RangeError("monthly amount is too large");
   }
-  return `${formatAssetAmount(value, rewardAsset.decimals)} ${rewardAsset.symbol}`;
+  return `${formatBaseUnits(value, rewardAsset.decimals)} ${rewardAsset.symbol}`;
 }
 
-function text(value, field, { max = 500, min = 1, pattern } = {}) {
-  if (
-    typeof value !== "string" ||
-    value.length < min ||
-    value.length > max ||
-    (pattern && !pattern.test(value))
-  ) {
-    throw new TypeError(`${field} is invalid`);
-  }
-  return value;
+function text(value, field, options = {}) {
+  return boundedText(value, field, { max: 500, ...options });
 }
 
 function url(value, field, expectedOrigin) {
@@ -205,7 +195,7 @@ function url(value, field, expectedOrigin) {
 }
 
 function minor(value, field) {
-  return text(value, field, { pattern: /^(?:0|[1-9]\d*)$/u });
+  return text(value, field, { pattern: CANONICAL_UINT });
 }
 
 function nullable(value, field, validator) {
@@ -761,18 +751,6 @@ function validateTerms(
   return terms;
 }
 
-function timestamp(value, field) {
-  const result = text(value, field, {
-    pattern: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
-  });
-  if (
-    !Number.isFinite(Date.parse(result)) ||
-    new Date(result).toISOString() !== result
-  )
-    throw new TypeError(`${field} is invalid`);
-  return result;
-}
-
 function validateRepository(value, index) {
   const field = `project.repositories[${index}]`;
   const repository = record(value, field);
@@ -1018,8 +996,10 @@ function validateReward(
   }
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
-  const expectedFeeBasisPoints =
-    reward.kind === "external-prize-share" ? 1000 : escrow ? 200 : 100;
+  const expectedFeeBasisPoints = expectedRewardFeeBasisPoints(
+    reward.kind,
+    Boolean(escrow),
+  );
   const hasLegacyExternalPrizeFee =
     allowLegacyExternalPrizeFee &&
     reward.kind === "external-prize-share" &&

@@ -1,1 +1,4 @@
-export function verifyStagingRoot(origin: string): Promise<void>;
+export function verifyStagingRoot(
+  origin: string,
+  retryDelayMs?: number,
+): Promise<void>;

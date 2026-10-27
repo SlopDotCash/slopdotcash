@@ -1,6 +1,6 @@
-# Slopbot v2 (draft). Not deployed: production deploys go only through the
-# checked-in GitHub Actions workflow after owner approval and the deploy lever
-# is claimed. No route is declared until then.
+# Slopbot v2. This Worker deploys only through the checked-in release workflow
+# (.github/workflows/deploy.yml) when the SLOPBOT_RELEASE repository variable
+# is "enabled". The owner manages its custom domain outside this file.
 name = "slop-slopbot"
 main = "entrypoint.ts"
 compatibility_date = "2026-07-30"

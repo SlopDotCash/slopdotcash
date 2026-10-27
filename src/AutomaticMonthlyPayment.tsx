@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -22,7 +23,7 @@ import {
 } from "./lib/payments/contracts";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
-import { isWalletAddress } from "./lib/wallets";
+import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
 
 type Pending = {
   version: 1;
@@ -58,8 +59,6 @@ function readPending(key: string, solana: boolean): Pending | null {
     );
   return value;
 }
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : "The wallet request failed.";
 
 /**
  * The owner's switch for automatic monthly payment on an ordinary vault.
@@ -75,15 +74,18 @@ export function AutomaticMonthlyPayment({
   deployment: EscrowDeployment;
   onFinalized: () => void;
 }) {
-  const solana = ESCROW_NETWORKS[deployment.network].family === "solana";
-  const sameWallet = (a: string, b: string) =>
-    solana ? a === b : a.toLowerCase() === b.toLowerCase();
+  const family = ESCROW_NETWORKS[deployment.network].family;
+  const solana = family === "solana";
+  const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
   const key = `slop:vault-monthly:v1:${deployment.network}:${deployment.vault}`;
   const [saved] = useState(() => {
     try {
       return { pending: readPending(key, solana), error: "" };
     } catch (error) {
-      return { pending: null, error: message(error) };
+      return {
+        pending: null,
+        error: errorMessage(error, "The wallet request failed."),
+      };
     }
   });
   const [pending, setPending] = useState<Pending | null>(saved.pending);
@@ -112,7 +114,7 @@ export function AutomaticMonthlyPayment({
     try {
       await action();
     } catch (caught) {
-      setError(message(caught));
+      setError(errorMessage(caught, "The wallet request failed."));
     } finally {
       setBusy(false);
     }

@@ -114,21 +114,20 @@ for (const payout of fixture.payouts) {
     .run(network, transaction, 0, "0xblock", "paid", id, "{}", payout.paidAt);
 }
 
+// The reviewed Worker vars, each overridable from the environment.
+const { vars } = Bun.TOML.parse(
+  readFileSync(new URL("./wrangler.toml", import.meta.url), "utf8"),
+) as { vars: Record<string, string> };
 const result = await runOnce(
   {
+    ...Object.fromEntries(
+      Object.entries(vars).map(([name, value]) => [
+        name,
+        process.env[name] ?? value,
+      ]),
+    ),
     REFERRAL_DB: db,
     REFERRAL_ACCRUAL_MODE: "dry_run",
-    REFERRAL_FIRST_PERIOD: process.env.REFERRAL_FIRST_PERIOD ?? "2026-11",
-    REFERRAL_RATE_BASE_PER_MICRO:
-      process.env.REFERRAL_RATE_BASE_PER_MICRO ?? "3000000000000",
-    REFERRAL_TOKEN_DECIMALS: process.env.REFERRAL_TOKEN_DECIMALS ?? "18",
-    REFERRAL_POOL_BASE:
-      process.env.REFERRAL_POOL_BASE ?? "2000000000000000000000000",
-    REFERRAL_PROJECT_CAP_BASE:
-      process.env.REFERRAL_PROJECT_CAP_BASE ?? "250000000000000000000000",
-    REFERRAL_WINDOW_MONTHS: process.env.REFERRAL_WINDOW_MONTHS ?? "12",
-    REFERRAL_EXCLUDED_GITHUB_IDS:
-      process.env.REFERRAL_EXCLUDED_GITHUB_IDS ?? "18633264,202660855",
   },
   () => (asOf ? new Date(asOf) : new Date()),
 );

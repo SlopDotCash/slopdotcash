@@ -11,21 +11,13 @@ import {
   type GitHubActor,
   type ScoreEvent,
 } from "./leaderboard";
+import { eventThirds } from "./score-penalties";
 
 export interface ReviewerLeader {
   rank: number;
   actor: GitHubActor;
   reviewThirds: number;
   reviewEventCount: number;
-}
-
-/** Formats an integer third count as a score with at most two decimals. */
-export function formatThirds(thirds: number): string {
-  if (!Number.isSafeInteger(thirds) || thirds < 0) {
-    throw new RangeError(`Invalid third count: ${thirds}`);
-  }
-  if (thirds % 3 === 0) return String(thirds / 3);
-  return (thirds / 3).toFixed(2);
 }
 
 export function selectReviewerLeaders(
@@ -37,12 +29,7 @@ export function selectReviewerLeaders(
   >();
   for (const event of ledger) {
     if (event.category !== "substantive-review") continue;
-    const thirds = event.scoreThirds ?? Math.round(event.points * 3);
-    if (!Number.isSafeInteger(thirds) || thirds < 0) {
-      throw new TypeError(
-        `Review event ${event.id} has a non-integer third count`,
-      );
-    }
+    const thirds = eventThirds(event);
     const current = byActor.get(event.actor.id) ?? {
       actor: event.actor,
       reviewThirds: 0,

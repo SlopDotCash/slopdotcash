@@ -17,6 +17,7 @@
 import type {
   AppealState,
   EnforcementAction,
+  EnforcementActorRole,
   GithubActor,
   ProjectEnforcement,
   ProjectRecord,
@@ -217,6 +218,7 @@ export function accountAppealState(
   const request = newestFirst.find(
     (record) =>
       record.action === "request_reinstatement" &&
+      record.actorRole === "banned-account" &&
       record.actor?.githubId === githubId &&
       record.sequence > boundary,
   );
@@ -449,6 +451,7 @@ function revisionTo(
 export function planEnforcement(input: {
   action: EnforcementAction;
   actor: GithubActor;
+  actorRole?: EnforcementActorRole;
   project: ProjectRecord;
   restriction: ProjectRestriction;
   listedBefore: boolean;
@@ -504,10 +507,13 @@ export function planEnforcement(input: {
       const isBannedActor = restriction.bannedMaintainers.some(
         (account) => account.githubId === actor.githubId,
       );
-      if (restriction.state === "clear" && !isBannedActor)
+      const isAccountAppeal =
+        isBannedActor &&
+        (input.actorRole === undefined || input.actorRole === "banned-account");
+      if (restriction.state === "clear" && !isAccountAppeal)
         refuse("not_restricted", "The project has no restriction to appeal");
       if (
-        isBannedActor
+        isAccountAppeal
           ? accountAppealState(restriction, actor.githubId) === "requested"
           : projectAppealState(restriction) === "requested"
       )
@@ -546,8 +552,11 @@ export function planEnforcement(input: {
         );
       const releasedIds = new Set(selected.map((account) => account.githubId));
       requireIndependentAccountModerator(restriction, actor, releasedIds);
+      // A release decides only account appeals. The project appeal, open or
+      // kept by malicious results, stays open for its own decision.
       const appealStillOpen =
-        projectAppealState(restriction) === "requested" ||
+        (restriction.state !== "clear" &&
+          projectAppealOpen(restriction.records, true)) ||
         restriction.bannedMaintainers.some(
           (account) =>
             !releasedIds.has(account.githubId) &&

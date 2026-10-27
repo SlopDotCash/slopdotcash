@@ -1,13 +1,16 @@
+import type { ActorRef } from "./leaderboard-types";
+import { ALLOCATION_STATES } from "./rewards";
 import type { WalletProof as CycleWalletProof } from "./wallet-proof";
 
-export type {
-  GithubIssueWalletProof as CycleGithubIssueWalletProof,
-  ProfileReadmeWalletProof as CycleProfileReadmeWalletProof,
-  SlopDatabaseWalletProof as CycleSlopDatabaseWalletProof,
-  WalletProof as CycleWalletProof,
-} from "./wallet-proof";
+export type { CycleWalletProof };
 
-import { readRecord } from "./record-validation.mjs";
+import {
+  boundedText,
+  CANONICAL_UINT,
+  EXACT_UTC,
+  isExactUtc,
+  readRecord,
+} from "./record-validation.mjs";
 /**
  * Defines the small browser-safe index of immutable reward-cycle artifacts.
  * Detailed allocations and transaction receipts remain separate public JSON
@@ -20,6 +23,7 @@ import {
   assertAllocationFundingBasis,
   LAST_LEGACY_CAP_CYCLE,
 } from "./allocation-funding";
+import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 import { findHistoricalProject } from "./projects.mjs";
 import {
   isWalletAddress,
@@ -44,6 +48,13 @@ export type CycleIndexState =
   /** A project vault creator returned the vault after binding the proposal;
    * every approved row is held with no funded backing (RFC #500 s.10). */
   | "wound-up";
+
+/** Recorded row states: allocation states plus external shares and paid rows. */
+const CYCLE_CONTRIBUTOR_STATES = [
+  ...ALLOCATION_STATES,
+  "external-share",
+  "paid",
+] as const;
 
 export interface CycleIndexEntry {
   projectId: string;
@@ -80,18 +91,10 @@ export interface CycleIndexEntry {
     };
   };
   contributors: Array<{
-    actor: { id: string; login: string };
+    actor: ActorRef;
     score: number;
     scoreThirds?: number;
-    state:
-      | "approved"
-      | "excluded"
-      | "external-share"
-      | "held"
-      | "held-below-minimum"
-      | "paid"
-      | "proposed"
-      | "unclaimed";
+    state: (typeof CYCLE_CONTRIBUTOR_STATES)[number];
     suggestedMinor: string;
     approvedMinor: string;
     paidMinor: string;
@@ -138,28 +141,12 @@ function exact(
   }
 }
 
-function text(value: unknown, field: string, pattern?: RegExp): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > 512 ||
-    (pattern && !pattern.test(value))
-  ) {
-    throw new TypeError(`${field} is invalid`);
-  }
-  return value;
-}
+const text = (value: unknown, field: string, pattern?: RegExp): string =>
+  boundedText(value, field, { max: 512, pattern });
 
 function iso(value: unknown, field: string): string {
-  const result = text(
-    value,
-    field,
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
-  );
-  if (
-    !Number.isFinite(Date.parse(result)) ||
-    new Date(result).toISOString() !== result
-  ) {
+  const result = text(value, field, EXACT_UTC);
+  if (!isExactUtc(result)) {
     throw new TypeError(`${field} is not a UTC timestamp`);
   }
   return result;
@@ -170,7 +157,7 @@ function nullableIso(value: unknown, field: string): string | null {
 }
 
 function minor(value: unknown, field: string): string {
-  return text(value, field, /^(?:0|[1-9]\d*)$/u);
+  return text(value, field, CANONICAL_UINT);
 }
 
 function fileReference(
@@ -570,16 +557,6 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
   if (!Array.isArray(entry.contributors)) {
     throw new TypeError(`${field}.contributors must be an array`);
   }
-  const contributorStates = new Set([
-    "approved",
-    "excluded",
-    "external-share",
-    "held",
-    "held-below-minimum",
-    "paid",
-    "proposed",
-    "unclaimed",
-  ]);
   const contributors = entry.contributors.map((value, contributorIndex) => {
     const contributorField = `${field}.contributors[${contributorIndex}]`;
     const contributor = readRecord(value, contributorField);
@@ -623,7 +600,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     ) {
       throw new TypeError(`${contributorField}.scoreThirds is invalid`);
     }
-    if (!contributorStates.has(String(contributor.state))) {
+    if (!CYCLE_CONTRIBUTOR_STATES.includes(contributor.state as never)) {
       throw new TypeError(`${contributorField}.state is invalid`);
     }
     const state =
@@ -1005,4 +982,24 @@ export function assertCycleIndex(value: unknown): asserts value is CycleIndex {
       throw new TypeError("cycle index is not canonically ordered");
     }
   }
+}
+
+/** Reads and validates the published cycle index; `query` only busts caches. */
+export async function loadCycleIndex(
+  signal: AbortSignal,
+  query: string,
+): Promise<CycleIndex> {
+  const response = await fetchWithDeadline(`/data/cycles/index.json?${query}`, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error(`cycle index returned ${response.status}`);
+  const cycleIndex = await readBoundedJson(
+    response,
+    8 * 1024 * 1024,
+    "cycle index",
+  );
+  assertCycleIndex(cycleIndex);
+  return cycleIndex;
 }

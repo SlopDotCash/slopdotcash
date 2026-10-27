@@ -1,49 +1,34 @@
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
+import { evmRpc } from "../../contracts/evm/adapter";
+import { solanaRpc } from "../../contracts/solana/adapter";
 import { chainFamily } from "../../src/lib/escrow-policy.mjs";
-import type { PaymentDeployment } from "./index";
+import type { DeploymentView } from "./index";
 
-async function rpc(
-  url: string,
-  method: string,
-  params: unknown[],
-): Promise<unknown> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  if (!response.ok) throw new Error("Reconciliation RPC unavailable");
-  const body = (await response.json()) as { error?: unknown; result?: unknown };
-  if (body.error || !("result" in body))
-    throw new Error("Reconciliation RPC failed");
-  return body.result;
-}
 /** Reuse the same canonical finalized-revert proof for payout and binding retries. */
 export async function finalizedEvmRevert(
-  url: string,
+  rpcUrl: string,
   chainId: string | undefined,
   transactionId: string,
   chain: string,
 ) {
+  const rpc = (method: string, params: unknown[]) =>
+    evmRpc({ rpcUrl }, method, params);
   if (
     !chainId ||
-    BigInt((await rpc(url, "eth_chainId", [])) as string) !== BigInt(chainId)
+    BigInt((await rpc("eth_chainId", [])) as string) !== BigInt(chainId)
   )
     throw new Error("Reconciliation chain mismatch");
-  const receipt = (await rpc(url, "eth_getTransactionReceipt", [
-    transactionId,
-  ])) as {
+  const receipt = (await rpc("eth_getTransactionReceipt", [transactionId])) as {
     status: string;
     transactionHash: string;
     blockHash: string;
     blockNumber: string;
   } | null;
   if (receipt?.status !== "0x0") return null;
-  const head = (await rpc(url, "eth_getBlockByNumber", [
-    "finalized",
-    false,
-  ])) as { number: string } | null;
-  const block = (await rpc(url, "eth_getBlockByNumber", [
+  const head = (await rpc("eth_getBlockByNumber", ["finalized", false])) as {
+    number: string;
+  } | null;
+  const block = (await rpc("eth_getBlockByNumber", [
     receipt.blockNumber,
     false,
   ])) as { hash: string } | null;
@@ -68,7 +53,7 @@ export async function finalizedEvmRevert(
  * receipts and uncertain submissions remain held; absence is not failure proof. */
 export async function reconcileFailedAttempts(
   db: D1Database,
-  deployments: PaymentDeployment[],
+  deployments: readonly DeploymentView<"chain" | "vault", "chainId">[],
   rpcUrls: Record<string, string>,
   genesisHashes: Record<string, string> = {},
   now = new Date(),
@@ -107,11 +92,11 @@ export async function reconcileFailedAttempts(
       } else {
         if (
           !genesisHashes[deployment.network] ||
-          (await rpc(url, "getGenesisHash", [])) !==
+          (await solanaRpc({ rpcUrl: url }, "getGenesisHash", [])) !==
             genesisHashes[deployment.network]
         )
           throw new Error("Reconciliation genesis mismatch");
-        const tx = (await rpc(url, "getTransaction", [
+        const tx = (await solanaRpc({ rpcUrl: url }, "getTransaction", [
           attempt.transactionId,
           { commitment: "finalized", maxSupportedTransactionVersion: 0 },
         ])) as { slot: number; meta: { err: unknown } } | null;

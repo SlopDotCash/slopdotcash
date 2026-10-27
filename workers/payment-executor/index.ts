@@ -1,4 +1,5 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { privateKeyToAccount } from "viem/accounts";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import type { PaymentExecutor } from "../../backend/payments/dispatch";
@@ -54,6 +55,7 @@ import {
 } from "./monthly-release";
 import {
   SIGNER_STACKS,
+  type SignerStack,
   signerStack,
   stackServesNetwork,
 } from "./signer-stacks.mjs";
@@ -65,8 +67,6 @@ import {
   solanaTransactionStatus,
 } from "./solana";
 import { freezeSolanaMonthly, submitSolanaMonthly } from "./solana-monthly";
-
-export { createEvmAttester, createEvmExecutor } from "./core";
 
 interface Fetcher {
   fetch(request: Request): Promise<Response>;
@@ -154,7 +154,8 @@ export class PaymentSignerJournal {
             input,
           ),
         );
-      } catch {
+      } catch (error) {
+        logRejected("/v1/reconcile-binding", error);
         return Response.json(
           { error: "binding_recovery_pending_or_rejected" },
           { status: 409 },
@@ -178,7 +179,7 @@ export class PaymentSignerJournal {
       this.env.PAYMENT_SCOPE === "security-bounty"
         ? securityPaymentDatabase(this.env.PAYMENTS_DB)
         : this.env.PAYMENTS_DB;
-    const pathname = new URL(request.url).pathname;
+    const { pathname } = url;
     if (
       request.method !== "POST" ||
       ![
@@ -236,19 +237,11 @@ export class PaymentSignerJournal {
           };
           return Response.json(idle);
         }
-        const key = this.env[SIGNER_STACKS[stack].evmSecret];
-        if (!key) throw new Error("Signer unavailable");
-        const account = privateKeyToAccount(key);
-        const signer: Signer = {
-          address: account.address,
-          signTransaction: (transaction) =>
-            account.signTransaction(transaction),
-        };
         // One contributor's held or rejected binding never stops the others;
         // the failure count makes the scheduled run fail.
         return Response.json(
           await runStoredBindings(
-            { ...environment, SIGNER: signer },
+            { ...environment, SIGNER: evmSigner(this.env, stack) },
             candidates,
           ),
         );
@@ -276,27 +269,16 @@ export class PaymentSignerJournal {
           throw new Error("Wrong signer stack");
         if (this.env.CHAIN_FAMILY === "solana") {
           await preflightSolanaDeployment(this.env, target);
-          const encodedSeed = this.env[SIGNER_STACKS[stack].solanaSecret];
-          if (!encodedSeed || !/^[0-9a-f]{64}$/.test(encodedSeed))
-            throw new Error("Signer unavailable");
-          const seed = Uint8Array.from(encodedSeed.match(/../g) ?? [], (byte) =>
-            Number.parseInt(byte, 16),
-          );
           return Response.json(
             await submitSolanaMonthly(
               {
                 PAYMENT_DEPLOYMENTS: this.env.PAYMENT_DEPLOYMENTS,
                 PAYMENT_RPC_URLS: this.env.PAYMENT_RPC_URLS,
                 JOURNAL: this.state.storage,
-                SOLANA_SIGNER: {
-                  address: solanaBase58(ed25519.getPublicKey(seed)),
-                  async signMessage(message: Uint8Array) {
-                    return ed25519.sign(message, seed);
-                  },
-                },
+                SOLANA_SIGNER: solanaSigner(this.env, stack),
               },
               authorization,
-              new URL(request.url).searchParams.get("admit") !== "false",
+              url.searchParams.get("admit") !== "false",
               // Settle every remaining leaf promptly after admission, bounded
               // per call by Worker subrequest limits.
               16,
@@ -304,18 +286,16 @@ export class PaymentSignerJournal {
           );
         }
         await preflightEvmDeployment(this.env, target);
-        const key = this.env[SIGNER_STACKS[stack].evmSecret];
-        if (!key) throw new Error("Signer unavailable");
         return Response.json(
           await submitEvmMonthly(
             {
               PAYMENT_DEPLOYMENTS: this.env.PAYMENT_DEPLOYMENTS,
               PAYMENT_RPC_URLS: this.env.PAYMENT_RPC_URLS,
               JOURNAL: this.state.storage,
-              SIGNER: privateKeyToAccount(key),
+              SIGNER: evmSigner(this.env, stack),
             },
             authorization,
-            new URL(request.url).searchParams.get("admit") !== "false",
+            url.searchParams.get("admit") !== "false",
             16,
           ),
         );
@@ -354,27 +334,8 @@ export class PaymentSignerJournal {
           },
           solana: (deployment) =>
             preflightSolanaDeployment(this.env, deployment),
-          sign: async (messageHex) => {
-            const secrets = SIGNER_STACKS[stack];
-            if (this.env.CHAIN_FAMILY === "evm") {
-              const key = this.env[secrets.evmSecret];
-              if (!key) throw new Error("Signer unavailable");
-              return (
-                await privateKeyToAccount(key).sign({ hash: `0x${messageHex}` })
-              ).slice(2);
-            }
-            const seed = this.env[secrets.solanaSecret];
-            if (!seed || !/^[0-9a-f]{64}$/.test(seed))
-              throw new Error("Signer unavailable");
-            const bytes = (value: string) =>
-              Uint8Array.from(value.match(/../g) ?? [], (b) =>
-                Number.parseInt(b, 16),
-              );
-            return Array.from(
-              ed25519.sign(bytes(messageHex), bytes(seed)),
-              (b) => b.toString(16).padStart(2, "0"),
-            ).join("");
-          },
+          sign: (messageHex) =>
+            signDigest(this.env, stack, this.env.CHAIN_FAMILY, messageHex),
         };
         return Response.json(
           await (isMonthlyReleaseCheck(input)
@@ -413,7 +374,6 @@ export class PaymentSignerJournal {
           string,
           unknown
         >[];
-        const secrets = SIGNER_STACKS[stack];
         const authorization = await signMonthlyAllocation(
           {
             db: database,
@@ -481,30 +441,8 @@ export class PaymentSignerJournal {
                 }),
                 plan,
               ),
-            sign: async (plan) => {
-              if (plan.family === "evm") {
-                const key = this.env[secrets.evmSecret];
-                if (!key) throw new Error("Signer unavailable");
-                return (
-                  await privateKeyToAccount(key).sign({
-                    hash: `0x${plan.messageHex}`,
-                  })
-                ).slice(2);
-              }
-              const encoded = this.env[secrets.solanaSecret];
-              if (!encoded || !/^[a-f0-9]{64}$/.test(encoded))
-                throw new Error("Signer unavailable");
-              const seed = Uint8Array.from(encoded.match(/../g) ?? [], (b) =>
-                Number.parseInt(b, 16),
-              );
-              const message = Uint8Array.from(
-                plan.messageHex.match(/../g) ?? [],
-                (b) => Number.parseInt(b, 16),
-              );
-              return Array.from(ed25519.sign(message, seed), (b) =>
-                b.toString(16).padStart(2, "0"),
-              ).join("");
-            },
+            sign: (plan) =>
+              signDigest(this.env, stack, plan.family, plan.messageHex),
           },
           input,
         );
@@ -593,7 +531,6 @@ export class PaymentSignerJournal {
       let engine: PaymentExecutor;
       if (!stackServesNetwork(stack, input.network))
         throw new Error("Signer stack does not serve this network");
-      const secrets = SIGNER_STACKS[stack];
       if (
         pathname === "/v1/complete-bind" &&
         (this.env.SIGNER_ROLE !== "attester" ||
@@ -602,14 +539,7 @@ export class PaymentSignerJournal {
         return new Response("Not found", { status: 404 });
       if (this.env.CHAIN_FAMILY === "evm") {
         await preflightEvmDeployment(this.env, input);
-        const key = this.env[secrets.evmSecret];
-        if (!key) throw new Error("Signer unavailable");
-        const account = privateKeyToAccount(key);
-        const signer: Signer = {
-          address: account.address,
-          signTransaction: (transaction) =>
-            account.signTransaction(transaction),
-        };
+        const signer = evmSigner(this.env, stack);
         engine =
           this.env.SIGNER_ROLE === "attester"
             ? createEvmAttester({ ...common, SIGNER: signer })
@@ -620,18 +550,7 @@ export class PaymentSignerJournal {
               });
       } else if (this.env.CHAIN_FAMILY === "solana") {
         await preflightSolanaDeployment(this.env, input);
-        const encodedSeed = this.env[secrets.solanaSecret];
-        if (!encodedSeed || !/^[0-9a-f]{64}$/.test(encodedSeed))
-          throw new Error("Signer unavailable");
-        const seed = Uint8Array.from(encodedSeed.match(/../g) ?? [], (byte) =>
-          Number.parseInt(byte, 16),
-        );
-        const signer = {
-          address: solanaBase58(ed25519.getPublicKey(seed)),
-          async signMessage(message: Uint8Array) {
-            return ed25519.sign(message, seed);
-          },
-        };
+        const signer = solanaSigner(this.env, stack);
         // A Solana binding needs the destination wallet's signature on the
         // same bytes: the attester prepares and half-signs it, the wallet
         // co-signs, and the completed transaction comes back here.
@@ -660,6 +579,7 @@ export class PaymentSignerJournal {
           { status: 409 },
         );
       // No keys, signed transaction bytes, wallet consent signatures, or RPC credentials in responses/logs.
+      logRejected(pathname, error);
       return Response.json(
         { error: "execution_pending_or_rejected" },
         { status: 409 },
@@ -800,6 +720,60 @@ function scheduledBindings(env: Environment) {
     env.SIGNER_ROLE === "attester" &&
     env.CHAIN_FAMILY === "evm" &&
     (stack === "production" || env.SCHEDULED_BINDINGS === "on")
+  );
+}
+
+/**
+ * The stack's signer keys. Each is read only when a signing route calls it,
+ * after that route's stack, network and deployment checks.
+ */
+function evmAccount(env: Environment, stack: SignerStack) {
+  const key = env[SIGNER_STACKS[stack].evmSecret];
+  if (!key) throw new Error("Signer unavailable");
+  return privateKeyToAccount(key);
+}
+function evmSigner(env: Environment, stack: SignerStack): Signer {
+  const account = evmAccount(env, stack);
+  return {
+    address: account.address,
+    signTransaction: (transaction) => account.signTransaction(transaction),
+  };
+}
+function solanaSigner(env: Environment, stack: SignerStack) {
+  const encoded = env[SIGNER_STACKS[stack].solanaSecret];
+  if (!encoded || !/^[0-9a-f]{64}$/.test(encoded))
+    throw new Error("Signer unavailable");
+  const seed = hexToBytes(encoded);
+  return {
+    address: solanaBase58(ed25519.getPublicKey(seed)),
+    async signMessage(message: Uint8Array) {
+      return ed25519.sign(message, seed);
+    },
+  };
+}
+/** Signs a hex digest (EVM) or message (Solana) and returns the hex signature. */
+async function signDigest(
+  env: Environment,
+  stack: SignerStack,
+  family: "evm" | "solana",
+  messageHex: string,
+) {
+  if (family === "evm")
+    return (
+      await evmAccount(env, stack).sign({ hash: `0x${messageHex}` })
+    ).slice(2);
+  return bytesToHex(
+    await solanaSigner(env, stack).signMessage(hexToBytes(messageHex)),
+  );
+}
+/** Fixed fields only: an error message can contain a private RPC URL. */
+function logRejected(route: string, error: unknown) {
+  console.error(
+    JSON.stringify({
+      event: "attester_request_rejected",
+      route,
+      kind: error instanceof Error ? error.name : "unknown",
+    }),
   );
 }
 

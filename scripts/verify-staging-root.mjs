@@ -3,8 +3,9 @@
  * Cost: at most six reads, one second apart, within a 30-second total deadline.
  * Only transport/transient HTTP failures retry; a redirect, missing security
  * header or other permanent HTTP failure rejects the release immediately.
+ * Tests pass a zero retry delay.
  */
-export async function verifyStagingRoot(origin) {
+export async function verifyStagingRoot(origin, retryDelayMs = 1000) {
   const deadline = Date.now() + 30000;
   let lastError;
   for (let attempt = 1; attempt <= 6; attempt++) {
@@ -42,8 +43,8 @@ export async function verifyStagingRoot(origin) {
       );
       if (![429, 500, 502, 503, 504].includes(response.status)) throw lastError;
     }
-    if (attempt < 6 && deadline - Date.now() > 1000) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    if (attempt < 6 && deadline - Date.now() > retryDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
   }
   throw new Error(

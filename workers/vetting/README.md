@@ -138,8 +138,10 @@ response reports the same source revision and a real image digest. Set the
 environment's `VETTING_CONTROLLER_RELEASE` to `enabled`, then dispatch the
 workflow on that branch for qualification. Set the repository's
 `VETTING_CONTROLLER_SCHEDULE` to `enabled` only after qualification. Scheduled
-dispatch occurs every 15 minutes and skips a branch with an active controller
-run.
+dispatch occurs every 15 minutes. It skips a branch with an active controller
+run, and a branch whose head has no successful `deploy.yml` release yet,
+because that head's sandbox is not deployed. The skip is a run notice, not a
+failed scan.
 
 The workflow and journal source do not establish deployment or provider
 acceptance. Verify the full scan, private evidence, publication and recovery
@@ -151,10 +153,11 @@ The inventory digest covers executable content and the digests of retained
 binary, archive and quarantined artifacts. Documentation that is not an agent
 instruction file does not change it. A later commit whose
 executable inventory, skill template and scan policy are byte-identical to a
-clean scan reuses that result with `reuseCleanScan`; the intake checks that
-the cited original is a clean, non-reused scan of the same repository,
-inventory, template, policy, run and report. Any change to executable
-content produces a new digest and a new scan.
+clean scan may cite that result; the intake checks that the cited original is
+a clean, non-reused scan of the same repository, inventory, template, policy,
+run and report. The controller does not produce such citations today: each
+queued assessment gets a new scan. Any change to executable content produces
+a new digest and a new scan.
 
 The signed service calls `POST /api/v1/vetting/refresh` before reading the
 queue. Slop then queues, for the project steward, a scan of every listed

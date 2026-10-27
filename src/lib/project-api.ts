@@ -16,11 +16,7 @@ export type {
   AdminProject,
   EnforcementAction,
   EnforcementPreview,
-  ProjectEnforcement as ProjectEnforcementRecord,
-  ProjectEnforcementState,
-  ProjectSetupStatus,
   PublicProjectApplication as ProjectApplication,
-  WebSession as ProjectSession,
 } from "./project-contracts";
 
 export class ProjectApiError extends Error {
@@ -31,6 +27,31 @@ export class ProjectApiError extends Error {
   ) {
     super(message);
   }
+}
+
+/**
+ * One same-origin JSON request to the API with its own deadline. A body makes
+ * it a POST. Callers read the bounded response and map statuses to their copy.
+ */
+export function apiRequest(
+  path: string,
+  {
+    body,
+    signal,
+    timeoutMs,
+  }: { body?: unknown; signal?: AbortSignal; timeoutMs: number },
+): Promise<Response> {
+  const deadline = AbortSignal.timeout(timeoutMs);
+  return fetch(`/api/v1/${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    credentials: "same-origin",
+    redirect: "error",
+    cache: "no-store",
+    headers:
+      body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+  });
 }
 
 export async function projectApiRequest<T>(

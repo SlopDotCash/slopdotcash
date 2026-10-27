@@ -1,5 +1,5 @@
 /** Keep standalone skill archives self-contained, with one authoring source. */
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROJECT_SKILL_TEMPLATES } from "../src/lib/project-schema.mjs";
@@ -16,20 +16,15 @@ const names = [
   "wallet-claim.mjs",
 ];
 const check = process.argv.includes("--check");
-// Registry skills, plus the frozen fixture skills that tests and the browser
-// fixture build install, so both always exercise the current shared scripts.
-const fixtureSkills = join("tests", "fixtures", "skills");
 // The contributor template always carries every shared script, so every
-// generated project skill does too.
+// generated project skill does too. The frozen fixture skills receive the
+// shared scripts when tests/fixture-overlay.mjs copies them.
 const TEMPLATE = PROJECT_SKILL_TEMPLATES.contributor;
 const skillPaths = [
   ...new Set([
     TEMPLATE,
     ...PROJECTS.map((project) => project.skill.sourcePath),
   ]),
-  ...readdirSync(join(root, fixtureSkills))
-    .filter((name) => name.startsWith("contribute-to-"))
-    .map((name) => join(fixtureSkills, name)),
 ];
 for (const name of names) {
   const source = join(sourceRoot, name);

@@ -5,8 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { encodeFunctionData, parseAbi } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import {
@@ -21,16 +20,23 @@ import {
   captureUpgrade,
   deployUpgradeableFactory,
 } from "../../contracts/evm/integration/upgrade";
+import { formatBaseUnits } from "../../src/lib/base-units.mjs";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
 } from "../../src/lib/escrow-policy.mjs";
-import { formatAssetAmount } from "../../src/lib/project-schema.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import {
   applicationManifest,
   CONTRIBUTION,
 } from "../project-application-manifest";
+import {
+  escapeRegExp,
+  expect,
+  expectAccessible,
+  serveProjectCycleIndex,
+  test,
+} from "./fixtures";
 
 test.skip(
   process.env.SLOP_E2E_VAULT_ACTIONS !== "1",
@@ -216,7 +222,7 @@ test.beforeAll(async () => {
       ...original.reward,
       chain: "base",
       currency: "TEST",
-      monthlyCapDisplay: `${formatAssetAmount(original.reward.monthlyCapMinor, 6)} TEST`,
+      monthlyCapDisplay: `${formatBaseUnits(original.reward.monthlyCapMinor, 6)} TEST`,
       feeBasisPoints: 200,
       paymentMode: "disabled",
       committedMinor: "0",
@@ -248,11 +254,6 @@ test.afterAll(() => anvil?.kill("SIGTERM"));
 test("depositor funds a real vault, recovers a submitted transaction and owner withdraws only free funds", async ({
   page,
 }, info) => {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (event) => {
-    if (event.type() === "error") errors.push(event.text());
-  });
   let account = donor;
   let wrongNetwork = true;
   let rejected = false;
@@ -311,6 +312,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     (route) =>
       route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
   );
+  await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/api/v1/projects/eliza", (route) =>
     route.fulfill({ json: { project, revision: 1 } }),
   );
@@ -559,13 +561,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   expect((await rpc("eth_getTransactionReceipt", [sends[3]])).status).toBe(
     "0x0",
   );
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   // The finalized monthly awards are a controlled fixture here; wallet execution and reserve
   // verification use the actual local contract and canonical finalized blocks.
   forceFailedTransaction = false;
@@ -761,24 +757,12 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
-  expect(errors).toEqual([]);
+  await expectAccessible(page);
 });
 
 test("owner turns automatic monthly payment on by default, then opts out", async ({
   page,
 }, info) => {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (event) => {
-    if (event.type() === "error") errors.push(event.text());
-  });
   let account = donor;
   let rejected = false;
   let ambiguous = false;
@@ -831,6 +815,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
     (route) =>
       route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
   );
+  await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/api/v1/projects/eliza", (route) =>
     route.fulfill({ json: { project, revision: 1 } }),
   );
@@ -873,7 +858,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
     ...project,
     rewardAsset: { ...project.rewardAsset, address: otherToken.toLowerCase() },
   };
-  const cap = formatAssetAmount(project.reward.monthlyCapMinor, 6);
+  const cap = formatBaseUnits(project.reward.monthlyCapMinor, 6);
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   const monthly = page.getByRole("region", {
     name: "Automatic monthly payment · base-sepolia",
@@ -991,17 +976,11 @@ test("owner turns automatic monthly payment on by default, then opts out", async
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
-  expect(errors).toEqual([]);
+  await expectAccessible(page);
 });
 
 test("owner creates, registers and funds a vault through the real API", async ({
+  diagnostics,
   page,
 }, info) => {
   test.setTimeout(180_000);
@@ -1255,18 +1234,16 @@ test("owner creates, registers and funds a vault through the real API", async ({
         },
       });
     }, initial.token);
-    const errors: string[] = [];
+    // The recovery rejection below; failedRequests checks its timing.
+    diagnostics.allow(
+      new RegExp(
+        `^console Failed to load resource: the server responded with a status of 422 .* at ${escapeRegExp(origin)}/api/v1/project-vaults/${escapeRegExp(project.id)}$`,
+        "u",
+      ),
+    );
     const failedRequests: string[] = [];
     let expectedRecoveryRejection = false;
-    const watch = (candidate: Page) => {
-      candidate.on("pageerror", (e) => errors.push(e.message));
-      candidate.on("console", (e) => {
-        if (
-          e.type() === "error" &&
-          !(expectedRecoveryRejection && e.text().includes("status of 422"))
-        )
-          errors.push(e.text());
-      });
+    const watch = (candidate: Page) =>
       candidate.on("response", (r) => {
         if (
           r.url().startsWith(origin) &&
@@ -1279,7 +1256,6 @@ test("owner creates, registers and funds a vault through the real API", async ({
         )
           failedRequests.push(`${r.status()} ${r.url()}`);
       });
-    };
     watch(page);
     await page.goto(`${origin}/projects/${project.slug}/funding`, {
       waitUntil: "networkidle",
@@ -1357,13 +1333,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       exact: true,
     });
     await expect(recoverButton).toBeEnabled();
-    expect(
-      (
-        await new AxeBuilder({ page: recoveryPage })
-          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-          .analyze()
-      ).violations,
-    ).toEqual([]);
+    await expectAccessible(recoveryPage);
     await recoveryPage.screenshot({
       path: info.outputPath("owner-vault-recovery-ready-no-wallet.png"),
       fullPage: true,
@@ -1571,20 +1541,13 @@ test("owner creates, registers and funds a vault through the real API", async ({
         ]),
       ),
     ).toBe(10_000_000n);
-    expect(errors).toEqual([]);
     expect(failedRequests).toEqual([]);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-          .analyze()
-      ).violations,
-    ).toEqual([]);
+    await expectAccessible(page);
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
     await page.screenshot({
       path: info.outputPath("owner-vault-funded.png"),
@@ -1604,15 +1567,8 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await expect(
       page.getByText(/Deposit needed|Payments off|Payouts are disabled/),
     ).toHaveCount(0);
-    expect(errors).toEqual([]);
     expect(failedRequests).toEqual([]);
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-          .analyze()
-      ).violations,
-    ).toEqual([]);
+    await expectAccessible(page);
     await page.screenshot({
       path: info.outputPath("owner-project-payment-links.png"),
       fullPage: true,
@@ -1628,6 +1584,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
 });
 
 test("owner funds a separate bounty vault with private balances and no monthly reward", async ({
+  diagnostics,
   page,
 }, info) => {
   test.setTimeout(180_000);
@@ -1823,16 +1780,23 @@ test("owner funds a separate bounty vault with private balances and no monthly r
         },
       });
     }, initial.token);
-    const errors: string[] = [];
     const failed: string[] = [];
     const privateUrl = `${origin}/api/v1/project-vaults/${id}?purpose=security-bounty`;
+    // The refused private reads, counted below.
+    diagnostics.allow(
+      new RegExp(
+        `^console .*(?:403|503).* at ${escapeRegExp(privateUrl)}$`,
+        "u",
+      ),
+    );
     let expectedPrivateErrors = 0;
-    page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (event) => {
-      if (event.type() !== "error") return;
-      if (event.location().url === privateUrl && /403|503/.test(event.text()))
+      if (
+        event.type() === "error" &&
+        event.location().url === privateUrl &&
+        /403|503/.test(event.text())
+      )
         expectedPrivateErrors++;
-      else errors.push(event.text());
     });
     page.on("response", (response) => {
       if (response.url().startsWith(origin) && response.status() >= 400)
@@ -1969,7 +1933,6 @@ test("owner funds a separate bounty vault with private balances and no monthly r
       await page.request.get(`${origin}/api/v1/projects/${id}`)
     ).text();
     expect(publicProject).not.toMatch(/availableMinor|freeMinor|snapshotAt/);
-    expect(errors).toEqual([]);
     expect(failed).toEqual([`503 ${privateUrl}`]);
     expect(expectedPrivateErrors).toBe(1);
     expect(
@@ -1977,13 +1940,7 @@ test("owner funds a separate bounty vault with private balances and no monthly r
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
-    expect(
-      (
-        await new AxeBuilder({ page })
-          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-          .analyze()
-      ).violations,
-    ).toEqual([]);
+    await expectAccessible(page);
     await page.screenshot({
       path: info.outputPath("bounty-vault-funded-open.png"),
       fullPage: true,
@@ -2027,7 +1984,6 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await expect(bountyFunds).toContainText(
       "Available for new awards: 10 USDC",
     );
-    expect(errors).toEqual([]);
     expect(failed).toEqual([`503 ${privateUrl}`, `403 ${privateUrl}`]);
     expect(expectedPrivateErrors).toBe(2);
   } finally {

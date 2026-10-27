@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { SignInPanel } from "./Admin";
 import { sha256Hex } from "./lib/async-sha256.mjs";
 import { fetchWithDeadline } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import { projectApiRequest, useProjectSession } from "./lib/project-api";
 
 const MAX_TRACE_BYTES = 8 * 1024 * 1024;
@@ -82,9 +83,10 @@ function TraceDownloadForm() {
       if (controller.signal.aborted) return;
       setStatus("");
       setError(
-        caught instanceof Error
-          ? caught.message
-          : "Download failed. Retry to request a new one-use grant.",
+        errorMessage(
+          caught,
+          "Download failed. Retry to request a new one-use grant.",
+        ),
       );
     } finally {
       bytes?.fill(0);

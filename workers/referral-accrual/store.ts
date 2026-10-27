@@ -231,17 +231,20 @@ export class D1AccrualStore implements AccrualStore, PostStore {
   async claimWallet(githubId: string) {
     const row = await this.db
       .prepare(
-        `SELECT w.wallet_address FROM wallet_claims w
+        `SELECT w.id, w.wallet_address FROM wallet_claims w
            JOIN payment_wallet_authorizations a ON a.claim_id = w.id
           WHERE w.github_user_id = ? AND w.chain = ?
             AND NOT EXISTS (SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id = w.id)
           LIMIT 1`,
       )
       .bind(githubId, CLAIM_CHAIN)
-      .first<{ wallet_address: string }>();
+      .first<{ id: string; wallet_address: string }>();
     if (!row) return null;
     const address = row.wallet_address.toLowerCase();
-    return /^0x[0-9a-f]{40}$/u.test(address) ? address : null;
+    // A malformed registered wallet must not silently cost the referrer a leaf.
+    if (!/^0x[0-9a-f]{40}$/u.test(address))
+      throw new TypeError(`Wallet claim ${row.id} has a malformed address`);
+    return address;
   }
 
   async pinnedWallets() {

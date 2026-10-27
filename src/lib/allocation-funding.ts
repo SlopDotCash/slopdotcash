@@ -1,7 +1,6 @@
 import { isBaseUnits } from "./escrow-policy.mjs";
 /** Frozen monetary basis for new proposals; accepted score is independent. */
 
-import { deriveAllocationFundingBasis } from "./allocation-funding-basis.mjs";
 import type { CycleIndexEntry } from "./cycle-index";
 import type { ProjectDefinition } from "./projects.mjs";
 
@@ -58,9 +57,13 @@ function assertFundingAmounts(value: unknown): {
 export type PromotionCycle = Pick<
   CycleIndexEntry,
   "cycleId" | "projectId" | "kind"
-> & { reward: Pick<CycleIndexEntry["reward"], "fundingBasis"> };
+>;
 
-/** Missing history cannot authorize promotion; funded projects may resume it. */
+/**
+ * Missing history cannot authorize promotion. Two consecutive earlier monthly
+ * cycles end it: no frozen funding basis backs a monthly pool (the vault
+ * enforces funds), so no recorded cycle can resume it.
+ */
 export function projectPromotionEligible(
   project: ProjectDefinition,
   cycles: readonly PromotionCycle[] | null,
@@ -69,12 +72,6 @@ export function projectPromotionEligible(
   if (project.status !== "active") return false;
   if (project.reward.kind !== "monthly-pool") return true;
   if (cycles === null || displayCycleId === null) return false;
-  if (
-    allocationFundingMinor(
-      deriveAllocationFundingBasis(project, displayCycleId),
-    ) > 0n
-  )
-    return true;
   const history = cycles
     .filter(
       (cycle) =>
@@ -90,11 +87,6 @@ export function projectPromotionEligible(
     const monthOrdinal = year * 12 + month;
     if (previousMonth !== null && monthOrdinal !== previousMonth - 1) break;
     previousMonth = monthOrdinal;
-    if (
-      cycle.reward.fundingBasis &&
-      allocationFundingMinor(cycle.reward.fundingBasis) > 0n
-    )
-      break;
     consecutive += 1;
     if (consecutive >= 2) return false;
   }

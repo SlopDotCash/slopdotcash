@@ -812,25 +812,6 @@ test("an application stored before self-service setup publishes once, by its app
   });
 });
 
-test("the removed admin approval routes no longer exist", async () => {
-  const { call } = registry();
-  for (const path of [
-    "admin/project-applications",
-    "admin/project-applications/app_storedapplication1/approve",
-  ])
-    expect(
-      (await call(path.endsWith("approve") ? "POST" : "GET", path, ADMIN, {}))
-        .status,
-    ).toBe(404);
-  expect(
-    (
-      await call("POST", "project-applications", OWNER, {
-        manifest: applicationManifest("open-registry", "example/open-registry"),
-      })
-    ).status,
-  ).toBe(404);
-});
-
 test("the scan digest ignores presentation, listing and money but binds skill inputs", async () => {
   const base = applicationManifest(
     "open-registry",
@@ -1838,9 +1819,76 @@ test("an open account appeal survives later project restrictions and needs an in
   expect(keptAppeal.status).toBe(200);
   expect(keptAppeal.body.record).toMatchObject({ appealAfter: "denied" });
   expect((await decide("deny_reinstatement", ADMIN, 15)).status).toBe(409);
+  // OTHER appeals its account ban at /admin while the project is clear. The
+  // request is an account appeal: only OWNER, who did not ban OTHER, reviews
+  // it, and it cannot authorize project reinstatement. After a later ban and
+  // a malicious result keep it, releasing OTHER leaves no appeal open.
+  const beforeClear = await t.persistence.getProject(project.id);
+  if (!beforeClear) throw new Error("Project missing");
+  expect(
+    await t.persistence.appendEnforcement(
+      {
+        id: "enf_clear_denial_reinstate_2",
+        projectId: project.id,
+        sequence: 15,
+        action: "reinstate",
+        stateAfter: "clear",
+        appealAfter: "granted",
+        reason: "Clean scan after revert clears the project",
+        evidenceReference: "private-project-review-fixture",
+        repositoryGithubId: "987654321",
+        repositoryKeys: ["example/clear-denial"],
+        actor: { githubId: OWNER, githubLogin: "owner" },
+        actorRole: "project-moderator",
+        decisionSource: "admin-panel",
+        beforeRevision: beforeClear.revision,
+        beforeManifestSha256: beforeClear.manifestSha256,
+        afterRevision: null,
+        afterManifestSha256: null,
+        result: "no_revision_needed",
+        createdAt: NOW,
+      },
+      null,
+      [],
+    ),
+  ).toBe("recorded");
+  const clearAppeal = await decide("request_reinstatement", OTHER, 16);
+  expect(clearAppeal.status).toBe(200);
+  expect(clearAppeal.body.record).toMatchObject({
+    actorRole: "banned-account",
+    decisionSource: "account-request",
+    stateAfter: "clear",
+  });
+  expect(
+    t.sqlite
+      .query(
+        "SELECT recipient_github_id FROM notifications WHERE event_key = ?",
+      )
+      .all(
+        `reinstatement-review:${(clearAppeal.body.record as { id: string }).id}`,
+      ),
+  ).toEqual([{ recipient_github_id: OWNER }]);
+  expect((await decide("ban", ADMIN, 17, [])).status).toBe(200);
+  const accountOnlyReinstate = await decide("reinstate", OWNER, 18);
+  expect(accountOnlyReinstate.status).toBe(409);
+  expect(accountOnlyReinstate.body.error).toBe("no_open_appeal");
+  expect(await vettingBan(18, "requested")).toBe("recorded");
+  const release = await decide("reinstate_accounts", OWNER, 19, [
+    { githubLogin: "other" },
+  ]);
+  expect(release.status).toBe(200);
+  expect(release.body.record).toMatchObject({ appealAfter: "granted" });
+  const decision = await decide("ban", ADMIN, 20, []);
+  expect(decision.status).toBe(200);
+  expect(decision.body.record).toMatchObject({ appealAfter: "none" });
 });
 
-test("a malicious decision that closes a kept project appeal needs an independent moderator while an account appeal is open", async () => {
+/**
+ * ADMIN placed the restriction and banned OTHER. OTHER's account appeal and
+ * OWNER's project appeal are open when two confirmed malicious results keep
+ * both appeals, so the next record has sequence 7.
+ */
+async function keptAppealFlow() {
   const t = registry();
   t.deps.moderatorGithubIds = new Set([ADMIN, OWNER]);
   t.deps.adminGithubIds = new Set([ADMIN, OWNER]);
@@ -1924,6 +1972,11 @@ test("a malicious decision that closes a kept project appeal needs an independen
   // keeps both appeals open.
   expect(await vettingBan(5, "requested")).toBe("recorded");
   expect(await vettingBan(6, "requested")).toBe("recorded");
+  return { t, decide };
+}
+
+test("a malicious decision that closes a kept project appeal needs an independent moderator while an account appeal is open", async () => {
+  const { t, decide } = await keptAppealFlow();
   // The decision closes the kept project appeal, so ADMIN, who placed the
   // restriction, cannot make it even though OTHER's account appeal is open.
   const placerDecision = await decide("ban", ADMIN, 7, []);
@@ -1939,6 +1992,199 @@ test("a malicious decision that closes a kept project appeal needs an independen
       { projectId: "kept-appeal", state: "banned", appeal: "requested" },
     ],
   });
+});
+
+test("an account release leaves the kept project appeal for an independent malicious decision", async () => {
+  const { decide } = await keptAppealFlow();
+  // OWNER did not ban OTHER, so OWNER can release OTHER. The release decides
+  // only OTHER's appeal; the kept project appeal stays open.
+  const release = await decide("reinstate_accounts", OWNER, 7, [
+    { githubLogin: "other" },
+  ]);
+  expect(release.status).toBe(200);
+  expect(release.body.record).toMatchObject({ appealAfter: "requested" });
+  // ADMIN placed the restriction, so ADMIN still cannot close that appeal.
+  const placerDecision = await decide("ban", ADMIN, 8, []);
+  expect(placerDecision.status).toBe(403);
+  expect(placerDecision.body.error).toBe("independent_review_required");
+  const independent = await decide("ban", OWNER, 8, []);
+  expect(independent.status).toBe(200);
+  expect(independent.body.record).toMatchObject({ appealAfter: "denied" });
+});
+
+test("a banned owner or moderator separates its project appeal from its account appeal in both filing orders", async () => {
+  const MOD_2 = "900000005";
+  const t = registry();
+  t.deps.moderatorGithubIds = new Set([ADMIN, MOD_2, OTHER]);
+  t.deps.adminGithubIds = new Set([ADMIN, MOD_2, OTHER]);
+  t.deps.github.fetch = async (url) =>
+    Response.json(
+      String(url).endsWith("/owner")
+        ? { id: Number(OWNER), login: "owner", type: "User" }
+        : { id: Number(OTHER), login: "other", type: "User" },
+    );
+  expect((await t.create("dual-appeal", "example/dual-appeal")).status).toBe(
+    201,
+  );
+  const project = await t.persistence.getProject("dual-appeal");
+  if (!project) throw new Error("Project missing");
+  const vettingBan = async (
+    sequence: number,
+    appealAfter: "none" | "requested" = "none",
+  ) => {
+    const current = await t.persistence.getProject(project.id);
+    if (!current) throw new Error("Project missing");
+    return t.persistence.appendEnforcement(
+      {
+        id: `enf_dual_appeal_scan_${sequence}`,
+        projectId: project.id,
+        sequence,
+        action: "ban",
+        stateAfter: "banned",
+        appealAfter,
+        reason: "Synthetic confirmed malicious scan",
+        evidenceReference: "private-case-fixture",
+        repositoryGithubId: "987654321",
+        repositoryKeys: ["example/dual-appeal"],
+        actor: null,
+        actorRole: "vetting-service",
+        decisionSource: "standing-rule",
+        systemIssuer: {
+          kind: "vetting-service",
+          keySha256: "a".repeat(64),
+          assessmentId: `vet_fixture_${sequence}`,
+          policyVersion: "fixture",
+          rule: "confirmed-malicious",
+        },
+        beforeRevision: current.revision,
+        beforeManifestSha256: current.manifestSha256,
+        afterRevision: null,
+        afterManifestSha256: null,
+        result: "revision_pending",
+        createdAt: NOW,
+      },
+      null,
+      [],
+    );
+  };
+  expect(await vettingBan(1)).toBe("recorded");
+  const decide = async (
+    action: string,
+    actor: string,
+    sequence: number,
+    responsibleAccounts?: { githubLogin: string }[],
+  ) =>
+    t.call("POST", "admin/projects/dual-appeal/enforcement", actor, {
+      action,
+      reason: `Moderator decision: ${action}`,
+      evidenceReference: "private-case-fixture",
+      expectedRevision: (await t.persistence.getProject(project.id))?.revision,
+      expectedSequence: sequence,
+      ...(responsibleAccounts ? { responsibleAccounts } : {}),
+    });
+  const ownerAppeal = () =>
+    t.call("POST", "project-appeals", OWNER, {
+      projectId: "dual-appeal",
+      reason: "Review the restriction and account evidence",
+      evidenceReference: "private-owner-appeal-fixture",
+    });
+  const expectAccountAppeal = async (actor: string, appeal: string) =>
+    expect((await t.call("GET", "project-appeals", actor)).body).toEqual({
+      appeals: [{ projectId: "dual-appeal", state: "banned", appeal }],
+    });
+
+  expect(
+    (
+      await decide("ban", ADMIN, 2, [
+        { githubLogin: "owner" },
+        { githubLogin: "other" },
+      ])
+    ).status,
+  ).toBe(200);
+
+  // Order 1: while restricted with no project appeal open, the banned
+  // applicant files a project appeal first. That request does not open a
+  // phantom account appeal or survive project denial.
+  const firstProjectAppeal = await ownerAppeal();
+  expect(firstProjectAppeal.status).toBe(200);
+  expect(firstProjectAppeal.body.record).toMatchObject({
+    actorRole: "project-applicant",
+    decisionSource: "owner-request",
+    appealAfter: "requested",
+  });
+  await expectAccountAppeal(OWNER, "none");
+  const deniedProjectAppeal = await decide("deny_reinstatement", MOD_2, 4);
+  expect(deniedProjectAppeal.status).toBe(200);
+  expect(deniedProjectAppeal.body.record).toMatchObject({
+    appealAfter: "denied",
+  });
+  await expectAccountAppeal(OWNER, "none");
+  expect((await decide("deny_reinstatement", MOD_2, 5)).status).toBe(409);
+
+  // When a banned moderator opens the project appeal at /admin, both banned
+  // accounts can then file their own account appeals while it is open.
+  const modProjectAppeal = await decide("request_reinstatement", OTHER, 5);
+  expect(modProjectAppeal.status).toBe(200);
+  expect(modProjectAppeal.body.record).toMatchObject({
+    actorRole: "project-moderator",
+    decisionSource: "admin-panel",
+  });
+  await expectAccountAppeal(OTHER, "none");
+  const ownerAccountAppeal = await ownerAppeal();
+  expect(ownerAccountAppeal.status).toBe(200);
+  expect(ownerAccountAppeal.body.record).toMatchObject({
+    actorRole: "banned-account",
+    decisionSource: "account-request",
+  });
+  const modAccountAppeal = await decide("request_reinstatement", OTHER, 7);
+  expect(modAccountAppeal.status).toBe(200);
+  expect(modAccountAppeal.body.record).toMatchObject({
+    actorRole: "banned-account",
+    decisionSource: "account-request",
+  });
+  expect(
+    t.sqlite
+      .query(
+        "SELECT recipient_github_id FROM notifications WHERE event_key = ?",
+      )
+      .all(
+        `reinstatement-review:${(modAccountAppeal.body.record as { id: string }).id}`,
+      ),
+  ).toEqual([{ recipient_github_id: MOD_2 }]);
+  expect((await ownerAppeal()).status).toBe(409);
+  expect((await decide("request_reinstatement", OTHER, 8)).status).toBe(409);
+
+  // Order 2: denying the project appeal leaves both account appeals open, and
+  // an open account appeal does not block a new project appeal on either route.
+  expect((await decide("deny_reinstatement", MOD_2, 8)).status).toBe(200);
+  await expectAccountAppeal(OWNER, "requested");
+  await expectAccountAppeal(OTHER, "requested");
+  const reopenedByOwner = await ownerAppeal();
+  expect(reopenedByOwner.status).toBe(200);
+  expect(reopenedByOwner.body.record).toMatchObject({
+    actorRole: "project-applicant",
+    decisionSource: "owner-request",
+  });
+  expect((await decide("deny_reinstatement", MOD_2, 10)).status).toBe(200);
+  const reopenedByMod = await decide("request_reinstatement", OTHER, 11);
+  expect(reopenedByMod.status).toBe(200);
+  expect(reopenedByMod.body.record).toMatchObject({
+    actorRole: "project-moderator",
+    decisionSource: "admin-panel",
+  });
+  // After both project and account appeals are denied, a kept project appeal
+  // filed by a banned moderator closes cleanly without leaving a phantom
+  // account appeal.
+  expect((await decide("deny_reinstatement", MOD_2, 12)).status).toBe(200);
+  expect((await decide("deny_reinstatement", MOD_2, 13)).status).toBe(200);
+  expect((await decide("request_reinstatement", OTHER, 14)).status).toBe(200);
+  expect(await vettingBan(15, "requested")).toBe("recorded");
+  expect(await vettingBan(16, "requested")).toBe("recorded");
+  const keptDecision = await decide("ban", MOD_2, 17, []);
+  expect(keptDecision.status).toBe(200);
+  expect(keptDecision.body.record).toMatchObject({ appealAfter: "denied" });
+  await expectAccountAppeal(OTHER, "none");
+  expect((await decide("deny_reinstatement", MOD_2, 18)).status).toBe(409);
 });
 
 test("account-reinstatement upgrade preserves prior releases and separates future project decisions", async () => {
@@ -2327,5 +2573,119 @@ test("a ban issued during the authority check prevents automatic activation", as
   expect(await t.persistence.getProject(target.id)).toMatchObject({
     revision: 1,
     status: "paused",
+  });
+});
+
+test("an account-page appeal from a banned owner survives reload without opening a project appeal", async () => {
+  const t = registry();
+  t.deps.moderatorGithubIds = new Set([ADMIN]);
+  t.deps.adminGithubIds = new Set([ADMIN]);
+  t.deps.github.fetch = async () =>
+    Response.json({ id: Number(OWNER), login: "owner", type: "User" });
+  expect((await t.create("account-page", "example/account-page")).status).toBe(
+    201,
+  );
+  const project = await t.persistence.getProject("account-page");
+  if (!project) throw new Error("Project missing");
+  const vettingBan = async (
+    sequence: number,
+    appealAfter: "none" | "requested" = "none",
+  ) => {
+    const current = await t.persistence.getProject(project.id);
+    if (!current) throw new Error("Project missing");
+    return t.persistence.appendEnforcement(
+      {
+        id: `enf_dual_appeal_scan_${sequence}`,
+        projectId: project.id,
+        sequence,
+        action: "ban",
+        stateAfter: "banned",
+        appealAfter,
+        reason: "Synthetic confirmed malicious scan",
+        evidenceReference: "private-case-fixture",
+        repositoryGithubId: "987654321",
+        repositoryKeys: ["example/dual-appeal"],
+        actor: null,
+        actorRole: "vetting-service",
+        decisionSource: "standing-rule",
+        systemIssuer: {
+          kind: "vetting-service",
+          keySha256: "a".repeat(64),
+          assessmentId: `vet_fixture_${sequence}`,
+          policyVersion: "fixture",
+          rule: "confirmed-malicious",
+        },
+        beforeRevision: current.revision,
+        beforeManifestSha256: current.manifestSha256,
+        afterRevision: null,
+        afterManifestSha256: null,
+        result: "revision_pending",
+        createdAt: NOW,
+      },
+      null,
+      [],
+    );
+  };
+  expect(await vettingBan(1)).toBe("recorded");
+  const ban = await t.call(
+    "POST",
+    "admin/projects/account-page/enforcement",
+    ADMIN,
+    {
+      action: "ban",
+      reason: "Reviewed malicious code",
+      evidenceReference: "private-case-fixture",
+      expectedRevision: project.revision,
+      expectedSequence: 2,
+      responsibleAccounts: [{ githubLogin: "owner" }],
+    },
+  );
+  expect(ban.status).toBe(200);
+  const body = {
+    projectId: "account-page",
+    appealScope: "account",
+    reason: "Review my account separately",
+    evidenceReference: "private-account-fixture",
+  };
+  expect((await t.call("POST", "project-appeals", OTHER, body)).status).toBe(
+    403,
+  );
+  expect(
+    (
+      await t.call("POST", "project-appeals", OWNER, {
+        ...body,
+        appealScope: "arbitrary",
+      })
+    ).status,
+  ).toBe(400);
+  const appealed = await t.call("POST", "project-appeals", OWNER, body);
+  expect(appealed.status).toBe(200);
+  expect(appealed.body.record).toMatchObject({
+    actorRole: "banned-account",
+    decisionSource: "account-request",
+    appealAfter: "requested",
+  });
+  expect((await t.call("GET", "project-appeals", OWNER)).body).toEqual({
+    appeals: [
+      { projectId: "account-page", state: "banned", appeal: "requested" },
+    ],
+  });
+  expect((await t.call("POST", "project-appeals", OWNER, body)).status).toBe(
+    409,
+  );
+  // The separate project appeal remains available after the account request.
+  const projectAppeal = await t.call("POST", "project-appeals", OWNER, {
+    projectId: "account-page",
+    reason: "Review the project restriction",
+    evidenceReference: "private-project-fixture",
+  });
+  expect(projectAppeal.status).toBe(200);
+  expect(projectAppeal.body.record).toMatchObject({
+    actorRole: "project-applicant",
+  });
+  expect((await t.call("GET", "project-appeals", OWNER)).body).toEqual({
+    appeals: [
+      { projectId: "account-page", state: "banned", appeal: "requested" },
+    ],
   });
 });

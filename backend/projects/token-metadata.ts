@@ -4,7 +4,11 @@
  * in the manifest; page views never read chain.
  */
 
-import { TOKEN as SPL_TOKEN_PROGRAM } from "../../contracts/solana/transactions";
+import {
+  readTokenMint,
+  type TokenMintReading,
+} from "../../contracts/solana/token-extensions";
+import { decodeBase58Bytes } from "../../src/lib/base58";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   REWARD_ASSET_NETWORKS,
@@ -145,24 +149,20 @@ async function solanaMetadata(
 ): Promise<TokenMetadata> {
   const result = (await rpc(fetcher, url, "getAccountInfo", [
     address,
-    { encoding: "jsonParsed", commitment: "finalized" },
-  ])) as {
-    value?: {
-      owner?: unknown;
-      data?: { parsed?: { type?: unknown; info?: { decimals?: unknown } } };
-    } | null;
-  } | null;
+    { encoding: "base64", commitment: "finalized" },
+  ])) as { value?: { owner?: unknown } | null } | null;
   const account = result?.value;
   if (!account)
     throw new TokenMetadataError("No account exists at that mint address");
-  // The classic SPL Token program; Token-2022 mints are not accepted.
-  if (account.owner !== SPL_TOKEN_PROGRAM)
-    throw new TokenMetadataError("The mint is not a classic SPL Token mint");
-  const parsed = account.data?.parsed;
-  const decimals = parsed?.info?.decimals;
-  if (parsed?.type !== "mint" || !Number.isSafeInteger(decimals))
-    throw new TokenMetadataError("The account is not an SPL mint");
-  return { decimals: decimals as number, symbol: null };
+  // Keep applicant errors independent of the reader's internal layout-check order.
+  // The shared reader still admits only classic SPL and the approved Token-2022 subset.
+  let mint: TokenMintReading;
+  try {
+    mint = readTokenMint(account, decodeBase58Bytes(address));
+  } catch {
+    throw new TokenMetadataError("The account is not a supported SPL mint");
+  }
+  return { decimals: mint.decimals, symbol: null };
 }
 
 export function rpcTokenMetadataReader(

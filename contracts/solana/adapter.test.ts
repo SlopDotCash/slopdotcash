@@ -5,11 +5,14 @@ import {
   readVaultTotals,
   solanaBase58,
   solanaConfigAddress,
+  solanaMintDecimals,
+  solanaMintDetails,
   solanaVaultAddress,
 } from "./adapter";
 
 const PROGRAM = "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ";
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const PROJECT_BYTES = new Uint8Array(32).fill(7);
 const PROJECT = solanaBase58(PROJECT_BYTES);
 const MINT_BYTES = new Uint8Array(32).fill(9);
@@ -80,12 +83,62 @@ const encoded = (owner: string, data: Uint8Array) => ({
   lamports: 1,
   data: [Buffer.from(data).toString("base64"), "base64"],
 });
+/** An approved metadata-only Token-2022 mint: base, account type, MetadataPointer and
+ * TokenMetadata that name this project's mint. */
+function token2022Mint(decimals: number): Uint8Array {
+  const data = new Uint8Array(166 + 68 + 4 + 89);
+  data[44] = decimals;
+  data[45] = 1;
+  data[165] = 1;
+  const view = new DataView(data.buffer);
+  let at = 166;
+  view.setUint16(at, 18, true); // MetadataPointer
+  view.setUint16(at + 2, 64, true);
+  data.set(MINT_BYTES, at + 4 + 32);
+  at += 4 + 64;
+  view.setUint16(at, 19, true); // TokenMetadata
+  view.setUint16(at + 2, 89, true);
+  const payload = at + 4;
+  data.set(MINT_BYTES, payload + 32);
+  for (const [offset, text] of [
+    [64, "TEST"],
+    [72, "TEST"],
+    [80, "u"],
+  ] as const) {
+    view.setUint32(payload + offset, text.length, true);
+    data.set(
+      Uint8Array.from(text, (c) => c.charCodeAt(0)),
+      payload + offset + 4,
+    );
+  }
+  view.setUint32(payload + 85, 0, true); // no additional metadata
+  return data;
+}
+/** A Token-2022 vault token account. `extension` defaults to ImmutableOwner. */
+function token2022Vault(amount: bigint, extension = [7, 0, 0, 0]): Uint8Array {
+  const data = new Uint8Array(166 + extension.length);
+  data.set(MINT_BYTES, 0);
+  data.set(PROJECT_BYTES, 32);
+  new DataView(data.buffer).setBigUint64(64, amount, true);
+  data[165] = 2;
+  data.set(extension, 166);
+  return data;
+}
+/** An initialized mint sized between the base and account layouts: no valid Token-2022 shape. */
+function truncatedMint(size: number): Uint8Array {
+  const data = new Uint8Array(size);
+  data[44] = 6;
+  data[45] = 1;
+  return data;
+}
 function mockRpc(accounts: {
   project: Uint8Array;
   mint: Uint8Array;
   mintOwner?: string;
   slot?: number;
   vaultAmount?: bigint;
+  vault?: Uint8Array;
+  vaultOwner?: string;
 }) {
   const calls: { method: string; params: unknown[] }[] = [];
   const slot = accounts.slot ?? 123456;
@@ -106,7 +159,11 @@ function mockRpc(accounts: {
         value: [
           project,
           encoded(accounts.mintOwner ?? TOKEN, accounts.mint),
-          encoded(TOKEN, vaultAccount(accounts.vaultAmount ?? 2n ** 64n - 1n)),
+          encoded(
+            accounts.vaultOwner ?? TOKEN,
+            accounts.vault ??
+              vaultAccount(accounts.vaultAmount ?? 2n ** 64n - 1n),
+          ),
         ],
       };
     } else if (body.method === "getBlockTime") {
@@ -196,18 +253,80 @@ describe("readVaultTotals", () => {
     );
   });
 
-  test("refuses a Token-2022 mint and an uninitialized mint", async () => {
+  test("refuses a truncated Token-2022 mint and an uninitialized mint", async () => {
     mockRpc({
       project: projectAccount(base),
-      mint: mintAccount(6),
-      mintOwner: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      mint: truncatedMint(120),
+      mintOwner: TOKEN_2022,
+      vault: token2022Vault(10n ** 19n),
+      vaultOwner: TOKEN_2022,
     });
     await expect(readVaultTotals(config)).rejects.toThrow(
-      "Not a classic SPL Token account",
+      "Truncated Token-2022 account",
     );
     mockRpc({ project: projectAccount(base), mint: mintAccount(6, 0) });
     await expect(readVaultTotals(config)).rejects.toThrow(
       "Mint is not initialized",
+    );
+  });
+
+  test("reads an approved metadata-only Token-2022 vault from one finalized slot", async () => {
+    mockRpc({
+      project: projectAccount(base),
+      mint: token2022Mint(6),
+      mintOwner: TOKEN_2022,
+      vault: token2022Vault(10n ** 19n),
+      vaultOwner: TOKEN_2022,
+    });
+    const totals = await readVaultTotals(config);
+    expect(totals.decimals).toBe(6);
+    expect(totals.asset).toBe(MINT);
+    expect(totals.freeBalance).toBe(
+      (10n ** 19n - 98n - 2n - 500n - 30n).toString(),
+    );
+    mockRpc({
+      project: projectAccount(base),
+      mint: token2022Mint(9),
+      mintOwner: TOKEN_2022,
+      vault: token2022Vault(10n ** 19n, []),
+      vaultOwner: TOKEN_2022,
+    });
+    expect((await readVaultTotals(config)).decimals).toBe(9);
+  });
+
+  test("refuses a Token-2022 mint outside the approved subset", async () => {
+    const mint = token2022Mint(6);
+    mint[46] = 1;
+    mockRpc({
+      project: projectAccount(base),
+      mint,
+      mintOwner: TOKEN_2022,
+      vault: token2022Vault(10n ** 19n),
+      vaultOwner: TOKEN_2022,
+    });
+    await expect(readVaultTotals(config)).rejects.toThrow(
+      "Token-2022 freeze authority is not disabled",
+    );
+  });
+
+  test("refuses a vault account with an unadmitted extension or token program", async () => {
+    mockRpc({
+      project: projectAccount(base),
+      mint: token2022Mint(6),
+      mintOwner: TOKEN_2022,
+      vault: token2022Vault(10n ** 19n, [2, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      vaultOwner: TOKEN_2022,
+    });
+    await expect(readVaultTotals(config)).rejects.toThrow(
+      "Unsupported Token-2022 extension 2",
+    );
+    mockRpc({
+      project: projectAccount(base),
+      mint: token2022Mint(6),
+      mintOwner: TOKEN_2022,
+    });
+    await expect(readVaultTotals(config)).rejects.toThrow(
+      "Vault token program differs from the mint",
     );
   });
 
@@ -218,6 +337,39 @@ describe("readVaultTotals", () => {
     });
     await expect(readVaultTotals(config)).rejects.toThrow(
       "Account layout mismatch",
+    );
+  });
+});
+
+describe("solanaMintDecimals", () => {
+  test("reads admitted token programs for the complete owner paths and refuses unsafe mints", async () => {
+    const answer = (owner: string, data: Uint8Array) => {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.method).toBe("getAccountInfo");
+        expect(body.params[0]).toBe(MINT);
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { context: { slot: 1 }, value: encoded(owner, data) },
+          }),
+        );
+      }) as typeof fetch;
+    };
+    answer(TOKEN, mintAccount(9));
+    expect(await solanaMintDecimals(config, MINT)).toBe(9);
+    answer(TOKEN_2022, token2022Mint(6));
+    expect(await solanaMintDecimals(config, MINT)).toBe(6);
+    expect(await solanaMintDetails(config, MINT)).toEqual({
+      decimals: 6,
+      tokenProgram: TOKEN_2022,
+    });
+    const unsafe = token2022Mint(6);
+    unsafe[46] = 1;
+    answer(TOKEN_2022, unsafe);
+    await expect(solanaMintDecimals(config, MINT)).rejects.toThrow(
+      "Token-2022 freeze authority is not disabled",
     );
   });
 });

@@ -1,4 +1,5 @@
-import { sha256Hex } from "./github";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { GitHubError } from "./github";
 import { sameRepositoryCommitHints } from "./value-commit-hints";
 import type { EvidenceClient, ValueEvidence } from "./value-evidence";
 
@@ -70,7 +71,8 @@ async function acceptingPull(
 }
 
 /** Resolve short references through the same repository's authenticated
- * GitHub client. A failed/ambiguous lookup supplies no retention authority.
+ * GitHub client. An ambiguous or absent commit supplies no retention
+ * authority; any other provider failure throws.
  * Keep a reference only when its author merged that commit, after the merge,
  * and this PR has a lower number than the merged PR. GitHub numbers PRs in
  * creation order, so a duplicate opened later, even during review, is no
@@ -104,7 +106,12 @@ export async function collectRetainedMergeReferences(
       .get<{ sha: string; html_url: string }>(
         `/repos/${source.repository}/commits/${abbreviation}`,
       )
-      .catch(() => null);
+      .catch((error: unknown) => {
+        // GitHub answers 422 for an ambiguous or non-commit abbreviation.
+        // Any other failure is not evidence that no merge was named.
+        if (error instanceof GitHubError && error.status === 422) return null;
+        throw error;
+      });
     if (
       !resolved ||
       !/^[a-f0-9]{40}$/u.test(resolved.sha) ||
