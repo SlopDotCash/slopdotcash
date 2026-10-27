@@ -887,12 +887,12 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await page
     .getByLabel("Revision note")
     .fill("Clarify acceptance evidence for maintainers.");
-  await expect(
-    page.getByRole("region", { name: "Changes" }),
-  ).toContainText(scope);
-  await expect(
-    page.getByRole("region", { name: "Changes" }),
-  ).not.toContainText("No changes yet");
+  await expect(page.getByRole("region", { name: "Changes" })).toContainText(
+    scope,
+  );
+  await expect(page.getByRole("region", { name: "Changes" })).not.toContainText(
+    "No changes yet",
+  );
   revision = 2;
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toContainText(
@@ -939,9 +939,9 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await review.screenshot({
     path: test.info().outputPath("criteria-review-200-percent-text.png"),
   });
-  await expect(
-    page.getByRole("region", { name: "Changes" }),
-  ).toContainText("Needs a new security scan: Contribution rules.");
+  await expect(page.getByRole("region", { name: "Changes" })).toContainText(
+    "Needs a new security scan: Contribution rules.",
+  );
   await page.getByRole("button", { name: "Publish changes" }).click();
   await expect(page.getByText("Published revision 3.")).toBeVisible();
   await expect(
@@ -957,9 +957,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
     project.contribution?.approvedScope ?? "",
   );
-  await expect(
-    page.getByRole("region", { name: "Changes" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Changes" })).toHaveCount(0);
   // PRD section 8: an exempt project publishes skill changes without a new
   // scan, so the change list must not say that it needs one.
   Object.assign(setup.checks.scan, {

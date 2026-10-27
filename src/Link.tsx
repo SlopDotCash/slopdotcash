@@ -69,7 +69,6 @@ export function useHashScroll(href: string): void {
 export function Link({
   ariaCurrent,
   ariaLabel,
-  ariaCurrent,
   children,
   className,
   href,
@@ -77,7 +76,6 @@ export function Link({
 }: {
   ariaCurrent?: "page";
   ariaLabel?: string;
-  ariaCurrent?: "page";
   children: ReactNode;
   className?: string;
   href: string;
@@ -94,7 +92,6 @@ export function Link({
     <a
       aria-current={ariaCurrent}
       aria-label={ariaLabel}
-      aria-current={ariaCurrent}
       className={className}
       href={href}
       onClick={(event) => {
