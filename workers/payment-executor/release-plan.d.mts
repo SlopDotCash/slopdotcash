@@ -1,6 +1,7 @@
 import type { PaymentStackConfig, PaymentStackInput } from "./configure.mjs";
 export interface MainnetReleaseEntry {
   network: string;
+  enabled: boolean;
   config: PaymentStackConfig & { triggers: { crons: string[] } };
   pinCount: number;
   secrets: string[];

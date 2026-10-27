@@ -37,6 +37,46 @@ async function fixture(run) {
   }
 }
 
+async function pinnedProject(network = "base-mainnet") {
+  const { fixtureProject } = await import("../tests/fixture-overlay.mjs");
+  const project = fixtureProject("eliza");
+  const chain = network === "ethereum" ? "ethereum" : "base";
+  project.status = "paused";
+  project.reward.chain = chain;
+  project.reward.feeBasisPoints = 200;
+  project.escrow = {
+    schemaVersion: "1",
+    effectiveCycle: "2026-11",
+    chain,
+    feeBasisPoints: 200,
+    withdrawalFeeBasisPoints: 200,
+    feeMode: "deduct-from-gross",
+    deployments: [
+      {
+        network,
+        vault: `0x${"1".repeat(40)}`,
+        asset: `0x${"2".repeat(40)}`,
+        owner: `0x${"3".repeat(40)}`,
+        identityAuthority: `0x${"4".repeat(40)}`,
+        feeRecipient: `0x${"5".repeat(40)}`,
+        registrar: `0x${"6".repeat(40)}`,
+        factory: `0x${"7".repeat(40)}`,
+        factoryCodeSha256: "a".repeat(64),
+        codeSha256: "b".repeat(64),
+        sourceCommit: "c".repeat(40),
+        deploymentTransaction: `0x${"d".repeat(64)}`,
+        bindingDelaySeconds: "0",
+        rotationDelaySeconds: null,
+        programId: null,
+        projectPda: null,
+        networkDomain: null,
+        upgradeAuthority: null,
+      },
+    ],
+  };
+  return project;
+}
+
 test("absent Base bootstrap gets exact version proof before Pages receives capabilities", async () => {
   await fixture(async ({ directory, path }) => {
     const requests = [];
@@ -136,40 +176,7 @@ test("authorization failures cannot be treated as proof that a Worker is absent"
 });
 
 test("pinned Base release requires the exact signer inventory and retains canonical vault pins", async () => {
-  const { fixtureProject } = await import("../tests/fixture-overlay.mjs");
-  const project = fixtureProject("eliza");
-  project.status = "paused";
-  project.reward.chain = "base";
-  project.reward.feeBasisPoints = 200;
-  const deployment = {
-    network: "base-mainnet",
-    vault: `0x${"1".repeat(40)}`,
-    asset: `0x${"2".repeat(40)}`,
-    owner: `0x${"3".repeat(40)}`,
-    identityAuthority: `0x${"4".repeat(40)}`,
-    feeRecipient: `0x${"5".repeat(40)}`,
-    registrar: `0x${"6".repeat(40)}`,
-    factory: `0x${"7".repeat(40)}`,
-    factoryCodeSha256: "a".repeat(64),
-    codeSha256: "b".repeat(64),
-    sourceCommit: "c".repeat(40),
-    deploymentTransaction: `0x${"d".repeat(64)}`,
-    bindingDelaySeconds: "0",
-    rotationDelaySeconds: null,
-    programId: null,
-    projectPda: null,
-    networkDomain: null,
-    upgradeAuthority: null,
-  };
-  project.escrow = {
-    schemaVersion: "1",
-    effectiveCycle: "2026-11",
-    chain: "base",
-    feeBasisPoints: 200,
-    withdrawalFeeBasisPoints: 200,
-    feeMode: "deduct-from-gross",
-    deployments: [deployment],
-  };
+  const project = await pinnedProject();
   await fixture(async ({ directory }) => {
     for (const names of [
       ["PAYMENT_RPC_URLS"],
@@ -203,7 +210,7 @@ test("pinned Base release requires the exact signer inventory and retains canoni
       await readFile(join(directory, `${name}.json`), "utf8"),
     );
     expect(JSON.parse(config.vars.PAYMENT_DEPLOYMENTS)[0].vault).toBe(
-      deployment.vault,
+      project.escrow.deployments[0].vault,
     );
     expect(config.triggers.crons).toEqual(["*/5 * * * *"]);
     await writeFile(join(directory, `${name}.json`), "{}");
@@ -216,5 +223,108 @@ test("pinned Base release requires the exact signer inventory and retains canoni
         },
       }),
     ).rejects.toThrow("configuration changed");
+  });
+});
+
+test("reviewed stop republishes an existing disabled-network attester without exposing its Pages entrypoints", async () => {
+  const stoppedName = "slop-payments-ethereum-attester";
+  const project = await pinnedProject("ethereum");
+  await fixture(async ({ directory, path }) => {
+    const requests = [];
+    const provider = async (args) => {
+      requests.push(args);
+      if (args[0] === "deployments" && args[1] === "list") return ok([]);
+      if (args[0] === "deploy") return ok({});
+      if (args[0] === "versions")
+        return ok([
+          { id: "stopped-version", annotations: { "workers/tag": sha } },
+        ]);
+      if (args[1] === "status")
+        return ok({
+          versions: [{ version_id: "stopped-version", percentage: 100 }],
+        });
+      throw new Error("Unexpected operation while stopping a service");
+    };
+    const plan = await prepareMainnetRelease({
+      directory,
+      account,
+      sha,
+      registry: [project],
+      provider,
+    });
+    expect(
+      plan.services.map((entry) => [entry.network, entry.enabled]),
+    ).toEqual([
+      ["base-mainnet", true],
+      ["ethereum", false],
+    ]);
+    await publishMainnetRelease({ directory, sha, provider });
+    const deploys = requests.filter((args) => args[0] === "deploy");
+    expect(deploys).toEqual([
+      [
+        "deploy",
+        "--config",
+        join(directory, `${stoppedName}.json`),
+        `--tag=${sha}`,
+        `--message=slop.cash release ${sha}`,
+      ],
+    ]);
+    const stopped = JSON.parse(
+      await readFile(join(directory, `${stoppedName}.json`), "utf8"),
+    );
+    expect(stopped.triggers.crons).toEqual([]);
+    expect(JSON.parse(stopped.vars.PAYMENT_DEPLOYMENTS)[0].vault).toBe(
+      project.escrow.deployments[0].vault,
+    );
+    expect(stopped.durable_objects.bindings[0].class_name).toBe(
+      "PaymentSignerJournal",
+    );
+    await assembleMainnetBindings({ directory, sha, path });
+    const pages = JSON.parse(await readFile(path, "utf8"));
+    expect(JSON.parse(pages.vars.PAYMENT_NETWORKS)).toEqual(["base-mainnet"]);
+    expect(pages.services).toEqual([
+      { binding: "SLOP_IDENTITY", service: "slop-identity" },
+    ]);
+  });
+});
+
+test("a disabled-network vault does not bootstrap a missing attester or hide lookup errors", async () => {
+  const project = await pinnedProject("ethereum");
+  await fixture(async ({ directory, path }) => {
+    const provider = async (args) => {
+      if (args[0] !== "deployments" || args[1] !== "list")
+        throw new Error("Disabled network must not deploy");
+      if (args[3] === name) return ok([]);
+      return {
+        status: 1,
+        stdout: "",
+        stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/slop-payments-ethereum-attester/deployments) failed. [code: 10007]`,
+      };
+    };
+    const plan = await prepareMainnetRelease({
+      directory,
+      account,
+      sha,
+      registry: [project],
+      provider,
+    });
+    expect(plan.services.every((entry) => !entry.release)).toBe(true);
+    await publishMainnetRelease({ directory, sha, provider });
+    await assembleMainnetBindings({ directory, sha, path });
+    expect(JSON.parse(await readFile(path, "utf8")).services).toEqual([
+      { binding: "SLOP_IDENTITY", service: "slop-identity" },
+    ]);
+    await expect(
+      prepareMainnetRelease({
+        directory,
+        account,
+        sha,
+        registry: [project],
+        provider: async (args) =>
+          args[3] === name
+            ? ok([])
+            : { status: 1, stdout: "", stderr: "Unauthorized" },
+      }),
+    ).rejects.toThrow("Cannot prove ethereum attester absent");
   });
 });
