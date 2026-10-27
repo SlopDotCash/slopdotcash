@@ -416,11 +416,13 @@ jobs:
         env:
           BROWSER_SHARD: ${{ matrix.shard }}
         run: node scripts/run-e2e.mjs --shard="$BROWSER_SHARD"
-      # The private trace operator workflow: Pages routing, native D1 and R2,
-      # and a Chromium sign-in. One registry runner is enough.
-      - name: Run private trace operator workflow
+      - name: Verify automatic private intake
         if: matrix.lane == 'registry-1'
-        run: bun run test:trace
+        env:
+          SLOP_E2E_PRIVATE_INTAKE: "1"
+        # This fixture seeds D1 through a second local Wrangler process.
+        # Keep its browser projects sequentially to avoid competing SQLite writers.
+        run: node scripts/run-e2e.mjs --grep '@private-intake' --workers=1
       - name: Upload browser diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -872,96 +874,10 @@ jobs:
             exit 1
           fi
 
-          # Base mainnet identity attester (workers/payment-executor, PRD
-          # PAY-05; owner activation of 24 October 2026). configure.mjs pins
-          # the Base mainnet vaults of the checked registry artifact from
-          # this release build. An absent Worker can be installed without pins
-          # or secrets, privately and without a cron. An existing Worker stays
-          # unchanged if the checked snapshot is empty. With pins, the required
-          # secrets must exist before this release changes anything. Only secret
-          # names are read, never values. Slop has no relayer or payment
-          # dispatcher on a mainnet (PRD section 6).
+          # Prepare every enabled attester from the checked registry. This reads
+          # secret names only; disabled networks are neither created nor updated.
           attester_dir="$RUNNER_TEMP/slop-payment-attester"
-          attester_config="$attester_dir/slop-payments-base-mainnet-attester.json"
-          mkdir -p "$attester_dir"
-          attester_vaults="$(ATTESTER_PINS="$attester_dir/pinned.json" bun --eval '
-          import { writeFileSync } from "node:fs";
-          import { HISTORICAL_PROJECTS } from "./src/lib/projects.mjs";
-          import { paymentDeployments } from "./scripts/prepare-payment-deployments.ts";
-          const pinned = paymentDeployments(HISTORICAL_PROJECTS, "mainnet", "base-mainnet");
-          writeFileSync(process.env.ATTESTER_PINS, JSON.stringify(pinned));
-          const privatePinned = paymentDeployments(HISTORICAL_PROJECTS, "mainnet", "base-mainnet", "security-bounty");
-          process.stdout.write(String(pinned.length + privatePinned.length));
-          ')"
-          if ! [[ "$attester_vaults" =~ ^[0-9]+$ ]]; then
-            echo "::error::The Base mainnet attester pin count is invalid."
-            exit 1
-          fi
-          node workers/payment-executor/configure.mjs --stack production \
-            --network base-mainnet \
-            --deployments "$attester_dir/pinned.json" \
-            --output "$attester_dir"
-          node - "$attester_config" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          const vars = config.vars ?? {};
-          const ordinaryPinned = JSON.parse(vars.PAYMENT_DEPLOYMENTS ?? "[]");
-          const privatePinned = JSON.parse(vars.SECURITY_PAYMENT_DEPLOYMENTS ?? "[]");
-          const pinned = [...ordinaryPinned, ...privatePinned];
-          if (
-            config.name !== "slop-payments-base-mainnet-attester" ||
-            config.workers_dev !== false ||
-            config.preview_urls !== false ||
-            !Array.isArray(config.routes) || config.routes.length !== 0 ||
-            config.services !== undefined ||
-            vars.SIGNER_STACK !== "production" ||
-            vars.SIGNER_ROLE !== "attester" ||
-            vars.CHAIN_FAMILY !== "evm" ||
-            !Array.isArray(pinned) ||
-            !pinned.every((d) => d.network === "base-mainnet" && d.chainId === "8453") ||
-            JSON.stringify(config.triggers?.crons) !== JSON.stringify(pinned.length ? ["*/5 * * * *"] : [])
-          ) {
-            throw new TypeError("the Base mainnet attester configuration boundary drifted");
-          }
-          NODE
-          attester_release=true
-          if [ "$attester_vaults" != "0" ]; then
-            ./node_modules/.bin/wrangler secret list \
-              --config "$attester_config" > "$attester_dir/secrets.json"
-            node - "$attester_dir/secrets.json" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          if (!Array.isArray(value)) throw new TypeError("attester secret inventory must be an array");
-          const actual = value.map((entry) => entry?.name).sort();
-          // The owner-installed attester key and the private Base RPC map.
-          // Any other name (a test key, a relayer key) also stops the release.
-          if (JSON.stringify(actual) !== JSON.stringify(["PAYMENT_RPC_URLS", "SIGNER_PRIVATE_KEY"])) {
-            throw new TypeError("Base mainnet attester secret inventory is incomplete or contains unexpected entries");
-          }
-          NODE
-          else
-            # Never replace an existing signer's pins or Durable Object journal
-            # with an empty snapshot. Only a proved absent Worker is bootstrapped.
-            if ./node_modules/.bin/wrangler deployments list \
-              --name slop-payments-base-mainnet-attester \
-              --config "$attester_config" --json \
-              > "$attester_dir/existing.json" 2> "$attester_dir/existing.stderr"; then
-              attester_release=false
-              echo "::notice::The registry pins no Base vault; the existing attester is unchanged."
-            else
-              node - "$attester_dir/existing.json" "$attester_dir/existing.stderr" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
-          const output = process.argv.slice(2).map((path) => readFileSync(path, "utf8")).join("\n");
-          const resource = `/accounts/${account}/workers/scripts/slop-payments-base-mainnet-attester/deployments`;
-          if (!/^[a-f0-9]{32}$/.test(account ?? "") ||
-              !output.includes(`A request to the Cloudflare API (${resource}) failed.`) ||
-              !/\[code: 10007\]/.test(output)) {
-            throw new Error("Cannot prove Base attester absent; no bootstrap is permitted");
-          }
-          NODE
-            fi
-          fi
+          bun workers/payment-executor/release-mainnets.mjs prepare "$attester_dir"
 
           # Restore only absent cleanup triggers; reject nonempty provisioning drift.
           bun scripts/verify-identity-schedules.mjs --restore-missing
@@ -1018,7 +934,6 @@ jobs:
           // private analysis secrets (PRD sections 6, 8 and 11). They stay inert
           // until their feature is enabled; any other name still fails closed.
           const optional = [
-            "ANTHROPIC_SECURITY_API_KEY",
             "PAYMENT_RPC_URLS",
             "GITHUB_INTAKE_APP_CLIENT_ID",
             "GITHUB_INTAKE_APP_CLIENT_SECRET",
@@ -1592,37 +1507,8 @@ jobs:
             echo "::notice::Fee-converter Worker release is not enabled (SLOP_FEE_CONVERTER_RELEASE repository variable)."
           fi
 
-          # Prepare only absent, empty and execution-disabled network services.
-          # No keys, schedules, public endpoints or vault pins are installed.
-          node workers/payment-executor/prepare-inactive.mjs "$RUNNER_TEMP/slop-inactive-attesters"
-
-          # Base mainnet attester release, after the shared slop-private
-          # migrations and before Pages serves its bindings. A full deploy
-          # preserves the SQLite Durable Object journal. Empty bootstrap has no cron.
-          if [ "$attester_release" = "true" ]; then
-            ./node_modules/.bin/wrangler deploy \
-              --config "$attester_config" \
-              --tag="$GITHUB_SHA" \
-              --message="slop.cash release $GITHUB_SHA"
-            attester_versions="$attester_dir/versions.json"
-            attester_deployment="$attester_dir/deployment.json"
-            ./node_modules/.bin/wrangler versions list --name slop-payments-base-mainnet-attester --json > "$attester_versions"
-            ./node_modules/.bin/wrangler deployments status --name slop-payments-base-mainnet-attester --json > "$attester_deployment"
-            node - "$attester_versions" "$attester_deployment" "$GITHUB_SHA" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const versions = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          const deployment = JSON.parse(readFileSync(process.argv[3], "utf8"));
-          const sha = process.argv[4];
-          const active = Array.isArray(deployment?.versions) && deployment.versions.length === 1 ? deployment.versions[0] : null;
-          if (active?.percentage !== 100 || typeof active?.version_id !== "string") {
-            throw new TypeError("Base mainnet attester deployment is not pinned 100% to one version");
-          }
-          const version = Array.isArray(versions) ? versions.find((candidate) => candidate?.id === active.version_id) : undefined;
-          if (version?.annotations?.["workers/tag"] !== sha) {
-            throw new TypeError("Base mainnet attester deployment is not bound to the tested commit");
-          }
-          NODE
-          fi
+          # Publish after migrations, retaining journals and verifying exact tags.
+          bun workers/payment-executor/release-mainnets.mjs publish "$attester_dir"
 
           live_main="$(
             git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
@@ -1645,17 +1531,8 @@ jobs:
           publish_dir="$(mktemp -d "$RUNNER_TEMP/slop-production-pages.XXXXXX")"
           git archive "$GITHUB_SHA" | tar -x -C "$publish_dir"
           bun scripts/prepare-vetting-public-key.ts assemble production "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.toml"
-          # An existing zero-pin service is intentionally not redeployed above.
-          # Do not bind Pages to an entrypoint that release has not verified.
-          if [ "$attester_release" != "true" ]; then
-            node - "$publish_dir/wrangler.jsonc" <<'NODE'
-          const { readFileSync, writeFileSync } = require("node:fs");
-          const path = process.argv[2];
-          const config = JSON.parse(readFileSync(path, "utf8"));
-          config.services = config.services.filter((service) => !["BINDING_RECOVERY", "MONTHLY_RELEASE_BASE"].includes(service.binding));
-          writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
-          NODE
-          fi
+          # Only verified named entrypoints are added to the Pages artifact.
+          bun workers/payment-executor/release-mainnets.mjs assemble "$attester_dir" "$publish_dir/wrangler.jsonc"
           cp -R dist "$publish_dir/dist"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$publish_dir/node_modules"
           printf '%s\n' "started_at=$(node -e 'process.stdout.write(Date.now().toString())')" >> "$GITHUB_OUTPUT"

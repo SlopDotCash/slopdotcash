@@ -18,6 +18,7 @@ import {
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { CONTRIBUTION } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 const deployment = deploymentOrigins(
@@ -978,11 +979,15 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await expect(item("delivery-1").locator(".inbox-delivery")).toHaveText(
     "Email: sent",
   );
-  await expect(item("delivery-1").locator(".inbox-state")).toHaveText("Read");
+  await expect(
+    item("delivery-1").getByText("Read", { exact: true }),
+  ).toBeVisible();
   await expect(item("delivery-2").locator(".inbox-delivery")).toHaveText(
     "Email: delivered",
   );
-  await expect(item("delivery-2").locator(".inbox-state")).toHaveText("Unread");
+  await expect(
+    item("delivery-2").getByText("Unread", { exact: true }),
+  ).toBeVisible();
   await expect(item("delivery-3").locator(".inbox-delivery")).toHaveText(
     "Email: failed",
   );
@@ -1176,15 +1181,20 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   expect(await trailingFundingRouteResponse.text()).toContain(
     '<div id="root"></div>',
   );
-  // These links are also opened from sign-in returns and Inbox notices.
-  // Exercise Pages rewrites: the preview server serves any path as the app
-  // and would conceal a missing production route.
+  // Monthly awards moved to the funding page. Saved Inbox notices and
+  // bookmarks still open the old path; the preview server would conceal a
+  // missing Pages rule.
   for (const path of ["/projects/eliza/awards", "/projects/eliza/awards/"]) {
     const response = await request.get(path, { maxRedirects: 0 });
-    expect(response.status(), path).toBe(200);
-    expect(await response.text(), path).toContain('<div id="root"></div>');
+    expect(response.status(), path).toBe(301);
+    expect(response.headers().location, path).toBe("/projects/eliza/funding");
   }
-  for (const path of ["/operator/traces", "/operator/traces/"]) {
+  for (const path of [
+    "/models",
+    "/models/",
+    "/operator/traces",
+    "/operator/traces/",
+  ]) {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status(), path).toBe(404);
     expect(await response.text(), path).not.toContain('<div id="root"></div>');
@@ -1320,7 +1330,6 @@ for (const scenario of [
   // its own timeout and the matrix runs across workers.
   test.describe(`reflow ${scenario.name}`, { tag: "@desktop-only" }, () => {
     for (const path of [
-      "/models",
       "/how-it-works",
       "/",
       "/projects/eliza",
@@ -1331,30 +1340,7 @@ for (const scenario of [
         await page.setViewportSize({ width: scenario.width, height: 1000 });
         await page.goto(path, { waitUntil: "networkidle" });
         if (scenario.textScale === 2) {
-          await page.evaluate(() => {
-            // Capture every original computed size before changing any ancestor,
-            // so nested text receives exactly 200%, not compounded enlargement.
-            const typography = [
-              ...document.querySelectorAll<HTMLElement>("body *"),
-            ]
-              .filter((element) => element instanceof HTMLElement)
-              .map((element) => ({
-                element,
-                font: getComputedStyle(element).fontSize,
-                line: getComputedStyle(element).lineHeight,
-              }));
-            for (const { element, font, line } of typography) {
-              element.style.setProperty(
-                "font-size",
-                `${Number.parseFloat(font) * 2}px`,
-              );
-              if (line !== "normal")
-                element.style.setProperty(
-                  "line-height",
-                  `${Number.parseFloat(line) * 2}px`,
-                );
-            }
-          });
+          await enlargeText(page.locator("body"));
         }
         // The skip link is the first stop; it hands keyboard users the content.
         await page.keyboard.press("Tab");
@@ -1400,25 +1386,7 @@ test("finds a receipt and opens its full evidence and GitHub contribution", asyn
 }) => {
   const snapshot = await loadSnapshot(request);
   const entry = snapshot.attributions.find((entry) => entry.run !== null);
-  await page.goto("/models", { waitUntil: "networkidle" });
-  const modelReceipts = page
-    .locator('.model-outcome-details a[href^="/receipts?q="]')
-    .first();
-  if (await modelReceipts.count()) {
-    await modelReceipts
-      .locator("xpath=ancestor::details")
-      .locator("summary")
-      .focus();
-    await page.keyboard.press("Enter");
-    await modelReceipts.click();
-    await expect(page).toHaveURL(/\/receipts\?q=/u);
-    await expect(
-      page.getByRole("searchbox", { name: "Find a receipt" }),
-    ).not.toHaveValue("");
-    expect(await page.locator(".receipt-record").count()).toBeGreaterThan(0);
-  } else {
-    await page.goto("/receipts", { waitUntil: "networkidle" });
-  }
+  await page.goto("/receipts", { waitUntil: "networkidle" });
   if (!entry?.run) {
     await expect(page.locator(".receipt-record")).toHaveCount(0);
     return;
@@ -1477,7 +1445,6 @@ test("finds a receipt and opens its full evidence and GitHub contribution", asyn
 // layout family instead of repeating each project's identical layout.
 const breakpointRoutes = new Set([
   "/",
-  "/models",
   "/account",
   "/projects/eliza",
   "/projects/eliza/funding",
@@ -1485,7 +1452,6 @@ const breakpointRoutes = new Set([
 ]);
 for (const route of [
   "latest cycle",
-  "/models",
   "/receipts",
   "/sponsors",
   "/how-it-works",
@@ -1566,81 +1532,6 @@ for (const route of [
   });
 }
 
-test("opens the models page directly and through keyboard navigation", async ({
-  page,
-}, testInfo) => {
-  await page.goto("/models", { waitUntil: "networkidle" });
-  await page.reload({ waitUntil: "networkidle" });
-  const outcomes = page.getByRole("list", {
-    name: "Accepted outcomes by model",
-    exact: true,
-  });
-  const firstModel = outcomes.locator(":scope > li").first();
-  await expect(firstModel).toBeVisible();
-  const disclosure = firstModel.locator("summary");
-  await disclosure.focus();
-  await page.keyboard.press("Enter");
-  await expect(firstModel.locator("details")).toHaveAttribute("open", "");
-  await expect(
-    firstModel
-      .locator("dd")
-      .filter({ hasText: /\d[\d,]* of \d[\d,]* outcomes/ }),
-  ).toBeVisible();
-  const clients = page.locator(".model-clients > summary");
-  await clients.focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("list", { name: "Client outcomes", exact: true }),
-  ).toBeVisible();
-  const client = page
-    .locator(".model-clients .model-outcome-list > li")
-    .first();
-  await client.locator("summary").press("Enter");
-  await expect(client.locator("details")).toHaveAttribute("open", "");
-  // Frozen accepted outcomes use the same public Points unit as profiles.
-  for (const [model, points] of [
-    ["deepseek/deepseek-v4.1-flash-free", "30"],
-    ["openai/gpt-6", "10"],
-  ]) {
-    const row = outcomes.locator(":scope > li").filter({
-      has: page.getByRole("heading", { name: model, exact: true }),
-    });
-    await row.locator("summary").click();
-    await expect(
-      row
-        .locator("dl > div")
-        .filter({
-          has: page.getByText("PR points", { exact: true }),
-        })
-        .locator("dd"),
-    ).toHaveText(points);
-  }
-  await testInfo.attach("models-page", {
-    body: await page.screenshot({ fullPage: true }),
-    contentType: "image/png",
-  });
-  const home = page.getByRole("link", { name: "Slop home", exact: true });
-  await home.focus();
-  const homeSnapshot = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
-  );
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/$/);
-  // Points can render before the separate score download finishes. A previous
-  // SPA route's networkidle state does not prove this response body is complete.
-  expect(await (await homeSnapshot).finished()).toBeNull();
-  await expect(page.locator("#leaderboard").getByRole("table")).toBeVisible({
-    timeout: 60_000,
-  });
-  const modelsSnapshot = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
-  );
-  await page.goBack({ waitUntil: "networkidle" });
-  await expect(page).toHaveURL(/\/models$/u);
-  expect(await (await modelsSnapshot).finished()).toBeNull();
-  await expect(firstModel).toBeVisible();
-});
-
 test("opens the sponsors page directly and through keyboard navigation", async ({
   page,
 }, testInfo) => {
@@ -1661,26 +1552,37 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await rules.focus();
   await page.keyboard.press("Enter");
   await expect(rules.locator("..")).toHaveAttribute("open", "");
-  const tableRegion = page.getByRole("region", {
+  const pools = page.getByRole("list", {
     name: "Project funding pools",
     exact: true,
   });
-  await tableRegion.focus();
-  await expect(tableRegion).toBeFocused();
-  if (
-    await tableRegion.evaluate(
-      (element) => element.scrollWidth > element.clientWidth,
-    )
-  ) {
-    await page.keyboard.press("ArrowRight");
-    await expect
-      .poll(() => tableRegion.evaluate((element) => element.scrollLeft))
-      .toBeGreaterThan(0);
-  }
+  await expect(pools).toBeVisible();
+  expect(
+    await pools.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  const fundingLink = pools.getByRole("link").first();
+  await expect(fundingLink).toHaveAttribute(
+    "href",
+    /^\/projects\/[^/]+\/funding$/u,
+  );
+  const fundingPath = await fundingLink.getAttribute("href");
+  if (!fundingPath)
+    throw new Error("The funding pool must link to its project");
+  const fundingUrl = new URL(fundingPath, page.url()).href;
+  await fundingLink.focus();
+  await expect(fundingLink).toBeFocused();
   await testInfo.attach("sponsors-page", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
   });
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(fundingUrl);
+  await page.waitForLoadState("networkidle");
+  await page.goBack({ waitUntil: "networkidle" });
+  await expect(page).toHaveURL(/\/sponsors$/u);
+  await expect(pools).toBeVisible();
   const home = page.getByRole("link", { name: "Slop home", exact: true });
   await home.focus();
   await page.keyboard.press("Enter");
@@ -1775,11 +1677,23 @@ test("lands direct and lazy cross-route hash links on their section", async ({
   }
 });
 
-test("refuses prototype paths", async ({ page }) => {
-  for (const path of ["/constructor", "/__proto__"]) {
+test("refuses retired and unknown paths and recovers to projects", async ({
+  page,
+}) => {
+  for (const path of ["/models", "/models/", "/constructor", "/__proto__"]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", { name: "Page not found", exact: true }),
     ).toBeVisible();
+    await expect(page).toHaveTitle("Page not found · Slop");
+    await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+    await page
+      .getByRole("link", { name: "See open projects", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/$/u);
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+      "href",
+      "https://slop.cash/",
+    );
   }
 });

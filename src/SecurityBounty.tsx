@@ -10,7 +10,14 @@
  * The API returns only the cases and fields the caller's current role allows.
  */
 
-import { CircleAlert, ExternalLink, RotateCcw } from "lucide-react";
+import {
+  ArrowRight,
+  CircleAlert,
+  ExternalLink,
+  LockKeyhole,
+  RotateCcw,
+  ShieldCheck,
+} from "lucide-react";
 import {
   type FormEvent,
   type ReactNode,
@@ -21,6 +28,7 @@ import {
   useState,
 } from "react";
 import { Link } from "./Link";
+import "./operations-design.css";
 import { decimalBaseUnits } from "./lib/base-units.mjs";
 import { copyText } from "./lib/copy-text";
 import { errorMessage } from "./lib/errors";
@@ -51,7 +59,9 @@ import { useAction } from "./lib/use-action";
 import {
   ExternalLinkAnchor,
   formatNullableUtc as formatUtc,
+  RoutePageHeader,
   SignInPanel,
+  StatusBadge,
 } from "./Presentation";
 
 function FormError({ message }: { message: string | null }) {
@@ -256,9 +266,15 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
     </button>
   );
   return (
-    <section aria-labelledby="security-report" className="admin-card">
+    <section
+      aria-labelledby="security-report"
+      className="admin-card security-intake-card"
+    >
       <h2 id="security-report">Report a vulnerability privately</h2>
-      <p>Never post exploit details publicly.</p>
+      <p className="operations-caution">
+        <LockKeyhole aria-hidden="true" />
+        Never post exploit details publicly.
+      </p>
       {state.status === "checking" ? (
         <p aria-live="polite" className="admin-status">
           Loading private reporting status…
@@ -283,15 +299,20 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
               {checkAgain(state.rechecking)}
             </div>
           ) : (
-            <p className="admin-status">
-              GitHub private reporting is on (checked{" "}
-              {state.value.checkedAt
-                ? formatUtc(state.value.checkedAt)
-                : "an unknown time"}
-              ).
-              {state.value.paidParticipation === "open"
-                ? ""
-                : " No new paid reports now."}
+            <p className="admin-status security-readiness">
+              <StatusBadge tone="success" icon={<ShieldCheck />}>
+                GitHub private reporting is on
+              </StatusBadge>{" "}
+              <span>
+                (checked{" "}
+                {state.value.checkedAt
+                  ? formatUtc(state.value.checkedAt)
+                  : "an unknown time"}
+                ).
+                {state.value.paidParticipation === "open"
+                  ? ""
+                  : " No new paid reports now."}
+              </span>
             </p>
           )}
           {state.stale ? null : (
@@ -487,40 +508,50 @@ function ReportFields({
           Include safe reproduction steps. Never induce an actual loss.
         </small>
       </label>
-      <label>
-        Severity (optional)
-        <select
-          disabled={draft.cvss.trim() !== ""}
-          onChange={(event) => set("severity")(event.target.value)}
-          value={draft.severity}
-        >
-          <option value="">Not set</option>
-          <option value="critical">Critical</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-        </select>
-      </label>
-      <label>
-        CVSS vector (optional, instead of severity)
-        <input
-          autoComplete="off"
-          onChange={(event) => set("cvss")(event.target.value)}
-          placeholder="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
-          spellCheck={false}
-          value={draft.cvss}
-        />
-      </label>
-      <label>
-        CWE IDs (optional)
-        <input
-          autoComplete="off"
-          onChange={(event) => set("cwe")(event.target.value)}
-          placeholder="CWE-284"
-          spellCheck={false}
-          value={draft.cwe}
-        />
-      </label>
+      <details
+        className="security-classification"
+        open={Boolean(draft.severity || draft.cvss || draft.cwe)}
+      >
+        <summary>
+          Additional classification <span>Optional</span>
+        </summary>
+        <div>
+          <label>
+            Severity (optional)
+            <select
+              disabled={draft.cvss.trim() !== ""}
+              onChange={(event) => set("severity")(event.target.value)}
+              value={draft.severity}
+            >
+              <option value="">Not set</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label>
+            CVSS vector (optional, instead of severity)
+            <input
+              autoComplete="off"
+              onChange={(event) => set("cvss")(event.target.value)}
+              placeholder="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+              spellCheck={false}
+              value={draft.cvss}
+            />
+          </label>
+          <label>
+            CWE IDs (optional)
+            <input
+              autoComplete="off"
+              onChange={(event) => set("cwe")(event.target.value)}
+              placeholder="CWE-284"
+              spellCheck={false}
+              value={draft.cwe}
+            />
+          </label>
+        </div>
+      </details>
     </>
   );
 }
@@ -608,153 +639,168 @@ export function SecurityProgramPage({
   const terms = project.securityBounty;
   if (terms === undefined)
     return (
-      <main className="shell route-main admin-page security-page">
-        <div className="admin-intro">
-          <h1>
-            Report a security issue in{" "}
-            <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-          </h1>
-          <p>No published bounty terms, so no award is promised.</p>
-        </div>
+      <main className="shell route-main admin-page security-page operations-page security-program">
+        <RoutePageHeader
+          icon={<ShieldCheck />}
+          title={
+            <>
+              Report a security issue in{" "}
+              <Link href={`/projects/${project.slug}`}>{project.name}</Link>
+            </>
+          }
+          lead="No published bounty terms, so no award is promised."
+        />
         <IntakeHandoff project={project} />
       </main>
     );
   const money = amounts(terms);
   const { scope } = terms;
   return (
-    <main className="shell route-main admin-page security-page">
-      <div className="admin-intro">
-        <h1>
-          <Link href={`/projects/${project.slug}`}>{project.name}</Link>{" "}
-          security bounty
-        </h1>
-        <p className="security-lead">
-          Published award: {money.gross} gross per finding, {money.researcher}{" "}
-          to the researcher. Funded by {terms.sponsor.name}.
-        </p>
-        <p>{PROGRAM_STATUS_LABELS[terms.status]}.</p>
-      </div>
+    <main className="shell route-main admin-page security-page operations-page security-program">
+      <RoutePageHeader
+        icon={<ShieldCheck />}
+        title={
+          <>
+            <Link href={`/projects/${project.slug}`}>{project.name}</Link>{" "}
+            security bounty
+          </>
+        }
+        lead={
+          <>
+            Published award: {money.gross} gross per finding. Funded by{" "}
+            {terms.sponsor.name}.
+          </>
+        }
+      >
+        <StatusBadge tone={terms.status === "open" ? "success" : "warning"}>
+          {PROGRAM_STATUS_LABELS[terms.status]}
+        </StatusBadge>
+      </RoutePageHeader>
       <IntakeHandoff project={project} />
-      <section aria-labelledby="security-terms" className="admin-card">
-        <h2 id="security-terms">Award terms</h2>
-        <section className="security-award-split" aria-label="Award split">
-          <div>
-            <span>Researcher · 75%</span>
-            <strong>{money.researcher}</strong>
-          </div>
-          <div>
-            <span>Slop · 25%</span>
-            <strong>{money.slop}</strong>
-          </div>
+      <div className="security-program-terms">
+        <section aria-labelledby="security-terms" className="admin-card">
+          <h2 id="security-terms">Award terms</h2>
+          <section className="security-award-split" aria-label="Award split">
+            <div>
+              <span>Researcher · 75%</span>
+              <strong>{money.researcher}</strong>
+            </div>
+            <div>
+              <span>Slop · 25%</span>
+              <strong>{money.slop}</strong>
+            </div>
+          </section>
+          <dl className="admin-facts">
+            <Fact term="Currency">
+              {terms.amount.currency}
+              {terms.amount.network ? ` on ${terms.amount.network}` : ""}
+            </Fact>
+            <Fact term="Funding">
+              {terms.funding.state === "pledged"
+                ? "Pledged, not verified."
+                : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
+            </Fact>
+            <Fact term="Capacity">
+              {terms.capacity.awards} award
+              {terms.capacity.awards === 1 ? "" : "s"} at the published amount
+              {terms.capacity.closesAt
+                ? `; closes ${formatUtc(terms.capacity.closesAt)}`
+                : ""}
+              . {terms.capacity.exhaustionRule}
+            </Fact>
+            <Fact term="Other work">
+              {terms.rewardMode === "bounty-only"
+                ? "Bounty only. Other work, including fixes, earns no monthly pool cash."
+                : "Contribution rewards are separate; one outcome is never paid twice."}
+            </Fact>
+          </dl>
+          <p>
+            Awards are discretionary. The owner decides whether to award and how
+            much; critical bugs and potential loss of funds are priorities, not
+            an automatic payout. No other payout fee applies. The terms in force
+            when GitHub receives your report apply to your case.
+          </p>
         </section>
-        <dl className="admin-facts">
-          <Fact term="Currency">
-            {terms.amount.currency}
-            {terms.amount.network ? ` on ${terms.amount.network}` : ""}
-          </Fact>
-          <Fact term="Funding">
-            {terms.funding.state === "pledged"
-              ? "Pledged, not verified."
-              : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
-          </Fact>
-          <Fact term="Capacity">
-            {terms.capacity.awards} award
-            {terms.capacity.awards === 1 ? "" : "s"} at the published amount
-            {terms.capacity.closesAt
-              ? `; closes ${formatUtc(terms.capacity.closesAt)}`
-              : ""}
-            . {terms.capacity.exhaustionRule}
-          </Fact>
-          <Fact term="Other work">
-            {terms.rewardMode === "bounty-only"
-              ? "Bounty only. Other work, including fixes, earns no monthly pool cash."
-              : "Contribution rewards are separate; one outcome is never paid twice."}
-          </Fact>
-        </dl>
-        <p>
-          Awards are discretionary. The owner decides whether to award and how
-          much; critical bugs and potential loss of funds are priorities, not an
-          automatic payout. No other payout fee applies. The terms in force when
-          GitHub receives your report apply to your case.
-        </p>
-      </section>
-      <section aria-labelledby="security-scope" className="admin-card">
-        <h2 id="security-scope">Scope</h2>
-        <dl className="admin-facts">
-          <Fact term="Covered source">
-            <ul>
-              {scope.sourceRevisions.map((source) => (
-                <li key={`${source.repository}@${source.commit}`}>
-                  <ExternalLinkAnchor
-                    href={`https://github.com/${source.repository}/tree/${source.commit}`}
-                  >
-                    {source.repository}@{source.commit.slice(0, 12)}
-                  </ExternalLinkAnchor>
-                </li>
-              ))}
-            </ul>
-          </Fact>
-          <Fact term="Deployments">
-            {scope.deployments.length === 0 ? (
-              "None listed"
-            ) : (
+        <section aria-labelledby="security-scope" className="admin-card">
+          <h2 id="security-scope">Scope</h2>
+          <dl className="admin-facts">
+            <Fact term="Covered source">
               <ul>
-                {scope.deployments.map((deployment) => (
-                  <li key={`${deployment.network}:${deployment.address}`}>
-                    {deployment.network}: <code>{deployment.address}</code>
-                    {deployment.codeIdentity
-                      ? ` (${deployment.codeIdentity})`
-                      : ""}
+                {scope.sourceRevisions.map((source) => (
+                  <li key={`${source.repository}@${source.commit}`}>
+                    <ExternalLinkAnchor
+                      href={`https://github.com/${source.repository}/tree/${source.commit}`}
+                    >
+                      {source.repository}@{source.commit.slice(0, 12)}
+                    </ExternalLinkAnchor>
                   </li>
                 ))}
               </ul>
-            )}
-          </Fact>
-          <Fact term="Included assets">{scope.includedAssets.join("; ")}</Fact>
-          <Fact term="Excluded dependencies">
-            {scope.excludedDependencies.length === 0
-              ? "None listed"
-              : scope.excludedDependencies.join("; ")}
-          </Fact>
-          <Fact term="Testing permission">{scope.testingPermission}</Fact>
-          <Fact term="Severity rubric">{scope.severityRubric}</Fact>
-          <Fact term="Loss of funds">{scope.lossDefinition}</Fact>
-        </dl>
-        <p>
-          Do not exploit a production system, move another person's funds,
-          reveal keys or cause damage. A local fork or isolated test can show
-          potential loss.
-        </p>
-      </section>
-      <section aria-labelledby="security-trust" className="admin-card">
-        <h2 id="security-trust">Decisions, disputes and disclosure</h2>
-        <dl className="admin-facts">
-          <Fact term="Findings and awards">
-            {people(terms.approvers.technical)}
-          </Fact>
-          <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
-          <Fact term="Disputes">
-            Contact {people(terms.approvers.dispute)}. {terms.dispute.process} A
-            Slop moderator decides escalated appeals.
-          </Fact>
-          <Fact term="Response targets">
-            Acknowledge within {terms.responseTargets.acknowledgeHours} hours;
-            first triage within {terms.responseTargets.triageBusinessDays}{" "}
-            business days; updates every{" "}
-            {terms.responseTargets.updateIntervalDays} days. A missed target
-            never publishes a report or approves an award.
-          </Fact>
-          <Fact term="Disclosure">{terms.disclosure}</Fact>
-          <Fact term="Safe harbor">{terms.safeHarbor}</Fact>
-        </dl>
-        <p>
-          Slop never publishes cases; rejected, duplicate, disputed and paid
-          reports stay private, and you decide separately whether your name is
-          public. Repository administrators and security managers can read the
-          advisory on GitHub. A public-chain payment shows its addresses, amount
-          and time.
-        </p>
-      </section>
+            </Fact>
+            <Fact term="Deployments">
+              {scope.deployments.length === 0 ? (
+                "None listed"
+              ) : (
+                <ul>
+                  {scope.deployments.map((deployment) => (
+                    <li key={`${deployment.network}:${deployment.address}`}>
+                      {deployment.network}: <code>{deployment.address}</code>
+                      {deployment.codeIdentity
+                        ? ` (${deployment.codeIdentity})`
+                        : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Fact>
+            <Fact term="Included assets">
+              {scope.includedAssets.join("; ")}
+            </Fact>
+            <Fact term="Excluded dependencies">
+              {scope.excludedDependencies.length === 0
+                ? "None listed"
+                : scope.excludedDependencies.join("; ")}
+            </Fact>
+            <Fact term="Testing permission">{scope.testingPermission}</Fact>
+            <Fact term="Severity rubric">{scope.severityRubric}</Fact>
+            <Fact term="Loss of funds">{scope.lossDefinition}</Fact>
+          </dl>
+          <p>
+            Do not exploit a production system, move another person's funds,
+            reveal keys or cause damage. A local fork or isolated test can show
+            potential loss.
+          </p>
+        </section>
+        <section aria-labelledby="security-trust" className="admin-card">
+          <h2 id="security-trust">Decisions, disputes and disclosure</h2>
+          <dl className="admin-facts">
+            <Fact term="Findings and awards">
+              {people(terms.approvers.technical)}
+            </Fact>
+            <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
+            <Fact term="Disputes">
+              Contact {people(terms.approvers.dispute)}. {terms.dispute.process}{" "}
+              A Slop moderator decides escalated appeals.
+            </Fact>
+            <Fact term="Response targets">
+              Acknowledge within {terms.responseTargets.acknowledgeHours} hours;
+              first triage within {terms.responseTargets.triageBusinessDays}{" "}
+              business days; updates every{" "}
+              {terms.responseTargets.updateIntervalDays} days. A missed target
+              never publishes a report or approves an award.
+            </Fact>
+            <Fact term="Disclosure">{terms.disclosure}</Fact>
+            <Fact term="Safe harbor">{terms.safeHarbor}</Fact>
+          </dl>
+          <p>
+            Slop never publishes cases; rejected, duplicate, disputed and paid
+            reports stay private, and you decide separately whether your name is
+            public. Repository administrators and security managers can read the
+            advisory on GitHub. A public-chain payment shows its addresses,
+            amount and time.
+          </p>
+        </section>
+      </div>
     </main>
   );
 }
@@ -2500,6 +2546,7 @@ function CaseDetail({
         <h3 id={`case-${record.id}`}>
           {record.advisory?.ghsa ?? record.id} · {record.projectId}
         </h3>
+        <StatusBadge icon={<LockKeyhole />}>Private case</StatusBadge>
       </header>
       {note ? (
         <p className="admin-status" role="status">
@@ -2507,12 +2554,24 @@ function CaseDetail({
         </p>
       ) : null}
       <p className="security-next-step">
-        <strong>Next step:</strong> {record.nextStep}
-        {record.nextStepDueAt ? ` Due ${formatUtc(record.nextStepDueAt)}.` : ""}
+        <ArrowRight aria-hidden="true" />
+        <span>
+          <strong>Next step:</strong> {record.nextStep}
+          {record.nextStepDueAt ? (
+            <span className="security-due">
+              {" "}
+              Due {formatUtc(record.nextStepDueAt)}.
+            </span>
+          ) : null}
+        </span>
       </p>
       <dl className="admin-facts">
         <Fact term="Receipt">
-          {SUBMISSION_LABELS[record.submissionState]}
+          <StatusBadge
+            tone={record.submissionState === "verified" ? "success" : "warning"}
+          >
+            {SUBMISSION_LABELS[record.submissionState]}
+          </StatusBadge>
           {record.receivedAt
             ? ` ${formatUtc(record.receivedAt)}${RECEIVED_AT_SOURCE_LABELS[record.receivedAtSource ?? "unknown"]}`
             : ""}
@@ -2539,7 +2598,11 @@ function CaseDetail({
           </Fact>
         ) : null}
         <Fact term="Payout">
-          {PAYMENT_LABELS[record.paymentState] ?? record.paymentState}
+          <StatusBadge
+            tone={record.paymentState === "paid" ? "success" : "neutral"}
+          >
+            {PAYMENT_LABELS[record.paymentState] ?? record.paymentState}
+          </StatusBadge>
           {record.paymentDeadline
             ? ` · deadline ${formatUtc(record.paymentDeadline)}`
             : ""}
@@ -2877,10 +2940,8 @@ export default function SecurityCasesPage() {
     );
   }
   return (
-    <main className="shell route-main admin-page security-page">
-      <div className="admin-intro">
-        <h1>Security cases</h1>
-      </div>
+    <main className="shell route-main admin-page security-page operations-page">
+      <RoutePageHeader icon={<LockKeyhole />} title="Security cases" />
       {body}
     </main>
   );

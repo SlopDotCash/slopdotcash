@@ -476,6 +476,27 @@ describe("Kyber gas pricing in the conversion workflow", () => {
       }
     });
   }
+
+  // The configured cap is 200 bps. 20 -> 19.6 USD is exactly 200 bps;
+  // 20 -> 19.599 USD is 200.5 bps and must not round down to the cap.
+  for (const [amountOutUsd, bps, state] of [
+    ["19.6", 200, "submitted"],
+    ["19.599", 201, "skipped"],
+  ] as const) {
+    test(`a Kyber price impact to ${amountOutUsd} USD counts as ${bps} bps`, async () => {
+      const h = quotedRun("base", { amountOutUsd });
+      try {
+        await runNetwork(h.network, h.deps);
+        expect(h.rows()[0]).toMatchObject({
+          state,
+          reason: state === "skipped" ? "price impact above the cap" : null,
+        });
+        expect(h.chain.prepared).toBe(state === "submitted" ? 1 : 0);
+      } finally {
+        h.sqlite.close();
+      }
+    });
+  }
 });
 
 describe("receipt-triggered conversion", () => {

@@ -1,16 +1,27 @@
+import { CalendarDays } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { loginHref } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
+import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
+import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits } from "./lib/payments/contracts";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
-import OwnerReserveRelease from "./OwnerReserveRelease";
-import { formatDateTime } from "./Presentation";
+import OwnerReserveRelease, {
+  releaseStoragePrefix,
+} from "./OwnerReserveRelease";
+import {
+  formatDateTime,
+  MetricGrid,
+  MetricTile,
+  NetworkName,
+  StatusBadge,
+} from "./Presentation";
 
 function previousMonth() {
   const now = new Date();
@@ -33,6 +44,15 @@ function baseUnitsOf(value: string, decimals: number | null) {
     return trimmed;
   }
   return parseVaultAmount(trimmed, decimals).toString();
+}
+/** A release this browser submitted must stay visible until it settles. */
+function hasSubmittedRelease(projectId: string) {
+  try {
+    const prefix = releaseStoragePrefix(projectId);
+    return Object.keys(sessionStorage).some((key) => key.startsWith(prefix));
+  } catch {
+    return false;
+  }
 }
 const STATE_TEXT: Record<
   NonNullable<MonthlyOwnerView["run"]>["awards"][number]["state"],
@@ -61,6 +81,9 @@ export default function OwnerAwards({
       };
     }
   });
+  // The funding page is public, so private award reads wait for the owner,
+  // unless this browser has a submitted release to reconcile.
+  const [opened, setOpened] = useState(() => hasSubmittedRelease(project.id));
   const [monthRequest, setMonthRequest] = useState(() => ({
     period: previousMonth(),
     revision: 0,
@@ -133,6 +156,7 @@ export default function OwnerAwards({
     [base],
   );
   useEffect(() => {
+    if (!opened) return;
     setView(null);
     setSelectedActor(null);
     setLoadError(null);
@@ -165,7 +189,7 @@ export default function OwnerAwards({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [accept, call, monthRequest, setActionError]);
+  }, [accept, call, monthRequest, opened, setActionError]);
   function run(action: () => Promise<void>) {
     setNotice("");
     setLoadError(null);
@@ -236,8 +260,13 @@ export default function OwnerAwards({
       ? view.deployment.network
       : null;
   return (
-    <main className="shell route-main owner-awards-page">
-      <h1>Monthly awards</h1>
+    <section
+      className="section owner-awards"
+      aria-labelledby="monthly-awards-heading"
+    >
+      <h2 id="monthly-awards-heading">
+        <CalendarDays size={22} aria-hidden="true" /> Monthly awards
+      </h2>
       {recovery.error && <p role="alert">{recovery.error}</p>}
       {recovery.pending.map((entry) => (
         <OwnerCommitment
@@ -247,211 +276,261 @@ export default function OwnerAwards({
           expected={entry.expected}
         />
       ))}
-      <form onSubmit={load}>
-        <label>
-          Contribution month
-          <input
-            type="month"
-            required
-            value={period}
-            disabled={busy}
-            onChange={(event) => {
-              setMonthRequest({
-                period: event.target.value,
-                revision: monthRequest.revision,
-              });
-              setView(null);
-            }}
-          />
-        </label>
-        <button className="button primary-button" type="submit" disabled={busy}>
-          {loading ? "Loading…" : "Refresh awards"}
-        </button>
-      </form>
-      {signedOut && (
-        <p>
-          <a href={loginHref(`/projects/${project.slug}/awards`)}>
-            Sign in with GitHub
-          </a>
-        </p>
-      )}
-      {error && <p role="alert">{error}</p>}
-      {notice && <p role="status">{notice}</p>}
-      {view && (
-        <section aria-label="Monthly awards">
-          <h2>{view.period} awards</h2>
-          <p>
-            Automatic monthly payment is{" "}
-            <strong>{view.automatic ? "on" : "off"}</strong>.{" "}
-            {view.automatic
-              ? cutoffPassed
-                ? "The cutoff has passed. Current allocations are finalized automatically."
-                : view.cutoffAt
-                  ? `Unless you finalize earlier, the current allocations are finalized at ${formatDateTime(view.cutoffAt)}.`
-                  : "Automatic payment starts later. Finalize this month yourself."
-              : "Finalize each month yourself."}
-            {project.reward.paymentMode !== "enabled" &&
-              " Payments are disabled for this project."}
-          </p>
+      {!opened ? (
+        <>
+          <p>Review allocations and reserve finalized awards.</p>
           <button
             className="button secondary-button"
             type="button"
-            disabled={busy}
-            onClick={() => void toggleAutomatic()}
+            onClick={() => setOpened(true)}
           >
-            {view.automatic
-              ? "Turn off automatic payment"
-              : "Turn on automatic payment"}
+            Review monthly awards
           </button>
-          {!view.proposal ? (
-            <p>No allocation is proposed for this month yet.</p>
-          ) : !view.run ? (
-            <>
+        </>
+      ) : (
+        <>
+          <form className="award-month-toolbar" onSubmit={load}>
+            <label>
+              Contribution month
+              <input
+                type="month"
+                required
+                value={period}
+                disabled={busy}
+                onChange={(event) => {
+                  setMonthRequest({
+                    period: event.target.value,
+                    revision: monthRequest.revision,
+                  });
+                  setView(null);
+                }}
+              />
+            </label>
+            <button
+              className="button primary-button"
+              type="submit"
+              disabled={busy}
+            >
+              {loading ? "Loading…" : "Refresh awards"}
+            </button>
+          </form>
+          {signedOut && (
+            <p>
+              <a href={loginHref(`/projects/${project.slug}/funding`)}>
+                Sign in with GitHub
+              </a>
+            </p>
+          )}
+          {error && <p role="alert">{error}</p>}
+          {notice && <p role="status">{notice}</p>}
+          {view && (
+            <div>
+              <h3>{view.period} awards</h3>
+              {view.deployment ? (
+                <NetworkName
+                  chain={ESCROW_NETWORKS[view.deployment.network].chain}
+                >
+                  {networkLabel(view.deployment.network)}
+                </NetworkName>
+              ) : null}
               <p>
-                Allocated{" "}
-                {amount(
-                  view.proposal.allocations
-                    .reduce((sum, row) => sum + BigInt(row.grossBase), 0n)
-                    .toString(),
-                )}{" "}
-                of {amount(view.proposal.capBase)}.
+                Automatic monthly payment is{" "}
+                <strong>{view.automatic ? "on" : "off"}</strong>.{" "}
+                {view.automatic
+                  ? cutoffPassed
+                    ? "The cutoff has passed. Current allocations are finalized automatically."
+                    : view.cutoffAt
+                      ? `Unless you finalize earlier, the current allocations are finalized at ${formatDateTime(view.cutoffAt)}.`
+                      : "Automatic payment starts later. Finalize this month yourself."
+                  : "Finalize each month yourself."}
+                {project.reward.paymentMode !== "enabled" &&
+                  " Payments are disabled for this project."}
               </p>
-              {view.proposal.allocations.length === 0 ? (
-                <p>No one has an allocation this month.</p>
-              ) : (
-                <ul className="owner-award-list" aria-label="Allocations">
-                  {view.proposal.allocations.map((row) => {
-                    const id = `allocation-${row.githubUserId}`;
-                    return (
-                      <li key={row.githubUserId}>
-                        <h3>{row.login}</h3>
-                        <dl>
-                          <dt>Proposed</dt>
-                          <dd>{amount(row.proposedGrossBase)}</dd>
-                        </dl>
-                        <label htmlFor={id}>
-                          Award for {row.login}
-                          {decimals === null ? " (base units)" : ""}
-                        </label>
-                        <input
-                          id={id}
-                          inputMode="decimal"
-                          spellCheck={false}
-                          disabled={busy || cutoffPassed}
-                          value={
-                            drafts[row.githubUserId] ??
-                            editableUnits(row.grossBase, decimals)
-                          }
-                          onChange={(event) =>
-                            setDrafts({
-                              ...drafts,
-                              [row.githubUserId]: event.target.value,
-                            })
-                          }
-                        />
-                        <button
-                          className="button secondary-button"
-                          type="button"
-                          disabled={
-                            busy ||
-                            cutoffPassed ||
-                            drafts[row.githubUserId] === undefined
-                          }
-                          onClick={() => void save(row.githubUserId)}
-                        >
-                          Save {row.login}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
               <button
-                className="button primary-button"
+                className="button secondary-button"
                 type="button"
                 disabled={busy}
-                onClick={() => void finalize()}
+                onClick={() => void toggleAutomatic()}
               >
-                Finalize awards
+                {view.automatic
+                  ? "Turn off automatic payment"
+                  : "Turn on automatic payment"}
               </button>
-            </>
-          ) : (
-            <>
-              <p role="status">
-                Finalized{" "}
-                {view.run.trigger === "automatic" ? "automatically" : "by you"}{" "}
-                on{" "}
-                <time dateTime={view.run.frozenAt}>
-                  {formatDateTime(view.run.frozenAt)}
-                </time>
-                .
-                {view.run.funded
-                  ? ""
-                  : " Awards wait until the vault's free balance covers them."}
-              </p>
-              {view.run.awards.length === 0 ? (
-                <p>No awards this month.</p>
-              ) : (
-                <ul className="owner-award-list" aria-label="Final awards">
-                  {view.run.awards.map((award) => (
-                    <li key={award.githubUserId}>
-                      <h3>{award.login}</h3>
-                      <dl>
-                        <dt>Award</dt>
-                        <dd>{amount(award.grossBase)}</dd>
-                        <dt>Contributor receives</dt>
-                        <dd>{amount(award.netBase)}</dd>
-                        <dt>Status</dt>
-                        <dd>{STATE_TEXT[award.state]}</dd>
-                      </dl>
-                      {reservable && award.state === "awaiting-reservation" && (
-                        <button
-                          className="button secondary-button"
-                          type="button"
-                          onClick={() => setSelectedActor(award.githubUserId)}
-                        >
-                          Reserve award for {award.login}
-                        </button>
+              {!view.proposal ? (
+                <p>No allocation is proposed for this month yet.</p>
+              ) : !view.run ? (
+                <>
+                  <MetricGrid>
+                    <MetricTile
+                      label="Allocated"
+                      value={amount(
+                        view.proposal.allocations
+                          .reduce((sum, row) => sum + BigInt(row.grossBase), 0n)
+                          .toString(),
                       )}
-                    </li>
-                  ))}
-                </ul>
+                      tone="info"
+                    />
+                    <MetricTile
+                      label="Monthly cap"
+                      value={amount(view.proposal.capBase)}
+                    />
+                  </MetricGrid>
+                  {view.proposal.allocations.length === 0 ? (
+                    <p>No one has an allocation this month.</p>
+                  ) : (
+                    <ul className="owner-award-list" aria-label="Allocations">
+                      {view.proposal.allocations.map((row) => {
+                        const id = `allocation-${row.githubUserId}`;
+                        return (
+                          <li key={row.githubUserId}>
+                            <h4>{row.login}</h4>
+                            <dl>
+                              <dt>Proposed</dt>
+                              <dd>{amount(row.proposedGrossBase)}</dd>
+                            </dl>
+                            <label htmlFor={id} className="visually-hidden">
+                              Award for {row.login}
+                              {decimals === null ? " (base units)" : ""}
+                            </label>
+                            <input
+                              id={id}
+                              inputMode="decimal"
+                              spellCheck={false}
+                              disabled={busy || cutoffPassed}
+                              value={
+                                drafts[row.githubUserId] ??
+                                editableUnits(row.grossBase, decimals)
+                              }
+                              onChange={(event) =>
+                                setDrafts({
+                                  ...drafts,
+                                  [row.githubUserId]: event.target.value,
+                                })
+                              }
+                            />
+                            <button
+                              className="button secondary-button"
+                              type="button"
+                              disabled={
+                                busy ||
+                                cutoffPassed ||
+                                drafts[row.githubUserId] === undefined
+                              }
+                              aria-label={`Save ${row.login}`}
+                              onClick={() => void save(row.githubUserId)}
+                            >
+                              Save
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  <button
+                    className="button primary-button"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void finalize()}
+                  >
+                    Finalize awards
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p role="status">
+                    Finalized{" "}
+                    {view.run.trigger === "automatic"
+                      ? "automatically"
+                      : "by you"}{" "}
+                    on{" "}
+                    <time dateTime={view.run.frozenAt}>
+                      {formatDateTime(view.run.frozenAt)}
+                    </time>
+                    .
+                    {view.run.funded
+                      ? ""
+                      : " Awards wait until the vault's free balance covers them."}
+                  </p>
+                  {view.run.awards.length === 0 ? (
+                    <p>No awards this month.</p>
+                  ) : (
+                    <ul className="owner-award-list" aria-label="Final awards">
+                      {view.run.awards.map((award) => (
+                        <li key={award.githubUserId}>
+                          <h4>{award.login}</h4>
+                          <dl>
+                            <dt>Award</dt>
+                            <dd>{amount(award.grossBase)}</dd>
+                            <dt>Contributor receives</dt>
+                            <dd>{amount(award.netBase)}</dd>
+                            <dt>Fee</dt>
+                            <dd>
+                              {amount(
+                                (
+                                  BigInt(award.grossBase) -
+                                  BigInt(award.netBase)
+                                ).toString(),
+                              )}
+                            </dd>
+                            <dt>Status</dt>
+                            <dd>
+                              <StatusBadge
+                                tone={
+                                  award.state === "paid" ? "success" : "warning"
+                                }
+                              >
+                                {STATE_TEXT[award.state]}
+                              </StatusBadge>
+                            </dd>
+                          </dl>
+                          {reservable &&
+                            award.state === "awaiting-reservation" && (
+                              <button
+                                className="button secondary-button"
+                                type="button"
+                                onClick={() =>
+                                  setSelectedActor(award.githubUserId)
+                                }
+                              >
+                                Reserve award for {award.login}
+                              </button>
+                            )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {selectedActor &&
+                    reservable &&
+                    !recovery.pending.some(
+                      (entry) =>
+                        entry.cycleId === view.period &&
+                        entry.expected.network === reservable &&
+                        entry.expected.githubUserId === selectedActor,
+                    ) && (
+                      <OwnerCommitment
+                        key={`${view.run.snapshotSha256}:${selectedActor}`}
+                        projectId={project.id}
+                        cycleId={view.period}
+                        expected={{
+                          network: reservable,
+                          githubUserId: selectedActor,
+                          manifestSha256: view.manifestSha256,
+                          snapshotSha256: view.run.snapshotSha256,
+                        }}
+                      />
+                    )}
+                </>
               )}
-              {selectedActor &&
-                reservable &&
-                !recovery.pending.some(
-                  (entry) =>
-                    entry.cycleId === view.period &&
-                    entry.expected.network === reservable &&
-                    entry.expected.githubUserId === selectedActor,
-                ) && (
-                  <OwnerCommitment
-                    key={`${view.run.snapshotSha256}:${selectedActor}`}
-                    projectId={project.id}
-                    cycleId={view.period}
-                    expected={{
-                      network: reservable,
-                      githubUserId: selectedActor,
-                      manifestSha256: view.manifestSha256,
-                      snapshotSha256: view.run.snapshotSha256,
-                    }}
-                  />
-                )}
-            </>
+            </div>
           )}
-        </section>
+          {view?.deployment && (
+            <OwnerReserveRelease
+              key={`${view.projectId}:${view.period}:${view.manifestSha256}`}
+              view={view}
+            />
+          )}
+        </>
       )}
-      <p>
-        <a href={`/projects/${project.slug}`}>{project.name}</a> ·{" "}
-        <a href={`/projects/${project.slug}/funding`}>Project funding</a> ·{" "}
-        <a href={`/projects/${project.slug}/manage`}>Project settings</a>
-      </p>
-      {view?.deployment && (
-        <OwnerReserveRelease
-          key={`${view.projectId}:${view.period}:${view.manifestSha256}`}
-          view={view}
-        />
-      )}
-    </main>
+    </section>
   );
 }

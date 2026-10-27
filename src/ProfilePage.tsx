@@ -19,6 +19,7 @@ import {
   formatCycleMonth,
   formatMicroUsdc,
   formatPointsFromThirds,
+  StatusBadge,
 } from "./Presentation";
 import { useProfiles } from "./Profiles";
 
@@ -257,13 +258,16 @@ export function ProfilePage({
                     points
                   </strong>
                   <small>
-                    <span
+                    <StatusBadge
                       className={`payout-state payout-state-${contributor.state}`}
+                      tone={
+                        contributor.state === "paid" ? "success" : "warning"
+                      }
                     >
                       {contributor.state === "paid"
                         ? "Paid"
                         : cycleLifecycleLabel(cycle)}
-                    </span>
+                    </StatusBadge>
                   </small>
                 </span>
                 <span>
