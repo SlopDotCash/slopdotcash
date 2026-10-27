@@ -1025,7 +1025,7 @@ async function runSetupCheck(
       current: project,
       manifest: { ...project.manifest, status: "active" },
       ownerParticipation: true,
-      reason: `Activated automatically after setup checks for @${actor.githubLogin}: ${authority.message} Slopbot installation ${access.access.installationId}. ${clearance.assessment === null ? "Grandfathered before security scans" : `Admission scan ${clearance.assessment.id}`}.`,
+      reason: `Activated automatically after setup checks for @${actor.githubLogin}: ${authority.message} Slopbot installation ${access.access.installationId}. ${clearance.assessment === null ? ("exemption" in clearance ? `Owner-approved admission exemption ${clearance.exemption.id}` : "Grandfathered before security scans") : `Admission scan ${clearance.assessment.id}`}.`,
       actor,
     });
     activatedRevision = project.revision;

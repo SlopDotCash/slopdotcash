@@ -13,6 +13,7 @@ import type {
 import { executableManifestContent } from "../../src/lib/project-revision-changes";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type {
+  AdmissionExemption,
   AssessmentState,
   AssessmentSummary,
   VettingClearance,
@@ -176,6 +177,59 @@ function newest<T>(items: T[], match: (item: T) => boolean): T | undefined {
   return undefined;
 }
 
+type ExemptionRow = {
+  id: string;
+  project_id: string;
+  revision: number;
+  manifest_sha256: string;
+  repository_id: string;
+  repository_node_id: string;
+  steward_id: string;
+  steward_node_id: string;
+  granted_by_github_id: string;
+  granted_by_github_login: string;
+  granted_at: string;
+  reason: string;
+  decision_reference: string;
+  covered_assessment_ids: string;
+  revoked_at: string | null;
+  revoked_by_github_id: string | null;
+  revoked_by_github_login: string | null;
+  revocation_reason: string | null;
+  revocation_decision_reference: string | null;
+};
+const EXEMPTION_SELECT = `SELECT g.*,r.revoked_at,r.revoked_by_github_id,r.revoked_by_github_login,r.reason AS revocation_reason,r.decision_reference AS revocation_decision_reference FROM vetting_admission_exemptions g LEFT JOIN vetting_admission_exemption_revocations r ON r.exemption_id=g.id`;
+const UNREVIEWED_MALICIOUS = `SELECT 1 FROM vetting_assessments a WHERE a.project_id=? AND a.state='malicious' AND NOT EXISTS(SELECT 1 FROM project_vetting_reinstatements r JOIN project_enforcements e ON e.id=r.enforcement_id,json_each(r.malicious_assessment_ids) reviewed WHERE e.project_id=a.project_id AND e.action='reinstate' AND reviewed.value=a.id)`;
+function exemptionView(row: ExemptionRow): AdmissionExemption {
+  return {
+    id: row.id,
+    kind: "owner-approved-admission",
+    projectId: row.project_id,
+    revision: row.revision,
+    manifestSha256: row.manifest_sha256,
+    repositoryId: row.repository_id,
+    repositoryNodeId: row.repository_node_id,
+    stewardId: row.steward_id,
+    stewardNodeId: row.steward_node_id,
+    grantedBy: {
+      githubId: row.granted_by_github_id,
+      githubLogin: row.granted_by_github_login,
+    },
+    grantedAt: row.granted_at,
+    reason: row.reason,
+    decisionReference: row.decision_reference,
+    revokedAt: row.revoked_at,
+    revokedBy: row.revoked_by_github_id
+      ? {
+          githubId: row.revoked_by_github_id,
+          githubLogin: row.revoked_by_github_login as string,
+        }
+      : null,
+    revocationReason: row.revocation_reason,
+    revocationDecisionReference: row.revocation_decision_reference,
+  };
+}
+
 export class CloudflareVettingPersistence {
   constructor(
     private readonly db: ProjectD1Database,
@@ -183,6 +237,100 @@ export class CloudflareVettingPersistence {
       assessment: VettingAssessment,
     ) => Promise<boolean>,
   ) {}
+
+  async listAdmissionExemptions(): Promise<AdmissionExemption[]> {
+    const rows = await this.db
+      .prepare(`${EXEMPTION_SELECT} ORDER BY g.sequence DESC`)
+      .all<ExemptionRow>();
+    return rows.results.map(exemptionView);
+  }
+  async admissionExemption(id: string): Promise<AdmissionExemption | null> {
+    const row = await this.db
+      .prepare(`${EXEMPTION_SELECT} WHERE g.id=?`)
+      .bind(id)
+      .first<ExemptionRow>();
+    return row ? exemptionView(row) : null;
+  }
+  async hasUnreviewedMalicious(projectId: string): Promise<boolean> {
+    return (
+      (await this.db.prepare(UNREVIEWED_MALICIOUS).bind(projectId).first()) !==
+      null
+    );
+  }
+  async grantAdmissionExemption(input: {
+    id: string;
+    projectId: string;
+    revision: number;
+    manifestSha256: string;
+    repositoryId: string;
+    repositoryNodeId: string;
+    stewardId: string;
+    stewardNodeId: string;
+    actor: GithubActor;
+    at: string;
+    reason: string;
+    decisionReference: string;
+    enforcementGeneration: number;
+  }): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `INSERT INTO vetting_admission_exemptions(id,project_id,revision,manifest_sha256,repository_id,repository_node_id,steward_id,steward_node_id,granted_by_github_id,granted_by_github_login,granted_at,reason,decision_reference,covered_assessment_ids) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT json_group_array(id) FROM vetting_assessments WHERE project_id=?) WHERE EXISTS(SELECT 1 FROM projects p WHERE p.id=? AND p.revision=? AND p.manifest_sha256=? AND json_extract(p.manifest,'$.authority.repositoryId')=? AND json_extract(p.manifest,'$.authority.repositoryNodeId')=? AND json_extract(p.manifest,'$.steward.github.actorId')=? AND json_extract(p.manifest,'$.steward.github.nodeId')=?) AND NOT EXISTS(${UNREVIEWED_MALICIOUS}) AND (SELECT COALESCE(MAX(rowid),0) FROM project_enforcements)=? AND NOT EXISTS(SELECT 1 FROM vetting_admission_exemptions g WHERE g.project_id=? AND g.repository_id=? AND g.repository_node_id=? AND g.steward_id=? AND g.steward_node_id=? AND NOT EXISTS(SELECT 1 FROM vetting_admission_exemption_revocations r WHERE r.exemption_id=g.id))`,
+      )
+      .bind(
+        input.id,
+        input.projectId,
+        input.revision,
+        input.manifestSha256,
+        input.repositoryId,
+        input.repositoryNodeId,
+        input.stewardId,
+        input.stewardNodeId,
+        input.actor.githubId,
+        input.actor.githubLogin,
+        input.at,
+        input.reason,
+        input.decisionReference,
+        input.projectId,
+        input.projectId,
+        input.revision,
+        input.manifestSha256,
+        input.repositoryId,
+        input.repositoryNodeId,
+        input.stewardId,
+        input.stewardNodeId,
+        input.projectId,
+        input.enforcementGeneration,
+        input.projectId,
+        input.repositoryId,
+        input.repositoryNodeId,
+        input.stewardId,
+        input.stewardNodeId,
+      )
+      .run();
+    return result.meta?.changes === 1;
+  }
+  async revokeAdmissionExemption(
+    id: string,
+    actor: GithubActor,
+    at: string,
+    reason: string,
+    decisionReference: string,
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO vetting_admission_exemption_revocations(exemption_id,revoked_by_github_id,revoked_by_github_login,revoked_at,reason,decision_reference) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM vetting_admission_exemptions WHERE id=?) ON CONFLICT(exemption_id) DO NOTHING`,
+      )
+      .bind(
+        id,
+        actor.githubId,
+        actor.githubLogin,
+        at,
+        reason,
+        decisionReference,
+        id,
+      )
+      .run();
+  }
 
   async listAssessments(): Promise<VettingAssessment[]> {
     const rows = await this.db
@@ -552,6 +700,7 @@ export class CloudflareVettingPersistence {
       readPin,
       forReinstatement,
       admissionRepository(manifest),
+      (manifest as Partial<ProjectDefinition>).steward?.github,
     );
   }
 
@@ -566,6 +715,7 @@ export class CloudflareVettingPersistence {
     readPin: VettingPinReader,
     forReinstatement = false,
     repositoryIdentity: string | null,
+    steward: { actorId: string; nodeId: string } | undefined,
   ): Promise<VettingClearance> {
     const assessments = await this.projectAssessments(projectId);
     const reviewed = await this.db
@@ -596,6 +746,51 @@ export class CloudflareVettingPersistence {
       .first<{ found: number }>();
     if (grandfathered && !malicious && !forReinstatement)
       return { state: "cleared", assessment: null, grandfathered: true };
+    if (
+      !malicious &&
+      !forReinstatement &&
+      repositoryIdentity !== null &&
+      steward
+    ) {
+      const identity = JSON.parse(repositoryIdentity) as {
+        id: string;
+        nodeId: string;
+      };
+      const exempt = await this.db
+        .prepare(
+          `${EXEMPTION_SELECT} WHERE g.project_id=? AND g.repository_id=? AND g.repository_node_id=? AND g.steward_id=? AND g.steward_node_id=? AND g.revision<=? AND r.exemption_id IS NULL ORDER BY g.sequence DESC LIMIT 1`,
+        )
+        .bind(
+          projectId,
+          identity.id,
+          identity.nodeId,
+          steward.actorId,
+          steward.nodeId,
+          throughRevision,
+        )
+        .first<ExemptionRow>();
+      if (exempt) {
+        const covered = new Set(
+          JSON.parse(exempt.covered_assessment_ids) as string[],
+        );
+        if (assessments.every((assessment) => covered.has(assessment.id)))
+          return {
+            state: "cleared",
+            assessment: null,
+            exemption: {
+              id: exempt.id,
+              kind: "owner-approved-admission",
+              grantedAt: exempt.granted_at,
+              grantedBy: {
+                githubId: exempt.granted_by_github_id,
+                githubLogin: exempt.granted_by_github_login,
+              },
+              repositoryId: exempt.repository_id,
+              repositoryNodeId: exempt.repository_node_id,
+            },
+          };
+      }
+    }
     const revisions = await this.revisionContents(projectId);
     const window = new Map<number, string>();
     for (let index = revisions.length - 1; index >= 0; index -= 1) {
