@@ -17,10 +17,10 @@ export default {
     const isolated = privateEnvironment(env);
     // A newly authorized wallet can arrive after the reserve was indexed.
     await isolated.PAYMENTS_DB.prepare(`INSERT INTO payment_outbox(obligation_id,state,updated_at)
-      SELECT o.id,'ready',? FROM payment_obligations o JOIN wallet_claims w
+      SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w
       ON w.github_user_id=o.github_user_id AND w.chain=o.chain
       JOIN payment_wallet_authorizations a ON a.claim_id=w.id
-      WHERE o.state='reserved' AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)
+      WHERE o.state='reserved'
       ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'`)
       .bind(new Date().toISOString())
       .run();

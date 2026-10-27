@@ -28,11 +28,16 @@ wallets and off-curve Solana destinations need a separately reviewed recovery
 path; they cannot skip signature verification. Legacy claim semantics remain
 unchanged.
 
-Admin wallet proposals are append-only pending records. The same GitHub session must match the trusted numeric `operatorIds` allowlist,
-provided by Pages `OPERATOR_GITHUB_IDS`; no public request header grants this
-capability.
-A proposal cannot authorize a destination. The contributor must independently
-register and sign their destination.
+Registration alone never displaces an authorized wallet. The derived
+`effective_payment_wallet_claims` view keeps the last authorized claim active
+through any unsigned successors, and exposes the pending leaf only before the
+first authorization. Challenges and registration still use the raw claim leaf.
+Apply migration 0100 before deploying these readers. Payment attempts, signed
+binding attempts and their reconciliation/cancellation limits remain intact.
+
+For wallet recovery, email the operator, then complete the existing signed
+self-service flow. The unused admin wallet-proposal endpoint is removed;
+historical proposal rows and their immutable migrations remain preserved.
 
 Apply migration `0011_payments.sql` after prior migrations. Run the account and
 queue integration workflow with:

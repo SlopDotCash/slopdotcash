@@ -257,7 +257,7 @@ export async function indexPaymentEvent(
     statements.push(
       db
         .prepare(
-          "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE o.id=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id) ON CONFLICT(obligation_id) DO NOTHING",
+          "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE o.id=? ON CONFLICT(obligation_id) DO NOTHING",
         )
         .bind(now, event.obligationId),
     );
