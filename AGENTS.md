@@ -203,10 +203,11 @@ nonexempt admission (owner decision, 27 October 2026, PRD section 8). Record the
 existing-project exemption explicitly, never as a passed scan; its project-ID
 scope is unchanged. Flags, pauses, confirmed-malicious bans and fresh-scan
 reinstatement requirements still apply.
+
 Owner decision, 27 October 2026: the registered Umia Protocol fork may receive
 an explicit, audited normal-admission exemption through the administrator
-interface. Bind it to the current D1 project revision and immutable repository
-identity; keep the frozen migration-0075 set unchanged. No other Slop-owned
+interface. Bind it to the current D1 project revision, immutable repository
+identity and steward; keep the frozen migration-0075 set unchanged. No other Slop-owned
 repository is automatically exempt. A later grant needs its own human owner
 decision. Display "Owner-approved exemption", never a passed scan. Retain
 earlier assessments; later investigations, flags, pauses, account restrictions,
