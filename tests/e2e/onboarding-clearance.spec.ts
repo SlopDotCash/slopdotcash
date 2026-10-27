@@ -34,7 +34,7 @@ test("project agent setup falls back to the general prompt until cleared", async
   state = "blocked";
   await page.reload({ waitUntil: "networkidle" });
   await expect(
-    page.getByText("This project revision is not cleared"),
+    page.getByText("This project is not cleared for agents."),
   ).toBeVisible();
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),

@@ -4,6 +4,7 @@ import { decodeBase58Bytes } from "./lib/base58";
 import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import type { VaultConnection } from "./lib/evm-vault-actions";
+import { networkLabel } from "./lib/network-names";
 import {
   checkEvmCommitment,
   evmCommitmentIntent,
@@ -199,9 +200,7 @@ export default function OwnerCommitment({
       } catch (reason) {
         if ((reason as { code?: unknown } | null)?.code === 4001) {
           remember(null);
-          throw new Error(
-            "You declined the wallet request. No commitment was submitted by this action.",
-          );
+          throw new Error("You declined the wallet request. Nothing was sent.");
         }
         if (requested)
           throw new Error(
@@ -232,8 +231,8 @@ export default function OwnerCommitment({
       setReview(null);
       setNotice(
         status === "failed"
-          ? "The finalized transaction failed. The award was not reserved by this transaction. Review again before retrying."
-          : `Award reserved on the finalized chain: ${hash}. This is a funding commitment, not a completed payment.`,
+          ? "The transaction failed. The award was not reserved. Review again before retrying."
+          : `Award reserved on the finalized chain: ${hash}. Not yet paid.`,
       );
     });
   const activePlan = pending?.plan ?? review?.plan;
@@ -243,9 +242,7 @@ export default function OwnerCommitment({
   return (
     <section aria-label="Authorize award commitment" className="section">
       <h2>Reserve this award</h2>
-      <p>
-        Network: {expected.network} · GitHub actor: {expected.githubUserId}
-      </p>
+      <p>Network: {networkLabel(expected.network)}</p>
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
       {storageError && (
@@ -374,7 +371,7 @@ export default function OwnerCommitment({
                 <dd>
                   {formatBaseUnits(review.plan.award.net, review.decimals)}
                 </dd>
-                <dt>2% fee included</dt>
+                <dt>Fee (2%)</dt>
                 <dd>
                   {formatBaseUnits(review.plan.award.fee, review.decimals)}
                 </dd>
@@ -384,10 +381,7 @@ export default function OwnerCommitment({
               <p>
                 Token: <code>{review.plan.deployment.asset}</code>
               </p>
-              <p>
-                Reserved funds cannot be withdrawn. Your wallet pays the network
-                fee.
-              </p>
+              <p>Reserved funds cannot be withdrawn.</p>
               <button
                 className="button primary-button"
                 type="button"

@@ -66,37 +66,34 @@ function VaultTotals({
   staleAfterMs: number;
 }) {
   const value = (amount: string | null) =>
-    amount === null
-      ? "Not reported by this vault type"
-      : formatAssetAmount(amount, snapshot);
+    amount === null ? "Not reported" : formatAssetAmount(amount, snapshot);
   const reservedAwards = reservedGross(snapshot);
   const stale = vaultSnapshotStale(snapshot, staleAfterMs);
   const network = Object.hasOwn(ESCROW_NETWORKS, snapshot.network)
     ? networkLabel(snapshot.network)
-    : `${snapshot.network} (not a registry network)`;
+    : snapshot.network;
   return (
     <>
       {stale && (
         <p role="alert">
-          These totals are stale. The last finalized vault read was at{" "}
-          {formatDateTime(snapshot.observedAt)}. The chain may show newer
-          activity.
+          These totals may be outdated · read{" "}
+          {formatDateTime(snapshot.observedAt)}.
         </p>
       )}
       <dl>
         <dt>Deposited</dt>
         <dd>{value(snapshot.totalDeposited)}</dd>
-        <dt>Paid out to contributors</dt>
+        <dt>Paid out</dt>
         <dd>{value(snapshot.totalPaid)}</dd>
         <dt>Payout fees</dt>
         <dd>{value(snapshot.totalPayoutFees)}</dd>
-        <dt>Withdrawn by the owner (gross)</dt>
+        <dt>Withdrawn (gross)</dt>
         <dd>{value(snapshot.totalGrossWithdrawn)}</dd>
         <dt>Withdrawal fees</dt>
         <dd>{value(snapshot.totalWithdrawalFees)}</dd>
-        <dt>Free balance</dt>
+        <dt>Available</dt>
         <dd>{value(snapshot.freeBalance)}</dd>
-        <dt>Reserved for committed awards</dt>
+        <dt>Reserved for awards</dt>
         <dd>{value(reservedAwards)}</dd>
         {snapshot.reservedFees !== null && (
           <>
@@ -106,10 +103,8 @@ function VaultTotals({
         )}
       </dl>
       <p>
-        As of {formatDateTime(snapshot.blockTime)} (finalized block{" "}
-        {snapshot.blockNumber} on {network}). Read from the vault counters at{" "}
-        {formatDateTime(snapshot.observedAt)}. Amounts are in the vault asset
-        only and are not dollar values.
+        As of {formatDateTime(snapshot.blockTime)} · finalized block{" "}
+        {snapshot.blockNumber} on {network}.
       </p>
     </>
   );
@@ -134,8 +129,7 @@ export function useVaultTotals(
         `/api/v1/payments/projects/${encodeURIComponent(project.id)}/vault`,
         { signal },
       );
-      if (!response.ok)
-        throw new Error("Vault totals are not available. Please retry.");
+      if (!response.ok) throw new Error("Vault totals are unavailable.");
       const vault = (await readBoundedJson(
         response,
         65536,
@@ -195,10 +189,9 @@ export function EscrowFunding({
         Project vault · {NETWORK_NAMES[project.escrow?.chain ?? "solana"]}
       </h2>
       <p>
-        Awards pay out after a 2% fee in the reward token. Reserved awards
-        cannot be withdrawn.
-        {withdrawalFee !== null &&
-          ` Withdrawing unused funds costs ${withdrawalFee}%.`}
+        Fees: 2% of each award
+        {withdrawalFee !== null && `, ${withdrawalFee}% of withdrawals`}.
+        Reserved awards cannot be withdrawn.
       </p>
       {!deployed ? (
         <OwnerVaultSetup
@@ -212,19 +205,13 @@ export function EscrowFunding({
       ) : (
         <>
           {registrationNotice && <p role="status">{registrationNotice}</p>}
-          <p>
-            Use the deposit action below to fund this project. Direct token
-            transfers are not credited.
-          </p>
+          <p>Deposit below. Direct token transfers are not credited.</p>
           {totals.status === "error" ? (
             <p role="alert">{totals.message}</p>
           ) : totals.status !== "ready" ? (
-            <p role="status">Loading the cached vault totals…</p>
+            <p role="status">Loading vault totals…</p>
           ) : totals.vault.snapshots.length === 0 ? (
-            <p role="status">
-              No finalized vault read is recorded yet. Totals appear after the
-              next payments scan.
-            </p>
+            <p role="status">Vault totals are not available yet.</p>
           ) : (
             totals.vault.snapshots.map((snapshot) => (
               <VaultTotals
@@ -262,9 +249,6 @@ export function EscrowFunding({
           </button>
         </>
       )}
-      <p>
-        <a href="/earnings">View your payouts</a>
-      </p>
     </section>
   );
 }

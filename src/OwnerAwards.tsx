@@ -38,12 +38,12 @@ const STATE_TEXT: Record<
   NonNullable<MonthlyOwnerView["run"]>["awards"][number]["state"],
   string
 > = {
-  underfunded: "Underfunded: waiting for free vault funds",
+  underfunded: "Underfunded",
   excluded: "Excluded: account banned",
-  "awaiting-reservation": "Approved and funded: ready for your reservation",
-  reserved: "Reserved in the vault; payment not yet verified",
+  "awaiting-reservation": "Approved: ready to reserve",
+  reserved: "Reserved, not yet paid",
   paid: "Paid",
-  conflict: "Conflict: a different award is reserved under this award's source",
+  conflict: "Conflict: another award holds this source",
 };
 
 export default function OwnerAwards({
@@ -182,9 +182,6 @@ export default function OwnerAwards({
       : null;
   return (
     <main className="shell route-main owner-awards-page">
-      <p>
-        <a href={`/projects/${project.slug}`}>{project.name}</a> / Awards
-      </p>
       <h1>Monthly awards</h1>
       {recovery.error && <p role="alert">{recovery.error}</p>}
       {recovery.pending.map((entry) => (
@@ -210,13 +207,13 @@ export default function OwnerAwards({
           />
         </label>
         <button className="button primary-button" type="submit" disabled={busy}>
-          {busy && !view ? "Checking authority…" : "Load awards"}
+          {busy && !view ? "Loading…" : "Load awards"}
         </button>
       </form>
       {signedOut && (
         <p>
           <a href={loginHref(`/projects/${project.slug}/awards`)}>
-            Sign in with GitHub to manage this project’s awards
+            Sign in with GitHub
           </a>
         </p>
       )}
@@ -230,13 +227,13 @@ export default function OwnerAwards({
             <strong>{view.automatic ? "on" : "off"}</strong>.{" "}
             {view.automatic
               ? cutoffPassed
-                ? "The cutoff has passed. The automatic process finalizes the current allocations."
+                ? "The cutoff has passed. Current allocations are finalized automatically."
                 : view.cutoffAt
                   ? `Unless you finalize earlier, the current allocations are finalized at ${formatDateTime(view.cutoffAt)}.`
-                  : "Automatic payment starts with a later month, so finalize this month yourself when it is ready."
+                  : "Automatic payment starts later. Finalize this month yourself."
               : "Finalize each month yourself."}
             {project.reward.paymentMode !== "enabled" &&
-              " Payments are disabled for this project, so no award is paid until payments are enabled."}
+              " Payments are disabled for this project."}
           </p>
           <button
             className="button secondary-button"
@@ -253,18 +250,13 @@ export default function OwnerAwards({
           ) : !view.run ? (
             <>
               <p>
-                Changes are private. Slop publishes final awards and payment
-                evidence, never the changes.
-              </p>
-              <p>
                 Allocated{" "}
                 {amount(
                   view.proposal.allocations
                     .reduce((sum, row) => sum + BigInt(row.grossBase), 0n)
                     .toString(),
                 )}{" "}
-                of {amount(view.proposal.capBase)}. Unallocated funds stay in
-                the vault and never raise a later month.
+                of {amount(view.proposal.capBase)}.
               </p>
               {view.proposal.allocations.length === 0 ? (
                 <p>No one has an allocation this month.</p>
@@ -322,7 +314,7 @@ export default function OwnerAwards({
                 disabled={busy}
                 onClick={() => void finalize()}
               >
-                Finalize these awards now
+                Finalize awards
               </button>
             </>
           ) : (
@@ -334,10 +326,10 @@ export default function OwnerAwards({
                 <time dateTime={view.run.frozenAt}>
                   {formatDateTime(view.run.frozenAt)}
                 </time>
-                .{" "}
+                .
                 {view.run.funded
-                  ? "Funding is recorded for eligible awards. Excluded entries receive no payment."
-                  : "Awards wait until the vault's free balance covers them."}
+                  ? ""
+                  : " Awards wait until the vault's free balance covers them."}
               </p>
               {view.run.awards.length === 0 ? (
                 <p>No awards this month.</p>
@@ -392,6 +384,7 @@ export default function OwnerAwards({
         </section>
       )}
       <p>
+        <a href={`/projects/${project.slug}`}>{project.name}</a> ·{" "}
         <a href={`/projects/${project.slug}/funding`}>Project funding</a> ·{" "}
         <a href={`/projects/${project.slug}/manage`}>Project settings</a>
       </p>

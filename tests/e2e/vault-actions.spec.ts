@@ -332,7 +332,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   // The project page shows one funding line; actions live on the funding page.
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   const summary = page.getByRole("region", { name: "Project funding" });
-  await expect(summary).toContainText("no finalized vault read yet");
+  await expect(summary).toContainText("Vault totals not read yet");
   await expect(
     summary.getByRole("link", { name: "Fund this project", exact: true }),
   ).toHaveAttribute("href", "/projects/eliza/funding");
@@ -556,7 +556,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect(actions.getByRole("status")).toContainText(
-    "failed on the finalized chain",
+    "The transaction failed.",
   );
   expect((await rpc("eth_getTransactionReceipt", [sends[3]])).status).toBe(
     "0x0",
@@ -861,7 +861,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   const cap = formatBaseUnits(project.reward.monthlyCapMinor, 6);
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   const monthly = page.getByRole("region", {
-    name: "Automatic monthly payment · base-sepolia",
+    name: "Automatic monthly payment · Base Sepolia (test)",
   });
   await monthly
     .getByRole("button", { name: "Connect MetaMask", exact: true })
@@ -1489,7 +1489,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await page.reload({ waitUntil: "networkidle" });
     unknownSend = false;
     const monthlyControls = page.getByRole("region", {
-      name: "Automatic monthly payment · base-sepolia",
+      name: "Automatic monthly payment · Base Sepolia (test)",
       exact: true,
     });
     await monthlyControls
@@ -1561,7 +1561,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
     ).toBeVisible();
     await expect(
       page.getByRole("link", {
-        name: "View vault funds and automatic payment",
+        name: "Vault funding",
       }),
     ).toHaveCount(2);
     await expect(

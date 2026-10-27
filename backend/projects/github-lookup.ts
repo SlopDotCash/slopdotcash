@@ -67,7 +67,7 @@ export async function githubJson(
     throw new GithubLookupError(
       503,
       "github_rate_limited",
-      "GitHub limited lookups. Try again later or enter the facts by hand.",
+      "GitHub limited lookups.",
     );
   if (!response.ok)
     throw new GithubLookupError(
@@ -173,7 +173,7 @@ export async function listOwnedRepositories(
       throw new GithubLookupError(
         503,
         "github_rate_limited",
-        "GitHub limited lookups. Enter the repository by name.",
+        "GitHub limited lookups.",
       );
     if (!response.ok)
       throw new GithubLookupError(
@@ -215,7 +215,7 @@ export async function listOwnedRepositories(
       throw new GithubLookupError(
         502,
         "github_unavailable",
-        "GitHub returned too many repository pages. Enter the repository by name.",
+        "GitHub returned too many repository pages.",
       );
     page = nextPage;
   }

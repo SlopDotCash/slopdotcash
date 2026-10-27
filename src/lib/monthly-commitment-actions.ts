@@ -77,13 +77,13 @@ export function vaultMonthlyCap(
     canonical(deployment.asset) !== canonical(expectedAsset)
   )
     throw new Error(
-      "The vault token differs from the project's reward asset. Record the matching asset in a project revision first.",
+      "The vault token differs from the project's reward asset. Update the reward asset in project settings first.",
     );
   const recorded =
     project.rewardAsset?.kind === "token" ? project.rewardAsset.decimals : 6;
   if (vaultDecimals !== recorded)
     throw new Error(
-      "The vault token's decimals differ from the project's monthly amount. Record the matching asset in a project revision first.",
+      "The vault token's decimals differ from the project's monthly amount. Update the reward asset in project settings first.",
     );
   if (!CANONICAL_UINT.test(project.reward.monthlyCapMinor))
     throw new Error("The project's monthly amount is invalid.");
@@ -97,9 +97,7 @@ export function monthlyTarget(
 ): MonthlySetting {
   if (!automatic) return { cap: current.cap, enabled: false };
   if (projectCap <= 0n)
-    throw new Error(
-      "Set a monthly amount in a project revision before turning on automatic monthly payment.",
-    );
+    throw new Error("Set a monthly amount in project settings first.");
   return { cap: projectCap.toString(), enabled: true };
 }
 const same = (a: MonthlySetting, b: MonthlySetting) =>
@@ -204,9 +202,7 @@ export async function checkEvmMonthlySetting(
         EVM_ESCROW_EVENT_TOPICS.MonthlyCommitmentSet,
   );
   if (events.length !== 1)
-    throw new Error(
-      "The transaction has no unique monthly commitment setting event.",
-    );
+    throw new Error("This transaction does not match the request.");
   await verifyMonthlyCommitmentSet(
     walletVaultConfig(deployment, wallet),
     transactionId,

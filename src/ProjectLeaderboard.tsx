@@ -193,9 +193,7 @@ function ReviewContribution({ reviewer }: { reviewer?: ReviewerLeader }) {
   if (!reviewer) return null;
   return (
     <small className="review-score-detail">
-      Includes {formatPointsFromThirds(reviewer.reviewThirds)} review points ·{" "}
-      {reviewer.reviewEventCount} scored review
-      {reviewer.reviewEventCount === 1 ? "" : "s"}
+      Includes {formatPointsFromThirds(reviewer.reviewThirds)} review points
     </small>
   );
 }

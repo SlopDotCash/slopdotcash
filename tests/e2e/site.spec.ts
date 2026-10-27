@@ -545,9 +545,9 @@ test("renders contributor and cycle records from validated public data", {
         (cycle) => cycle.projectId === archived.projectId,
       ).length;
       await expect(
-        page.getByText(
-          `Showing ${shown} of ${cycles.cycles.length} published cycles`,
-        ),
+        page.getByText(`${shown} of ${cycles.cycles.length} cycles`, {
+          exact: true,
+        }),
       ).toBeVisible();
       await page.reload();
       await expect(page.getByLabel("Project", { exact: true })).toHaveValue(
@@ -567,19 +567,18 @@ test("renders contributor and cycle records from validated public data", {
         exact: true,
       }),
     ).toBeVisible();
-    const records = page.getByText("Original records and checksums", {
+    const records = page.getByText("Original records", {
       exact: true,
     });
     await records.focus();
     await page.keyboard.press("Enter");
     const frozen = page.getByRole("link", {
-      name: /Frozen source/u,
+      name: /Source data/u,
     });
     await expect(frozen).toHaveAttribute(
       "href",
       archived.files.sourceSnapshot.url,
     );
-    await expect(frozen).toContainText(archived.files.sourceSnapshot.sha256);
     const download = await request.get(archived.files.sourceSnapshot.url);
     expect(download.ok()).toBe(true);
     expect(
@@ -604,7 +603,7 @@ test("makes the public project draft boundary unmistakable", async ({
   // The form must finish loading before it is edited.
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(
-    page.getByRole("link", { name: "View vault funds and automatic payment" }),
+    page.getByRole("link", { name: "Vault funding" }),
   ).toHaveAttribute("href", "/projects/eliza/funding");
   await expect(page.getByLabel("Draft total, USDC")).toHaveCount(0);
   await expect(
@@ -739,7 +738,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     scope,
   );
   await expect(page.getByRole("region", { name: "Changes" })).not.toContainText(
-    "No manifest field has changed",
+    "No changes yet",
   );
   revision = 2;
   await page.reload({ waitUntil: "networkidle" });
@@ -750,9 +749,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     page.getByRole("button", { name: "Publish changes" }),
   ).toBeDisabled();
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(scope);
-  await page
-    .getByRole("button", { name: "Use this draft with the current revision" })
-    .click();
+  await page.getByRole("button", { name: "Use this draft" }).click();
   const review = page.getByRole("region", { name: "Changes" });
   const proposed = review.getByText(scope, { exact: true });
   await review.scrollIntoViewIfNeeded();
@@ -808,8 +805,23 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     project.contribution?.approvedScope ?? "",
   );
   await expect(page.getByRole("region", { name: "Changes" })).toContainText(
-    "No manifest field has changed",
+    "No changes yet",
   );
+  // PRD section 8: an exempt project publishes skill changes without a new
+  // scan, so the change list must not say that it needs one.
+  Object.assign(setup.checks.scan, {
+    state: "cleared",
+    exempt: true,
+    message: "Existing project, permanently exempt from scan clearance.",
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByText("Exempt", { exact: true })).toBeVisible();
+  await page.getByLabel("Acceptance criteria").fill(scope);
+  const exemptChanges = page.getByRole("region", { name: "Changes" });
+  await expect(exemptChanges).toContainText(
+    "Publishes now: Contribution rules.",
+  );
+  await expect(exemptChanges).not.toContainText("Needs a new security scan");
 });
 
 test("reaches and reads older inbox notifications without losing the page", async ({
@@ -864,9 +876,7 @@ test("reaches and reads older inbox notifications without losing the page", asyn
   await page
     .getByRole("button", { name: "Mark shown as read", exact: true })
     .click();
-  await expect(page.locator(".inbox-summary")).toContainText(
-    "All notifications are read.",
-  );
+  await expect(page.locator(".inbox-summary")).toContainText("All read.");
   await expect(page.locator(".inbox-item")).toContainText("project-100");
   await page.screenshot({
     path: test.info().outputPath("older-notification-read.png"),
@@ -949,7 +959,7 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   ).toBeVisible();
   const preferences = page.getByRole("region", { name: "Email preferences" });
   await expect(preferences).toContainText(
-    "does not use your GitHub profile email, so retrying will not add one",
+    "No verified email address is on file.",
   );
   await expect(
     preferences.getByRole("button", { name: "Retry email preferences" }),
@@ -1040,9 +1050,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await page.getByRole("searchbox", { name: "Find a project" }).fill("ASI");
   await page.getByRole("button", { name: "Open ASI", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\?project=asi$/u);
-  await page
-    .getByRole("button", { name: "Edit manifest", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Edit project", exact: true }).click();
   const changes = page.getByRole("region", { name: "Revision changes" });
   await expect(changes).toContainText("No changes.");
   await page
@@ -1053,9 +1061,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await page.getByRole("button", { name: "Close and keep draft" }).click();
   await page.getByRole("button", { name: "All projects", exact: true }).click();
   await page.getByRole("button", { name: "Open ASI", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Edit manifest", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Edit project", exact: true }).click();
   await expect(changes).not.toContainText("rewardAsset");
   await page.screenshot({
     path: test.info().outputPath("admin-no-implicit-asset.png"),
@@ -1081,9 +1087,6 @@ test("project pages omit full standings and sponsor links keep their destination
   await expect(
     page.getByRole("link", { name: "Eliza", exact: true }),
   ).toHaveAttribute("href", "/projects/eliza/funding");
-  await expect(
-    page.getByRole("link", { name: "Reviewed project revisions", exact: true }),
-  ).toHaveAttribute("href", "/api/v1/project-revisions");
   await page.screenshot({
     path: test.info().outputPath("direct-sponsor-handoffs.png"),
     fullPage: true,
@@ -1114,14 +1117,15 @@ test("current payment guidance separates award approval from vault payment", asy
     path: test.info().outputPath("current-vault-payment-states.png"),
     fullPage: true,
   });
+  // Sponsors links the one explanation instead of repeating it.
   await page.goto("/sponsors", { waitUntil: "networkidle" });
-  await page
-    .getByText("Funding rules and payment stages", { exact: true })
-    .click();
+  await page.getByText("Funding rules", { exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "Payment stages", exact: true }),
+  ).toHaveAttribute("href", "/how-it-works");
   await expect(
     page.getByRole("list", { name: "Award review stages" }),
-  ).toBeVisible();
-  await expect(page.getByText("Funded, ready", { exact: true })).toBeVisible();
+  ).toHaveCount(0);
 });
 
 test("serves byte-consistent bootstrap and read-only site artifacts", {
@@ -1416,7 +1420,7 @@ test("finds a receipt and opens its full evidence and GitHub contribution", asyn
     record.getByText(entry.run.runId, { exact: true }),
   ).toBeVisible();
   await expect(
-    record.getByText(entry.run.skillSha256, { exact: true }),
+    record.getByText(entry.run.skillRevision, { exact: true }),
   ).toBeVisible();
   await expect(
     record.getByRole("link", {
@@ -1437,9 +1441,22 @@ test("finds a receipt and opens its full evidence and GitHub contribution", asyn
     .fill("no-matching-receipt-000000");
   await expect(page.locator(".receipt-record")).toHaveCount(0);
   await page.getByRole("searchbox", { name: "Find a receipt" }).fill("");
-  await expect(page.locator(".receipt-record")).toHaveCount(
-    snapshot.attributions.filter((entry) => entry.run !== null).length,
+  // Receipts show 25 per page; the count names every receipt.
+  const total = snapshot.attributions.filter(
+    (entry) => entry.run !== null,
+  ).length;
+  await expect(page.locator(".receipt-count")).toHaveText(
+    `${total} of ${total} receipts`,
   );
+  await expect(page.locator(".receipt-record")).toHaveCount(
+    Math.min(total, 25),
+  );
+  if (total > 25) {
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(page.locator(".receipt-record")).toHaveCount(
+      Math.min(total - 25, 25),
+    );
+  }
 });
 
 // One test per route keeps each axe and overflow check independent, so the
@@ -1599,7 +1616,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await audience.focus();
   await page.keyboard.press("Enter");
   await expect(audience.locator("..")).toHaveAttribute("open", "");
-  const rules = page.getByText("Funding rules and payment stages", {
+  const rules = page.getByText("Funding rules", {
     exact: true,
   });
   await rules.focus();

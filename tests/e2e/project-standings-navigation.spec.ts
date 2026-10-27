@@ -106,7 +106,7 @@ test("Money received standings preserve unavailable data and recover on retry", 
   ).toBeVisible();
   await expect(standings.locator("tbody tr")).toHaveCount(0);
   await expect(
-    standings.getByText("No recorded contributions match this view."),
+    standings.getByText("No contributors match this view."),
   ).toHaveCount(0);
   expect(failures.length).toBeGreaterThan(0);
   expect(

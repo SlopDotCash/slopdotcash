@@ -15,8 +15,7 @@ type Pending = { planId: string; hash: string | null };
 const HELD: Record<string, string> = {
   "allocation-unavailable":
     "The complete original allocation is unavailable. The reserve stays held.",
-  "allocation-mismatch":
-    "The retained allocation does not prove this reserve is faulty. The reserve stays held.",
+  "allocation-mismatch": "This reserve is not proven faulty. It stays held.",
   "no-wrong-sum-fault": "The reserve total is correct. No release is needed.",
   "prior-reserve-transition":
     "This reserve has already changed. It cannot use this repair.",
@@ -78,11 +77,7 @@ export default function OwnerReserveRelease({
   return (
     <details className="owner-reserve-release">
       <summary>Repair a stuck monthly reserve</summary>
-      <p>
-        Check a reserve that cannot pay because its recorded total is wrong. A
-        proven repair returns the untouched reserve to the vault's free balance.
-        Funds stay in the vault.
-      </p>
+      <p>Returns a reserve whose total is wrong to the vault's free balance.</p>
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
       {storageError && (
@@ -206,8 +201,8 @@ export default function OwnerReserveRelease({
                 {view.asset && amount
                   ? `${formatBaseUnits(amount, view.asset.assetDecimals)} ${view.asset.symbol}`
                   : `${amount} token base units`}{" "}
-                to the vault's free balance. Your wallet pays the network fee.
-                This does not pay contributors or withdraw funds.
+                to the vault's free balance. This does not pay contributors or
+                withdraw funds.
               </p>
               {!wallet ? (
                 <fieldset disabled={busy}>
