@@ -539,8 +539,9 @@ async function requestAssessment(
 
 /**
  * Queues one scan of a project's current revision at its live pin. The
- * queue assigns the exact commit and template digest (VET-07); the service
- * cannot choose them, and a result for any other commit is refused. Returns
+ * queue assigns the exact commit and template digest (VET-07); a template retry
+ * keeps the stored source assignment. The service cannot choose them, and a
+ * result for any other commit is refused. Returns
  * "conflict" when this pin and active flag set already have a queued scan. Throws
  * `pin_unavailable` when the live pin cannot be read.
  */
@@ -554,6 +555,7 @@ async function queueAssessment(
   project: ProjectRecord,
   requestedBy: GithubActor,
   reason: string,
+  templateRetry?: VettingAssessment,
 ) {
   let pin: VettingPin;
   try {
@@ -568,10 +570,14 @@ async function queueAssessment(
   const assessment = {
     id: `vet_${deps.randomId().replaceAll("-", "").toLowerCase()}`,
     projectId: project.id,
-    revision: project.revision,
-    manifestSha256: project.manifestSha256,
-    contentSha256: await vettedContentSha256(project.manifest),
-    commitSha: pin.commitSha,
+    // A template-only retry keeps the exact source and manifest that were
+    // requested, including when a later commit removes the reported code.
+    revision: templateRetry?.revision ?? project.revision,
+    manifestSha256: templateRetry?.manifestSha256 ?? project.manifestSha256,
+    contentSha256:
+      templateRetry?.contentSha256 ??
+      (await vettedContentSha256(project.manifest)),
+    commitSha: templateRetry?.commitSha ?? pin.commitSha,
     templateSha256: pin.templateSha256,
     requestedBy,
     requestedAt: deps.now().toISOString(),
@@ -579,7 +585,10 @@ async function queueAssessment(
   };
   if (!/^vet_[a-f0-9]{32}$/u.test(assessment.id))
     fail(500, "internal_error", "Assessment id is invalid");
-  if ((await deps.vetting.createAssessment(assessment)) === "conflict")
+  if (
+    (await deps.vetting.createAssessment(assessment, templateRetry?.id)) ===
+    "conflict"
+  )
     return "conflict" as const;
   const stored = await deps.vetting.getAssessment(assessment.id);
   if (stored === null) fail(500, "internal_error", "Assessment vanished");
@@ -695,6 +704,7 @@ async function refreshQueue(
     if (restriction.state !== "clear" && !flagPaused) continue;
     if (!flagPaused && project.manifest.listingTier === "retired") continue;
     let reason: string | null = null;
+    let templateRetry: VettingAssessment | undefined;
     if (flagPaused) {
       // A fresh scan must cover the live pin and every active flag. New
       // evidence queues another scan even when the source did not change.
@@ -748,6 +758,42 @@ async function refreshQueue(
       );
       if (clearance.state === "unscanned")
         reason = "Automatic scan of new project content";
+      else if (
+        clearance.state === "queued" ||
+        (clearance.state === "cleared" && clearance.assessment === null)
+      ) {
+        // Exempt projects can still have explicitly requested investigations.
+        // Recover only an existing pending assignment; never create a normal
+        // scan requirement for an exempt project or rescan completed admission.
+        const pending =
+          clearance.state === "queued"
+            ? await deps.vetting.getAssessment(clearance.assessment.id)
+            : (await deps.vetting.projectAssessments(project.id)).at(-1);
+        if (
+          !pending ||
+          pending.projectId !== project.id ||
+          pending.state !== "pending"
+        ) {
+          if (clearance.state === "queued")
+            skipped.push({ projectId: project.id, reason: "queue_changed" });
+          continue;
+        }
+        let live: VettingPin;
+        try {
+          live = await deps.livePin(project.manifest);
+        } catch {
+          skipped.push({ projectId: project.id, reason: "pin_unavailable" });
+          continue;
+        }
+        // The template endpoint serves the current bundle only. A pending
+        // assignment to an older bundle cannot be acquired after a release.
+        // Preserve that row and queue the replacement; completed admission
+        // above remains valid and never reaches this branch.
+        if (pending.templateSha256 !== live.templateSha256) {
+          templateRetry = pending;
+          reason = "Automatic replacement of an unavailable queued template";
+        }
+      }
     }
     if (reason === null) continue;
     try {
@@ -756,6 +802,7 @@ async function refreshQueue(
         project,
         stewardActor(project.manifest),
         reason,
+        templateRetry,
       );
       if (assessment !== "conflict") queued.push(assessment.id);
     } catch (error) {

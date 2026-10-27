@@ -662,7 +662,7 @@ test("authenticated source acquisition exceeds the public quota without sharing 
   expect(await readdir(config.workDirectory)).toEqual([]);
 });
 
-test("a template update preserves the assigned admission scan until an explicit new request", async () => {
+test("a pending admission recovers from a replaced template without an admin request", async () => {
   provider.up = false;
   const first = await runScanPass(config);
   const original = await vetting.getAssessment(
@@ -673,24 +673,127 @@ test("a template update preserves the assigned admission scan until an explicit 
 
   templateInputs.acceptedRevisions = ["1", "2"];
   templateSha256 = digest(JSON.stringify(templateInputs));
+  await commit(
+    { "src/index.ts": "export const replacement = true;\n" },
+    "Change source while the original scan is pending",
+  );
   clock = new Date(clock.getTime() + 1000);
-  const unchanged = await runScanPass(config);
-  expect(unchanged.assessments[0].assessmentId).toBe(original.id);
-  expect(await vetting.listAssessments()).toHaveLength(1);
-  await requestInvestigation();
+  provider.up = true;
+  provider.calls = [];
   const next = await runScanPass(config);
-  const pending = await vetting.pendingAssessments();
-  expect(pending).toHaveLength(1);
-  expect(pending[0].templateSha256).toBe(templateSha256);
-  expect(pending[0].id).not.toBe(original?.id);
+  const assessments = await vetting.listAssessments();
+  const current = assessments.find(
+    (assessment) => assessment.id !== original.id,
+  );
+  expect(current?.templateSha256).toBe(templateSha256);
+  expect(current?.commitSha).toBe(original.commitSha);
+  expect(current?.manifestSha256).toBe(original.manifestSha256);
+  expect(current?.revision).toBe(original.revision);
+  expect(current?.state).toBe("clean");
+  if (!current) throw new Error("The replacement was not recorded");
   expect(next.assessments).toEqual([
-    { assessmentId: pending[0].id, state: "retry", step: "primary-review" },
+    {
+      assessmentId: current?.id,
+      state: "published",
+      disposition: "clean",
+      outcome: "accepted",
+      specialist: false,
+      evidence: "retained",
+    },
   ]);
   expect(await vetting.getAssessment(original.id)).toEqual(original);
+  expect(assessments).toHaveLength(2);
+  expect(provider.calls).toHaveLength(1);
+  expect((await activate()).status).toBe(200);
+
+  // A refresh that raced the completed scan or a newer assignment cannot
+  // install another pending scan over the accepted result.
+  for (const previous of [original, current])
+    expect(
+      await vetting.createAssessment(
+        {
+          id: `vet_${randomId().replaceAll("-", "")}`,
+          projectId: original.projectId,
+          revision: original.revision,
+          manifestSha256: original.manifestSha256,
+          contentSha256: original.contentSha256,
+          commitSha: original.commitSha,
+          templateSha256,
+          requestedBy: original.requestedBy,
+          requestedAt: clock.toISOString(),
+          requestReason: "Racing template replacement",
+        },
+        previous.id,
+      ),
+    ).toBe("conflict");
+
+  // A later template change does not rescan an already admitted repository.
+  templateInputs.acceptedRevisions = ["1", "2", "3"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
+  expect((await runScanPass(config)).assessments).toEqual([]);
   expect(await vetting.listAssessments()).toHaveLength(2);
+  expect(provider.calls).toHaveLength(1);
+});
+
+test("a pending investigation on an exempt project recovers without changing its exemption", async () => {
   await runScanPass(config);
-  expect(await vetting.listAssessments()).toHaveLength(2);
-  expect((await activate()).status).toBe(422);
+  // Model a project present at migration 0075; the migration deliberately
+  // prevents application code from granting this permanent exemption later.
+  sqlite.exec("DROP TRIGGER vetting_grandfathered_projects_no_insert");
+  sqlite
+    .query(
+      "INSERT INTO vetting_grandfathered_projects(project_id,granted_at) VALUES(?,?)",
+    )
+    .run("open-registry", clock.toISOString());
+  await commit(
+    { "src/investigation.ts": "export const inspectMe = true;\n" },
+    "Explicit investigation source",
+  );
+  await requestInvestigation();
+  provider.up = false;
+  await runScanPass(config);
+  const original = (await vetting.pendingAssessments())[0];
+  expect(original.state).toBe("pending");
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("Missing exempt project");
+  const clearance = () =>
+    vetting.manifestClearance(
+      project.id,
+      project.manifest,
+      project.revision,
+      readLivePin,
+    );
+  expect(await clearance()).toEqual({
+    state: "cleared",
+    assessment: null,
+    grandfathered: true,
+  });
+  templateInputs.acceptedRevisions = ["1", "2"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
+  provider.up = true;
+  const next = await runScanPass(config);
+  expect(next.assessments).toMatchObject([
+    { state: "published", disposition: "clean" },
+  ]);
+  const completed = await vetting.getAssessment(
+    next.assessments[0].assessmentId,
+  );
+  expect(completed).toMatchObject({
+    state: "clean",
+    commitSha: original.commitSha,
+    revision: original.revision,
+    manifestSha256: original.manifestSha256,
+    templateSha256,
+  });
+  expect(await vetting.getAssessment(original.id)).toEqual(original);
+  expect(await clearance()).toEqual({
+    state: "cleared",
+    assessment: null,
+    grandfathered: true,
+  });
+  templateInputs.acceptedRevisions = ["1", "2", "3"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
+  expect((await runScanPass(config)).assessments).toEqual([]);
 });
 
 test("a provider outage leaves the scan pending; the next pass clears the project with one Surplus review", async () => {
