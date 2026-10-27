@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: write
+      contents: read
     steps:
       - name: Dispatch protected scanner branches
         env:
@@ -19,6 +20,14 @@ jobs:
         run: |
           set -euo pipefail
           for ref in main development; do
+            # The scan job requires the isolated runner of the exact branch
+            # head. Dispatch only after the release of that head succeeded.
+            head="$(gh api "repos/$GITHUB_REPOSITORY/commits/heads/$ref" --jq .sha)"
+            released="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?branch=$ref&head_sha=$head&status=success&per_page=100" --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")] | length')"
+            if [ "$released" -eq 0 ]; then
+              echo "::notice title=Scanner waits for release::$ref head $head has no successful release yet. Its isolated runner is not deployed, so no scan is dispatched."
+              continue
+            fi
             active="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow vetting-controller.yml --branch "$ref" --event workflow_dispatch --json status --jq '[.[] | select(.status != "completed")] | length')"
             if [ "$active" -eq 0 ]; then
               gh workflow run vetting-controller.yml --repo "$GITHUB_REPOSITORY" --ref "$ref"
