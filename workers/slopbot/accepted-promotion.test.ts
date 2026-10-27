@@ -517,3 +517,45 @@ test("a recognized imported merge preserves the original claims without promotio
   expect(result.limitations).toEqual([]);
   expect(result.claims).toEqual(original.claims);
 });
+
+for (const hasResolution of [false, true]) {
+  test(`a recognized imported merge with ${hasResolution ? "changed" : "empty"} resolution adds no promotion credit`, async () => {
+    const f = unchangedPromotion();
+    const proof = await collectNoChangePromotion(
+      f.client,
+      repository.id,
+      f.promotion.evidence,
+    );
+    if (!proof || !f.original.evidence.mergeCommitEvidence)
+      throw new Error("Missing promotion fixture");
+    f.promotion.evidence.noChangePromotion = proof;
+    const parents = [{ sha: base }, { sha: implemented }];
+    f.original.evidence.mergeCommitEvidence.parents = parents;
+    f.promotion.evidence.commits[0].parents = parents;
+    const patch = hasResolution ? file.patch : "";
+    f.promotion.evidence.mergeResolutions = [
+      {
+        commitSha: accepted,
+        parents: [base, implemented],
+        gitVersion: "git version 2.56.0",
+        automaticTree: "a".repeat(40),
+        resolvedTree: (hasResolution ? "b" : "a").repeat(40),
+        hadConflicts: hasResolution,
+        patch,
+        patchSha256: createHash("sha256").update(patch).digest("hex"),
+        paths: hasResolution ? [file.filename] : [],
+      },
+    ];
+    if (!hasResolution) {
+      f.promotion.evidence.files = [];
+      f.promotion.evidence.pull.changed_files = 0;
+    }
+    const original = await prepareWorkUnitEvidence([f.original], [repository]);
+    const result = await prepareWorkUnitEvidence(
+      [f.promotion, f.original],
+      [repository],
+    );
+    expect(result.limitations).toEqual([]);
+    expect(result.claims).toEqual(original.claims);
+  });
+}
