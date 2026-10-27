@@ -8,7 +8,15 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
 import { loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
@@ -28,6 +36,12 @@ import {
   RoutePageHeader,
   StatusBadge,
 } from "./Presentation";
+
+const SecurityInbox = lazy(() =>
+  import("./SecurityBounty").then((module) => ({
+    default: module.SecurityInbox,
+  })),
+);
 
 type InboxState =
   | { status: "loading" }
@@ -163,6 +177,11 @@ export default function InboxPage() {
             Retry
           </button>
         </div>
+      ) : null}
+      {state.status === "ready" || state.status === "error" ? (
+        <Suspense fallback={<p role="status">Loading private reports…</p>}>
+          <SecurityInbox embedded />
+        </Suspense>
       ) : null}
       {state.status === "ready" ? (
         <InboxList

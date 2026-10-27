@@ -22,6 +22,8 @@ export interface SecurityBountyAmount {
 
 export interface SecurityBountyTerms {
   readonly settlement?: SecurityEscrowPolicy;
+  /** Omitted on historical programs that require funding before opening. */
+  readonly fundingPolicy?: "after-approval";
   readonly version: "1";
   readonly status: SecurityProgramStatus;
   readonly rewardMode: "bounty-only" | "separate";
@@ -40,7 +42,8 @@ export interface SecurityBountyTerms {
         readonly verifiedAt: string;
       };
   readonly capacity: {
-    readonly awards: number;
+    /** Null means each first qualifying finding is considered separately. */
+    readonly awards: number | null;
     readonly closesAt: string | null;
     readonly exhaustionRule: string;
   };

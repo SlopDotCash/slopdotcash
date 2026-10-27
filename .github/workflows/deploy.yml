@@ -751,6 +751,14 @@ jobs:
         # Synthetic source and local SQLite; no production bindings or output artifacts.
         run: bun --no-env-file scripts/qualify-value-models.ts
 
+      - name: Qualify private report screening with the real provider
+        timeout-minutes: 3
+        env:
+          SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
+        # One bounded synthetic call; no private reports or delivery side effects.
+        # This protected main-only job fails before any publication on failure.
+        run: bun --no-env-file scripts/qualify-security-screening.ts
+
       - name: Require reviewed Pages project
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
