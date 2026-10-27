@@ -1542,6 +1542,18 @@ function describePageSize(variables: GraphqlVariables): string {
   return typeof current === "number" ? `; page size ${current}` : "";
 }
 
+function comparisonBuildTimedOut(status: number, body: string): boolean {
+  if (status !== 422) return false;
+  try {
+    return (
+      asRecord(JSON.parse(body), "comparison error").message ===
+      "Server Error: Sorry, this diff is taking too long to generate."
+    );
+  } catch {
+    return false;
+  }
+}
+
 export class GitHubGraphqlClient implements GraphqlExecutor {
   readonly #token: string;
   readonly #fetch: FetchLike;
@@ -1707,11 +1719,15 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       } finally {
         clearTimeout(timeout);
       }
-      const retryableStatus = [502, 503, 504].includes(response.status);
+      const retryableStatus =
+        [502, 503, 504].includes(response.status) ||
+        (restPath !== undefined &&
+          comparisonBuildTimedOut(response.status, responseBody));
       if (retryableStatus && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
-        // error-policy:J2 Retrying the identical page cannot clear a
-        // server-side page-build timeout, so narrow the request before backing
-        // off. Requests without a page size retry unchanged.
+        // error-policy:J2 Narrow a timed-out GraphQL page before backing off.
+        // Comparison retries keep the exact immutable range and page; only
+        // the recognized server timeout joins the existing bounded retry.
+        // Other 422 responses remain non-retryable validation failures.
         activeVariables = narrowedPageSize(activeVariables) ?? activeVariables;
         await retryDelay(this.#retryBaseDelayMs * 2 ** (attempt - 1));
         continue;

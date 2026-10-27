@@ -27,6 +27,7 @@ import {
 import {
   GitHubGraphqlClient,
   generateLeaderboardFromGitHub,
+  MAX_GRAPHQL_REQUEST_ATTEMPTS,
   runGenerator,
   writeLeaderboardAtomically,
 } from "./generate-leaderboard";
@@ -41,7 +42,7 @@ const sha256 = (value: string) =>
 const connection = (nodes: unknown[]) => ({
   totalCount: nodes.length,
   nodes,
-  pageInfo: { hasNextPage: false, endCursor: null },
+  pageInfo: { hasNextPage: false, endCursor: null as string | null },
 });
 function required<T>(value: T | null | undefined): T {
   if (value === undefined || value === null)
@@ -120,17 +121,48 @@ type Failure =
   | "partial"
   | "transport"
   | "unmatched-null";
+type Comparison =
+  | "complete"
+  | "missing"
+  | "duplicate"
+  | "wrong-base"
+  | "changed-count"
+  | "unavailable"
+  | "invalid-range";
 
 async function fixture(
   mode: "removed" | "persistent" | "joint" | "healthy",
   failure?: Failure,
   productionProjects?: readonly string[],
+  comparison?: Comparison,
 ) {
   let missingSeen = false;
   let requests = 0;
   let attempts = 0;
   let repositoryReads = 0;
   let forbiddenSourceReads = 0;
+  const comparisonPages: number[] = [];
+  const range = Array.from({ length: 251 }, (_, index) => ({
+    commit: {
+      oid:
+        index === 250
+          ? retained.headRefOid
+          : (index + 1).toString(16).padStart(40, "0"),
+      author: { user: { ...retained.author, __typename: "User" } },
+    },
+  }));
+  const sourceNodeFor = (pull: (typeof pulls)[number]) => {
+    const node = nodeFor(pull);
+    if (comparison && pull.id === retained.id)
+      node.commits = {
+        totalCount: range.length,
+        // Large PR connections can expose a later window than comparison
+        // page one. The complete comparison must retain both sets of commits.
+        nodes: range.slice(-100),
+        pageInfo: { hasNextPage: true, endCursor: "known-late-window" },
+      };
+    return node;
+  };
   const nodeId = (owner: string, name: string) => {
     const row = required(
       TARGET_REPOSITORIES.find(
@@ -177,7 +209,7 @@ async function fixture(
             mode === "persistent" || (mode === "removed" && !missingSeen)
               ? pulls
               : [retained, unaffected];
-          const nodes = merged ? current.map(nodeFor) : [];
+          const nodes = merged ? current.map(sourceNodeFor) : [];
           data.search = {
             issueCount: nodes.length,
             nodes,
@@ -248,7 +280,7 @@ async function fixture(
           query.includes("query LeaderboardMergedPullRequestReviews")
         ) {
           data.nodes = v.ids.map((id: string) =>
-            nodeFor(required(pulls.find((p) => p.id === id))),
+            sourceNodeFor(required(pulls.find((p) => p.id === id))),
           );
         } else
           throw new Error(
@@ -261,6 +293,44 @@ async function fixture(
           resetAt: "2026-11-20T01:00:00.000Z",
         };
         return Response.json({ data, ...(errors ? { errors } : {}) });
+      }
+      if (comparison && url.pathname.includes("/compare/")) {
+        const page = Number(url.searchParams.get("page"));
+        comparisonPages.push(page);
+        if (
+          comparison === "invalid-range" ||
+          comparison === "unavailable" ||
+          (page === 1 && comparisonPages.length === 1)
+        )
+          return Response.json(
+            {
+              message:
+                comparison === "invalid-range"
+                  ? "Validation Failed"
+                  : "Server Error: Sorry, this diff is taking too long to generate.",
+            },
+            { status: 422 },
+          );
+        let slice = range.slice((page - 1) * 100, page * 100);
+        if (comparison === "missing" && page === 3) slice = slice.slice(1);
+        if (comparison === "duplicate" && page === 3)
+          slice = [range[0], ...slice.slice(1)];
+        return Response.json({
+          total_commits: comparison === "changed-count" ? 252 : 251,
+          base_commit: {
+            sha: comparison === "wrong-base" ? "b".repeat(40) : "a".repeat(40),
+          },
+          commits: slice.map(({ commit }) => ({
+            sha: commit.oid,
+            author: {
+              node_id: commit.author.user.id,
+              type: "User",
+              login: commit.author.user.login,
+              avatar_url: commit.author.user.avatarUrl,
+              html_url: commit.author.user.url,
+            },
+          })),
+        });
       }
       if (url.pathname === "/api/v1/project-account-bans")
         return Response.json({
@@ -364,6 +434,7 @@ async function fixture(
       attempts,
       repositoryReads,
       forbiddenSourceReads,
+      comparisonPages,
     }),
     generate: () =>
       runGenerator(
@@ -775,3 +846,62 @@ test("a persistently enumerated unavailable merge is counted explicitly and rece
     await f.close();
   }
 });
+
+test("a server-side comparison timeout retries without losing complete merged attribution", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const baseline = await fixture("healthy");
+  let before: LeaderboardSnapshot;
+  try {
+    before = await baseline.generate();
+  } finally {
+    await baseline.close();
+  }
+  const f = await fixture("healthy", undefined, undefined, "complete");
+  try {
+    const snapshot = await f.generate();
+    expect(snapshot.ledger).toEqual(before.ledger);
+    expect(snapshot.source.counts.mergedPullRequests).toBe(2);
+    expect(f.stats().comparisonPages).toEqual([1, 1, 2, 3]);
+    assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+  } finally {
+    await f.close();
+  }
+});
+
+for (const comparison of ["unavailable", "invalid-range"] as const) {
+  test(`an ${comparison} comparison fails closed within its request bound`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture("healthy", undefined, undefined, comparison);
+    try {
+      await expect(f.generate()).rejects.toThrow("GitHub comparison HTTP 422");
+      expect(f.stats().comparisonPages).toHaveLength(
+        comparison === "unavailable" ? MAX_GRAPHQL_REQUEST_ATTEMPTS : 1,
+      );
+      expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+for (const comparison of [
+  "missing",
+  "duplicate",
+  "wrong-base",
+  "changed-count",
+] as const) {
+  test(`an invalid ${comparison} comparison preserves the last published snapshot`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture("healthy", undefined, undefined, comparison);
+    try {
+      await expect(f.generate()).rejects.toThrow(
+        comparison === "wrong-base" || comparison === "changed-count"
+          ? "comparison does not match its commit range"
+          : "comparison omitted known commits",
+      );
+      expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+    } finally {
+      await f.close();
+    }
+  });
+}
