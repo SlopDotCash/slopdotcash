@@ -31,13 +31,15 @@ execFileSync(
 const tip = execFileSync("git", ["rev-parse", "FETCH_HEAD"], options).trim();
 execFileSync("git", ["merge-base", "--is-ancestor", revision, tip], options);
 
-// These dispatches hold the staging environment for its secrets only. They
-// create, probe and delete their own disposable resources and never change the
-// shared staging Workers, database or Pages project, so a newer one is not a
-// staging attempt. Any other or unknown creator still counts.
+// These jobs use the staging environment's secrets without publishing staging
+// code or applying migrations. Qualification uses disposable resources; the
+// controller records scan data and calls the already deployed sandbox. Those data
+// writes do not establish a newer code release. Any other or unknown creator
+// still counts, including a failed release at the same revision.
 const NON_RELEASE_WORKFLOWS = new Set([
   ".github/workflows/vetting-recovery-qualification.yml",
   ".github/workflows/vetting-sandbox-qualification.yml",
+  ".github/workflows/vetting-controller.yml",
 ]);
 function createdByNonReleaseWorkflow(deployment) {
   if (!Number.isSafeInteger(deployment.id)) return false;
@@ -119,7 +121,7 @@ for (let page = 1; page <= 10; page++) {
       // revision may appear later in the history.
       if (createdByNonReleaseWorkflow(deployment)) {
         console.log(
-          `Ignoring qualification-only staging deployment ${deployment.sha}`,
+          `Ignoring non-release staging environment record ${deployment.sha}`,
         );
         continue;
       }
