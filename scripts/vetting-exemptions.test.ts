@@ -95,14 +95,13 @@ function fixture() {
     body?: unknown,
     admin = true,
     origin = ORIGIN,
+    contentType = "application/json",
   ) => {
     const reply = await handleVettingApi(
       new Request(`${ORIGIN}/api/v1/${path}`, {
         method: body === undefined ? "GET" : "POST",
         headers:
-          body === undefined
-            ? {}
-            : { origin, "content-type": "application/json" },
+          body === undefined ? {} : { origin, "content-type": contentType },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       }),
       {
@@ -425,11 +424,46 @@ describe("owner-approved admission exemptions", () => {
     const queued = await f.queue();
     const granted = await f.grant();
     const id = granted.body.exemption.id;
-    const revoked = await f.call(`admin/vetting/exemptions/${id}/revoke`, {
+    const revocation = {
       reason: "The owner revoked the admission waiver.",
       decisionReference: "owner-revocation-1",
       confirmation: true,
-    });
+    };
+    const misplaced = await f.call(
+      `vetting/not-admin/exemptions/${id}/revoke`,
+      revocation,
+      true,
+      "https://attacker.example",
+      "text/plain",
+    );
+    expect(misplaced.status).toBe(404);
+    expect((await f.vetting.admissionExemption(id))?.revokedAt).toBe(null);
+    expect(
+      (
+        await f.call(
+          `admin/vetting/exemptions/${id}/revoke`,
+          revocation,
+          true,
+          "https://attacker.example",
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await f.call(
+          `admin/vetting/exemptions/${id}/revoke`,
+          revocation,
+          true,
+          ORIGIN,
+          "text/plain",
+        )
+      ).status,
+    ).toBe(403);
+    expect((await f.vetting.admissionExemption(id))?.revokedAt).toBe(null);
+    const revoked = await f.call(
+      `admin/vetting/exemptions/${id}/revoke`,
+      revocation,
+    );
     expect(revoked.status).toBe(200);
     expect(revoked.body.exemption).toMatchObject({
       id,
