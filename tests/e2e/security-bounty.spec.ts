@@ -545,7 +545,7 @@ test("maintainers can verify or reject a manually linked private report @registr
     .click();
   const detail = page.locator(`[aria-labelledby="case-${claims[0]}"]`);
   await detail
-    .getByLabel("Action", { exact: true })
+    .getByRole("combobox", { name: "Action", exact: true })
     .selectOption("verify-link");
   const verify = detail.getByRole("form", { name: "Verify the GitHub report" });
   await expect(
@@ -579,7 +579,7 @@ test("maintainers can verify or reject a manually linked private report @registr
     .click();
   const rejectedDetail = page.locator(`[aria-labelledby="case-${claims[1]}"]`);
   await rejectedDetail
-    .getByLabel("Action", { exact: true })
+    .getByRole("combobox", { name: "Action", exact: true })
     .selectOption("reject-link");
   const reject = rejectedDetail.getByRole("form", { name: "Reject this link" });
   const reason = "The advisory does not identify this account as the reporter.";
@@ -1506,7 +1506,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(detail).toContainText("Waiting for an independent reviewer");
     await expect(detail.getByText(/\(verified from GitHub\)/u)).toBeVisible();
     await detail
-      .getByLabel("Action", { exact: true })
+      .getByRole("combobox", { name: "Action", exact: true })
       .selectOption({ label: "Related-party award review" });
     const form = detail.getByRole("form", {
       name: "Related-party award review",
@@ -1838,7 +1838,7 @@ test("private security bounty programs keep cases restricted from intake to awar
       .click();
     await page
       .getByRole("region", { name: "Case actions" })
-      .getByLabel("Action", { exact: true })
+      .getByRole("combobox", { name: "Action", exact: true })
       .selectOption({ label: "Disclosure" });
     const form = page.getByRole("form", { name: "Disclosure", exact: true });
     await form
@@ -1979,7 +1979,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(detail).toContainText("Received by GitHub");
     await expect(detail).not.toContainText("AI summary");
     await detail
-      .getByLabel("Action", { exact: true })
+      .getByRole("combobox", { name: "Action", exact: true })
       .selectOption("recognition");
     await detail.getByLabel("Show my name publicly").selectOption("opt-in");
     await detail.getByRole("button", { name: "Save my choice" }).click();
@@ -2104,7 +2104,7 @@ test("private settlement requires visibility consent and produces an unsigned re
   await page.getByRole("button", { name: new RegExp(`^${id} `) }).click();
   await page
     .getByRole("region", { name: "Case actions" })
-    .getByLabel("Action", { exact: true })
+    .getByRole("combobox", { name: "Action", exact: true })
     .selectOption("consent-payment");
   await page
     .getByLabel(/^I understand that chain transactions reveal/u)
@@ -2137,7 +2137,7 @@ test("private settlement requires visibility consent and produces an unsigned re
   await page.getByRole("button", { name: new RegExp(`^${id} `) }).click();
   await page
     .getByRole("region", { name: "Case actions" })
-    .getByLabel("Action", { exact: true })
+    .getByRole("combobox", { name: "Action", exact: true })
     .selectOption("prepare-payment");
   await page.getByLabel(/^I approve .* on this network/u).check();
   await page
@@ -3066,15 +3066,19 @@ test("automatic private intake files as the reporter and verifies receipt @regis
       "Next step: Choose an award amount or no award.",
     );
     const actions = page.getByRole("region", { name: "Case actions" });
-    await actions.getByLabel("Action", { exact: true }).selectOption("award");
+    await actions
+      .getByRole("combobox", { name: "Action", exact: true })
+      .selectOption("award");
     await expect(actions.getByRole("form")).toHaveCount(1);
     const form = page.getByRole("form", { name: "Award" });
     await form.getByLabel("Gross award (USDC)").fill("4000");
     await actions
-      .getByLabel("Action", { exact: true })
+      .getByRole("combobox", { name: "Action", exact: true })
       .selectOption("request-information");
     await expect(actions.getByRole("form")).toHaveCount(1);
-    await actions.getByLabel("Action", { exact: true }).selectOption("award");
+    await actions
+      .getByRole("combobox", { name: "Action", exact: true })
+      .selectOption("award");
     await expect(form.getByLabel("Gross award (USDC)")).toHaveValue("4000");
     await expect(form.getByRole("status")).toHaveText(
       "Researcher 3,000 USDC · Slop 1,000 USDC",

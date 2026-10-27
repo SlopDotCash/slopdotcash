@@ -80,19 +80,19 @@ async function watchPaymentIdentity(page: Page) {
       const leaks: object[] = [];
       const observer = new MutationObserver((records) => {
         const history = document.querySelector(".payment-history");
-        const breadcrumb = document.querySelector(".breadcrumb")?.textContent;
+        const projectName = document.querySelector("main h1")?.textContent;
         const text = history?.textContent ?? "";
         const sample = {
           at: performance.now(),
           path: location.pathname,
-          breadcrumb,
+          projectName,
           text,
           disclosures: [...(history?.querySelectorAll("a") ?? [])]
             .filter((a) => a.textContent === "Disclosure")
             .map((a) => a.href),
         };
         observations.push(sample);
-        if (breadcrumb?.endsWith("Slop") && text.includes(firstAmount))
+        if (projectName === "Slop" && text.includes(firstAmount))
           leaks.push(sample);
         // A passive-effect update can remove the wrong row before this
         // callback. Mutation records still retain that actual DOM node.
@@ -150,7 +150,7 @@ for (const navigation of ["project links", "browser history"] as const) {
         await page.goto(`${site}/projects/${nextProject}`);
         await expect(page.getByText(nextAmount, { exact: true })).toBeVisible();
         await page
-          .locator(".breadcrumb")
+          .getByRole("main")
           .getByRole("link", { name: "Projects", exact: true })
           .click();
         await page
@@ -174,14 +174,14 @@ for (const navigation of ["project links", "browser history"] as const) {
         await page.evaluate(() => window.history.go(-2));
       else {
         await page
-          .locator(".breadcrumb")
+          .getByRole("main")
           .getByRole("link", { name: "Projects", exact: true })
           .click();
         await page
           .locator(`a.project-card[href="/projects/${nextProject}"]`)
           .click();
       }
-      await expect(page.locator(".breadcrumb")).toHaveText("Projects/Slop");
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText("Slop");
       await expect.poll(() => nextRequests).toBeGreaterThan(beforeNavigation);
       await expect(page.getByText(firstAmount, { exact: true })).toHaveCount(0);
       await page.screenshot({
@@ -289,14 +289,14 @@ test("a late previous payment request cannot overwrite a retried project", async
     await page.goto(`${site}/projects/${nextProject}`);
     await expect(page.getByText(nextAmount, { exact: true })).toBeVisible();
     await page
-      .locator(".breadcrumb")
+      .getByRole("main")
       .getByRole("link", { name: "Projects", exact: true })
       .click();
     await page
       .locator(`a.project-card[href="/projects/${firstProject}"]`)
       .click();
     await expect.poll(() => previousRequests).toBeGreaterThan(0);
-    await expect(page.locator(".breadcrumb")).toHaveText("Projects/Eliza");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Eliza");
     await watchPaymentIdentity(page);
     const canceled = page.waitForEvent("requestfailed", (request) =>
       request.url().endsWith(`/projects/${firstProject}/direct-transfers`),
@@ -304,7 +304,7 @@ test("a late previous payment request cannot overwrite a retried project", async
     outage = true;
     await page.evaluate(() => window.history.go(-2));
     await canceled;
-    await expect(page.locator(".breadcrumb")).toHaveText("Projects/Slop");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Slop");
     const retry = page.getByRole("button", { name: "Retry direct payments" });
     await expect(retry).toBeVisible();
     await expect(page.getByText(nextAmount, { exact: true })).toHaveCount(0);
@@ -388,7 +388,7 @@ test("a flag draft does not follow browser history to another project", async ({
   try {
     await page.goto(`${site}/projects/${nextProject}`);
     await page
-      .locator(".breadcrumb")
+      .getByRole("main")
       .getByRole("link", { name: "Projects", exact: true })
       .click();
     await page
@@ -402,7 +402,7 @@ test("a flag draft does not follow browser history to another project", async ({
       .fill("Evidence for the first project only");
     hold = true;
     await page.evaluate(() => window.history.go(-2));
-    await expect(page.locator(".breadcrumb")).toHaveText("Projects/Slop");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Slop");
     await expect.poll(() => held).toBe(true);
     await expect(page.getByRole("textbox", { name: /^Evidence/u })).toHaveCount(
       0,

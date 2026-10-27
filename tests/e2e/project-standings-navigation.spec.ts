@@ -165,7 +165,7 @@ test("history navigation keeps contributor standings scoped to the current proje
   await standings.scrollIntoViewIfNeeded();
   const document = await page.evaluate(() => performance.timeOrigin);
   await page
-    .locator(".breadcrumb")
+    .getByRole("main")
     .getByRole("link", { name: "Projects", exact: true })
     .click();
   await page.locator('a.project-card[href="/projects/eliza"]').click();
@@ -174,7 +174,7 @@ test("history navigation keeps contributor standings scoped to the current proje
     .click();
   await expect(eliza).toContainText("$111.11");
   await page.evaluate(() => history.go(-2));
-  await expect(page.locator(".breadcrumb")).toHaveText("Projects/Slop");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Slop");
   await standings.scrollIntoViewIfNeeded();
   await page.screenshot({
     path: info.outputPath("returned-to-slop.png"),
@@ -191,7 +191,7 @@ test("history navigation keeps contributor standings scoped to the current proje
   await expect(eliza).toHaveCount(0);
   await expectAccessible(page);
   await page.evaluate(() => history.go(2));
-  await expect(page.locator(".breadcrumb")).toHaveText("Projects/Eliza");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Eliza");
   await expect(eliza).toContainText("$111.11");
   await expect(slop).toHaveCount(0);
   expect(await page.evaluate(() => performance.timeOrigin)).toBe(document);
