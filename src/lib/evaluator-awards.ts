@@ -23,6 +23,7 @@ import {
   externalWorkKey,
 } from "./external-sources";
 import { githubUserIdFromNodeId } from "./github-actor";
+import { githubWorkKey } from "./github-work";
 import {
   canonicalActorAvatarUrl,
   type GitHubActor,
@@ -424,17 +425,11 @@ export function loadEvaluatorAwardEvents(
     const sourceKey = `${manifest.repository}\0${manifest.source.id}`;
     // One GitHub item has a legacy and a current node ID, and its URL may use
     // another case or a transfer alias. Key it by number and fragment too.
-    const githubWorkKey = manifest.source.platform
-      ? null
-      : JSON.stringify([
-          manifest.repository,
-          manifest.source.number,
-          new URL(manifest.source.url).hash.toLowerCase(),
-        ]);
+    const workKey = githubWorkKey(manifest.repository, manifest.source);
     if (
       ids.has(manifest.id) ||
       sources.has(sourceKey) ||
-      (githubWorkKey !== null && githubWork.has(githubWorkKey))
+      (workKey !== null && githubWork.has(workKey))
     ) {
       throw new TypeError("evaluator award ids and sources must be unique");
     }
@@ -469,7 +464,7 @@ export function loadEvaluatorAwardEvents(
     }
     ids.add(manifest.id);
     sources.add(sourceKey);
-    if (githubWorkKey !== null) githubWork.add(githubWorkKey);
+    if (workKey !== null) githubWork.add(workKey);
     return {
       id: manifest.id,
       actor: manifest.actor,

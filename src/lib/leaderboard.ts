@@ -8,6 +8,7 @@ import {
   externalWorkKey,
 } from "./external-sources";
 import { githubUserIdFromNodeId } from "./github-actor";
+import { githubWorkKey } from "./github-work";
 import type {
   AttributionAssessment,
   AttributionAssessmentOptions,
@@ -3650,6 +3651,7 @@ function createSnapshotWithReviewCutoff(
   }
 
   const evaluatedSourceKeys = new Set<string>();
+  const evaluatedGitHubWork = new Set<string>();
   const evaluatedExternalWorkKeys = new Set<string>();
   const evaluatedExternalContentKeys = new Set<string>();
   const evaluatedReviewReservations = new Set<string>();
@@ -3707,13 +3709,17 @@ function createSnapshotWithReviewCutoff(
       );
     }
     const sourceKey = `${event.repository}\0${event.source.id}`;
+    const workKey = githubWorkKey(event.repository, event.source);
     if (
       evaluatedSourceKeys.has(sourceKey) ||
+      (workKey !== null && evaluatedGitHubWork.has(workKey)) ||
       ledger.some(
         (existing) =>
           existing.repository === event.repository &&
           (existing.source.id === event.source.id ||
-            existing.source.url === event.source.url),
+            existing.source.url === event.source.url ||
+            (workKey !== null &&
+              githubWorkKey(existing.repository, existing.source) === workKey)),
       )
     ) {
       throw new TypeError(
@@ -3721,6 +3727,7 @@ function createSnapshotWithReviewCutoff(
       );
     }
     evaluatedSourceKeys.add(sourceKey);
+    if (workKey !== null) evaluatedGitHubWork.add(workKey);
     if (event.source.kind === "external") {
       if (!event.source.platform || !event.source.evidence) {
         throw new TypeError(
@@ -6686,6 +6693,7 @@ export function assertLeaderboardSnapshot(
   const evaluatedReviewSemanticKeys = new Set<string>();
   const nonEvaluatedSourceIds = new Set<string>();
   const nonEvaluatedSourceUrls = new Set<string>();
+  const nonEvaluatedGitHubWork = new Set<string>();
   const eventsByActor = new Map<string, ScoreEvent[]>();
   for (const event of validatedLedger) {
     if (
@@ -6703,6 +6711,8 @@ export function assertLeaderboardSnapshot(
     if (event.category !== "evaluated-contribution") {
       nonEvaluatedSourceIds.add(`${event.repository}\0${event.source.id}`);
       nonEvaluatedSourceUrls.add(`${event.repository}\0${event.source.url}`);
+      const workKey = githubWorkKey(event.repository, event.source);
+      if (workKey !== null) nonEvaluatedGitHubWork.add(workKey);
     }
     const events = eventsByActor.get(event.actor.id) ?? [];
     events.push(event);
@@ -6759,13 +6769,21 @@ export function assertLeaderboardSnapshot(
     } else {
       usage.evaluatedContributions += 1;
       const sourceKey = `${event.repository}\0${event.source.id}`;
-      if (evaluatedSources.has(sourceKey)) {
+      const workKey = githubWorkKey(event.repository, event.source);
+      if (
+        evaluatedSources.has(sourceKey) ||
+        (workKey !== null && evaluatedSources.has(workKey))
+      ) {
         throw new Error("snapshot.ledger repeats evaluated source credit");
       }
       evaluatedSources.add(sourceKey);
+      if (workKey !== null) evaluatedSources.add(workKey);
       if (
         nonEvaluatedSourceIds.has(sourceKey) ||
-        nonEvaluatedSourceUrls.has(`${event.repository}\0${event.source.url}`)
+        nonEvaluatedSourceUrls.has(
+          `${event.repository}\0${event.source.url}`,
+        ) ||
+        (workKey !== null && nonEvaluatedGitHubWork.has(workKey))
       ) {
         throw new Error(
           `snapshot.ledger evaluated event ${event.id} duplicates another score source`,
