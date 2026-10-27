@@ -1298,6 +1298,20 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
       },
     }),
   );
+  // The admin project list also reads the private fee report (PRD section 6).
+  await page.route("**/api/v1/admin/fee-conversions", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        recent: [],
+        routes: [
+          { network: "robinhood", targetToken: null, status: "not_converted" },
+        ],
+        totals: [],
+        last24Hours: [],
+      },
+    }),
+  );
   await page.goto("/admin", { waitUntil: "networkidle" });
   await page.getByRole("searchbox", { name: "Find a project" }).fill("ASI");
   await page.getByRole("button", { name: "Open ASI", exact: true }).click();
