@@ -6,11 +6,9 @@ import {
 import { solanaBase58 } from "../contracts/solana/adapter";
 
 /**
- * The reward-asset reader is the owner-setup surface: a maintainer submits a mint
- * address and Slop stores its decimals. Vault creation, funding and the monthly
- * commitment use the classic Token program only, so owner setup admits classic SPL
- * Token and refuses every Token-2022 mint, including the approved metadata-only
- * subset, until those paths support it. Every other owner and layout is refused.
+ * Owner setup admits classic SPL Token and the approved metadata-only Token-2022
+ * subset now supported by the complete vault builders and program. It refuses
+ * every other owner, layout and extension before an owner can sign.
  */
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
@@ -112,15 +110,18 @@ describe("reward token metadata", () => {
     });
   });
 
-  test("refuses the approved Token-2022 subset until vaults support it", async () => {
-    // Vault creation would otherwise plan a classic `initialize` that the program
-    // refuses, and funding and the monthly commitment would use the classic program.
-    for (const mint of [token2022Mint(9), classicMint(6)]) {
-      const { metadata } = read(TOKEN_2022, mint);
-      await expect(metadata).rejects.toThrow(
-        "The mint is not a classic SPL Token mint",
-      );
-      await expect(metadata).rejects.toBeInstanceOf(TokenMetadataError);
+  test("owner setup reads approved Token-2022 mints for the complete vault flow", async () => {
+    for (const [mint, decimals] of [
+      [token2022Mint(9), 9],
+      [classicMint(6), 6],
+    ] as const) {
+      // Revoking an SPL authority clears its tag, not its former public-key bytes.
+      mint.fill(9, 4, 36);
+      mint.fill(7, 50, 82);
+      expect(await read(TOKEN_2022, mint).metadata).toEqual({
+        decimals,
+        symbol: null,
+      });
     }
   });
 

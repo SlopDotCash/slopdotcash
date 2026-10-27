@@ -10,7 +10,6 @@ import type { VaultTotals } from "../vault-totals";
 import {
   readTokenAccount,
   readTokenMint,
-  TOKEN_PROGRAM,
   type TokenMintReading,
 } from "./token-extensions";
 
