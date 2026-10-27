@@ -193,13 +193,25 @@ export async function reviewSolanaRouteAccounts(
     }
   };
   await read(proof.keys);
-  const created = new Set(
-    associatedAccountCreations(parsed, proof.keys, expected.wallet).map(
-      (entry) => proof.keys[entry.index],
-    ),
+  const creations = associatedAccountCreations(
+    parsed,
+    proof.keys,
+    expected.wallet,
   );
+  for (const entry of creations) {
+    if (
+      proof.keys[entry.index] !== route.destination ||
+      entry.mint !== expected.outputMint ||
+      entry.tokenProgram !== expected.outputProgram
+    )
+      throw new Error("Route creates an unrelated associated token account");
+  }
+  const created = new Set(creations.map((entry) => proof.keys[entry.index]));
   const holdings = new Map<string, Holding>();
-  const mints = new Map<string, string>();
+  const mints = new Map<string, string>([
+    [expected.inputMint, expected.inputProgram],
+    [expected.outputMint, expected.outputProgram],
+  ]);
   proof.keys.forEach((address, index) => {
     const state = states.get(address);
     if (!state) {
@@ -213,7 +225,12 @@ export async function reviewSolanaRouteAccounts(
       state.data.length === 82 ||
       (state.owner === TOKEN_2022_PROGRAM && state.data[165] === 1)
     ) {
+      if (state.executable)
+        throw new Error("Route mint account cannot be executable");
       inspectMintAccount(rpcAccount(state), address);
+      if (mints.has(address) && mints.get(address) !== state.owner)
+        throw new Error("Route mints have inconsistent token programs");
+      mints.set(address, state.owner);
       return;
     }
     const token = holding(state);
