@@ -2465,6 +2465,8 @@ function AppealTriagePanel({
 
 /** Owner and reviewer decisions shown at once; access tools stay folded. */
 const PRIMARY_ACTIONS = [
+  "verify-link",
+  "reject-link",
   "request-information",
   "decide",
   "award",

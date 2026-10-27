@@ -243,7 +243,7 @@ export default function OwnerAwards({
       const body = await call(
         "/monthly-settings",
         { automatic: !view.automatic },
-        "Monthly payment setting",
+        "Monthly finalization setting",
       );
       if (body && typeof body.automatic === "boolean")
         setView({ ...view, automatic: body.automatic });
@@ -317,7 +317,11 @@ export default function OwnerAwards({
           </form>
           {signedOut && (
             <p>
-              <a href={loginHref(`/projects/${project.slug}/funding`)}>
+              <a
+                href={loginHref(
+                  `/projects/${project.slug}/funding#monthly-awards`,
+                )}
+              >
                 Sign in with GitHub
               </a>
             </p>
@@ -335,14 +339,14 @@ export default function OwnerAwards({
                 </NetworkName>
               ) : null}
               <p>
-                Automatic monthly payment is{" "}
+                Automatic allocation finalization is{" "}
                 <strong>{view.automatic ? "on" : "off"}</strong>.{" "}
                 {view.automatic
                   ? cutoffPassed
                     ? "The cutoff has passed. Current allocations are finalized automatically."
                     : view.cutoffAt
                       ? `Unless you finalize earlier, the current allocations are finalized at ${formatDateTime(view.cutoffAt)}.`
-                      : "Automatic payment starts later. Finalize this month yourself."
+                      : "Automatic finalization starts later. Finalize this month yourself."
                   : "Finalize each month yourself."}
                 {project.reward.paymentMode !== "enabled" &&
                   " Payments are disabled for this project."}
@@ -354,8 +358,8 @@ export default function OwnerAwards({
                 onClick={() => void toggleAutomatic()}
               >
                 {view.automatic
-                  ? "Turn off automatic payment"
-                  : "Turn on automatic payment"}
+                  ? "Turn off automatic finalization"
+                  : "Turn on automatic finalization"}
               </button>
               {!view.proposal ? (
                 <p>No allocation is proposed for this month yet.</p>
