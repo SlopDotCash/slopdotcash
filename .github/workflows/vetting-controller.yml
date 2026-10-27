@@ -72,7 +72,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    environment: ${{ github.ref == 'refs/heads/main' && 'eliza-army-production' || 'slop-staging' }}
+    environment: ${{ github.ref == 'refs/heads/main' && 'slop-production' || 'slop-staging' }}
     concurrency:
       group: slop-vetting-controller-${{ github.ref }}
       cancel-in-progress: false
