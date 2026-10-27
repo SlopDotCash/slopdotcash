@@ -34,8 +34,9 @@ corrupt, expired or unauthorized evidence fails closed. Successful bounded
 admission evidence is retained permanently under the 27 October owner decision;
 other closed cases retain the 90-day rule.
 
-Outside the permanent existing-project exemption, owner decision #1467
-section3.9 requires one successful admission scan when the project is added.
+Outside the permanent existing-project exemption, the direct owner approval
+recorded in PRD section 8 requires one successful admission scan when the project
+is added.
 The latest actual assessment in the uninterrupted history of
 the same immutable repository ID and node ID controls normal admission. Routine
 commits, dependencies, Markdown, skill inputs, template changes and presentation
