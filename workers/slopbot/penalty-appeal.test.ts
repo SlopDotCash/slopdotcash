@@ -137,6 +137,7 @@ type Run = {
   comments: string[];
   labels: string[];
   sql: (q: string) => unknown;
+  suspendInstallation: (value: boolean) => void;
   /** The worker's public HTTP routes, served in process. */
   feed: typeof fetch;
   job: (kind: string, extra: Record<string, unknown>) => Job;
@@ -923,6 +924,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       beforeAppealResolution: (callback) => {
         beforeAppealResolution = callback;
       },
+      suspendInstallation: (value) =>
+        sqlite.run(
+          "UPDATE slopbot_installations SET suspended_at = ? WHERE installation_id = 1",
+          [value ? new Date().toISOString() : null],
+        ),
       ban: () =>
         seedParticipationBan(
           sqlite,
@@ -1702,6 +1708,40 @@ test("a rejected draft escalates, and an appeal unresolved for 7 days escalates 
     expect(run.sql(APPEAL)).toEqual([
       { draft: "deny", escalated: 1, resolution: null, resolved_by: null },
     ]);
+  });
+});
+
+test("a due appeal is not consumed while the installation is suspended", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    const start = Date.now();
+    run.suspendInstallation(true);
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = await run.tick();
+    expect(due.map((j) => j.kind)).toEqual(["appeal_due"]);
+    // The session gate fails gracefully, so nothing may be consumed: the
+    // appeal stays unescalated and the dispatcher queues it again a day
+    // later, exactly as it re-queues a lost message.
+    expect(await run.deliver(due[0])).toBe("installation removed or suspended");
+    expect(run.sql(APPEAL)).toEqual([
+      { draft: "deny", escalated: 0, resolution: null, resolved_by: null },
+    ]);
+    expect(run.labels).not.toContain("slopbot: moderator");
+    run.suspendInstallation(false);
+    setSystemTime(new Date(start + 8 * day + 60_000));
+    const retried = await run.tick();
+    expect(retried.map((j) => j.kind)).toEqual(["appeal_due"]);
+    expect(await run.deliver(retried[0])).toBe(
+      "appeal escalated: the appeal is unresolved 7 days after it opened",
+    );
+    expect(run.sql(APPEAL)).toEqual([
+      { draft: "deny", escalated: 1, resolution: null, resolved_by: null },
+    ]);
+    expect(run.labels).toContain("slopbot: moderator");
+    expect(await run.tick()).toEqual([]);
   });
 });
 
