@@ -1,6 +1,12 @@
 /** Browser regressions for retained routes and fragment navigation (PRD 7). */
+import { join } from "node:path";
+import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
+
+const { site } = deploymentOrigins(
+  deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
+);
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/project-session", (route) =>
@@ -71,7 +77,22 @@ test("retained awards URLs resolve during client navigation with query and fragm
 test("same-route fragment navigation opens the named account disclosure", async ({
   page,
 }, info) => {
-  await page.goto("/account", { waitUntil: "networkidle" });
+  // The membership service is intentionally inactive on loopback origins.
+  // Serve the built application at its product origin, as account-sessions does.
+  await page.route(`${site}/**`, (route) => {
+    if (new URL(route.request().url()).pathname.startsWith("/api/"))
+      return route.fallback();
+    return route.fulfill({
+      path: join(
+        process.cwd(),
+        "dist",
+        route.request().resourceType() === "document"
+          ? "index.html"
+          : new URL(route.request().url()).pathname,
+      ),
+    });
+  });
+  await page.goto(`${site}/account`, { waitUntil: "networkidle" });
   const closure = page.locator("#close-account");
   await expect(closure).not.toHaveAttribute("open", "");
   await page.screenshot({
@@ -94,7 +115,7 @@ test("same-route fragment navigation opens the named account disclosure", async 
     history.pushState({}, "", "/account#recovery");
     dispatchEvent(new PopStateEvent("popstate"));
   });
-  await expect(page).toHaveURL("/account#recovery");
+  await expect(page).toHaveURL(`${site}/account#recovery`);
   await expect(confirmation).toHaveValue("keep this draft");
   await expectAccessible(page);
   await page.screenshot({
