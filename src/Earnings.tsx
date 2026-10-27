@@ -43,7 +43,7 @@ import {
   PayoutRow,
   RECEIVED_STATUS,
 } from "./PayoutRows";
-import { formatCycleMonth } from "./Presentation";
+import { formatCycleMonth, RoutePageHeader } from "./Presentation";
 import { ReferralClaims } from "./ReferralClaims";
 
 function chainDefaultNetwork(chain: EscrowChain): string {
@@ -179,6 +179,7 @@ export function EarningsPage({
   const [data, setData] = useState<PaymentsAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<WalletFamily | null>(null);
@@ -204,7 +205,7 @@ export function EarningsPage({
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    setError("");
+    setLoadError("");
     request("me", undefined, controller.signal)
       .then((value) => {
         if (!controller.signal.aborted) {
@@ -217,7 +218,7 @@ export function EarningsPage({
         if (e instanceof SignedOutError) {
           setSignedOut(true);
           setData(null);
-        } else setError(errorMessage(e, "Could not load your payouts."));
+        } else setLoadError(errorMessage(e, "Could not load your payouts."));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -375,7 +376,18 @@ export function EarningsPage({
       {walletsOnly ? (
         <h2 id={heading}>Wallets</h2>
       ) : (
-        <h1 id={heading}>Your payouts</h1>
+        <RoutePageHeader
+          icon={<WalletIcon />}
+          title={<span id={heading}>Your payouts</span>}
+          actions={
+            <a
+              className="button secondary-button button-small"
+              href="/account#wallets"
+            >
+              Manage payout wallets
+            </a>
+          }
+        />
       )}
       <dialog
         ref={dialog}
@@ -466,9 +478,10 @@ export function EarningsPage({
           </a>
         </div>
       )}
-      {error && (
+      {(error || loadError) && (
         <div role="alert">
-          <p>{error}</p>
+          {error && <p>{error}</p>}
+          {loadError && <p>{loadError}</p>}
           <button
             className="button secondary-button button-small"
             type="button"
@@ -481,7 +494,7 @@ export function EarningsPage({
       {message && <p role="status">{message}</p>}
       {data && (
         <>
-          {error && <p>Showing the last verified data.</p>}
+          {(error || loadError) && <p>Showing the last verified data.</p>}
           {!walletsOnly && <ReferralClaims />}
           {walletsOnly ? (
             <>
@@ -539,7 +552,7 @@ export function EarningsPage({
                             chain={chain}
                             status={
                               wallet
-                                ? wallet.authorized && addresses.length === 1
+                                ? wallet.authorized
                                   ? "confirmed"
                                   : "not confirmed"
                                 : undefined

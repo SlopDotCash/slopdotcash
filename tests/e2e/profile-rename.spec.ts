@@ -523,14 +523,15 @@ for (const staleMembership of [false, true]) {
 
 for (const scenario of [
   "renamed actor",
-  "reassigned login",
+  "reassigned login: directory first",
+  "reassigned login: membership first",
   "delayed directory",
   "delayed session",
   "current member",
+  "absent member",
 ] as const) {
-  test(`directory-only membership identity: ${scenario}`, async ({
-    page,
-  }, info) => {
+  test(`directory-only membership identity: ${scenario}`, async ({ page }) => {
+    const reassigned = scenario.startsWith("reassigned login:");
     const site = await serveProfileSite(page);
     const { cycles, profiles, archived, walletRequests } = await profileRecords(
       page,
@@ -543,7 +544,7 @@ for (const scenario of [
     profiles.people = profiles.people.filter(
       (person) => person.id !== archived.id,
     );
-    if (scenario !== "reassigned login" && scenario !== "delayed session")
+    if (!reassigned && scenario !== "delayed session")
       profiles.people.push({
         ...archived,
         login: "alice2",
@@ -551,7 +552,7 @@ for (const scenario of [
         repositories: [],
       });
     if (
-      scenario === "reassigned login" ||
+      reassigned ||
       scenario === "delayed directory" ||
       scenario === "delayed session"
     )
@@ -564,22 +565,31 @@ for (const scenario of [
       });
     assertCycleIndex(cycles);
     assertProfiles(profiles);
-    const login = scenario === "current member" ? "alice2" : "alice";
-    let releaseIdentity = () => {};
-    const identityReady = new Promise<void>((resolve) => {
-      releaseIdentity = resolve;
+    const currentIdentity =
+      scenario === "current member" || scenario === "absent member";
+    const login = currentIdentity ? "alice2" : "alice";
+    let releaseDirectory!: () => void;
+    let releaseMembership!: () => void;
+    let releaseSession!: () => void;
+    const directoryReady = new Promise<void>((resolve) => {
+      releaseDirectory = resolve;
+    });
+    const membershipReady = new Promise<void>((resolve) => {
+      releaseMembership = resolve;
+    });
+    const sessionReady = new Promise<void>((resolve) => {
+      releaseSession = resolve;
     });
     await page.route(`${site}/api/v1/points/**`, async (route) => {
       const path = new URL(route.request().url()).pathname;
-      if (
-        (scenario === "reassigned login" && path.endsWith("/member")) ||
-        (scenario === "delayed session" && path.endsWith("/me"))
-      )
-        await identityReady;
+      const isMember = path.endsWith("/member");
+      if (isMember && reassigned) await membershipReady;
+      if (path.endsWith("/me") && scenario === "delayed session")
+        await sessionReady;
+      const identityPath = scenario === "delayed session" ? "/me" : "/member";
       return route.fulfill({
         json:
-          (scenario !== "delayed session" && path.endsWith("/member")) ||
-          (scenario === "delayed session" && path.endsWith("/me"))
+          path.endsWith(identityPath) && scenario !== "absent member"
             ? {
                 actor: { id: archived.id, login },
                 joinedAt: "2026-10-17T00:00:00.000Z",
@@ -592,56 +602,63 @@ for (const scenario of [
     await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
       route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
     );
-    let releaseDirectory = () => {};
-    const directoryReady = new Promise<void>((resolve) => {
-      releaseDirectory = resolve;
-    });
-    if (scenario === "delayed directory")
+    if (scenario === "delayed directory" || reassigned)
       await page.route("**/data/profiles.json", async (route) => {
         await directoryReady;
         await route.fulfill({ json: profiles });
       });
     try {
-      const directoryResponse =
-        scenario === "reassigned login" || scenario === "delayed session"
-          ? page.waitForResponse("**/data/profiles.json")
-          : null;
       const memberResponse = page.waitForResponse((response) =>
         new URL(response.url()).pathname.endsWith("/points/member"),
       );
-      const sessionResponse =
-        scenario === "delayed session"
-          ? page.waitForResponse((response) =>
-              new URL(response.url()).pathname.endsWith("/points/me"),
-            )
-          : null;
+      const directoryResponse = page.waitForResponse((response) =>
+        new URL(response.url()).pathname.endsWith("/data/profiles.json"),
+      );
+      const sessionResponse = page.waitForResponse((response) =>
+        new URL(response.url()).pathname.endsWith("/points/me"),
+      );
       await page.goto(`${site}/contributors/${login}`, {
         waitUntil: "domcontentloaded",
       });
-      if (scenario === "reassigned login" || scenario === "delayed session") {
-        if (directoryResponse) await (await directoryResponse).finished();
-        if (scenario === "delayed session")
-          await (await memberResponse).finished();
-        await page.evaluate(
-          () =>
-            new Promise<void>((resolve) => {
-              requestAnimationFrame(() =>
-                requestAnimationFrame(() => resolve()),
-              );
-            }),
-        );
+      let pendingRequests: string[] = [];
+      let pendingIdentity = true;
+      if (reassigned || scenario === "delayed session") {
         await expect(
           page.getByText("Checking contributor…", { exact: true }),
         ).toBeVisible();
-        expect(walletRequests).toEqual([]);
-        if (scenario === "delayed session")
-          await page.screenshot({
-            path: info.outputPath("profile-session-pending.png"),
-          });
-        releaseIdentity();
+        if (scenario === "delayed session") {
+          await (await directoryResponse).finished();
+          await (await memberResponse).finished();
+        } else if (scenario.endsWith("directory first")) {
+          releaseDirectory();
+          await (await directoryResponse).finished();
+        } else {
+          releaseMembership();
+          await (await memberResponse).finished();
+        }
+        // Response parsing and React's next paint settle while the other source stays held.
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) =>
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve()),
+              ),
+            ),
+        );
+        pendingRequests = [...walletRequests];
+        pendingIdentity = await page
+          .getByText("Checking contributor…", { exact: true })
+          .isVisible();
+        await page.screenshot({
+          path: test.info().outputPath("identity-source-pending.png"),
+          fullPage: true,
+        });
+        releaseDirectory();
+        releaseMembership();
+        releaseSession();
       }
       await (await memberResponse).finished();
-      if (sessionResponse) await (await sessionResponse).finished();
+      await (await sessionResponse).finished();
       if (scenario === "delayed directory") {
         await expect(
           page.getByText("Checking contributor…", {
@@ -652,7 +669,20 @@ for (const scenario of [
         releaseDirectory();
       }
       await page.waitForLoadState("networkidle");
-      if (scenario === "current member") {
+      await test.info().attach("identity-arrival-order", {
+        body: JSON.stringify({
+          scenario,
+          pendingRequests,
+          finalRequests: walletRequests,
+          pendingIdentity,
+        }),
+        contentType: "application/json",
+      });
+      if (reassigned || scenario === "delayed session") {
+        expect(pendingIdentity).toBe(true);
+        expect(pendingRequests).toEqual([]);
+      }
+      if (currentIdentity) {
         await expect(
           page.getByRole("heading", { name: "alice2", exact: true }),
         ).toBeVisible();
@@ -669,7 +699,7 @@ for (const scenario of [
             .getByText("total points", { exact: true })
             .locator("..")
             .locator("strong"),
-        ).toHaveText("5");
+        ).toHaveText(scenario === "absent member" ? "0" : "5");
         expect(walletRequests).toEqual([
           "/api/v1/wallet-claims/actors/2/current",
         ]);
@@ -695,13 +725,14 @@ for (const scenario of [
           ).toBeVisible();
           await expectAccessible(page);
           await page.screenshot({
-            path: info.outputPath("profile-session-refused.png"),
+            path: test.info().outputPath("profile-session-refused.png"),
           });
         }
       }
     } finally {
-      releaseIdentity();
       releaseDirectory();
+      releaseMembership();
+      releaseSession();
     }
   });
 }
@@ -732,3 +763,48 @@ test("an unavailable session preserves an unconflicted cached profile", async ({
   ).toBeVisible();
   expect(walletRequests).toEqual(["/api/v1/wallet-claims/actors/1/current"]);
 });
+
+test(
+  "membership lookup terminates at the shared request deadline",
+  { tag: "@desktop-only" },
+  async ({ page, diagnostics }, info) => {
+    const site = await serveProfileSite(page);
+    const { archived } = await profileRecords(page, { directoryOnly: true });
+    let releaseMember!: () => void;
+    const memberGate = new Promise<void>((resolve) => {
+      releaseMember = resolve;
+    });
+    diagnostics.allowCanceledBackgroundReads();
+    await page.route(`${site}/api/v1/points/**`, async (route) => {
+      if (new URL(route.request().url()).pathname.endsWith("/member"))
+        await memberGate;
+      await route.fulfill({ json: null });
+    });
+    await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
+      route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+    );
+    const start = Date.now();
+    try {
+      await page.goto(`${site}/contributors/${archived.login}`, {
+        waitUntil: "domcontentloaded",
+      });
+      await expect(
+        page.getByText("Checking contributor…", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Past cycles", exact: true }),
+      ).toBeVisible({ timeout: 17_500 });
+    } finally {
+      await page.screenshot({
+        path: info.outputPath("membership-deadline.png"),
+        fullPage: true,
+      });
+      await info.attach("membership-elapsed-ms", {
+        body: String(Date.now() - start),
+        contentType: "text/plain",
+      });
+      releaseMember();
+      await page.waitForLoadState("networkidle");
+    }
+  },
+);

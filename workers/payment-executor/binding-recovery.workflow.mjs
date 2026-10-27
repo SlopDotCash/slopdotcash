@@ -67,6 +67,35 @@ try {
           },
         },
         {
+          name: "solana-binding-caller",
+          ...shared,
+          script:
+            "export default { fetch(request, env) { return env.BINDING.fetch(request); } };",
+          serviceBindings: {
+            BINDING: { name: "solana-attester", entrypoint: "SolanaBinding" },
+          },
+        },
+        {
+          name: "solana-attester",
+          ...shared,
+          script: await readFile(bundle, "utf8"),
+          bindings: {
+            SIGNER_STACK: "production",
+            SIGNER_ROLE: "attester",
+            CHAIN_FAMILY: "solana",
+            PAYMENT_DEPLOYMENTS: "[]",
+            SECURITY_PAYMENT_DEPLOYMENTS: "[]",
+            PAYMENT_RPC_URLS: "{}",
+          },
+          durableObjects: {
+            JOURNAL: { className: "PaymentSignerJournal", useSQLite: true },
+          },
+          outboundService: () => {
+            outbound += 1;
+            return new Response("Unexpected external request", { status: 502 });
+          },
+        },
+        {
           name: "recovery-attester",
           ...shared,
           script: await readFile(bundle, "utf8"),
@@ -172,6 +201,40 @@ try {
     ).status,
     404,
   );
+  const solana = await runtime.getWorker("solana-binding-caller");
+  for (const path of [
+    "/v1/commit-monthly",
+    "/v1/monthly-authorization",
+    "/v1/monthly-reserve-release",
+    "/v1/reconcile-binding",
+    "/v1/bind-destinations",
+    "/v1/attempt-status",
+    "/v1/cancel-unsubmitted",
+    "/v1/security/pay/extra",
+  ]) {
+    const response = await solana.fetch(`https://binding.internal${path}`, {
+      method: "POST",
+      body: "{}",
+    });
+    assert.equal(response.status, 404, path);
+    await response.text();
+  }
+  for (const path of [
+    "/v1/pay",
+    "/v1/complete-bind",
+    "/v1/security/pay",
+    "/v1/security/complete-bind",
+  ]) {
+    const get = await solana.fetch(`https://binding.internal${path}`);
+    assert.equal(get.status, 404, path);
+    await get.text();
+    const post = await solana.fetch(`https://binding.internal${path}`, {
+      method: "POST",
+      body: "{}",
+    });
+    assert(post.status >= 400, "No pinned deployment may bind");
+    await post.text();
+  }
   assert.equal(outbound, 0);
   console.log(
     "PASS: compiled BindingRecovery service binding reached native SQLite Durable Object without keys; ordinary/private missing-attempt refusal, malformed-scope refusal, eight non-recovery routes and GET denied, zero external requests. No chain or finalized-winner qualification is claimed.",

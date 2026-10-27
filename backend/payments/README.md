@@ -180,7 +180,10 @@ only after its vault was read.
 deposited, paid out, payout fees, withdrawn, withdrawal fees, free and
 reserved amounts in the vault asset, with the block time ("as of") and a stale
 warning past `staleAfterMs`. It shows "not reported" for a NULL counter and no
-totals before the first read, never zero.
+totals before the first read, never zero. An open page reads the route again
+when a snapshot passes `staleAfterMs` (then once per `staleAfterMs`), when the
+reader returns to the tab at least 60 seconds after the last read, and after a
+finalized wallet action. A failed read keeps the last totals, marked stale.
 
 `POST /api/v1/payments/projects/<id>/solana-funding` reviews or checks a
 wallet funding action. It needs no Slop session: the depositor or owner signs

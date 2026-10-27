@@ -1,4 +1,12 @@
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  GitBranch,
+  ListChecks,
+  Settings2,
+  ShieldCheck,
+  Wallet,
+} from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
@@ -59,6 +67,7 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { OwnerBountyVault } from "./OwnerBountyVault";
+import { RoutePageHeader } from "./Presentation";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 import { SecurityProgramEditor } from "./SecurityProgramEditor";
 
@@ -433,7 +442,9 @@ function TextField({
     value,
   };
   return (
-    <div className={`form-field${error ? " form-field-invalid" : ""}`}>
+    <div
+      className={`form-field${!multiline && ["name", "stewardName", "stewardLogin", "integrationBranch", "licenseSpdx", "rewardAssetSymbol", "monthlyPool"].includes(name) ? " field-compact" : ""}${error ? " form-field-invalid" : ""}`}
+    >
       <label htmlFor={id}>{label}</label>
       {multiline ? (
         <textarea
@@ -479,7 +490,9 @@ function SelectField({
 }) {
   const id = `field-${name}`;
   return (
-    <div className={`form-field${error ? " form-field-invalid" : ""}`}>
+    <div
+      className={`form-field field-compact${error ? " form-field-invalid" : ""}`}
+    >
       <label htmlFor={id}>{label}</label>
       <select
         aria-describedby={error ? `${id}-error` : undefined}
@@ -1268,8 +1281,10 @@ export default function ProjectProposalPage() {
     }
   }
   function clearDraft() {
+    if (submission.status === "submitting") return;
     lookupController.current?.abort();
     setProposal(EMPTY_PROPOSAL);
+    setSubmission({ status: "idle" });
     suggestedText.current = { name: "", headline: "", goal: "", criteria: "" };
     setTermsOpen(false);
     setAttempted(SETUP_STEPS.map(() => false));
@@ -1309,13 +1324,11 @@ export default function ProjectProposalPage() {
       <p className="breadcrumb">
         <Link href="/">Projects</Link>
       </p>
-      <section className="proposal-intro">
-        <h1>Add a project</h1>
-        <p>
-          Your project goes live automatically after you install Slopbot and the
-          security scan passes.
-        </p>
-      </section>
+      <RoutePageHeader
+        icon={<GitBranch />}
+        title="Add a project"
+        lead="Install Slopbot and pass the security scan to go live."
+      />
       <OwnerProjects
         key={
           projectSession.status === "signed-in"
@@ -1338,7 +1351,20 @@ export default function ProjectProposalPage() {
                   onClick={() => goTo(index)}
                   type="button"
                 >
-                  <strong>{index + 1}</strong> {label}
+                  <span className="proposal-step-icon" aria-hidden="true">
+                    {index === 0 ? (
+                      <GitBranch />
+                    ) : index === 1 ? (
+                      <ListChecks />
+                    ) : index === 2 ? (
+                      <Wallet />
+                    ) : (
+                      <ShieldCheck />
+                    )}
+                  </span>
+                  <span>
+                    <strong>{index + 1}</strong> {label}
+                  </span>
                   {attempted[index] && count > 0 ? (
                     <small>{count} to fix</small>
                   ) : null}
@@ -1852,6 +1878,7 @@ export default function ProjectProposalPage() {
             <span>Clear this draft?</span>
             <button
               className="button danger-button"
+              disabled={submission.status === "submitting"}
               onClick={clearDraft}
               type="button"
             >
@@ -1868,6 +1895,7 @@ export default function ProjectProposalPage() {
         ) : (
           <button
             className="button ghost-button"
+            disabled={submission.status === "submitting"}
             onClick={() => setConfirmClear(true)}
             type="button"
           >
@@ -2035,6 +2063,10 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         : -1
       : null,
   );
+  // The draft the user last typed, including edits made while a publish
+  // request is in flight. Compared on success so those edits survive.
+  const latestDraft = useRef(draft);
+  latestDraft.current = draft;
   const [saveFailed, setSaveFailed] = useState(false);
   useEffect(() => {
     try {
@@ -2248,6 +2280,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   async function publish() {
     setAttempted(true);
     if (!valid || !changed || base === null || staleDraft) return;
+    const submittedDraft = draft;
     setSubmission({ state: "publishing" });
     try {
       const result = await publishProjectRevision(
@@ -2266,8 +2299,12 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         project: result.project.manifest,
       });
       setSubmission({ state: "published", result });
-      setDraft(null);
-      setDraftRevision(null);
+      // Edits typed while the request was in flight are not part of what was
+      // published; keep them as the new draft, rebased on the new revision.
+      // Only clear when nothing changed since the request went out.
+      const editedDuringSave = latestDraft.current !== submittedDraft;
+      setDraft(editedDuringSave ? latestDraft.current : null);
+      setDraftRevision(editedDuringSave ? result.project.revision : null);
       setAttempted(false);
     } catch (error) {
       setSubmission({
@@ -2287,14 +2324,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       <p className="breadcrumb">
         <Link href={`/projects/${project.slug}`}>{project.name}</Link>
       </p>
-      <div className="manage-intro">
-        <h1>Manage project</h1>
-        {project.escrow && (
-          <p>
-            <Link href={`/projects/${project.slug}/awards`}>Review awards</Link>
-          </p>
-        )}
-      </div>
+      <RoutePageHeader icon={<Settings2 />} title="Manage project" />
       {session.status === "signed-in" ? (
         <ProjectSetupStatusPanel
           key={

@@ -56,7 +56,7 @@ import {
   WORK_ITEM_PRIORITIES,
 } from "./leaderboard-types";
 import { isRecord } from "./record-validation.mjs";
-import { penaltyDeductions } from "./score-penalties";
+import { assertPenaltyHistory, penaltyDeductions } from "./score-penalties";
 import {
   allocatePullRequestReviewCredit,
   assertValueScoringPolicy,
@@ -614,9 +614,9 @@ export function isBotActor(actor: GitHubActor | null): boolean {
 export function isRecognizedTestFile(path: string): boolean {
   const normalized = path.toLowerCase();
   if (
-    normalized.includes("/__snapshots__/") ||
-    normalized.includes("/fixtures/") ||
-    normalized.includes("/testdata/")
+    /(^|\/)__snapshots__\//.test(normalized) ||
+    /(^|\/)fixtures\//.test(normalized) ||
+    /(^|\/)testdata\//.test(normalized)
   ) {
     return false;
   }
@@ -4899,6 +4899,7 @@ function createSnapshotWithReviewCutoff(
         left.reviewId.localeCompare(right.reviewId),
     ),
     penalties,
+    ...(input.penaltyHistory ? { penaltyHistory: input.penaltyHistory } : {}),
     opportunities,
     attributions,
     invalidAttributionMarkers: overallAttribution.invalidMarkers.sort(
@@ -6814,6 +6815,12 @@ export function assertLeaderboardSnapshot(
     windowFrom as string,
     windowTo as string,
   );
+  if (snapshot.penaltyHistory !== undefined)
+    assertPenaltyHistory(
+      snapshot.penaltyHistory,
+      REGISTERED_REPOSITORIES.map((r) => r.projectId),
+      snapshot.generatedAt,
+    );
   const penaltyThirds = penaltyDeductions(
     validatedLedger,
     validatedPenalties,

@@ -1,3 +1,4 @@
+import { CircleAlert } from "lucide-react";
 import { useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
@@ -29,7 +30,7 @@ import {
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
-import { WalletConnection } from "./Presentation";
+import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
 
 type Step = "approve" | "reset" | "send";
 type Pending = {
@@ -322,12 +323,35 @@ export function VaultActions({
       className="admin-card vault-actions"
       aria-label={`Fund or withdraw · ${networkLabel(deployment.network)}`}
     >
-      <h3>Fund or withdraw · {networkLabel(deployment.network)}</h3>
-      <p>
-        Vault <code>{deployment.vault}</code>
-      </p>
-      <p>
-        Token <code>{deployment.asset}</code>
+      <h3>
+        Fund or withdraw ·{" "}
+        <NetworkName chain={ESCROW_NETWORKS[deployment.network].chain}>
+          {networkLabel(deployment.network)}
+        </NetworkName>
+      </h3>
+      <details
+        className="vault-contract-details"
+        open={Boolean(review || pending)}
+      >
+        <summary>Contract details</summary>
+        <dl className="vault-addresses">
+          <div>
+            <dt>Vault</dt>
+            <dd>
+              <code>{deployment.vault}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>Token</dt>
+            <dd>
+              <code>{deployment.asset}</code>
+            </dd>
+          </div>
+        </dl>
+      </details>
+      <p className="setup-badge setup-badge--warning">
+        <CircleAlert aria-hidden="true" size={14} />
+        Direct transfers are not credited
       </p>
       {error && (
         <p role="alert" className="form-error">
@@ -357,15 +381,7 @@ export function VaultActions({
         legend={
           pending ? "Reconnect to check this transaction" : "Choose a wallet"
         }
-        empty={
-          <>
-            {solana
-              ? "No Solana wallet with transaction support was found."
-              : "No EVM wallet was found."}{" "}
-            Open this page in your wallet's browser or enable its browser
-            extension.
-          </>
-        }
+        empty={<NoWalletFound solana={solana} />}
         onConnect={(provider) => void connect(provider)}
       />
       {pending ? (

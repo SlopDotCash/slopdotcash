@@ -173,7 +173,7 @@ Live mode runs the accrual step exactly as `dry_run` does (files say
 The finalized header and canonical receipt/event evidence establish finality.
 State reads use `latest` for preflight and conservative holds; latest state
 alone cannot establish a terminal journal result. The poster key can post a
-capped root that the owner can void for seven days; it holds no tokens
+capped root that is immediately claimable; the owner can void it only before its first successful claim. It holds no tokens
 (`docs/security/referral-distributor-ai-review-2026-10-25.md`). Incident
 order: pause the distributor, rotate the poster, void, unpause.
 

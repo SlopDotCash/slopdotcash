@@ -1,3 +1,4 @@
+import { FileSearch, LockKeyhole } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { sha256Hex } from "./lib/async-sha256.mjs";
 import { loginHref } from "./lib/browser-deployment";
@@ -5,6 +6,9 @@ import { fetchWithDeadline } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { projectApiRequest, useProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
+import { CopyIdentifier } from "./Operations";
+import { RoutePageHeader, StatusBadge } from "./Presentation";
+import "./operations-design.css";
 
 type EvidenceObject = {
   sha256: string;
@@ -52,14 +56,14 @@ export default function VettingEvidencePage() {
     );
   }
   return (
-    <main
-      className="shell route-main admin-page"
-      style={{ overflowWrap: "anywhere" }}
-    >
-      <h1>Private vetting evidence</h1>
-      <p>
-        Designated vetting operators only. Evidence may contain hostile code and
-        private data.
+    <main className="shell route-main admin-page operations-page evidence-page">
+      <RoutePageHeader icon={<FileSearch />} title="Private vetting evidence" />
+      <p className="operations-caution">
+        <LockKeyhole aria-hidden="true" />
+        <span>
+          Designated vetting operators only. Evidence may contain hostile code
+          and private data.
+        </span>
       </p>
       {session.status === "signed-out" ? (
         <p>
@@ -73,7 +77,7 @@ export default function VettingEvidencePage() {
           </a>
         </p>
       ) : null}
-      <form className="admin-card" onSubmit={load}>
+      <form className="admin-card evidence-lookup" onSubmit={load}>
         <label className="form-field">
           Assessment ID
           <input
@@ -97,30 +101,63 @@ export default function VettingEvidencePage() {
       {error ? <p role="alert">{error} Check the IDs and retry.</p> : null}
       {data ? (
         <>
-          <p>{data.retentionBoundary}</p>
+          <p className="operations-retention">{data.retentionBoundary}</p>
           {data.runs.map((run) => (
             <section
-              className="admin-card"
-              style={{ overflowWrap: "anywhere" }}
+              className="admin-card evidence-run"
               key={`${run.assessmentId}/${run.runId}`}
             >
-              <h2>{run.runId}</h2>
-              <p>Assessment: {run.assessmentId}</p>
+              <header className="operations-card-heading">
+                <h2>Evidence inventory</h2>
+                <StatusBadge icon={<LockKeyhole />}>Private</StatusBadge>
+              </header>
+              <dl className="operations-facts">
+                <div>
+                  <dt>Run</dt>
+                  <dd>
+                    <CopyIdentifier label="run ID" value={run.runId} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>Assessment</dt>
+                  <dd>
+                    <CopyIdentifier
+                      label="assessment ID"
+                      value={run.assessmentId}
+                    />
+                  </dd>
+                </div>
+                <div>
+                  <dt>Storage inventory SHA-256</dt>
+                  <dd>
+                    <CopyIdentifier
+                      label="storage inventory digest"
+                      value={run.manifestSha256}
+                    />
+                  </dd>
+                </div>
+                <div>
+                  <dt>Policy</dt>
+                  <dd>{run.policy.version}</dd>
+                </div>
+              </dl>
               {run.assembly ? (
-                <p>
-                  Evidence assembly:{" "}
-                  {run.assembly.retained ? "Retained" : "Not verified"}.{" "}
-                  {run.assembly.reason} Clean admission is unavailable.
+                <p className="operations-caution">
+                  <span>
+                    <StatusBadge
+                      tone={run.assembly.retained ? "info" : "warning"}
+                    >
+                      Evidence assembly:{" "}
+                      {run.assembly.retained ? "Retained" : "Not verified"}
+                    </StatusBadge>{" "}
+                    {run.assembly.reason} Clean admission is unavailable.
+                  </span>
                 </p>
               ) : null}
-              <p style={{ overflowWrap: "anywhere" }}>
-                Storage inventory SHA-256: {run.manifestSha256}
-              </p>
-              <p>
+              <p className="operations-retention">
                 {run.expiresAt === null
                   ? "Case open. Evidence remains available until 90 days after closure."
-                  : `Access expires: ${run.expiresAt}.`}{" "}
-                Policy: {run.policy.version}.
+                  : `Access expires: ${run.expiresAt}.`}
               </p>
               {run.objects.map((object) => (
                 <EvidenceItem key={object.sha256} run={run} object={object} />
@@ -201,13 +238,33 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
     );
   }
   return (
-    <article className="admin-card" style={{ overflowWrap: "anywhere" }}>
-      <h3>{object.label}</h3>
-      <p>
-        {object.kind} · {object.sizeBytes} bytes · {object.state}
-      </p>
-      <p>SHA-256: {object.sha256}</p>
-      <form className="admin-section" onSubmit={inspect}>
+    <article className="evidence-object">
+      <header className="operations-card-heading">
+        <h3>{object.label}</h3>
+        <StatusBadge tone="warning">{object.state}</StatusBadge>
+      </header>
+      <dl className="operations-facts">
+        <div>
+          <dt>Type</dt>
+          <dd>
+            {object.kind} · {object.contentType}
+          </dd>
+        </div>
+        <div>
+          <dt>Size</dt>
+          <dd>{object.sizeBytes.toLocaleString()} bytes</dd>
+        </div>
+        <div>
+          <dt>SHA-256</dt>
+          <dd>
+            <CopyIdentifier
+              label={`${object.label} digest`}
+              value={object.sha256}
+            />
+          </dd>
+        </div>
+      </dl>
+      <form className="evidence-inspection" onSubmit={inspect}>
         <label className="form-field">
           Reason to inspect {object.label}
           <input
@@ -234,9 +291,7 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
       {error ? <p role="alert">{error}</p> : null}
       {status ? <p role="status">{status}</p> : null}
       {content !== null ? (
-        <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-          {content}
-        </pre>
+        <pre className="evidence-content">{content}</pre>
       ) : null}
     </article>
   );

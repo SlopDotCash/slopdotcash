@@ -24,7 +24,7 @@ import {
 import { useAction } from "./lib/use-action";
 import { usePayoutWallets } from "./lib/use-payout-wallets";
 import { isWalletAddress } from "./lib/wallets";
-import { WalletConnection } from "./Presentation";
+import { NoWalletFound, WalletConnection } from "./Presentation";
 
 type Pending = {
   plan: OwnerCommitmentPlan;
@@ -261,11 +261,7 @@ export default function OwnerCommitment({
         legend={
           pending ? "Reconnect the owner wallet" : "Choose the owner wallet"
         }
-        empty={
-          solana
-            ? "Install or enable a Solana wallet extension, then reload."
-            : "Open this page in an EVM wallet browser or enable its browser extension."
-        }
+        empty={<NoWalletFound solana={solana} />}
         onConnect={(provider) =>
           void run(async () => {
             const connection = await provider.connect();

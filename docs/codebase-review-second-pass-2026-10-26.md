@@ -2788,3 +2788,152 @@ The first combined validation at `438b41b6` passed669 Bun cases with one intenti
 The final parallel browser run exposed a pre-existing race inside the hero animation test: its installed clock continued advancing after it observed a complete phrase, allowing the phrase to start deleting before the next assertion. The product kept cycling correctly. The test now pauses that clock before navigation, matching the existing reduced-motion case, and advances it explicitly. All original phrase, layout and accessibility assertions and timeouts remain. A fresh isolated desktop/mobile run passed4/4. This is a one-line test-determinism correction, not an animation/product change. The main cleanup was already merged through #1402/#1404 before waiting for remote CI, as requested.
 
 The local default preview worker pool is also capped at two (and at half the available CPU parallelism, minimum one). The previous half-of-machine default started nine browsers on this host while other local workflows were active, producing a static-server socket failure and slow-response assertions. This bounds per-page ledger memory/CPU work while retaining parallel preview checks, the one-worker Pages/chain defaults and an explicit caller override. It changes no timeout, retry, assertion or product behavior.
+
+## Completion audit after the merged second pass
+
+The first completion claim was too broad: the full browser run subsequently supplied a reproducible profile identity race, and review of the actual remaining mixed test suite found three residual client-only fragments plus a fixture startup exception that could bypass cleanup. This addendum records those gaps before their source corrections. Merging without waiting for CI, as requested, did not prove them resolved. The goal remains active until the corrections and the resulting behavior are verified.
+
+Current integration baseline: `a3f1b96b` from `origin/development`, including the separately approved PRD note about November payout exclusions. This cleanup does not change that policy. Windows and native contract job metadata shows cancellation during setup after merge; those statuses are not evidence of a failing test or a passing platform qualification. Local platform limitations remain explicit.
+
+### Requirement-by-requirement completion evidence
+
+| Requested category | Authoritative implementation/evidence | Current conclusion |
+| --- | --- | --- |
+| Combine files/simplify structure | SR01–03 deletion/direct import/canonical JSON; shared Solana helper; sole fixture registry; first-pass canonical skill tree | Implemented; static references and byte comparisons checked |
+| Simplify features/gates/human steps | SF01–06; direct project login; correct token precision; first-pass automatic monthly reads | Implemented; selected browser/chain workflows pass |
+| Shared UI/components/styles | Reused SignInPanel, WalletConnection, useAction; footer display owned by design system | Implemented; visual/reflow evidence; unproved general abstractions explicitly rejected |
+| UI/UX path complexity | Shared session reads and fresh Review identity; failed-list Retry; direct return path | Implemented; PI01 exposes one remaining profile ordering defect |
+| Remove unnecessary explanatory copy | First-pass duplicate footer/domain content removed; SF10/SF20 retained context tied to decisions and money/consent | Audited and classified, not blanket deletion of required facts |
+| Text better expressed graphically | Existing actual logo/icon/graph assets inventoried; all seven agent icons live; no supported replacement for identifiers/amounts | Audited; avoid decorative text-to-image conversion without a user benefit |
+| Hidden errors/defaults/exception patterns | Removed dead CLI fallbacks; shared visible action errors; consistent account read; explicit aggregate refresh errors | Implemented; remaining fixture startup exception recorded below |
+| Buttons that can be automatic | Automatic reads/focus refresh and direct login; signatures/moderation/consent remain deliberate | Implemented within approved authority |
+| Dead scripts/code/imports | 656-module import/export scan and runtime/CLI checks; SR01/02 removals; no stale executable references | Implemented; tool candidate counts are not misrepresented as dead code |
+| Useless tests | ST01–06 prune literal/helper/mock-only fragments and preserve complete outcomes | Implemented, except three ST09 fragments now identified |
+| Non-contract units and fixtures | Sole cloned registry; two additional helper suites removed; contract tests retained | ST09 final cleanup pending; retained suites exercise real DB/process/browser/chain boundaries |
+| Simplify/parallelize/deduplicate E2E | ST07–16; bounded concurrency; representative layout matrix; process-tree cleanup; no duplicate browsers in CI | Implemented except real startup-error gap below |
+| Other smells/bugs/efficiency | SB01 atomic account view, SB02 independent vault refresh, SB03 byte-identical PDA reuse | Implemented with real reproduction/measurements; PI01 remaining |
+| Explicit best-practice criteria | 14-row root matrix and16-rule frontend rubric in report | Complete artifact |
+| Extremely detailed report before code | Initial second-pass report committed `18f655f2`; this completion addendum precedes corrections | Complete artifact; final validation must be appended honestly |
+| All justified implementation and verification | Full run at f785:346 pass/20 skip/1 fail; exact remaining failure and two audit gaps follow | Incomplete until those gaps are resolved; no blanket100% claim |
+
+# Profile identity arrival-order audit
+
+Source: f785dfab1eb5b9e0cfd5ccc7956e10f34bcf32a7. Audit/reproduction only; no application edits at report creation.
+
+## PI01 — Do not resolve a profile actor while its membership veto is pending
+
+Priority: P2 correctness and request-authority ordering. Scope: src/ProfilePage.tsx canonical currentProfileActor boundary and the existing profile identity browser regression. No payout mutation or private-data exposure is demonstrated.
+
+PRD: section3 requires permanent GitHub actor IDs through renames; section2 keeps wallet records in the account service and says one record cannot replace another required proof; section7 visitor acceptance requires consistent profile/receipt records and retained historical URLs. Repository working rules require distinct loading/invalid/error states. This restores already-intended identity validation rather than introducing product policy.
+
+### Evidence
+
+- `ProfilePage.tsx:80-82` passes the independently loading profile census and current membership to currentProfileActor, then immediately uses the result in useCurrentWallet.
+- `ProfilePage.tsx:470-472` waits for the directory to be ready but does not wait for `membership.joinStatus`.
+- `ProfilePage.tsx:477-483` checks a current membership conflict only when a member has already arrived.
+- `ProfilePage.tsx:490-496` falls back to a unique directory record while the membership lookup may still be loading.
+- `Points.tsx:451-495` explicitly exposes the login-keyed membership state as loading/ready/absent/unavailable. While loading it returns joined:null, which is not proof that no membership conflict exists.
+- `ProfilePage.tsx:539-540` starts the actor-bound wallet read as soon as the premature candidate is returned. A later correct UI rejection cannot undo that request.
+- Full exact-source run `/tmp/slop-second-f785-e2e.log` lines23254-23273: mobile `directory-only membership identity: reassigned login` ultimately hid conflicting records but recorded `/api/v1/wallet-claims/actors/3/current`, where the test required no read.
+
+### Sequence
+
+For `/contributors/alice`, the current directory describes actor3 as alice. A public membership record still describes historical actor2 as alice. With directory-first arrival, currentProfileActor selects actor3 and triggers a wallet read while membership is loading. When actor2 arrives, the conflict correctly rejects the profile. Membership-first arrival already remains unresolved until the directory arrives, then rejects. The network effect therefore depends on response ordering even though final UI matches.
+
+### Proposed exact correction
+
+Add `membership.joinStatus === "loading"` to the early unresolved condition of currentProfileActor, alongside its existing snapshot/directory prerequisites. Keep this at the canonical actor-resolution boundary, so both profile history and useCurrentWallet stay unresolved together. Use the existing “Checking contributor…” display while waiting; no second state machine, timer, request, or duplicated guard in the wallet hook.
+
+Keep ready and absent membership behavior, directory-only actor fallback, login-keyed cancellation, and terminal `unavailable` behavior unchanged. `unavailable` is deliberate compatibility behavior on preview/non-product origins (Points.tsx467-469), and changing its public cached-record fallback would be broader policy than this reproduced ordering defect. The page's own authenticated-actor path and session timing are not changed without a separate demonstrated defect. Do not gate public profiles on successful private authentication.
+
+### Acceptance/reproduction plan
+
+Extend the existing reassigned-login browser case with deferred directory/member responses for both orders. While one required source is held, check the page stays unresolved and no actor-bound wallet request starts; after both respond with conflicting permanent IDs, assert no history/points/wallet appears and no wallet request has occurred. Retain the existing valid-current-member and preview directory-only cases, proving ready/absent/unavailable fallback behavior was preserved. Capture desktop/mobile before/after screenshots, video and request logs. No extra unit tests.
+
+Controlled reproduction is running in an isolated standard fixture; results will be appended below before implementation authorization.
+
+
+# Test/fixture completion audit
+
+Read-only review of `f785dfab1eb5b9e0cfd5ccc7956e10f34bcf32a7`, the committed second-pass report, and the actual source. This is completion of the selected audit, not a new broad review. No source edits were made.
+
+## Findings that still need action
+
+1. **ST15 startup cleanup has one demonstrated hole.** `tests/github-api-fixture.mjs` ends with a `Promise` that resolves on `server.listen` but does not reject on the server `error` event. `runRegistryPhase` now correctly wraps acquisition in its cleanup lifetime, but `EADDRINUSE` escapes that promise as an unhandled event, terminates Node, and skips the caller's cleanup. A real loopback occupied-port probe wrapped the call in `try/catch/finally`; Node terminated with unhandled `EADDRINUSE`, and the catch did not run. Log: `/tmp/slop-completion-github-startup.log`. Fix only this fixture's startup promise to reject the server error and remove the temporary listener after listening. Validate through a real occupied-port scenario, not a mocked callback.
+
+2. **ST09 retains three standalone client-method fragments under the user's strict non-contract-unit criterion.** The five originally named fake-chain scenarios are gone; the durable reservation/overlap and actual-client reconciliation cases are legitimate integrations. These three are different:
+   - `workers/referral-accrual/poster.test.ts:437`: calls only `client.broadcast` and `message(error)` after seeding a DB, without executing the actual posting/recovery workflow or asserting any journal transition. Preserve its diagnostic privacy/wrong-hash behavior by driving `postNextRoot` through rebroadcast and asserting the durable row remains unknown, its signed bytes unchanged, and its reason contains only the safe category. The RPC fixture must model missing receipt with unchanged nonce for this workflow. Do not keep a helper-only redaction assertion.
+   - `:462`: observes a mocked account factory/signing call and calls only `client.prepare`. This isolated quote/signer spy can be removed; the actual Anvil workflow already runs the over-cap quote through `runOnce`, asserts `gas_budget`, no post or gas rows, and unchanged nonce before the allowed run posts exactly once. The complete D1 gas-cap refusal case also remains.
+   - `:636`: calls only `client.nativeCost` for controlled receipt shapes. Remove the direct return-value case or absorb any distinct legacy-liability assertion into actual journal reconciliation. Existing full Anvil workflow asserts recorded `maximum_wei`, `actual_wei == receipt.gasUsed * effectiveGasPrice`, and the receipt UTC day; actual-client `postNextRoot` cases already reject noncanonical/wrong-index evidence without closing the journal.
+   These are bounded leftovers in an explicitly selected mixed suite, not a request for additional theoretical test coverage.
+
+3. **Final combined acceptance is not yet green.** The durable validation index truthfully records the exact `f785dfab` matrix as346 passed/20 skipped/1 failed. The failure is the known profile identity race assigned to the frontend agent. Do not report all original goal requirements complete until its correction and relevant exact-head validation are recorded.
+
+## ST01–16 status and retained workflow mapping
+
+| Finding | Current source | Retained behavior / evidence |
+| --- | --- | --- |
+| ST01 | Complete | `profiles.spec.ts` contains only the real profile navigation/history case. The old census/helper unit and exclusive imports are gone. |
+| ST02 | Complete | Both helper/marker suite files deleted; full installer authorizes/refuses revisions and performs install, update, no-op, rollback, lock and corrupted-archive behavior. 35-case installer run passed. |
+| ST03 | Complete | Fee null-return case and terms parser shape matrix gone. Auth refusal/admin high-precision projection and generated terms→real preflight consumer remain. Optional combination of the two terms compatibility scenarios was not mandatory and their distinct compatibility inputs remain meaningful. |
+| ST04 | Complete | Mock closure body gone from `account-sessions`. Real handler+SQLite closure now drops one successful response, verifies uncertainty, retained obligations/session revocation and explicit authenticated reopening. Precise intentional failed-response diagnostic is asserted once. Desktop/mobile4/4 targeted pass. |
+| ST05 | Complete | Standalone mock monthly file deleted. Real Anvil browser checks owner default/opt-out and transaction authority. Final scoped Anvil browser8/8 pass is separately recorded. |
+| ST06 | Complete | Static penalty fixture/display file deleted. `penalty-appeal.test.ts` persists debits/reversals, publishes the ledger, preserves month attribution and tests actual appeal/state transitions; general table/navigation UI remains. |
+| ST07 | Complete | All11 duplicate JSON manifests deleted, sole frozen registry used through cloned lookup. Exact baseline comparison11/11 identical,46,583 bytes removed; caller references migrated. |
+| ST08 | Complete | One refresh→D1→public API sequence retains both chains, wrong deployment/decreasing counters/decimals refusal, older-block suppression and forward progress. Edge-cache, evidence index, concurrent monotonic writes and bounded refresh tests remain. |
+| ST09 | Partial | Five named fake-only scenarios gone, actual Anvil empty-first-file ordering added and passed. Three remaining standalone client fragments above require final cleanup. Durable fake-boundary D1 interleavings are retained appropriately, so their shared fakeChain is not dead. |
+| ST10 | Deliberate keep | Per-case real R2 runtime retained with documented lifecycle/namespace complexity rationale. Optional optimization required a smaller measured-safe implementation; none was demonstrated. No synthetic Map substituted. |
+| ST11 | Complete | Full desktop/mobile route matrix retained; six representative breakpoint families;18 distinct reflow/text scenarios; desktop-only reflow excluded from mobile discovery. Trailing-slash duplicate layout removed; HTTP alias route test remains. Later footer overlap checks strengthen actual geometry. |
+| ST12 | Complete | Chromium-only preview1/preview2/Pages matrix entries; Chromium+Firefox registry1/registry2. Firefox test selection remains email/evidence. YAML valid. |
+| ST13 | Complete | No live `test:escrow-policy` alias/caller remains. Main `verify:code` runs all retained Bun suites, actual native/chain workflows remain in escrow CI. |
+| ST14 | Complete source; platform caveat | POSIX owned process group kill and Windows taskkill tree handling implemented, failures observable. Actual descendant heartbeat regression and nonzero/zero exit test pass. Windows workflow runs it before installer, with corrected source/fixture triggers. No local Windows execution claim. |
+| ST15 | Partial | D1 creation/migrations/startup now within one acquired-resource lifetime; all acquired close/delete actions attempted and original error retained. Fix the unhandled GitHub server startup event above to cover the remaining real startup failure. |
+| ST16 | Complete deliberate preservation | Independent Miniflare and bounded2-Anvil workflows retained; registry/Pages and explicit same-chain browser workflows default serial. Later preview cap2 is documented from observed contention and keeps independent parallelism; no retry/timeout weakening. |
+
+## Stale-reference and inventory check
+
+No live code/config/ordinary documentation reference remains to the deleted four suite files, `tests/fixtures/projects`, or `test:escrow-policy`. Hits in the two codebase review documents are deliberately historical before/after inventory. `scripts/skill-source-matches-commit.mjs` remains a live production helper imported by `prepare-site.mjs`; only its isolated `.test.ts` was removed, so that reference is correct.
+
+Noncontract Bun suites63→62 (two helper suites deleted; one real subprocess suite added); browser specs31→29; protected contract TypeScript suites5→5. All contract tests remain. Native Windows and Solana tooling unavailable locally is disclosed by the validation index; existence of CI configuration is not represented as local execution.
+
+### Completion corrections and retained evidence
+
+The completion gaps above are now implemented and independently reviewed. The existing profile fix in [PR1409](https://github.com/SlopDotCash/slopdotcash/pull/1409) was reviewed and merged into development instead of publishing a duplicate. It covers both a pending public membership response and an independently reproduced pending signed-in session response. A known authenticated owner retains its existing exemption from the redundant public-member wait; terminal unavailable reads still permit the existing unconflicted cached-profile fallback. The only additional production change is reuse of the already-imported fifteen-second request helper for the member lookup: the unbounded raw fetch stayed in “Checking contributor” beyond nineteen seconds, whereas the shared deadline now resolves to the existing unavailable state. No timeout value, authentication requirement, permission, financial policy or new UI action was introduced.
+
+The combined profile browser suite passes **41/41**, including both member/directory response orders, delayed conflicting session, unavailable-session fallback, current and absent members, and a real-clock held-request deadline (16.3-second observed case). Both before and after failures/successes have screenshots, videos and network evidence in the task's `profile-identity` artifact directory. The source guard and its assertions were not weakened to accept the original premature request.
+
+ST15 now rejects the actual HTTP server startup error and removes that temporary listener after successful listening; later runtime errors remain visible. The retained subprocess suite proves occupied-port refusal, caller cleanup, port reuse and a real HTTP404 response. A separate invocation of the actual registry runner with its GitHub port occupied returned failure and left **zero** temporary D1 directories. ST09's three residual direct-client fragments are gone; the transport/redaction boundary now runs through the actual posting coordinator and durable journal, retains the original uncertain signed attempt and safe diagnostic reason through both failure kinds, then reconciles the same attempt with canonical finality and exact fee accounting. The obsolete quote/signer spy and direct native-cost assertion are removed, with their behavior retained in the complete Anvil flow. The combined subprocess/referral selection passes **19/19**, and the full referral Anvil flow passes again.
+
+The backend completion audit also replaced weak inference with direct evidence: four full artifact-verifier before/after outcomes match, and restoring the three comment changes/removing the exact moved planner reproduces the original verifier bytes. Ninety-three retained backend/contract cases pass. The repeated controlled refresh observation was93ms at peak4 with all eight rows, consistent with the original65ms observation; these timings are measurements, not a guaranteed latency.
+
+All identified implementation gaps in the requirement matrix are resolved. Final complete verification and browser results are recorded against the frozen implementation revision in the accompanying validation record and pull request; earlier failed, cancelled and superseded runs remain explicitly distinguished. Native Windows and Solana executions remain disclosed platform limits rather than invented passing results.
+
+### Native Windows completion finding
+
+The fresh Windows job for PR1418 at `90c07952` failed in `scripts/e2e-runner.test.ts:32`: removing the timed-out process's temporary directory returned `EBUSY`; the installer steps did not run. This is a real failure, unlike the earlier cancelled jobs. Its five total assertions also leave open whether a missing heartbeat during cold nested-Node startup was hidden by that cleanup exception. The existing runner sends `taskkill /T /F` then immediately resolves, without observing launcher exit; Windows process termination may be asynchronous ([Microsoft TerminateProcess contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess)). Before claiming platform acceptance, retain the phase's failure result, wait for owned launcher exit with a bounded failure fallback, preserve primary and cleanup errors, and let the real process regression establish that its descendant started before the deadline. Do not ignore `EBUSY`, remove the heartbeat assertion or turn a timeout into success. Re-run the actual Windows lifecycle after correction.
+
+A final static footer check also proved `.footer-wordmark { margin: 0; }` is unreachable: the fixed footer JSX renders `.footer-brand-row > .slop-mark` and `.footer-links`; no source, generated markup, injector or dynamic class construction supplies `footer-wordmark`. The rule is a three-line remnant of the earlier removed wordmark and can be deleted without replacing it with another abstraction. Other footer selectors remain live.
+
+The Windows teardown correction preserves a timed-out phase as failed even if a late launcher exits with zero. After requesting process-tree termination, the runner now observes the owned launcher's exit and has a five-second failure fallback, rather than returning while its working directory is still held. The regression observes an atomically published descendant PID and a live process before timeout, then requires process death and a stopped heartbeat. Its Windows cold-start budget is five seconds; the outer test deadline includes bounded termination and cleanup. Persistent cleanup errors are retained with the original test failure. All three real process tests pass locally; actual Windows rerun remains required. The proven orphan `.footer-wordmark` rule is deleted; no other footer selector was changed in this follow-up.
+
+
+### Coordinated runner integration
+
+The integration keeps #1417's close-event barrier, including inherited pipes, and its atomic heartbeat. It retains the occupied-port case, explicit child readiness and PID checks, and primary-plus-cleanup error reporting from this review. The cleanup fixture now gives both Node processes five seconds to start on every platform: a cold macOS run under the shared host load reproduced the same missing-readiness failure as Windows at the prior 1.5-second budget. The production phase deadline is unchanged.
+
+The earlier native Windows checks passed at `807d2c4d` (run `40456941777`, job `122032360192`) and at #1417 `f87a8d83` (run `40456572883`, job `122031193076`). Those are historical results, not a claim that the combined revision has passed. The final combined revision requires its own native Windows and full verification results.
+
+### Final integration and promotion review
+
+The combined revision `c96df835` passed the complete verifier: 668 tests passed, one intentional sandbox skip, no failures, all five integration drivers, dependency audit, policy checks, compilation, lint and production build. Its real process regression passed three consecutive runs (nine tests and 24 assertions). The full browser matrix remains separately recorded at `90c07952`: 356 passed, 20 intentional skips and no failures. No later browser or native-platform pass is inferred from those results.
+
+PR1418 was merged into development as `0712ade6`. Independent comparison confirmed that its profile/member deadline, process runner, startup fixture and referral integration preserve the reviewed combined bytes; the additional style change is the separately reviewed month-input sizing fix. The final promotion inventory also found one newly introduced file from parallel PR1410, `src/lib/leaderboard-test-recognition.test.ts`, after this audit's test inventory was complete. Its four cases call only pure path-recognition and statistics helpers with literals. The file is removed under the owner's explicit instruction to delete non-contract unit tests; PR1410's production scoring correction is retained unchanged. No contract test or integration workflow is removed. Deleting this isolated test file does not change application behavior and does not justify another complete test run.
+
+The owner explicitly requested promotion to main without waiting for queued quality checks. The normal release workflows remain enabled. Hosted or production checks that have not finished are not represented as passing, and this promotion does not activate payments, scanning, referral posting or contract upgrades.
+
+
+### Strict test-declaration completion audit
+
+A final declaration-by-declaration audit found remaining pure helper assertions inside files previously classified as useful integrations. The [remaining-test completion report](codebase-test-completion-2026-10-27.md) records every script/backend/worker/browser declaration and the Python workflows, plus new development-only tests, before further code changes. It identifies the exact removals and preserves complete HTTP, SQL, filesystem, browser and chain outcomes. Earlier completion statements are superseded for this test criterion until those listed corrections are implemented.
+
+Those corrections are now implemented: 22 source declarations and their exclusive scaffolding are removed or consolidated, including two whole helper-only files. The cleanup removes 1,186 net non-report lines. All listed gaps have an implementation disposition and an independent final diff review. The retained backend/worker group passes 239 cases; the script group and focused rerun reconcile to 67 passes with one intentional sandbox skip; the focused Slopbot workflow and typecheck pass. The completion report preserves both encountered test failures and their corrections rather than counting them as passes. No contract file changed, and the only production source edit removes a test-only export from an otherwise byte-identical internal scoring implementation.

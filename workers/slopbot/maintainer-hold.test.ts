@@ -240,10 +240,16 @@ async function uncertainReview(
     init: Parameters<typeof fetch>[1],
   ) => {
     const u = new URL(url instanceof Request ? url.url : String(url));
-    if (u.origin === new URL(server.url).origin) return nativeFetch(url, init);
+    // Every case stops its ephemeral server. A pooled connection can otherwise
+    // reach a reused port after teardown, corrupting the next case's response.
+    const headers = new Headers(init?.headers);
+    headers.set("connection", "close");
+    const localInit = { ...init, headers };
+    if (u.origin === new URL(server.url).origin)
+      return nativeFetch(url, localInit);
     if (u.hostname !== "api.github.com")
       throw new Error(`unexpected network request to ${u.hostname}`);
-    return nativeFetch(new URL(u.pathname + u.search, server.url), init);
+    return nativeFetch(new URL(u.pathname + u.search, server.url), localInit);
   }) as typeof fetch;
   const sent: Job[] = [];
   const env = {

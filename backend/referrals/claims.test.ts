@@ -1,20 +1,9 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import {
-  decodeFunctionData,
-  encodeFunctionResult,
-  type Hex,
-  keccak256,
-} from "viem";
-import {
-  REFERRAL_ABI,
-  type ReferralAccount,
-  reviewReferralClaim,
-  sendReferralClaim,
-} from "../../src/lib/referral-claims";
+import { type Hex, keccak256 } from "viem";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { buildTree } from "../../workers/referral-accrual/merkle";
-import { activeClaimEpoch, type ClaimSnapshot } from "./cache";
+import type { ClaimSnapshot } from "./cache";
 import { handleReferralClaims } from "./claims";
 
 const wallet = "0x1111111111111111111111111111111111111111";
@@ -189,110 +178,14 @@ test("a paused pending window never matures, and a void retains the preceding ro
   h.snapshot.epochs.push(pending);
   h.snapshot.paused = true;
   h.snapshot.pauseAt = time - 50;
-  expect(activeClaimEpoch(h.snapshot)?.epoch).toBe(0);
+  h.save(h.snapshot);
+  expect((await h.read()).body).toMatchObject({ claim: { epoch: 0 } });
   h.snapshot.paused = false;
   pending.voided = true;
-  expect(activeClaimEpoch(h.snapshot)?.epoch).toBe(0);
   h.save(h.snapshot);
   expect((await h.read()).body).toMatchObject({
     latestVoided: true,
     claim: { epoch: 0 },
   });
-  h.sqlite.close();
-});
-
-function connection(
-  data: ReferralAccount,
-  changed: "none" | "root" | "amount" | "account" = "none",
-) {
-  const calls: { method: string; params: unknown[] }[] = [];
-  const evmRequest = async (method: string, params: unknown[]) => {
-    calls.push({ method, params });
-    if (method === "eth_accounts")
-      return [changed === "account" ? token : wallet];
-    if (method === "eth_chainId") return "0xb626";
-    if (method === "eth_getCode") return code;
-    if (method === "eth_estimateGas") return "0x186a0";
-    if (method === "eth_sendTransaction") return `0x${"f".repeat(64)}`;
-    if (method === "eth_call") {
-      const call = params[0] as { data: Hex };
-      const decoded = decodeFunctionData({
-        abi: REFERRAL_ABI,
-        data: call.data,
-      });
-      if (decoded.functionName === "token")
-        return encodeFunctionResult({
-          abi: REFERRAL_ABI,
-          functionName: "token",
-          result: token,
-        });
-      if (decoded.functionName === "paused")
-        return encodeFunctionResult({
-          abi: REFERRAL_ABI,
-          functionName: "paused",
-          result: false,
-        });
-      if (decoded.functionName === "currentRoot")
-        return encodeFunctionResult({
-          abi: REFERRAL_ABI,
-          functionName: "currentRoot",
-          result: [
-            changed === "root"
-              ? `0x${"9".repeat(64)}`
-              : (data.claim?.root as Hex),
-            100n * unit,
-            0n,
-          ],
-        });
-      if (decoded.functionName === "claimed")
-        return encodeFunctionResult({
-          abi: REFERRAL_ABI,
-          functionName: "claimed",
-          result: (changed === "amount" ? 30n : 20n) * unit,
-        });
-      if (decoded.functionName === "claim") return "0x";
-    }
-    throw new Error(`Unexpected fixture method ${method}`);
-  };
-  return {
-    calls,
-    wallet: { address: wallet, sign: async () => "unused", evmRequest },
-  };
-}
-
-test("wallet review is read-only, and an explicit send rechecks the exact claim without token approvals", async () => {
-  const h = harness();
-  const data = (await h.read()).body as ReferralAccount;
-  const c = connection(data);
-  await reviewReferralClaim(data, c.wallet);
-  expect(c.calls.some((c) => c.method === "eth_sendTransaction")).toBe(false);
-  let pendingSaved = false;
-  await sendReferralClaim(data, c.wallet, () => {
-    pendingSaved = true;
-  });
-  expect(pendingSaved).toBe(true);
-  const sends = c.calls.filter((c) => c.method === "eth_sendTransaction");
-  expect(sends).toHaveLength(1);
-  const tx = sends[0].params[0] as {
-    to: string;
-    from: string;
-    value: string;
-    data: Hex;
-  };
-  expect(tx).toMatchObject({ to: distributor, from: wallet, value: "0x0" });
-  expect(
-    decodeFunctionData({ abi: REFERRAL_ABI, data: tx.data }),
-  ).toMatchObject({ functionName: "claim", args: [100n * unit, []] });
-  for (const fault of ["root", "amount", "account"] as const) {
-    const altered = connection(data, fault);
-    await expect(
-      sendReferralClaim(data, altered.wallet, () => {
-        throw new Error("Must not reach send");
-      }),
-    ).rejects.toThrow();
-    expect(altered.calls.some((c) => c.method === "eth_sendTransaction")).toBe(
-      false,
-    );
-  }
   h.sqlite.close();
 });

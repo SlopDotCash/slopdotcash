@@ -153,10 +153,6 @@ for (const withObligations of [false, true])
       );
       await page.goto(`${SITE}/account`);
       const connections = page.getByRole("region", { name: "Connections" });
-      await expect(
-        connections.getByRole("button", { name: "Disconnect X", exact: true }),
-      ).toBeVisible();
-      // X shows with the public membership; there is no visibility choice.
       await expect(connections.getByRole("checkbox")).toHaveCount(0);
       await expect(page.getByText(/Telegram/i)).toHaveCount(0);
       await expect(page.locator('a[href^="https://t.me/"]')).toHaveCount(0);
@@ -176,6 +172,7 @@ for (const withObligations of [false, true])
       expect((await readState()).retained).toEqual(before.retained);
       await page.goto(`${SITE}/account`);
       const recovery = page.locator("#recovery");
+      await recovery.locator("#close-account > summary").click();
       await expect(
         recovery.getByRole("button", { name: "Close account", exact: true }),
       ).toBeDisabled();
@@ -211,18 +208,26 @@ for (const withObligations of [false, true])
         fullPage: true,
       });
       const profile = page.locator("#profile");
+      const signInPopup = page.waitForEvent("popup");
       await profile
         .getByRole("button", { name: "Continue with GitHub", exact: true })
         .click();
+      const signInWindow = await signInPopup;
       await expect(profile).toContainText("You closed this account.");
+      await expect.poll(() => signInWindow.isClosed()).toBe(true);
+      expect(page.isClosed()).toBe(false);
       expect((await readState()).member.closed_at).not.toBeNull();
+      const reopenPopup = page.waitForEvent("popup");
       await profile
         .getByRole("button", {
           name: "Reopen account with GitHub",
           exact: true,
         })
         .click();
+      const reopenWindow = await reopenPopup;
       await expect(profile).toContainText("Your account is open again.");
+      await expect.poll(() => reopenWindow.isClosed()).toBe(true);
+      expect(page.isClosed()).toBe(false);
       const reopened = await readState();
       expect(reopened.retained).toEqual(before.retained);
       expect(reopened.member).toEqual({ public: 1, closed_at: null });

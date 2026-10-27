@@ -1,11 +1,14 @@
 /** Read-only signed queue and revision/template acquisition. No result-write capability. */
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readLimitedBody } from "../../backend/trace/validation";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { readRecord } from "../../src/lib/record-validation.mjs";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
-import { AcquisitionRefusal, acquireRepository } from "./acquire";
+import {
+  AcquisitionRefusal,
+  acquireRepository,
+  readAcquisitionBody,
+} from "./acquire";
 import {
   serviceOrigin,
   signedVettingFetch,
@@ -38,6 +41,16 @@ export type QueuedAssessment = {
   commitSha: string;
   templateSha256: string;
 };
+/** A refusal bound to the assignment reread by acquisition itself. */
+export class QueuedAcquisitionRefusal extends AcquisitionRefusal {
+  constructor(
+    readonly assessment: QueuedAssessment,
+    readonly repository: string,
+    refusal: AcquisitionRefusal,
+  ) {
+    super(refusal.reason, refusal.capacity);
+  }
+}
 export type QueueConnection = VettingConnection;
 /** A pinned input of at most 1 MiB. */
 async function pinnedBytes(response: Response): Promise<Uint8Array> {
@@ -45,7 +58,7 @@ async function pinnedBytes(response: Response): Promise<Uint8Array> {
     await response.body?.cancel();
     throw new Error("Pinned input unavailable");
   }
-  return readLimitedBody(response, 1024 * 1024);
+  return readAcquisitionBody(response, 1024 * 1024);
 }
 async function bytes(
   fetcher: typeof fetch,
@@ -117,17 +130,34 @@ export async function acquireQueuedAssessment(
   connection: QueueConnection,
   assessmentId: string,
   directory: string,
+  githubToken?: string,
 ) {
   const deadline = AbortSignal.timeout(180_000);
   const baseFetch = connection.fetch ?? fetch;
-  const fetcher = ((input: string | URL | Request, init?: RequestInit) =>
-    baseFetch(input, {
+  const fetcher = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    // This credential belongs to trusted acquisition only. Never send it to
+    // Slop, raw content, the model provider, or an isolated execution service.
+    if (
+      githubToken &&
+      url.origin === "https://api.github.com" &&
+      url.pathname.startsWith("/repos/") &&
+      (init?.method ?? "GET") === "GET"
+    )
+      headers.set("authorization", `Bearer ${githubToken}`);
+    return baseFetch(input, {
       ...init,
+      headers: Object.fromEntries(headers),
+      redirect: "error",
       signal: AbortSignal.any([
         deadline,
         ...(init?.signal ? [init.signal] : []),
       ]),
-    })) as typeof fetch;
+    });
+  }) as typeof fetch;
   // Re-read the signed queue at acquisition start. Caller-supplied commit/template pins are not accepted.
   const assessment = (
     await readPendingAssessments({ ...connection, fetch: fetcher })
@@ -149,11 +179,16 @@ export async function acquireQueuedAssessment(
   )
     throw new Error("Manifest pin mismatch");
   const manifest = assertProjectDefinition(JSON.parse(revision.manifestText));
-  if (
-    manifest.id !== assessment.projectId ||
-    manifest.repositories.length !== 1
-  )
-    throw new AcquisitionRefusal("Unsupported repository inventory");
+  if (manifest.id !== assessment.projectId)
+    throw new Error("Manifest project mismatch");
+  const refusal = (error: AcquisitionRefusal) =>
+    new QueuedAcquisitionRefusal(
+      assessment,
+      manifest.repositories[0].id,
+      error,
+    );
+  if (manifest.repositories.length !== 1)
+    throw refusal(new AcquisitionRefusal("Unsupported repository inventory"));
   const repositoryIdentity = json(
     await bytes(
       fetcher,
@@ -174,7 +209,9 @@ export async function acquireQueuedAssessment(
       manifest.repositories[0].id.toLowerCase() ||
     repositoryIdentity.private !== false
   )
-    throw new AcquisitionRefusal("Immutable repository identity mismatch");
+    throw refusal(
+      new AcquisitionRefusal("Immutable repository identity mismatch"),
+    );
   const index = json(
     await bytes(fetcher, `${origin}/skill-templates/index.json`),
   );
@@ -233,6 +270,9 @@ export async function acquireQueuedAssessment(
     commitSha: assessment.commitSha,
     directory,
     fetch: fetcher,
+  }).catch((error: unknown) => {
+    if (error instanceof AcquisitionRefusal) throw refusal(error);
+    throw error;
   });
   try {
     const sourceInventoryBytes = await readFile(
@@ -265,7 +305,11 @@ export async function acquireQueuedAssessment(
       const content = await bytes(fetcher, source.url);
       templateBytes += content.byteLength;
       if (templateBytes > 32 * 1024 * 1024)
-        throw new AcquisitionRefusal("Template acquisition size limit");
+        throw new AcquisitionRefusal("Template acquisition size limit", {
+          unit: "bytes",
+          observed: templateBytes,
+          maximum: 32 * 1024 * 1024,
+        });
       if (sha256(content) !== source.sha256)
         throw new Error("Template file bytes changed");
       const objectPath = join(acquired.directory, "objects", source.sha256);
@@ -319,6 +363,7 @@ export async function acquireQueuedAssessment(
     };
   } catch (error) {
     await rm(acquired.directory, { recursive: true, force: true });
+    if (error instanceof AcquisitionRefusal) throw refusal(error);
     throw error;
   }
 }

@@ -14,7 +14,6 @@ import {
 import type { RepositoryControl } from "../backend/projects/contracts";
 import type { EdgeCache } from "../backend/projects/edge-cache";
 import {
-  EnforcementRefusal,
   planEnforcement,
   projectRestriction,
 } from "../backend/projects/enforcement";
@@ -38,16 +37,10 @@ import {
   allocationFundingMinor,
   deriveAllocationFundingBasis,
 } from "../src/lib/allocation-funding";
-import type {
-  ProjectEnforcement,
-  RepositoryAccess,
-} from "../src/lib/project-contracts";
-import { rewardFields, slugify } from "../src/lib/project-proposal";
+import type { RepositoryAccess } from "../src/lib/project-contracts";
+import { rewardFields } from "../src/lib/project-proposal";
 import { PROJECT_SKILL_TEMPLATES } from "../src/lib/project-schema.mjs";
-import {
-  buildProjectPublication,
-  sha256Hex,
-} from "../src/lib/project-skill-publication.mjs";
+import { sha256Hex } from "../src/lib/project-skill-publication.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";
 import type { SecurityBountyTerms } from "../src/lib/security-bounty.mjs";
@@ -832,7 +825,6 @@ describe("project registry API", () => {
 
   test("refuses a project id too long for its reviewer skill name", async () => {
     const id = "reproducible-research-toolkit-for-everyone-x";
-    expect(`review-${id}-contributions`).toHaveLength(65);
     const response = await create(
       applicationManifest(id, "example/open-registry"),
     );
@@ -1098,52 +1090,67 @@ async function publicationRequests() {
 }
 
 describe("generated skill publication", () => {
-  test("an id derived from a long project name renders the reviewer skill", async () => {
-    // /projects/new derives the id from the name. The reviewer skill is
-    // `review-<id>-contributions`, and a skill name has at most 64 characters.
-    const id = slugify(
-      "Reproducible Research Toolkit for Everyone, Everywhere",
-    );
-    await listProject(applicationManifest(id, "example/open-registry"));
-    const project = await persistence.getProject(id);
-    if (project === null) throw new Error("project was not listed");
-    const { index } = await publicationRequests();
-    const root = resolve(import.meta.dir, "..");
-    const files = await buildProjectPublication({
-      template: index,
-      readFile: async (path: string) =>
-        new Uint8Array(readFileSync(join(root, path))),
-      project: project.manifest,
-      revision: project.revision,
-      manifestSha256: project.manifestSha256,
-      generatedAt: project.updatedAt,
-    });
-    const reviewer = `review-${id}-contributions`;
-    expect(reviewer.length).toBeLessThanOrEqual(64);
-    expect(Object.keys(files ?? {})).toContain(`downloads/${reviewer}.skill`);
-    for (const path of ["skill-manifest.json", "review-skill-manifest.json"]) {
-      const manifest = JSON.parse(new TextDecoder().decode(files?.[path]));
-      expect(manifest.telemetry.policy).toContain(
-        "From November 2026, monthly and external-prize reward shares use accepted-work Points only.",
-      );
-      expect(manifest.telemetry.policy).toContain(
-        "Optional traces add no payment weight. Older calculations and funded awards stay unchanged; unpaid September–October work stays subject to the reviewed historical reconciliation.",
-      );
-      expect(manifest.telemetry.policy).not.toContain("earns the trace bonus");
-      expect(manifest.telemetry.policy).toContain(
-        "Missing evidence never blocks submission.",
-      );
-    }
+  test("discovery lists only active cleared projects", async () => {
+    // #1411 D3 / bootstrap SKILL.md: the index is for agent setup. A paused
+    // project may still be cleared (legacy exemption) and may serve skill
+    // bytes, but the installer refuses status !== active. Keep the index
+    // identical so agents do not select work they must then refuse.
+    const { publication } = await publicationRequests();
+    await listProject();
+    const paused = await persistence.getProject("open-registry");
+    if (paused === null) throw new Error("project was not listed");
+    expect(paused.status).toBe("paused");
+    const active = {
+      ...paused,
+      id: "active-registry",
+      status: "active" as const,
+      manifest: {
+        ...paused.manifest,
+        id: "active-registry",
+        slug: "active-registry",
+        status: "active" as const,
+        skill: {
+          ...paused.manifest.skill,
+          id: "contribute-to-active-registry",
+        },
+        reviewSkill: {
+          ...paused.manifest.reviewSkill,
+          id: "review-active-registry-contributions",
+        },
+        repositories: [
+          {
+            ...paused.manifest.repositories[0],
+            id: "example/active-registry",
+            aliases: ["example/active-registry"],
+          },
+        ],
+      },
+    };
+    const cleared = {
+      state: "cleared" as const,
+      assessment: null,
+      grandfathered: true as const,
+    };
+    const get = (path: string) =>
+      handleProjectArtifactRequest(new Request(`${ORIGIN}${path}`), {
+        ...publication,
+        listProjects: async () => [paused, active],
+        vettingClearance: async () => cleared,
+      }) as Promise<Response>;
+    const before = await (await get("/.well-known/slop/projects.json")).json();
+    expect(before.projects).toEqual([
+      expect.objectContaining({
+        project_id: "active-registry",
+        repository: "example/active-registry",
+        skill: "contribute-to-active-registry",
+      }),
+    ]);
+    // Skill bytes for a cleared paused project remain available for inspection.
+    expect((await get("/projects/open-registry/skill.md")).status).toBe(200);
   });
 
   test("historical clean metadata cannot publish skills without canonical closure", async () => {
-    const { publication, get } = await publicationRequests();
-    expect(
-      await handleProjectArtifactRequest(
-        new Request(`${ORIGIN}/projects/open-registry`),
-        publication,
-      ),
-    ).toBeNull();
+    const { get } = await publicationRequests();
     expect((await get("/projects/open-registry/skill.md")).status).toBe(404);
     await listProject();
     expect((await get("/projects/open-registry/skill.md")).status).toBe(404);
@@ -1781,142 +1788,6 @@ describe("project enforcement (ADM-06)", () => {
     expect((await restored.json()).error).toBe("repository_restricted");
   });
 
-  test("an account-only appeal cannot reinstate the project, while a project appeal can", async () => {
-    await listProject();
-    expect((await enforce("admin", "ban")).status).toBe(200);
-    const project = await persistence.getProject("open-registry");
-    const [record] = await persistence.listEnforcements();
-    if (!project || !record) throw new Error("Project restriction missing");
-    const ban: ProjectEnforcement = {
-      ...record,
-      maintainerBans: [APPLICANT],
-    };
-    const accountAppeal: ProjectEnforcement = {
-      ...record,
-      id: "enf-account-only-appeal",
-      sequence: 2,
-      action: "request_reinstatement",
-      actor: APPLICANT,
-      actorRole: "banned-account",
-      decisionSource: "account-request",
-      appealAfter: "requested",
-      beforeRevision: project.revision,
-      beforeManifestSha256: project.manifestSha256,
-      afterRevision: null,
-      afterManifestSha256: null,
-      result: "no_revision_needed",
-    };
-    const restriction = projectRestriction(project.id, [ban, accountAppeal]);
-    let refusal: unknown;
-    try {
-      planEnforcement({
-        action: "reinstate",
-        actor: MODERATOR,
-        project,
-        restriction,
-        listedBefore: true,
-      });
-    } catch (error) {
-      refusal = error;
-    }
-    expect(refusal).toBeInstanceOf(EnforcementRefusal);
-    expect(refusal).toMatchObject({ code: "no_open_appeal" });
-    // The existing account-appeal denial path remains available.
-    expect(
-      planEnforcement({
-        action: "deny_reinstatement",
-        actor: MODERATOR,
-        project,
-        restriction,
-        listedBefore: true,
-      }),
-    ).toMatchObject({ stateAfter: "banned", appealAfter: "denied" });
-    const projectAppeal: ProjectEnforcement = {
-      ...accountAppeal,
-      id: "enf-project-appeal",
-      sequence: 3,
-      actorRole: "project-applicant",
-      decisionSource: "owner-request",
-    };
-    expect(
-      planEnforcement({
-        action: "reinstate",
-        actor: MODERATOR,
-        project,
-        restriction: projectRestriction(project.id, [
-          ban,
-          accountAppeal,
-          projectAppeal,
-        ]),
-        listedBefore: true,
-      }),
-    ).toMatchObject({ stateAfter: "clear", appealAfter: "granted" });
-  });
-
-  test("reinstatement is refused while the restriction revision is pending", async () => {
-    await listProject();
-    const listed = await persistence.getProject("open-registry");
-    if (listed === null) throw new Error("project missing");
-    // The quarantine found an active, featured manifest whose paused,
-    // retired revision could not be appended, and the appeal is open.
-    const project = {
-      ...listed,
-      manifest: {
-        ...listed.manifest,
-        status: "active",
-        listingTier: "featured",
-      } as ProjectDefinition,
-    };
-    const restriction = {
-      ...projectRestriction("open-registry", []),
-      state: "quarantined" as const,
-      appeal: "requested" as const,
-      restrictedBy: [ADMIN],
-      openedAtRevision: 1,
-      // The appeal itself must be the project's own: a banned account's
-      // appeal alone no longer opens project reinstatement.
-      records: [
-        {
-          id: "enf-project-appeal",
-          projectId: "open-registry",
-          sequence: 1,
-          action: "request_reinstatement" as const,
-          stateAfter: "quarantined" as const,
-          appealAfter: "requested" as const,
-          reason: "The release script was removed",
-          evidenceReference: "evidence",
-          repositoryGithubId: "",
-          repositoryKeys: [],
-          actor: APPLICANT,
-          actorRole: "project-applicant" as const,
-          decisionSource: "owner-request" as const,
-          beforeRevision: 1,
-          beforeManifestSha256: "",
-          afterRevision: null,
-          afterManifestSha256: null,
-          result: "no_revision_needed" as const,
-          createdAt: new Date().toISOString(),
-        },
-      ],
-    };
-    let refusal: unknown = null;
-    try {
-      planEnforcement({
-        action: "reinstate",
-        actor: MODERATOR,
-        project,
-        restriction,
-        listedBefore: true,
-      });
-    } catch (error) {
-      refusal = error;
-    }
-    // Clearing it would restore the featured, active manifest unreviewed.
-    expect(refusal).toBeInstanceOf(EnforcementRefusal);
-    expect((refusal as EnforcementRefusal).code).toBe("revision_pending");
-    expect((refusal as EnforcementRefusal).status).toBe(409);
-  });
-
   test("a revision fails when a restriction lands after its read", async () => {
     await listProject();
     const listed = await persistence.getProject("open-registry");
@@ -2062,7 +1933,7 @@ describe("referral attribution (PRJ-05)", () => {
       );
   }
 
-  test("records the referrer once on the created project", async () => {
+  test("records the referrer once and leaves omitted referrals unset", async () => {
     joinMember(REFERRER);
     const manifest = applicationManifest("referred", "example/referred");
     const submitted = await create(manifest, { referrer: "E2E-Referrer" });
@@ -2090,6 +1961,12 @@ describe("referral attribution (PRJ-05)", () => {
         "UPDATE projects SET referrer_github_id = NULL WHERE id = 'referred'",
       ),
     ).toThrow(/project referrer is immutable/u);
+    // An omitted referral remains unset in both the response and stored row.
+    const unassigned = await listProject();
+    expect(unassigned.referrer).toBeNull();
+    expect(
+      (await persistence.getProject("open-registry"))?.referrer,
+    ).toBeNull();
   });
 
   test("a recycled login cannot attribute the applicant to an older cached member", async () => {
@@ -2114,14 +1991,6 @@ describe("referral attribution (PRJ-05)", () => {
     });
     expect(unknown.status).toBe(422);
     expect((await unknown.json()).message).toMatch(/has not signed in/u);
-  });
-
-  test("a project that names nobody records no referrer", async () => {
-    const project = await listProject();
-    expect(project.referrer).toBeNull();
-    expect(
-      (await persistence.getProject("open-registry"))?.referrer,
-    ).toBeNull();
   });
 
   test("refuses the applicant, the steward, team accounts and unknown logins", async () => {

@@ -1,5 +1,6 @@
 import { assertProfiles } from "../../src/lib/profiles";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 test("profiles preserve legacy coverage and a valid census", async ({
@@ -88,20 +89,7 @@ test("profiles preserve legacy coverage and a valid census", async ({
   });
   // Match the repository's 200% text-enlargement fixture without reducing
   // a 320px viewport below the supported reflow width through CSS zoom.
-  await page.evaluate(() => {
-    const typography = [...document.querySelectorAll<HTMLElement>("body *")]
-      .filter((el) => el instanceof HTMLElement)
-      .map((el) => ({
-        el,
-        font: getComputedStyle(el).fontSize,
-        line: getComputedStyle(el).lineHeight,
-      }));
-    for (const { el, font, line } of typography) {
-      el.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-      if (line !== "normal")
-        el.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-    }
-  });
+  await enlargeText(page.locator("body"));
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,
@@ -116,7 +104,6 @@ test("profiles preserve legacy coverage and a valid census", async ({
   expect(response.ok()).toBe(true);
   const census = await response.json();
   assertProfiles(census);
-  expect(census.schemaVersion).toBe("2");
   expect(walletRequests).toEqual(expectedWalletRequests);
   expect(failures).toEqual([]);
 });

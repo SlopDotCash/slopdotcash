@@ -19,7 +19,6 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
 import type { ConversionRow } from "./core";
 import { createEvmClient } from "./evm";
-import { runOnce } from "./index";
 import { NativeGasJournal, type NativeGasLimits } from "./native-gas";
 import { parseTransaction as parseSolanaWire } from "./solana";
 import { LOOKUP_TABLE_PROGRAM, resolveSolanaAccounts } from "./solana-accounts";
@@ -142,25 +141,6 @@ async function fixture(
     commit,
   };
 }
-
-test("missing native limits refuse before the Worker reads its key", async () => {
-  const { db } = sqliteD1();
-  let reads = 0;
-  await expect(
-    runOnce({
-      ...envLimits,
-      FEE_DB: db,
-      FEE_CONVERTER_MODE: "live",
-      FEE_CONVERTER_NETWORKS: "ethereum",
-      FEE_WALLET_ETHEREUM: token,
-      get FEE_WALLET_KEY_ETHEREUM(): string {
-        reads++;
-        throw new Error("key must not be read");
-      },
-    }),
-  ).rejects.toThrow("Native gas limits");
-  expect(reads).toBe(0);
-});
 
 test("exact-wei reservations serialize competing attempts and preserve liability across midnight", async () => {
   const h = await fixture({

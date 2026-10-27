@@ -1,4 +1,10 @@
-import { ArrowDown, ChevronDown } from "lucide-react";
+import {
+  ArrowDown,
+  ChartNoAxesColumnIncreasing,
+  ChevronDown,
+  LogIn,
+  UserRound,
+} from "lucide-react";
 import {
   createContext,
   lazy,
@@ -38,6 +44,7 @@ import {
   readLocalFlow,
   saveLocalFlow,
 } from "./lib/local-signin";
+import { loginReturnPath } from "./lib/login-return";
 import {
   assemblePoints,
   POINTS_NOTICE,
@@ -59,7 +66,9 @@ import {
   formatMicroUsdc,
   NotFound,
   Pager,
+  RoutePageHeader,
 } from "./Presentation";
+import "./account-design.css";
 import { ProfileActivity, useProfiles } from "./Profiles";
 
 const EarningsPage = lazy(() =>
@@ -151,19 +160,7 @@ async function loadPoints(signal: AbortSignal) {
 }
 /** Same-origin path from `next`; anything else falls back to the profile. */
 function returnPath(search = window.location.search): string | null {
-  const next = new URLSearchParams(search).get("next");
-  if (!next) return null;
-  if (next === "earnings") return "/earnings";
-  if (!next.startsWith("/") || next.startsWith("//") || next.includes("\\"))
-    return null;
-  try {
-    const url = new URL(next, window.location.origin);
-    if (url.origin !== window.location.origin || url.pathname === "/login")
-      return null;
-    return `${url.pathname}${url.search}${url.hash}`;
-  } catch {
-    return null;
-  }
+  return loginReturnPath(search, window.location.origin);
 }
 function member(value: unknown): Membership {
   const m = value as Membership;
@@ -468,9 +465,12 @@ export function useProfileMembership(login: string, enabled = true) {
       update("unavailable");
       return () => c.abort();
     }
-    void fetch(`/api/v1/points/member?login=${encodeURIComponent(login)}`, {
-      signal: c.signal,
-    })
+    void fetchWithDeadline(
+      `/api/v1/points/member?login=${encodeURIComponent(login)}`,
+      {
+        signal: c.signal,
+      },
+    )
       .then(async (r) => {
         if (r.status === 404) {
           update("absent");
@@ -725,6 +725,16 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
           const body = await readBoundedJson(response, 16384, "sign-in");
           if (!body || typeof body !== "object" || Array.isArray(body))
             throw new Error("Sign-in failed. Start again.");
+          // A completed sign-in can close its own window before this poll.
+          // Only a still-pending flow needs recovery when the window is gone.
+          if (
+            response.status === 202 &&
+            "status" in body &&
+            body.status === "pending" &&
+            // A same-tab or resumed local sign-in has no window to watch.
+            popup?.closed === true
+          )
+            throw new Error("The GitHub sign-in window was closed. Try again.");
           return {
             status: response.status,
             body: body as Record<string, unknown>,
@@ -803,6 +813,12 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       {!me && session === "error" ? (
         <p role="status">Could not check your session. Sign in again.</p>
       ) : null}
+      {!me ? (
+        <p>
+          Signing in makes your Slop membership and any connected X profile link
+          public.
+        </p>
+      ) : null}
       {me ? (
         <div className="account-session-actions">
           <a
@@ -848,7 +864,7 @@ export function LoginPage() {
   }, [me]);
   return (
     <main className="shell route-main login-page">
-      <h1>{me ? "Signed in" : "Log in"}</h1>
+      <RoutePageHeader icon={<LogIn />} title={me ? "Signed in" : "Log in"} />
       {me ? (
         <p role="status">Redirecting…</p>
       ) : (
@@ -861,12 +877,24 @@ export function AccountPage() {
   const accountSession = useProjectSession();
   const { me, session } = usePoints();
   const [closedNotice, setClosedNotice] = useState("");
+  const closure = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (me) setClosedNotice("");
+    const revealRecovery = () => {
+      if (
+        closure.current &&
+        ["#recovery", "#close-account"].includes(window.location.hash)
+      ) {
+        closure.current.open = true;
+      }
+    };
+    revealRecovery();
+    window.addEventListener("hashchange", revealRecovery);
+    return () => window.removeEventListener("hashchange", revealRecovery);
   }, [me]);
   return (
-    <main className="shell route-main points-page">
-      <h1>Account</h1>
+    <main className="shell route-main account-page">
+      <RoutePageHeader icon={<UserRound />} title="Account" />
       <nav className="account-sections" aria-label="Account sections">
         <a href="#profile">Profile</a>
         {me ? <a href="#connections">Connections</a> : null}
@@ -877,7 +905,7 @@ export function AccountPage() {
         {accountSession.status === "signed-in" ? (
           <a href="#appeals">Appeals</a>
         ) : null}
-        <a href="#recovery">{me ? "Recovery and closure" : "Recovery"}</a>
+        <a href="#recovery">Recovery</a>
       </nav>
       <div id="profile">
         <JoinPoints />
@@ -896,7 +924,7 @@ export function AccountPage() {
       {me ? <AccountSessions /> : null}
       {accountSession.status === "signed-in" ? <AccountAppeals /> : null}
       <section id="recovery">
-        <h2>{me ? "Recovery and closure" : "Recovery"}</h2>
+        <h2>Recovery</h2>
         {closedNotice ? <p role="status">{closedNotice}</p> : null}
         <p>
           Lost access to your account?{" "}
@@ -906,7 +934,14 @@ export function AccountPage() {
           .
         </p>
         {me ? (
-          <AccountClosure login={me.actor.login} onClosed={setClosedNotice} />
+          <details
+            className="account-close-details"
+            id="close-account"
+            ref={closure}
+          >
+            <summary>Close account</summary>
+            <AccountClosure login={me.actor.login} onClosed={setClosedNotice} />
+          </details>
         ) : null}
       </section>
     </main>
@@ -1076,8 +1111,11 @@ const POINT_CATEGORIES: readonly (readonly [string, string])[] = [
 ];
 export function PointsPage() {
   return (
-    <main className="shell route-main points-page">
-      <h1>Leaderboard</h1>
+    <main className="shell route-main points-page standings-page">
+      <RoutePageHeader
+        icon={<ChartNoAxesColumnIncreasing />}
+        title="Leaderboard"
+      />
       <ContributorStandings />
       <section className="points-panel" id="rules">
         <h2>Ways to earn Points</h2>
@@ -1127,21 +1165,27 @@ function StandingsCoverage({
         ? monthStart
         : snapshot.window.from;
   return (
-    <p className="points-meta points-coverage">
-      {rankedFrom !== null &&
-      Date.parse(rankedFrom) < Date.parse(snapshot.window.to)
-        ? `This month ranks ${formatDateTime(rankedFrom)} to ${formatDateTime(snapshot.window.to)}. `
-        : null}
-      Snapshot window: {formatDateTime(snapshot.window.from)} to{" "}
-      {formatDateTime(snapshot.window.to)}. Source
-      {projectId ? " (all projects)" : ""}:{" "}
-      {countFormat.format(counts.mergedPullRequests)} merged pull requests and{" "}
-      {countFormat.format(counts.closedIssues)} closed issues across{" "}
-      {countFormat.format(snapshot.repositories.length)} repositories.
-      {month === null
-        ? ` Includes ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
-        : null}
-    </p>
+    <details className="points-coverage-details">
+      <summary>
+        Updated {formatDateTime(snapshot.generatedAt)} ·{" "}
+        {countFormat.format(snapshot.repositories.length)} repositories
+      </summary>
+      <p className="points-meta points-coverage">
+        {rankedFrom !== null &&
+        Date.parse(rankedFrom) < Date.parse(snapshot.window.to)
+          ? `This month ranks ${formatDateTime(rankedFrom)} to ${formatDateTime(snapshot.window.to)}. `
+          : null}
+        Snapshot window: {formatDateTime(snapshot.window.from)} to{" "}
+        {formatDateTime(snapshot.window.to)}. Source
+        {projectId ? " (all projects)" : ""}:{" "}
+        {countFormat.format(counts.mergedPullRequests)} merged pull requests and{" "}
+        {countFormat.format(counts.closedIssues)} closed issues across{" "}
+        {countFormat.format(snapshot.repositories.length)} repositories.
+        {month === null
+          ? ` Includes ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
+          : null}
+      </p>
+    </details>
   );
 }
 
@@ -1580,6 +1624,9 @@ function SocialConnections() {
         </>
       ) : (
         <>
+          {!data.account && data.configured ? (
+            <p>Connecting X is optional. Your X profile link will be public.</p>
+          ) : null}
           <div className="connection-row">
             <strong>X</strong>
             <span>

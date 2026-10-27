@@ -11,11 +11,14 @@ import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { communityProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
+  assignLeaderboardRanks,
+  compareRankedEntries,
   type LeaderboardSnapshot,
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { CONTRIBUTION } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 const deployment = deploymentOrigins(
@@ -497,9 +500,6 @@ test("shows agent setup and keeps contribution records available", async ({
   for (const cell of shareCells) {
     expect(cell).toMatch(/^\d+\.\d{2}% of payment weight$/u);
   }
-  expect(view.leaders.every((leader) => leader.projectedMinor === "0")).toBe(
-    true,
-  );
 });
 
 test("never presents Delta Star's external prize as platform money", async ({
@@ -516,49 +516,6 @@ test("never presents Delta Star's external prize as platform money", async ({
     .first()
     .click();
   await expect(page).toHaveURL(/\/cycles\/delta-star\/\d{4}-\d{2}$/u);
-});
-
-test("shows the frozen record for a cycle the live window still covers", {
-  tag: ["@pages"],
-}, async ({ page, request }) => {
-  const snapshot = await loadSnapshot(request);
-  const cycles = await loadCycles(request);
-  // A month with a frozen record that the rolling window also reaches is the
-  // case where a live recompute could replace what is under review.
-  const overlapping = cycles.cycles.find((cycle) => {
-    if (cycle.contributors.length === 0) return false;
-    try {
-      createProjectView(snapshot, cycle.projectId, cycle.cycleId);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  const cycle = overlapping ?? cycles.cycles.find((c) => c.contributors.length);
-  if (cycle) {
-    await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
-      waitUntil: "networkidle",
-    });
-    const rows = page.locator(".archived-leader-row");
-    await expect(rows).toHaveCount(cycle.contributors.length);
-    await expect(rows.first().getByRole("link")).toHaveText(
-      cycle.contributors[0].actor.login,
-    );
-    await expect(
-      page.locator(
-        ".leader-row:not(.archived-leader-row, .archived-leader-head)",
-      ),
-    ).toHaveCount(0);
-  }
-
-  const project = PROJECTS.find(
-    (candidate) => candidate.reward.kind === "monthly-pool",
-  );
-  if (!project) throw new Error("Monthly project fixture is unavailable");
-  await page.goto(`/cycles/${project.id}/2025-01`);
-  await expect(
-    page.getByRole("link", { name: "project page" }),
-  ).toHaveAttribute("href", `/projects/${project.slug}`);
 });
 
 test("renders contributor and cycle records from validated public data", {
@@ -1022,11 +979,15 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await expect(item("delivery-1").locator(".inbox-delivery")).toHaveText(
     "Email: sent",
   );
-  await expect(item("delivery-1").locator(".inbox-state")).toHaveText("Read");
+  await expect(
+    item("delivery-1").getByText("Read", { exact: true }),
+  ).toBeVisible();
   await expect(item("delivery-2").locator(".inbox-delivery")).toHaveText(
     "Email: delivered",
   );
-  await expect(item("delivery-2").locator(".inbox-state")).toHaveText("Unread");
+  await expect(
+    item("delivery-2").getByText("Unread", { exact: true }),
+  ).toBeVisible();
   await expect(item("delivery-3").locator(".inbox-delivery")).toHaveText(
     "Email: failed",
   );
@@ -1161,25 +1122,6 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await expect(changes).toContainText("listingTier");
 });
 
-test("project pages omit full standings and sponsor links keep their destination", async ({
-  page,
-}) => {
-  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
-  const standings = page.getByRole("link", {
-    name: "Full standings",
-    exact: true,
-  });
-  await expect(standings).toHaveCount(0);
-  await page.goto("/sponsors");
-  await expect(
-    page.getByRole("link", { name: "Eliza", exact: true }),
-  ).toHaveAttribute("href", "/projects/eliza/funding");
-  await page.screenshot({
-    path: test.info().outputPath("direct-sponsor-handoffs.png"),
-    fullPage: true,
-  });
-});
-
 test("serves byte-consistent bootstrap and read-only site artifacts", {
   tag: ["@pages", "@pages-only"],
 }, async ({ baseURL, request }) => {
@@ -1239,6 +1181,24 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   expect(await trailingFundingRouteResponse.text()).toContain(
     '<div id="root"></div>',
   );
+  // Monthly awards moved to the funding page. Saved Inbox notices and
+  // bookmarks still open the old path; the preview server would conceal a
+  // missing Pages rule.
+  for (const path of ["/projects/eliza/awards", "/projects/eliza/awards/"]) {
+    const response = await request.get(path, { maxRedirects: 0 });
+    expect(response.status(), path).toBe(301);
+    expect(response.headers().location, path).toBe("/projects/eliza/funding");
+  }
+  for (const path of [
+    "/models",
+    "/models/",
+    "/operator/traces",
+    "/operator/traces/",
+  ]) {
+    const response = await request.get(path, { maxRedirects: 0 });
+    expect(response.status(), path).toBe(404);
+    expect(await response.text(), path).not.toContain('<div id="root"></div>');
+  }
 
   const [
     bootstrapResponse,
@@ -1370,7 +1330,6 @@ for (const scenario of [
   // its own timeout and the matrix runs across workers.
   test.describe(`reflow ${scenario.name}`, { tag: "@desktop-only" }, () => {
     for (const path of [
-      "/models",
       "/how-it-works",
       "/",
       "/projects/eliza",
@@ -1381,30 +1340,7 @@ for (const scenario of [
         await page.setViewportSize({ width: scenario.width, height: 1000 });
         await page.goto(path, { waitUntil: "networkidle" });
         if (scenario.textScale === 2) {
-          await page.evaluate(() => {
-            // Capture every original computed size before changing any ancestor,
-            // so nested text receives exactly 200%, not compounded enlargement.
-            const typography = [
-              ...document.querySelectorAll<HTMLElement>("body *"),
-            ]
-              .filter((element) => element instanceof HTMLElement)
-              .map((element) => ({
-                element,
-                font: getComputedStyle(element).fontSize,
-                line: getComputedStyle(element).lineHeight,
-              }));
-            for (const { element, font, line } of typography) {
-              element.style.setProperty(
-                "font-size",
-                `${Number.parseFloat(font) * 2}px`,
-              );
-              if (line !== "normal")
-                element.style.setProperty(
-                  "line-height",
-                  `${Number.parseFloat(line) * 2}px`,
-                );
-            }
-          });
+          await enlargeText(page.locator("body"));
         }
         // The skip link is the first stop; it hands keyboard users the content.
         await page.keyboard.press("Tab");
@@ -1450,25 +1386,7 @@ test("finds a receipt and opens its full evidence and GitHub contribution", asyn
 }) => {
   const snapshot = await loadSnapshot(request);
   const entry = snapshot.attributions.find((entry) => entry.run !== null);
-  await page.goto("/models", { waitUntil: "networkidle" });
-  const modelReceipts = page
-    .locator('.model-outcome-details a[href^="/receipts?q="]')
-    .first();
-  if (await modelReceipts.count()) {
-    await modelReceipts
-      .locator("xpath=ancestor::details")
-      .locator("summary")
-      .focus();
-    await page.keyboard.press("Enter");
-    await modelReceipts.click();
-    await expect(page).toHaveURL(/\/receipts\?q=/u);
-    await expect(
-      page.getByRole("searchbox", { name: "Find a receipt" }),
-    ).not.toHaveValue("");
-    expect(await page.locator(".receipt-record").count()).toBeGreaterThan(0);
-  } else {
-    await page.goto("/receipts", { waitUntil: "networkidle" });
-  }
+  await page.goto("/receipts", { waitUntil: "networkidle" });
   if (!entry?.run) {
     await expect(page.locator(".receipt-record")).toHaveCount(0);
     return;
@@ -1527,7 +1445,6 @@ test("finds a receipt and opens its full evidence and GitHub contribution", asyn
 // layout family instead of repeating each project's identical layout.
 const breakpointRoutes = new Set([
   "/",
-  "/models",
   "/account",
   "/projects/eliza",
   "/projects/eliza/funding",
@@ -1535,7 +1452,6 @@ const breakpointRoutes = new Set([
 ]);
 for (const route of [
   "latest cycle",
-  "/models",
   "/receipts",
   "/sponsors",
   "/how-it-works",
@@ -1616,63 +1532,6 @@ for (const route of [
   });
 }
 
-test("opens the models page directly and through keyboard navigation", async ({
-  page,
-}, testInfo) => {
-  await page.goto("/models", { waitUntil: "networkidle" });
-  await page.reload({ waitUntil: "networkidle" });
-  const outcomes = page.getByRole("list", {
-    name: "Accepted outcomes by model",
-    exact: true,
-  });
-  const firstModel = outcomes.locator(":scope > li").first();
-  await expect(firstModel).toBeVisible();
-  const disclosure = firstModel.locator("summary");
-  await disclosure.focus();
-  await page.keyboard.press("Enter");
-  await expect(firstModel.locator("details")).toHaveAttribute("open", "");
-  await expect(
-    firstModel
-      .locator("dd")
-      .filter({ hasText: /\d[\d,]* of \d[\d,]* outcomes/ }),
-  ).toBeVisible();
-  const clients = page.locator(".model-clients > summary");
-  await clients.focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("list", { name: "Client outcomes", exact: true }),
-  ).toBeVisible();
-  const client = page
-    .locator(".model-clients .model-outcome-list > li")
-    .first();
-  await client.locator("summary").press("Enter");
-  await expect(client.locator("details")).toHaveAttribute("open", "");
-  await testInfo.attach("models-page", {
-    body: await page.screenshot({ fullPage: true }),
-    contentType: "image/png",
-  });
-  const home = page.getByRole("link", { name: "Slop home", exact: true });
-  await home.focus();
-  const homeSnapshot = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
-  );
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/$/);
-  // Points can render before the separate score download finishes. A previous
-  // SPA route's networkidle state does not prove this response body is complete.
-  expect(await (await homeSnapshot).finished()).toBeNull();
-  await expect(page.locator("#leaderboard").getByRole("table")).toBeVisible({
-    timeout: 60_000,
-  });
-  const modelsSnapshot = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
-  );
-  await page.goBack({ waitUntil: "networkidle" });
-  await expect(page).toHaveURL(/\/models$/u);
-  expect(await (await modelsSnapshot).finished()).toBeNull();
-  await expect(firstModel).toBeVisible();
-});
-
 test("opens the sponsors page directly and through keyboard navigation", async ({
   page,
 }, testInfo) => {
@@ -1693,26 +1552,37 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await rules.focus();
   await page.keyboard.press("Enter");
   await expect(rules.locator("..")).toHaveAttribute("open", "");
-  const tableRegion = page.getByRole("region", {
+  const pools = page.getByRole("list", {
     name: "Project funding pools",
     exact: true,
   });
-  await tableRegion.focus();
-  await expect(tableRegion).toBeFocused();
-  if (
-    await tableRegion.evaluate(
-      (element) => element.scrollWidth > element.clientWidth,
-    )
-  ) {
-    await page.keyboard.press("ArrowRight");
-    await expect
-      .poll(() => tableRegion.evaluate((element) => element.scrollLeft))
-      .toBeGreaterThan(0);
-  }
+  await expect(pools).toBeVisible();
+  expect(
+    await pools.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  const fundingLink = pools.getByRole("link").first();
+  await expect(fundingLink).toHaveAttribute(
+    "href",
+    /^\/projects\/[^/]+\/funding$/u,
+  );
+  const fundingPath = await fundingLink.getAttribute("href");
+  if (!fundingPath)
+    throw new Error("The funding pool must link to its project");
+  const fundingUrl = new URL(fundingPath, page.url()).href;
+  await fundingLink.focus();
+  await expect(fundingLink).toBeFocused();
   await testInfo.attach("sponsors-page", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
   });
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(fundingUrl);
+  await page.waitForLoadState("networkidle");
+  await page.goBack({ waitUntil: "networkidle" });
+  await expect(page).toHaveURL(/\/sponsors$/u);
+  await expect(pools).toBeVisible();
   const home = page.getByRole("link", { name: "Slop home", exact: true });
   await home.focus();
   await page.keyboard.press("Enter");
@@ -1732,12 +1602,31 @@ test("lands direct and lazy cross-route hash links on their section", async ({
 }, info) => {
   const snapshot = await loadSnapshot(request);
   const actor = snapshot.leaders[0]?.actor;
-  const exclusion = snapshot.reviewExclusions?.[0];
-  if (!actor || !exclusion)
+  const event = snapshot.ledger.find(
+    (entry) =>
+      entry.actor.id === actor?.id && entry.source.kind === "pull-request",
+  );
+  if (!actor || !event)
     throw new Error(
-      "The profile fixture needs a contributor and a review exclusion",
+      "The profile fixture needs a contributor with accepted work",
     );
-  exclusion.reviewer = actor;
+  snapshot.penalties = [
+    {
+      id: `${event.source.id}:penalty`,
+      actor,
+      repository: event.repository,
+      occurredAt: event.occurredAt,
+      category: "spam",
+      tableVersion: "slopbot-penalties-v1",
+      debitThirds: 3,
+      source: { ...event.source, kind: "pull-request" },
+    },
+  ];
+  snapshot.leaders[0].scoreThirds -= 3;
+  snapshot.leaders[0].score = Math.floor(snapshot.leaders[0].scoreThirds / 3);
+  snapshot.leaders[0].penaltyThirds = 3;
+  snapshot.leaders.sort(compareRankedEntries);
+  assignLeaderboardRanks(snapshot.leaders);
   assertLeaderboardSnapshot(snapshot);
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshot }),
@@ -1758,7 +1647,7 @@ test("lands direct and lazy cross-route hash links on their section", async ({
       waitUntil: "networkidle",
     });
     await page
-      .getByRole("link", { name: "How reviews score", exact: true })
+      .getByRole("link", { name: "How penalties work", exact: true })
       .click();
     await expect(
       page.getByText("Loading page…", { exact: true }),
@@ -1788,11 +1677,23 @@ test("lands direct and lazy cross-route hash links on their section", async ({
   }
 });
 
-test("refuses prototype paths", async ({ page }) => {
-  for (const path of ["/constructor", "/__proto__"]) {
+test("refuses retired and unknown paths and recovers to projects", async ({
+  page,
+}) => {
+  for (const path of ["/models", "/models/", "/constructor", "/__proto__"]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", { name: "Page not found", exact: true }),
     ).toBeVisible();
+    await expect(page).toHaveTitle("Page not found · Slop");
+    await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+    await page
+      .getByRole("link", { name: "See open projects", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/$/u);
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+      "href",
+      "https://slop.cash/",
+    );
   }
 });

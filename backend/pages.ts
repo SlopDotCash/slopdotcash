@@ -32,6 +32,8 @@ export type PagesEnv = {
   };
   /** Named recovery-only entrypoint; it cannot submit a binding or payment. */
   BINDING_RECOVERY?: { fetch(request: Request): Promise<Response> };
+  BINDING_RECOVERY_ETHEREUM?: { fetch(request: Request): Promise<Response> };
+  BINDING_RECOVERY_ROBINHOOD?: { fetch(request: Request): Promise<Response> };
   MONTHLY_RELEASE_BASE?: { fetch(request: Request): Promise<Response> };
   MONTHLY_RELEASE_ETHEREUM?: { fetch(request: Request): Promise<Response> };
   MONTHLY_RELEASE_ROBINHOOD?: { fetch(request: Request): Promise<Response> };

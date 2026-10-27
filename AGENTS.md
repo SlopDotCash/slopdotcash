@@ -71,8 +71,10 @@ alias only.
   - The referral root-posting key (PRD section 11, "Referral program", owner
     decision of 25 October 2026). It posts cumulative Merkle roots to the
     ReferralDistributor and is separate from the contract owner key. It does
-    not transfer tokens; referrers claim their own tokens after the void
-    window. The accrual job may run only in off or dry_run until the program
+    not transfer tokens; referrers claim their own tokens immediately after a
+    root is posted (owner decision, 26 October 2026). The owner can void the
+    latest root only before its first successful claim; paid tokens cannot be
+    clawed back. There is no guaranteed intervention window. The accrual job may run only in off or dry_run until the program
     token exists, the funding line is agreed, an independent root watcher is
     operating, and the owner explicitly activates posting. Counsel review is
     not required (owner decision, 26 October 2026). Root
@@ -295,9 +297,8 @@ redacts the selected file; the uploader stores its exact bytes and performs no
 automatic redaction.
 
 Trace bodies are permanent private R2 objects. D1 stores only safe metadata and
-digests. Contributors, project owners, and the public have no read route. Only
-designated Slop operators may obtain a short-lived audited read grant through a
-separate operator-controlled path.
+digests. No website or API route returns a trace body, including to
+contributors, project owners, operators, and the public.
 
 The contributor upload route is write-only, bounded, authenticated,
 checksum-verified, and fail-closed. Public artifacts contain only safe metadata
@@ -333,11 +334,19 @@ Slop Points are the single contribution and participation unit governed by
 X-connection points (PRD section 11, Participation points). Keep every award
 recorded before that date unchanged; never delete, rewrite, or reissue one.
 Earned-point standings and rewards already exclude them. The X connection
-stays a consented profile link with no points.
+stays an optional OAuth-authorized public profile link with no points.
 Verified payout recognition is fixed per recipient/project/cycle, never per dollar
 or transfer. X control never confers GitHub, organization, or payment authority.
 Telegram is retired (PRD section 3). Preserve its historical records; do not
 restore a bot, connection, public profile link, or support route.
+Owner decision, 26 October 2026: active memberships and connected X profile
+links are public, without a separate visibility opt-out. Existing private
+memberships and already-connected X links become public at the next
+authenticated sign-in; explicit reopening and new X connections are public.
+Disclose visibility before sign-in or connection. Keep closed accounts private,
+removed links disconnected, and private cases, traces, wallet records, email
+consent and historical Points unchanged. Public reads perform no transition.
+
 Only accepted-work points for the project and period determine reward shares;
 never feed historical participation or payout-recognition bonuses into rewards. Preserve
 historical settlements and compatibility fields without exposing a separate
@@ -546,11 +555,17 @@ and policy mirrors; explain why application acceptance does not apply to the
 prose itself. Keep required repository checks. Do not fabricate UI or
 deployment evidence.
 
-Rebase onto current `origin/development`, install the lockfile, run `bun run
-verify`, and run real-browser E2E against the exact head. UI changes require
-desktop and mobile review, keyboard and 200% zoom checks, WCAG AA, working copy
-feedback, raw Markdown and archive downloads, valid GitHub links, zero
-first-party request failures, and zero application console errors.
+Rebase onto current `origin/development`, install the lockfile, and prepare the
+ledger with `bun run leaderboard:generate`. Local pull-request checks may use
+the validated public-snapshot preparation in
+[Local review checks](README.md#local-review-checks) instead of live ingestion.
+Stop if ledger preparation fails; never use a leftover ledger. Releases still
+collect fresh GitHub data through the normal release workflow. Run `bun run
+verify`, `bun run format:check`, and real-browser E2E against the exact head.
+UI changes require desktop and mobile review, keyboard and 200% zoom checks,
+WCAG AA, working copy feedback, raw Markdown and archive downloads, valid
+GitHub links, zero first-party request failures, and zero application console
+errors.
 
 Attach exact-head evidence to the issue or PR: screenshots, accessibility
 results, console/network logs, uploaded UI walkthrough and evidence videos, detailed

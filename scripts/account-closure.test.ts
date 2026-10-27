@@ -246,7 +246,7 @@ test("a closed account signs in again only through an explicit reopen", async ()
     expect(reopened.status).toBe(200);
     expect(reopened.body).toMatchObject({
       actor: { id: ME.actor, login: ME.login },
-      public: false,
+      public: true,
       socialPoints: 10,
     });
     expect(reopened.cookie).toContain("Max-Age=3600");
@@ -254,7 +254,7 @@ test("a closed account signs in again only through an explicit reopen", async ()
       sqlite
         .query("SELECT public, closed_at FROM points_members WHERE actor_id=?")
         .get(ME.actor),
-    ).toEqual({ public: 0, closed_at: null });
+    ).toEqual({ public: 1, closed_at: null });
     // Removed connections stay removed until the person connects again.
     expect(
       count("SELECT count(*) n FROM points_x_links WHERE actor_id=?", ME.actor),

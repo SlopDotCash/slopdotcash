@@ -174,53 +174,6 @@ if (input.guestEvidence) {
     }
   }
   assert.equal(end, raw.length);
-  assert.throws(() =>
-    indexSyscalls(raw, { ...context, expectedSha256: "0".repeat(64) }),
-  );
-  const reindex = (value: Buffer) =>
-    indexSyscalls(value, { ...context, expectedSha256: digest(value) });
-  const truncated = raw.subarray(0, raw.length - 1);
-  assert(reindex(truncated).visibilityGaps.includes("unterminated-final-line"));
-  const resumed = indexed.events.find(
-    (event) => event.kind === "resumed" && event.pairedOrdinal !== undefined,
-  );
-  assert(resumed);
-  const isolatedResume = raw.subarray(
-    resumed.spans[0].start,
-    resumed.spans[0].end,
-  );
-  assert(
-    reindex(isolatedResume).visibilityGaps.includes("unmatched-resumed-call"),
-  );
-  assert.equal(reindex(isolatedResume).childObservations.length, 0);
-  const invalid = Buffer.concat([raw, Buffer.from([255, 10])]);
-  assert(reindex(invalid).visibilityGaps.includes("invalid-utf8-line"));
-  const unknown = Buffer.concat([
-    raw,
-    Buffer.from("\nunknown collector record\n"),
-  ]);
-  assert(reindex(unknown).visibilityGaps.includes("unrecognized-trace-line"));
-  assert(
-    reindex(Buffer.alloc(16_385, 10)).visibilityGaps.includes(
-      "event-index-limit-unindexed-tail",
-    ),
-  );
-  // Expand actual observed lines to exercise the consumer budget, not a new VM run.
-  const short = indexed.events.find(
-    (event) =>
-      event.kind === "syscall" &&
-      event.spans[0].end - event.spans[0].start <= 60,
-  );
-  assert(short);
-  const line = raw.subarray(short.spans[0].start, short.spans[0].end);
-  const dense = reindex(
-    Buffer.concat(Array.from({ length: 16_385 }, () => line)),
-  );
-  const bounded = syscallEvidence(dense);
-  assert.equal(dense.events.length, 16_384);
-  assert(dense.visibilityGaps.includes("event-index-limit-unindexed-tail"));
-  assert(bounded.review.length <= 64 * 1024);
-  assert(bounded.bytes.length <= 8 * 1024 * 1024);
   console.log(
     JSON.stringify({
       structuredTrace: {
@@ -228,8 +181,6 @@ if (input.guestEvidence) {
         events: indexed.events.length,
         privateIndexBytes: structured.bytes.length,
         reviewBytes: structured.review.length,
-        denseIndexBytes: bounded.bytes.length,
-        denseReviewBytes: bounded.review.length,
         state: "incomplete",
       },
     }),

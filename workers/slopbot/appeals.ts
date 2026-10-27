@@ -4,6 +4,7 @@
 // prompt or model text is stored here.
 
 import { notifySlopbotAppeal } from "../../backend/notifications/events";
+import { PARTICIPATION_BAN_QUERY } from "../../backend/projects/account-bans";
 import { githubIdSet } from "../../src/lib/github-ids";
 import { type Category, CLOSE_CONFIDENCE, type Job } from "./contracts";
 import { dispatchDueJobs } from "./maintainer-holds";
@@ -31,8 +32,8 @@ export type Appeal = {
 
 /** The published escalation criteria that Slopbot can decide by itself.
  * Rejection of the draft and the 7-day limit are recorded by their own paths.
- * Slopbot never bans, and a private security case never reaches this public
- * appeal path, so those criteria have no case here.
+ * The caller checks current account bans; private security cases use their
+ * separate appeal path.
  */
 export function escalationFor(input: {
   category: Category;
@@ -169,20 +170,22 @@ export async function resolveAppeal(
   appealKey: string,
   resolution: "upheld" | "denied",
   by: "appellant" | "maintainer" | "moderator",
-  onlyUnescalated = false,
+  draftAppellantId?: string,
 ): Promise<boolean> {
   const result = await db
     .prepare(
       `UPDATE slopbot_appeals SET resolved_at = ?, resolution = ?, resolved_by = ?
        WHERE appeal_key = ? AND resolved_at IS NULL
-         AND (? = 0 OR escalated_at IS NULL)`,
+         AND (? IS NULL OR (escalated_at IS NULL
+           AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})))`,
     )
     .bind(
       new Date().toISOString(),
       resolution,
       by,
       appealKey,
-      onlyUnescalated ? 1 : 0,
+      draftAppellantId ?? null,
+      draftAppellantId ?? "",
     )
     .run();
   return (result.meta?.changes ?? 0) === 1;

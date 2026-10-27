@@ -18,6 +18,7 @@ import {
 import "./brand-tokens.css";
 import "./styles.css";
 import "./design-system.css";
+import "./route-design.css";
 
 const root = document.getElementById("root");
 if (!root) {

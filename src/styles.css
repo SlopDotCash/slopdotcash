@@ -141,24 +141,6 @@ textarea:focus-visible {
   padding-block: clamp(60px, 8vw, 110px);
 }
 
-.evidence-page-hero {
-  max-width: 920px;
-  margin-bottom: 56px;
-}
-
-.evidence-page-hero h1 {
-  max-width: 900px;
-  margin: 12px 0 22px;
-  font-size: clamp(44px, 7vw, 92px);
-  line-height: 0.94;
-}
-
-.evidence-page-hero > p:last-child {
-  max-width: 70ch;
-  color: var(--muted);
-  line-height: 1.65;
-}
-
 .mechanism-flow {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -457,10 +439,6 @@ textarea:focus-visible {
   .mechanism-flow li:nth-child(2n + 1) {
     border-left: 1px solid var(--line);
   }
-
-  .evidence-page-hero h1 {
-    font-size: clamp(42px, 14vw, 64px);
-  }
 }
 
 .hero {
@@ -530,7 +508,6 @@ p {
 }
 
 .project-hero h1,
-.proposal-intro h1,
 .not-found h1,
 .profile-hero h1,
 .cycle-hero h1 {
@@ -851,10 +828,6 @@ small {
 .footer-brand-row {
   display: flex;
   flex-wrap: wrap;
-}
-
-.footer-wordmark {
-  margin: 0;
 }
 
 .footer-links {
@@ -1272,8 +1245,7 @@ small {
   font-size: clamp(46px, 6vw, 82px);
 }
 
-.cycle-hero p,
-.proposal-intro p {
+.cycle-hero p {
   max-width: 720px;
   color: var(--muted);
   font-size: 14px;
@@ -1376,15 +1348,6 @@ small {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   text-overflow: ellipsis;
-}
-
-.proposal-intro {
-  max-width: 950px;
-  padding-bottom: 40px;
-}
-
-.proposal-intro h1 {
-  font-size: clamp(52px, 7vw, 94px);
 }
 
 .proposal-steps {
@@ -1542,26 +1505,6 @@ small {
   line-height: 1.55;
 }
 
-.manage-intro {
-  max-width: 860px;
-  padding-bottom: 56px;
-}
-
-.manage-intro h1 {
-  max-width: none;
-  margin-bottom: 18px;
-  font-size: clamp(46px, 6.5vw, 86px);
-  letter-spacing: -0.035em;
-  line-height: 0.96;
-}
-
-.manage-intro p {
-  max-width: 68ch;
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 1.65;
-}
-
 .owner-section {
   display: grid;
   grid-template-columns: minmax(180px, 0.45fr) minmax(0, 1fr);
@@ -1714,8 +1657,7 @@ small {
     margin-top: 24px;
   }
 
-  .project-hero h1,
-  .proposal-intro h1 {
+  .project-hero h1 {
     font-size: clamp(45px, 14vw, 68px);
   }
 
@@ -2012,23 +1954,7 @@ small {
   line-height: 1.6;
 }
 
-.model-identity {
-  font-family: var(--brand-font-data);
-  white-space: nowrap;
-}
-
-.model-identity > span {
-  color: var(--muted);
-  font-weight: 400;
-}
-
-.model-share-high {
-  color: var(--orange-hover);
-  font-weight: 700;
-}
-
-.model-outcomes-note,
-.model-outcomes-notes {
+.model-outcomes-note {
   color: var(--muted);
   font-size: 15px;
   line-height: 1.6;
@@ -2037,15 +1963,6 @@ small {
 .model-outcomes-note {
   margin: 16px 0 0;
   max-width: 70ch;
-}
-
-.model-outcomes-notes {
-  max-width: 76ch;
-  padding-left: 20px;
-}
-
-.model-outcomes-notes li + li {
-  margin-top: 10px;
 }
 
 .sponsor-details {
@@ -2552,13 +2469,6 @@ a.payout-tx:hover {
 .receipt-page {
   padding-block: 48px 80px;
 }
-.receipt-page .evidence-page-hero {
-  margin-bottom: 32px;
-}
-.receipt-page .evidence-page-hero h1 {
-  font-size: clamp(36px, 5vw, 56px);
-  line-height: 1.05;
-}
 .receipt-search {
   display: grid;
   gap: 8px;
@@ -2666,77 +2576,6 @@ a.payout-tx:hover {
   .receipt-record summary > svg {
     grid-column: 2;
     grid-row: 1 / 3;
-  }
-}
-
-.model-outcome-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.model-outcome-list > li {
-  border-top: 1px solid var(--line);
-  padding: 20px 0;
-}
-.model-outcome-list h3 {
-  margin: 0 0 12px;
-  font-size: 17px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.model-outcome-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 24px;
-  font-size: 14px;
-}
-.model-outcome-bar {
-  height: 6px;
-  background: var(--line);
-  margin: 12px 0;
-}
-.model-outcome-bar > span {
-  display: block;
-  height: 100%;
-  background: var(--ink);
-}
-.model-outcome-details {
-  margin-top: 12px;
-  font-size: 14px;
-}
-.model-outcome-details summary,
-.model-clients > summary {
-  cursor: pointer;
-  min-height: 44px;
-  padding-block: 12px;
-}
-.model-outcome-details dl {
-  margin: 0;
-}
-.model-outcome-details dl > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  gap: 12px;
-  padding-block: 8px;
-}
-.model-outcome-details dt {
-  color: var(--muted);
-}
-.model-outcome-details dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.model-outcome-details ul {
-  padding-left: 16px;
-}
-.model-clients > summary {
-  font-size: 24px;
-  font-weight: 700;
-}
-@media (max-width: 650px) {
-  .model-outcome-details dl > div {
-    grid-template-columns: 1fr;
-    gap: 4px;
   }
 }
 
@@ -2932,8 +2771,7 @@ a.payout-tx:hover {
 }
 
 .proposal-facts,
-.proposal-preview dl,
-.funding-status-grid {
+.proposal-preview dl {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: 14px 24px;
@@ -2941,16 +2779,14 @@ a.payout-tx:hover {
 }
 
 .proposal-facts dt,
-.proposal-preview dt,
-.funding-status-grid dt {
+.proposal-preview dt {
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
 }
 
 .proposal-facts dd,
-.proposal-preview dd,
-.funding-status-grid dd {
+.proposal-preview dd {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
   font-family: var(--brand-font-data);
@@ -3133,7 +2969,6 @@ a.payout-tx:hover {
   }
 }
 
-.proposal-intro p a,
 .payout-status a {
   color: var(--ink);
   font-weight: 700;
@@ -3757,8 +3592,11 @@ a.payout-tx:hover {
 .admin-actions select,
 .admin-actions textarea,
 .admin-editor textarea,
+.admin-editor select,
 .admin-editor input {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -3844,7 +3682,6 @@ a.payout-tx:hover {
   margin: 0 0 0.5rem;
   overflow-wrap: anywhere;
 }
-.inbox-state,
 .inbox-meta {
   color: var(--muted);
   font-size: 0.875rem;
@@ -4083,42 +3920,6 @@ html:has(.security-page) {
   margin-top: 0.3em;
 }
 
-.owner-awards-page form {
-  display: grid;
-  gap: 1rem;
-  justify-items: start;
-  margin-block: 1.5rem 2rem;
-}
-
-.owner-awards-page form label {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.owner-award-list {
-  display: grid;
-  gap: 1.5rem;
-  padding-inline-start: 1.25rem;
-  margin-block: 1.5rem 2rem;
-}
-
-.owner-award-list li {
-  padding-bottom: 1.5rem;
-  border-bottom: 1px solid var(--line);
-  overflow-wrap: anywhere;
-}
-
-.owner-award-list dl {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0.5rem 1rem;
-  max-width: 36rem;
-}
-
-.owner-award-list dd {
-  margin: 0;
-}
-
 /* Compact owner setup checks; text and icons both communicate state. */
 .owner-section.project-setup-status {
   display: block;
@@ -4321,4 +4122,188 @@ html:has(.security-page) {
   padding: 1rem;
   border: 1px solid var(--input-border);
   border-radius: 12px;
+}
+
+/* Project vault: network mark, fee chips, balance tiles and wallet state. */
+.section.project-funding {
+  display: grid;
+  gap: 20px;
+  padding-block: 24px 0;
+}
+
+.project-funding > .button,
+.vault-actions > .setup-badge {
+  justify-self: start;
+}
+
+.vault-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+
+.vault-header h2 {
+  margin: 0;
+  font-size: clamp(24px, 4vw, 36px);
+}
+
+.vault-fees {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.network-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+}
+
+.network-mark {
+  width: 0.8em;
+  height: 0.8em;
+  flex: none;
+}
+
+.vault-totals,
+.vault-snapshot {
+  display: grid;
+  gap: 14px;
+}
+
+.project-funding .data-notice,
+.vault-totals > .setup-badge,
+.vault-snapshot > .setup-badge {
+  justify-self: start;
+  margin: 0;
+}
+
+.vault-meter {
+  margin: 0;
+}
+
+.vault-available {
+  background: var(--orange);
+}
+
+.vault-reserved {
+  background: var(--faint);
+}
+
+.vault-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.vault-stat {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--brand-radius-large);
+  background: var(--surface);
+}
+
+.vault-stat dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vault-stat dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--brand-font-data);
+  font-size: clamp(17px, 2vw, 20px);
+  font-weight: 700;
+}
+
+.vault-stat--available dd:first-of-type {
+  font-size: clamp(22px, 3vw, 28px);
+}
+
+.vault-stat .vault-stat-note {
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.vault-finality {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.vault-addresses {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.vault-addresses div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  min-width: 0;
+}
+
+.vault-addresses dt {
+  min-width: 48px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vault-addresses dd {
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+}
+
+.wallet-missing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+
+.wallet-missing > svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.wallet-missing p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.wallet-missing span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+@media (max-width: 520px) {
+  .vault-stat--available {
+    grid-column: 1 / -1;
+  }
 }

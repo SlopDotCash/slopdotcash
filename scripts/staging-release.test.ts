@@ -147,11 +147,15 @@ test("a newer attempted deployment prevents rollback regardless of success", () 
   expect(result.stderr).toContain("Refusing staging rollback");
 });
 
-test("a newer qualification-only deployment does not block an older release", () => {
+test.each([
+  ".github/workflows/vetting-recovery-qualification.yml",
+  ".github/workflows/vetting-sandbox-qualification.yml",
+  ".github/workflows/vetting-controller.yml",
+])("a newer %s record does not block an older release", (path) => {
   const f = fixture();
   const qualification = {
     head_sha: f.revisions[2],
-    path: ".github/workflows/vetting-recovery-qualification.yml",
+    path,
   };
   const result = f.run(
     [[f.deployment(f.revisions[2], 7), f.deployment(f.revisions[1])]],
@@ -159,7 +163,6 @@ test("a newer qualification-only deployment does not block an older release", ()
     { 7: qualification },
   );
   expect(result.status).toBe(0);
-  expect(result.stdout).toContain("Ignoring qualification-only");
   // A release of that same revision still prevents rollback.
   const release = f.run(
     [
@@ -177,6 +180,14 @@ test("a newer qualification-only deployment does not block an older release", ()
   );
   expect(release.status).not.toBe(0);
   expect(release.stderr).toContain("Refusing staging rollback");
+  // A workflow name cannot exempt a record bound to another source revision.
+  const mismatched = f.run(
+    [[f.deployment(f.revisions[2], 7), f.deployment(f.revisions[1])]],
+    {},
+    { 7: { ...qualification, head_sha: f.revisions[0] } },
+  );
+  expect(mismatched.status).not.toBe(0);
+  expect(mismatched.stderr).toContain("Refusing staging rollback");
 });
 
 test("a divergent deployment prevents overwriting unknown staging state", () => {

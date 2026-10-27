@@ -21,10 +21,7 @@ import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
-import {
-  runMonthlyCommitments,
-  runMonthlyCoordinator,
-} from "../../workers/payments/index";
+import { runMonthlyCommitments } from "../../workers/payments/index";
 import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
@@ -601,7 +598,7 @@ describe("monthly coordinator", () => {
         recipient_github_id: project.manifest.steward.github.actorId,
         kind: "payout_exception",
         subject: project.id,
-        action_path: `/projects/${project.id}/awards`,
+        action_path: `/projects/${project.id}/funding`,
       },
     ]);
     vault("900");
@@ -1072,12 +1069,139 @@ describe("monthly coordinator", () => {
     );
   });
 
-  test("private bounty programs never run the monthly coordinator", async () => {
-    expect(
-      await runMonthlyCoordinator({
-        PAYMENT_SCOPE: "security-bounty",
-      } as never),
-    ).toBeNull();
+  test("monthly HTTP writes distinguish storage outages from allocation races", async () => {
+    clock = beforeCutoff;
+    const service = owner();
+    const token = "w".repeat(43);
+    sqlite
+      .prepare(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('write-owner',?,'owner',?,0)",
+      )
+      .run(OWNER, clock.toISOString());
+    sqlite
+      .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
+      .run(await sha256Hex(token), "write-owner", "2027-01-01T00:00:00.000Z");
+    const call = (action: string, body: unknown) =>
+      handlePaymentsApi(
+        new Request(
+          `https://slop.cash/api/v1/payments/projects/${project.id}/${action}`,
+          {
+            method: "POST",
+            headers: {
+              origin: "https://slop.cash",
+              "content-type": "application/json",
+              cookie: `__Host-slop_points=${token}`,
+            },
+            body: JSON.stringify(body),
+          },
+        ),
+        { db, monthly: service, now: () => clock },
+      );
+    const allocation = (
+      githubUserId: string,
+      grossBase: string,
+      expectedSequence: number,
+    ) =>
+      call("monthly/2026-11/allocations", {
+        githubUserId,
+        grossBase,
+        expectedSequence,
+      });
+    expect((await call("monthly-settings", { automatic: false })).status).toBe(
+      200,
+    );
+    expect((await allocation(B, "300", 0)).status).toBe(200);
+    const records = () =>
+      Object.fromEntries(
+        [
+          "monthly_allocation_changes",
+          "monthly_payment_settings",
+          "monthly_payment_runs",
+          "monthly_payment_obligations",
+        ].map((table) => [
+          table,
+          sqlite.query(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+        ]),
+      );
+    const before = records();
+    sqlite.exec("PRAGMA query_only = ON");
+    try {
+      for (const response of [
+        await allocation(B, "200", 1),
+        await call("monthly-settings", { automatic: true }),
+      ]) {
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({
+          error: "payments_unavailable",
+        });
+      }
+      expect(records()).toEqual(before);
+    } finally {
+      sqlite.exec("PRAGMA query_only = OFF");
+    }
+    expect((await call("monthly-settings", { automatic: true })).status).toBe(
+      200,
+    );
+
+    // Another real owner operation commits after our read and before our INSERT.
+    // The losing write must remain a conflict, including the freeze trigger.
+    const prepare = db.prepare.bind(db);
+    const beforeAllocationWrite = (competing: () => Promise<unknown>) => {
+      db.prepare = (query) => {
+        const statement = prepare(query);
+        if (!query.startsWith("INSERT INTO monthly_allocation_changes("))
+          return statement;
+        return {
+          ...statement,
+          bind(...values: unknown[]) {
+            const bound = statement.bind(...values);
+            return {
+              ...bound,
+              async run() {
+                db.prepare = prepare;
+                await competing();
+                return bound.run();
+              },
+            };
+          },
+        };
+      };
+    };
+    try {
+      beforeAllocationWrite(() =>
+        service.changeAllocation(project.id, "2026-11", actor, {
+          githubUserId: A,
+          grossBase: "500",
+          expectedSequence: 1,
+        }),
+      );
+      const raced = await allocation(B, "200", 1);
+      expect(raced.status).toBe(409);
+      expect(await raced.json()).toMatchObject({
+        error: "allocations_changed",
+      });
+      expect(count("monthly_allocation_changes")).toBe(2);
+      expect(
+        (
+          await service.view(project.id, "2026-11", actor)
+        ).proposal?.allocations.map((row) => row.grossBase),
+      ).toEqual(["500", "300"]);
+
+      vault("1000");
+      beforeAllocationWrite(() =>
+        service.finalize(project.id, "2026-11", actor, 2),
+      );
+      const frozen = await allocation(B, "200", 2);
+      expect(frozen.status).toBe(409);
+      expect(await frozen.json()).toMatchObject({
+        error: "allocations_changed",
+      });
+      expect(count("monthly_allocation_changes")).toBe(2);
+      expect(count("monthly_payment_runs")).toBe(1);
+      expect(count("monthly_payment_obligations")).toBe(2);
+    } finally {
+      db.prepare = prepare;
+    }
   });
 });
 
@@ -2061,7 +2185,7 @@ test("Solana v3 retries preserve the first signed freeze time after a signer out
   expect(freezeReads).toBe(1);
 });
 
-test("reserve release requires the live monthly owner authority and current policy before requesting any attestation", async () => {
+test("reserve release requires current authority and refuses a revision changed during the request", async () => {
   const token = "r".repeat(43);
   sqlite
     .prepare(
@@ -2072,7 +2196,8 @@ test("reserve release requires the live monthly owner authority and current poli
     .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
     .run(await sha256Hex(token), "release-owner", "2027-01-01T00:00:00.000Z");
   let authority = true,
-    requested = 0;
+    requested = 0,
+    reviseDuringRelease = false;
   const service = monthlyOwnerService({
     db,
     ...projects(),
@@ -2095,6 +2220,24 @@ test("reserve release requires the live monthly owner authority and current poli
         manifestSha256: project.manifestSha256,
       });
       requested++;
+      if (reviseDuringRelease) {
+        const text = JSON.stringify(project.manifest);
+        expect(
+          await new CloudflareProjectPersistence(db).appendProjectRevision(
+            {
+              projectId: project.id,
+              expectedRevision: project.revision,
+              manifest: project.manifest,
+              manifestText: text,
+              manifestSha256: await sha256Hex(text),
+              reason: "Owner updated the project while release was checked",
+              actor,
+              at: afterCutoff.toISOString(),
+            },
+            0,
+          ),
+        ).toBe("updated");
+      }
       return { status: "held", reason: "allocation-unavailable" };
     },
   });
@@ -2132,33 +2275,15 @@ test("reserve release requires the live monthly owner authority and current poli
   expect(requested).toBe(0);
   expect((await request()).status).toBe(200);
   expect(requested).toBe(1);
-});
-
-test("a concurrent project revision change refuses a prepared reserve release", async () => {
-  let revision = 0;
-  const service = monthlyOwnerService({
-    db,
-    ...projects(),
-    getProject: async () => ({
-      ...project,
-      revision: project.revision + revision,
-    }),
-    networks: () => ["base-sepolia"],
-    schedule: () => schedule,
-    now: () => clock,
-    verifyAuthority: async () => {},
-    releaseReserve: async () => {
-      revision++;
-      return { status: "held", reason: "allocation-unavailable" };
-    },
-  });
-  await rejects(
-    service.releaseReserve(project.id, "2026-11", actor, {
-      network: "base-sepolia",
-      manifestSha256: project.manifestSha256,
-    }),
-    "project_changed",
-  );
+  reviseDuringRelease = true;
+  const changed = await request();
+  expect(changed.status).toBe(409);
+  expect(await changed.json()).toMatchObject({ error: "project_changed" });
+  expect(requested).toBe(2);
+  expect(
+    (await new CloudflareProjectPersistence(db).getProject(project.id))
+      ?.revision,
+  ).toBe(project.revision + 1);
 });
 
 test("account keeps an award visible when a reservation is indexed during its read", async () => {

@@ -8,7 +8,6 @@ const HOME_TITLE = "Slop: make money shipping open source";
 export const STATIC_PAGE_TITLES = new Map([
   ["/", HOME_TITLE],
   ["/how-it-works", "How it works"],
-  ["/models", "Models"],
   ["/sponsors", "Sponsors"],
   ["/receipts", "Run receipts"],
   ["/cycles", "Cycle archive"],

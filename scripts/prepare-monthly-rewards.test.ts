@@ -1,11 +1,14 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { buildMonthlyBase, monthlyBasesSql } from "./prepare-monthly-rewards";
 
-const snapshotBytes = readFileSync(
-  "tests/fixtures/history/cycles/eliza/2026-09/source-snapshot.json",
+const snapshotBytes = gunzipSync(
+  readFileSync(
+    "tests/fixtures/history/cycles/eliza/2026-09/source-snapshot.json.gz",
+  ),
 );
 function fundedProject(projectId = "eliza", effectiveCycle = "2026-09") {
   const project = fixtureProject(projectId);
@@ -82,7 +85,6 @@ test("a month's proposal is stored once; a later ledger never adds or replaces r
     expect(() => sqlite.exec("DELETE FROM monthly_reward_base_rows")).toThrow(
       "monthly base permanent",
     );
-    expect(monthlyBasesSql({ ...result, bases: [] }, "x")).toBe("");
   } finally {
     sqlite.close();
   }
