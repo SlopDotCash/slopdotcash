@@ -1,5 +1,6 @@
 /** Provider/API fixtures exercise the real page; they never register a real wallet. */
 import type { Page } from "@playwright/test";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 test.beforeEach(({ diagnostics }) => diagnostics.allowPreviewApiMisses());
@@ -63,20 +64,32 @@ async function providers(
   {
     connected = evmAddress,
     permissions = "picker",
+    rejectSignature = 0,
   }: {
     connected?: string;
     permissions?: "picker" | "unsupported" | "rejected";
+    rejectSignature?: number;
   } = {},
 ) {
   await page.addInitScript(
-    ({ reject, evmAddress, solanaAddress, connected, permissions }) => {
+    ({
+      reject,
+      evmAddress,
+      solanaAddress,
+      connected,
+      permissions,
+      rejectSignature,
+    }) => {
       const calls: string[] = [];
       const evm = (name: string) => {
         let account = connected;
+        let signatures = 0;
         return {
           request: async ({ method }: { method: string }) => {
             calls.push(`${name}:${method}`);
             if (reject) throw new Error("Wallet request rejected by user.");
+            if (method === "personal_sign" && ++signatures === rejectSignature)
+              throw new Error("Wallet signature rejected by user.");
             if (method === "wallet_requestPermissions") {
               if (permissions === "unsupported")
                 throw Object.assign(new Error("Method not supported."), {
@@ -174,7 +187,14 @@ async function providers(
           ),
       });
     },
-    { reject, evmAddress, solanaAddress, connected, permissions },
+    {
+      reject,
+      evmAddress,
+      solanaAddress,
+      connected,
+      permissions,
+      rejectSignature,
+    },
   );
 }
 
@@ -567,22 +587,7 @@ for (const scenario of [
       await expect(
         dialog.getByRole("button", { name: /Detected$/u }),
       ).toHaveCount(2);
-      if (scenario.textScale === 2)
-        await page.evaluate(() => {
-          // Read every size first so nested text is enlarged exactly once.
-          const typography = [
-            ...document.querySelectorAll<HTMLElement>("body *"),
-          ].map((element) => ({
-            element,
-            font: getComputedStyle(element).fontSize,
-            line: getComputedStyle(element).lineHeight,
-          }));
-          for (const { element, font, line } of typography) {
-            element.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-            if (line !== "normal")
-              element.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-          }
-        });
+      if (scenario.textScale === 2) await enlargeText(page.locator("body"));
       await expect(
         dialog.getByRole("button", { name: "Close wallet picker" }),
       ).toBeInViewport();
@@ -755,6 +760,67 @@ test("connecting the saved address confirms it without an extra step", async ({
   });
 });
 
+for (const rejectedSignature of [2, 3]) {
+  test(`a rejected EVM signature ${rejectedSignature} stays visible after partial confirmation and can resume`, async ({
+    page,
+  }) => {
+    const saved: SavedWallet[] = [];
+    const writes = await payments(page, saved);
+    await page.route("**/api/v1/payments/wallets/authorize", async (route) => {
+      const registration = writes
+        .filter((write) => write.path === "wallets/register")
+        .at(-1)?.body;
+      if (!registration) throw new Error("Missing wallet registration");
+      saved.push({
+        chain: registration.chain as SavedWallet["chain"],
+        claimId: "fixture",
+        address: registration.address,
+        authorized: true,
+      });
+      await route.fallback();
+    });
+    await providers(page, false, { rejectSignature: rejectedSignature });
+    await page.goto("/account#wallets");
+    await chooseMetaMask(page, "Connect");
+
+    const card = page.getByRole("article", { name: "EVM wallet" });
+    // The confirmed Base state comes from the reconciliation GET, not the
+    // action's stale account. Its arrival must not erase the signature error.
+    await expect(
+      card.getByRole("img", { name: "Base, confirmed", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("alert")).toContainText(
+      "Wallet signature rejected by user.",
+    );
+    expect(saved.map((wallet) => wallet.chain)).toEqual(
+      ["base", "robinhood", "ethereum"].slice(0, rejectedSignature - 1),
+    );
+    expect(
+      writes.filter((write) => write.path === "wallets/authorize"),
+    ).toHaveLength(rejectedSignature - 1);
+
+    await chooseMetaMask(page, "Change");
+    await expect(
+      page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
+    ).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    expect(saved.map((wallet) => wallet.chain)).toEqual([
+      "base",
+      "robinhood",
+      "ethereum",
+    ]);
+    expect(
+      writes.filter((write) => write.path === "wallets/authorize"),
+    ).toHaveLength(3);
+    expect(
+      writes.filter(
+        (write) =>
+          write.path === "wallets/register" && write.body.chain === "base",
+      ),
+    ).toHaveLength(1);
+  });
+}
+
 test("a wallet without an account picker falls back to its connected account", async ({
   page,
 }) => {
@@ -822,21 +888,7 @@ for (const scenario of [
       name: "Register a different EVM address?",
     });
     await expect(confirmation).toBeVisible();
-    if (scenario.textScale === 2)
-      await page.evaluate(() => {
-        const typography = [
-          ...document.querySelectorAll<HTMLElement>("body *"),
-        ].map((element) => ({
-          element,
-          font: getComputedStyle(element).fontSize,
-          line: getComputedStyle(element).lineHeight,
-        }));
-        for (const { element, font, line } of typography) {
-          element.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-          if (line !== "normal")
-            element.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-        }
-      });
+    if (scenario.textScale === 2) await enlargeText(page.locator("body"));
     // The site lays out at a 320px minimum, so the 160px case checks only
     // that nothing escapes the confirmation itself.
     if (scenario.width === 320)

@@ -1,0 +1,385 @@
+/* Private operations and security routes only; shared chrome and home are unchanged. */
+.operations-page {
+  --operations-green: #72dda6;
+  --operations-blue: #9cc9ff;
+  --operations-amber: #ffcb79;
+  overflow-wrap: anywhere;
+}
+
+.operations-page .route-page-header {
+  margin-bottom: 1.5rem;
+}
+
+.operations-page .route-page-header .route-badge {
+  margin-top: 0.85rem;
+}
+
+.operations-page .admin-card {
+  padding: clamp(1rem, 2.3vw, 1.5rem);
+  border-radius: 0.8rem;
+}
+
+.operations-page .admin-card > header,
+.operations-page .operations-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.operations-page .admin-card h2,
+.operations-page .admin-card h3,
+.operations-page .admin-enforcement h4 {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.35;
+  letter-spacing: -0.025em;
+}
+
+.operations-page .admin-card > h2 {
+  margin-bottom: 1rem;
+}
+
+.operations-page .admin-facts,
+.operations-page .operations-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 1rem 1.5rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.operations-page .admin-facts > div,
+.operations-page .operations-facts > div {
+  min-width: 0;
+}
+
+.operations-page .admin-facts dt,
+.operations-page .operations-facts dt {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+.operations-page .admin-facts dd,
+.operations-page .operations-facts dd {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.operations-page .operations-caution {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #ffcb7933;
+  border-radius: 0.6rem;
+  background: #ffcb7909;
+  color: var(--operations-amber);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.operations-page .operations-caution > svg {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  margin-top: 0.15rem;
+}
+
+.operations-page .operations-retention {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.operations-page .operations-identifier {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+  min-width: 0;
+}
+
+.operations-page .operations-identifier > code {
+  flex: 1 1 15rem;
+  min-width: 0;
+  color: var(--operations-blue);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.operations-page .operations-identifier .text-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.operations-page .operations-identifier svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.operations-page .operations-identifier > [role="status"] {
+  flex-basis: 100%;
+  font-size: 0.75rem;
+}
+
+.operations-page .operations-summary {
+  max-width: 42rem;
+  margin-top: 0;
+}
+
+.operations-page .admin-project-summary {
+  align-items: center;
+  margin-bottom: 0.7rem;
+}
+
+.operations-page .admin-project-summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.8rem;
+  min-width: 0;
+}
+
+.operations-page .admin-project-summary > div > p {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.operations-page .admin-project-summary > div > .form-error {
+  color: #ff9387;
+}
+
+.operations-page .admin-enforcement {
+  padding-top: 1.25rem;
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+
+.operations-page .admin-enforcement > header {
+  margin-bottom: 1rem;
+}
+
+.operations-page .admin-enforcement-history {
+  padding: 0.7rem 0.7rem 0.7rem 1.8rem;
+  background: var(--paper);
+  border-radius: 0.5rem;
+}
+
+.operations-page .admin-actions {
+  margin-top: 1rem;
+}
+
+.operations-page .admin-badge.route-badge {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.operations-page .security-readiness {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.operations-page .security-readiness > span:last-child {
+  font-size: 0.8rem;
+}
+
+.operations-page .security-program-terms {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  align-items: start;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.operations-page .security-program-terms > .admin-card {
+  margin: 0;
+}
+
+.operations-page .security-program-terms > .admin-card:last-child {
+  grid-column: 1 / -1;
+}
+
+.operations-page .security-program-terms .admin-facts {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.operations-page .security-program-terms > .admin-card:last-child .admin-facts {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+}
+
+.operations-page .security-program-terms .admin-card > p {
+  font-size: 0.83rem;
+  line-height: 1.55;
+  color: var(--muted);
+  margin-bottom: 0;
+}
+
+.operations-page .security-award-split {
+  gap: 0.6rem;
+  margin-bottom: 1.2rem;
+}
+
+.operations-page .security-award-split > div {
+  padding: 0.85rem;
+  border-top-width: 0.35rem;
+  border-radius: 0.3rem;
+  background: var(--paper);
+}
+
+.operations-page .security-award-split > div:first-child {
+  color: var(--operations-green);
+}
+
+.operations-page .security-award-split > div:last-child {
+  color: var(--operations-blue);
+}
+
+.operations-page .security-award-split span {
+  font-size: 0.78rem;
+}
+
+.operations-page .security-award-split strong {
+  font-size: clamp(1rem, 2.2vw, 1.4rem);
+  overflow-wrap: anywhere;
+}
+
+.operations-page .security-classification {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+}
+
+.operations-page .security-classification > summary {
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.operations-page .security-classification > summary > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 400;
+  margin-left: 0.5rem;
+}
+
+.operations-page .security-classification > div {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.operations-page .security-next-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 1rem;
+  background: #9cc9ff0c;
+  border-left: 3px solid var(--operations-blue);
+  border-radius: 0.3rem;
+  line-height: 1.5;
+}
+
+.operations-page .security-next-step > svg {
+  color: var(--operations-blue);
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: none;
+  margin-top: 0.15rem;
+}
+
+.operations-page .security-due {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 0.3rem;
+}
+
+.operations-page .security-case-choice {
+  border-radius: 0.65rem;
+  background: var(--surface);
+}
+
+.operations-page .security-case-choice[aria-pressed="true"] {
+  border-color: var(--operations-blue);
+  background: #9cc9ff0a;
+}
+
+.operations-page .security-case-choice > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.operations-page .security-case-choice > span:first-child {
+  color: var(--operations-blue);
+}
+
+.operations-page .evidence-lookup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 1rem;
+}
+
+.operations-page .evidence-lookup .form-field {
+  margin: 0;
+}
+
+.operations-page .evidence-lookup .button {
+  margin: 0;
+}
+
+.operations-page .evidence-run .operations-facts > div:nth-child(3),
+.operations-page .evidence-object .operations-facts > div:last-child {
+  grid-column: 1 / -1;
+}
+
+.operations-page .evidence-object {
+  min-width: 0;
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line-strong);
+}
+
+.operations-page .evidence-inspection {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.operations-page .evidence-inspection .form-field {
+  margin: 0;
+}
+
+.operations-page .evidence-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .operations-page .security-program-terms,
+  .operations-page .evidence-lookup,
+  .operations-page .evidence-inspection {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .operations-page .evidence-lookup .button,
+  .operations-page .evidence-inspection .button {
+    justify-self: start;
+  }
+}

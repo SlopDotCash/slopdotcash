@@ -22,6 +22,7 @@ import {
   type PointsJournal,
   pointMembers,
   pointRevisionId,
+  reconcilePointPenalties,
   retainedBatchOwnedKeys,
 } from "../src/lib/points";
 import { findHistoricalRepository, findProject } from "../src/lib/projects.mjs";
@@ -32,6 +33,8 @@ function hash(s: string) {
 }
 export async function loadPublishedPoints(
   bootstrap = false,
+  wait: (milliseconds: number) => Promise<void> = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
 ): Promise<PointsJournal | null> {
   let cursor: number | null = 0;
   let batch: string | undefined;
@@ -40,15 +43,28 @@ export async function loadPublishedPoints(
     const url = new URL("https://slop.cash/api/v1/points/journal");
     url.searchParams.set("after", String(cursor));
     if (batch) url.searchParams.set("batch", batch);
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(30000),
-      headers: { Accept: "application/json" },
-    });
-    const value = (await readBoundedJson(
-      response,
-      8 * 1024 * 1024,
-      "published points",
-    )) as Record<string, unknown>;
+    let response: Response;
+    let value: Record<string, unknown>;
+    for (let attempt = 0; ; attempt++) {
+      response = await fetch(url, {
+        signal: AbortSignal.timeout(30000),
+        headers: { Accept: "application/json" },
+      });
+      value = (await readBoundedJson(
+        response,
+        8 * 1024 * 1024,
+        "published points",
+      )) as Record<string, unknown>;
+      // Retry only the known transient database refusal, at the same cursor
+      // and batch. Three 30-second requests plus two 15-second waits at most.
+      if (
+        response.status !== 503 ||
+        value.error !== "points_unavailable" ||
+        attempt === 2
+      )
+        break;
+      await wait(15000);
+    }
     if (
       bootstrap &&
       cursor === 0 &&
@@ -385,6 +401,11 @@ export async function generatePoints(
   journal = applyRetainedHistoryBatch(
     journal,
     reviewedAwards,
+    hash(JSON.stringify(reviewed)),
+    now,
+  );
+  journal = reconcilePointPenalties(
+    journal,
     hash(JSON.stringify(reviewed)),
     now,
   );

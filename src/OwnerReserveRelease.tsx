@@ -21,12 +21,15 @@ const HELD: Record<string, string> = {
   "prior-reserve-transition":
     "This reserve has already changed. It cannot use this repair.",
 };
+/** Session storage prefix for a project's submitted reserve releases. */
+export const releaseStoragePrefix = (projectId: string) =>
+  `slop:monthly-release:v1:${projectId}:`;
 export default function OwnerReserveRelease({
   view,
 }: {
   view: MonthlyOwnerView;
 }) {
-  const key = `slop:monthly-release:v1:${view.projectId}:${view.period}:${view.deployment?.network}`;
+  const key = `${releaseStoragePrefix(view.projectId)}${view.period}:${view.deployment?.network}`;
   const [initial] = useState(() => {
     try {
       const raw = sessionStorage.getItem(key);

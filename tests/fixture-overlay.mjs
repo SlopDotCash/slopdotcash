@@ -10,9 +10,12 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 import { RAW_PROJECT_DEFINITIONS } from "./fixtures/project-registry.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -21,11 +24,19 @@ const fixtures = join(repositoryRoot, "tests", "fixtures");
 /** Copies the frozen history into `target`, the root of a repository copy. */
 export function copyFixtureHistory(target) {
   const history = join(fixtures, "history");
-  cpSync(history, target, { recursive: true });
+  cpSync(history, target, {
+    recursive: true,
+    filter(source, destination) {
+      if (!source.endsWith(".json.gz")) return true;
+      mkdirSync(dirname(destination), { recursive: true });
+      writeFileSync(destination.slice(0, -3), gunzipSync(readFileSync(source)));
+      return false;
+    },
+  });
   for (const project of readdirSync(join(history, "cycles")))
     for (const cycle of readdirSync(join(history, "cycles", project))) {
       const snapshot = join("cycles", project, cycle, "source-snapshot.json");
-      if (!existsSync(join(history, snapshot)))
+      if (!existsSync(join(target, snapshot)))
         copyFileSync(
           join(target, "cycles", "eliza", cycle, "source-snapshot.json"),
           join(target, snapshot),

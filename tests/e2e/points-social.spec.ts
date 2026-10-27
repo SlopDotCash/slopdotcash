@@ -7,7 +7,7 @@ const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
 
-test("social membership preserves past points and connection privacy without new awards", async ({
+test("social membership preserves past points and discloses public connections without new awards", async ({
   page,
 }, info) => {
   const me = {
@@ -28,6 +28,14 @@ test("social membership preserves past points and connection privacy without new
     verifiedAt: me.joinedAt,
     public: 1,
   };
+  const connectionStarts: boolean[] = [];
+  const authorizationUrl = "https://x.com/i/oauth2/authorize?fixture=public";
+  await page.route(authorizationUrl, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "Synthetic X authorization",
+    }),
+  );
   // Serve the built bytes at the product origin without a second HTTP proxy.
   // Proxy requests can outlive navigation and reset reused localhost sockets.
   // Provider and membership responses below remain explicit doubles.
@@ -77,7 +85,11 @@ test("social membership preserves past points and connection privacy without new
         account,
         award: { points: 10, awardedAt: me.joinedAt },
       };
-    else if (path.endsWith("/x/disconnect")) {
+    else if (path.endsWith("/x/start")) {
+      expect(route.request().method()).toBe("POST");
+      connectionStarts.push(route.request().postDataJSON().public);
+      value = { authorizationUrl };
+    } else if (path.endsWith("/x/disconnect")) {
       expect(route.request().method()).toBe("POST");
       account = null;
       value = { disconnected: true };
@@ -208,4 +220,16 @@ test("social membership preserves past points and connection privacy without new
       .locator("..")
       .locator("strong"),
   ).toHaveText("15");
+  await page.waitForLoadState("networkidle");
+  await page.goto(`${site}/account`);
+  await expect(
+    social.getByText(
+      "Connecting X is optional. Your X profile link will be public.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  expect(connectionStarts).toEqual([]);
+  await social.getByRole("button", { name: "Connect X", exact: true }).click();
+  await expect(page).toHaveURL(authorizationUrl);
+  expect(connectionStarts).toEqual([true]);
 });

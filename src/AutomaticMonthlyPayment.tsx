@@ -26,7 +26,7 @@ import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
-import { WalletConnection } from "./Presentation";
+import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
 
 type Pending = {
   version: 1;
@@ -255,12 +255,30 @@ export function AutomaticMonthlyPayment({
       className="admin-card vault-actions"
       aria-label={`Automatic monthly payment · ${networkLabel(deployment.network)}`}
     >
-      <h3>Automatic monthly payment · {networkLabel(deployment.network)}</h3>
+      <h3>
+        Automatic monthly payment ·{" "}
+        <NetworkName chain={ESCROW_NETWORKS[deployment.network].chain}>
+          {networkLabel(deployment.network)}
+        </NetworkName>
+      </h3>
       <p>
-        Commits each month&apos;s awards from this vault after the month ends
-        (UTC), up to the monthly amount. Only the vault owner{" "}
-        <code>{deployment.owner}</code> can change it.
+        Commits each month&apos;s awards after the month ends (UTC), up to the
+        monthly amount. Only the vault owner can change it.
       </p>
+      <details
+        className="vault-contract-details"
+        open={Boolean(review || pending)}
+      >
+        <summary>Owner details</summary>
+        <dl className="vault-addresses">
+          <div>
+            <dt>Owner</dt>
+            <dd>
+              <code>{deployment.owner}</code>
+            </dd>
+          </div>
+        </dl>
+      </details>
       {error && (
         <p role="alert" className="form-error">
           {error}
@@ -291,15 +309,9 @@ export function AutomaticMonthlyPayment({
             ? "Reconnect to check this transaction"
             : "Connect the vault owner's wallet"
         }
-        empty={
-          <>
-            {solana
-              ? "No Solana wallet with transaction support was found."
-              : "No EVM wallet was found."}{" "}
-            Open this page in your wallet's browser or enable its browser
-            extension.
-          </>
-        }
+        // The funding card above shows the missing wallet once; a saved
+        // request still needs it here to explain the disabled check.
+        empty={pending ? <NoWalletFound solana={solana} /> : undefined}
         onConnect={(provider) => void connect(provider)}
       />
       {pending ? (

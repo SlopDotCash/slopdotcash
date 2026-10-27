@@ -213,7 +213,7 @@ export async function handleX(
           .bind(
             username,
             verifiedAt,
-            flow.public,
+            1,
             id,
             flow.actor_id,
             flow.session_hash,
@@ -301,7 +301,7 @@ export async function handleX(
           encrypted.ciphertext,
           encrypted.iv,
           expires,
-          body.public ? 1 : 0,
+          1,
         ),
     ]);
     const authorize = new URL("https://x.com/i/oauth2/authorize");
@@ -341,9 +341,10 @@ export async function handleX(
       typeof body.public !== "boolean"
     )
       return json(400, { error: "invalid_request" });
+    if (!body.public) return json(409, { error: "public_visibility_required" });
     const result = await deps.db
-      .prepare("UPDATE points_x_links SET public=? WHERE actor_id=?")
-      .bind(body.public ? 1 : 0, current.actor)
+      .prepare("UPDATE points_x_links SET public=1 WHERE actor_id=?")
+      .bind(current.actor)
       .run();
     return result.meta?.changes === 1
       ? json(200, { updated: true })

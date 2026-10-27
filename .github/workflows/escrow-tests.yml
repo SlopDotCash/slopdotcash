@@ -10,6 +10,8 @@ on:
       - 'workers/payments/**'
       - 'workers/security-payments/**'
       - 'workers/payment-executor/**'
+      - 'workers/fee-converter/**'
+      - 'backend/fee-conversions/**'
       - 'workers/referral-accrual/**'
       - 'backend/referrals/**'
       - 'src/lib/payments/**'
@@ -53,11 +55,92 @@ on:
 permissions:
   contents: read
 
+env:
+  SLOP_SOLANA_BUILD_IMAGE: solanafoundation/anchor@sha256:facc4ebd0738ba7ebc1eb4ef000deab6b37e7747960d3f400c73c40c5421b5de
+
 concurrency:
   group: escrow-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  solana-verifiable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact-id: ${{ steps.program.outputs.artifact-id }}
+      build-attempt: ${{ steps.manifest.outputs.attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build the deployable Solana program in the pinned image
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/amd64 "$SLOP_SOLANA_BUILD_IMAGE"
+          mkdir -p "$RUNNER_TEMP/solana-verifiable"
+          docker run --rm --platform linux/amd64 "$SLOP_SOLANA_BUILD_IMAGE" \
+            sh -c 'anchor --version; solana --version; cargo --version; rustc --version' \
+            > "$RUNNER_TEMP/solana-verifiable/toolchain.txt"
+          # Same /workdir and target directory as Anchor 0.32.1 --verifiable.
+          # Calling its build command directly avoids the later host IDL step.
+          docker run --rm --platform linux/amd64 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/contracts/solana,target=/workdir" \
+            --workdir /workdir \
+            --env CARGO_TARGET_DIR=/workdir/docker-target \
+            "$SLOP_SOLANA_BUILD_IMAGE" \
+            cargo build-sbf --manifest-path programs/slop-escrow/Cargo.toml \
+              --tools-version v1.52 -- --locked
+          cp contracts/solana/docker-target/deploy/slop_escrow.so \
+            "$RUNNER_TEMP/solana-verifiable/slop_escrow.so"
+      - name: Bind the program artifact to its source and build
+        id: manifest
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          output = Path(os.environ["RUNNER_TEMP"]) / "solana-verifiable"
+          program = (output / "slop_escrow.so").read_bytes()
+          if not program.startswith(b"\x7fELF"):
+              raise SystemExit("The program build did not produce an ELF artifact")
+          digest = hashlib.sha256(program).hexdigest()
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          tree = subprocess.check_output(
+              ["git", "rev-parse", "HEAD:contracts/solana"], text=True
+          ).strip()
+          manifest = {
+              "schemaVersion": 1,
+              "sourceCommit": commit,
+              "solanaSourceTree": tree,
+              "buildImage": os.environ["SLOP_SOLANA_BUILD_IMAGE"],
+              "platform": "linux/amd64",
+              "platformTools": "v1.52",
+              "command": "cargo build-sbf --manifest-path programs/slop-escrow/Cargo.toml --tools-version v1.52 -- --locked",
+              "toolchain": (output / "toolchain.txt").read_text().splitlines(),
+              "file": "slop_escrow.so",
+              "sha256": digest,
+              "sizeBytes": len(program),
+              "workflowRun": os.environ["GITHUB_RUN_ID"],
+              "workflowAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
+          }
+          (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          (output / "SHA256SUMS").write_text(f"{digest}  slop_escrow.so\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+          echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: program
+        with:
+          name: solana-verifiable-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/solana-verifiable/
+          if-no-files-found: error
+          retention-days: 30
+
   evm:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -96,6 +179,10 @@ jobs:
       - run: bun run test:contracts:evm
       - run: bun run test:payments
       - run: bun run test:referral-accrual:anvil
+      - name: Exercise fee conversion and claim recovery on an isolated local chain
+        env:
+          SLOP_TEST_CLAIM_FAULTS: before,lease,finalized-role
+        run: bun run test:fee-converter:fork --local
       - run: bunx playwright install --with-deps chromium
       - name: Load deployed public ledger for browser checks
         run: |
@@ -140,6 +227,7 @@ jobs:
           retention-days: 30
 
   solana:
+    needs: solana-verifiable
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -168,14 +256,37 @@ jobs:
             --require-hashes \
             --requirement "$RUNNER_TEMP/slop-python-requirements.txt"
 
+      - name: Require the paired producer artifact
+        env:
+          ARTIFACT_ID: ${{ needs.solana-verifiable.outputs.artifact-id }}
+          BUILD_ATTEMPT: ${{ needs.solana-verifiable.outputs.build-attempt }}
+        run: |
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BUILD_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.solana-verifiable.outputs.artifact-id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/solana-verifiable
       - run: bash contracts/solana/scripts/bootstrap-linux.sh
       - run: bun run test:contracts:solana
+        env:
+          SLOP_SOLANA_TEST_ARTIFACT: ${{ runner.temp }}/solana-verifiable
+          SLOP_SOLANA_ARTIFACT_ATTEMPT: ${{ needs.solana-verifiable.outputs.build-attempt }}
+      - name: Verify the lifecycle-tested program matches the retained artifact
+        run: |
+          set -euo pipefail
+          (cd "$RUNNER_TEMP/solana-verifiable" && sha256sum --check SHA256SUMS)
+          cmp contracts/solana/target/deploy/slop_escrow.so \
+            "$RUNNER_TEMP/solana-verifiable/slop_escrow.so"
       - name: Retain safe validator failure evidence
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: solana-transaction-failures-${{ github.event.pull_request.head.sha || github.sha }}
-          path: contracts/solana/.local/failure-evidence/*.json
+          path: |
+            contracts/solana/.local/failure-evidence/*.json
+            contracts/solana/.local/test-program.json
           if-no-files-found: ignore
           retention-days: 30
       - run: bunx playwright install --with-deps chromium

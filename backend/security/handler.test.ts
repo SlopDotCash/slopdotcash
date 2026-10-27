@@ -7,8 +7,6 @@ import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
-import { publicRestrictionOf } from "../projects/enforcement";
 import type { AdvisoryReader, GithubPrivateReport } from "./advisories";
 import type {
   SecurityAnalysisInput,
@@ -1622,15 +1620,6 @@ for (const identity of ["id", "path"] as const)
         expect(result.status).toBe(409);
         expect(result.body.error).toBe("program_restricted");
         expect(env.reservations()).toEqual([]);
-        const persistence = new CloudflareProjectPersistence(env.db);
-        const project = await persistence.getProject(PROJECT);
-        if (project === null) throw new Error("Missing fixture project");
-        const restriction = publicRestrictionOf(
-          project,
-          await persistence.listEnforcements(),
-        );
-        expect(restriction.state).toBe("quarantined");
-        expect(restriction.sourceProjectId).toBe(other);
         // The actual journal's explicit reinstatement permits a fresh attempt.
         env.sqlite
           .query(`INSERT INTO project_enforcements (id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)

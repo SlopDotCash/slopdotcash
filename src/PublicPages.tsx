@@ -1,14 +1,28 @@
-import { ChevronRight } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpen,
+  CalendarCheck,
+  ChevronRight,
+  Cpu,
+  GitPullRequest,
+  HandCoins,
+  ListChecks,
+  ReceiptText,
+  Search,
+  ShieldCheck,
+  Wallet,
+} from "lucide-react";
 import { useState } from "react";
 import { PENALTY_TABLE } from "../workers/slopbot/penalties";
+import chatgptMark from "./agent-logos/chatgpt.svg";
+import claudeMark from "./agent-logos/claude.svg";
+import grokMark from "./agent-logos/grok.svg";
+import metaMark from "./agent-logos/meta-ai.svg";
 import { Link } from "./Link";
 import { browserDeployment } from "./lib/browser-deployment";
-import {
-  type ModelOutcomeSummary,
-  modelIdentityKey,
-  summarizeModelOutcomes,
-} from "./lib/model-outcomes";
+import { modelIdentityKey, summarizeModelOutcomes } from "./lib/model-outcomes";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
+import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import {
   MAX_CREDITED_REVIEWERS,
   VALUE_SCORING_POLICY_EFFECTIVE_AT,
@@ -28,24 +42,26 @@ import {
   formatDate,
   formatPointsFromThirds,
   monthlyPoolLabel,
+  NetworkName,
   Pager,
   PaymentLifecycle,
   paymentStateLabel,
+  RoutePageHeader,
   reviewBudgetLabel,
+  StatusBadge,
   vaultStateLabel,
 } from "./Presentation";
 
 export function HowItWorksPage() {
   return (
-    <main className="shell evidence-page how-it-works">
-      <section className="evidence-page-hero">
-        <h1>How Slop works</h1>
-      </section>
+    <main className="shell evidence-page how-it-works route-guide">
+      <RoutePageHeader title="How Slop works" icon={<BookOpen />} />
       <div className="how-paths">
         <section aria-labelledby="contributor-path">
           <h2 id="contributor-path">For contributors</h2>
           <ol className="mechanism-flow">
             <li>
+              <Search className="route-step-icon" aria-hidden="true" />
               <strong>1. Choose work</strong>
               <p>
                 Find an active <Link href="/#projects">project</Link>, read its
@@ -53,6 +69,7 @@ export function HowItWorksPage() {
               </p>
             </li>
             <li>
+              <GitPullRequest className="route-step-icon" aria-hidden="true" />
               <strong>2. Submit a PR</strong>
               <p>
                 Use any agent. Test the result and disclose the exact provider,
@@ -60,16 +77,19 @@ export function HowItWorksPage() {
               </p>
             </li>
             <li>
+              <ShieldCheck className="route-step-icon" aria-hidden="true" />
               <strong>3. Maintainer review</strong>
               <p>
-                Maintainers decide what merges. Only merged work earns points.
+                Maintainers accept the work. Accepted work and useful reviews
+                earn Points.
               </p>
             </li>
             <li>
+              <Wallet className="route-step-icon" aria-hidden="true" />
               <strong>4. Points and payout</strong>
               <p>
-                Merged work earns points. Funded projects with payments enabled
-                pay monthly by points share.
+                Funded projects pay monthly by accepted-work Points share when
+                payments are enabled.
               </p>
             </li>
           </ol>
@@ -78,16 +98,17 @@ export function HowItWorksPage() {
           <h2 id="maintainer-path">For maintainers</h2>
           <ol className="mechanism-flow">
             <li>
+              <GitPullRequest className="route-step-icon" aria-hidden="true" />
               <strong>1. Add a project</strong>
               <p>
                 <Link href="/projects/new">
                   Add your repository and contribution rules
                 </Link>
-                . Install the free Slopbot; the project goes live when the
-                security scan passes.
+                . Install free Slopbot and complete the security checks.
               </p>
             </li>
             <li>
+              <Wallet className="route-step-icon" aria-hidden="true" />
               <strong>2. Fund the pool</strong>
               <p>
                 Only funds in the project vault pay awards. Unused funds roll
@@ -95,6 +116,7 @@ export function HowItWorksPage() {
               </p>
             </li>
             <li>
+              <ListChecks className="route-step-icon" aria-hidden="true" />
               <strong>3. Adjust awards</strong>
               <p>
                 Change proposed amounts within the cap before the monthly
@@ -102,6 +124,7 @@ export function HowItWorksPage() {
               </p>
             </li>
             <li>
+              <CalendarCheck className="route-step-icon" aria-hidden="true" />
               <strong>4. Automatic payment</strong>
               <p>
                 When payments are enabled, funded awards pay automatically 72
@@ -274,8 +297,7 @@ export function HowItWorksPage() {
           <summary>Does the model I use matter?</summary>
           <p>
             Not to your points. Disclose the provider, exact model, and client;
-            the declaration adds no points and shows on{" "}
-            <Link href="/models">Models</Link>. From November 2026, monthly and
+            the declaration adds no points. From November 2026, monthly and
             external-prize reward shares use accepted-work Points only. Optional
             traces add no payment weight. Older calculations and funded awards
             stay unchanged; unpaid September–October work stays subject to the
@@ -535,57 +557,60 @@ export function SponsorsPage({
     (project) => project.reward.kind === "external-prize-share",
   );
   return (
-    <main className="shell evidence-page">
-      <section className="evidence-page-hero">
-        <h1>Fund a project.</h1>
-        <p>
-          Deposit into a project&apos;s vault. When payments are enabled, funded
-          awards pay contributors automatically each month.
-        </p>
-      </section>
+    <main className="shell evidence-page route-sponsors">
+      <RoutePageHeader
+        title="Fund a project"
+        icon={<HandCoins />}
+        lead="Deposit into a project’s vault. Funded awards pay monthly when payments are enabled."
+      />
       <section className="custody-proof sponsor-pools">
         <h2>Projects</h2>
-        <section
-          className="plain-table-wrap"
-          aria-label="Project funding pools"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
-          tabIndex={0}
-        >
-          <table className="plain-table sponsor-pools-table">
-            <thead>
-              <tr>
-                <th scope="col">Project</th>
-                <th scope="col">Pool</th>
-                <th scope="col">Payments</th>
-                {hasReviewBudget ? <th scope="col">Review line</th> : null}
-                <th scope="col">Vault</th>
-              </tr>
-            </thead>
-            <tbody>
-              {PROJECTS.map((project) => {
-                return (
-                  <tr key={project.id}>
-                    <th scope="row">
-                      <Link href={`/projects/${project.slug}/funding`}>
-                        {project.name}
-                      </Link>
-                    </th>
-                    <td>{sponsorPoolLabel(project.reward)}</td>
-                    <td>{paymentStateLabel(project)}</td>
-                    {hasReviewBudget ? (
-                      <td>
-                        {project.reward.reviewBudget
-                          ? reviewBudgetLabel(project.reward.reviewBudget)
-                          : "none"}
-                      </td>
-                    ) : null}
-                    <td>{vaultStateLabel(project)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
+        <ul className="route-sponsor-grid" aria-label="Project funding pools">
+          {PROJECTS.map((project) => {
+            return (
+              <li className="route-sponsor-card" key={project.id}>
+                <Link
+                  className="route-sponsor-link"
+                  href={`/projects/${project.slug}/funding`}
+                >
+                  <strong>{project.name}</strong>
+                  <ArrowRight aria-hidden="true" />
+                </Link>
+                <p>{sponsorPoolLabel(project.reward)}</p>
+                {project.reward.chain ? (
+                  <NetworkName chain={project.reward.chain}>
+                    {NETWORK_NAMES[project.reward.chain]}
+                  </NetworkName>
+                ) : null}
+                <div className="route-sponsor-status">
+                  <StatusBadge
+                    tone={
+                      project.escrow?.deployments.length ? "info" : "neutral"
+                    }
+                  >
+                    Vault: {vaultStateLabel(project)}
+                  </StatusBadge>
+                  <StatusBadge
+                    tone={
+                      project.reward.paymentMode === "enabled"
+                        ? "success"
+                        : "neutral"
+                    }
+                  >
+                    Payments: {paymentStateLabel(project)}
+                  </StatusBadge>
+                </div>
+                {hasReviewBudget ? (
+                  project.reward.reviewBudget ? (
+                    <small>
+                      {reviewBudgetLabel(project.reward.reviewBudget)}
+                    </small>
+                  ) : null
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
       </section>
       <section className="worked-example sponsor-fee">
         <div>
@@ -698,6 +723,24 @@ export function SponsorsPage({
 
 const RECEIPTS_PAGE_SIZE = 25;
 
+function ModelMark({ model }: { model: string }) {
+  const key = model.toLowerCase();
+  const mark = key.startsWith("claude")
+    ? claudeMark
+    : key.startsWith("gpt") || key.startsWith("o1") || key.startsWith("o3")
+      ? chatgptMark
+      : key.startsWith("grok")
+        ? grokMark
+        : key.startsWith("muse") || key.startsWith("llama")
+          ? metaMark
+          : null;
+  return mark ? (
+    <img className="route-model-mark" src={mark} alt="" aria-hidden="true" />
+  ) : (
+    <Cpu className="route-model-mark" aria-hidden="true" />
+  );
+}
+
 export function ReceiptsPage({
   state,
   retry,
@@ -745,14 +788,14 @@ export function ReceiptsPage({
     (current + 1) * RECEIPTS_PAGE_SIZE,
   );
   return (
-    <main className="shell evidence-page receipt-page">
-      <section className="evidence-page-hero">
-        <h1>Run receipts</h1>
-        <p>
-          Model and usage are self-reported and not verified with the provider.
-        </p>
+    <main className="shell evidence-page receipt-page route-receipts">
+      <RoutePageHeader
+        title="Run receipts"
+        icon={<ReceiptText />}
+        lead="Model and usage are self-reported, not provider-verified."
+      >
         <DataNotice retry={retry} state={state} />
-      </section>
+      </RoutePageHeader>
       {state.status === "ready" && receipts.length > 0 ? (
         <label className="receipt-search">
           Find a receipt
@@ -812,6 +855,7 @@ export function ReceiptsPage({
               <details>
                 <summary>
                   <span>
+                    <ModelMark model={run.model} />
                     {run.provider}/{run.model}
                   </span>
                   <time dateTime={run.completedAt}>
@@ -862,251 +906,5 @@ export function ReceiptsPage({
         <Pager onPage={setPage} page={current} pages={pages} />
       ) : null}
     </main>
-  );
-}
-
-export function ModelsPage({
-  state,
-  retry,
-}: {
-  state: DataState;
-  retry: () => void;
-}) {
-  const summary =
-    state.status === "ready" ? summarizeModelOutcomes(state.snapshot) : null;
-  return (
-    <main className="shell evidence-page">
-      <section className="evidence-page-hero">
-        <h1>Models</h1>
-        <DataNotice retry={retry} state={state} />
-      </section>
-      {summary ? <ModelOutcomes summary={summary} /> : null}
-    </main>
-  );
-}
-
-function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
-  const { totals } = summary;
-  const count = new Intl.NumberFormat("en-US");
-  const percent = (part: number, whole: number) =>
-    `${whole > 0 ? Math.round((100 * part) / whole) : 0}%`;
-  const points = (value: number) => count.format(value);
-  const modelRows = summary.models
-    .filter((row) => row.mergedPullRequests > 0 || row.acceptedReviews > 0)
-    .slice(0, 30);
-  const largestMergedCount = Math.max(
-    1,
-    ...modelRows.map((row) => row.mergedPullRequests),
-  );
-  const concentrated = modelRows.filter(
-    (row) =>
-      row.mergedPullRequests >= 40 && (row.topContributorShare ?? 0) > 0.5,
-  );
-  if (totals.declarations === 0) {
-    return <EmptyState text="No model declarations yet." />;
-  }
-  return (
-    <>
-      <div className="money-summary model-outcomes-summary">
-        <span>
-          <strong>
-            {percent(
-              totals.mergedPullRequestsWithModel,
-              totals.mergedPullRequests,
-            )}
-          </strong>{" "}
-          of merged pull requests name a model (
-          {count.format(totals.mergedPullRequestsWithModel)} of{" "}
-          {count.format(totals.mergedPullRequests)})
-        </span>
-        <details>
-          <summary>Declaration coverage</summary>
-          <span>
-            <strong>
-              {count.format(totals.mergedPullRequestsWithSignedRun)}
-            </strong>{" "}
-            of those carry a signed receipt
-          </span>
-          <span>
-            <strong>
-              {percent(totals.acceptedReviewsWithModel, totals.acceptedReviews)}
-            </strong>{" "}
-            of accepted reviews name a model
-          </span>
-        </details>
-      </div>
-
-      <section className="model-outcomes-section">
-        <h2>Accepted outcomes by model</h2>
-        <ol
-          className="model-outcome-list"
-          aria-label="Accepted outcomes by model"
-        >
-          {modelRows.map((row) => (
-            <li key={row.key}>
-              <h3 className="model-identity">
-                <span>{row.provider}/</span>
-                {row.model}
-              </h3>
-              <div className="model-outcome-metrics">
-                <span>
-                  <strong>{count.format(row.mergedPullRequests)}</strong> merged
-                  PRs
-                </span>
-                <span>
-                  <strong>
-                    {totals.mergedPullRequests === 0
-                      ? "n/a"
-                      : row.mergedPullRequests > 0 &&
-                          (100 * row.mergedPullRequests) /
-                            totals.mergedPullRequests <
-                            0.1
-                        ? "<0.1%"
-                        : `${((100 * row.mergedPullRequests) / totals.mergedPullRequests).toFixed(1)}%`}
-                  </strong>{" "}
-                  of all merged PRs
-                </span>
-                <span>
-                  <strong>{count.format(row.acceptedReviews)}</strong> accepted
-                  reviews
-                </span>
-              </div>
-              <div className="model-outcome-bar" aria-hidden="true">
-                <span
-                  style={{
-                    width: `${(100 * row.mergedPullRequests) / largestMergedCount}%`,
-                  }}
-                />
-              </div>
-              <details className="model-outcome-details">
-                <summary>Details</summary>
-                <dl>
-                  <div>
-                    <dt>Signed PRs</dt>
-                    <dd>
-                      {row.signedPullRequests > 0 ? (
-                        <Link
-                          href={`/receipts?q=${encodeURIComponent(row.key)}`}
-                        >
-                          {count.format(row.signedPullRequests)}
-                        </Link>
-                      ) : (
-                        "none"
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>PR points</dt>
-                    <dd>{points(row.pullRequestPoints)}</dd>
-                  </div>
-                  <div>
-                    <dt>Declaring contributors</dt>
-                    <dd>{count.format(row.contributors)}</dd>
-                  </div>
-                  <div>
-                    <dt>Outcomes from busiest contributor</dt>
-                    <dd
-                      className={
-                        (row.topContributorShare ?? 0) > 0.5
-                          ? "model-share-high"
-                          : undefined
-                      }
-                    >
-                      {row.topContributorShare === null
-                        ? "n/a"
-                        : `${count.format(row.topContributorOutcomes)} of ${count.format(row.mergedPullRequests + row.acceptedReviews)} outcomes`}
-                    </dd>
-                  </div>
-                </dl>
-              </details>
-            </li>
-          ))}
-        </ol>
-        <p className="model-outcomes-note">
-          Shows up to 30 models with at least one accepted outcome.
-        </p>
-      </section>
-
-      <details className="model-outcomes-section model-clients">
-        <summary>Clients from signed receipts</summary>
-        {summary.clients.length === 0 ? (
-          <EmptyState text="No signed receipts yet." />
-        ) : (
-          <ul className="model-outcome-list" aria-label="Client outcomes">
-            {summary.clients.map((row) => (
-              <li key={row.client}>
-                <h3 className="model-identity">{row.client}</h3>
-                <div className="model-outcome-metrics">
-                  <span>
-                    <strong>{count.format(row.signedRuns)}</strong> signed runs
-                  </span>
-                  <span>
-                    <strong>{count.format(row.mergedPullRequests)}</strong>{" "}
-                    merged PRs
-                  </span>
-                  <span>
-                    <strong>{count.format(row.contributors)}</strong>{" "}
-                    contributors
-                  </span>
-                </div>
-                <details className="model-outcome-details">
-                  <summary>Models and usage</summary>
-                  <dl>
-                    <div>
-                      <dt>Declared models</dt>
-                      <dd>
-                        <ul>
-                          {row.models.map((model) => (
-                            <li key={model.key}>
-                              <code>{model.key}</code> (
-                              {count.format(model.count)})
-                            </li>
-                          ))}
-                        </ul>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Median output tokens</dt>
-                      <dd>
-                        {row.medianOutputTokens === null
-                          ? "not reported"
-                          : `${count.format(row.medianOutputTokens)} (${count.format(row.runsWithExactUsage)} runs)`}
-                      </dd>
-                    </div>
-                  </dl>
-                </details>
-              </li>
-            ))}
-          </ul>
-        )}
-      </details>
-
-      <details className="model-outcomes-section">
-        <summary>Methodology and limitations</summary>
-        <ul className="model-outcomes-notes">
-          <li>
-            This is not a benchmark. Contributors choose their own tasks, repos
-            and models.
-          </li>
-          <li>
-            Results reflect who uses each model.
-            {concentrated.length > 0
-              ? ` Of the models with 40 or more merged PRs, ${concentrated
-                  .map(
-                    (row) =>
-                      `${row.key} (${percent(row.topContributorShare ?? 0, 1)})`,
-                  )
-                  .join(
-                    ", ",
-                  )} take over half of their outcomes from one contributor.`
-              : ""}
-          </li>
-          <li>
-            Declarations and receipts are not verified with the model provider.
-          </li>
-          <li>Points record contributions; they are not money.</li>
-        </ul>
-      </details>
-    </>
   );
 }

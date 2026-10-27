@@ -5,7 +5,9 @@ import {
   ChevronRight,
   Clipboard,
   ExternalLink,
+  FolderGit2,
   Plus,
+  Wallet,
 } from "lucide-react";
 import {
   lazy,
@@ -57,11 +59,15 @@ import {
   formatDate,
   formatDateTime,
   formatMicroUsdc,
+  MetricGrid,
+  MetricTile,
   monthlyPoolPointsOnly,
   monthlyPoolUnfunded,
   NotFound,
   paymentStateLabel,
+  RoutePageHeader,
   reviewBudgetLabel,
+  StatusBadge,
   vaultStateLabel,
 } from "./Presentation";
 import { ProjectRiskFlag } from "./ProjectRiskFlag";
@@ -99,10 +105,7 @@ const SponsorsPage = lazy(() =>
 const ReceiptsPage = lazy(() =>
   import("./PublicPages").then((module) => ({ default: module.ReceiptsPage })),
 );
-const ModelsPage = lazy(() =>
-  import("./PublicPages").then((module) => ({ default: module.ModelsPage })),
-);
-const OwnerAwardsPage = lazy(() => import("./OwnerAwards"));
+const OwnerAwards = lazy(() => import("./OwnerAwards"));
 const ProjectProposalPage = lazy(() => import("./ProjectProposalPage"));
 const AdminPage = lazy(() => import("./Admin"));
 const InboxPage = lazy(() => import("./Inbox"));
@@ -144,13 +147,11 @@ type ProjectRouteKind =
   | "project"
   | "funding-project"
   | "manage-project"
-  | "security-program"
-  | "owner-awards";
+  | "security-program";
 type PageRouteKind =
   | "home"
   | "how-it-works"
   | "receipts"
-  | "models"
   | "sponsors"
   | "cycle-archive"
   | "unknown"
@@ -186,7 +187,6 @@ const ROUTES: Record<
   home: { snapshot: false, registry: "cached" },
   "how-it-works": { snapshot: false, registry: "independent" },
   receipts: { snapshot: true, registry: "cached" },
-  models: { snapshot: true, registry: "cached" },
   sponsors: { snapshot: true, registry: "cached" },
   "cycle-archive": { snapshot: false, registry: "cached" },
   unknown: { snapshot: false, registry: "cached" },
@@ -219,11 +219,6 @@ const ROUTES: Record<
   "funding-project": { snapshot: false, registry: "current" },
   "manage-project": { snapshot: false, registry: "current" },
   "security-program": { snapshot: false, registry: "current" },
-  "owner-awards": {
-    snapshot: false,
-    registry: "current",
-    privateTitle: "Monthly awards",
-  },
   cycle: { snapshot: true, registry: "cached" },
   profile: { snapshot: true, registry: "cached" },
 };
@@ -239,14 +234,12 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
   ["account", "account"],
   ["how-it-works", "how-it-works"],
   ["receipts", "receipts"],
-  ["models", "models"],
   ["sponsors", "sponsors"],
   ["cycles", "cycle-archive"],
 ]);
 
 /** Project pages at /projects/<id>/<section>. */
 const PROJECT_SECTIONS = new Map<string, ProjectRouteKind>([
-  ["awards", "owner-awards"],
   ["manage", "manage-project"],
   ["security", "security-program"],
   ["funding", "funding-project"],
@@ -323,12 +316,7 @@ function routeHead(route: Route): { title: string; path: string | null } {
   if (privateTitle) {
     return {
       title: pageTitle(privateTitle),
-      path:
-        route.kind === "owner-awards"
-          ? null
-          : route.kind === "security-cases"
-            ? "/security"
-            : `/${route.kind}`,
+      path: route.kind === "security-cases" ? "/security" : `/${route.kind}`,
     };
   }
   if (route.kind === "profile") {
@@ -1073,9 +1061,6 @@ function ProjectPaymentHistory({
           <Link href={`/projects/${project.slug}/funding`}>Manage funding</Link>
         )}
         <Link href={`/projects/${project.slug}/manage`}>Manage project</Link>
-        {project.escrow && (
-          <Link href={`/projects/${project.slug}/awards`}>Monthly awards</Link>
-        )}
       </div>
       {directState.status === "error" && !externalPrize ? (
         <p role="status">
@@ -1175,7 +1160,8 @@ function ProjectFunding({ project }: { project: ProjectDefinition }) {
           {index > 0 ? " · " : null}
           {networkLabel(snapshot.network)}: {amount(snapshot.freeBalance)}{" "}
           available · {amount(reservedGross(snapshot))} reserved
-          {vaultSnapshotStale(snapshot, totals.vault.staleAfterMs)
+          {totals.refreshError !== null ||
+          vaultSnapshotStale(snapshot, totals.vault.staleAfterMs)
             ? ` (stale, read ${formatDateTime(snapshot.observedAt)})`
             : null}
         </span>
@@ -1209,67 +1195,74 @@ function ProjectFundingPage({
   const [registered, setRegistered] = useState<ProjectDefinition | null>(null);
   const project = registered ?? original;
   return (
-    <main className="shell route-main funding-page">
-      <p className="breadcrumb">
-        <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-        <span>/</span>Funding
-      </p>
-      <h1>{project.name} funding</h1>
+    <main className="shell route-main funding-page route-funding">
+      <RoutePageHeader
+        title={<>{project.name} funding</>}
+        icon={<Wallet />}
+        eyebrow={
+          <>
+            <Link href={`/projects/${project.slug}`}>{project.name}</Link>
+            <span> / </span>Funding
+          </>
+        }
+        actions={
+          <MetricGrid
+            className={`route-funding-summary${project.escrow ? "" : " route-funding-summary--unfunded"}`}
+          >
+            <MetricTile
+              label={
+                project.reward.kind === "monthly-pool"
+                  ? "Monthly target"
+                  : "Advertised prize"
+              }
+              value={
+                monthlyPoolPointsOnly(project.reward)
+                  ? "$0 (Points only)"
+                  : project.reward.kind === "monthly-pool"
+                    ? project.reward.monthlyCapDisplay
+                    : (project.reward.externalOpportunity
+                        ?.advertisedAmountDisplay ?? "External")
+              }
+            />
+            {!project.escrow ? (
+              <MetricTile
+                label="Committed"
+                value={formatMicroUsdc(project.reward.committedMinor)}
+                detail={fundingStateLabel(project)}
+              />
+            ) : null}
+          </MetricGrid>
+        }
+      />
       <section className="funding-records">
-        <dl className="funding-status-grid">
-          <div>
-            <dt>
-              {project.reward.kind === "monthly-pool"
-                ? "Monthly target"
-                : "Advertised prize"}
-            </dt>
-            <dd>
-              {monthlyPoolPointsOnly(project.reward)
-                ? "$0 (Points only)"
-                : project.reward.kind === "monthly-pool"
-                  ? project.reward.monthlyCapDisplay
-                  : (project.reward.externalOpportunity
-                      ?.advertisedAmountDisplay ?? "External")}
-            </dd>
+        {!project.escrow ? (
+          <div className="route-funding-status">
+            <StatusBadge>Payments: {paymentStateLabel(project)}</StatusBadge>
+            <StatusBadge>Project vault: {vaultStateLabel(project)}</StatusBadge>
           </div>
-          {!project.escrow ? (
-            <>
-              <div>
-                <dt>Funding</dt>
-                <dd>{fundingStateLabel(project)}</dd>
-              </div>
-              <div>
-                <dt>Committed</dt>
-                <dd>{formatMicroUsdc(project.reward.committedMinor)}</dd>
-              </div>
-              <div>
-                <dt>Payments</dt>
-                <dd>{paymentStateLabel(project)}</dd>
-              </div>
-              <div>
-                <dt>Project vault</dt>
-                <dd>{vaultStateLabel(project)}</dd>
-              </div>
-            </>
-          ) : null}
-        </dl>
+        ) : null}
         {project.reward.kind === "external-prize-share" ? (
           <p>The organizer pays this prize.</p>
         ) : project.escrow ? (
           <EscrowFunding project={project} onRegistered={setRegistered} />
         ) : (
-          <div>
-            <EmptyState text="This project has no vault yet." />
-            <p>
-              Choose a monthly amount in{" "}
-              <Link href={`/projects/${project.slug}/manage`}>
-                project settings
-              </Link>{" "}
-              to enable vault setup.
-            </p>
+          <div className="route-empty">
+            <Wallet aria-hidden="true" />
+            <div>
+              <p>This project has no vault yet.</p>
+              <Link
+                className="button secondary-button"
+                href={`/projects/${project.slug}/manage`}
+              >
+                Set up funding
+              </Link>
+            </div>
           </div>
         )}
       </section>
+      {project.escrow ? (
+        <OwnerAwards key={project.id} project={project} />
+      ) : null}
     </main>
   );
 }
@@ -1297,7 +1290,7 @@ function ProjectPage({
     ? project.headline.slice(headlinePrefix.length)
     : null;
   return (
-    <main>
+    <main className="route-project">
       <section className="project-hero">
         <div className="shell">
           <DataNotice state={state} retry={retry} />
@@ -1308,23 +1301,26 @@ function ProjectPage({
           </p>
           <div className="project-hero-grid">
             <div>
-              <h1>
-                {project.status === "paused" ||
-                (project.reward.kind === "monthly-pool" &&
-                  project.reward.paymentMode !== "enabled") ||
-                monthlyPoolPointsOnly(project.reward) ? (
-                  project.name
-                ) : headlineAction ? (
-                  <>
-                    Make money{" "}
-                    <span className="project-headline-action">
-                      {headlineAction}
-                    </span>
-                  </>
-                ) : (
-                  project.headline
-                )}
-              </h1>
+              <div className="route-project-title">
+                <FolderGit2 aria-hidden="true" />
+                <h1>
+                  {project.status === "paused" ||
+                  (project.reward.kind === "monthly-pool" &&
+                    project.reward.paymentMode !== "enabled") ||
+                  monthlyPoolPointsOnly(project.reward) ? (
+                    project.name
+                  ) : headlineAction ? (
+                    <>
+                      Make money{" "}
+                      <span className="project-headline-action">
+                        {headlineAction}
+                      </span>
+                    </>
+                  ) : (
+                    project.headline
+                  )}
+                </h1>
+              </div>
               <p className="hero-copy">
                 {monthlyPoolPointsOnly(project.reward)
                   ? project.contribution?.approvedScope ||
@@ -1541,8 +1537,6 @@ function AppContent({ route }: { route: Route }) {
     content = <SponsorsPage retry={retry} state={state} />;
   else if (route.kind === "receipts")
     content = <ReceiptsPage retry={retry} state={state} />;
-  else if (route.kind === "models")
-    content = <ModelsPage retry={retry} state={state} />;
   else if (route.kind === "cycle-archive")
     content = <CycleArchivePage retry={retryArchive} state={archive} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;
@@ -1551,10 +1545,6 @@ function AppContent({ route }: { route: Route }) {
   else if (route.kind === "security-program")
     content = withProject(route, (project) => (
       <SecurityProgramPage key={project.id} project={project} />
-    ));
-  else if (route.kind === "owner-awards")
-    content = withProject(route, (project) => (
-      <OwnerAwardsPage key={project.id} project={project} />
     ));
   else if (route.kind === "manage-project")
     content = withProject(route, (project) => (

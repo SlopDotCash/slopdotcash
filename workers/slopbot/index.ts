@@ -211,7 +211,11 @@ export default {
       // published score applies each one once; a reversal removes it.
       const project = url.searchParams.get("project") ?? "";
       const after = url.searchParams.get("after") ?? "";
-      if (!/^[A-Za-z0-9_=-]{0,100}$/u.test(after))
+      const history = url.searchParams.get("history");
+      if (
+        !/^[A-Za-z0-9_=-]{0,100}$/u.test(after) ||
+        (history !== null && history !== "1")
+      )
         return Response.json(
           { error: "Invalid penalty query" },
           { status: 400 },
@@ -224,9 +228,16 @@ export default {
           );
         return Response.json(
           {
-            schemaVersion: "slop-penalties:v1",
+            schemaVersion: history
+              ? "slop-penalty-history:v1"
+              : "slop-penalties:v1",
             project,
-            ...(await activePenaltyPage(env.SLOPBOT_DB, project, after)),
+            ...(await activePenaltyPage(
+              env.SLOPBOT_DB,
+              project,
+              after,
+              history === "1",
+            )),
           },
           {
             headers: {

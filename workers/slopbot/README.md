@@ -105,9 +105,12 @@ to `"true"` after the explicit production qualification and activation review.
    removes the finding label and reverses the penalty. A later human close
    stays. The appeal escalates to a moderator, with the
    `slopbot: moderator` label, when the draft is rejected, the finding is
-   `scam`, the debit at stake is 24 thirds or more, the draft confidence is
-   below 0.9, or the appeal is unresolved 7 days after it opened. A moderator
-   in `PROJECT_MODERATOR_GITHUB_IDS` decides an escalated appeal with
+   `scam`, the appellant has an active participation ban, the debit at stake
+   is 24 thirds or more, the draft confidence is below 0.9, or the appeal is
+   unresolved 7 days after it opened. The account ban is checked again when
+   accepting a draft, including in the resolution write. Resolving this work
+   appeal never lifts the account ban. A moderator in
+   `PROJECT_MODERATOR_GITHUB_IDS` decides an escalated appeal with
    `/slopbot uphold` or `/slopbot deny`, never their own. Unset, no moderator
    decision is possible. A maintainer reopen always wins.
    The signature-verified webhook receipt binds a reopen to its item, sender,
@@ -544,9 +547,42 @@ Git blob SHA-1, UTF-8 bytes, byte length and exact added-line count before
 constructing the empty-file diff. Recovery is limited to 16 reads and 2 MiB
 total across both ranges. Each file must fit the remaining shared budget.
 Decoded bytes consume that budget even when later validation refuses them.
-Binary, modified, oversized or invalid files keep their missing-diff limitation. Publication uses the same collector
+This text recovery leaves binary, modified, oversized or invalid files unresolved. Publication uses the same collector
 and rechecks the recovered source. The recovered bodies stay in private source
 evidence; journal records contain their source digest, not the patch bodies.
+
+Added regular binary files have a separate, versioned `addedBinary` source proof.
+It retains the complete bytes as canonical base64, their length, Git blob SHA-1
+and SHA-256, and the immutable comparison commits and verified root trees. The
+collector proves absence at the comparison base and presence with mode `100644`
+at the head, then requires identical bytes in the accepted change and the one
+ordinary implementation commit. It uses the shared blob reader's 48-read,
+512 KiB per-file and 2 MiB decoded-byte limits across those binary scopes, plus
+at most 20,000 retained tree entries. Failed reads consume the existing budgets.
+This is one binary-recovery session per PR, not a new budget for each scope.
+The preexisting text-recovery readers keep their separate, unchanged budgets;
+2 MiB is not a new total limit for the whole collector. Private preparation
+also refuses binary proofs whose combined bodies exceed the session limits.
+Modified, renamed, removed, executable-mode and indirect binary changes remain
+unsupported. Text, empty files and Git LFS pointers cannot use this proof.
+
+Binary proofs do not manufacture patch lines or change GitHub's line counts.
+Every binary path retains its original work-unit claim and actor attribution.
+Their bytes and refs enter the source digest; authenticated import and
+publication collect them again instead of trusting uploaded proof fields.
+Old text-only source records retain their serialization and digest. A new
+binary proof creates a new source revision; it never rewrites an old record.
+
+The collector marks binary content `unviewed`. Byte identity proves which
+artifact was accepted, not what a recording depicts or whether a product works.
+A reviewer must inspect relevant media safely and record actual observations
+and limits in the source-bound assessment. Unviewable required evidence stays
+unresolved; filenames, hashes, test counts and acceptance alone prove no value.
+Text-only model requests keep the binary hashes, sizes, paths, claims and
+`unviewed` status, but omit the base64 bodies. The complete bodies remain in
+private source evidence and its digest. The model receives an explicit rule to
+leave media-dependent outcomes unresolved without actual viewing evidence;
+omitting the bytes is not a claim that the media was reviewed.
 
 For a rename with no patch and zero added or deleted lines, the collector
 checks the old path at the submitted merge base and the new path at the head.
@@ -1267,6 +1303,24 @@ The bounded recovery handles at most 16 added or modified text-diff paths and
 2 MiB of verified file reads, with 512 KiB per file. Unsupported changes, missing
 bytes, altered patches, or larger sources retain the original limitation and
 need dedicated Git evidence. No original capture is rewritten.
+
+An equal-inventory squash whose hunks moved after an unrelated parent edit can
+instead carry `acceptedPatchReplay`. This proof does not change `acceptedRange`
+or mark a dependency as imported. It preserves the submitted and accepted
+patches, requires identical hunk content and extents, finds each old hunk
+uniquely in the original accepted parent, and reconstructs the complete accepted
+file bytes. Ambiguous, overlapping, reordered or contextless modified-file
+hunks refuse. Added files require verified absence in the accepted parent.
+
+The replay supports at most 16 added or modified regular text paths. Complete,
+hash-verified ancestor trees prove each path's presence, absence and mode without
+enumerating unrelated subtrees. It retains the 20,000-entry tree bound and uses
+one 48-request allowance across tree and blob reads, plus the existing 512 KiB
+file and 2 MiB aggregate blob limits. No encoding or newline normalization is
+allowed. The proof records submitted, parent and accepted blob identities;
+their contents may differ because the accepted parent contains unrelated work.
+Fresh collection recomputes the proof and changes the source digest. It does
+not prove authorship, useful value, review eligibility or permission to publish.
 
 ### Omitted deleted-file evidence
 

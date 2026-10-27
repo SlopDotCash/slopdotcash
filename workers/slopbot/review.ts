@@ -1,7 +1,9 @@
 // Review pipeline for one issue or pull request revision (PRD BOT-04 to BOT-13).
 // The model only classifies. Every GitHub action is decided here, in code,
 // after independent state checks.
+
 import { notifySlopbotScamReview } from "../../backend/notifications/events";
+import { hasParticipationBan } from "../../backend/projects/account-bans";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { publishAppealComment } from "./appeal-publication";
 import {
@@ -1877,12 +1879,14 @@ async function triageAppeal(
   if (current.draft_confidence === null)
     throw new Error("Appeal draft was not stored");
   const penalty = await activePenalty(db, session.issue.node_id);
-  const reason = escalationFor({
-    category: finding,
-    debitThirds: penalty?.debit_thirds ?? 0,
-    moderatorReview: penalty?.moderator_review === 1,
-    draftConfidence: current.draft_confidence,
-  });
+  const reason = (await hasParticipationBan(db, current.appellant_github_id))
+    ? "the appellant has an active participation ban"
+    : escalationFor({
+        category: finding,
+        debitThirds: penalty?.debit_thirds ?? 0,
+        moderatorReview: penalty?.moderator_review === 1,
+        draftConfidence: current.draft_confidence,
+      });
   if (reason !== null)
     await escalateAppeal(
       db,
@@ -2094,7 +2098,7 @@ export async function applyAppealCommand(
   if (String(job.senderId) === env.SLOPBOT_APP_USER_ID) return "ignored";
   const session = await appealSession(env, job);
   if (typeof session === "string") return session;
-  const appeal = await latestAppealFor(db, session.issue.node_id);
+  let appeal = await latestAppealFor(db, session.issue.node_id);
   if (appeal === null) return "no open appeal";
   if (appeal.resolved_at !== null) {
     // Resume the recorded decision, including external writes interrupted
@@ -2130,6 +2134,21 @@ export async function applyAppealCommand(
           : null;
     if (by === null)
       return "only the appellant or a maintainer can answer the draft";
+    // A moderator may ban the account after triage but before the draft is
+    // accepted. Recheck the immutable actor ID before allowing resolution.
+    if (
+      appeal.escalated_at === null &&
+      (await hasParticipationBan(db, appeal.appellant_github_id))
+    ) {
+      await escalateAppeal(
+        db,
+        appeal.appeal_key,
+        "the appellant has an active participation ban",
+        moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+      );
+      appeal = (await appealByKey(db, appeal.appeal_key)) ?? appeal;
+      await publishAppealState(env, job, session, appeal, "escalation");
+    }
     if (appeal.escalated_at !== null) {
       // A rejection may have committed escalation before its comment response
       // was lost. Reconcile the recorded stage when that command is retried.
@@ -2196,12 +2215,23 @@ async function finishAppeal(
     appeal.appeal_key,
     resolution,
     by,
-    by !== "moderator",
+    by !== "moderator" ? appeal.appellant_github_id : undefined,
   );
   const current = await appealByKey(db, appeal.appeal_key);
   if (current === null) throw new Error("Appeal is missing");
-  if (current.resolved_at === null)
+  if (current.resolved_at === null) {
+    if (await hasParticipationBan(db, current.appellant_github_id)) {
+      await escalateAppeal(
+        db,
+        current.appeal_key,
+        "the appellant has an active participation ban",
+        moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+      );
+      const escalated = (await appealByKey(db, current.appeal_key)) ?? current;
+      await publishAppealState(env, job, session, escalated, "escalation");
+    }
     return "a Slop moderator decides this appeal";
+  }
   const { issue } = session;
   if (current.resolution === "upheld") {
     const closedBySlopbot = await store.count(

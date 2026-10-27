@@ -89,7 +89,8 @@ export type SkillPublicationDependencies = {
   /**
    * Security vetting of the revision's exact content, integration-branch head
    * and the digest of the template inputs the skills render from (VET-01,
-   * VET-07). Only "cleared" serves a skill or lists the project.
+   * VET-07). Only "cleared" serves a skill. Discovery also requires an
+   * active project so the index matches installer refusal of paused work.
    */
   vettingClearance(
     project: ProjectRecord,
@@ -184,9 +185,14 @@ async function discovery(
     deps.listEnforcements(),
   ]);
   const template = await deps.loadTemplate();
+  // Paused projects may still be cleared (legacy exemption) and may serve
+  // skill bytes for inspection, but the bootstrap skill and installer only
+  // accept active projects. Keep the discovery index identical to that gate.
   const candidates = all.filter(
     (project) =>
-      listed(project, records) && publishesGeneratedSkills(project.manifest),
+      project.status === "active" &&
+      listed(project, records) &&
+      publishesGeneratedSkills(project.manifest),
   );
   const clearances = await Promise.all(
     candidates.map((project) =>

@@ -6,24 +6,14 @@ interface IReferralToken {
     function transfer(address to, uint256 value) external returns (bool);
 }
 
-/// @notice Cumulative Merkle distributor for the Slop Cash S.P. project-referral program (PRD section 11,
-/// "Referral program"). The contract holds one ERC-20. A bounded poster publishes one root per epoch
-/// over leaves of (account, cumulative amount); each root becomes claimable CLAIM_DELAY after it is posted, and
-/// the owner may void it inside that window. Referrers pull their own tokens: claim(cumulative, proof) pays
-/// cumulative minus what the caller already claimed. Nobody pushes a transfer and nobody holds a recipient list.
-/// @dev Trust model. The poster chooses the root and the declared total; the contract cannot see inside a root,
-/// so what bounds the poster is this: a root pays nothing until CLAIM_DELAY has passed, the owner can void it in
-/// that window, claims against a root can never exceed its declared total (totalClaimed <= activeTotal), the
-/// declared total can grow by at most epochCap above the highest total ever posted, live posts are at least
-/// postSpacing apart, and the balance plus what was already claimed must cover the total. A malicious root that
-/// the owner does not void can therefore redirect at most the unclaimed part of the previous total plus one
-/// epochCap; the off-chain watcher that rebuilds each root from the public accrual file is still required.
-/// The owner can void a pending root, pause (which freezes the objection window of a pending root and blocks
-/// posts, claims and rescue), change the poster, hand over ownership in two steps, and rescue the whole balance
-/// only after RESCUE_DELAY with no root going live and no unpause. A voided epoch keeps its index so the
-/// off-chain numbering never shifts. The token must have exact transfers and no transfer fee. Amounts are token
-/// base units. The contract reads only block.timestamp, never block.number, so Arbitrum Nitro block semantics
-/// on Robinhood Chain do not affect it.
+/// @notice Cumulative Merkle distributor for the referral program (PRD section 11).
+/// Roots are immediately claimable. The owner may void the latest root only before its first successful
+/// claim. Referrers pull their own tokens; nobody pushes a transfer or holds a recipient list.
+/// @dev The poster chooses the root and declared total. There is no protected intervention window: a
+/// compromised poster can win the race to a claim, and paid tokens cannot be clawed back. The independent
+/// watcher, separate owner key, pause, growth cap, post spacing and full funding checks remain required.
+/// The owner may rescue only after RESCUE_DELAY without a new live root or unpause. A void does not shorten
+/// that delay. Token transfers must be exact. All timing uses block.timestamp, never block.number.
 contract ReferralDistributor {
     struct Epoch {
         bytes32 root;
@@ -32,8 +22,8 @@ contract ReferralDistributor {
         bool voided;
     }
 
-    /// @notice Objection window between a post and the first claim against it.
-    uint64 public constant CLAIM_DELAY = 7 days;
+    /// @notice Claims are eligible immediately; retained for deployment/read compatibility.
+    uint64 public constant CLAIM_DELAY = 0;
     /// @notice The owner may sweep the balance only after this long with no live root and no unpause.
     uint64 public constant RESCUE_DELAY = 365 days;
 
@@ -47,11 +37,11 @@ contract ReferralDistributor {
     address public pendingOwner;
     address public poster;
     bool public paused;
-    /// @dev When the current pause began; the pending root's window is frozen from here.
-    uint64 private pausedAt;
+    /// @dev A successful claim after the latest post permanently seals that root against voiding.
+    bool private latestRootClaimed;
 
     Epoch[] private epochs;
-    /// @notice Root claims are verified against: the latest non-voided epoch whose delay has passed.
+    /// @notice Root claims are verified against: the latest non-voided epoch.
     bytes32 public activeRoot;
     /// @notice Declared total of the active root. Claims never exceed it in sum.
     uint256 public activeTotal;
@@ -145,16 +135,14 @@ contract ReferralDistributor {
         return epochs.length;
     }
 
-    /// @notice When claims against epoch `index` open, including any time the window spent frozen by a pause.
+    /// @notice When claims against epoch `index` became eligible.
     function claimableAt(uint256 index) public view returns (uint64) {
-        return windowEnd(epochs[index]);
+        return epochs[index].postedAt;
     }
 
-    /// @notice True while the latest epoch is posted, not voided and inside its objection window.
-    function hasPendingRoot() public view returns (bool) {
-        if (epochs.length == 0) return false;
-        Epoch storage last = epochs[epochs.length - 1];
-        return !last.voided && block.timestamp < windowEnd(last);
+    /// @notice No root waits for a claim-delay window under this contract revision.
+    function hasPendingRoot() public pure returns (bool) {
+        return false;
     }
 
     /// @notice The root claims would verify against now, its declared total and its epoch index (NONE if none).
@@ -166,7 +154,11 @@ contract ReferralDistributor {
     function rescueAvailableAt() public view returns (uint64) {
         (,, uint256 index) = liveRoot();
         uint64 liveAt = lastLiveAt;
-        if (index != NONE && index != activeIndex) liveAt = windowEnd(epochs[index]);
+        if (index != NONE && index != activeIndex) liveAt = epochs[index].postedAt;
+        // Even a subsequently voided immediate root cannot shorten the rescue wait.
+        if (epochs.length > 0 && epochs[epochs.length - 1].postedAt > liveAt) {
+            liveAt = epochs[epochs.length - 1].postedAt;
+        }
         uint64 since = liveAt > lastUnpausedAt ? liveAt : lastUnpausedAt;
         return since + RESCUE_DELAY;
     }
@@ -186,23 +178,13 @@ contract ReferralDistributor {
         return totalClaimed + amount <= total ? amount : 0;
     }
 
-    /// @dev End of an epoch's objection window. While paused, a window that was still open when the pause
-    /// began is frozen: it extends by the time paused so far. unpause() bakes that extension into postedAt.
-    function windowEnd(Epoch storage epoch) internal view returns (uint64) {
-        uint64 end = epoch.postedAt + CLAIM_DELAY;
-        if (paused && end > pausedAt) end += uint64(block.timestamp) - pausedAt;
-        return end;
-    }
-
-    /// @dev The root that claims verify against once promoted: the latest non-voided epoch past its window.
+    /// @dev The latest non-voided root is immediately eligible.
     function liveRoot() internal view returns (bytes32 root, uint256 total, uint256 index) {
         uint256 i = epochs.length;
         while (i > 0) {
             i -= 1;
             Epoch storage candidate = epochs[i];
-            if (candidate.voided) continue;
-            if (block.timestamp >= windowEnd(candidate)) return (candidate.root, candidate.total, i);
-            // The pending epoch: the live one is the previous non-voided epoch.
+            if (!candidate.voided) return (candidate.root, candidate.total, i);
         }
         return (bytes32(0), 0, NONE);
     }
@@ -211,15 +193,14 @@ contract ReferralDistributor {
     // Poster
     // ------------------------------------------------------------------
 
-    /// @notice Posts the root of epoch `index`, which must be the next index. Refused while a root is pending,
-    /// sooner than postSpacing after the last non-voided post, when the total falls below what was already
+    /// @notice Posts the next epoch. Refused sooner than postSpacing after the last non-voided post,
+    /// when the total falls below what was already
     /// claimed, when it exceeds the highest posted total by more than epochCap, or when the balance plus what
-    /// was already claimed does not cover it. Claims against it open CLAIM_DELAY later.
+    /// was already claimed does not cover it. Claims are eligible immediately.
     function postRoot(uint256 index, bytes32 root, uint256 newTotal) external whenNotPaused {
         if (msg.sender != poster) revert NotPoster();
         if (index != epochs.length) revert EpochOutOfOrder(epochs.length);
         if (root == bytes32(0)) revert InvalidInput();
-        if (hasPendingRoot()) revert RootPending();
         uint64 earliest = lastLivePostedAt + postSpacing;
         if (lastLivePostedAt != 0 && block.timestamp < earliest) revert TooSoon(earliest);
         activate();
@@ -229,6 +210,7 @@ contract ReferralDistributor {
         uint64 now64 = uint64(block.timestamp);
         epochs.push(Epoch({root: root, total: newTotal, postedAt: now64, voided: false}));
         lastLivePostedAt = now64;
+        latestRootClaimed = false;
         if (newTotal > highWaterTotal) highWaterTotal = newTotal;
         emit RootPosted(index, root, newTotal, now64 + CLAIM_DELAY);
     }
@@ -237,16 +219,17 @@ contract ReferralDistributor {
     // Owner
     // ------------------------------------------------------------------
 
-    /// @notice Drops the latest root inside its objection window. The epoch keeps its index; the previous
-    /// live root stays claimable and the next post carries the corrected totals. Works while paused.
+    /// @notice Drops the latest root only before its first successful claim. The previous root becomes
+    /// claimable again, with all earlier claim counters preserved. Works while paused; no token is recovered.
     function voidRoot(uint256 index) external onlyOwner {
         if (epochs.length == 0 || index != epochs.length - 1) revert EpochOutOfOrder(epochs.length);
         Epoch storage last = epochs[index];
         if (last.voided) revert AlreadyVoided();
-        if (block.timestamp >= windowEnd(last)) revert WindowClosed();
+        if (latestRootClaimed) revert WindowClosed();
         last.voided = true;
         // The spacing and high-water marks follow the latest non-voided post.
         (lastLivePostedAt, highWaterTotal) = previousLiveMarks(index);
+        activate();
         emit RootVoided(index, last.root);
     }
 
@@ -261,31 +244,19 @@ contract ReferralDistributor {
         return (0, 0);
     }
 
-    /// @notice Blocks posts, claims and rescue and freezes the objection window of a pending root.
+    /// @notice Blocks posts, claims and rescue. An unclaimed latest root remains voidable.
     function pause() external onlyOwner {
         if (paused) revert InvalidInput();
         paused = true;
-        pausedAt = uint64(block.timestamp);
         emit Paused(msg.sender);
     }
 
-    /// @notice Resumes. A root whose window was open at the pause keeps the time it had left.
+    /// @notice Resumes immediately; pause never creates or extends a claim delay.
     function unpause() external onlyOwner {
         if (!paused) revert InvalidInput();
-        uint256 extended = NONE;
-        uint64 newEnd = 0;
-        if (epochs.length > 0) {
-            Epoch storage last = epochs[epochs.length - 1];
-            uint64 end = last.postedAt + CLAIM_DELAY;
-            if (!last.voided && end > pausedAt) {
-                last.postedAt += uint64(block.timestamp) - pausedAt;
-                extended = epochs.length - 1;
-                newEnd = last.postedAt + CLAIM_DELAY;
-            }
-        }
         paused = false;
         lastUnpausedAt = uint64(block.timestamp);
-        emit Unpaused(msg.sender, extended, newEnd);
+        emit Unpaused(msg.sender, NONE, 0);
     }
 
     function setPoster(address newPoster) external onlyOwner {
@@ -310,11 +281,9 @@ contract ReferralDistributor {
     }
 
     /// @notice Sweeps the whole balance, unclaimed amounts included, once RESCUE_DELAY has passed with no root
-    /// going live and no unpause. Refused while paused or while a root is pending, so claimants always had the
-    /// full delay to claim. This ends the program: later claims fail for lack of balance.
+    /// going live and no unpause. Refused while paused, so claimants always had the full rescue delay to claim. This ends the program: later claims fail for lack of balance.
     function rescue(address to) external onlyOwner whenNotPaused {
         if (to == address(0)) revert InvalidInput();
-        if (hasPendingRoot()) revert RootPending();
         activate();
         uint64 earliest = rescueAvailableAt();
         if (block.timestamp < earliest) revert RescueTooEarly(earliest);
@@ -339,19 +308,22 @@ contract ReferralDistributor {
         if (totalClaimed + amount > activeTotal) revert TotalExceeded();
         claimed[msg.sender] = cumulative;
         totalClaimed += amount;
+        latestRootClaimed = true;
         emit Claimed(msg.sender, activeIndex, amount, cumulative);
         if (!token.transfer(msg.sender, amount)) revert TransferFailed();
     }
 
-    /// @dev Promotes the latest non-voided epoch past its window to the active root. Idempotent.
+    /// @dev Promotes the latest non-voided epoch, or clears a voided root. Idempotent.
     function activate() internal {
         (bytes32 root, uint256 total, uint256 index) = liveRoot();
-        if (index == NONE || index == activeIndex) return;
+        if (index == activeIndex) return;
         activeRoot = root;
         activeTotal = total;
         activeIndex = index;
-        lastLiveAt = windowEnd(epochs[index]);
-        emit RootActivated(index, root, total);
+        if (index != NONE) {
+            if (epochs[index].postedAt > lastLiveAt) lastLiveAt = epochs[index].postedAt;
+            emit RootActivated(index, root, total);
+        }
     }
 
     /// @dev Sorted-pair Merkle verification over the double-hashed leaf.

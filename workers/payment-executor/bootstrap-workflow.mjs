@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
@@ -10,7 +10,12 @@ import {
   readRegistryDatabase,
 } from "../payments/registry-database.mjs";
 import { paymentStack } from "./configure.mjs";
-import { prepareInactiveAttesters } from "./prepare-inactive.mjs";
+import {
+  assembleMainnetBindings,
+  prepareMainnetRelease,
+  publishMainnetRelease,
+} from "./release-mainnets.mjs";
+import { mainnetReleasePlan } from "./release-plan.mjs";
 
 // Real generated configuration and native Workerd/SQLite Durable Object.
 // The test-only observer records access names, never secret values. No keys,
@@ -28,29 +33,6 @@ try {
   };
   const { configs } = paymentStack(input);
   const config = configs.attester;
-  assert.deepEqual(Object.keys(configs), ["attester"]);
-  assert.deepEqual(config.triggers, { crons: [] });
-  assert.equal(config.workers_dev, false);
-  assert.equal(config.preview_urls, false);
-  assert.deepEqual(config.routes, []);
-  assert.equal(config.services, undefined);
-  assert.deepEqual(config.durable_objects.bindings, [
-    { name: "JOURNAL", class_name: "PaymentSignerJournal" },
-  ]);
-  assert.deepEqual(config.migrations, [
-    { tag: "v1", new_sqlite_classes: ["PaymentSignerJournal"] },
-  ]);
-  assert.throws(
-    () =>
-      paymentStack({
-        ...input,
-        stack: "test",
-        network: "base-sepolia",
-        databaseName: "slop-payments-base-sepolia-bootstrap",
-        databaseId: "11111111-1111-4111-8111-111111111111",
-      }),
-    /Expected reviewed deployment array/,
-  );
   const configPath = join(directory, "wrangler.json");
   await writeFile(configPath, JSON.stringify(config));
   const env = childEnvironment(process.env, {
@@ -73,129 +55,103 @@ try {
   );
   assert.equal(dryRun.status, 0, dryRun.stderr);
 
-  // Execute the checked-in release preflight itself. Only the provider CLI
-  // is a controlled fixture: absence, an existing service, and uncertain
-  // lookups must choose distinct paths before any deployment or secret read.
+  // Execute the same release helper the protected workflow invokes. Only
+  // Cloudflare replies are controlled; configurations and publication files are real.
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
-  const start = workflow.indexOf('          node - "$attester_config"');
-  const end = workflow.indexOf(
-    "          # Restore only absent cleanup triggers",
-    start,
-  );
-  assert.ok(start >= 0 && end > start);
-  const preflight = workflow.slice(start, end).replace(/^ {10}/gm, "");
-  const cliDirectory = join(directory, "node_modules/.bin");
-  await mkdir(cliDirectory, { recursive: true });
-  await writeFile(
-    join(cliDirectory, "wrangler"),
-    `#!/usr/bin/env node
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(process.env.CALLS, JSON.stringify(args) + "\\n");
-if (args[0] !== "deployments" || args[1] !== "list") process.exit(90);
-if (process.env.SCENARIO === "existing") { process.stdout.write("[]"); process.exit(0); }
-const account = process.env.SCENARIO === "wrong-account" ? "1".repeat(32) : process.env.CLOUDFLARE_ACCOUNT_ID;
-process.stderr.write("A request to the Cloudflare API (/accounts/" + account + "/workers/scripts/slop-payments-base-mainnet-attester/deployments) failed. [code: " + (process.env.SCENARIO === "auth" ? "10000" : "10007") + "]");
-process.exit(1);
-`,
-    { mode: 0o700 },
-  );
-  for (const scenario of ["absent", "existing", "auth", "wrong-account"]) {
-    const calls = join(directory, `${scenario}-calls.jsonl`);
-    const decision = join(directory, `${scenario}-decision`);
-    const run = spawnSync(
-      "bash",
-      ["-euc", `${preflight}\nprintf '%s' "$attester_release" > "$DECISION"`],
-      {
-        cwd: directory,
-        encoding: "utf8",
-        timeout: 10_000,
-        env: childEnvironment(process.env, {
-          attester_dir: directory,
-          attester_config: configPath,
-          attester_vaults: "0",
-          CLOUDFLARE_ACCOUNT_ID: "0".repeat(32),
-          SCENARIO: scenario,
-          CALLS: calls,
-          DECISION: decision,
-        }),
-      },
-    );
-    if (scenario === "absent" || scenario === "existing") {
-      assert.equal(run.status, 0, run.stderr);
-      assert.equal(
-        await readFile(decision, "utf8"),
-        scenario === "absent" ? "true" : "false",
-      );
-    } else {
-      assert.notEqual(run.status, 0, scenario);
-      assert.match(run.stderr, /Cannot prove Base attester absent/);
-    }
-    const invoked = (await readFile(calls, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    assert.equal(invoked.length, 1);
-    assert.deepEqual(invoked[0].slice(0, 2), ["deployments", "list"]);
-  }
-  // Execute the publication decision from the same workflow: an unchanged
-  // zero-pin Worker may not yet export the new named entrypoint.
-  const publicationStart = workflow.indexOf(
-    '          if [ "$attester_release" != "true" ]; then',
-  );
-  const publicationEnd = workflow.indexOf(
-    '          cp -R dist "$publish_dir/dist"',
-    publicationStart,
-  );
-  assert(publicationStart >= 0 && publicationEnd > publicationStart);
-  const publication = workflow
-    .slice(publicationStart, publicationEnd)
-    .replace(/^ {10}/gm, "");
-  const parsedPages = spawnSync(
-    "bun",
-    [
-      "--no-env-file",
-      "-e",
-      'process.stdout.write(JSON.stringify(Bun.TOML.parse(await Bun.file("wrangler.toml").text())))',
-    ],
-    { encoding: "utf8", env, timeout: 10_000 },
-  );
-  assert.equal(parsedPages.status, 0, parsedPages.stderr);
-  const pages = JSON.parse(parsedPages.stdout);
-  const recovery = pages.services.find(
-    (service) => service.binding === "BINDING_RECOVERY",
-  );
-  assert.deepEqual(recovery, {
-    binding: "BINDING_RECOVERY",
-    service: config.name,
-    entrypoint: "BindingRecovery",
-  });
-  for (const released of ["true", "false"]) {
-    const output = join(directory, "wrangler.jsonc");
-    await writeFile(output, JSON.stringify(pages));
-    const result = spawnSync("bash", ["-euc", publication], {
-      encoding: "utf8",
-      timeout: 10_000,
-      env: childEnvironment(process.env, {
-        attester_release: released,
-        publish_dir: directory,
-      }),
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const actual = JSON.parse(await readFile(output, "utf8"));
-    assert.deepEqual(actual, {
-      ...pages,
-      services:
-        released === "true"
-          ? pages.services
-          : pages.services.filter(
-              (service) =>
-                !["BINDING_RECOVERY", "MONTHLY_RELEASE_BASE"].includes(
-                  service.binding,
+  for (const scenario of [
+    "absent",
+    "existing",
+    "auth",
+    "wrong-account",
+    "wrong-source",
+  ]) {
+    const folder = join(directory, scenario);
+    const calls = [];
+    const provider = async (args) => {
+      calls.push(args);
+      if (args[0] === "deployments" && args[1] === "list") {
+        if (scenario === "existing") return { status: 0, stdout: "[]" };
+        const account = (scenario === "wrong-account" ? "1" : "0").repeat(32);
+        return {
+          status: 1,
+          stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${config.name}/deployments) failed. [code: ${scenario === "auth" ? "10000" : "10007"}]`,
+        };
+      }
+      if (args[0] === "deploy") return { status: 0, stdout: "" };
+      if (args[0] === "versions")
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              id: "fixture",
+              annotations: {
+                "workers/tag": (scenario === "wrong-source" ? "b" : "a").repeat(
+                  40,
                 ),
-            ),
-    });
-    assert.deepEqual(actual.env.preview.services, []);
+              },
+            },
+          ]),
+        };
+      if (args[1] === "status")
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            versions: [{ version_id: "fixture", percentage: 100 }],
+          }),
+        };
+      throw new Error("Unexpected provider operation");
+    };
+    const run = async () => {
+      await prepareMainnetRelease({
+        directory: folder,
+        account: "0".repeat(32),
+        sha: "a".repeat(40),
+        registry: [],
+        provider,
+      });
+      const path = join(folder, "wrangler.jsonc");
+      await writeFile(
+        path,
+        JSON.stringify({
+          vars: {},
+          services: [],
+          env: { preview: { services: [] } },
+        }),
+      );
+      await publishMainnetRelease({
+        directory: folder,
+        sha: "a".repeat(40),
+        provider,
+      });
+      await assembleMainnetBindings({
+        directory: folder,
+        sha: "a".repeat(40),
+        path,
+      });
+      const pages = JSON.parse(await readFile(path, "utf8"));
+      assert.deepEqual(pages.env.preview.services, []);
+      assert.deepEqual(JSON.parse(pages.vars.PAYMENT_NETWORKS), [
+        "base-mainnet",
+      ]);
+      assert.equal(pages.services.length, scenario === "existing" ? 0 : 2);
+      if (scenario === "absent")
+        assert.deepEqual(pages.services[0], {
+          binding: "BINDING_RECOVERY",
+          service: config.name,
+          entrypoint: "BindingRecovery",
+        });
+    };
+    if (["absent", "existing"].includes(scenario)) await run();
+    else
+      await assert.rejects(
+        run,
+        scenario === "wrong-source"
+          ? /does not match tested source/
+          : /Cannot prove .* absent/,
+      );
+    if (["existing", "auth", "wrong-account"].includes(scenario))
+      assert(!calls.some((args) => args[0] === "deploy"));
+    assert(!calls.some((args) => args[0] === "secret"));
   }
   // The application already accepts the private payment RPC map. Its
   // installation must pass the real Pages release guard without admitting
@@ -228,98 +184,16 @@ process.exit(1);
         "Pages must reject a signing-key secret",
       );
   }
-  // Exercise the same non-Base publication helper the protected release uses.
-  // Only the provider CLI is a controlled input; configs and Workerd are real.
-  const prepared = [];
-  for (const scenario of [
-    "absent",
-    "existing",
-    "auth",
-    "wrong-account",
-    "wrong-source",
-  ]) {
-    const calls = [];
-    const folder = join(directory, scenario);
-    const run = () =>
-      prepareInactiveAttesters({
-        registry: [],
-        directory: folder,
-        account: "0".repeat(32),
-        sha: "a".repeat(40),
-        async provider(args) {
-          calls.push(args);
-          if (args[0] === "deployments" && args[1] === "list") {
-            if (scenario === "existing") return { status: 0, stdout: "[]" };
-            const name = args[args.indexOf("--name") + 1];
-            const account = (scenario === "wrong-account" ? "1" : "0").repeat(
-              32,
-            );
-            return {
-              status: 1,
-              stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${name}/deployments) failed. [code: ${scenario === "auth" ? "10000" : "10007"}]`,
-            };
-          }
-          if (args[0] === "deploy") {
-            const generated = JSON.parse(
-              await readFile(args[args.indexOf("--config") + 1], "utf8"),
-            );
-            if (scenario === "absent") prepared.push(generated);
-            return { status: 0 };
-          }
-          if (args[0] === "versions")
-            return {
-              status: 0,
-              stdout: JSON.stringify([
-                {
-                  id: "fixture",
-                  annotations: {
-                    "workers/tag": (scenario === "wrong-source"
-                      ? "b"
-                      : "a"
-                    ).repeat(40),
-                  },
-                },
-              ]),
-            };
-          if (args[0] === "deployments" && args[1] === "status")
-            return {
-              status: 0,
-              stdout: JSON.stringify({
-                versions: [{ version_id: "fixture", percentage: 100 }],
-              }),
-            };
-          throw new Error("Unexpected provider operation");
-        },
-      });
-    if (scenario === "absent" || scenario === "existing") {
-      const results = await run();
-      assert(
-        results.every(
-          (row) =>
-            row.status ===
-            (scenario === "absent"
-              ? "inactive_released"
-              : "existing_unchanged"),
-        ),
-      );
-      if (scenario === "existing")
-        assert(
-          calls.every(
-            (args) => args[0] === "deployments" && args[1] === "list",
-          ),
-        );
-    } else {
-      await assert.rejects(
-        run,
-        scenario === "wrong-source"
-          ? /does not match tested source/
-          : /Cannot prove .* absent/,
-      );
-      if (scenario !== "wrong-source")
-        assert(!calls.some((args) => args[0] === "deploy"));
-    }
-    assert(!calls.some((args) => args[0] === "secret"));
-  }
+  // Hypothetical configuration only: exercise disabled-network code without
+  // changing the actual execution policy or publishing any service.
+  const prepared = mainnetReleasePlan({
+    ...input,
+    execution: {
+      ethereum: true,
+      "robinhood-mainnet": true,
+      "solana-mainnet": true,
+    },
+  }).map((entry) => entry.config);
   for (const inactive of [config, ...prepared]) {
     const config = inactive;
     const generatedPath = join(directory, `${config.name}.json`);

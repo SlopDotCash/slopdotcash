@@ -1,5 +1,7 @@
 /** The canonical authenticated payout response restores every network together. */
-import { expect, expectAccessible, test } from "./fixtures";
+import { join } from "node:path";
+import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
 
 test.beforeEach(({ diagnostics }) => diagnostics.allowPreviewApiMisses());
 
@@ -32,9 +34,15 @@ test("Account Wallets restores all saved networks and public records after reloa
   page,
 }, info) => {
   const writes: string[] = [];
+  let authorized = false;
   await page.route("**/api/v1/payments/**", async (route) => {
     if (route.request().method() !== "GET") writes.push(route.request().url());
-    await route.fulfill({ json: account });
+    await route.fulfill({
+      json: {
+        ...account,
+        wallets: account.wallets.map((wallet) => ({ ...wallet, authorized })),
+      },
+    });
   });
   await page.goto("/account#wallets", { waitUntil: "networkidle" });
   for (let visit = 0; visit < 2; visit++) {
@@ -56,6 +64,19 @@ test("Account Wallets restores all saved networks and public records after reloa
     ).toHaveCount(0);
     if (visit === 0) await page.reload({ waitUntil: "networkidle" });
   }
+  // Each network can legitimately retain a different confirmed address.
+  authorized = true;
+  await page.reload({ waitUntil: "networkidle" });
+  for (const [, network] of wallets)
+    await expect(
+      page.getByRole("img", { name: `${network}, confirmed`, exact: true }),
+    ).toHaveCount(1);
+  await expect(page.getByRole("img", { name: /not confirmed$/u })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("article", { name: "EVM wallet", exact: true }),
+  ).toHaveAttribute("data-state", "attention");
   expect(writes).toEqual([]);
   await expectAccessible(page);
   await page.screenshot({
@@ -98,13 +119,62 @@ test("expired wallet sessions require sign-in with an Account return path", asyn
   diagnostics,
   page,
 }) => {
+  const { site } = deploymentOrigins(
+    deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
+  );
   diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at |401 GET )http:\/\/[^ ]+\/api\/v1\/payments\/me$/u,
+    new RegExp(
+      `^(?:console Failed to load resource: the server responded with a status of 401 \\(Unauthorized\\) at |401 GET )${escapeRegExp(site)}/api/v1/payments/me$`,
+      "u",
+    ),
   );
-  await page.route("**/api/v1/payments/me", (route) =>
-    route.fulfill({ status: 401, json: { error: "not_signed_in" } }),
+  // The parent still has a valid membership observation when the wallet read
+  // discovers the expired session. Serve the actual build at a product origin
+  // so the Points provider performs that independent membership read.
+  await page.route(`${site}/**`, async (route) => {
+    const { pathname } = new URL(route.request().url());
+    if (/\/(?:fixture-)?project-registry\.json$/u.test(pathname))
+      return route.fulfill({ json: { schemaVersion: "1", projects: [] } });
+    if (pathname === "/api/v1/points/me")
+      return route.fulfill({
+        json: {
+          actor: { id: "U_wallet_readback", login: "wallet-readback" },
+          joinedAt: "2026-10-01T00:00:00.000Z",
+          public: true,
+          welcome: 0,
+          socialPoints: 0,
+        },
+      });
+    if (pathname === "/api/v1/payments/me")
+      return route.fulfill({ status: 401, json: { error: "not_signed_in" } });
+    if (pathname === "/api/v1/points/x/me")
+      return route.fulfill({
+        json: { configured: false, account: null, award: null },
+      });
+    if (pathname === "/api/v1/points/sessions")
+      return route.fulfill({ json: { sessions: [] } });
+    if (pathname === "/api/v1/project-session")
+      return route.fulfill({ json: { session: null } });
+    if (pathname.startsWith("/api/"))
+      return route.fulfill({ status: 404, json: {} });
+    return route.fulfill({
+      path: join(
+        process.cwd(),
+        "dist",
+        route.request().resourceType() === "document" ? "index.html" : pathname,
+      ),
+    });
+  });
+  await page.route("https://avatars.githubusercontent.com/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"/>',
+    }),
   );
-  await page.goto("/account#wallets", { waitUntil: "networkidle" });
+  await page.goto(`${site}/account#wallets`, { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("button", { name: "Your account", exact: true }),
+  ).toBeVisible();
   await expect(
     page.locator("#wallets").getByRole("link", { name: "Sign in with GitHub" }),
   ).toHaveAttribute("href", "/login?next=%2Faccount%23wallets");

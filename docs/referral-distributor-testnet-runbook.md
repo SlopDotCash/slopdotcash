@@ -126,7 +126,7 @@ cast call "$(cast call "$D" 'token()(address)' --rpc-url "$ROBINHOOD_TESTNET_RPC
 ```
 
 Expected: the mock token, the two role addresses, the cap, the spacing,
-`604800`, `31536000`, `0`, and the mock supply. Compare the deployed runtime
+`0`, `31536000`, `0`, and the mock supply. The zero claim delay is the owner-requested revision of 26 October 2026. Compare the deployed runtime
 code with `forge inspect ReferralDistributor deployedBytecode` (the
 immutables are `token`, `epochCap` and `postSpacing`; compare after masking
 those words, or compare the creation transaction input against the creation
@@ -139,42 +139,46 @@ code plus constructor arguments).
    `merkle.root`, `totals.treeTotalBase` and each referrer's `leaf.proof`.
 2. As the poster: `cast send "$D" 'postRoot(uint256,bytes32,uint256)' 0 <root>
    <treeTotalBase> --account slop-test-poster`. Expect `RootPosted(0, root,
-   total, claimableAt)` and `hasPendingRoot() == true`.
-3. Inside the window, as the owner: `voidRoot(0)` once to rehearse the veto.
-   Expect `RootVoided(0, root)`. Then post the same root as epoch 1 (a voided
-   epoch keeps its index, and a voided post does not consume the spacing).
-4. Wait seven days (or rehearse on a local Anvil fork with `evm_increaseTime`
-   first). Check `claimable(address,uint256,bytes32[])` for one referrer, then
-   claim from that wallet: `claim(uint256,bytes32[])`. Expect `Claimed` and
-   the mock balance to move. Claim again and expect `NothingToClaim`.
-5. Post epoch 2 with a higher cumulative for that referrer (after
-   `postSpacing` has passed since epoch 1, or with a low rehearsal spacing)
-   and claim the difference after the delay. Also try a claim for more than
-   the declared total and expect `TotalExceeded`.
-6. Rehearse the incident drill with a pending root: `pause` (the window
-   freezes; read `claimableAt(index)` before and after), `setPoster` to a
-   fresh key, `voidRoot(index)`, `unpause`. Confirm `rescue` reverts with
-   `IsPaused` while paused and with `RescueTooEarly(earliest)` after, and
-   that `rescueAvailableAt()` moved to the unpause time plus 365 days.
-   Then rehearse the drill with the honest root instead and confirm the
-   claimable time after unpause equals the time the window had left.
+   total, claimableAt)` with `claimableAt` equal to the block timestamp and
+   `hasPendingRoot() == false`.
+3. Before any successful claim, as the owner: `voidRoot(0)` once to rehearse
+   cancellation. Expect `RootVoided(0, root)`. Post the same root as epoch 1;
+   the voided epoch keeps its index and does not consume post spacing.
+4. Immediately check `claimable(address,uint256,bytes32[])`, then claim from
+   that wallet with `claim(uint256,bytes32[])`. Expect `Claimed` and the exact
+   mock-token balance change. Claim again and expect `NothingToClaim`.
+   Try `voidRoot(1)` after the successful claim and expect `WindowClosed`.
+5. After the existing `postSpacing`, post epoch 2 with a higher cumulative
+   amount and immediately claim only the difference. A claim beyond the
+   declared total must fail with `TotalExceeded`.
+6. Before the next root's first claim, rehearse `pause`, poster rotation,
+   `voidRoot`, and `unpause`. While paused, posts, claims and rescue refuse;
+   voiding an unclaimed root remains possible. Pause/unpause never introduces
+   a claim delay. Every new live post and every unpause preserve the full
+   365-day rescue wait. A void cannot shorten that wait.
 
-Incident order at launch, from the review (section H-2 and L-2 of
-`docs/security/referral-distributor-ai-review-2026-10-25.md`): pause first,
-so the objection window stops; rotate the poster, so the compromised key
-cannot repost; void the pending root; unpause. A watcher must rebuild every
-posted root from the public accrual file and a human must decide to void by
-day five, because the sequencer can delay a transaction and the contract
-cannot see inside a root.
+There is no protected seven-day intervention period. A compromised poster can
+win the race to a claim. The watcher, owner pause and poster rotation remain
+required, and none can claw back paid tokens. Keep the real program Off/dry_run
+until the token, funding, independent watcher and explicit activation are ready.
+
+Incident order for immediate claims: pause first to block further claims and
+posts, then rotate the poster. Void the latest root only if no claim against
+it has succeeded. Confirm the root and claim counters before unpausing. If a
+claim already succeeded, the root cannot be voided and paid tokens cannot be
+recovered. The watcher must rebuild every posted root from the public accrual
+file; no deadline can guarantee that a human reacts before the first claim.
+The 25 October review describes the earlier timed-window contract, not an
+independent audit of this immediate-claim revision.
 
 Record every transaction hash and the values read back. Captured evidence is
 not committed; publish only reviewed safe deployment evidence.
 
 ## 7. What this rehearsal does not prove
 
-- It is not an audit. The contract has an AI-assisted internal review only
-  (three independent model reviews reconciled against 41 proof tests; every
-  High and Medium finding fixed before the pull request opened).
+- It is not an audit. The 25 October AI-assisted internal review applies to
+  the earlier seven-day-window contract. This immediate-claim revision needs
+  its own source-bound review and test evidence.
 - It does not activate the program. Activation needs the token to exist, the
   funding line agreed, an operating independent
   root watcher, a verified deployment on chain id 4663 with the program token,

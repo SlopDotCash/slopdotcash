@@ -74,7 +74,13 @@ The flow for one queued assessment:
 
 A service failure publishes nothing: an unavailable source or a failed
 primary or specialist review leaves the assessment pending, and the next pass
-retries it. A clean result is never published without its retained evidence;
+retries it. A policy refusal of the bound assignment, such as an entry or
+byte limit, instead publishes an incomplete result and notifies each owner
+once. It records the fixed refusal reason and observed limit counters. Every
+surface is unsupported, every threat check is not run, and the configured
+primary review is explicitly not started; no source inspection or model call
+is claimed. This does not establish clearance or confirm malice. A clean
+result is never published without its retained evidence;
 a refused evidence upload leaves it pending too. An incomplete result is
 published even when the evidence upload fails, because the intake needs
 retained evidence only for a clean result: the quarantine is recorded and the
@@ -138,10 +144,15 @@ response reports the same source revision and a real image digest. Set the
 environment's `VETTING_CONTROLLER_RELEASE` to `enabled`, then dispatch the
 workflow on that branch for qualification. Set the repository's
 `VETTING_CONTROLLER_SCHEDULE` to `enabled` only after qualification. Scheduled
-dispatch occurs every 15 minutes. It skips a branch with an active controller
-run, and a branch whose head has no successful `deploy.yml` release yet,
-because that head's sandbox is not deployed. The skip is a run notice, not a
-failed scan.
+dispatch remains a 15-minute backstop. A successful same-repository
+`slop.cash` release also dispatches its branch immediately, after confirming
+that the branch still names that release's commit and its deployment job
+succeeded. Pull-request runs cannot dispatch the controller. Both paths skip
+a branch with an active controller run, or a head without a completed
+deployment, because that head's sandbox is not deployed. The completion
+trigger uses only GitHub metadata and never checks out release artifacts or
+untrusted source. The activation switch still gates both paths; this change
+does not activate scanning. A skip is a run notice, not a failed scan.
 
 The workflow and journal source do not establish deployment or provider
 acceptance. Verify the full scan, private evidence, publication and recovery

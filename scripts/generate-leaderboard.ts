@@ -1,6 +1,6 @@
 import { GitHubClient } from "../workers/slopbot/github";
 import {
-  fetchProjectPenalties,
+  fetchProjectPenaltyState,
   loadParticipationBans,
   loadValueInputs,
   VALUE_FEED_UNAVAILABLE_EXIT_CODE,
@@ -46,7 +46,6 @@ import {
   type PullRequestFile,
   type PullRequestRecord,
   type PullRequestReview,
-  penaltyProjectOf,
   pullRequestTextSources,
   repositoryIdFromUrl,
   SCORE_WINDOW_DAYS,
@@ -56,6 +55,7 @@ import {
   type VerifiedEvidenceArtifact,
 } from "../src/lib/leaderboard";
 import {
+  REGISTERED_REPOSITORIES,
   TARGET_REPOSITORIES,
   type TargetRepository,
 } from "../src/lib/repositories.mjs";
@@ -208,6 +208,11 @@ interface NodeReference {
 type ExpectedRecordState = "closed" | "merged" | "open";
 
 export class OpenSetChangedError extends Error {}
+
+/** A previously enumerated node is no longer addressable; never omit it in place. */
+export class SourceNodeUnavailableError extends Error {
+  override readonly name = "SourceNodeUnavailableError";
+}
 
 /** Retries only a concurrent mutation of evidence-bound open work. */
 export async function retrySlopSnapshot<T>(
@@ -1300,6 +1305,46 @@ function sanitizeGraphqlError(value: unknown): string {
   return "Unknown GraphQL error";
 }
 
+function hasUnavailableRequestedNode(
+  envelope: JsonRecord,
+  variables: GraphqlVariables,
+): boolean {
+  const ids = variables.ids;
+  const data = envelope.data;
+  if (
+    !Array.isArray(ids) ||
+    ids.length === 0 ||
+    !ids.every((id) => typeof id === "string") ||
+    typeof data !== "object" ||
+    data === null ||
+    Array.isArray(data)
+  )
+    return false;
+  const nodes = (data as JsonRecord).nodes;
+  return (
+    Array.isArray(nodes) &&
+    nodes.length === ids.length &&
+    Array.isArray(envelope.errors) &&
+    envelope.errors.length > 0 &&
+    envelope.errors.every((value) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value))
+        return false;
+      const error = value as JsonRecord;
+      const path = error.path;
+      return (
+        error.type === "NOT_FOUND" &&
+        Array.isArray(path) &&
+        path.length === 2 &&
+        path[0] === "nodes" &&
+        Number.isInteger(path[1]) &&
+        path[1] >= 0 &&
+        path[1] < ids.length &&
+        nodes[path[1]] === null
+      );
+    })
+  );
+}
+
 function parseRateLimit(
   value: unknown,
 ): Omit<RateLimitSnapshot, "consumedDuringRun"> {
@@ -1679,7 +1724,13 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         `${apiLabel} HTTP ${response.status}: ${sanitizeGraphqlError(envelope.message)}`,
       );
     }
-    if (Array.isArray(envelope.errors) && envelope.errors.length > 0) {
+    const unavailableNode =
+      !restPath && hasUnavailableRequestedNode(envelope, activeVariables);
+    if (
+      Array.isArray(envelope.errors) &&
+      envelope.errors.length > 0 &&
+      !unavailableNode
+    ) {
       const errors = envelope.errors.map(sanitizeGraphqlError).join("; ");
       throw new Error(`${apiLabel} rejected the leaderboard query: ${errors}`);
     }
@@ -1706,6 +1757,17 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         `${apiLabel} safety budget exceeded (${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve})`,
       );
     }
+    // Even an unavailable-node response spent GitHub budget. Retain that cost
+    // before discarding the entire attempt and recollecting its source census.
+    if (unavailableNode)
+      throw new SourceNodeUnavailableError(
+        "GitHub could not resolve an enumerated source node; a fresh complete census is required",
+        {
+          cause: new Error(
+            (envelope.errors as unknown[]).map(sanitizeGraphqlError).join("; "),
+          ),
+        },
+      );
     return data;
   }
 
@@ -4079,17 +4141,37 @@ export async function generateLeaderboardFromGitHub(
       return github.get<T>(path);
     },
   });
-  // A debit applies only to a closed, unmerged pull request in this census,
-  // so only projects with such a pull request read the penalty feed.
+  // History is a retained read, not GitHub collection. Keep reversals after
+  // a PR leaves the rolling census or its project is paused/retired.
   const penalties: NonNullable<LeaderboardInput["penalties"]>[number][] = [];
+  const penaltyHistory: NonNullable<LeaderboardInput["penaltyHistory"]> = [];
+  let hasPenaltyHistory = false;
   for (const projectId of [
     ...new Set(
-      closedUnmergedPullRequests.map((pull) =>
-        penaltyProjectOf(repositoryIdFromUrl(pull.url)),
-      ),
+      REGISTERED_REPOSITORIES.map((repository) => repository.projectId),
     ),
-  ].sort())
-    penalties.push(...(await fetchProjectPenalties(projectId)));
+  ].sort()) {
+    // Reconstruct state at the GitHub cutoff when a close/reversal happens
+    // during collection. Later evidence belongs to the next publication.
+    const state = await fetchProjectPenaltyState(projectId);
+    if (state.history === null) {
+      console.warn(
+        `[penalties] ${projectId}: retained history unavailable on the deployed Worker; active debits only`,
+      );
+      penalties.push(...state.penalties);
+      continue;
+    }
+    hasPenaltyHistory = true;
+    const history = state.history
+      .filter((row) => row.recordedAt <= now.toISOString())
+      .map((row) =>
+        row.reversedAt !== null && row.reversedAt > now.toISOString()
+          ? { ...row, reversedAt: null, reversal: null }
+          : row,
+      );
+    penaltyHistory.push(...history);
+    penalties.push(...history.filter((row) => row.reversedAt === null));
+  }
   const fetchedAt = new Date().toISOString();
   const rateLimit = client.getRateLimit();
   const source: LeaderboardSourceMetadata = {
@@ -4139,6 +4221,7 @@ export async function generateLeaderboardFromGitHub(
     reviewedMergedPullRequests: dedupedReviewedMergedPullRequests,
     closedUnmergedPullRequests,
     penalties,
+    ...(hasPenaltyHistory ? { penaltyHistory } : {}),
     detailEligibleMergedPullRequestIds: [...hydrationPlan.detailEligibleIds],
     closedIssueCount,
     resolvedIssues: dedupedClosedIssues,
@@ -4187,7 +4270,7 @@ export async function runGenerator(
     write: writeLeaderboardAtomically,
     onCensusRetry: () => {
       process.stderr.write(
-        "[slop.cash] final review census changed; recollecting once with the existing GraphQL budget\n",
+        "[slop.cash] source census changed or a node became unavailable; recollecting once with the existing GraphQL budget\n",
       );
     },
   },
@@ -4203,8 +4286,14 @@ export async function runGenerator(
   try {
     snapshot = await dependencies.generate(client, generationOptions);
   } catch (error) {
-    // error-policy:J2 recover only classified census churn, once, with no budget reset.
-    if (!(error instanceof ReviewCensusChangedError)) throw error;
+    // error-policy:J2 recover only classified census churn or unavailable
+    // enumerated nodes, once, with no budget reset. NOT_FOUND does not prove
+    // deletion: fresh enumeration and all ordinary checks must still succeed.
+    if (
+      !(error instanceof ReviewCensusChangedError) &&
+      !(error instanceof SourceNodeUnavailableError)
+    )
+      throw error;
     dependencies.onCensusRetry?.();
     // Recollect every source; never reuse a partially assembled first attempt.
     // The same client retains consumed cost, request counts, reserve and reset state.

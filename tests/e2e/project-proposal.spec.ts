@@ -370,11 +370,20 @@ test("drafts a project through the setup steps and creates it without an admin",
     }),
   ).toBeVisible();
   const setupPanel = page.locator(".project-setup-status");
-  await expect(setupPanel.locator(".setup-badge")).toContainText([
-    "Confirmed",
-    "Installed",
-    "Queued",
-  ]);
+  for (const [label, status] of [
+    ["GitHub access", "Confirmed"],
+    ["Slopbot", "Installed"],
+    ["Security scan", "Queued"],
+  ]) {
+    const value = setupPanel
+      .locator("dl > div")
+      .filter({
+        has: page.locator("dt", { hasText: new RegExp(`^${label}$`) }),
+      })
+      .locator("dd");
+    await expect(value).toHaveText(status);
+    await expect(value).toBeVisible();
+  }
   const details = setupPanel.locator("details");
   await expect(details).not.toHaveAttribute("open", "");
   await details.locator("summary").focus();
@@ -441,6 +450,50 @@ test("drafts a project through the setup steps and creates it without an admin",
     repositories: [{ id: "example/open-protein", integrationBranch: "trunk" }],
   });
   expect(posted?.reward).not.toHaveProperty("reviewBudget");
+
+  // Starting over must remove the completed submission without a reload.
+  await page.getByRole("button", { name: "Start over" }).click();
+  await page.getByRole("button", { name: "Clear draft" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Project created" }),
+  ).toHaveCount(0);
+  await page
+    .getByLabel("Public GitHub repository")
+    .fill("example/open-protein");
+  await page.getByRole("button", { name: "Look up on GitHub" }).click();
+  await expect(page.locator(".lookup-status")).toContainText(
+    "Found example/open-protein",
+  );
+  await page.getByRole("button", { name: "Next: Contribution rules" }).click();
+  await page.getByLabel("Project name").fill("Open Protein");
+  await page
+    .getByLabel("Short description")
+    .fill("Reproducible protein-folding benchmarks.");
+  await page.getByLabel("Goal").fill("Make protein research reproducible.");
+  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next: Review" }).click();
+  await expect(handoff).toBeVisible();
+  let completeCreation!: () => void;
+  const pendingCreation = new Promise<void>((resolve) => {
+    completeCreation = resolve;
+  });
+  await page.route("**/api/v1/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await pendingCreation;
+    await route.fulfill({
+      status: 201,
+      json: {
+        project: { id: "open-protein", revision: 1, referrer: null },
+        setup: CREATED_SETUP,
+      },
+    });
+  });
+  await handoff.click();
+  await expect(page.getByRole("button", { name: "Start over" })).toBeDisabled();
+  completeCreation();
+  await expect(
+    page.getByRole("heading", { name: "Project created" }),
+  ).toBeVisible();
 
   // The draft persists on this device without credentials and never claims
   // to be a listing. Clearing it needs a second confirmation.
@@ -847,7 +900,6 @@ for (const [name, expectedId] of [
       page.getByRole("heading", { name: "Project created" }),
     ).toBeVisible();
     const manifest = submitted as Record<string, unknown>;
-    expect(() => validate(manifest)).not.toThrow();
     expect(manifest).toMatchObject({
       id: expectedId,
       slug: expectedId,

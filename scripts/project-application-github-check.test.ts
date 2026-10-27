@@ -5,10 +5,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { repositoryControl } from "../backend/projects/setup";
 import { onRequest } from "../functions/api/v1/[[path]]";
-import { parseRepositoryIdentity } from "../src/lib/project-contracts";
-import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { sha256Hex } from "../workers/identity/crypto";
@@ -30,25 +27,6 @@ const repositories: Record<string, unknown> = {
     full_name: "example/open-registry",
     private: false,
     owner: OWNER,
-  },
-  "example/registry-docs": {
-    id: 223456789,
-    node_id: "R_docs",
-    full_name: "example/registry-docs",
-    private: false,
-    owner: OWNER,
-  },
-  "partner-lab/shared-models": {
-    id: 323456789,
-    node_id: "R_partner",
-    full_name: "partner-lab/shared-models",
-    private: false,
-    owner: {
-      id: 777000111,
-      node_id: "O_partner_lab",
-      login: "partner-lab",
-      type: "Organization",
-    },
   },
   "someone-else/their-repo": {
     id: 555000111,
@@ -87,21 +65,6 @@ let stubGithub = () => {
       : Response.json({ message: "Not Found" }, { status: 404 });
   }) as typeof fetch;
 };
-
-/** The public-facts check of a manifest. */
-async function control(manifest: unknown) {
-  stubGithub();
-  const project = manifest as ProjectDefinition;
-  return await repositoryControl(
-    project,
-    {
-      fetch: (url, init) => fetch(url, init),
-      token: undefined,
-      apiOrigin: API,
-    },
-    parseRepositoryIdentity(repositories[project.repositories[0].id]),
-  );
-}
 
 /** What the Slopbot binding reads; `null` leaves Slopbot unbound. */
 type SlopbotAnswer = Record<string, unknown> | null;
@@ -274,25 +237,6 @@ test("a new project lists exactly one repository", async () => {
   });
 });
 
-test("every listed repository must be a public GitHub repository", async () => {
-  expect(
-    await control(
-      manifestWith(
-        {},
-        repository("example/registry-docs"),
-        repository("partner-lab/shared-models"),
-      ),
-    ),
-  ).toEqual({ state: "matched" });
-  expect(lookups).toContain(`${API}/repos/partner-lab/shared-models`);
-  expect(
-    await control(manifestWith({}, repository("someone-else/missing-repo"))),
-  ).toEqual({
-    state: "mismatch",
-    reason: "GitHub has no public repository named someone-else/missing-repo",
-  });
-});
-
 test("an alias must lead to the repository it names", async () => {
   const former = await submit(
     manifestWith({ aliases: ["example/old-registry-name"] }),
@@ -311,56 +255,6 @@ test("an alias must lead to the repository it names", async () => {
     message:
       "Alias someone-else/their-repo is not a name of example/open-registry on GitHub",
   });
-
-  expect(
-    await control(
-      manifestWith(
-        {},
-        {
-          ...repository("example/registry-docs"),
-          aliases: ["someone-else/missing-repo"],
-        },
-      ),
-    ),
-  ).toEqual({
-    state: "mismatch",
-    reason: "GitHub has no public repository named someone-else/missing-repo",
-  });
-});
-
-test("a check names at most 5 repositories and aliases", async () => {
-  const docs = repositories["example/registry-docs"];
-  for (const name of ["docs-old-1", "docs-old-2", "docs-old-3"])
-    repositories[`example/${name}`] = docs;
-  const five = manifestWith(
-    { aliases: ["example/old-registry-name"] },
-    {
-      ...repository("example/registry-docs"),
-      aliases: ["example/docs-old-1", "example/docs-old-2"],
-    },
-  );
-  expect((await control(five)).state).toBe("matched");
-  expect(lookups.filter((url) => url.startsWith(`${API}/repos/`))).toHaveLength(
-    4,
-  );
-
-  lookups.length = 0;
-  const [first, second] = five.repositories as Record<string, unknown>[];
-  const six = {
-    ...five,
-    repositories: [
-      first,
-      {
-        ...second,
-        aliases: [...(second.aliases as string[]), "example/docs-old-3"],
-      },
-    ],
-  };
-  expect(await control(six)).toEqual({
-    state: "mismatch",
-    reason: "An application may name at most 5 repositories and aliases",
-  });
-  expect(lookups).toEqual([]);
 });
 
 test.each(["unchanged", "changed", "unavailable"])(

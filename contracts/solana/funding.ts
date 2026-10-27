@@ -172,6 +172,7 @@ export async function prepareSolanaFunding(
   return {
     ...intent,
     ...prepared,
+    tokenProgram,
     gross: gross.toString(),
     fee: fee.toString(),
     net: (gross - fee).toString(),
