@@ -1822,6 +1822,7 @@ test("lands direct and lazy cross-route hash links on their section", async ({
     await page.goto(`/contributors/${encodeURIComponent(actor.login)}`, {
       waitUntil: "networkidle",
     });
+    await page.getByText("Penalty history · 1", { exact: true }).click();
     await page
       .getByRole("link", { name: "How penalties work", exact: true })
       .click();

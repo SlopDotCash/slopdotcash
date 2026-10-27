@@ -904,7 +904,11 @@ export function AccountPage() {
   useEffect(() => {
     const update = () => setWalletEntry(window.location.hash === "#wallets");
     window.addEventListener("hashchange", update);
-    return () => window.removeEventListener("hashchange", update);
+    window.addEventListener("popstate", update);
+    return () => {
+      window.removeEventListener("hashchange", update);
+      window.removeEventListener("popstate", update);
+    };
   }, []);
   const [closedNotice, setClosedNotice] = useState("");
   useEffect(() => {
