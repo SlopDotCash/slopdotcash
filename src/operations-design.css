@@ -56,6 +56,26 @@
   min-width: 0;
 }
 
+.operations-page .admin-facts > .assessment-coverage {
+  grid-column: 1 / -1;
+}
+
+.operations-page .scan-coverage-table {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.operations-page .scan-coverage-table table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.operations-page .scan-coverage-table th,
+.operations-page .scan-coverage-table td {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
 .operations-page .admin-facts dt,
 .operations-page .operations-facts dt {
   color: var(--muted);
