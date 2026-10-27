@@ -6,8 +6,8 @@ import {
   type PublicPaymentScope,
   useVaultPayments,
 } from "./lib/use-vault-payments";
-import { ExternalLinkAnchor, formatCycleMonth } from "./Presentation";
 import { PayoutAmount } from "./PayoutRows";
+import { ExternalLinkAnchor, formatCycleMonth } from "./Presentation";
 
 /** Only finalized ordinary payments; each asset keeps its own base units. */
 export function VaultPaymentHistory({ scope }: { scope: PublicPaymentScope }) {
