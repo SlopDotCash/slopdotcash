@@ -2239,9 +2239,12 @@ test("owner reserves an old monthly allocation and recovers a lost wallet reply"
   });
   await expect(reservation).toBeVisible();
   await reservation.getByRole("button", { name: /MetaMask/ }).click();
-  await reservation
-    .getByRole("button", { name: "Review monthly reservation", exact: true })
-    .click();
+  const reviewButton = reservation.getByRole("button", {
+    name: "Review monthly reservation",
+    exact: true,
+  });
+  await reviewButton.focus();
+  await page.keyboard.press("Enter");
   await expect(
     reservation.getByRole("button", {
       name: "Authorize monthly reservation in wallet",
@@ -2251,9 +2254,19 @@ test("owner reserves an old monthly allocation and recovers a lost wallet reply"
     path: info.outputPath("monthly-owner-review.png"),
     fullPage: true,
   });
-  await reservation
-    .getByRole("button", { name: "Authorize monthly reservation in wallet" })
-    .click();
+  const authorizeButton = reservation.getByRole("button", {
+    name: "Authorize monthly reservation in wallet",
+  });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "200%";
+  });
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("monthly-owner-200-percent.png"),
+    fullPage: true,
+  });
+  await authorizeButton.focus();
+  await page.keyboard.press("Enter");
   await expect.poll(() => sent.length).toBe(1);
   await expect(reservation).toContainText("Reservation awaiting verification");
   await page.reload();

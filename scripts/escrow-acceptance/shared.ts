@@ -7,12 +7,7 @@
  * Nothing here reads, stores or prints a private key.
  */
 import { Database } from "bun:sqlite";
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  renameSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import {
