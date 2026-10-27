@@ -35,6 +35,8 @@ type Env = {
   ACTIVITY_MAIL_PILOT?: string;
   NOTIFY_FROM_ADDRESS: string;
   NOTIFY_INBOX_URL?: string;
+  /** Same configured administrators as the Pages notification writer. */
+  ADMIN_GITHUB_IDS?: string;
   /** Slop moderators; without it, moderator case mail is suppressed. */
   PROJECT_MODERATOR_GITHUB_IDS?: string;
 };
@@ -55,6 +57,7 @@ function mailPilot<Config extends { inboxUrl: string }>(
   return {
     db: env.SLOP_DB,
     config,
+    adminGithubIds: githubIdSet(env.ADMIN_GITHUB_IDS, "ADMIN_GITHUB_IDS"),
     moderatorGithubIds: githubIdSet(
       env.PROJECT_MODERATOR_GITHUB_IDS,
       "PROJECT_MODERATOR_GITHUB_IDS",
