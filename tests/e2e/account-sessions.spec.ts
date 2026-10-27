@@ -241,6 +241,9 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
     .fill("appeal-test");
   await recovery.getByRole("button", { name: "Close account" }).click();
   await expect(recovery).toContainText("Your account is closed");
+  await expect(
+    page.getByText("You’re signed in.", { exact: true }),
+  ).toHaveCount(0);
   await expect(appeals).toHaveCount(0);
   await expect(
     page.getByRole("form", { name: "Account appeal for demo" }),
