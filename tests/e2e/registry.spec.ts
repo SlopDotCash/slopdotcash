@@ -719,6 +719,9 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   ).toBeDisabled();
   await manifestEditor.fill(JSON.stringify(pausedManifest, null, 2));
   await card
+    .getByRole("combobox", { name: "Network", exact: true })
+    .selectOption("robinhood");
+  await card
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("A reviewed paused project awaiting complete security evidence.");
   expect(JSON.parse(await manifestEditor.inputValue()).headline).toBe(
@@ -750,8 +753,41 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     path: test.info().outputPath("admin-routine-edit.png"),
     fullPage: true,
   });
-  await card.getByRole("button", { name: "Save revision 2" }).click();
+  await admin.evaluate(() => {
+    const typography = [
+      ...document.querySelectorAll<HTMLElement>("body *"),
+    ].map((el) => ({
+      el,
+      font: getComputedStyle(el).fontSize,
+      line: getComputedStyle(el).lineHeight,
+    }));
+    for (const { el, font, line } of typography) {
+      el.style.fontSize = `${Number.parseFloat(font) * 2}px`;
+      if (line !== "normal")
+        el.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
+    }
+  });
+  expect(
+    await admin.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await card.getByRole("button", { name: "Save revision 2" }).focus();
+  await admin.keyboard.press("Enter");
   await expect(card).toContainText("2 · updated");
+  expect(await listedProject(admin, project.id)).toMatchObject({
+    reward: {
+      chain: "robinhood",
+      currency: "USDG",
+      monthlyCapMinor: "1000000000",
+    },
+    rewardAsset: { network: "robinhood", symbol: "USDG" },
+    escrow: { chain: "robinhood", deployments: [] },
+  });
+  const prior = await (
+    await admin.request.get(`/api/v1/project-revisions/${project.id}/1`)
+  ).json();
+  expect(JSON.parse(prior.manifestText).escrow.chain).toBe("base");
   await expectAccessible(admin);
   await adminContext.close();
 });
