@@ -535,6 +535,13 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   await expect(
     actions.getByRole("region", { name: "Review vault action" }),
   ).toContainText("no refund right");
+  for (const address of [deployment.vault, deployment.asset]) {
+    await expect(
+      actions
+        .locator(".vault-contract-details")
+        .getByText(address, { exact: true }),
+    ).toBeVisible();
+  }
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({
     path: info.outputPath("solana-deposit-review.png"),
@@ -556,6 +563,13 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   );
   await page.reload({ waitUntil: "networkidle" });
   await connect();
+  for (const address of [deployment.vault, deployment.asset]) {
+    await expect(
+      actions
+        .locator(".vault-contract-details")
+        .getByText(address, { exact: true }),
+    ).toBeVisible();
+  }
   await expect(
     actions.getByRole("button", {
       name: "Confirm deposit in wallet",

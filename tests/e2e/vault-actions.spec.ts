@@ -371,6 +371,13 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await expect(
     actions.getByRole("region", { name: "Review vault action" }),
   ).toContainText("no refund right");
+  for (const address of [deployment.vault, deployment.asset]) {
+    await expect(
+      actions
+        .locator(".vault-contract-details")
+        .getByText(address, { exact: true }),
+    ).toBeVisible();
+  }
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({
     path: info.outputPath("deposit-review.png"),
@@ -408,6 +415,13 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await actions
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
+  for (const address of [deployment.vault, deployment.asset]) {
+    await expect(
+      actions
+        .locator(".vault-contract-details")
+        .getByText(address, { exact: true }),
+    ).toBeVisible();
+  }
   await expect(
     actions.getByRole("button", {
       name: "Confirm deposit in wallet",
@@ -889,6 +903,11 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   });
   await expect(review).toContainText("Off");
   await expect(review).toContainText(cap);
+  await expect(
+    monthly
+      .locator(".vault-contract-details")
+      .getByText(owner, { exact: true }),
+  ).toBeVisible();
   await page.screenshot({
     path: info.outputPath("monthly-payment-review.png"),
     fullPage: true,
@@ -913,6 +932,11 @@ test("owner turns automatic monthly payment on by default, then opts out", async
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
   await expect(turnOn).toHaveCount(0);
+  await expect(
+    monthly
+      .locator(".vault-contract-details")
+      .getByText(owner, { exact: true }),
+  ).toBeVisible();
   await monthly.getByLabel("Transaction hash from your wallet").fill(sends[0]);
   await monthly
     .getByRole("button", { name: "Check transaction", exact: true })
