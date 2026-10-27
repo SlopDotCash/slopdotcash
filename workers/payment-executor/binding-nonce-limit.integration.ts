@@ -36,7 +36,7 @@ import {
   pendingStoredBindings,
   STORED_BINDING,
 } from "./core";
-import { testBindingNonceLimit } from "./index";
+import { privateScopeJournal, testBindingNonceLimit } from "./index";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const port = Number(process.env.SLOP_BINDING_NONCE_LIMIT_PORT ?? "22843");
@@ -300,14 +300,14 @@ const proxy = Bun.serve({
       .entries()
       .find(
         (item) =>
-          item.key.startsWith(STORED_BINDING) &&
+          item.key.replace(/^security:/, "").startsWith(STORED_BINDING) &&
           item.value?.rawTransaction === raw &&
           !item.key.includes(":reverted:"),
       );
     assert(row, "Signed binding must be stored before broadcast");
     if (active.env.BINDING_NONCE_LIMIT === 1) {
       assert(row.value.bindingNonceBudgetKey);
-      const budget = await active.journal.store.get<{
+      const budget = await active.env.JOURNAL.get<{
         transactionId: string;
         nonce: number;
       }>(row.value.bindingNonceBudgetKey);
@@ -830,6 +830,68 @@ try {
         /Legacy test binding/,
       );
       active.journal.remove(original.key);
+      await assert.rejects(
+        bindStoredDestination(active.env, candidate),
+        /Legacy test binding/,
+      );
+      assert.equal(active.signatures(), 1);
+      assert.equal(await nonce(), before);
+    },
+  );
+  await run(
+    "private journal admits one binding without reading ordinary history",
+    async () => {
+      active = await fixture("128", true);
+      active.env.JOURNAL = privateScopeJournal(active.journal.store);
+      // An ordinary record for the same vault must not enter private history.
+      await active.journal.store.put(`${STORED_BINDING}ordinary-only`, {
+        network,
+        vault: active.vault,
+        rawTransaction: "invalid ordinary-only sentinel",
+      });
+      await bindStoredDestination(active.env, active.candidate);
+      await mine(64);
+      assert.equal(active.signatures(), 1);
+      assert.equal(
+        (await bindStoredDestination(active.env, active.candidate)).state,
+        "current",
+      );
+      const rows = active.journal.entries();
+      assert.equal(
+        rows.filter((row) => row.key.startsWith("security:bind:test-nonce:"))
+          .length,
+        1,
+      );
+      assert.equal(
+        rows.filter((row) => row.key.startsWith("security:bind:stored:"))
+          .length,
+        1,
+      );
+      assert(rows.some((row) => row.key.startsWith("nonce:")));
+      assert(!rows.some((row) => row.key.startsWith("security:nonce:")));
+    },
+  );
+  await run(
+    "private legacy archive refuses a successor binding under the nonce limit",
+    async () => {
+      active = await fixture("129", false);
+      active.env.JOURNAL = privateScopeJournal(active.journal.store);
+      active.revertNext = true;
+      await bindStoredDestination(active.env, active.candidate);
+      const original = active.journal
+        .entries()
+        .find((row) => row.key.startsWith(`security:${STORED_BINDING}`));
+      assert(original);
+      const observed = await reconcileBindingWinner(active.env, {
+        network,
+        vault: active.vault,
+        originalTransactionId: original.value.transactionId,
+        winnerTransactionId: original.value.transactionId,
+      });
+      assert.equal(observed.state, "original_reverted");
+      const candidate = await successorClaim(active);
+      active.env.BINDING_NONCE_LIMIT = 1;
+      const before = await nonce();
       await assert.rejects(
         bindStoredDestination(active.env, candidate),
         /Legacy test binding/,
