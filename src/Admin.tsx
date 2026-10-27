@@ -385,7 +385,7 @@ function ProjectEditor({
         </label>
         <p className="admin-status">
           Activation needs verified authority, Slopbot, and a{" "}
-          <a href="#admin-vetting">passed scan</a> or the existing-project
+          <a href="#admin-vetting">passed scan</a> or an explicit recorded
           exemption.
         </p>
       </fieldset>
