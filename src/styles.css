@@ -878,10 +878,6 @@ small {
   flex-wrap: wrap;
 }
 
-.footer-wordmark {
-  margin: 0;
-}
-
 .footer-links {
   display: flex;
 }

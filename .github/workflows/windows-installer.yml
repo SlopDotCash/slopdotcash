@@ -46,7 +46,8 @@ jobs:
 
       - name: Stop timed-out process trees and preserve phase failures
         shell: bash
-        run: bun test ./scripts/e2e-runner.test.ts --timeout 10000
+        # Includes cold process startup, bounded tree termination and exit wait.
+        run: bun test ./scripts/e2e-runner.test.ts --timeout 20000
 
       - name: Exercise install, update, rollback, active reads, and locking
         shell: bash

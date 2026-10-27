@@ -1,6 +1,6 @@
 /** Actual subprocess lifecycle: failed browser phases must not leave servers running. */
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,33 +10,69 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test("a timed-out launcher stops its descendant server before returning failure", async () => {
   const directory = mkdtempSync(join(tmpdir(), "slop-phase-tree-"));
+  const ready = join(directory, "ready");
   const heartbeat = join(directory, "heartbeat");
-  // SIGKILL can interrupt a truncate-and-write, leaving an empty heartbeat.
-  // Rename a complete sample so the test observes process liveness rather
-  // than which filesystem syscall was interrupted at the deadline.
-  const descendant = `const fs = require("node:fs"); const heartbeat = ${JSON.stringify(heartbeat)}; let count = 0; setInterval(() => { fs.writeFileSync(heartbeat + ".next", String(++count)); fs.renameSync(heartbeat + ".next", heartbeat); }, 25);`;
+  // Publish complete heartbeat samples so termination cannot leave a torn write.
+  const descendant = `const fs = require("node:fs"); let count = 0; fs.writeFileSync(${JSON.stringify(heartbeat)}, "0"); fs.writeFileSync(${JSON.stringify(`${ready}.tmp`)}, String(process.pid)); fs.renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)}); setInterval(() => { fs.writeFileSync(${JSON.stringify(heartbeat)} + ".next", String(++count)); fs.renameSync(${JSON.stringify(heartbeat)} + ".next", ${JSON.stringify(heartbeat)}); }, 25);`;
   const launcher = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "inherit" }); setInterval(() => {}, 1000);`;
+  let completed = false;
+  // Hosted Windows must cold-start both Node processes before the timeout.
+  const phase = runE2ePhase({
+    label: "timeout-regression",
+    command: "node",
+    args: ["-e", launcher],
+    cwd: directory,
+    env: process.env,
+    timeoutMs: process.platform === "win32" ? 5000 : 1500,
+  }).then((status) => {
+    completed = true;
+    return status;
+  });
+  let failed = false;
+  let failure: unknown;
   try {
-    expect(
-      await runE2ePhase({
-        label: "timeout-regression",
-        command: "node",
-        args: ["-e", launcher],
-        cwd: directory,
-        env: process.env,
-        // Hosted Windows needs more time to start two Node processes.
-        // Give them time to run; the same post-timeout liveness checks apply.
-        timeoutMs: process.platform === "win32" ? 5000 : 1500,
-      }),
-    ).toBe(1);
+    while (!existsSync(ready) && !completed) await pause(25);
+    if (!existsSync(ready))
+      throw new Error("The descendant did not start before the phase deadline");
+    const pid = Number(readFileSync(ready, "utf8"));
+    process.kill(pid, 0);
+    expect(await phase).toBe(1);
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      alive = false;
+    }
+    expect(alive).toBe(false);
     const stoppedAt = readFileSync(heartbeat, "utf8");
     expect(Number(stoppedAt)).toBeGreaterThan(0);
     await pause(150);
     expect(readFileSync(heartbeat, "utf8")).toBe(stoppedAt);
+  } catch (error) {
+    failed = true;
+    failure = error;
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    await phase;
+    try {
+      rmSync(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    } catch (error) {
+      failure = failed
+        ? new AggregateError(
+            [failure, error],
+            "Phase regression failed and its directory could not be removed",
+          )
+        : error;
+      failed = true;
+    }
   }
-}, 15_000);
+  if (failed) throw failure;
+}, 20_000);
 
 test("a completed phase preserves successful and failed child exit codes", async () => {
   for (const status of [0, 7]) {
