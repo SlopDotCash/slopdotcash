@@ -2846,7 +2846,9 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       `[aria-labelledby="submission-${submissionId}"]`,
     );
     await expect(report).toContainText("Slop receipt");
-    await expect(report).toContainText("GitHub delivery optional");
+    await expect(report).toContainText(
+      "Your original Slop receipt and review status are retained.",
+    );
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await expect(page.getByText(description, { exact: true })).toHaveCount(0);
     await expect(

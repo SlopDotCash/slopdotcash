@@ -178,6 +178,7 @@ export function PrivateReportForm({
       setBusy(false);
     }
   };
+  const reviewed = body(saved.draft);
   return (
     <form
       className="security-form report-composer"
@@ -223,12 +224,16 @@ export function PrivateReportForm({
             To {project.name}, as @{login}.
           </p>
           <SecurityOffer project={project} compact />
-          <h4>{saved.draft.summary}</h4>
-          <pre className="report-preview">{saved.draft.description}</pre>
-          {saved.draft.severity || saved.draft.cvss || saved.draft.cwe ? (
+          <h4>{String(reviewed.summary)}</h4>
+          <pre className="report-preview">{String(reviewed.description)}</pre>
+          {reviewed.severity || reviewed.cvssVectorString || reviewed.cweIds ? (
             <p>
               Classification:{" "}
-              {[saved.draft.severity, saved.draft.cvss, saved.draft.cwe]
+              {[
+                reviewed.severity,
+                reviewed.cvssVectorString,
+                ...(Array.isArray(reviewed.cweIds) ? reviewed.cweIds : []),
+              ]
                 .filter(Boolean)
                 .join(" · ")}
             </p>
