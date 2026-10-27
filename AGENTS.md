@@ -528,12 +528,12 @@ or tag.
 
 Required environment secrets are `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`; Actions supplies `GITHUB_TOKEN` for ingestion. The
-`eliza-army-production` environment allows only `main`. Merges to `main`
+`slop-production` environment allows only `main`. Merges to `main`
 start the normal release workflow automatically. Branch protections and
 rulesets are not a release requirement (owner decision, 25 October 2026).
 Do not add or restore them during release work unless the owner asks.
 
-Production releases use the main-only `eliza-army-production` environment.
+Production releases use the main-only `slop-production` environment.
 No separate manual release approval is required. Publication credentials must
 never be exposed to pull-request runs. Every production release uses the
 shared publication lock.

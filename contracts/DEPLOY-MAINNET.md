@@ -836,7 +836,7 @@ an authorized agent installs the secrets under PRD section 11.
 `base-mainnet` is `true` in `mainnet-execution.mjs`, and the Pages
 `PAYMENT_NETWORKS` in `wrangler.toml` is `["base-mainnet"]`. The production
 release (`.github/workflows/deploy.yml`, job `deploy`, `main` only, environment
-`eliza-army-production`) generates the attester configuration with
+`slop-production`) generates the attester configuration with
 `configure.mjs --stack production` from the checked registry artifact of the
 verified build. The release verifies both registry-file digests first. Then:
 
