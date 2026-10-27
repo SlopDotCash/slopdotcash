@@ -138,8 +138,10 @@ response reports the same source revision and a real image digest. Set the
 environment's `VETTING_CONTROLLER_RELEASE` to `enabled`, then dispatch the
 workflow on that branch for qualification. Set the repository's
 `VETTING_CONTROLLER_SCHEDULE` to `enabled` only after qualification. Scheduled
-dispatch occurs every 15 minutes and skips a branch with an active controller
-run.
+dispatch occurs every 15 minutes. It skips a branch with an active controller
+run, and a branch whose head has no successful `deploy.yml` release yet,
+because that head's sandbox is not deployed. The skip is a run notice, not a
+failed scan.
 
 The workflow and journal source do not establish deployment or provider
 acceptance. Verify the full scan, private evidence, publication and recovery

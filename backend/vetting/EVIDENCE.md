@@ -165,7 +165,7 @@ The UI reports that a download was requested, not that the browser saved it.
 The registration and operator console work with incomplete assessments. Missing,
 corrupt, oversize and expired bodies remain explicit failures. Harmless paused
 applications and queue registration remain available without storage; signed
-queue acquisition fails closed before work starts if storage policy is absent.
+queue acquisition fails closed before work starts if evidence storage is not bound.
 Production binding, policy approval, external controls, actual collector/provider
 integration and live acceptance are not performed by this source change.
 

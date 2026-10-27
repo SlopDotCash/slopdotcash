@@ -112,6 +112,16 @@ async function main() {
       imageSha256?: string;
     };
     stage = "runner-revision";
+    if (health.revision !== env.GITHUB_SHA) {
+      // Commit IDs are public. Name both so the operator knows to wait for
+      // the release of this checkout, then dispatch again.
+      const deployed = /^[a-f0-9]{40}$/.test(health.revision ?? "")
+        ? health.revision
+        : "no valid revision";
+      console.error(
+        `The isolated runner reports ${deployed}; this checkout is ${env.GITHUB_SHA}. Dispatch again after the release of this checkout succeeds.`,
+      );
+    }
     if (
       health.ok !== true ||
       health.revision !== env.GITHUB_SHA ||
