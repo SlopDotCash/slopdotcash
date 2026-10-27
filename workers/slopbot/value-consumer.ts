@@ -98,9 +98,10 @@ export async function consumeValueRequest(
     if (!pull) return await finish("source-incomplete");
     if (pull.state !== "closed") return await finish("open", true);
     const occurred = Date.parse(pull.merged_at ?? pull.closed_at ?? "");
-    // Historical work is handled by the subscription intake, never this API route.
     if (!Number.isFinite(occurred)) return await finish("source-incomplete");
-    if (occurred < start) return await finish("authority");
+    // Historical work is handled by the subscription intake, never this API
+    // route. A later reopen or close sends a new delivery with its own request.
+    if (occurred < start) return await finish("historical", true);
     let evidence = await collectValueEvidence(
       github,
       repository.id,
@@ -295,12 +296,16 @@ export async function consumeValueRequest(
   }
 }
 
-/** One bounded job per scheduled invocation. Concurrent schedulers may select
- * the same row; the durable lease allows only one to process it.
+/** The next due request. Requests are ordered by the time they became due: a
+ * new request when it was received, a waiting request at its retry time and an
+ * abandoned claim when its lease expired. A failed request therefore waits
+ * behind newer work. Concurrent schedulers may select the same row; the
+ * durable lease allows only one to process it.
  */
-export async function consumePendingValueRequest(env: ValueConsumerEnv) {
-  const job = await env.SLOPBOT_DB.prepare(
-    `SELECT r.delivery_id AS deliveryId,r.installation_id AS installationId,
+function nextValueRequest(db: ValueConsumerEnv["SLOPBOT_DB"]) {
+  return db
+    .prepare(
+      `SELECT r.delivery_id AS deliveryId,r.installation_id AS installationId,
        r.repository_id AS repositoryId,r.owner,r.repo,r.pull_request_number AS number
      FROM slopbot_value_requests r LEFT JOIN slopbot_value_processing p
        ON p.delivery_id=r.delivery_id
@@ -314,9 +319,28 @@ export async function consumePendingValueRequest(env: ValueConsumerEnv) {
            AND other.repository_id=r.repository_id
            AND other.pull_request_number=r.pull_request_number
        )
-     ORDER BY r.received_at,r.delivery_id LIMIT 1`,
-  )
+     ORDER BY COALESCE(p.retry_at,p.lease_until,r.received_at),r.delivery_id
+     LIMIT 1`,
+    )
     .bind(new Date().toISOString())
     .first<ValueRequest>();
-  return job ? consumeValueRequest(env, job) : "empty";
+}
+
+const RUN_REQUESTS = 10;
+const RUN_MS = 4 * 60 * 1000;
+
+/** Processes due requests until none remain, ten are processed or four
+ * minutes have passed. The limits keep one scheduled run inside its
+ * five-minute interval and the per-invocation D1 query limit. Each outcome
+ * settles the earlier deliveries for its PR, so a run usually covers ten PRs.
+ */
+export async function consumePendingValueRequests(env: ValueConsumerEnv) {
+  const started = Date.now();
+  const outcomes: string[] = [];
+  while (outcomes.length < RUN_REQUESTS && Date.now() - started < RUN_MS) {
+    const job = await nextValueRequest(env.SLOPBOT_DB);
+    if (!job) break;
+    outcomes.push(await consumeValueRequest(env, job));
+  }
+  return outcomes;
 }
