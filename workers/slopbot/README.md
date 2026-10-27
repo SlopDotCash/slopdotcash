@@ -35,7 +35,15 @@ to `"true"` after the explicit production qualification and activation review.
    repository, type switch, open/draft, bot author, human reopen, exemption,
    audience, author cap, budget. Advisory review stays broad; closure needs the
    separate eligibility check below.
-4. Deterministic pre-filters (empty, same-author duplicate) run without a model.
+4. Deterministic pre-filters (empty, same-author duplicate) can provide free
+   advisory results when closure is unavailable. A potentially closable result
+   still receives actual model triage and independent confirmation; the models'
+   verdicts replace the pre-filter hint. A complete zero-file comparison is
+   identified explicitly in the model input, rather than inferred from an empty
+   patch. An exact same-author duplicate supplies bounded service observations
+   about the matched open item's identity, revision and identical source digest.
+   Both reviews see the same facts; the exact original is checked again before
+   publication and closure. A model's unsupported duplicate claim cannot close.
 5. `models.ts` runs triage: Surplus `claude-opus-5.5`, then Surplus
    `gpt-6.1-sol` as fallback (owner decision, 9 October 2026). Every call is written to
    `slopbot_costs` with its internal provider cost and a zero billed amount.
