@@ -120,12 +120,6 @@ export function CycleAllocation({
                         point Slopbot penalty
                       </small>
                     ) : null}
-                    {leader.computeBonusBasisPoints > 0 ? (
-                      <small>
-                        +{leader.computeBonusBasisPoints / 100}% receipt
-                        evidence
-                      </small>
-                    ) : null}
                   </td>
                   <td>
                     <strong>
