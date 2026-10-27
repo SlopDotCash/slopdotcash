@@ -5,6 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "bun --bun vite --port 4466",
+    "dev:backend": "bun scripts/dev-backend.ts",
+    "dev:local": "SLOP_DEV_BACKEND=http://127.0.0.1:4477 bun --bun vite --port 4466",
     "build": "bun --bun vite build && node scripts/dist-manifest.mjs create dist",
     "preview": "bun --bun vite preview --port 4466",
     "prepare:publication": "node scripts/prepare-publication.mjs",

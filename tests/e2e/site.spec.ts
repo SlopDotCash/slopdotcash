@@ -11,6 +11,8 @@ import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { communityProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
+  assignLeaderboardRanks,
+  compareRankedEntries,
   type LeaderboardSnapshot,
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
@@ -606,55 +608,7 @@ test("renders contributor and cycle records from validated public data", {
   await expect(
     page.locator(".profile-totals").getByText(/simulated estimate|pool$/u),
   ).toHaveCount(0);
-  const acceptedRecords = snapshot.ledger.filter(
-    (event) => event.actor.id === actor.id,
-  );
-  const activity = page.getByRole("region", { name: "Contribution activity" });
-  await expect(activity).toBeVisible();
-  const dates = await activity
-    .locator("li[data-activity-date]")
-    .evaluateAll((rows) =>
-      rows.map((row) => row.getAttribute("data-activity-date") ?? ""),
-    );
-  expect(dates).toEqual([...dates].sort((a, b) => b.localeCompare(a)));
-  if (acceptedRecords.length > 10) {
-    await expect(activity.locator("li[data-activity-date]")).toHaveCount(10);
-    const expand = activity.getByRole("button", {
-      name: /View all .* activity records/u,
-    });
-    await expand.scrollIntoViewIfNeeded();
-    await expand.focus();
-    await page.keyboard.press("Enter");
-    const collapse = activity.getByRole("button", {
-      name: "Show recent activity",
-    });
-    await expect(collapse).toBeFocused();
-    await expect(collapse).toBeInViewport();
-    const fullDates = await activity
-      .locator("li[data-activity-date]")
-      .evaluateAll((rows) =>
-        rows.map((row) => row.getAttribute("data-activity-date") ?? ""),
-      );
-    expect(fullDates.length).toBeGreaterThanOrEqual(acceptedRecords.length);
-    expect(fullDates).toEqual(
-      [...fullDates].sort((a, b) => b.localeCompare(a)),
-    );
-    const latest = [...acceptedRecords].sort((a, b) =>
-      b.occurredAt.localeCompare(a.occurredAt),
-    )[0];
-    await expect(
-      activity
-        .getByRole("link", { name: latest.source.title, exact: true })
-        .first(),
-    ).toBeVisible();
-    await expect(
-      activity.getByRole("button", { name: "Show recent activity" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    await page.keyboard.press("Enter");
-    await expect(expand).toBeFocused();
-    await expect(expand).toBeInViewport();
-    await expect(activity.locator("li[data-activity-date]")).toHaveCount(10);
-  }
+  await expect(page.locator("li[data-activity-date]")).toHaveCount(0);
 
   const archived = cycles.cycles.find((cycle) =>
     cycle.contributors.some((entry) => entry.actor.id === actor.id),
@@ -1290,15 +1244,15 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   // These links are also opened from sign-in returns and Inbox notices.
   // Exercise Pages rewrites: the preview server serves any path as the app
   // and would conceal a missing production route.
-  for (const path of [
-    "/projects/eliza/awards",
-    "/projects/eliza/awards/",
-    "/operator/traces",
-    "/operator/traces/",
-  ]) {
+  for (const path of ["/projects/eliza/awards", "/projects/eliza/awards/"]) {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status(), path).toBe(200);
     expect(await response.text(), path).toContain('<div id="root"></div>');
+  }
+  for (const path of ["/operator/traces", "/operator/traces/"]) {
+    const response = await request.get(path, { maxRedirects: 0 });
+    expect(response.status(), path).toBe(404);
+    expect(await response.text(), path).not.toContain('<div id="root"></div>');
   }
 
   const [
@@ -1708,6 +1662,24 @@ test("opens the models page directly and through keyboard navigation", async ({
     .first();
   await client.locator("summary").press("Enter");
   await expect(client.locator("details")).toHaveAttribute("open", "");
+  // Frozen accepted outcomes use the same public Points unit as profiles.
+  for (const [model, points] of [
+    ["deepseek/deepseek-v4.1-flash-free", "30"],
+    ["openai/gpt-6", "10"],
+  ]) {
+    const row = outcomes.locator(":scope > li").filter({
+      has: page.getByRole("heading", { name: model, exact: true }),
+    });
+    await row.locator("summary").click();
+    await expect(
+      row
+        .locator("dl > div")
+        .filter({
+          has: page.getByText("PR points", { exact: true }),
+        })
+        .locator("dd"),
+    ).toHaveText(points);
+  }
   await testInfo.attach("models-page", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
@@ -1793,12 +1765,31 @@ test("lands direct and lazy cross-route hash links on their section", async ({
 }, info) => {
   const snapshot = await loadSnapshot(request);
   const actor = snapshot.leaders[0]?.actor;
-  const exclusion = snapshot.reviewExclusions?.[0];
-  if (!actor || !exclusion)
+  const event = snapshot.ledger.find(
+    (entry) =>
+      entry.actor.id === actor?.id && entry.source.kind === "pull-request",
+  );
+  if (!actor || !event)
     throw new Error(
-      "The profile fixture needs a contributor and a review exclusion",
+      "The profile fixture needs a contributor with accepted work",
     );
-  exclusion.reviewer = actor;
+  snapshot.penalties = [
+    {
+      id: `${event.source.id}:penalty`,
+      actor,
+      repository: event.repository,
+      occurredAt: event.occurredAt,
+      category: "spam",
+      tableVersion: "slopbot-penalties-v1",
+      debitThirds: 3,
+      source: { ...event.source, kind: "pull-request" },
+    },
+  ];
+  snapshot.leaders[0].scoreThirds -= 3;
+  snapshot.leaders[0].score = Math.floor(snapshot.leaders[0].scoreThirds / 3);
+  snapshot.leaders[0].penaltyThirds = 3;
+  snapshot.leaders.sort(compareRankedEntries);
+  assignLeaderboardRanks(snapshot.leaders);
   assertLeaderboardSnapshot(snapshot);
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshot }),
@@ -1819,7 +1810,7 @@ test("lands direct and lazy cross-route hash links on their section", async ({
       waitUntil: "networkidle",
     });
     await page
-      .getByRole("link", { name: "How reviews score", exact: true })
+      .getByRole("link", { name: "How penalties work", exact: true })
       .click();
     await expect(
       page.getByText("Loading page…", { exact: true }),

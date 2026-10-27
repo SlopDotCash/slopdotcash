@@ -14,7 +14,11 @@ import {
 import { identityPublicOrigin } from "../workers/identity/contracts";
 import { AccountAppeals } from "./AccountAppeals";
 import { Link } from "./Link";
-import { browserDeployment, loginHref } from "./lib/browser-deployment";
+import {
+  browserDeployment,
+  localBackendOrigin,
+  loginHref,
+} from "./lib/browser-deployment";
 import {
   fetchWithDeadline,
   readBoundedJson,
@@ -28,8 +32,8 @@ import { errorMessage } from "./lib/errors";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
-import type { ScoreEvent } from "./lib/leaderboard";
 import type { ActorRef } from "./lib/leaderboard-types";
+import { loginReturnPath } from "./lib/login-return";
 import {
   assemblePoints,
   POINTS_NOTICE,
@@ -38,6 +42,7 @@ import {
   type PointsMember,
   pointMembers,
 } from "./lib/points";
+import { recentPoints } from "./lib/profile-activity";
 import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
@@ -62,20 +67,11 @@ const productOrigin = () =>
 
 function AdminAccountLink({ onNavigate }: { onNavigate: () => void }) {
   const session = useProjectSession();
-  if (session.status !== "signed-in") return null;
+  if (session.status !== "signed-in" || !session.session.admin) return null;
   return (
-    <>
-      {session.session.admin ? (
-        <Link href="/admin" onNavigate={onNavigate}>
-          Admin
-        </Link>
-      ) : null}
-      {session.session.traceOperator === true ? (
-        <Link href="/operator/traces" onNavigate={onNavigate}>
-          Private traces
-        </Link>
-      ) : null}
-    </>
+    <Link href="/admin" onNavigate={onNavigate}>
+      Admin
+    </Link>
   );
 }
 
@@ -151,19 +147,7 @@ async function loadPoints(signal: AbortSignal) {
 }
 /** Same-origin path from `next`; anything else falls back to the profile. */
 function returnPath(search = window.location.search): string | null {
-  const next = new URLSearchParams(search).get("next");
-  if (!next) return null;
-  if (next === "earnings") return "/earnings";
-  if (!next.startsWith("/") || next.startsWith("//") || next.includes("\\"))
-    return null;
-  try {
-    const url = new URL(next, window.location.origin);
-    if (url.origin !== window.location.origin || url.pathname === "/login")
-      return null;
-    return `${url.pathname}${url.search}${url.hash}`;
-  } catch {
-    return null;
-  }
+  return loginReturnPath(search, window.location.origin);
 }
 function member(value: unknown): Membership {
   const m = value as Membership;
@@ -499,8 +483,10 @@ export function useProfileMembership(login: string, enabled = true) {
   };
 }
 
+/** The profile shows points earned over this many recent days beside the total. */
+const RECENT_POINTS_DAYS = 30;
+
 export function ProfilePoints({
-  work,
   actorId,
   login,
   cycles,
@@ -512,7 +498,6 @@ export function ProfilePoints({
 }: {
   children?: ReactNode;
   login: string;
-  work?: readonly ScoreEvent[];
   cycles?: CycleIndex;
   showIdentity?: boolean;
   actorId?: string;
@@ -555,6 +540,15 @@ export function ProfilePoints({
           ? named[0]
           : undefined
       : undefined;
+  // A known actor with no Points record and no membership has none.
+  const pointsKnown =
+    state.status === "ready" &&
+    (m || identity || recorded || (actorId && joinStatus === "absent"));
+  const pointsUnavailable = pointsKnown
+    ? null
+    : state.status === "loading"
+      ? "Loading…"
+      : "Unavailable";
   if (
     notFoundWhenUnrecorded &&
     state.status === "ready" &&
@@ -573,23 +567,7 @@ export function ProfilePoints({
   return (
     <section className="points-panel" aria-label="Slop Points">
       <ProfileActivity
-        work={work}
         awards={m?.awards}
-        pointsMissing={
-          state.status === "ready"
-            ? undefined
-            : state.status === "loading"
-              ? "Points loading…"
-              : "Points unavailable"
-        }
-        revisions={
-          state.status === "ready" && (resolvedActorId ?? m?.actor.id)
-            ? state.journal.revisions.filter(
-                (revision) =>
-                  revision.award.actor.id === (resolvedActorId ?? m?.actor.id),
-              )
-            : undefined
-        }
         login={login}
         actorId={resolvedActorId ?? m?.actor.id}
         census={census}
@@ -600,13 +578,9 @@ export function ProfilePoints({
             <Notice />
             {state.status === "ready" && (m || identity || recorded) ? (
               <div className="profile-badges">
-                {m?.badges.map((badge) => (
-                  <span key={badge}>{badge}</span>
-                ))}
                 <PublicXLink
                   actorId={(m?.actor ?? identity?.actor ?? recorded!).id}
                 />
-                {own ? <a href="/account">Manage account</a> : null}
               </div>
             ) : state.status === "ready" ? (
               <p>
@@ -620,25 +594,30 @@ export function ProfilePoints({
           </>
         }
         summary={
-          <div>
-            <strong>
-              {state.status === "ready" &&
-              (m ||
-                identity ||
-                recorded ||
-                // A known actor with no Points record and no membership has none.
-                (actorId && joinStatus === "absent"))
-                ? (
+          <>
+            <div>
+              <strong>
+                {pointsUnavailable ??
+                  recentPoints(
+                    m?.awards ?? [],
+                    new Date(),
+                    RECENT_POINTS_DAYS,
+                  ).toLocaleString()}
+              </strong>
+              <span>points · {RECENT_POINTS_DAYS} days</span>
+            </div>
+            <div>
+              <strong>
+                {pointsUnavailable ??
+                  (
                     (m?.total ?? 0) +
                     (identity?.welcome ?? 0) +
                     (identity?.socialPoints ?? 0)
-                  ).toLocaleString()
-                : state.status === "loading"
-                  ? "Loading…"
-                  : "Unavailable"}
-            </strong>
-            <span>total points</span>
-          </div>
+                  ).toLocaleString()}
+              </strong>
+              <span>total points</span>
+            </div>
+          </>
         }
       >
         {children}
@@ -650,39 +629,48 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
   const { me, setMe, session } = usePoints();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [authorization, setAuthorization] = useState<string | null>(null);
   const [closedAccount, setClosedAccount] = useState(false);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
   async function start(reopen = false) {
     active.current?.abort();
-    const c = new AbortController();
-    active.current = c;
-    setBusy(true);
-    setMessage("");
     const popup = window.open(
       "about:blank",
       "_blank",
       "popup,width=600,height=720",
     );
-    if (popup) popup.opener = null;
+    if (!popup) {
+      // Some browsers, including embedded ones, never open the window; without
+      // it the sign-in would wait for a GitHub page nobody can see.
+      setBusy(false);
+      setMessage(
+        "Your browser did not open the GitHub sign-in window. Allow pop-ups for this site, or open it in another browser, and try again.",
+      );
+      return;
+    }
+    popup.opener = null;
+    const c = new AbortController();
+    active.current = c;
+    setBusy(true);
+    setMessage("");
     try {
       const assertion = await requestIdentityAssertion({
         origin: identityPublicOrigin(
-          [
-            "https://staging.slop.cash",
-            "https://slop-staging.pages.dev",
-          ].includes(window.location.origin)
-            ? import.meta.env.VITE_IDENTITY_PUBLIC_ORIGIN
-            : undefined,
+          // A local backend serves sign-in from the dev server's own origin.
+          localBackendOrigin ??
+            ([
+              "https://staging.slop.cash",
+              "https://slop-staging.pages.dev",
+            ].includes(window.location.origin)
+              ? import.meta.env.VITE_IDENTITY_PUBLIC_ORIGIN
+              : undefined),
           deploymentTier(import.meta.env.VITE_SLOP_ENVIRONMENT),
+          { loopback: localBackendOrigin !== null },
         ),
+        allowLoopback: localBackendOrigin !== null,
         audience: "slop-points-web",
         signal: c.signal,
-        authorize: (url) => {
-          setAuthorization(url);
-          if (popup) popup.location.replace(url);
-        },
+        authorize: (url) => popup.location.replace(url),
         request: async (url, init) => {
           const response = await fetchWithDeadline(url, {
             ...init,
@@ -696,6 +684,15 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
           const body = await readBoundedJson(response, 16384, "sign-in");
           if (!body || typeof body !== "object" || Array.isArray(body))
             throw new Error("Sign-in failed. Start again.");
+          // A completed sign-in can close its own window before this poll.
+          // Only a still-pending flow needs recovery when the window is gone.
+          if (
+            response.status === 202 &&
+            "status" in body &&
+            body.status === "pending" &&
+            popup.closed
+          )
+            throw new Error("The GitHub sign-in window was closed. Try again.");
           return {
             status: response.status,
             body: body as Record<string, unknown>,
@@ -707,8 +704,8 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(
           reopen
-            ? { assertion, public: false, reopen: true }
-            : { assertion, public: false },
+            ? { assertion, public: true, reopen: true }
+            : { assertion, public: true },
         ),
         signal: c.signal,
       });
@@ -731,10 +728,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
             : errorMessage(e, "Sign-in unavailable"),
         );
     } finally {
-      if (active.current === c) {
-        setBusy(false);
-        setAuthorization(null);
-      }
+      if (active.current === c) setBusy(false);
     }
   }
   async function signout() {
@@ -776,77 +770,42 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       {!me && session === "error" ? (
         <p role="status">Could not check your session. Sign in again.</p>
       ) : null}
+      {!me ? (
+        <p>
+          Signing in makes your Slop membership and any connected X profile link
+          public.
+        </p>
+      ) : null}
       {me ? (
-        <>
-          <div className="account-session-actions">
-            <a
-              className="button secondary-button"
-              href={`/contributors/${encodeURIComponent(me.actor.login)}`}
-            >
-              Your profile
-            </a>
-            <button
-              className="button ghost-button"
-              type="button"
-              onClick={() => void signout()}
-            >
-              Sign out
-            </button>
-          </div>
-          <label>
-            <input
-              type="checkbox"
-              checked={me.public}
-              onChange={(e) => {
-                void requestJson("/api/v1/points/visibility", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ public: e.target.checked }),
-                }).then(
-                  (v) => {
-                    setMe(member(v));
-                    setMessage("Visibility saved.");
-                  },
-                  () => setMessage("Could not update visibility."),
-                );
-              }}
-            />
-            Show my membership publicly
-          </label>
-        </>
-      ) : (
-        <>
-          <button
-            className="button primary-button"
-            type="button"
-            disabled={busy || session === "loading"}
-            onClick={() => void start(closedAccount)}
+        <div className="account-session-actions">
+          <a
+            className="button secondary-button"
+            href={`/contributors/${encodeURIComponent(me.actor.login)}`}
           >
-            <GithubIcon aria-hidden="true" />
-            {busy
-              ? "Waiting for GitHub…"
-              : closedAccount
-                ? "Reopen account with GitHub"
-                : "Continue with GitHub"}
+            Your profile
+          </a>
+          <button
+            className="button ghost-button"
+            type="button"
+            onClick={() => void signout()}
+          >
+            Sign out
           </button>
-          {busy ? (
-            <button
-              type="button"
-              onClick={() => {
-                active.current?.abort();
-                setBusy(false);
-                setAuthorization(null);
-              }}
-            >
-              Cancel
-            </button>
-          ) : null}
-          {authorization ? (
-            <a href={authorization} target="_blank" rel="noreferrer">
-              Open GitHub sign-in
-            </a>
-          ) : null}
-        </>
+        </div>
+      ) : (
+        <button
+          className="button primary-button"
+          type="button"
+          disabled={busy || session === "loading"}
+          onClick={() => void start(closedAccount)}
+        >
+          <GithubIcon aria-hidden="true" />
+          {busy
+            ? "Waiting for GitHub…"
+            : closedAccount
+              ? "Reopen account with GitHub"
+              : "Continue with GitHub"}
+        </button>
       )}
       <p role="status">{message}</p>
     </section>
@@ -1518,12 +1477,10 @@ function SocialConnections() {
   } | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [publish, setPublish] = useState(false);
   const [version, setVersion] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: version explicitly refreshes the server state after account mutations.
   useEffect(() => {
     setData(null);
-    setPublish(false);
     if (!me || !productOrigin()) return;
     const c = new AbortController();
     void requestJson("/api/v1/points/x/me", { signal: c.signal })
@@ -1566,9 +1523,7 @@ function SocialConnections() {
       }
       setVersion((v) => v + 1);
       if (me) setMe({ ...me });
-      setMessage(
-        path === "disconnect" ? "X disconnected." : "X visibility updated.",
-      );
+      setMessage("X disconnected.");
     } catch {
       setMessage("X request failed. Retry.");
     } finally {
@@ -1598,6 +1553,12 @@ function SocialConnections() {
         </>
       ) : (
         <>
+          {!data.account && data.configured ? (
+            <p>
+              Connecting X is optional. Your X profile link will be public when
+              your Slop membership is public.
+            </p>
+          ) : null}
           <div className="connection-row">
             <strong>X</strong>
             <span>
@@ -1621,7 +1582,7 @@ function SocialConnections() {
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => void action("start", { public: publish })}
+                onClick={() => void action("start", { public: true })}
               >
                 {busy ? "Connecting…" : "Connect X"}
               </button>
@@ -1629,27 +1590,9 @@ function SocialConnections() {
               <span>Unavailable</span>
             )}
           </div>
-          {data.account || data.configured ? (
-            <label>
-              <input
-                type="checkbox"
-                checked={data.account ? data.account.public === 1 : publish}
-                disabled={busy}
-                onChange={(e) =>
-                  data.account
-                    ? void action("visibility", { public: e.target.checked })
-                    : setPublish(e.target.checked)
-                }
-              />
-              Show my X account with my public membership
-            </label>
-          ) : null}
           {data.account && !me.public ? (
             <p>Hidden while your membership is private.</p>
           ) : null}
-          <p className="points-meta">
-            Slop requests no posting or messaging access.
-          </p>
           <p role="status">{message}</p>
         </>
       )}

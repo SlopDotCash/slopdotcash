@@ -1214,7 +1214,7 @@ for (const scenario of [
     if (!assessment || !result || !isScanResult(result))
       throw new Error("Missing incomplete scan result");
     expect(result.assessed.commitSha).toBe(commitSha);
-    expect(result.assessed.templateSha256).toBe(TEMPLATE);
+    expect(result.assessed.templateSha256).toBe(templateSha256);
     const reason =
       scenario.source === "entries"
         ? `Source entry limit exceeded: observed ${git("ls-tree", "-r", "-t", "HEAD").toString().trim().split("\n").length} entries, maximum 1024`

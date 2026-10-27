@@ -1268,8 +1268,10 @@ export default function ProjectProposalPage() {
     }
   }
   function clearDraft() {
+    if (submission.status === "submitting") return;
     lookupController.current?.abort();
     setProposal(EMPTY_PROPOSAL);
+    setSubmission({ status: "idle" });
     suggestedText.current = { name: "", headline: "", goal: "", criteria: "" };
     setTermsOpen(false);
     setAttempted(SETUP_STEPS.map(() => false));
@@ -1852,6 +1854,7 @@ export default function ProjectProposalPage() {
             <span>Clear this draft?</span>
             <button
               className="button danger-button"
+              disabled={submission.status === "submitting"}
               onClick={clearDraft}
               type="button"
             >
@@ -1868,6 +1871,7 @@ export default function ProjectProposalPage() {
         ) : (
           <button
             className="button ghost-button"
+            disabled={submission.status === "submitting"}
             onClick={() => setConfirmClear(true)}
             type="button"
           >

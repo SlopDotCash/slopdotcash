@@ -136,12 +136,16 @@ cases, inbox rows and public GitHub work stay. The database refuses a session
 or public visibility for a closed account. A repeated request that raced
 the first closure reports that same closure. An ordinary sign-in to a closed
 account returns `account_closed`; only a sign-in that sends `reopen: true`
-opens it again, private and without connections. Support handles only lost
+opens it again, public and without connections under the 26 October 2026 account policy. Support handles only lost
 GitHub access and contested recovery.
 
-New join-only membership is private unless opted into public display. Public
-GitHub contribution history remains public. Visibility can be changed without
-rejoining. Identity aliases never move balances between account IDs. A disputed
+Owner decision, 26 October 2026: sign-in and explicit reopening publish membership.
+Existing private memberships and their already-connected X links become public
+on the next authenticated sign-in; new X connections are public. Active accounts
+have no separate visibility opt-out. State this before sign-in or connecting X.
+Keep closed accounts private and disconnected until explicit reopening, and do
+not change visibility from a public read. Public GitHub contribution history
+remains public. Identity aliases never move balances between account IDs. A disputed
 or reused login must resolve through verified identity rather than name matching.
 
 ## Operations and rollback
@@ -167,7 +171,7 @@ The X numeric ID is reserved to its verified GitHub identity to prevent reuse
 across accounts. A member can reconnect or switch X accounts. Disconnecting
 removes the visible link while preserving historical award uniqueness.
 Historical X awards were participation points, not accepted-work score.
-Public community cards include opted-in members even without accepted work.
+Public community cards include public members even without accepted work.
 
 X uses OAuth 2.0 authorization code with S256 PKCE and a confidential client.
 The browser flow cookie is separate, HttpOnly/Secure/SameSite=Lax, expires after
@@ -181,9 +185,11 @@ and messaging permissions are not requested. X handles are observed snapshots;
 reconnect to refresh a changed handle. X control does not confer GitHub project,
 organization, wallet, or payment authority.
 
-Membership and X visibility each require opt-in. Both must be public before an
-X link appears to others. Changing either preference hides the link. Signing
-out cancels session-bound linking; connecting does not publish any post or DM.
+Membership and X links follow the public-account policy above. Connecting X
+still requires its OAuth authorization; disconnecting removes the public link.
+Legacy requests to hide an active membership or connection are refused rather
+than reported as successful. Signing out cancels session-bound linking;
+connecting does not publish any post or DM.
 
 Each recipient earns **25 points per project and finalized monthly payout
 cycle** with positive paid principal. Dollar size, fee size, separate reward
@@ -232,7 +238,7 @@ No Telegram credential or webhook is required.
 Every recorded PR author has a discoverable `/contributors/<login>` profile,
 including authors with only open or closed unmerged PRs. Joined members and
 historical point recipients retain profiles independently of the current score
-window. Public membership and X visibility remain opt-in.
+window. Membership and X links follow the public-account policy above.
 
 `profiles:generate` walks the complete PR connection of each active manifest
 repository, deduplicates immutable PR IDs, and reconciles the total record count

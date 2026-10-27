@@ -295,16 +295,17 @@ export function ownerVaultSetupService(deps: {
               }),
         };
         try {
-          const prepared = await prepareSolanaVaultCreation(
-            config,
-            creation,
-            registrationOnly,
-          );
+          const { tokenProgram, ...prepared } =
+            await prepareSolanaVaultCreation(
+              config,
+              creation,
+              registrationOnly,
+            );
           return {
             family: "solana" as const,
             template,
             config,
-            creation,
+            creation: { ...creation, tokenProgram },
             prepared,
           };
         } catch (error) {
