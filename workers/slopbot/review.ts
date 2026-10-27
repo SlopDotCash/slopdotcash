@@ -1270,7 +1270,10 @@ async function runReview(
   let close = false;
   // An uncertain finding goes to the maintainer first and never closes
   // (PRD section 5). Policy gates such as label-only modes are not uncertainty.
-  let uncertain = verdict.confidence < CLOSE_CONFIDENCE || !proof.ok;
+  let uncertain =
+    verdict.confidence < CLOSE_CONFIDENCE ||
+    verdict.limitations.length > 0 ||
+    !proof.ok;
   if (scope === "security") {
     if (mode === "close" && proof.ok) blockedClose = routing.reason;
   } else if (
