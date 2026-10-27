@@ -653,6 +653,16 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
   const [closedAccount, setClosedAccount] = useState(false);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
+  useEffect(() => {
+    if (!me)
+      setMessage((current) =>
+        current === "You’re signed in." ||
+        current ===
+          "Your account is open again. Connections and activity email are off."
+          ? ""
+          : current,
+      );
+  }, [me]);
   async function start(reopen = false) {
     active.current?.abort();
     const popup = window.open(
