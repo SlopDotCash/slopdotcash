@@ -7,6 +7,7 @@ import {
   validAddedBinaryProof,
 } from "./value-binary";
 import { collectValueEvidence, type FileChange } from "./value-evidence";
+import { valueModelSource } from "./value-model-source";
 import { verifyCurrentValueSource } from "./value-publication";
 import { valueSourceDigest } from "./value-review";
 import {
@@ -246,6 +247,47 @@ function fixture(
 async function collect(f = fixture()) {
   return collectValueEvidence(f.client, repository.id, 1, repository);
 }
+
+test("model input keeps binary identity and claims while retaining bodies only in private evidence", async () => {
+  const source = await collect();
+  const original = JSON.stringify(source);
+  const digest = await valueSourceDigest(source, policy);
+  const prepared = await prepareWorkUnitEvidence(
+    [{ evidence: source, policy }],
+    [repository],
+  );
+  for (const evidence of [source, prepared]) {
+    const projected = valueModelSource(evidence);
+    expect(projected.item).not.toContain('"contentBase64":');
+    expect(projected.item).toContain('"contentReview":"unviewed"');
+    expect(projected.systemSuffix).toContain("leave that outcome unresolved");
+    const retained = required(source.files.at(-1)?.addedBinary);
+    expect(projected.item).toContain(retained.sha256);
+    expect(projected.item).toContain(retained.blobSha);
+    expect(projected.item).toContain(binaryPath);
+  }
+  const projectedJoint = JSON.parse(valueModelSource(prepared).item);
+  expect(projectedJoint.claims).toEqual(prepared.claims);
+  expect(JSON.stringify(source)).toBe(original);
+  expect(await valueSourceDigest(source, policy)).toBe(digest);
+  expect(required(source.files.at(-1)?.addedBinary).contentBase64).toBe(
+    Buffer.from(bytes).toString("base64"),
+  );
+});
+
+test("text-only model input remains byte-identical for single and joint assessments", async () => {
+  const source = await collect(fixture({ textOnly: true }));
+  const prepared = await prepareWorkUnitEvidence(
+    [{ evidence: source, policy }],
+    [repository],
+  );
+  for (const evidence of [source, prepared]) {
+    expect(valueModelSource(evidence)).toEqual({
+      item: JSON.stringify(evidence),
+      systemSuffix: "",
+    });
+  }
+});
 
 test("single-parent binary acceptance preserves bytes, paths and original actors without patch lines", async () => {
   const f = fixture();
