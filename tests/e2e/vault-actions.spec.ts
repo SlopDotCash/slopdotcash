@@ -2258,8 +2258,24 @@ test("owner reserves an old monthly allocation and recovers a lost wallet reply"
     name: "Authorize monthly reservation in wallet",
   });
   await page.evaluate(() => {
-    document.documentElement.style.fontSize = "200%";
+    const typography = [
+      ...document.querySelectorAll<HTMLElement>("body *"),
+    ].map((el) => ({
+      el,
+      font: getComputedStyle(el).fontSize,
+      line: getComputedStyle(el).lineHeight,
+    }));
+    for (const { el, font, line } of typography) {
+      el.style.fontSize = `${Number.parseFloat(font) * 2}px`;
+      if (line !== "normal")
+        el.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
+    }
   });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("monthly-owner-200-percent.png"),

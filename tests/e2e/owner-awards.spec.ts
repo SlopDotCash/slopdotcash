@@ -30,8 +30,8 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   let sequence = 0;
   let frozen = false;
   let automatic = true;
-  // Decision D1: the 2026-11 cutoff is 72 hours after the month ends.
-  let cutoffAt = "2026-12-04T00:00:00.000Z";
+  // Closed months remain editable until the owner explicitly finalizes them.
+  const finalizationOpensAt = "2026-12-01T00:00:00.000Z";
   await page.clock.setFixedTime(new Date("2026-12-02T12:00:00.000Z"));
   const allocations = [
     { githubUserId: "1", login: "first-contributor", grossBase: "1234567890" },
@@ -42,7 +42,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     period: "2026-11",
     manifestSha256: "a".repeat(64),
     automatic,
-    cutoffAt,
+    finalizationOpensAt,
     deployment: null,
     asset: {
       network: "base-sepolia",
@@ -65,7 +65,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     run: frozen
       ? {
           trigger: "owner",
-          frozenAt: "2026-12-02T00:00:00.000Z",
+          frozenAt: "2027-02-02T00:00:00.000Z",
           snapshotSha256: "c".repeat(64),
           totalGrossBase: "3234567890",
           network: "base-sepolia",
@@ -158,19 +158,20 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   expect(changes).toEqual([
     { githubUserId: "2", grossBase: "1500000000", expectedSequence: 0 },
   ]);
-  // After the cutoff, with the automatic default on, allocations are fixed.
-  cutoffAt = "2026-12-01T00:00:00.000Z";
+  await page.clock.setFixedTime(new Date("2027-02-02T12:00:00.000Z"));
   await load.click();
-  await expect(awards).toContainText("The cutoff has passed");
-  await expect(
-    awards.getByLabel("Award for second-contributor"),
-  ).toBeDisabled();
-  cutoffAt = "2026-12-04T00:00:00.000Z";
-  await load.click();
-  await expect(awards).toContainText("Unless you finalize earlier");
-  // The cutoff is a calendar UTC instant, shown in UTC for every viewer.
-  await expect(awards).toContainText("finalized at Dec 4, 2026, 00:00 UTC.");
+  await expect(awards).toContainText("there is no deadline");
   await expect(awards.getByLabel("Award for second-contributor")).toBeEnabled();
+  await awards.getByLabel("Award for second-contributor").fill("1.75");
+  await awards
+    .getByRole("button", { name: "Save second-contributor", exact: true })
+    .click();
+  await expect(page.getByText("Allocation saved privately.")).toBeVisible();
+  expect(changes[1]).toEqual({
+    githubUserId: "2",
+    grossBase: "1750000000",
+    expectedSequence: 1,
+  });
   await awards
     .getByRole("button", { name: "Turn off automatic payment" })
     .click();
@@ -187,7 +188,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   ).toBe(true);
   await awards.getByRole("button", { name: "Finalize awards" }).click();
   await expect(awards).toContainText("Finalized by you");
-  await expect(awards).toContainText("Dec 2, 2026, 00:00 UTC");
+  await expect(awards).toContainText("Feb 2, 2027, 00:00 UTC");
   await expect(awards).toContainText("Underfunded");
   await expect(awards.getByLabel("Award for second-contributor")).toHaveCount(
     0,
@@ -270,7 +271,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
           period: "2026-11",
           manifestSha256: "a".repeat(64),
           automatic: false,
-          cutoffAt: null,
+          finalizationOpensAt: null,
           deployment,
           asset: null,
           proposal: null,
