@@ -171,7 +171,12 @@ test("large private evidence downloads with a single-use browser grant @registry
   await item
     .getByRole("textbox")
     .fill("Inspect the complete synthetic disk overlay without execution");
-  await item.getByRole("button").focus();
+  await item
+    .getByRole("button", {
+      name: "Download Synthetic VM disk overlay",
+      exact: true,
+    })
+    .focus();
   const downloadPromise = page.waitForEvent("download");
   await page.keyboard.press("Enter");
   const downloaded = await downloadPromise;
