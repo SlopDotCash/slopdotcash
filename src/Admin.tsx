@@ -162,6 +162,7 @@ function ProjectEditor({
     }
   }, [draftKey, text, skill, asset, assetSelected, status, reason]);
   const [busy, setBusy] = useState(false);
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const skillStarted = CONTRIBUTION_FIELDS.some(
     (field) => skill[field].trim() !== "",
@@ -415,7 +416,11 @@ function ProjectEditor({
         </p>
       </fieldset>
       <details
-        open={Object.values(skillErrors).some((value) => value !== null)}
+        onToggle={(event) => setInstructionsOpen(event.currentTarget.open)}
+        open={
+          instructionsOpen ||
+          Object.values(skillErrors).some((value) => value !== null)
+        }
       >
         <summary>Customize contributor instructions</summary>
         <fieldset className="admin-fieldset">

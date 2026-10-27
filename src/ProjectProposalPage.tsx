@@ -886,6 +886,7 @@ export default function ProjectProposalPage() {
     message: string;
   }>({ state: "idle", message: "" });
   const [factsOpen, setFactsOpen] = useState(false);
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const lookupController = useRef<AbortController | null>(null);
@@ -1197,6 +1198,8 @@ export default function ProjectProposalPage() {
     )
       setFactsOpen(true);
     if (isTermsField(field)) setTermsOpen(true);
+    if (SKILL_RULE_FIELDS.some((entry) => entry === field))
+      setInstructionsOpen(true);
     setStep(owner);
     window.setTimeout(() => document.getElementById(`field-${field}`)?.focus());
   }
@@ -1275,6 +1278,7 @@ export default function ProjectProposalPage() {
     setSubmission({ status: "idle" });
     suggestedText.current = { name: "", headline: "", goal: "", criteria: "" };
     setTermsOpen(false);
+    setInstructionsOpen(false);
     setAttempted(SETUP_STEPS.map(() => false));
     setLookup({ state: "idle", message: "" });
     setConfirmClear(false);
@@ -1561,7 +1565,13 @@ export default function ProjectProposalPage() {
             />
             <details
               className="proposal-skill-rules"
-              open={SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))}
+              onToggle={(event) =>
+                setInstructionsOpen(event.currentTarget.open)
+              }
+              open={
+                instructionsOpen ||
+                SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))
+              }
             >
               <summary>Contributor instructions (optional)</summary>
               <p className="field-hint">
@@ -2364,14 +2374,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             value={value.goal}
           />
         </details>
-        <details
-          className="settings-group"
-          open={Boolean(
-            shown("criteria") ||
-              shown("automaticClosure") ||
-              SKILL_RULE_FIELDS.some((field) => Boolean(shown(field))),
-          )}
-        >
+        <details className="settings-group">
           <summary>Contribution rules</summary>
           <TextField
             error={shown("criteria")}
@@ -2386,10 +2389,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             onChange={set("automaticClosure")}
             value={value.automaticClosure}
           />
-          <details
-            className="proposal-skill-rules"
-            open={SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))}
-          >
+          <details className="proposal-skill-rules">
             <summary>Contributor instructions</summary>
             <p className="field-hint">
               These cannot override Slop's safety rules.
@@ -2409,14 +2409,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           </details>
         </details>
         {monthly ? (
-          <details
-            className="settings-group"
-            open={Boolean(
-              shown("monthlyAmount") ||
-                shown("tokenAddress") ||
-                shown("tokenSymbol"),
-            )}
-          >
+          <details className="settings-group">
             <summary>Monthly rewards</summary>
             <FundingFields
               choice={choice}
@@ -2458,7 +2451,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             </button>
           </div>
         ) : null}
-        <details className="settings-group" open={Boolean(shown("note"))}>
+        <details className="settings-group">
           <summary>Public revision note (optional)</summary>
           <TextField
             error={shown("note")}

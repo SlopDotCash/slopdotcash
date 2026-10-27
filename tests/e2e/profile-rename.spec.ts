@@ -1,10 +1,12 @@
 /** Public-record fixtures exercise profile identity, not OAuth or settlement. */
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
+import { deriveAllocationFundingBasis } from "../../src/lib/allocation-funding";
 import { assertCycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { assertLeaderboardSnapshot } from "../../src/lib/leaderboard";
 import { assertProfiles } from "../../src/lib/profiles";
+import { findProject } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -814,19 +816,35 @@ test("profile history previews retain every payment and cycle behind keyboard co
 }, info) => {
   const site = await serveProfileSite(page);
   const { current, cycles } = await profileRecords(page);
-  const original = JSON.stringify(cycles.cycles[0]);
-  for (const month of ["01", "03", "05"]) {
-    cycles.cycles.push(
-      JSON.parse(
-        original
-          .replaceAll("2026-07", `2026-${month}`)
-          .replaceAll(
-            "2026-08",
-            `2026-${String(Number(month) + 1).padStart(2, "0")}`,
-          ),
-      ),
-    );
+  const original = cycles.cycles[0];
+  const project = findProject(original.projectId);
+  if (!project) throw new Error("Missing historical project fixture");
+  for (const month of [8, 9, 10]) {
+    const cycle = structuredClone(original);
+    const period = `2026-${String(month).padStart(2, "0")}`;
+    const following = `2026-${String(month + 1).padStart(2, "0")}`;
+    cycle.cycleId = period;
+    cycle.contributionWindow = {
+      from: `${period}-01T00:00:00.000Z`,
+      to: `${following}-01T00:00:00.000Z`,
+    };
+    cycle.generatedAt = `${following}-02T00:00:00.000Z`;
+    cycle.reviewEndsAt = `${following}-15T00:00:00.000Z`;
+    cycle.approvedAt = cycle.settledAt = `${following}-16T00:00:00.000Z`;
+    // Retained historical awards can use carried funds; the fixture does not
+    // claim a current commitment or invent a new funding route.
+    cycle.reward.fundingBasis = deriveAllocationFundingBasis(project, period);
+    cycle.reward.capMinor = "0";
+    cycle.reward.carriedMinor = cycle.reward.approvedMinor;
+    for (const contributor of cycle.contributors)
+      if (contributor.wallet)
+        contributor.wallet.observedAt = `${following}-01T00:00:00.000Z`;
+    for (const file of Object.values(cycle.files))
+      if (file) file.url = file.url.replace("/2026-07/", `/${period}/`);
+    cycles.cycles.unshift(cycle);
   }
+  cycles.generatedAt = "2026-11-17T00:00:00.000Z";
+  await page.clock.setFixedTime(new Date(cycles.generatedAt));
   assertCycleIndex(cycles);
   await page.route(`${site}/api/v1/points/**`, (route) =>
     route.fulfill({ json: null }),
@@ -889,7 +907,7 @@ test("profile history previews retain every payment and cycle behind keyboard co
   await expect(history.locator(".profile-projects > a")).toHaveCount(4);
   await expect(history.getByRole("link").last()).toHaveAttribute(
     "href",
-    "/cycles/eliza/2026-01",
+    "/cycles/eliza/2026-07",
   );
   await expectAccessible(page);
   expect(

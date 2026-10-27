@@ -531,6 +531,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await expect(requiredTests).toBeVisible();
   await expect(requiredTests).toHaveAttribute("aria-invalid", "true");
   await requiredTests.fill(originalTests);
+  await expect(requiredTests).toBeVisible();
   const consent = returningOwner.getByRole("checkbox", {
     name: "Allow automatic closure by Slopbot",
   });

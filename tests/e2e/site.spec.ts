@@ -181,7 +181,7 @@ test("security reports recover a failed list and share one session across submis
     fullPage: true,
   });
   await expect(
-    page.getByRole("heading", { name: "Your private reports" }),
+    page.getByRole("heading", { name: "Report receipts" }),
   ).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(3);
   await expect(page.getByRole("alert")).toHaveCount(0);
@@ -1367,7 +1367,9 @@ test("shows an explicit error for invalid data and retries", async ({
   });
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toBeVisible();
-  await expect(page.locator(".reward-card")).not.toContainText("$0");
+  const summary = page.locator(".project-state-summary");
+  await expect(summary).not.toContainText("$0");
+  await expect(summary).toContainText("$1,000 monthly target");
   await expectAccessible(page);
   const failedAttempts = attempts;
   expect(failedAttempts).toBeGreaterThan(1);
