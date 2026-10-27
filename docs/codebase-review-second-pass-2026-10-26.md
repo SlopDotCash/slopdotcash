@@ -2742,3 +2742,35 @@ All `contracts/evm/test/*.sol`, `contracts/solana/**/*.rs` test blocks and contr
 - `contracts/solana/monthly-commitment.test.ts`: Solana monthly setting route > refuses a non-owner wallet with a readable reason and no chain read — pass, 0.11 ms.
 - `contracts/evm/scripts.test.ts`: deploy scripts > network scripts fix no address; only Base takes the default fee recipient — pass, 0.23 ms.
 - `contracts/evm/scripts.test.ts`: deploy scripts > roles come from the environment; only Base has a default fee recipient — pass, 0.07 ms.
+
+## Implementation results
+
+The report-first commit is `18f655f2`. The implementation following it resolves the selected changes as follows; this section records final decisions separately from the original baseline audit above.
+
+| Finding | Implemented result |
+| --- | --- |
+| SF-01 | Funding route no longer loads unused leaderboard/cycle snapshots; current-registry and vault data requirements remain. |
+| SF-02 | Submission-list reload clears its old error, so503→Retry→200 reaches the real list in the same document. |
+| SF-03 | Page-owned project sessions feed setup children and private submission cards. Initial setup and a three-card case list each use one project-session request. A fresh shared identity check remains on entering Review, and an actor switch refreshes the owner inventory; the UI does not display the old actor while checking. This preserves the earlier review-time confirmation while removing redundant children, so the initial report's proposed zero additional Review reads was deliberately not adopted. |
+| SF-04 | Project automatic-intake sign-in goes directly to login with the project security return path; checking and failed sessions use the shared panel. |
+| SF-05 | One canonical decimal parser validates token amounts. Existing token decimals are honored; new token precision remains server-verified. Token previews show token units; stablecoin cent/cap rules and positive-amount requirements remain. |
+| SF-06 | The remaining two identical action wrappers use `useAction`, preserving creation-failure classification and pending-record recovery. |
+| SF-07/09/10/11/12 | Keep current preload/manual operator reads, contextual score explanations, formatters and CSS groups. No measured user problem or complete cascade-equivalence proof justified extra abstraction/churn. All other retained frontend decisions above stand. |
+| SB-01 | One SQL statement reads the five account datasets from the same snapshot. Actual reservation interleaving now returns the award before reservation in the first response and as a reserved payment in the next; it never disappears. Missing database output throws instead of inventing empty arrays. |
+| SB-02 | At most four independent vault refreshes proceed concurrently. Controlled8-vault/30ms measurement improved254ms→65ms with all8 rows retained; peak in-flight reads1→4. Blocked/failing vaults no longer stall healthy ones; errors retain deterministic order and monotonic writes are unchanged. |
+| SB-03 | Unsigned Solana builders reuse adapter PDA/public-key helpers. Ordinary and private-bounty unsigned messages and derivations are byte-identical to baseline vector SHA-256 `3ec1f0ff5f64e4a2ccde178c3a13c389bfa12eaccfc9ab42d22840ea7810e8b5`. Native program source is untouched. |
+| SR-01 | Unused immutable-file writer deleted. |
+| SR-02 | Abandoned checker CLI/barrel and519 lines of its exclusive policy branches removed. `planReferencedArtifacts` moved unchanged into the actual artifact module, giving ingestion one direct import and one adjacent declaration file. The original plan for two declaration files was simplified further.24 retained parser/planner/semantic results and6 constants matched the baseline; live verifier function bodies stayed unchanged. |
+| SR-03 | Cycle comparison reuses byte-identical `canonicalJson`;11 historical fixture representations match. The differently ordered project-policy serializer remains. |
+| ST-01/02/03 | Deleted residual census unit under Playwright, two isolated helper/marker suites and literal/parser-only fragments. Complete installer, real API/database outcomes and meaningful failure paths remain. |
+| ST-04/05/06 | Moved lost-response closure coverage into the actual handler/DB/browser workflow; removed mocked closure duplicate, standalone mocked monthly-toggle flow and static penalty-display suite. Full chain monthly control, ledger penalty/appeal and real navigation evidence remain. |
+| ST-07 | Deleted11 duplicate project JSON files (46,583 bytes). All consumers use a cloned lookup in the one frozen fixture registry; no production inventory changed. |
+| ST-08/09 | Consolidated snapshot-store outcomes into refresh→D1→public API, preserving concurrency controls. Removed five duplicate fake poster cases; the actual Anvil scenario now proves an empty first file epoch is skipped before the next funded root posts at contract epoch0. Other durable budget/uncertain-send cases remain. |
+| ST-10 | Kept per-case real R2 runtimes: sharing would require additional lifetime/namespace complexity without an established net benefit. No Map replacement or weaker storage double introduced. |
+| ST-11 | Full desktop/mobile route coverage remains; laptop/tablet and extra reflow checks use six representative layout families. Desktop-only checks are excluded by project selection instead of generating mobile skip noise. |
+| ST-12/13 | Preview/Pages CI install only Chromium; registry retains Chromium+Firefox. Removed redundant escrow-policy subset execution and alias; full code, contract and chain workflows remain. |
+| ST-14/15 | Timeout kills the owned process tree; real subprocess heartbeat proves descendants stop and exit codes survive. Registry acquisition/cleanup share one lifetime, attempt every acquired cleanup and preserve original failure. Windows CI runs the lifecycle regression; trigger paths now follow canonical templates and fixture inputs. |
+
+Targeted implementation acceptance completed before the combined run:80 backend/contract cases;18 poster cases; actual EVM payment integration; full Anvil referral posting/watch/void/claim/cache workflow;35 installer cases/244 assertions;18 fixture/runner/store cases/116 assertions; compiler and formatting checks. Desktop/mobile browser regressions exercise the selected UI behaviors against isolated before/after bundles. These are local fixture/chain results, not production or real-provider qualification.
+
+Full combined exact-head validation, final browser artifacts, request measurements and limitations are retained in the task's local `codebase-second-review` evidence directory, with a final `validation.md` index. No private source archive, prompt, response, signing material or session token is published as evidence. Native Solana validator/Anchor/Cargo and a local Windows runner are unavailable in this environment; Solana unsigned-byte equivalence and existing adapter tests are local evidence, while native Windows lifecycle is covered by its checked-in CI workflow. No live model behavior changed, so provider calls and agent-client qualification do not apply to these refactors.

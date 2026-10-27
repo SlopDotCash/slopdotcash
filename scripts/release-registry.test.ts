@@ -21,6 +21,7 @@ import {
   type ProjectApiDependencies,
 } from "../backend/projects/handler";
 import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
+import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import {
   renderProjectRegistry,
@@ -78,9 +79,7 @@ test("release carries the checked D1 registry and history into canonical atteste
   );
   // A paused project may hold funded obligations. These are schema-valid
   // controlled pins, not a claim of finalized chain evidence.
-  const base = JSON.parse(
-    await readFile(join(source, "tests/fixtures/projects/eliza.json"), "utf8"),
-  );
+  const base = fixtureProject("eliza");
   base.status = "paused";
   base.reward.chain = "base";
   base.reward.feeBasisPoints = 200;

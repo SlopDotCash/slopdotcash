@@ -38,6 +38,301 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+test("funding opens without downloading contribution snapshots", async ({
+  page,
+}) => {
+  const snapshotReads: string[] = [];
+  page.on("request", (request) => {
+    if (
+      /\/data\/(?:leaderboard\.json|cycles\/index\.json)/u.test(request.url())
+    )
+      snapshotReads.push(request.url());
+  });
+  await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", { name: "Eliza funding" }),
+  ).toBeVisible();
+  await expect(page.getByText("This project has no vault yet.")).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("funding-ready.png"),
+    fullPage: true,
+  });
+  await test.info().attach("funding-snapshot-requests", {
+    body: JSON.stringify(snapshotReads),
+    contentType: "application/json",
+  });
+  expect(snapshotReads).toEqual([]);
+  await expectAccessible(page);
+});
+
+test("project setup shares one sign-in read with its owner inventory", async ({
+  page,
+}) => {
+  let reads = 0;
+  await page.route("**/api/v1/project-session", (route) => {
+    reads++;
+    return route.fulfill({
+      json: {
+        session: { githubId: "4242", githubLogin: "example", admin: false },
+      },
+    });
+  });
+  await page.route("**/api/v1/project-setup", (route) =>
+    route.fulfill({ json: { projects: [], applications: [] } }),
+  );
+  await page.route("**/api/v1/project-github/owned-repositories", (route) =>
+    route.fulfill({ json: { repositories: [] } }),
+  );
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  await page.getByText("Your projects", { exact: true }).click();
+  await expect(page.getByText("You have no projects yet.")).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("project-setup.png"),
+    fullPage: true,
+  });
+  await test.info().attach("session-reads", {
+    body: String(reads),
+    contentType: "text/plain",
+  });
+  expect(reads).toBe(1);
+  await expectAccessible(page);
+});
+
+test("security reports recover a failed list and share one session across submissions", async ({
+  page,
+  diagnostics,
+}) => {
+  let reads = 0;
+  let lists = 0;
+  diagnostics.allowResponse(503, "GET", "/api/v1/security-submissions");
+  await page.route("**/api/v1/project-session", (route) => {
+    reads++;
+    return route.fulfill({
+      json: {
+        session: { githubId: "4242", githubLogin: "example", admin: false },
+      },
+    });
+  });
+  await page.route("**/api/v1/security-cases", (route) =>
+    route.fulfill({
+      json: {
+        viewer: { githubId: "4242", githubLogin: "example" },
+        programs: [],
+        cases: [],
+      },
+    }),
+  );
+  await page.route("**/api/v1/security-submissions", (route) => {
+    lists++;
+    return lists === 2
+      ? route.fulfill({
+          status: 503,
+          json: {
+            error: "unavailable",
+            message: "Report list temporarily unavailable.",
+          },
+        })
+      : route.fulfill({
+          json: {
+            automatic: true,
+            submissions: [1, 2, 3].map((number) => ({
+              id: `ss_example${number}`,
+              projectId: "eliza",
+              repository: "elizaOS/eliza",
+              origin: "slop",
+              state: "submitted",
+              revision: 1,
+              attempt: 1,
+              advisory: null,
+              githubCreatedAt: null,
+              failureCode: null,
+              caseId: null,
+              retryAllowed: false,
+              reconcileAfter: null,
+            })),
+          },
+        });
+  });
+  await page.goto("/security", { waitUntil: "networkidle" });
+  await expect(page.getByRole("article")).toHaveCount(3);
+  const initialSessionReads = reads;
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByRole("alert")).toContainText(
+    "Report list temporarily unavailable.",
+  );
+  await page.getByRole("button", { name: "Retry", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await page.waitForLoadState("networkidle");
+  await page.screenshot({
+    path: test.info().outputPath("security-list-retried.png"),
+    fullPage: true,
+  });
+  await expect(
+    page.getByRole("heading", { name: "Your private reports" }),
+  ).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(3);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  expect(lists).toBe(3);
+  expect(initialSessionReads).toBe(1);
+  expect(reads).toBe(2);
+  await test.info().attach("security-read-counts", {
+    body: JSON.stringify({
+      lists,
+      initialSessionReads,
+      sessionsAfterReload: reads,
+      submissions: 3,
+    }),
+    contentType: "application/json",
+  });
+  await expectAccessible(page);
+});
+
+test("security sign-in returns directly to the selected project", async ({
+  page,
+}) => {
+  let reads = 0;
+  await page.route("**/api/v1/project-session", (route) => {
+    reads++;
+    return route.fulfill({ json: { session: null } });
+  });
+  await page.route("**/api/v1/security-programs/eliza/intake", (route) =>
+    route.fulfill({
+      json: {
+        state: "ready",
+        automatic: "ready",
+        automaticConfigured: true,
+        checkedAt: new Date().toISOString(),
+        maxAgeSeconds: 300,
+        paidParticipation: "open",
+        handoffUrl: "https://github.com/elizaOS/eliza/security/advisories/new",
+      },
+    }),
+  );
+  await page.goto("/projects/eliza/security", { waitUntil: "networkidle" });
+  const signIn = page.getByRole("link", {
+    name: "Sign in with GitHub",
+    exact: true,
+  });
+  await signIn.focus();
+  await expect(signIn).toBeFocused();
+  await page.screenshot({
+    path: test.info().outputPath("security-project-sign-in.png"),
+    fullPage: true,
+  });
+  await expect(signIn).toHaveAttribute(
+    "href",
+    /\/login\?next=%2Fprojects%2Feliza%2Fsecurity$/u,
+  );
+  expect(reads).toBe(1);
+  await expectAccessible(page);
+});
+
+test("token amounts keep asset precision when publishing an unrelated project edit", async ({
+  page,
+}) => {
+  const registered = PROJECTS.find((entry) => entry.id === "eliza");
+  if (registered?.reward.kind !== "monthly-pool")
+    throw new Error("Eliza monthly fixture is missing");
+  const project = {
+    ...registered,
+    contribution: CONTRIBUTION,
+    reward: {
+      ...registered.reward,
+      chain: "base",
+      currency: "TEST",
+      monthlyCapMinor: "1000000000000000",
+      monthlyCapDisplay: "0.001 TEST",
+    },
+    rewardAsset: {
+      network: "base",
+      kind: "token",
+      address: "0x1111111111111111111111111111111111111111",
+      symbol: "TEST",
+      decimals: 18,
+      chainId: "8453",
+      cluster: null,
+      verifiedAt: "2026-10-25T00:00:00.000Z",
+    },
+  };
+  const setup = {
+    projectId: "eliza",
+    name: project.name,
+    slug: project.slug,
+    revision: 1,
+    status: "active",
+    state: "ready",
+    nextAction: { kind: "none", message: "Project active.", href: null },
+    checks: {
+      authority: { state: "verified", message: "Verified." },
+      installation: { state: "installed", message: "Installed." },
+      scan: { state: "cleared", message: "Cleared." },
+    },
+    funding: { mode: "none" },
+    activatedRevision: 1,
+    checkedAt: "2026-10-25T00:00:00.000Z",
+  };
+  let published:
+    | { manifest: typeof project; monthlyAmount?: string }
+    | undefined;
+  await page.route("**/data/fixture-project-registry.json", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        projects: PROJECTS.map((entry) =>
+          entry.id === project.id ? project : entry,
+        ),
+      },
+    }),
+  );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: "4242", githubLogin: "example", admin: false },
+      },
+    }),
+  );
+  await page.route("**/api/v1/project-setup/eliza/check", (route) =>
+    route.fulfill({ json: { setup } }),
+  );
+  await page.route("**/api/v1/projects/eliza*", (route) => {
+    if (route.request().method() !== "PUT")
+      return route.fulfill({ json: { revision: 1, project } });
+    published = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        project: { id: "eliza", revision: 2, manifest: published?.manifest },
+        setup: { ...setup, revision: 2 },
+        changes: { presentation: ["headline"], executable: [], financial: [] },
+      },
+    });
+  });
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  await expect(page.getByLabel("Monthly amount (TEST)")).toHaveValue("0.001");
+  await page
+    .getByLabel("Short description")
+    .fill("A focused token project description");
+  await page
+    .getByRole("button", { name: "Publish changes", exact: true })
+    .click();
+  await page.waitForLoadState("networkidle");
+  await page.screenshot({
+    path: test.info().outputPath("token-project-edit.png"),
+    fullPage: true,
+  });
+  await expect(page.getByText("Published revision 2.")).toBeVisible();
+  expect(published?.manifest.reward.monthlyCapMinor).toBe("1000000000000000");
+  expect(published?.monthlyAmount).toBeUndefined();
+  await expect(page.getByLabel("Monthly amount (TEST)")).toHaveValue("0.001");
+  await page.getByLabel("Monthly amount (TEST)").fill("0.0000000000000000001");
+  await page
+    .getByRole("button", { name: "Publish changes", exact: true })
+    .click();
+  await expect(
+    page.getByText("amount has more decimal places than the asset's 18"),
+  ).toBeVisible();
+  await expectAccessible(page);
+});
+
 async function loadSnapshot(
   request: APIRequestContext,
 ): Promise<LeaderboardSnapshot> {
@@ -1121,19 +1416,12 @@ for (const scenario of [
 ]) {
   // Each scenario and route is its own test, so every registered route keeps
   // its own timeout and the matrix runs across workers.
-  test.describe(`reflow ${scenario.name}`, () => {
-    // A describe-level condition skips before any page fixture is created.
-    // The desktop project is the only Chromium 1440 px viewport.
-    test.skip(
-      ({ viewport }) => viewport?.width !== 1440,
-      "Runs once on chromium-desktop",
-    );
+  test.describe(`reflow ${scenario.name}`, { tag: "@desktop-only" }, () => {
     for (const path of [
       "/models",
-      "/sponsors",
       "/how-it-works",
       "/",
-      ...PROJECTS.map((project) => `/projects/${project.id}`),
+      "/projects/eliza",
       "/projects/new",
       "/projects/eliza/funding",
     ]) {
@@ -1264,8 +1552,16 @@ test("finds a receipt and opens its full evidence and GitHub contribution", asyn
   }
 });
 
-// One test per route keeps each axe and overflow check independent, so the
-// routes run on separate workers instead of one long serial test.
+// All routes retain desktop/mobile checks. Extra widths cover each shared
+// layout family instead of repeating each project's identical layout.
+const breakpointRoutes = new Set([
+  "/",
+  "/models",
+  "/account",
+  "/projects/eliza",
+  "/projects/eliza/funding",
+  "/projects/new",
+]);
 for (const route of [
   "latest cycle",
   "/models",
@@ -1276,12 +1572,11 @@ for (const route of [
   "/",
   ...PROJECTS.map((project) => `/projects/${project.id}`),
   "/projects/eliza/funding",
-  "/projects/eliza/funding/",
   "/projects/eliza/manage",
   "/projects/new",
 ]) {
   test(`keeps ${route} accessible and inside the viewport`, {
-    tag: "@layout",
+    tag: breakpointRoutes.has(route) ? ["@layout", "@breakpoint"] : "@layout",
   }, async ({ page, request }) => {
     let path = route;
     if (route === "latest cycle") {

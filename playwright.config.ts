@@ -170,7 +170,7 @@ export default defineConfig({
         stderr: "pipe",
       },
   // Every spec runs at the 1440 px desktop and the 320 px mobile viewport; the
-  // 1024 px laptop and 768 px tablet viewports run the @layout route checks.
+  // 1024 px laptop and 768 px tablet viewports run representative @breakpoint layouts.
   // The email workflow observed a Chromium no-store stream EOF and ERR_ABORTED
   // (https://github.com/microsoft/playwright/issues/42742). Keep the bounded
   // private reader and strict failure assertions, and run the email workflow
@@ -209,6 +209,7 @@ export default defineConfig({
     },
     {
       name: "chromium-mobile",
+      grepInvert: /@desktop-only/,
       testIgnore: "**/email-preferences.spec.ts",
       use: {
         ...devices["Desktop Chrome"],
@@ -217,7 +218,7 @@ export default defineConfig({
     },
     {
       name: "chromium-laptop",
-      grep: /@layout/,
+      grep: /@breakpoint/,
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 1024, height: 768 },
@@ -225,7 +226,7 @@ export default defineConfig({
     },
     {
       name: "chromium-tablet",
-      grep: /@layout/,
+      grep: /@breakpoint/,
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 768, height: 1024 },

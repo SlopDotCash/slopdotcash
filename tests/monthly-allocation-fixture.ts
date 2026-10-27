@@ -1,9 +1,10 @@
 /** Shared migrated monthly workflow fixture; chain evidence is supplied by each integration. */
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { monthlyBasesSql } from "../scripts/prepare-monthly-rewards";
 import { escrowAwardOrigin } from "../src/lib/payments/escrow-cycle";
 import { sha256Hex } from "../workers/identity/crypto";
+import { fixtureProject } from "./fixture-overlay.mjs";
 import { sqliteD1 } from "./sqlite-d1";
 
 export async function createMonthlyAllocationFixture({
@@ -30,37 +31,47 @@ export async function createMonthlyAllocationFixture({
       )
       .sort(),
   );
-  const manifest = JSON.parse(
-    readFileSync("tests/fixtures/projects/eliza.json", "utf8"),
-  );
-  manifest.reward.feeBasisPoints = 200;
+  const fixture = fixtureProject("eliza");
   const chain = String(selected.network).startsWith("solana")
     ? "solana"
     : "base";
-  manifest.reward.chain = chain;
-  if (unit > 1n) {
-    manifest.reward.currency = "TOKEN";
-    manifest.reward.monthlyCapMinor = capBase;
-    manifest.reward.monthlyCapDisplay = "1,000 TOKEN";
-    manifest.rewardAsset = {
-      network: chain,
-      kind: "token",
-      address: selected.asset,
-      symbol: "TOKEN",
-      decimals: 18,
-      chainId: chain === "solana" ? null : "8453",
-      cluster: chain === "solana" ? "mainnet-beta" : null,
-      verifiedAt: "2026-10-01T00:00:00.000Z",
-    };
-  }
-  manifest.escrow = {
-    schemaVersion: "1",
-    effectiveCycle: period,
-    chain,
-    feeBasisPoints: 200,
-    withdrawalFeeBasisPoints: 200,
-    feeMode: "deduct-from-gross",
-    deployments: [selected],
+  const manifest = {
+    ...fixture,
+    reward: {
+      ...fixture.reward,
+      feeBasisPoints: 200,
+      chain,
+      ...(unit > 1n
+        ? {
+            currency: "TOKEN",
+            monthlyCapMinor: capBase,
+            monthlyCapDisplay: "1,000 TOKEN",
+          }
+        : {}),
+    },
+    ...(unit > 1n
+      ? {
+          rewardAsset: {
+            network: chain,
+            kind: "token",
+            address: selected.asset,
+            symbol: "TOKEN",
+            decimals: 18,
+            chainId: chain === "solana" ? null : "8453",
+            cluster: chain === "solana" ? "mainnet-beta" : null,
+            verifiedAt: "2026-10-01T00:00:00.000Z",
+          },
+        }
+      : {}),
+    escrow: {
+      schemaVersion: "1",
+      effectiveCycle: period,
+      chain,
+      feeBasisPoints: 200,
+      withdrawalFeeBasisPoints: 200,
+      feeMode: "deduct-from-gross",
+      deployments: [selected],
+    },
   };
   const text = JSON.stringify(manifest);
   const digest = await sha256Hex(text);

@@ -50,7 +50,6 @@ import { classifyRevisionChanges } from "./lib/project-revision-changes";
 import {
   monthlyAmountDisplay,
   PROJECT_SKILL_TEMPLATES,
-  parseAssetAmount,
 } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
@@ -347,10 +346,11 @@ function proposalErrors(p: Proposal): FieldErrors {
     }
   }
   if (p.fundingMode === "monthly") {
-    const amount = monthlyPoolValue(p.monthlyPool);
-    if (!amount.valid || BigInt(amount.minor) === 0n)
-      errors.monthlyPool =
-        "Enter a positive amount with up to two decimals, or choose no monthly funding.";
+    const amount = monthlyPoolValue(
+      p.monthlyPool,
+      p.rewardKind === "token" ? { symbol: p.rewardAssetSymbol } : undefined,
+    );
+    if (!amount.valid) errors.monthlyPool = amount.error;
   }
   return errors;
 }
@@ -655,18 +655,17 @@ function RepositoryPicker({
 }
 
 /**
- * Reads the session only on the review step that needs it. The API decides
- * who may create a project, so the button follows its session, not the
- * points profile.
+ * Reuses the page's project session. The API checks authority again on creation.
  */
 function SubmitProject({
   onSubmit,
   submitting,
+  projectSession,
 }: {
   onSubmit: () => void;
   submitting: boolean;
+  projectSession: ProjectSessionState;
 }) {
-  const projectSession = useProjectSession();
   const login =
     projectSession.status === "signed-in"
       ? projectSession.session.githubLogin
@@ -857,7 +856,8 @@ function FundingFields({
 }
 
 export default function ProjectProposalPage() {
-  const projectSession = useProjectSession();
+  const [sessionRevision, setSessionRevision] = useState(0);
+  const projectSession = useProjectSession(sessionRevision);
   const [proposal, setProposal] = useState<Proposal>(
     () => readDraft() ?? EMPTY_PROPOSAL,
   );
@@ -953,7 +953,10 @@ export default function ProjectProposalPage() {
     slugify(p.name) ||
     slugify(p.repository.split("/").at(-1) || "") ||
     "new-project";
-  const pool = monthlyPoolValue(p.monthlyPool);
+  const pool = monthlyPoolValue(
+    p.monthlyPool,
+    p.rewardKind === "token" ? { symbol: p.rewardAssetSymbol } : undefined,
+  );
   const funding: FundingChoice = useMemo(
     () => ({
       mode: p.fundingMode === "monthly" ? "monthly" : "none",
@@ -1160,6 +1163,8 @@ export default function ProjectProposalPage() {
   }
 
   function goTo(index: number) {
+    if (index === SETUP_STEPS.length - 1 && step !== index)
+      setSessionRevision((current) => current + 1);
     setStep(index);
     window.setTimeout(() => {
       document.getElementById("proposal-step-heading")?.focus();
@@ -1312,6 +1317,12 @@ export default function ProjectProposalPage() {
         </p>
       </section>
       <OwnerProjects
+        key={
+          projectSession.status === "signed-in"
+            ? projectSession.session.githubId
+            : "anonymous"
+        }
+        session={projectSession}
         refreshKey={
           submission.status === "submitted" ? submission.projectId : ""
         }
@@ -1754,7 +1765,7 @@ export default function ProjectProposalPage() {
                     {p.fundingMode !== "monthly"
                       ? "None"
                       : pool.valid
-                        ? `${formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
+                        ? `${p.rewardKind === "token" ? pool.display : formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
                         : "Invalid"}
                   </dd>
                 </div>
@@ -1808,6 +1819,7 @@ export default function ProjectProposalPage() {
             ) : valid ? (
               <div className="handoff-actions">
                 <SubmitProject
+                  projectSession={projectSession}
                   onSubmit={submit}
                   submitting={submission.status === "submitting"}
                 />
@@ -2051,16 +2063,25 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     if (draft === null) setDraftRevision(base?.revision ?? null);
     setDraft((existing) => ({ ...(existing ?? {}), [field]: next }));
   };
-  const amount = monthlyPoolValue(value.monthlyAmount);
-  // The amount in the current asset's base units; null when it cannot be
-  // written with that asset's decimals.
-  let amountMinor: string | null = null;
-  if (amount.valid)
-    try {
-      amountMinor = parseAssetAmount(value.monthlyAmount.trim(), decimals);
-    } catch {
-      amountMinor = null;
-    }
+  // A legacy project needs an explicit funding choice to initialize a vault.
+  // Editing only its text must preserve its existing funding and fee terms.
+  const assetTouched =
+    (!current.escrow && draft?.fundingMode === "monthly") ||
+    (draft !== null &&
+      (["network", "assetKind", "tokenAddress", "tokenSymbol"] as const).some(
+        (field) =>
+          draft[field] !== undefined && draft[field] !== initial[field],
+      ));
+  const amount = monthlyPoolValue(
+    value.monthlyAmount,
+    value.assetKind === "token"
+      ? {
+          symbol: value.tokenSymbol,
+          ...(assetFixed || !assetTouched ? { decimals } : {}),
+        }
+      : undefined,
+  );
+  const amountMinor = amount.valid ? amount.minor : null;
   const errors: Record<string, string | undefined> = {
     headline: lengthError(value.headline, 8, 120),
     goal: lengthError(value.goal, 24, 600),
@@ -2068,9 +2089,8 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     note:
       value.note.trim() === "" ? undefined : lengthError(value.note, 1, 500),
     monthlyAmount:
-      value.fundingMode === "monthly" &&
-      (!amount.valid || BigInt(amount.minor) === 0n)
-        ? "Enter a positive amount with up to two decimals, or choose no monthly funding."
+      value.fundingMode === "monthly" && !amount.valid
+        ? amount.error
         : undefined,
     ...Object.fromEntries(
       SKILL_RULE_FIELDS.map((field) => [
@@ -2106,24 +2126,6 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         error instanceof Error ? `${error.message}.` : "Check the token.";
     }
   }
-  // A legacy project needs an explicit funding choice to initialize a vault.
-  // Editing only its text must preserve its existing funding and fee terms.
-  const assetTouched =
-    (!current.escrow && draft?.fundingMode === "monthly") ||
-    (draft !== null &&
-      (["network", "assetKind", "tokenAddress", "tokenSymbol"] as const).some(
-        (field) =>
-          draft[field] !== undefined && draft[field] !== initial[field],
-      ));
-  // A kept asset cannot hold more decimals than it has; the server would
-  // refuse the amount.
-  if (
-    choice.mode === "monthly" &&
-    amount.valid &&
-    amountMinor === null &&
-    (assetFixed || !assetTouched)
-  )
-    errors.monthlyAmount = `${current.rewardAsset?.symbol ?? "This asset"} allows at most ${decimals} decimal places.`;
   /** The submitted manifest: the current revision with the owner's edits. */
   const next = ((): ProjectDefinition => {
     const source = current;
@@ -2229,11 +2231,13 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             // The typed amount, in whole units of the chosen asset.
             after:
               choice.mode === "monthly" && amount.valid
-                ? formatMonthlyAmount(
-                    amount.minor,
-                    6,
-                    String(next.reward.currency),
-                  )
+                ? choice.assetKind === "token"
+                  ? amount.display
+                  : formatMonthlyAmount(
+                      amount.minor,
+                      6,
+                      String(next.reward.currency),
+                    )
                 : "No monthly funding",
           },
         ]
@@ -2617,8 +2621,13 @@ const PROJECT_STATUS_LABEL: Record<ProjectSummary["status"], string> = {
  * application stored before self-service setup, which its applicant
  * publishes without entering it again.
  */
-function OwnerProjects({ refreshKey }: { refreshKey: string }) {
-  const session = useProjectSession();
+function OwnerProjects({
+  refreshKey,
+  session,
+}: {
+  refreshKey: string;
+  session: ProjectSessionState;
+}) {
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
@@ -2641,9 +2650,11 @@ function OwnerProjects({ refreshKey }: { refreshKey: string }) {
       }
     | null
   >(null);
+  const actorId =
+    session.status === "signed-in" ? session.session.githubId : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt and a new project trigger an explicit reload.
   useEffect(() => {
-    if (session.status !== "signed-in") return;
+    if (actorId === null) return;
     let active = true;
     setState({ status: "loading" });
     listProjectSetup().then(
@@ -2661,7 +2672,7 @@ function OwnerProjects({ refreshKey }: { refreshKey: string }) {
     return () => {
       active = false;
     };
-  }, [session.status, attempt, refreshKey]);
+  }, [actorId, attempt, refreshKey]);
   if (session.status !== "signed-in") return null;
   return (
     <details id="your-projects">

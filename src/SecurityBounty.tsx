@@ -36,6 +36,7 @@ import {
 } from "./lib/intake-drafts";
 import {
   ProjectApiError,
+  type ProjectSessionState,
   projectApiRequest,
   useProjectSession,
 } from "./lib/project-api";
@@ -174,7 +175,8 @@ function automaticReady(value: Readiness): boolean {
 function IntakeHandoff({ project }: { project: ProjectDefinition }) {
   const [state, setState] = useState<ReadinessState>({ status: "checking" });
   const [draft, setDraft] = useState<ReportDraft>(EMPTY_DRAFT);
-  const signedIn = useProjectSession().status === "signed-in";
+  const session = useProjectSession();
+  const signedIn = session.status === "signed-in";
   const stateRef = useRef(state);
   useEffect(() => {
     stateRef.current = state;
@@ -333,6 +335,7 @@ function IntakeHandoff({ project }: { project: ProjectDefinition }) {
             <p className="admin-status">You can still prepare your report.</p>
           )}
           <AutomaticReportForm
+            session={session}
             draft={draft}
             ensureReady={ensureReady}
             onDraft={setDraft}
@@ -534,21 +537,23 @@ function AutomaticReportForm({
   ensureReady,
   onDraft,
   project,
+  session,
 }: {
+  session: ProjectSessionState;
   draft: ReportDraft;
   ensureReady: () => Promise<boolean>;
   onDraft: (draft: ReportDraft) => void;
   project: ProjectDefinition;
 }) {
-  const session = useProjectSession();
   const [key] = useState(requestKey);
   const { busy, error, run } = useAction();
   if (session.status !== "signed-in")
     return (
-      <p>
-        <Link href="/security">Sign in with GitHub</Link> to report through
-        Slop.
-      </p>
+      <SignInPanel
+        state={session}
+        next={`/projects/${project.slug}/security`}
+        purpose="Sign in to report through Slop."
+      />
     );
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -1271,11 +1276,13 @@ function submissionStatus(submission: Submission): string {
 
 /** One private submission and the only action its state allows. */
 function SubmissionCard({
+  session,
   submission,
   focused,
   onUpdated,
   onOpenCase,
 }: {
+  session: Extract<ProjectSessionState, { status: "signed-in" }>;
   submission: Submission;
   focused: boolean;
   onUpdated: (submission: Submission) => void;
@@ -1286,7 +1293,6 @@ function SubmissionCard({
   );
   const { busy, error, setError, run: act } = useAction();
   const [needsGrant, setNeedsGrant] = useState(false);
-  const session = useProjectSession();
   const keepDraft = needsDraft(submission);
   useEffect(() => {
     if (!keepDraft) clearDraft(submission.id);
@@ -1368,13 +1374,7 @@ function SubmissionCard({
             run("send", { expectedRevision, report: reportBody(draft) });
           }}
         >
-          <IntakeConsent
-            login={
-              session.status === "signed-in"
-                ? session.session.githubLogin
-                : null
-            }
-          />
+          <IntakeConsent login={session.session.githubLogin} />
           <ReportFields
             draft={draft}
             onChange={(next) => {
@@ -1438,12 +1438,14 @@ function SubmissionCard({
  * intake is off, so the manual claim path stays the only path shown.
  */
 function SubmissionsPanel({
+  session,
   focusId,
   grantError,
   onAvailability,
   onLinkFallback,
   onOpenCase,
 }: {
+  session: Extract<ProjectSessionState, { status: "signed-in" }>;
   focusId: string | null;
   grantError: string | null;
   onAvailability: (available: boolean) => void;
@@ -1464,6 +1466,7 @@ function SubmissionsPanel({
     );
   }, [submissions, onLinkFallback]);
   const load = useCallback(() => {
+    setError(null);
     projectApiRequest<{ automatic: boolean; submissions: Submission[] }>(
       "GET",
       "security-submissions",
@@ -1506,6 +1509,7 @@ function SubmissionsPanel({
       ) : null}
       {shown.map((submission) => (
         <SubmissionCard
+          session={session}
           focused={submission.id === focusId}
           key={submission.id}
           onOpenCase={onOpenCase}
@@ -2815,6 +2819,7 @@ export default function SecurityCasesPage() {
           ) : null}
         </section>
         <SubmissionsPanel
+          session={session}
           focusId={returned.submission}
           grantError={returned.error}
           onAvailability={setAutomatic}

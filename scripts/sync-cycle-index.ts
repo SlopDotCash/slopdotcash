@@ -18,6 +18,7 @@ import {
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LAST_LEGACY_CAP_CYCLE } from "../src/lib/allocation-funding";
+import { canonicalJson as canonical } from "../src/lib/canonical-json";
 import {
   assertCycleIndex,
   CYCLE_INDEX_SCHEMA_VERSION,
@@ -74,17 +75,6 @@ interface CycleBuild {
   entry: CycleIndexEntry;
   files: Map<string, Buffer>;
   allocation: RewardAllocationManifest | null;
-}
-
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (typeof value === "object" && value !== null) {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => `${JSON.stringify(key)}:${canonical(child)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
 }
 
 function reference(
