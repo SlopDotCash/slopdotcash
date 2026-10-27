@@ -2174,7 +2174,13 @@ async function requestReinstatement(
 ): Promise<Response> {
   const session = await requireSession(request, deps);
   const body = await readJsonObject(request);
-  exactKeys(body, ["projectId", "reason", "evidenceReference"]);
+  exactKeys(
+    body,
+    ["projectId", "reason", "evidenceReference"],
+    ["appealScope"],
+  );
+  if (body.appealScope !== undefined && body.appealScope !== "account")
+    fail(400, "invalid_request", "Unsupported appeal scope");
   if (typeof body.projectId !== "string" || !PROJECT_ID.test(body.projectId))
     fail(404, "not_found", "Project not found");
   return await recordEnforcement(deps, {
@@ -2187,6 +2193,19 @@ async function requestReinstatement(
     expectedSequence: null,
     actor: { githubId: session.githubId, githubLogin: session.githubLogin },
     actorRole: async (project, restriction) => {
+      if (body.appealScope === "account") {
+        if (
+          !restriction.bannedMaintainers.some(
+            (account) => account.githubId === session.githubId,
+          )
+        )
+          return fail(
+            403,
+            "forbidden",
+            "Only a currently banned account can file an account appeal",
+          );
+        return "banned-account";
+      }
       if (filesAccountAppeal(restriction, session.githubId))
         return "banned-account";
       const ownerRole =
