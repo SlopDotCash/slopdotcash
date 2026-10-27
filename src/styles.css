@@ -2246,7 +2246,6 @@ small {
     font-size: 14px;
     white-space: nowrap;
   }
-
 }
 
 .points-social-link {
@@ -2381,6 +2380,18 @@ small {
 .payout-main small {
   color: var(--muted);
   font-size: 13px;
+}
+
+.payout-amount {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.payout-token {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .payout-value {
