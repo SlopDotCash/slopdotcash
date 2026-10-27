@@ -224,7 +224,7 @@ test("social membership preserves past points and discloses public connections w
   await page.goto(`${site}/account`);
   await expect(
     social.getByText(
-      "Connecting X is optional. Your X profile link will be public when your Slop membership is public.",
+      "Connecting X is optional. Your X profile link will be public.",
       { exact: true },
     ),
   ).toBeVisible();

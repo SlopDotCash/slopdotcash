@@ -153,10 +153,12 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
       await expect(
         page.getByRole("heading", { exact: true, name: "Eliza funding" }),
       ).toBeVisible();
-      await keyboardTo(
-        page,
-        page.getByRole("link", { name: "project settings", exact: true }),
-      );
+      const setup = page.getByRole("link", {
+        name: "Set up funding",
+        exact: true,
+      });
+      await expect(setup).toHaveAttribute("href", "/projects/eliza/manage");
+      await keyboardTo(page, setup);
       await audit(page, info, "funding-200-percent-text");
     }
   }
