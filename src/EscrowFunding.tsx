@@ -149,32 +149,46 @@ function VaultTotals({
           )}
         </div>
         <div className="vault-stat">
-          <dt>Deposited</dt>
-          <dd>{value(snapshot.totalDeposited)}</dd>
-        </div>
-        <div className="vault-stat">
           <dt>Paid out</dt>
           <dd>{value(snapshot.totalPaid)}</dd>
           <dd className="vault-stat-note">
             + {value(snapshot.totalPayoutFees)} fees
           </dd>
         </div>
-        <div className="vault-stat">
-          <dt>Withdrawn</dt>
-          <dd>{value(snapshot.totalGrossWithdrawn)}</dd>
-          <dd className="vault-stat-note">
-            incl. {value(snapshot.totalWithdrawalFees)} fees
-          </dd>
-        </div>
       </dl>
-      <p className="vault-finality">
-        <ShieldCheck aria-hidden="true" size={15} />
-        <span>Finalized block {snapshot.blockNumber}</span>
-        <span>{formatDateTime(snapshot.blockTime)}</span>
-        <NetworkName chain={snapshot.chain}>
-          {networkLabel(snapshot.network)}
-        </NetworkName>
-      </p>
+      <details className="vault-ledger-details">
+        <summary>Ledger details</summary>
+        <dl className="vault-stats">
+          <div className="vault-stat">
+            <dt>Deposited</dt>
+            <dd>{value(snapshot.totalDeposited)}</dd>
+          </div>
+          <div className="vault-stat">
+            <dt>Withdrawn</dt>
+            <dd>{value(snapshot.totalGrossWithdrawn)}</dd>
+          </div>
+          <div className="vault-stat">
+            <dt>Withdrawal fees</dt>
+            <dd>{value(snapshot.totalWithdrawalFees)}</dd>
+          </div>
+          <div className="vault-stat">
+            <dt>Payout fees</dt>
+            <dd>{value(snapshot.totalPayoutFees)}</dd>
+          </div>
+          <div className="vault-stat">
+            <dt>Accrued fees</dt>
+            <dd>{value(snapshot.accruedFees)}</dd>
+          </div>
+        </dl>
+        <p className="vault-finality">
+          <ShieldCheck aria-hidden="true" size={15} />
+          <span>Finalized block {snapshot.blockNumber}</span>
+          <span>{formatDateTime(snapshot.blockTime)}</span>
+          <NetworkName chain={snapshot.chain}>
+            {networkLabel(snapshot.network)}
+          </NetworkName>
+        </p>
+      </details>
     </div>
   );
 }

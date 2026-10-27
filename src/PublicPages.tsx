@@ -146,6 +146,7 @@ export function HowItWorksPage() {
           </p>
           <details>
             <summary>Points rules and evidence</summary>
+            <p>Related or split pull requests count as one work unit.</p>
             <p>
               A useful review can find a correction or validate the change. A
               request for changes is not required. Review bands are triage 10,
@@ -257,20 +258,14 @@ export function HowItWorksPage() {
       >
         <h2 id="faq-title">Questions</h2>
         <details>
-          <summary>Which repositories count?</summary>
+          <summary>What work can I contribute?</summary>
           <p>
-            Repositories listed by an active project. Each project page names
-            them.
+            Choose unblocked work in an active{" "}
+            <Link href="/#projects">project</Link> and follow its contribution
+            rules. You do not need to claim an issue.
           </p>
-        </details>
-        <details>
-          <summary>Do I need to claim an issue first?</summary>
-          <p>No. Pick unblocked work and open a pull request.</p>
-        </details>
-        <details>
-          <summary>Does work outside code earn points?</summary>
           <p>
-            On projects that opt in. The{" "}
+            Non-code work counts on projects that opt in. The{" "}
             <Link href="/projects/slopdotcash">Slop project</Link> does: a
             tutorial, explainer, video, or support answer about Slop can receive
             a reviewed award of 1 to 8 points.
@@ -288,13 +283,6 @@ export function HowItWorksPage() {
           </p>
         </details>
         <details>
-          <summary>What is my merge worth before Slopbot sizes it?</summary>
-          <p>
-            At least 10 points. After Slopbot sizes it, points follow the tier
-            table above. Related or split pull requests count as one work unit.
-          </p>
-        </details>
-        <details>
           <summary>Does the model I use matter?</summary>
           <p>
             Not to your points. Disclose the provider, exact model, and client;
@@ -306,20 +294,18 @@ export function HowItWorksPage() {
           </p>
         </details>
         <details>
-          <summary>How do I get paid?</summary>
+          <summary>How and when do I get paid?</summary>
           <p>
             Add a wallet for your award's network (Base, Solana, Robinhood Chain
             or Ethereum) in <Link href="/account#wallets">Account wallets</Link>
             . Wallet confirmation requires your signature. Awards wait for your
             wallet.
           </p>
-        </details>
-        <details>
-          <summary>When are payments sent?</summary>
           <p>
             Monthly. After a UTC month ends, the owner has 72 hours to adjust
             awards. Then, if payments are enabled, the vault pays funded awards
-            automatically unless the owner turned that off.
+            automatically unless the owner turned that off. Slop publishes final
+            awards and payment evidence, not the owner's changes.
           </p>
         </details>
         <details>
@@ -329,13 +315,6 @@ export function HowItWorksPage() {
             guarantee: a cap is a target, and only funds in the vault can be
             allocated. Funds added after a month freezes count toward later
             months.
-          </p>
-        </details>
-        <details>
-          <summary>Who decides the monthly amounts?</summary>
-          <p>
-            The project owner, until the monthly cutoff. Slop publishes final
-            awards and payment evidence, not the changes.
           </p>
         </details>
       </section>

@@ -141,7 +141,7 @@ export function InboxEmail() {
       {state.status === "signed-out" ? (
         <p>
           Your session expired.{" "}
-          <a href={loginHref("/inbox")}>Sign in with GitHub</a>.
+          <a href={loginHref("/account#notifications")}>Sign in with GitHub</a>.
         </p>
       ) : null}
       {state.status === "error" ? (

@@ -170,8 +170,11 @@ function account(value: unknown): PaymentsAccount {
 
 export function EarningsPage({
   walletsOnly = false,
+  headingId,
 }: {
   walletsOnly?: boolean;
+  /** An enclosing settings disclosure supplies the wallet heading. */
+  headingId?: string;
 } = {}) {
   const wallets = usePayoutWallets();
   const [picker, setPicker] = useState<WalletFamily | null>(null);
@@ -393,15 +396,15 @@ export function EarningsPage({
       className={
         walletsOnly ? "earnings-page" : "shell route-main earnings-page"
       }
-      aria-labelledby={heading}
-      id={walletsOnly ? "wallets" : undefined}
+      aria-labelledby={headingId ?? heading}
+      id={walletsOnly && !headingId ? "wallets" : undefined}
     >
-      {walletsOnly ? (
+      {walletsOnly && headingId ? null : walletsOnly ? (
         <h2 id={heading}>Wallets</h2>
       ) : (
         <RoutePageHeader
           icon={<WalletIcon />}
-          title={<span id={heading}>Your payouts</span>}
+          title={<span id={heading}>Payouts</span>}
           actions={
             <a
               className="button secondary-button button-small"
@@ -453,7 +456,6 @@ export function EarningsPage({
                   <WalletIcon size={24} aria-hidden="true" />
                 )}
                 <span>{wallet.name}</span>
-                <small>Detected</small>
               </button>
             ))}
           {!wallets.some((wallet) => wallet.family === picker) && (
@@ -519,7 +521,6 @@ export function EarningsPage({
       {data && (
         <>
           {(error || loadError) && <p>Showing the last verified data.</p>}
-          {!walletsOnly && <ReferralClaims />}
           {walletsOnly ? (
             <>
               <section aria-label="Payout wallets" className="wallet-cards">
@@ -829,6 +830,7 @@ export function EarningsPage({
                   </ul>
                 </section>
               )}
+              <ReferralClaims />
             </>
           )}
         </>

@@ -1,10 +1,12 @@
 /** Public-record fixtures exercise profile identity, not OAuth or settlement. */
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
+import { deriveAllocationFundingBasis } from "../../src/lib/allocation-funding";
 import { assertCycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { assertLeaderboardSnapshot } from "../../src/lib/leaderboard";
 import { assertProfiles } from "../../src/lib/profiles";
+import { findProject } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -808,3 +810,124 @@ test(
     }
   },
 );
+
+test("profile history previews retain every payment and cycle behind keyboard controls", async ({
+  page,
+}, info) => {
+  const site = await serveProfileSite(page);
+  const { current, cycles } = await profileRecords(page);
+  const original = cycles.cycles[0];
+  const project = findProject(original.projectId);
+  if (!project) throw new Error("Missing historical project fixture");
+  for (const month of [8, 9, 10]) {
+    const cycle = structuredClone(original);
+    const period = `2026-${String(month).padStart(2, "0")}`;
+    const following = `2026-${String(month + 1).padStart(2, "0")}`;
+    cycle.cycleId = period;
+    cycle.contributionWindow = {
+      from: `${period}-01T00:00:00.000Z`,
+      to: `${following}-01T00:00:00.000Z`,
+    };
+    cycle.generatedAt = `${following}-02T00:00:00.000Z`;
+    cycle.reviewEndsAt = `${following}-15T00:00:00.000Z`;
+    cycle.approvedAt = cycle.settledAt = `${following}-16T00:00:00.000Z`;
+    // Retained historical awards can use carried funds; the fixture does not
+    // claim a current commitment or invent a new funding route.
+    cycle.reward.fundingBasis = deriveAllocationFundingBasis(project, period);
+    cycle.reward.capMinor = "0";
+    cycle.reward.carriedMinor = cycle.reward.approvedMinor;
+    for (const contributor of cycle.contributors)
+      if (contributor.wallet)
+        contributor.wallet.observedAt = `${following}-01T00:00:00.000Z`;
+    for (const file of Object.values(cycle.files))
+      if (file) file.url = file.url.replace("/2026-07/", `/${period}/`);
+    cycles.cycles.unshift(cycle);
+  }
+  cycles.generatedAt = "2026-11-17T00:00:00.000Z";
+  await page.clock.setFixedTime(new Date(cycles.generatedAt));
+  assertCycleIndex(cycles);
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route(
+    `${site}/api/v1/payments/actors/1/direct-transfers`,
+    (route) =>
+      route.fulfill({
+        json: {
+          totalMicro: "10000000",
+          transfers: Array.from({ length: 5 }, (_, index) => ({
+            projectId: "eliza",
+            githubUserId: "1",
+            login: current.login,
+            amountMicro: "2000000",
+            contributionMonth: "2026-08",
+            network: "base-sepolia",
+            chain: "base",
+            recipient: "synthetic-recipient",
+            transactionId: `synthetic-profile-payment-${index}`,
+            blockTime: `2026-08-${17 + index}T12:00:00.000Z`,
+          })),
+        },
+      }),
+  );
+  await page.goto(`${site}/contributors/${current.login}`, {
+    waitUntil: "networkidle",
+  });
+  const payouts = page.getByRole("region", { name: "Payouts", exact: true });
+  const history = page.locator(".profile-section", {
+    has: page.getByRole("heading", { name: "Past cycles", exact: true }),
+  });
+  await expect(payouts.locator(".profile-card-heading > span")).toHaveText(
+    "$14 USDC",
+  );
+  await expect(payouts.locator("li")).toHaveCount(3);
+  await expect(history.locator(".profile-projects > a")).toHaveCount(3);
+  await page.screenshot({
+    path: info.outputPath("profile-history-preview.png"),
+    fullPage: true,
+  });
+  await payouts
+    .getByRole("button", { name: "Show all 9 payouts", exact: true })
+    .focus();
+  await page.keyboard.press("Enter");
+  await expect(payouts.locator("li")).toHaveCount(9);
+  await expect(
+    payouts.getByRole("link").filter({ hasText: "Verified settlement" }),
+  ).toHaveCount(4);
+  await expect(
+    payouts.getByRole("link").filter({ hasText: "Direct transfer" }),
+  ).toHaveCount(5);
+  await history
+    .getByRole("button", { name: "Show all 4 cycles", exact: true })
+    .focus();
+  await page.keyboard.press("Space");
+  await expect(history.locator(".profile-projects > a")).toHaveCount(4);
+  await expect(history.getByRole("link").last()).toHaveAttribute(
+    "href",
+    "/cycles/eliza/2026-07",
+  );
+  await expectAccessible(page);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: info.outputPath("profile-history-expanded.png"),
+    fullPage: true,
+  });
+  await payouts
+    .getByRole("button", { name: "Show recent payouts", exact: true })
+    .click();
+  await history
+    .getByRole("button", { name: "Show recent cycles", exact: true })
+    .click();
+  await expect(payouts.locator("li")).toHaveCount(3);
+  await expect(history.locator(".profile-projects > a")).toHaveCount(3);
+  await expect(payouts.locator(".profile-card-heading > span")).toHaveText(
+    "$14 USDC",
+  );
+});

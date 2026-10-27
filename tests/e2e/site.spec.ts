@@ -5,7 +5,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { APIRequestContext } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { communityProjects } from "../../src/lib/home-projects";
@@ -24,6 +24,17 @@ import { expect, expectAccessible, test } from "./fixtures";
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
+
+async function openOwnerSettings(page: Page, label: string) {
+  const summary = page
+    .getByText(label, { exact: true })
+    .locator("xpath=self::summary");
+  if (
+    (await summary.locator("xpath=parent::details").getAttribute("open")) ===
+    null
+  )
+    await summary.click();
+}
 
 // Preview serves frozen data; registry.spec.ts exercises these routes on D1.
 test.beforeEach(async ({ page }) => {
@@ -401,6 +412,7 @@ test("token amounts keep asset precision when publishing an unrelated project ed
   expect(published?.manifest.reward.monthlyCapMinor).toBe("1000000000000000");
   expect(published?.monthlyAmount).toBeUndefined();
   await expect(page.getByLabel("Monthly amount (TEST)")).toHaveValue("0.001");
+  await openOwnerSettings(page, "Monthly rewards");
   await page.getByLabel("Monthly amount (TEST)").fill("0.0000000000000000001");
   await page
     .getByRole("button", { name: "Publish changes", exact: true })
@@ -722,13 +734,16 @@ test("makes the public project draft boundary unmistakable", async ({
   // The form must finish loading before it is edited.
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(
-    page.getByRole("link", { name: "Vault funding" }),
+    page
+      .getByRole("navigation", { name: "Project navigation" })
+      .getByRole("link", { name: "Funds & awards" }),
   ).toHaveAttribute("href", "/projects/eliza/funding");
   await expect(page.getByLabel("Draft total, USDC")).toHaveCount(0);
   await expect(
     page.getByRole("link", { name: "Sign in to publish changes" }),
   ).toHaveAttribute("href", /\/login\?next=%2Fprojects%2Feliza%2Fmanage$/u);
   await page.getByLabel("Short description").fill("Eliza-only draft");
+  await openOwnerSettings(page, "Public revision note (optional)");
   await page
     .getByLabel("Revision note")
     .fill("Clarify the project focus for contributors.");
@@ -847,6 +862,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
     project.contribution?.approvedScope ?? "",
   );
+  await openOwnerSettings(page, "Contribution rules");
   const instructions = page.locator("details.proposal-skill-rules");
   await instructions.locator("summary").click();
   await page
@@ -865,7 +881,9 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await expect(instructions).toHaveAttribute("open", "");
   const scope =
     "Fix reproducible defects and provide the affected workflow evidence.";
+  await openOwnerSettings(page, "Contribution rules");
   await page.getByLabel("Acceptance criteria").fill(scope);
+  await openOwnerSettings(page, "Public revision note (optional)");
   await page
     .getByLabel("Revision note")
     .fill("Clarify acceptance evidence for maintainers.");
@@ -939,9 +957,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
     project.contribution?.approvedScope ?? "",
   );
-  await expect(page.getByRole("region", { name: "Changes" })).toContainText(
-    "No changes yet",
-  );
+  await expect(page.getByRole("region", { name: "Changes" })).toHaveCount(0);
   // PRD section 8: an exempt project publishes skill changes without a new
   // scan, so the change list must not say that it needs one.
   Object.assign(setup.checks.scan, {
@@ -951,6 +967,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   });
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByText("Exempt", { exact: true })).toBeVisible();
+  await openOwnerSettings(page, "Contribution rules");
   await page.getByLabel("Acceptance criteria").fill(scope);
   const exemptChanges = page.getByRole("region", { name: "Changes" });
   await expect(exemptChanges).toContainText(
@@ -1021,9 +1038,14 @@ test("reaches and reads older inbox notifications without losing the page", asyn
   await expect(page.locator(".inbox-item")).toHaveCount(100);
 });
 
-test("the inbox keeps read, acknowledged and email outcomes distinct and puts email settings after the notices", async ({
+test("the inbox keeps delivery, read and acknowledgment distinct and links to account email preferences", async ({
   page,
 }) => {
+  const paymentReads: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/payments/me")
+      paymentReads.push(request.url());
+  });
   const notice = (
     i: number,
     emailDelivery: string | undefined,
@@ -1064,20 +1086,47 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await page.route("**/api/v1/notifications/email", (route) =>
     route.fulfill({ json: { enabled: false, availability: "unverified" } }),
   );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: "4242", githubLogin: "example", admin: false },
+      },
+    }),
+  );
+  await page.route("**/api/v1/project-appeals", (route) =>
+    route.fulfill({ json: { appeals: [] } }),
+  );
+  await page.route("**/api/v1/payments/me", (route) =>
+    route.fulfill({
+      json: {
+        githubUserId: "4242",
+        wallets: [],
+        payments: [],
+        monthlyAwards: [],
+        balances: [],
+        directTransfers: [],
+        walletObservations: [],
+      },
+    }),
+  );
   await page.goto("/inbox", { waitUntil: "networkidle" });
   const item = (subject: string) =>
     page.locator(".inbox-item", { hasText: subject });
+  const sent = item("delivery-1");
+  await expect(sent.locator(".inbox-state")).toHaveText("Read");
   await expect(
-    item("delivery-1").getByText("Email: sent", { exact: true }),
-  ).toBeVisible();
+    sent.getByText("Email: sent", { exact: true }),
+  ).not.toBeVisible();
+  await sent.getByText("Email delivery", { exact: true }).click();
+  await expect(sent.getByText("Email: sent", { exact: true })).toBeVisible();
+  await expect(sent.getByText("Email: delivered", { exact: true })).toHaveCount(
+    0,
+  );
+  const delivered = item("delivery-2");
+  await expect(delivered.locator(".inbox-state")).toHaveText("Unread");
+  await delivered.getByText("Email delivery", { exact: true }).click();
   await expect(
-    item("delivery-1").getByText("Read", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    item("delivery-2").getByText("Email: delivered", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    item("delivery-2").getByText("Unread", { exact: true }),
+    delivered.getByText("Email: delivered", { exact: true }),
   ).toBeVisible();
   await expect(
     item("delivery-3").getByText("Email: failed", { exact: true }),
@@ -1085,19 +1134,40 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await expect(
     item("delivery-4").getByText("Email: uncertain", { exact: true }),
   ).toBeVisible();
+  const queued = item("delivery-5");
   await expect(
-    item("delivery-5").getByText("Email: queued", { exact: true }),
+    queued.getByText("Email: queued", { exact: true }),
+  ).not.toBeVisible();
+  await queued.getByText("Email delivery", { exact: true }).click();
+  await expect(
+    queued.getByText("Email: queued", { exact: true }),
   ).toBeVisible();
-  await expect(item("delivery-6").getByText(/^Email:/u)).toHaveCount(0);
-  // A private notice stays generic: the provider-accepted email does not
-  // stand in for the explicit acknowledgment.
+  await expect(item("delivery-6").locator(".inbox-delivery")).toHaveCount(0);
+  // Reading a private notice or accepting its email does not acknowledge it.
   const security = item("case-0001");
+  await expect(security.locator(".inbox-state")).toHaveText("Read");
+  await security.getByText("Email delivery", { exact: true }).click();
   await expect(
     security.getByText("Email: sent", { exact: true }),
   ).toBeVisible();
   await expect(
     security.getByRole("button", { name: /^Acknowledge:/u }),
   ).toBeVisible();
+  await expect(security.getByText("Acknowledged", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("region", { name: "Email preferences" }),
+  ).toHaveCount(0);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("inbox-delivery-states.png"),
+    fullPage: true,
+  });
+  await page
+    .getByRole("link", { name: "Email preferences", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/account#notifications$/u);
   const preferences = page.getByRole("region", { name: "Email preferences" });
   await expect(preferences).toContainText(
     "No verified email address is on file.",
@@ -1105,31 +1175,33 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await expect(
     preferences.getByRole("button", { name: "Retry email preferences" }),
   ).toHaveCount(0);
-  // Optional settings come after the notices and their actions.
-  const order = await page.evaluate(() => {
-    const list = document.querySelector(".inbox-list");
-    const settings = document.querySelector(
-      "[aria-labelledby='inbox-email-heading']",
-    );
-    return list && settings
-      ? list.compareDocumentPosition(settings) &
-          Node.DOCUMENT_POSITION_FOLLOWING
-      : 0;
-  });
-  expect(order).toBeGreaterThan(0);
-  await expectAccessible(page);
-  await page.screenshot({
-    path: test.info().outputPath("inbox-delivery-states.png"),
-    fullPage: true,
-  });
   await page.unroute("**/api/v1/notifications/email");
   await page.route("**/api/v1/notifications/email", (route) =>
     route.fulfill({ json: { enabled: false, availability: "unavailable" } }),
   );
   await page.reload();
+  const retry = preferences.getByRole("button", {
+    name: "Retry email preferences",
+  });
+  await expect(retry).toBeVisible();
+  await page.unroute("**/api/v1/notifications/email");
+  await page.route("**/api/v1/notifications/email", (route) =>
+    route.fulfill({
+      json: {
+        enabled: false,
+        availability: "verified",
+        email: "example@example.com",
+        destinationVersion: "a".repeat(64),
+      },
+    }),
+  );
+  await retry.click();
+  await expect(preferences).toContainText("example@example.com");
   await expect(
-    preferences.getByRole("button", { name: "Retry email preferences" }),
+    preferences.getByRole("button", { name: "Turn on activity email" }),
   ).toBeVisible();
+  await expectAccessible(page);
+  expect(paymentReads).toEqual([]);
 });
 
 test("an admin leaves an unset reward asset unchanged until choosing it", async ({
@@ -1395,7 +1467,10 @@ test("shows an explicit error for invalid data and retries", async ({
   });
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toBeVisible();
-  await expect(page.locator(".reward-card")).not.toContainText("$0");
+  await expect(page.locator(".project-state-summary")).toContainText(
+    "$1,000 monthly target",
+  );
+  await expect(page.locator(".project-state-summary")).not.toContainText("$0");
   await expectAccessible(page);
   const failedAttempts = attempts;
   expect(failedAttempts).toBeGreaterThan(1);

@@ -1,6 +1,7 @@
 /** Browser regressions for retained routes and fragment navigation (PRD 7). */
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { PROJECTS } from "../../src/lib/projects.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
 
 const { site } = deploymentOrigins(
@@ -40,6 +41,37 @@ test.beforeEach(async ({ page }) => {
       },
     }),
   );
+});
+
+test("retained awards URLs resolve during client navigation with query and fragment intact", async ({
+  page,
+}, info) => {
+  const project = PROJECTS.find((entry) => entry.id === "eliza");
+  if (!project) throw new Error("Missing project fixture");
+  await page.route("**/api/v1/projects/eliza", (route) =>
+    route.fulfill({ json: { revision: 1, project } }),
+  );
+  await page.goto("/how-it-works", { waitUntil: "networkidle" });
+  for (const [suffix, expected] of [
+    ["?period=2026-10", "?period=2026-10#monthly-awards"],
+    ["/?period=2026-09#retained-receipt", "?period=2026-09#retained-receipt"],
+  ]) {
+    // Link dispatches this same event after pushState. A network navigation
+    // would exercise only the Pages redirect and miss the client router.
+    await page.evaluate((path) => {
+      history.pushState({}, "", path);
+      dispatchEvent(new PopStateEvent("popstate"));
+    }, `/projects/eliza/awards${suffix}`);
+    await expect(page).toHaveURL(`/projects/eliza/funding${expected}`);
+    await expect(
+      page.getByRole("heading", { name: "Eliza funding", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("This project has no vault yet."),
+    ).toBeVisible();
+  }
+  await expectAccessible(page);
+  await page.screenshot({ path: info.outputPath("retained-awards-route.png") });
 });
 
 test("same-route fragment navigation opens the named account disclosure", async ({
