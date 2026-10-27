@@ -83,7 +83,10 @@ import { REVIEWED_EVM_FACTORIES } from "../../../contracts/evm/factories";
 import type { SolanaEscrowConfig } from "../../../contracts/solana/adapter";
 import { REVIEWED_SOLANA_PROGRAMS } from "../../../contracts/solana/programs";
 import { readBoundedJson } from "../../../src/lib/browser-json";
-import { deploymentTier } from "../../../src/lib/deployment";
+import {
+  deploymentTier,
+  isLocalDevelopmentOrigin,
+} from "../../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
 import type { GithubActor } from "../../../src/lib/project-contracts";
@@ -192,13 +195,15 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     repository: { path: string; githubId: string },
     actor: GithubActor,
   ) => slopbotRepositoryAccess(env.SLOPBOT, repository, actor);
-  // Trusted staging origins only; never request input.
-  const stagingOrigins = [
-    "https://staging.slop.cash",
-    "https://slop-staging.pages.dev",
-  ].includes(env.PAYMENTS_ALLOWED_ORIGIN ?? "")
-    ? { allowedOrigins: [env.PAYMENTS_ALLOWED_ORIGIN as string] }
-    : {};
+  // Trusted staging origins, or the local development server's origin; never
+  // request input. The API checks the origin it is served from, so a local
+  // origin cannot affect production traffic.
+  const stagingOrigins =
+    ["https://staging.slop.cash", "https://slop-staging.pages.dev"].includes(
+      env.PAYMENTS_ALLOWED_ORIGIN ?? "",
+    ) || isLocalDevelopmentOrigin(env.PAYMENTS_ALLOWED_ORIGIN)
+      ? { allowedOrigins: [env.PAYMENTS_ALLOWED_ORIGIN as string] }
+      : {};
   const projectPersistence = new CloudflareProjectPersistence(db);
   const { evidence, vetting, github, livePin } = vettingContext(env, request, {
     session: async (request) => {
