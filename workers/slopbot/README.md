@@ -578,6 +578,11 @@ artifact was accepted, not what a recording depicts or whether a product works.
 A reviewer must inspect relevant media safely and record actual observations
 and limits in the source-bound assessment. Unviewable required evidence stays
 unresolved; filenames, hashes, test counts and acceptance alone prove no value.
+Text-only model requests keep the binary hashes, sizes, paths, claims and
+`unviewed` status, but omit the base64 bodies. The complete bodies remain in
+private source evidence and its digest. The model receives an explicit rule to
+leave media-dependent outcomes unresolved without actual viewing evidence;
+omitting the bytes is not a claim that the media was reviewed.
 
 For a rename with no patch and zero added or deleted lines, the collector
 checks the old path at the submitted merge base and the new path at the head.
