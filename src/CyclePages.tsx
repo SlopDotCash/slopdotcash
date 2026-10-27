@@ -1,4 +1,4 @@
-import { CalendarDays, CircleAlert, ExternalLink } from "lucide-react";
+import { CalendarDays, CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
@@ -23,7 +23,6 @@ import {
   cycleStateLabel,
   DataNotice,
   EmptyState,
-  ExternalLinkAnchor,
   formatCycleMonth,
   formatDate,
   formatDateTime,
@@ -268,7 +267,6 @@ export function CyclePage({
       ) : view ? (
         <CycleAllocation updatedAt={state.snapshot.generatedAt} view={view} />
       ) : null}
-      {record ? <CycleArtifacts cycle={record} /> : null}
     </main>
   );
 }
@@ -379,40 +377,6 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
           </table>
         </div>
       )}
-    </section>
-  );
-}
-
-function CycleArtifacts({ cycle }: { cycle: CycleIndexEntry }) {
-  const files = [
-    ["Source data", cycle.files.sourceSnapshot],
-    ["Proposal", cycle.files.proposal],
-    ["Approved allocation", cycle.files.allocation],
-    ["Payment plan", cycle.files.executionPlan],
-    ["Verified settlement", cycle.files.settlement],
-  ] as const;
-  return (
-    <section className="section cycle-artifacts">
-      <div className="section-heading">
-        <h2>Evidence</h2>
-      </div>
-      <details>
-        <summary>Original records</summary>
-        <div className="artifact-links">
-          {files
-            .filter((entry) => entry[1] !== null)
-            .map(([label, file]) =>
-              file ? (
-                <ExternalLinkAnchor href={file.url} key={label}>
-                  <span>
-                    <strong>{label}</strong>
-                  </span>
-                  <ExternalLink aria-hidden="true" size={17} />
-                </ExternalLinkAnchor>
-              ) : null,
-            )}
-        </div>
-      </details>
     </section>
   );
 }
