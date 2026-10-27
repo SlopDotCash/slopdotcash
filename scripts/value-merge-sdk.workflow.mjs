@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const [origin, output, image] = process.argv.slice(2);
 assert.equal(process.platform, "linux", "This proof requires native Linux");
@@ -214,6 +215,65 @@ try {
   const inputs = fixture.sources.map((source) => source.input);
   await send("complete-public-merge", inputs, bundle, 200);
   await send("fresh-sandbox-repeat", inputs, bundle, 200);
+  const inputFile = join(directory, "scoped-inputs.json");
+  const scopedFile = join(directory, "scoped.bundle");
+  await writeFile(inputFile, JSON.stringify(inputs));
+  execFileSync(
+    "bun",
+    [
+      "--no-env-file",
+      fileURLToPath(new URL("./create-value-merge-bundle.ts", import.meta.url)),
+      directory,
+      inputFile,
+      scopedFile,
+    ],
+    { env, timeout: 120_000, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const scoped = await readFile(scopedFile);
+  assert(scoped.length < bundle.length);
+  report.scopedBundle = { bytes: scoped.length, sha256: sha(scoped) };
+  await send("scoped-public-merge", inputs, scoped, 200);
+  const scopedRepository = join(directory, "scoped-objects.git");
+  git(["init", "--bare", "--template=", scopedRepository]);
+  git(["-C", scopedRepository, "bundle", "unbundle", scopedFile]);
+  const omittedBlob = git([
+    "rev-parse",
+    `${inputs[0].pull.head.sha}:${inputs[0].files[0].filename}`,
+  ]);
+  const scopedObjects = git([
+    "-C",
+    scopedRepository,
+    "cat-file",
+    "--batch-all-objects",
+    "--batch-check=%(objectname)",
+  ]).split("\n");
+  assert(scopedObjects.includes(omittedBlob));
+  const incompletePack = execFileSync(
+    "git",
+    [
+      "-C",
+      scopedRepository,
+      "pack-objects",
+      "--stdout",
+      "--no-reuse-delta",
+      "--no-reuse-object",
+    ],
+    {
+      env,
+      input: `${scopedObjects.filter((id) => id !== omittedBlob).join("\n")}\n`,
+      maxBuffer: 25 * 1024 * 1024,
+      timeout: 120_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  const boundary = scoped.indexOf(Buffer.from("\n\nPACK"));
+  assert(boundary > 0);
+  await send(
+    "missing-required-head-blob",
+    inputs,
+    Buffer.concat([scoped.subarray(0, boundary + 2), incompletePack]),
+    409,
+  );
   await send(
     "corrupt-bundle",
     inputs,

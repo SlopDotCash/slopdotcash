@@ -220,12 +220,14 @@ test("shared navigation preserves project drafts and account sign-in destination
   ).toBe(true);
 });
 
-test("security reports recover a failed list and share one session across submissions", async ({
+test("security reports recover a failed list with account-bound private reads", async ({
   page,
   diagnostics,
 }) => {
   let reads = 0;
   let lists = 0;
+  const privateRequests: { path: string; expectedActor: string | undefined }[] =
+    [];
   diagnostics.allowResponse(503, "GET", "/api/v1/security-submissions");
   await page.route("**/api/v1/project-session", (route) => {
     reads++;
@@ -235,17 +237,25 @@ test("security reports recover a failed list and share one session across submis
       },
     });
   });
-  await page.route("**/api/v1/security-cases", (route) =>
-    route.fulfill({
+  await page.route("**/api/v1/security-cases", (route) => {
+    privateRequests.push({
+      path: "security-cases",
+      expectedActor: route.request().headers()["x-slop-expected-github-id"],
+    });
+    return route.fulfill({
       json: {
         viewer: { githubId: "4242", githubLogin: "example" },
         programs: [],
         cases: [],
       },
-    }),
-  );
+    });
+  });
   await page.route("**/api/v1/security-submissions", (route) => {
     lists++;
+    privateRequests.push({
+      path: "security-submissions",
+      expectedActor: route.request().headers()["x-slop-expected-github-id"],
+    });
     return lists === 2
       ? route.fulfill({
           status: 503,
@@ -296,14 +306,21 @@ test("security reports recover a failed list and share one session across submis
   await expect(page.getByRole("article")).toHaveCount(3);
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(lists).toBe(3);
-  expect(initialSessionReads).toBe(1);
-  expect(reads).toBe(2);
+  expect(privateRequests).toEqual(
+    expect.arrayContaining([
+      { path: "security-cases", expectedActor: "4242" },
+      { path: "security-submissions", expectedActor: "4242" },
+    ]),
+  );
+  for (const request of privateRequests)
+    expect(request.expectedActor, request.path).toBe("4242");
   await test.info().attach("security-read-counts", {
     body: JSON.stringify({
       lists,
       initialSessionReads,
       sessionsAfterReload: reads,
       submissions: 3,
+      privateRequests,
     }),
     contentType: "application/json",
   });
