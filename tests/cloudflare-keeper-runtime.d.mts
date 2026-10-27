@@ -25,6 +25,7 @@ interface CloudflareKeeperRuntime {
   query<T>(sql: string, ...values: (string | number | null)[]): Promise<T[]>;
   request(path: string, body?: unknown): Promise<Record<string, unknown>>;
   restart(): Promise<void>;
+  crashAndRestart(): Promise<{ previousPid: number; currentPid: number }>;
   close(): Promise<void>;
 }
 export function cloudflareKeeperRuntime(

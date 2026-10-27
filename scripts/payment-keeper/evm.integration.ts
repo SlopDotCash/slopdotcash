@@ -59,6 +59,10 @@ let lose = false;
 let latestBlockFailsAfter = -1;
 let signatures = 0;
 let broadcasts = 0;
+let forwardedBroadcasts = 0;
+let holdBroadcast:
+  | { reached(raw: Hex): void; response: Promise<Response> }
+  | undefined;
 const proxy = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
@@ -68,8 +72,14 @@ const proxy = Bun.serve({
       return new Response("observed");
     }
     const text = await request.text();
-    if (JSON.parse(text).method === "eth_sendRawTransaction") broadcasts++;
     const call = JSON.parse(text) as { method: string; params?: unknown[] };
+    if (call.method === "eth_sendRawTransaction") {
+      broadcasts++;
+      if (holdBroadcast) {
+        holdBroadcast.reached(call.params?.[0] as Hex);
+        return holdBroadcast.response;
+      }
+    }
     if (
       latestBlockFailsAfter >= 0 &&
       call.method === "eth_getBlockByNumber" &&
@@ -83,6 +93,7 @@ const proxy = Bun.serve({
       });
     if (lose && JSON.parse(text).method === "eth_sendRawTransaction")
       return new Response("lost before acceptance", { status: 502 });
+    if (call.method === "eth_sendRawTransaction") forwardedBroadcasts++;
     return fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -648,7 +659,152 @@ try {
     preBudget,
     "The expense mined today must reduce today's budget",
   );
-  const blocked = await tick();
+  let resumedAfterCrash: Awaited<ReturnType<typeof tick>> | undefined;
+  if (cloudflare) {
+    // The RPC gate observes the committed attempt, but forwards no bytes to
+    // Anvil. Kill the real Workerd process here, not after a graceful tick.
+    let reached!: (raw: Hex) => void;
+    let release!: (response: Response) => void;
+    const captured = new Promise<Hex>((resolve) => {
+      reached = resolve;
+    });
+    holdBroadcast = {
+      reached,
+      response: new Promise<Response>((resolve) => {
+        release = resolve;
+      }),
+    };
+    const beforeForwarded = forwardedBroadcasts;
+    const beforeSignatures = signatures;
+    const inFlight = tick().then(
+      () => "completed",
+      () => "interrupted",
+    );
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const raw = await Promise.race([
+        captured,
+        new Promise<never>((_, reject) => {
+          deadline = setTimeout(
+            () =>
+              reject(new Error("Keeper never reached the pre-broadcast gate")),
+            30_000,
+          );
+        }),
+      ]);
+      clearTimeout(deadline);
+      const id = keccak256(raw);
+      const savedPayment = await queryOne<{ key: string; value: string }>(
+        `SELECT key,value FROM journal WHERE json_extract(value,'$.transactionId')='${id}'`,
+      );
+      assert(
+        savedPayment,
+        "the signed payment was durably committed before RPC",
+      );
+      const attempt = JSON.parse(savedPayment.value) as {
+        rawTransaction: Hex;
+        transactionId: Hex;
+        obligationId: Hex;
+      };
+      assert.equal(attempt.rawTransaction, raw);
+      assert.equal(attempt.transactionId, id);
+      assert.equal(
+        attempt.obligationId,
+        evmAwardId(11155111n, vault, entries[1].sourceDigest),
+      );
+      const nonce = await queryOne<{ value: string }>(
+        "SELECT value FROM journal WHERE key LIKE 'nonce:%'",
+      );
+      const gas = await queryOne<{
+        id: string;
+        transaction_id: string;
+        maximum: string;
+        actual: string | null;
+      }>(
+        `SELECT id,transaction_id,maximum,actual FROM gas WHERE transaction_id='${id}'`,
+      );
+      assert(nonce && gas);
+      assert.equal(gas.actual, null);
+      assert(BigInt(gas.maximum) > 0n);
+      assert.equal(signatures, beforeSignatures + 1);
+      assert.equal(forwardedBroadcasts, beforeForwarded);
+      assert.equal(await chain("eth_getTransactionByHash", [id]), null);
+      const processes = await cloudflare.crashAndRestart();
+      assert.notEqual(processes.currentPid, processes.previousPid);
+      assert.equal(await inFlight, "interrupted");
+      assert.deepEqual(
+        await queryOne(
+          `SELECT key,value FROM journal WHERE key='${savedPayment.key}'`,
+        ),
+        savedPayment,
+        "a new Workerd process retains the exact signed attempt",
+      );
+      assert.deepEqual(
+        await queryOne("SELECT value FROM journal WHERE key LIKE 'nonce:%'"),
+        nonce,
+      );
+      assert.deepEqual(
+        await queryOne(
+          `SELECT id,transaction_id,maximum,actual FROM gas WHERE transaction_id='${id}'`,
+        ),
+        gas,
+        "the uncertain send keeps its full native liability across the crash",
+      );
+      assert.equal(await chain("eth_getTransactionByHash", [id]), null);
+      holdBroadcast = undefined;
+      release(new Response("fixture process was terminated", { status: 502 }));
+      resumedAfterCrash = await tick();
+      assert.equal(
+        signatures,
+        beforeSignatures + 1,
+        "restart must not sign again",
+      );
+      assert.equal(forwardedBroadcasts, beforeForwarded + 1);
+      await mine();
+      await tick();
+      const paid = await queryOne<{ payment: string }>(
+        `SELECT payment FROM awards WHERE id='${attempt.obligationId}'`,
+      );
+      assert(paid);
+      const receipt = JSON.parse(paid.payment);
+      assert.equal(receipt.transactionId, id);
+      assert.equal(receipt.obligationId, attempt.obligationId);
+      assert.equal(receipt.githubUserId, "1002");
+      assert.equal(receipt.destination, bob.address.toLowerCase());
+      assert.equal(receipt.netMicro, "980000");
+      assert.equal(receipt.feeMicro, "20000");
+      assert(
+        BigInt(
+          (
+            await queryOne<{ actual: string }>(
+              `SELECT actual FROM gas WHERE transaction_id='${id}'`,
+            )
+          )?.actual ?? "0",
+        ) > 0n,
+        "the same reserved attempt reconciles its canonical gas charge",
+      );
+      assert.equal(
+        (
+          await queryOne<{ n: number }>(
+            "SELECT count(*) n FROM awards WHERE payment IS NOT NULL",
+          )
+        )?.n,
+        1,
+      );
+      await tick();
+      assert.equal(signatures, beforeSignatures + 1);
+      assert.equal(
+        forwardedBroadcasts,
+        beforeForwarded + 1,
+        "completed payment is not rebroadcast",
+      );
+    } finally {
+      clearTimeout(deadline);
+      holdBroadcast = undefined;
+      release(new Response("fixture gate closed", { status: 502 }));
+    }
+  }
+  const blocked = resumedAfterCrash ?? (await tick());
   assert(
     blocked.some((item) => item.state === "submitted"),
     JSON.stringify(blocked),
@@ -1121,6 +1277,7 @@ try {
               "concurrent native cron handlers coalesce in one gas-wallet object",
               "address case and registry changes cannot reset nonce or budget",
               "registry redirects refused without following the destination",
+              "SIGKILL after durable signing before broadcast retains exact attempt, nonce and gas; fresh process pays once without re-signing",
             ]
           : []),
         "read-only dry run",

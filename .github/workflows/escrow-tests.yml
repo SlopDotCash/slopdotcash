@@ -36,6 +36,8 @@ on:
       - 'scripts/check-payout-test-funding.mjs'
       - 'scripts/*escrow*'
       - 'scripts/payment-keeper/**'
+      - 'workers/operator-keeper/**'
+      - 'tests/cloudflare-keeper-*'
       - 'scripts/prepare-payment-deployments.ts'
       - 'scripts/check-payout-readiness.ts'
       - 'scripts/check-referral-roots.ts'
@@ -177,6 +179,10 @@ jobs:
       - run: forge build --root contracts/evm --sizes
       - run: forge test --root contracts/evm
       - run: bun run test:contracts:evm
+      - name: Prove native keeper durability across an abrupt process crash
+        env:
+          SLOP_KEEPER_RUNTIME: cloudflare
+        run: bun scripts/payment-keeper/evm.integration.ts
       - run: bun run test:payments
       - run: bun run test:referral-accrual:anvil
       - name: Exercise fee conversion and claim recovery on an isolated local chain

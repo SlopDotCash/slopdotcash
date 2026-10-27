@@ -39,6 +39,31 @@ run must resume from the journal; it is not proof of payment. Use the existing
 `perRun` bound and the operator's spending limits. A provider failure or missing
 receipt remains unavailable work.
 
+## Local durability qualification
+
+Run the actual keeper against Anvil and a native Workerd SQLite Durable Object:
+
+```sh
+SLOP_KEEPER_RUNTIME=cloudflare bun --no-env-file scripts/payment-keeper/evm.integration.ts
+```
+
+This uses generated local keys and loopback RPC only. In addition to the
+rollback, duplicate, fee-budget and failed-recipient cases, it holds a payment
+at the RPC transport after the journal commits but before the node receives
+the signed bytes. It verifies the durable attempt, nonce and gas reservation,
+then kills the fixture's entire process group with `SIGKILL`. A fresh process
+opens the same storage and submits the exact retained transaction once. The
+other recipient stays reserved until its transfer restriction is removed.
+The escrow CI runs this native case as well as the Bun SQLite variant.
+
+This is local runtime proof, not hosted-service acceptance. The remaining
+hosted qualification needs a separately reviewed test-only interruption
+controller, the same deployed keeper namespace before and after interruption,
+dedicated testnet keys and budgets, and independent finalized public receipts.
+A graceful deployment during a running tick is not that interruption. Never
+deploy the local fixture's inspection routes, load production keys into it,
+reset a keeper namespace, or add a fault switch to the production entrypoint.
+
 ## Operator installation
 
 These are instructions for the operator. They have not been run against an
