@@ -795,9 +795,14 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       if (amountOut === 0n) return { noRoute: "KyberSwap quoted zero output" };
       const inUsd = usdMicro(summary.amountInUsd);
       const outUsd = usdMicro(summary.amountOutUsd);
+      // Rounded up so a cap is never undercounted, as on Solana.
       const priceImpactBps =
         inUsd !== null && outUsd !== null && inUsd > 0n
-          ? Number(inUsd > outUsd ? ((inUsd - outUsd) * 10_000n) / inUsd : 0n)
+          ? Number(
+              inUsd > outUsd
+                ? ((inUsd - outUsd) * 10_000n + inUsd - 1n) / inUsd
+                : 0n,
+            )
           : null;
       const gasUsd = usdMicro(summary.gasUsd);
       // Ethereum has no separate L1 posting fee. Base needs both estimates;
