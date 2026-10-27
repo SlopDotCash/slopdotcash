@@ -73,6 +73,10 @@ for (const [next, expected] of [
     diagnostics.allow(
       /^console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at https:\/\/[^ ]+\/api\/v1\/points\/me$/u,
     );
+    // The signed-in identity is synthetic; keep its avatar local as well.
+    await page.route("https://avatars.githubusercontent.com/**", (route) =>
+      route.fulfill({ path: join(process.cwd(), "public/slop-mark.svg") }),
+    );
     const expiresAt = new Date(
       Math.floor(Date.now() / 1000) * 1000 + 240_000,
     ).toISOString();
