@@ -3,6 +3,10 @@
 PRD section 11 ("Release workflow") defines this flow. Issue #534 records the
 maintainer's request for separate staging login and writes.
 
+For containment, preserved journals and recovery verification, use the
+[production incident runbook](incident-response.md). Its outstanding operator
+assignments and alert checks remain launch prerequisites.
+
 | Branch | Website | Pages project | Database | Identity Worker |
 | --- | --- | --- | --- | --- |
 | `development` | `https://staging.slop.cash` | `slop-staging` | `slop-staging` | `slop-identity-staging` |
