@@ -1,7 +1,33 @@
 /** Browser coverage of private monthly allocations; the API rules are tested in backend/payments/monthly.test.ts. */
 
+import type { Page } from "@playwright/test";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
+
+/** Monthly awards are on the funding page of a project that has a vault policy. */
+function projectWithVault() {
+  const project = PROJECTS.find((item) => item.id === "eliza");
+  if (project?.reward.kind !== "monthly-pool")
+    throw new Error("Missing project fixture");
+  return {
+    ...project,
+    reward: { ...project.reward, feeBasisPoints: 200 },
+    escrow: {
+      schemaVersion: "1",
+      effectiveCycle: "2026-10",
+      chain: "solana",
+      feeBasisPoints: 200,
+      withdrawalFeeBasisPoints: 200,
+      feeMode: "deduct-from-gross",
+      deployments: [],
+    },
+  } as typeof project;
+}
+
+async function openMonthlyAwards(page: Page) {
+  await page.goto("/projects/eliza/funding");
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
+}
 
 test("owner edits monthly allocations privately, finalizes them and keeps sign-in context", async ({
   diagnostics,
@@ -12,8 +38,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     /^(?:console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at |401 GET )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/monthly\/2026-11$/u,
     /^(?:console Failed to load resource: the server responded with a status of 403 \(Forbidden\) at |403 GET )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/monthly\/2026-11$/u,
   );
-  const project = PROJECTS.find((item) => item.id === "eliza");
-  if (!project) throw new Error("Missing project fixture");
+  const project = projectWithVault();
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
@@ -127,7 +152,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
       return route.fulfill({ json: { automatic } });
     },
   );
-  await page.goto("/projects/eliza/awards");
+  await openMonthlyAwards(page);
   await expect(
     page.getByRole("heading", { name: "Monthly awards", exact: true }),
   ).toBeVisible();
@@ -137,10 +162,10 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     exact: true,
   });
   await expect(
-    page.getByRole("link", {
-      name: "Sign in with GitHub",
-    }),
-  ).toHaveAttribute("href", /next=.*awards/);
+    page
+      .getByRole("region", { name: "Monthly awards" })
+      .getByRole("link", { name: "Sign in with GitHub" }),
+  ).toHaveAttribute("href", /next=.*funding/);
   status = 403;
   await load.focus();
   await page.keyboard.press("Enter");
@@ -242,8 +267,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
 test("owner reserve repair keeps healthy and unknown states held and restores a submitted transaction after reload", async ({
   page,
 }, info) => {
-  const project = PROJECTS.find((item) => item.id === "eliza");
-  if (!project) throw new Error("Missing project fixture");
+  const project = projectWithVault();
   await page.clock.setFixedTime(new Date("2026-12-02T12:00:00Z"));
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
@@ -293,7 +317,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
       });
     },
   );
-  await page.goto("/projects/eliza/awards");
+  await openMonthlyAwards(page);
   const details = page.locator(".owner-reserve-release");
   await details.locator("summary").focus();
   await page.keyboard.press("Enter");

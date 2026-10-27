@@ -763,7 +763,8 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
       });
     },
   );
-  await page.goto("/projects/eliza/awards");
+  await page.goto("/projects/eliza/funding");
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
   await page.getByLabel("Contribution month").fill("2026-09");
   await page
     .getByRole("button", { name: "Reserve award for local-contributor" })

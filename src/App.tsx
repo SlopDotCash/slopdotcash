@@ -102,7 +102,7 @@ const ReceiptsPage = lazy(() =>
 const ModelsPage = lazy(() =>
   import("./PublicPages").then((module) => ({ default: module.ModelsPage })),
 );
-const OwnerAwardsPage = lazy(() => import("./OwnerAwards"));
+const OwnerAwards = lazy(() => import("./OwnerAwards"));
 const ProjectProposalPage = lazy(() => import("./ProjectProposalPage"));
 const AdminPage = lazy(() => import("./Admin"));
 const InboxPage = lazy(() => import("./Inbox"));
@@ -144,8 +144,7 @@ type ProjectRouteKind =
   | "project"
   | "funding-project"
   | "manage-project"
-  | "security-program"
-  | "owner-awards";
+  | "security-program";
 type PageRouteKind =
   | "home"
   | "how-it-works"
@@ -219,11 +218,6 @@ const ROUTES: Record<
   "funding-project": { snapshot: false, registry: "current" },
   "manage-project": { snapshot: false, registry: "current" },
   "security-program": { snapshot: false, registry: "current" },
-  "owner-awards": {
-    snapshot: false,
-    registry: "current",
-    privateTitle: "Monthly awards",
-  },
   cycle: { snapshot: true, registry: "cached" },
   profile: { snapshot: true, registry: "cached" },
 };
@@ -246,7 +240,6 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
 
 /** Project pages at /projects/<id>/<section>. */
 const PROJECT_SECTIONS = new Map<string, ProjectRouteKind>([
-  ["awards", "owner-awards"],
   ["manage", "manage-project"],
   ["security", "security-program"],
   ["funding", "funding-project"],
@@ -323,12 +316,7 @@ function routeHead(route: Route): { title: string; path: string | null } {
   if (privateTitle) {
     return {
       title: pageTitle(privateTitle),
-      path:
-        route.kind === "owner-awards"
-          ? null
-          : route.kind === "security-cases"
-            ? "/security"
-            : `/${route.kind}`,
+      path: route.kind === "security-cases" ? "/security" : `/${route.kind}`,
     };
   }
   if (route.kind === "profile") {
@@ -1073,9 +1061,6 @@ function ProjectPaymentHistory({
           <Link href={`/projects/${project.slug}/funding`}>Manage funding</Link>
         )}
         <Link href={`/projects/${project.slug}/manage`}>Manage project</Link>
-        {project.escrow && (
-          <Link href={`/projects/${project.slug}/awards`}>Monthly awards</Link>
-        )}
       </div>
       {directState.status === "error" && !externalPrize ? (
         <p role="status">
@@ -1271,6 +1256,9 @@ function ProjectFundingPage({
           </div>
         )}
       </section>
+      {project.escrow ? (
+        <OwnerAwards key={project.id} project={project} />
+      ) : null}
     </main>
   );
 }
@@ -1552,10 +1540,6 @@ function AppContent({ route }: { route: Route }) {
   else if (route.kind === "security-program")
     content = withProject(route, (project) => (
       <SecurityProgramPage key={project.id} project={project} />
-    ));
-  else if (route.kind === "owner-awards")
-    content = withProject(route, (project) => (
-      <OwnerAwardsPage key={project.id} project={project} />
     ));
   else if (route.kind === "manage-project")
     content = withProject(route, (project) => (

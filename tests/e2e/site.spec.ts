@@ -1176,13 +1176,13 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   expect(await trailingFundingRouteResponse.text()).toContain(
     '<div id="root"></div>',
   );
-  // These links are also opened from sign-in returns and Inbox notices.
-  // Exercise Pages rewrites: the preview server serves any path as the app
-  // and would conceal a missing production route.
+  // Monthly awards moved to the funding page. Saved Inbox notices and
+  // bookmarks still open the old path; the preview server would conceal a
+  // missing Pages rule.
   for (const path of ["/projects/eliza/awards", "/projects/eliza/awards/"]) {
     const response = await request.get(path, { maxRedirects: 0 });
-    expect(response.status(), path).toBe(200);
-    expect(await response.text(), path).toContain('<div id="root"></div>');
+    expect(response.status(), path).toBe(301);
+    expect(response.headers().location, path).toBe("/projects/eliza/funding");
   }
   for (const path of ["/operator/traces", "/operator/traces/"]) {
     const response = await request.get(path, { maxRedirects: 0 });
