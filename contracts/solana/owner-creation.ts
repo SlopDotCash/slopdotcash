@@ -91,6 +91,7 @@ export async function prepareSolanaVaultCreation(
       projectPda: plan.projectPda,
       vault: plan.vault,
       decimals,
+      tokenProgram: mint.tokenProgram,
       existingVault: plan.vault,
       transaction: null,
     };
@@ -99,6 +100,7 @@ export async function prepareSolanaVaultCreation(
     projectPda: plan.projectPda,
     vault: plan.vault,
     decimals,
+    tokenProgram: mint.tokenProgram,
     existingVault: null,
     transaction: registrationOnly
       ? null

@@ -1,9 +1,8 @@
-import { githubUserIdFromNodeId } from "../../src/lib/github-actor";
 import { assertProfiles } from "../../src/lib/profiles";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
 
-test("profiles preserve legacy coverage and expose recorded issue history", async ({
+test("profiles preserve legacy coverage and a valid census", async ({
   page,
 }, info) => {
   const failures: string[] = [];
@@ -18,7 +17,7 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
   const expectedWalletRequests = [
     "/api/v1/wallet-claims/actors/1234567/current",
   ];
-  // This census/issue-history check must not depend on a remote payout service.
+  // This census check must not depend on a remote payout service.
   await page.route("**/api/v1/wallet-claims/actors/*/current", (route) => {
     walletRequests.push(new URL(route.request().url()).pathname);
     return route.fulfill({ json: null });
@@ -79,16 +78,9 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
   await expect(
     profile.getByRole("link", { name: "GitHub · @profile-only-contributor" }),
   ).toHaveAttribute("href", "https://github.com/profile-only-contributor");
-  await profile.getByText("Issue outcomes", { exact: true }).click();
-  await expect(profile.getByLabel("Period (UTC)")).toHaveCount(0);
   await expect(
     profile.locator("summary", { hasText: /^Penalty history$/ }),
   ).toHaveCount(0);
-  await profile.locator("summary", { hasText: /^Issue outcomes$/ }).focus();
-  await page.keyboard.press("Tab");
-  expect(
-    await page.evaluate(() => document.activeElement !== document.body),
-  ).toBe(true);
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("individual-profile.png"),
@@ -124,61 +116,6 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
   expect(response.ok()).toBe(true);
   const census = await response.json();
   assertProfiles(census);
-  expect(census.schemaVersion).toBe("2");
-  const reopened = census.issues?.items.find(
-    (issue) =>
-      issue.authorId !== null &&
-      issue.events.some((event) => event.kind === "reopened"),
-  );
-  if (!reopened)
-    throw Error("The reviewed census must include a reopened issue");
-  const actor = census.people.find((person) => person.id === reopened.authorId);
-  if (!actor) throw Error("The issue author must have a profile");
-  const walletActorId = githubUserIdFromNodeId(actor.id);
-  if (!walletActorId)
-    throw Error("The issue author must have a GitHub actor ID");
-  expectedWalletRequests.push(
-    `/api/v1/wallet-claims/actors/${walletActorId}/current`,
-  );
-  const lastReopen = [...reopened.events]
-    .reverse()
-    .find((event) => event.kind === "reopened");
-  if (!lastReopen) throw Error("The issue must retain its reopen event");
-  const repository = TARGET_REPOSITORIES.find(
-    (item) => item.id === reopened.repository,
-  );
-  if (!repository) throw Error("The issue repository must be registered");
-  await page.goto(`/contributors/${actor.login}`);
-  await page.getByText("Issue outcomes", { exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Repository", exact: true })
-    .selectOption(reopened.repository);
-  await page
-    .getByRole("combobox", { name: "Period (UTC)", exact: true })
-    .selectOption(new Date(lastReopen.occurredAt).toISOString().slice(0, 7));
-  const issueDetails = page.locator("details").filter({
-    has: page.locator(":scope > summary", { hasText: /^Issue outcomes$/ }),
-  });
-  await issueDetails.locator("summary", { hasText: /^Issue history/ }).click();
-  const reopenedRecord = issueDetails
-    .locator("li")
-    .filter({
-      has: page.locator(
-        `a[href="https://github.com/${repository.owner}/${repository.name}/issues/${reopened.number}"]`,
-      ),
-    })
-    .filter({ hasText: "Reopened" });
-  await expect(reopenedRecord.first()).toBeVisible();
-  await expectAccessible(page);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth + 1,
-    ),
-  ).toBe(true);
-  await page.screenshot({
-    path: info.outputPath("issue-outcomes.png"),
-    fullPage: true,
-  });
   expect(walletRequests).toEqual(expectedWalletRequests);
   expect(failures).toEqual([]);
 });

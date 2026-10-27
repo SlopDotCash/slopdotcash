@@ -25,3 +25,15 @@ export function dailyPoints(
   }
   return entries;
 }
+
+/** Points awarded over the last `days` UTC days, today included. */
+export function recentPoints(
+  awards: readonly Pick<PointAward, "occurredAt" | "amount">[],
+  today: Date,
+  days: number,
+): number {
+  return dailyPoints(awards, today, days).reduce(
+    (total, entry) => total + entry.points,
+    0,
+  );
+}

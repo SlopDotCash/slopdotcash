@@ -165,19 +165,91 @@ The dev server then reads the project registry, public direct-payment totals,
 and any published snapshot in `/data/` that is not generated locally from
 `https://slop.cash`, read-only. Do not commit the synced registry files.
 
-Before requesting review:
+### Local sign-in
+
+Sign-in works only on a product origin, so the plain dev server links to
+slop.cash. To sign in on localhost with real GitHub and return to localhost, run
+the identity Worker and the API on this machine:
+
+1. Create your own GitHub App (not the production App). Set the callback to
+   `http://localhost:4466/v1/oauth/callback`. Turn webhooks off and request no
+   permissions.
+2. Put its client ID and a new client secret in `.env` as
+   `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`.
+3. In two terminals, run:
+
+```bash
+bun run dev:backend
+bun run dev:local
+```
+
+Open `http://localhost:4466`, not `127.0.0.1`: the origin must match the callback.
+If you use another port, set `SLOP_DEV_ORIGIN` (for example
+`http://localhost:4467`) for the backend and use the same callback and port for
+the dev server.
+
+The backend keeps its data in `.slop-dev/` (ignored by Git; delete it to start
+over). Only sign-in and the API run locally, on an empty database. Project and
+published data still come from slop.cash, read-only. X connections and payment
+networks are not configured. Safari does not accept the session cookie over
+`http://localhost`, so use Chrome, Edge, or Firefox. The backend listens on
+`127.0.0.1` only and is never deployed.
+
+
+### Local review checks
+
+Install the lockfile before preparing the ledger input:
+
+```bash
+bun install --frozen-lockfile
+```
+
+Choose one ledger preparation path. With live GitHub credentials, collect the
+current ledger:
+
+```bash
+bun run leaderboard:generate
+```
+
+For local pull-request checks without live ingestion, use the same public
+snapshot adapter as pull-request CI:
+
+```bash
+(
+  set -euo pipefail
+  ledger_file="$(mktemp)"
+  trap 'rm -f "$ledger_file"' EXIT
+  curl --fail --silent --show-error \
+    --proto '=https' --tlsv1.2 \
+    --connect-timeout 10 --max-time 60 --max-filesize 26214400 \
+    --output "$ledger_file" https://slop.cash/data/leaderboard.json
+  test -s "$ledger_file"
+  bun scripts/prepare-pr-ledger.ts "$ledger_file" public/data/leaderboard.json
+)
+```
+
+The adapter validates the published snapshot and adapts it to the checked-out
+schema and registry. It does not collect current GitHub activity or prove live
+ingestion. If the chosen preparation fails, stop and resolve the failure before
+running checks; do not use a leftover ledger. Do not edit or commit the
+generated ledger. Trusted releases collect fresh GitHub data through the
+normal release workflow and never use this local adapter.
+
+After the chosen preparation succeeds, run:
 
 ```bash
 bun run verify
+bun run format:check
 bun run test:e2e
 ```
 
 `bun run verify` checks the committed source records (brand tokens, projects,
-skills, evaluations, disclosures, contribution quality, cycles, and protocol
-identity); audits dependencies; runs type, format, and lint checks; and
-produces the static build. It runs the database, API, CLI and Worker integration
-suites and preserves the smart-contract unit tests. Browser behavior is covered
-by `bun run test:e2e`.
+evaluations, disclosures, contribution quality, cycles, and protocol identity);
+audits dependencies; runs type and lint checks, smart-contract unit tests, and
+the database, API, CLI and Worker integration suites; and produces the static build.
+`bun run format:check` is a separate required check. Browser behavior is covered
+by `bun run test:e2e`; the separate escrow workflow checks the contract and
+payment lifecycles.
 
 ## Trust and deployment
 

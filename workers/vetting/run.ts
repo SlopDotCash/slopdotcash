@@ -8,6 +8,8 @@
  *
  * A service failure (an unavailable queue, source or provider) publishes
  * nothing and leaves the assessment pending, so the next pass retries it.
+ * A bound acquisition-policy refusal publishes an incomplete result instead;
+ * no source inspection or model review is claimed.
  * A clean result is never published without its retained evidence. An
  * incomplete result records quarantine even when evidence storage fails.
  * A published attempt is journaled and never sent again; an uncertain or
@@ -21,6 +23,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
+  composeAcquisitionRefusal,
   composeScanResult,
   inspectRepository,
   readAcquiredObject,
@@ -36,6 +39,7 @@ import {
 import {
   acquireQueuedAssessment,
   type QueueConnection,
+  QueuedAcquisitionRefusal,
   readPendingAssessments,
 } from "./queue";
 import {
@@ -151,8 +155,8 @@ async function signedRequest(
   });
 }
 /** A retry for a step that threw. It names the error, never the message,
- * which can carry source or provider text. An unsupported pin names
- * AcquisitionRefusal; an outage or changed input keeps its own error name.
+ * which can carry source or provider text. A bound policy refusal takes the
+ * incomplete-publication path; outages and changed inputs remain retryable.
  */
 function retry(
   assessmentId: string,
@@ -272,6 +276,59 @@ async function retainEvidence(
   return true;
 }
 
+/** A policy refusal completes the assignment as incomplete and notifies its owner. */
+async function publishAcquisitionRefusal(
+  config: ScanServiceConfig,
+  refusal: QueuedAcquisitionRefusal,
+  startedAt: string,
+): Promise<AssessmentOutcome> {
+  const { connection } = config;
+  const { assessmentId } = refusal.assessment;
+  const runId = `scan_${(config.randomId ?? randomUUID)().replaceAll("-", "")}`;
+  const composed = composeAcquisitionRefusal({
+    queued: { ...refusal.assessment, repository: refusal.repository },
+    reason: refusal.summary,
+    primaryModel: config.primary.model,
+    policyVersion: config.policyVersion,
+    runId,
+    startedAt,
+    completedAt: (connection.now?.() ?? new Date()).toISOString(),
+  });
+  const retained = await retainEvidence(connection, assessmentId, runId, [
+    {
+      bytes: composed.report,
+      kind: "trace",
+      label: "Acquisition refusal report",
+      contentType: "application/json",
+    },
+    {
+      bytes: composed.inventory,
+      kind: "manifest",
+      label: "Uninspected source coverage",
+      contentType: "application/json",
+    },
+  ]).catch(() => false);
+  const body = JSON.stringify(composed.result);
+  const receipt = await publishResult({
+    origin: connection.origin,
+    body,
+    approvedSha256: await sha256Hex(encoder.encode(body)),
+    signer: connection,
+    journalDirectory: config.journalDirectory,
+    journal: config.journal,
+    at: connection.now?.(),
+    fetch: connection.fetch,
+  });
+  return {
+    assessmentId,
+    state: "published",
+    disposition: "incomplete",
+    outcome: receipt.outcome,
+    specialist: false,
+    evidence: retained ? "retained" : "failed",
+  };
+}
+
 async function scanOne(
   config: ScanServiceConfig,
   assessment: Awaited<ReturnType<typeof readPendingAssessments>>[number],
@@ -280,6 +337,7 @@ async function scanOne(
   const { connection } = config;
   const now = () => connection.now?.() ?? new Date();
   let directory: string;
+  const acquisitionStartedAt = now().toISOString();
   try {
     directory = (
       await acquireQueuedAssessment(
@@ -290,6 +348,8 @@ async function scanOne(
       )
     ).directory;
   } catch (error) {
+    if (error instanceof QueuedAcquisitionRefusal)
+      return publishAcquisitionRefusal(config, error, acquisitionStartedAt);
     return retry(assessmentId, "acquire", error);
   }
   try {

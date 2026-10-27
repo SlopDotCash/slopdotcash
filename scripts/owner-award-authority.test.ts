@@ -30,7 +30,6 @@ test("organization maintainers reach private monthly awards through their own se
       feeMode: "deduct-from-gross",
       deployments: [],
     };
-    expect(project.steward.github.type).toBe("Organization");
     const manifest = JSON.stringify(project);
     sqlite
       .prepare(

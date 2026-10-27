@@ -1,13 +1,22 @@
-import { ExternalLink, Wallet as WalletIcon, X } from "lucide-react";
+import {
+  Check,
+  ExternalLink,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  TriangleAlert,
+  Wallet as WalletIcon,
+  X,
+} from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { browserDeployment } from "./lib/browser-deployment";
+import { ChainIcon } from "./ChainIcon";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import {
-  chainFamily,
   ESCROW_CHAINS,
   ESCROW_NETWORKS,
   type EscrowChain,
+  EVM_CHAINS,
 } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import {
@@ -26,7 +35,7 @@ import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { PayoutConsent } from "./PayoutConsent";
-import { formatCycleMonth, formatDate } from "./Presentation";
+import { formatCycleMonth } from "./Presentation";
 import { ReferralClaims } from "./ReferralClaims";
 
 function chainDefaultNetwork(chain: EscrowChain): string {
@@ -40,6 +49,22 @@ function chainDefaultNetwork(chain: EscrowChain): string {
 /** Direct transfers are imported only from reviewed USDC disclosures (6 decimals). */
 function usdcAmount(value: string): string {
   return `${formatBaseUnits(value, 6)} USDC`;
+}
+
+type WalletFamily = "evm" | "solana";
+/** One wallet covers every chain of its family; each chain is still confirmed on its own. */
+const WALLET_FAMILIES: readonly {
+  id: WalletFamily;
+  label: string;
+  article: string;
+  chains: readonly PaymentChain[];
+}[] = [
+  { id: "solana", label: "Solana", article: "a", chains: ["solana"] },
+  { id: "evm", label: "EVM", article: "an", chains: EVM_CHAINS },
+];
+
+function shortAddress(address: string): string {
+  return `${address.slice(0, address.startsWith("0x") ? 6 : 4)}…${address.slice(-4)}`;
 }
 
 class SignedOutError extends Error {}
@@ -150,22 +175,23 @@ export function EarningsPage({
   walletsOnly?: boolean;
 } = {}) {
   const wallets = usePayoutWallets();
-  const [picker, setPicker] = useState<PaymentChain | null>(null);
+  const [picker, setPicker] = useState<WalletFamily | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const [data, setData] = useState<PaymentsAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState<PaymentChain | null>(null);
+  const [busy, setBusy] = useState<WalletFamily | null>(null);
   const [pendingChange, setPendingChange] = useState<{
-    chain: PaymentChain;
+    family: WalletFamily;
     saved: string;
     address: string;
     sign(message: string): Promise<string>;
   } | null>(null);
   const changeHeading = useRef<HTMLHeadingElement>(null);
-  const returnFocus = useRef<PaymentChain | null>(null);
+  const returnFocus = useRef<WalletFamily | null>(null);
   const [revision, setRevision] = useState(0);
   const refresh = () => setRevision((n) => n + 1);
   const mounted = useRef(true);
@@ -180,7 +206,7 @@ export function EarningsPage({
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    setError("");
+    setLoadError("");
     request("me", undefined, controller.signal)
       .then((value) => {
         if (!controller.signal.aborted) {
@@ -193,7 +219,7 @@ export function EarningsPage({
         if (e instanceof SignedOutError) {
           setSignedOut(true);
           setData(null);
-        } else setError(errorMessage(e, "Could not load your payouts."));
+        } else setLoadError(errorMessage(e, "Could not load your payouts."));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -214,8 +240,8 @@ export function EarningsPage({
     else dialog.current?.close();
   }, [picker]);
 
-  async function walletStep(chain: PaymentChain, step: () => Promise<void>) {
-    setBusy(chain);
+  async function walletStep(family: WalletFamily, step: () => Promise<void>) {
+    setBusy(family);
     setError("");
     setMessage("");
     try {
@@ -265,61 +291,80 @@ export function EarningsPage({
       challengeId: challenge.challengeId,
       signature,
     });
-    if (mounted.current) {
-      setMessage(
-        `${NETWORK_NAMES[chain]} wallet confirmed. Eligible unpaid awards are sent automatically.`,
-      );
-      refresh();
-    }
   }
 
-  function connect(chosen: PayoutWallet, chain: PaymentChain) {
+  /** Confirms the address on each chain of the family that lacks it, one signature per chain. */
+  async function registerFamily(
+    family: WalletFamily,
+    address: string,
+    sign: (message: string) => Promise<string>,
+  ) {
+    const { label, chains } = familyOf(family);
+    try {
+      for (const chain of chains) {
+        const saved = data?.wallets.find((w) => w.chain === chain);
+        if (saved?.authorized && saved.address === address) continue;
+        await register(chain, address, sign);
+      }
+    } finally {
+      // A stopped confirmation can leave earlier chains confirmed.
+      if (mounted.current) refresh();
+    }
+    if (mounted.current)
+      setMessage(
+        `${label} wallet confirmed. Eligible unpaid awards are sent automatically.`,
+      );
+  }
+
+  const familyOf = (id: WalletFamily) =>
+    WALLET_FAMILIES.find(
+      (family) => family.id === id,
+    ) as (typeof WALLET_FAMILIES)[number];
+  const savedWallets = (id: WalletFamily) =>
+    data?.wallets.filter((w) => familyOf(id).chains.includes(w.chain)) ?? [];
+
+  function connect(chosen: PayoutWallet, family: WalletFamily) {
     setPicker(null);
     setPendingChange(null);
-    const saved = data?.wallets.find((w) => w.chain === chain);
-    void walletStep(chain, async () => {
+    const saved = savedWallets(family);
+    void walletStep(family, async () => {
       const { address, sign } = await chosen.connect({
-        chooseAccount: saved?.authorized === true,
+        chooseAccount: saved.some((w) => w.authorized),
       });
       // The wallet decides which account it returns. A different address
-      // from the saved one is a change, so it needs the same public-record
+      // from a saved one is a change, so it needs the same public-record
       // consent as Account Wallets before anything is registered (WAL-02).
-      if (saved && saved.address !== address) {
+      const different = saved.find((w) => w.address !== address);
+      if (different) {
         if (mounted.current)
-          setPendingChange({ chain, saved: saved.address, address, sign });
+          setPendingChange({
+            family,
+            saved: different.address,
+            address,
+            sign,
+          });
         return;
       }
-      await register(chain, address, sign);
+      await registerFamily(family, address, sign);
     });
   }
 
   function confirmChange() {
     if (!pendingChange) return;
-    const { chain, address, sign } = pendingChange;
+    const { family, address, sign } = pendingChange;
     setPendingChange(null);
-    void walletStep(chain, () => register(chain, address, sign));
+    void walletStep(family, () => registerFamily(family, address, sign));
   }
 
   function keepSaved() {
     if (!pendingChange) return;
-    returnFocus.current = pendingChange.chain;
+    returnFocus.current = pendingChange.family;
     setPendingChange(null);
     setMessage(
-      `Kept your saved ${NETWORK_NAMES[pendingChange.chain]} address. Nothing was registered.`,
+      `Kept your saved ${familyOf(pendingChange.family).label} address. Nothing was registered.`,
     );
   }
 
-  const walletDetailChains = ESCROW_CHAINS.filter(
-    (chain) =>
-      data &&
-      (data.wallets.some((wallet) => wallet.chain === chain) ||
-        data.balances.some(
-          (balance) => balance.chain === chain && balance.netBase !== "0",
-        ) ||
-        data.walletObservations.some(
-          (observation) => observation.chain === chain,
-        )),
-  );
   const Root = walletsOnly ? "section" : "main";
   return (
     <Root
@@ -334,9 +379,7 @@ export function EarningsPage({
       ) : (
         <h1 id={heading}>Your payouts</h1>
       )}
-      {walletsOnly ? (
-        <p>Confirm a wallet to receive payouts.</p>
-      ) : (
+      {walletsOnly ? null : (
         <p>
           <a href="/account#wallets">Manage payout wallets</a>
         </p>
@@ -350,7 +393,11 @@ export function EarningsPage({
       >
         <div className="wallet-picker-header">
           <h2 id={`${heading}-wallet-picker`}>
-            Connect a {picker ? NETWORK_NAMES[picker] : ""} wallet
+            Connect{" "}
+            {picker
+              ? `${familyOf(picker).article} ${familyOf(picker).label}`
+              : "a"}{" "}
+            wallet
           </h2>
           <button
             type="button"
@@ -363,7 +410,7 @@ export function EarningsPage({
         </div>
         <div className="wallet-picker-list">
           {wallets
-            .filter((wallet) => picker && wallet.family === chainFamily(picker))
+            .filter((wallet) => wallet.family === picker)
             .map((wallet) => (
               <button
                 type="button"
@@ -380,9 +427,7 @@ export function EarningsPage({
                 <small>Detected</small>
               </button>
             ))}
-          {!wallets.some(
-            (wallet) => picker && wallet.family === chainFamily(picker),
-          ) && (
+          {!wallets.some((wallet) => wallet.family === picker) && (
             <>
               <p>No wallet found. Install one, then reload.</p>
               <a
@@ -428,9 +473,10 @@ export function EarningsPage({
           </a>
         </div>
       )}
-      {error && (
+      {(error || loadError) && (
         <div role="alert">
-          <p>{error}</p>
+          {error && <p>{error}</p>}
+          {loadError && <p>{loadError}</p>}
           <button
             className="button secondary-button button-small"
             type="button"
@@ -443,122 +489,158 @@ export function EarningsPage({
       {message && <p role="status">{message}</p>}
       {data && (
         <>
-          {error && <p>Showing the last verified data.</p>}
+          {(error || loadError) && <p>Showing the last verified data.</p>}
           {!walletsOnly && <ReferralClaims />}
           {walletsOnly ? (
             <>
-              {walletDetailChains.length < ESCROW_CHAINS.length ? (
-                <fieldset className="admin-fieldset">
-                  <legend>Add a payout wallet</legend>
-                  <div className="handoff-actions">
-                    {ESCROW_CHAINS.filter(
-                      (chain) => !walletDetailChains.includes(chain),
-                    ).map((chain) => (
-                      <button
-                        key={chain}
-                        id={`${heading}-${chain}`}
-                        className="button secondary-button"
-                        type="button"
-                        disabled={busy !== null || pendingChange !== null}
-                        onClick={() => setPicker(chain)}
-                      >
-                        Connect {NETWORK_NAMES[chain]} wallet
-                      </button>
-                    ))}
-                  </div>
-                </fieldset>
-              ) : null}
-              <section aria-label="Payout wallets" className="earnings-wallets">
-                {walletDetailChains.map((chain) => {
-                  const wallet = data.wallets.find((w) => w.chain === chain);
-                  // Each network and asset keeps its own balance; never summed.
-                  const unpaid = data.balances.filter(
-                    (b) => b.chain === chain && b.netBase !== "0",
-                  );
-                  const defaultNetwork = chainDefaultNetwork(chain);
+              <section aria-label="Payout wallets" className="wallet-cards">
+                {WALLET_FAMILIES.map((family) => {
+                  const rows = family.chains.map((chain) => ({
+                    chain,
+                    wallet: data.wallets.find((w) => w.chain === chain),
+                    // Each network and asset keeps its own balance; never summed.
+                    unpaid: data.balances.filter(
+                      (b) => b.chain === chain && b.netBase !== "0",
+                    ),
+                  }));
+                  const addresses = [
+                    ...new Set(
+                      rows.flatMap((r) => (r.wallet ? [r.wallet.address] : [])),
+                    ),
+                  ];
+                  const confirmed =
+                    addresses.length === 1 &&
+                    rows.every((r) => r.wallet?.authorized);
+                  // Only a confirmed wallet can be changed; any other state connects.
+                  const changing = rows.some((r) => r.wallet?.authorized);
+                  const state =
+                    addresses.length === 0
+                      ? "empty"
+                      : confirmed
+                        ? "confirmed"
+                        : "attention";
+                  const status = (ok: boolean) =>
+                    ok ? (
+                      <Check
+                        className="wallet-ok"
+                        role="img"
+                        aria-label="Confirmed"
+                      />
+                    ) : (
+                      <TriangleAlert
+                        className="wallet-warn"
+                        role="img"
+                        aria-label="Not confirmed"
+                      />
+                    );
                   return (
-                    <article key={chain} className="funding-workbench">
-                      <h2>{NETWORK_NAMES[chain]}</h2>
-                      {unpaid.length === 0 ? (
-                        <p>No unpaid awards</p>
-                      ) : (
-                        unpaid.map((b) => (
-                          <p key={`${b.network}:${b.assetAddress}`}>
-                            <strong>{formatAssetAmount(b.netBase, b)}</strong>{" "}
-                            unpaid
-                            {b.network === defaultNetwork
-                              ? ""
-                              : ` on ${networkLabel(b.network)}`}
+                    <article
+                      key={family.id}
+                      className="wallet-card"
+                      data-state={state}
+                      aria-label={`${family.label} wallet`}
+                    >
+                      <div className="wallet-card-chains">
+                        {rows.map(({ chain, wallet }) => (
+                          <ChainIcon
+                            key={chain}
+                            chain={chain}
+                            status={
+                              wallet
+                                ? wallet.authorized
+                                  ? "confirmed"
+                                  : "not confirmed"
+                                : undefined
+                            }
+                          />
+                        ))}
+                      </div>
+                      <div className="wallet-card-main">
+                        <h3>{family.label}</h3>
+                        {addresses.length === 1 ? (
+                          <p className="wallet-card-address">
+                            <span aria-hidden="true" title={addresses[0]}>
+                              {shortAddress(addresses[0])}
+                            </span>
+                            <span className="visually-hidden">
+                              {addresses[0]}
+                            </span>
+                            {status(confirmed)}
                           </p>
-                        ))
-                      )}
-                      {wallet ? (
-                        <p>
-                          <span className="wallet-address">
-                            {wallet.address}
-                          </span>{" "}
-                          <a
-                            href={`${browserDeployment.api}/api/v1/wallet-claims/${encodeURIComponent(wallet.claimId)}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            View public record
-                          </a>
-                        </p>
-                      ) : null}
-                      {!wallet?.authorized &&
-                        data.walletObservations
-                          .filter(
-                            (o) =>
-                              o.chain === chain &&
-                              o.address !== wallet?.address,
+                        ) : (
+                          rows.some((r) => r.wallet) && (
+                            <ul className="wallet-card-rows">
+                              {rows.map(({ chain, wallet }) =>
+                                wallet ? (
+                                  <li key={chain}>
+                                    <ChainIcon chain={chain} decorative />
+                                    <span
+                                      aria-hidden="true"
+                                      title={wallet.address}
+                                    >
+                                      {shortAddress(wallet.address)}
+                                    </span>
+                                    <span className="visually-hidden">
+                                      {NETWORK_NAMES[chain]} {wallet.address}
+                                    </span>
+                                    {status(wallet.authorized)}
+                                  </li>
+                                ) : null,
+                              )}
+                            </ul>
                           )
-                          .slice(0, 1)
-                          .map((o) => (
-                            <p key={o.sourceUrl}>
-                              Your{" "}
-                              <a
-                                href={o.sourceUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                GitHub profile README
-                              </a>{" "}
-                              listed{" "}
-                              <span className="wallet-address">
-                                {o.address}
-                              </span>{" "}
-                              on {formatDate(o.observedAt)}.
-                            </p>
-                          ))}
-                      {wallet && (
-                        <p>
-                          {wallet.authorized ? "Confirmed" : "Not confirmed"}
-                        </p>
-                      )}
+                        )}
+                        {rows.flatMap(({ chain, unpaid }) =>
+                          unpaid.map((b) => (
+                            <span
+                              key={`${chain}:${b.network}:${b.assetAddress}`}
+                              className="wallet-chip"
+                              title={`Unpaid${b.network === chainDefaultNetwork(chain) ? "" : ` on ${networkLabel(b.network)}`}`}
+                            >
+                              <ChainIcon chain={chain} decorative />
+                              <strong>{formatAssetAmount(b.netBase, b)}</strong>
+                              <span className="visually-hidden">
+                                unpaid on {NETWORK_NAMES[chain]}
+                              </span>
+                            </span>
+                          )),
+                        )}
+                      </div>
                       <button
-                        id={`${heading}-${chain}`}
-                        className="button secondary-button"
+                        id={`${heading}-${family.id}`}
+                        className="button secondary-button icon-button wallet-card-action"
                         type="button"
                         disabled={busy !== null || pendingChange !== null}
-                        onClick={() => setPicker(chain)}
+                        aria-label={
+                          busy === family.id
+                            ? "Confirm in your wallet…"
+                            : `${changing ? "Change" : "Connect"} ${family.label} wallet`
+                        }
+                        onClick={() => setPicker(family.id)}
                       >
-                        {busy === chain
-                          ? "Confirm in your wallet…"
-                          : `${wallet?.authorized ? "Change" : "Connect"} ${NETWORK_NAMES[chain]} wallet`}
+                        {busy === family.id ? (
+                          <LoaderCircle
+                            className="wallet-spin"
+                            aria-hidden="true"
+                          />
+                        ) : changing ? (
+                          <Pencil aria-hidden="true" />
+                        ) : (
+                          <Plus aria-hidden="true" />
+                        )}
                       </button>
-                      {pendingChange?.chain === chain && (
+                      {pendingChange?.family === family.id && (
                         <section
                           className="wallet-confirmation"
-                          aria-labelledby={`${heading}-${chain}-change`}
+                          aria-labelledby={`${heading}-${family.id}-change`}
                         >
                           <h3
-                            id={`${heading}-${chain}-change`}
+                            id={`${heading}-${family.id}-change`}
                             className="wallet-heading"
                             ref={changeHeading}
                             tabIndex={-1}
                           >
-                            Register a different {NETWORK_NAMES[chain]} address?
+                            Register a different {family.label} address?
                           </h3>
                           <p>
                             Your wallet returned a different account. Nothing is
@@ -611,7 +693,7 @@ export function EarningsPage({
                   );
                 })}
               </section>
-              <p>
+              <p className="wallet-note">
                 Payments publish your address on chain. Confirming a wallet
                 moves no funds.
               </p>

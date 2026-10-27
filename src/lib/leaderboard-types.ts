@@ -368,6 +368,13 @@ export interface PenaltyFeedRecord {
   recordedAt: string;
 }
 
+/** Safe retained Slopbot state. Absence never proves a reversal. */
+export interface PenaltyHistoryRecord extends PenaltyFeedRecord {
+  projectId: string;
+  reversedAt: string | null;
+  reversal: "appeal_upheld" | "maintainer_reopen" | null;
+}
+
 /**
  * A debit bound to a closed, unmerged pull request in the snapshot census.
  * GitHub supplies the author; Slopbot's recorded close time supplies the
@@ -651,6 +658,7 @@ export interface LeaderboardSnapshot {
   reviewExclusions?: ReviewExclusion[];
   /** Unreversed debits; absent from snapshots published before penalties. */
   penalties?: PublishedPenalty[];
+  penaltyHistory?: PenaltyHistoryRecord[];
   /** Separate allocation weights; never consumed by Score or Points. */
   paymentReviewBasis?: {
     policy: "scr-05-payments-production-v1";
@@ -705,6 +713,7 @@ export interface LeaderboardInput {
   closedUnmergedPullRequests?: PullRequestRecord[];
   /** Unreversed debits from the hosted feed; bound to the closed census. */
   penalties?: PenaltyFeedRecord[];
+  penaltyHistory?: PenaltyHistoryRecord[];
   detailEligibleMergedPullRequestIds: string[];
   closedIssueCount: number;
   resolvedIssues: IssueRecord[];
