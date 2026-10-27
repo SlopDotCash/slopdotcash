@@ -28,7 +28,6 @@ import { errorMessage } from "./lib/errors";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
-import type { ScoreEvent } from "./lib/leaderboard";
 import type { ActorRef } from "./lib/leaderboard-types";
 import {
   assemblePoints,
@@ -488,7 +487,6 @@ export function useProfileMembership(login: string, enabled = true) {
 }
 
 export function ProfilePoints({
-  work,
   actorId,
   login,
   cycles,
@@ -500,7 +498,6 @@ export function ProfilePoints({
 }: {
   children?: ReactNode;
   login: string;
-  work?: readonly ScoreEvent[];
   cycles?: CycleIndex;
   showIdentity?: boolean;
   actorId?: string;
@@ -561,15 +558,7 @@ export function ProfilePoints({
   return (
     <section className="points-panel" aria-label="Slop Points">
       <ProfileActivity
-        work={work}
         awards={m?.awards}
-        pointsMissing={
-          state.status === "ready"
-            ? undefined
-            : state.status === "loading"
-              ? "Points loading…"
-              : "Points unavailable"
-        }
         login={login}
         actorId={resolvedActorId ?? m?.actor.id}
         census={census}

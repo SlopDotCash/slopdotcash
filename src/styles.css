@@ -365,30 +365,6 @@ textarea:focus-visible {
   line-height: 1.55;
 }
 
-.payment-branches {
-  margin-top: 32px;
-  padding: 20px;
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--brand-radius-small);
-}
-
-.payment-branches dl {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px 28px;
-  margin: 0;
-}
-
-.payment-branches dt {
-  font-weight: 700;
-}
-
-.payment-branches dd {
-  margin: 4px 0 0;
-  color: var(--muted);
-  line-height: 1.55;
-}
-
 .account-sections {
   display: flex;
   flex-wrap: wrap;
@@ -429,8 +405,7 @@ textarea:focus-visible {
 }
 
 @media (max-width: 900px) {
-  .payment-stages,
-  .payment-branches dl {
+  .payment-stages {
     grid-template-columns: 1fr;
   }
 
@@ -1134,7 +1109,6 @@ small {
   line-height: 1.25;
 }
 
-.event-list,
 .profile-projects {
   overflow: hidden;
   margin-bottom: 24px;
@@ -1143,7 +1117,6 @@ small {
   background: var(--surface);
 }
 
-.event-list > a,
 .profile-projects > a {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1154,25 +1127,12 @@ small {
   border-bottom: 1px solid var(--line);
 }
 
-.event-list > a:last-child,
 .profile-projects > a:last-child {
   border-bottom: 0;
 }
 
-.event-list > a:hover,
 .profile-projects > a:hover {
   background: rgba(255, 90, 25, 0.055);
-}
-
-.event-list > a > span:nth-child(2) {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.event-list strong {
-  font-size: 15px;
-  line-height: 1.4;
 }
 
 .profile-hero {
@@ -1207,6 +1167,12 @@ small {
 
 .profile-links a {
   overflow-wrap: anywhere;
+}
+
+.profile-github {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .profile-totals {
@@ -1266,16 +1232,10 @@ small {
   overflow-wrap: anywhere;
 }
 
-.profile-penalties > li > span,
-.profile-review-reasons {
+.profile-penalties > li > span {
   color: var(--muted);
 }
 
-.profile-review-reasons {
-  overflow-wrap: anywhere;
-}
-
-.profile-page .event-list,
 .profile-page .profile-projects {
   margin-bottom: 0;
   border-width: 1px 0;
@@ -1295,30 +1255,8 @@ small {
   font-size: 14px;
 }
 
-.profile-page .event-list > a,
 .profile-page .profile-projects > a {
   padding-inline: 0;
-}
-
-.event-points {
-  min-width: 42px;
-  color: var(--orange-hover);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.opportunity-list > a {
-  grid-template-columns: minmax(5.5rem, 7rem) minmax(0, 1fr) auto;
-}
-
-.opportunity-list .event-points {
-  width: auto;
-  min-width: 5.5rem;
-  height: auto;
-  padding: 8px 0;
-  line-height: 1.2;
-  text-align: center;
-  white-space: normal;
 }
 
 .cycle-hero {
@@ -1934,16 +1872,6 @@ small {
     grid-row: 1 / 4;
   }
 
-  .profile-page .event-list > a {
-    grid-template-columns: minmax(3.5rem, auto) minmax(0, 1fr) auto;
-    gap: 10px;
-    padding-block: 14px;
-  }
-
-  .profile-page .event-list strong {
-    font-size: 14px;
-  }
-
   .cycle-number {
     max-width: 400px;
   }
@@ -2459,17 +2387,8 @@ small {
 .profile-activity {
   overflow-wrap: anywhere;
 }
-.profile-activity details {
-  margin: 1rem 0;
-}
 .profile-activity li {
   margin-block: 0.5rem;
-}
-.profile-activity summary + p {
-  margin-top: 0.75rem;
-}
-.profile-activity details p a {
-  text-decoration: underline;
 }
 .points-panel > label > input[type="search"] {
   max-width: 100%;
@@ -2762,13 +2681,6 @@ small {
   .how-it-works .mechanism-flow {
     grid-template-columns: 1fr;
   }
-}
-
-.how-details {
-  margin-block: 32px;
-}
-.how-details > summary {
-  font-weight: 600;
 }
 
 .cycle-record {
@@ -3152,19 +3064,6 @@ small {
   font-weight: 700;
   text-decoration: underline;
   text-underline-offset: 4px;
-}
-
-.issue-outcome-counts {
-  max-width: 32rem;
-}
-.issue-outcome-counts > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.issue-outcome-counts dd {
-  margin: 0;
-  font-variant-numeric: tabular-nums;
 }
 
 .wallet-picker {

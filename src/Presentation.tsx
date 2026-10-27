@@ -3,6 +3,7 @@ import { type ReactNode, useState } from "react";
 import { Link } from "./Link";
 import { loginHref } from "./lib/browser-deployment";
 import type { CycleIndexEntry } from "./lib/cycle-index";
+import { GithubIcon } from "./lib/github-icon";
 import type { GitHubActor, LeaderboardSnapshot } from "./lib/leaderboard";
 import { POINTS_PER_THIRD } from "./lib/points";
 import type { ProjectSessionState } from "./lib/project-api";
@@ -171,13 +172,22 @@ export function ExternalLinkAnchor({
   children,
   className,
   href,
+  label,
 }: {
   children: ReactNode;
   className?: string;
   href: string;
+  /** Accessible name when the visible content is an icon plus a short handle. */
+  label?: string;
 }) {
   return (
-    <a className={className} href={href} rel="noreferrer" target="_blank">
+    <a
+      aria-label={label}
+      className={className}
+      href={href}
+      rel="noreferrer"
+      target="_blank"
+    >
       {children}
     </a>
   );
@@ -347,8 +357,12 @@ export function ContributorIdentity({
       <div className="profile-identity">
         <h1>{actor.login}</h1>
         <div className="profile-links">
-          <ExternalLinkAnchor href={actor.url}>
-            GitHub · @{actor.login}
+          <ExternalLinkAnchor
+            className="profile-github"
+            href={actor.url}
+            label={`GitHub · @${actor.login}`}
+          >
+            <GithubIcon aria-hidden="true" size={16} />@{actor.login}
           </ExternalLinkAnchor>
           {children}
         </div>
@@ -360,59 +374,24 @@ export function ContributorIdentity({
 /** Current vault lifecycle shared by contributor and sponsor guidance (PAY-01). */
 export function PaymentLifecycle() {
   return (
-    <>
-      <h3>Award review</h3>
-      <ol className="payment-stages" aria-label="Award review stages">
-        <li>
-          <strong>Projected</strong>
-          <span>An estimate, not an approved award.</span>
-        </li>
-        <li>
-          <strong>Under review</strong>
-          <span>The owner can adjust it until the monthly cutoff.</span>
-        </li>
-        <li>
-          <strong>Approved</strong>
-          <span>The owner approved the amount.</span>
-        </li>
-        <li>
-          <strong>Excluded</strong>
-          <span>A payout exclusion or ban keeps it out of payment.</span>
-        </li>
-      </ol>
-      <div className="payment-branches">
-        <h3>Payment of an approved award</h3>
-        <dl>
-          <div>
-            <dt>Underfunded</dt>
-            <dd>The vault has not reserved enough funds.</dd>
-          </div>
-          <div>
-            <dt>Funded, awaiting wallet</dt>
-            <dd>Funds are reserved. Add or confirm a payout wallet.</dd>
-          </div>
-          <div>
-            <dt>Funded, ready</dt>
-            <dd>Funds and wallet are ready to pay.</dd>
-          </div>
-          <div>
-            <dt>Submitted</dt>
-            <dd>A transaction was sent. Chain verification is pending.</dd>
-          </div>
-          <div>
-            <dt>Paid</dt>
-            <dd>Finalized evidence reconciles the recipient amount and fee.</dd>
-          </div>
-          <div>
-            <dt>Held</dt>
-            <dd>
-              A requirement or failed attempt needs attention. The award remains
-              unpaid.
-            </dd>
-          </div>
-        </dl>
-      </div>
-    </>
+    <ol className="payment-stages" aria-label="Award review stages">
+      <li>
+        <strong>Projected</strong>
+        <span>An estimate, not an approved award.</span>
+      </li>
+      <li>
+        <strong>Under review</strong>
+        <span>The owner can adjust it until the monthly cutoff.</span>
+      </li>
+      <li>
+        <strong>Approved</strong>
+        <span>The owner approved the amount.</span>
+      </li>
+      <li>
+        <strong>Excluded</strong>
+        <span>A payout exclusion or ban keeps it out of payment.</span>
+      </li>
+    </ol>
   );
 }
 
