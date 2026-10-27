@@ -24,7 +24,10 @@ if (
   throw new Error("SLOP_DEV_BACKEND must be a localhost address");
 const localBackendProxy: Record<string, ProxyOptions> = localBackend
   ? {
-      "^/(?:api/|v1/oauth/)": { target: localBackend, changeOrigin: false },
+      "^/(?:api/|v1/oauth/|__dev/)": {
+        target: localBackend,
+        changeOrigin: false,
+      },
     }
   : {};
 

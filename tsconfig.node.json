@@ -54,6 +54,7 @@
     "src/lib/use-payout-wallets.ts",
     "src/lib/notifications.ts",
     "src/lib/github-actor.ts",
+    "src/lib/github-work.ts",
     "src/lib/github-ids.ts",
     "src/lib/login-return.ts",
     "vite.config.ts",

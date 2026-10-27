@@ -656,6 +656,7 @@ export function composeScanResult(input: {
   specialist?: ScannerEvidence | null;
   execution?: VettingScanResult["execution"];
   executionEvidenceSha256s?: string[];
+  sourceInventorySha256?: string;
 }) {
   const { inspection } = input;
   for (const scanner of [input.primary, input.specialist ?? null])
@@ -666,8 +667,13 @@ export function composeScanResult(input: {
       throw new Error("A review read another inventory");
   const report = new TextEncoder().encode(
     JSON.stringify({
-      schemaVersion: "slop-scan-report-v1",
+      schemaVersion: input.sourceInventorySha256
+        ? "slop-scan-report-v2"
+        : "slop-scan-report-v1",
       assessmentId: input.queued.assessmentId,
+      ...(input.sourceInventorySha256
+        ? { sourceInventorySha256: input.sourceInventorySha256 }
+        : {}),
       inventorySha256: inspection.inventorySha256,
       findings: inspection.findings,
       downloads: inspection.downloads,
@@ -690,6 +696,9 @@ export function composeScanResult(input: {
       commitSha: input.queued.commitSha,
       templateSha256: input.queued.templateSha256,
       inputManifestSha256: inspection.inventorySha256,
+      ...(input.sourceInventorySha256
+        ? { sourceInventorySha256: input.sourceInventorySha256 }
+        : {}),
       dependencyLocks: inspection.dependencyLocks.slice(0, 200),
     },
     scan: {

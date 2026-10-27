@@ -21,7 +21,6 @@ import {
 import { networkLabel } from "./lib/network-names";
 import {
   formatAssetAmount,
-  formatBaseUnits,
   isAssetDecimals,
   isBaseUnits,
   PAYMENT_DELIVERY_STATES,
@@ -34,13 +33,17 @@ import { apiRequest } from "./lib/project-api";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { shortAddress } from "./lib/wallets";
 import { PayoutConsent } from "./PayoutConsent";
 import {
-  formatCycleMonth,
-  NetworkName,
-  RoutePageHeader,
-  StatusBadge,
-} from "./Presentation";
+  AWARD_STATUS,
+  NetAmount,
+  PAYMENT_STATUS,
+  PayoutAmount,
+  PayoutRow,
+  RECEIVED_STATUS,
+} from "./PayoutRows";
+import { AccountNav, formatCycleMonth, RoutePageHeader } from "./Presentation";
 import { ReferralClaims } from "./ReferralClaims";
 
 function chainDefaultNetwork(chain: EscrowChain): string {
@@ -49,11 +52,6 @@ function chainDefaultNetwork(chain: EscrowChain): string {
       ([, n]) => n.chain === chain && !n.testnet,
     )?.[0] ?? ""
   );
-}
-
-/** Direct transfers are imported only from reviewed USDC disclosures (6 decimals). */
-function usdcAmount(value: string): string {
-  return `${formatBaseUnits(value, 6)} USDC`;
 }
 
 type WalletFamily = "evm" | "solana";
@@ -67,10 +65,6 @@ const WALLET_FAMILIES: readonly {
   { id: "solana", label: "Solana", article: "a", chains: ["solana"] },
   { id: "evm", label: "EVM", article: "an", chains: EVM_CHAINS },
 ];
-
-function shortAddress(address: string): string {
-  return `${address.slice(0, address.startsWith("0x") ? 6 : 4)}…${address.slice(-4)}`;
-}
 
 class SignedOutError extends Error {}
 
@@ -176,8 +170,11 @@ function account(value: unknown): PaymentsAccount {
 
 export function EarningsPage({
   walletsOnly = false,
+  headingId,
 }: {
   walletsOnly?: boolean;
+  /** An enclosing settings disclosure supplies the wallet heading. */
+  headingId?: string;
 } = {}) {
   const wallets = usePayoutWallets();
   const [picker, setPicker] = useState<WalletFamily | null>(null);
@@ -273,29 +270,52 @@ export function EarningsPage({
     };
     if (typeof claim.claimId !== "string")
       throw new Error("Wallet registration could not be verified.");
-    const challenge = (await request("wallets/challenge", {
-      claimId: claim.claimId,
-    })) as {
-      challengeId: string;
-      message: string;
-      address: string;
-      chain: string;
-    };
-    if (
-      challenge.address !== address ||
-      challenge.chain !== chain ||
-      typeof challenge.challengeId !== "string" ||
-      typeof challenge.message !== "string"
-    )
+    // A new claim replaces the saved one at once, and payouts go only to a
+    // confirmed current claim. A later failure reloads the account and says
+    // what changed.
+    const saved = data?.wallets.find((w) => w.chain === chain);
+    let authorizationAttempted = false;
+    try {
+      const challenge = (await request("wallets/challenge", {
+        claimId: claim.claimId,
+      })) as {
+        challengeId: string;
+        message: string;
+        address: string;
+        chain: string;
+      };
+      if (
+        challenge.address !== address ||
+        challenge.chain !== chain ||
+        typeof challenge.challengeId !== "string" ||
+        typeof challenge.message !== "string"
+      )
+        throw new Error(
+          "Wallet confirmation does not match your selected address.",
+        );
+      const signature = await sign(challenge.message);
+      authorizationAttempted = true;
+      await request("wallets/authorize", {
+        claimId: claim.claimId,
+        challengeId: challenge.challengeId,
+        signature,
+      });
+    } catch (e) {
+      if (e instanceof SignedOutError || claim.claimId === saved?.claimId)
+        throw e;
+      const network = NETWORK_NAMES[chain];
+      if (authorizationAttempted)
+        throw new Error(
+          `${errorMessage(e, "Wallet confirmation failed.")} Your new ${network} address ${address} was saved, but confirmation could not be verified. Check the current wallet status below before trying again.`,
+        );
       throw new Error(
-        "Wallet confirmation does not match your selected address.",
+        `${errorMessage(e, "Wallet confirmation failed.")} ${
+          saved?.authorized
+            ? `Your new ${network} address ${address} is saved but not confirmed. Payouts to your earlier address ${saved.address} are paused. Connect your wallet again to confirm the new address, or to confirm the earlier address again.`
+            : `Your ${network} address ${address} is saved but not confirmed. Connect your wallet again to confirm it for automatic payments.`
+        }`,
       );
-    const signature = await sign(challenge.message);
-    await request("wallets/authorize", {
-      claimId: claim.claimId,
-      challengeId: challenge.challengeId,
-      signature,
-    });
+    }
   }
 
   /** Confirms the address on each chain of the family that lacks it, one signature per chain. */
@@ -376,15 +396,15 @@ export function EarningsPage({
       className={
         walletsOnly ? "earnings-page" : "shell route-main earnings-page"
       }
-      aria-labelledby={heading}
-      id={walletsOnly ? "wallets" : undefined}
+      aria-labelledby={headingId ?? heading}
+      id={walletsOnly && !headingId ? "wallets" : undefined}
     >
-      {walletsOnly ? (
+      {walletsOnly && headingId ? null : walletsOnly ? (
         <h2 id={heading}>Wallets</h2>
       ) : (
         <RoutePageHeader
           icon={<WalletIcon />}
-          title={<span id={heading}>Your payouts</span>}
+          title={<span id={heading}>Payouts</span>}
           actions={
             <a
               className="button secondary-button button-small"
@@ -395,6 +415,7 @@ export function EarningsPage({
           }
         />
       )}
+      {!walletsOnly ? <AccountNav current="payouts" /> : null}
       <dialog
         ref={dialog}
         className="wallet-picker"
@@ -435,7 +456,6 @@ export function EarningsPage({
                   <WalletIcon size={24} aria-hidden="true" />
                 )}
                 <span>{wallet.name}</span>
-                <small>Detected</small>
               </button>
             ))}
           {!wallets.some((wallet) => wallet.family === picker) && (
@@ -501,7 +521,6 @@ export function EarningsPage({
       {data && (
         <>
           {(error || loadError) && <p>Showing the last verified data.</p>}
-          {!walletsOnly && <ReferralClaims />}
           {walletsOnly ? (
             <>
               <section aria-label="Payout wallets" className="wallet-cards">
@@ -713,209 +732,105 @@ export function EarningsPage({
             <>
               <section aria-labelledby={`${heading}-payments`}>
                 <h2 id={`${heading}-payments`}>Payment history</h2>
-                <button
-                  className="button secondary-button"
-                  type="button"
-                  onClick={refresh}
-                  disabled={loading}
-                >
-                  Refresh payments
-                </button>
                 {data.payments.length === 0 &&
                 data.monthlyAwards.length === 0 ? (
                   <p>No approved awards yet.</p>
                 ) : (
-                  <section
-                    className="points-table"
-                    aria-label="Payment history details; scroll horizontally for all columns"
-                    // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the payment history on narrow screens.
-                    tabIndex={0}
+                  <ul
+                    className="payout-rows"
+                    aria-labelledby={`${heading}-payments`}
                   >
-                    <table aria-labelledby={`${heading}-payments`}>
-                      <thead>
-                        <tr>
-                          <th>Project</th>
-                          <th>Network</th>
-                          <th>Gross award</th>
-                          <th>Fee</th>
-                          <th>You receive</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.monthlyAwards.map((award) => (
-                          <tr key={`${award.projectId}/${award.period}`}>
-                            <td data-label="Project">
-                              <a
-                                href={`/projects/${encodeURIComponent(award.projectId)}`}
-                              >
-                                {award.projectId}
-                              </a>{" "}
-                              ({formatCycleMonth(award.period)})
-                            </td>
-                            <td data-label="Network">
-                              <NetworkName chain={award.chain}>
-                                {networkLabel(award.network)}
-                              </NetworkName>
-                            </td>
-                            <td data-label="Gross award">
-                              {formatAssetAmount(award.grossBase, award)}
-                            </td>
-                            <td data-label="Fee">
-                              {formatAssetAmount(award.feeBase, award)}
-                            </td>
-                            <td data-label="You receive">
-                              {formatAssetAmount(award.netBase, award)}
-                            </td>
-                            <td data-label="Status">
-                              <StatusBadge tone="warning">
-                                {award.state === "underfunded"
-                                  ? "Approved, underfunded"
-                                  : award.state === "conflict"
-                                    ? "Approved, conflict: cannot be reserved"
-                                    : "Approved, awaiting reservation"}
-                              </StatusBadge>
-                            </td>
-                          </tr>
-                        ))}
-                        {data.payments.map((payment) => (
-                          <tr key={payment.id}>
-                            <td data-label="Project">
-                              <a
-                                href={`/projects/${encodeURIComponent(payment.projectId)}`}
-                              >
-                                {payment.projectId}
-                              </a>
-                            </td>
-                            <td data-label="Network">
-                              <NetworkName chain={payment.chain}>
-                                {networkLabel(payment.network)}
-                              </NetworkName>
-                            </td>
-                            <td data-label="Gross award">
-                              {formatAssetAmount(payment.grossBase, payment)}
-                            </td>
-                            <td data-label="Fee">
-                              {formatAssetAmount(payment.feeBase, payment)}
-                            </td>
-                            <td data-label="You receive">
-                              {formatAssetAmount(payment.netBase, payment)}
-                            </td>
-                            <td data-label="Status">
-                              <StatusBadge
-                                tone={
-                                  payment.deliveryState === "paid"
-                                    ? "success"
-                                    : "warning"
-                                }
-                              >
-                                {
-                                  {
-                                    paid: "Paid",
-                                    needs_wallet: `Awaiting wallet: add or confirm your ${NETWORK_NAMES[payment.chain]} wallet`,
-                                    ready: "Payment queued",
-                                    submitted: "Submitted",
-                                    held: "Held",
-                                  }[payment.deliveryState]
-                                }
-                              </StatusBadge>
-                              <PayoutConsent
-                                key={
-                                  data.wallets.find(
-                                    (wallet) => wallet.chain === payment.chain,
-                                  )?.claimId ?? "no-wallet"
-                                }
-                                payment={payment}
-                                account={data}
-                              />
-                              {transactionUrl(
-                                payment.network,
-                                payment.transactionId,
-                              ) && (
-                                <p>
-                                  <a
-                                    href={
-                                      transactionUrl(
-                                        payment.network,
-                                        payment.transactionId,
-                                      ) ?? undefined
-                                    }
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    View transaction
-                                  </a>
-                                </p>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </section>
+                    {data.monthlyAwards.map((award) => (
+                      <PayoutRow
+                        key={`${award.projectId}/${award.period}`}
+                        chain={award.chain}
+                        network={award.network}
+                        projectId={award.projectId}
+                        amount={<NetAmount payout={award} />}
+                        note={formatCycleMonth(award.period)}
+                        status={AWARD_STATUS[award.state]}
+                        transactionUrl={null}
+                        transactionLabel=""
+                      />
+                    ))}
+                    {data.payments.map((payment) => (
+                      <PayoutRow
+                        key={payment.id}
+                        chain={payment.chain}
+                        network={payment.network}
+                        projectId={payment.projectId}
+                        amount={<NetAmount payout={payment} />}
+                        status={PAYMENT_STATUS[payment.deliveryState]}
+                        statusTitle={
+                          payment.deliveryState === "needs_wallet"
+                            ? `Awaiting wallet: add or confirm your ${NETWORK_NAMES[payment.chain]} wallet`
+                            : undefined
+                        }
+                        transactionUrl={transactionUrl(
+                          payment.network,
+                          payment.transactionId,
+                        )}
+                        transactionLabel="View transaction"
+                      >
+                        {payment.deliveryState === "needs_wallet" ? (
+                          <p className="payout-consent">
+                            <a href="/account#wallets">
+                              Add or confirm your {NETWORK_NAMES[payment.chain]}{" "}
+                              wallet
+                            </a>
+                          </p>
+                        ) : null}
+                        <PayoutConsent
+                          key={
+                            data.wallets.find(
+                              (wallet) => wallet.chain === payment.chain,
+                            )?.claimId ?? "no-wallet"
+                          }
+                          payment={payment}
+                          account={data}
+                        />
+                      </PayoutRow>
+                    ))}
+                  </ul>
                 )}
               </section>
               {data.directTransfers.length > 0 && (
                 <section aria-labelledby={`${heading}-direct`}>
                   <h2 id={`${heading}-direct`}>Direct transfers</h2>
-                  <section
-                    className="points-table"
-                    aria-label="Direct payment details; scroll horizontally for all columns"
-                    // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the payment history on narrow screens.
-                    tabIndex={0}
+                  <ul
+                    className="payout-rows"
+                    aria-labelledby={`${heading}-direct`}
                   >
-                    <table aria-labelledby={`${heading}-direct`}>
-                      <thead>
-                        <tr>
-                          <th>Project</th>
-                          <th>Month</th>
-                          <th>Network</th>
-                          <th>Received</th>
-                          <th>Transaction</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.directTransfers.map((t) => (
-                          <tr key={`${t.network}:${t.transactionId}`}>
-                            <td data-label="Project">
-                              <a
-                                href={`/projects/${encodeURIComponent(t.projectId)}`}
-                              >
-                                {t.projectId}
-                              </a>
-                            </td>
-                            <td data-label="Month">{t.contributionMonth}</td>
-                            <td data-label="Network">
-                              {networkLabel(t.network)}
-                            </td>
-                            <td data-label="Received">
-                              {usdcAmount(t.amountMicro)}
-                            </td>
-                            <td data-label="Transaction">
-                              {transactionUrl(t.network, t.transactionId) ? (
-                                <a
-                                  href={
-                                    transactionUrl(
-                                      t.network,
-                                      t.transactionId,
-                                    ) ?? undefined
-                                  }
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  View transfer
-                                </a>
-                              ) : (
-                                t.transactionId
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </section>
+                    {data.directTransfers.map((t) => {
+                      const url = transactionUrl(t.network, t.transactionId);
+                      return (
+                        <PayoutRow
+                          key={`${t.network}:${t.transactionId}`}
+                          chain={t.chain}
+                          network={t.network}
+                          projectId={t.projectId}
+                          amount={
+                            <PayoutAmount
+                              base={t.amountMicro}
+                              decimals={6}
+                              symbol="USDC"
+                            />
+                          }
+                          note={
+                            url
+                              ? formatCycleMonth(t.contributionMonth)
+                              : `${formatCycleMonth(t.contributionMonth)} · ${t.transactionId}`
+                          }
+                          status={RECEIVED_STATUS}
+                          transactionUrl={url}
+                          transactionLabel="View transfer"
+                        />
+                      );
+                    })}
+                  </ul>
                 </section>
               )}
+              <ReferralClaims />
             </>
           )}
         </>

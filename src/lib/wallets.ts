@@ -39,6 +39,11 @@ export function isBaseAddress(value: unknown): value is string {
   return isFundingAddress("base", value);
 }
 
+/** An address shortened for display; the full value belongs in a tooltip. */
+export function shortAddress(address: string): string {
+  return `${address.slice(0, address.startsWith("0x") ? 6 : 4)}…${address.slice(-4)}`;
+}
+
 /** EVM accounts compare without case; Solana public keys are case-sensitive. */
 export function sameWalletAddress(
   family: "evm" | "solana",

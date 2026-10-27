@@ -156,11 +156,12 @@ export function isAssetDecimals(value: unknown): value is number {
  * other token shows its shortened address, because a token's own symbol()
  * text is not reviewed.
  */
-function assetLabel(
+/** The reviewed symbol of a registry asset, or null for an unlisted token. */
+export function knownAssetSymbol(
   network: string,
   assetAddress: string,
   assetDecimals: number,
-): string {
+): string | null {
   const policy = Object.hasOwn(ESCROW_NETWORKS, network)
     ? ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]
     : undefined;
@@ -171,8 +172,15 @@ function assetLabel(
         ? asset.address.toLowerCase() === assetAddress.toLowerCase()
         : asset.address === assetAddress),
   );
+  return reference?.symbol ?? null;
+}
+function assetLabel(
+  network: string,
+  assetAddress: string,
+  assetDecimals: number,
+): string {
   return (
-    reference?.symbol ??
+    knownAssetSymbol(network, assetAddress, assetDecimals) ??
     `token ${assetAddress.slice(0, 6)}…${assetAddress.slice(-4)}`
   );
 }

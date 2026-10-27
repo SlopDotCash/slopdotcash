@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import AxeBuilder from "@axe-core/playwright";
+import { expect } from "@playwright/test";
 import { chromium } from "playwright";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -95,7 +96,7 @@ try {
     };
   }, signer.address);
   await page.goto("http://127.0.0.1:18549/earnings");
-  await page.getByRole("heading", { name: "Your payouts" }).waitFor();
+  await page.getByRole("heading", { name: "Payouts", exact: true }).waitFor();
   await page.getByRole("link", { name: "Manage payout wallets" }).click();
   await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
   await page.getByRole("button", { name: "Connect EVM wallet" }).waitFor();
@@ -108,25 +109,30 @@ try {
   await page.keyboard.press("Enter");
   await page
     .getByRole("dialog")
-    .getByRole("button", { name: "Browser wallet Detected" })
+    .getByRole("button", { name: "Browser wallet", exact: true })
     .focus();
   await page.keyboard.press("Enter");
   await page
     .getByText("EVM wallet confirmed.", { exact: false })
     .waitFor({ timeout: 60000 });
   await page
-    .getByRole("navigation", { name: "Account sections" })
+    .getByRole("navigation", { name: "Account navigation" })
     .getByRole("link", { name: "Payouts", exact: true })
     .click();
-  for (let attempt = 0; attempt < 15; attempt++) {
-    await page.getByRole("button", { name: "Refresh payments" }).click();
-    await page
-      .getByRole("button", { name: "Refresh payments" })
-      .waitFor({ state: "visible" });
-    await page.waitForLoadState("networkidle");
-    if (await page.getByText("Paid", { exact: true }).count()) break;
-    await page.waitForTimeout(1000);
-  }
+  // Settlement runs after wallet authorization. Wait for its finalized API
+  // receipt before reloading the page, without timing repeated page refreshes.
+  await expect
+    .poll(
+      async () =>
+        (
+          await (
+            await fetch("http://127.0.0.1:18548/api/v1/payments/me")
+          ).json()
+        ).payments[0].state,
+      { timeout: 15000 },
+    )
+    .toBe("paid");
+  await page.reload({ waitUntil: "networkidle" });
   await page.getByText("Paid", { exact: true }).waitFor({ timeout: 10000 });
   const paid = await (
     await fetch("http://127.0.0.1:18548/api/v1/payments/me")
@@ -158,7 +164,7 @@ try {
   )
     throw new Error("Robinhood Chain wallet registration changed Base state");
   await page
-    .getByRole("navigation", { name: "Account sections" })
+    .getByRole("navigation", { name: "Account navigation" })
     .getByRole("link", { name: "Payouts", exact: true })
     .click();
   await page.getByText("Paid", { exact: true }).waitFor();
@@ -170,37 +176,58 @@ try {
     .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
     .analyze();
   await page.setViewportSize({ width: 390, height: 844 });
-  const history = page.getByRole("region", {
-    name: "Payment history details; scroll horizontally for all columns",
+  const history = page.getByRole("list", {
+    name: "Payment history",
+    exact: true,
   });
-  // Narrow screens show labelled payment cards. Every value must fit on
-  // screen without the horizontal scrolling required by the old table.
-  const paidRow = history.getByRole("row").filter({
+  const paidRow = history.getByRole("listitem").filter({
     has: page.getByText("Paid", { exact: true }),
   });
-  for (const label of [
-    "Project",
-    "Network",
-    "Gross award",
-    "Fee",
-    "You receive",
-    "Status",
+  const projectLink = paidRow.getByRole("link", {
+    name: "integration-fixture",
+    exact: true,
+  });
+  const amount = paidRow.locator(".payout-amount");
+  const amountText = await amount.innerText();
+  if (
+    !(await paidRow.innerText()).includes("Local EVM test") ||
+    (await amount.locator("strong").innerText()).trim() !== "98" ||
+    !amountText.includes("Gross 100 token ") ||
+    !amountText.includes("fee 2 token ") ||
+    !amountText.includes(paid.payments[0].assetAddress)
+  )
+    throw new Error(
+      "Payment row hides or changes the asset, network or amounts",
+    );
+  for (const [label, element] of [
+    ["amount and fee", amount],
+    ["project", projectLink],
+    ["status", paidRow.getByText("Paid", { exact: true })],
   ]) {
-    const cell = paidRow.locator(`td[data-label="${label}"]`);
-    await cell.waitFor({ state: "visible" });
-    const bounds = await cell.boundingBox();
+    await element.waitFor({ state: "visible" });
+    const bounds = await element.boundingBox();
     if (!bounds || bounds.x < 0 || bounds.x + bounds.width > 390)
       throw new Error(`Mobile payment value is off screen: ${label}`);
   }
-  await history.focus();
-  await page.keyboard.press("Tab");
-  const projectLink = paidRow.locator('td[data-label="Project"] a');
-  if (
-    !(await projectLink.evaluate(
+  const amountLines = await amount.locator("strong").evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    return new Set(
+      [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+    ).size;
+  });
+  if (amountLines !== 1)
+    throw new Error("Mobile payment amount splits its digits across lines");
+  await page.getByRole("link", { name: "Manage payout wallets" }).focus();
+  let reachedProject = false;
+  for (let tab = 0; tab < 12 && !reachedProject; tab++) {
+    await page.keyboard.press("Tab");
+    reachedProject = await projectLink.evaluate(
       (element) => element === document.activeElement,
-    ))
-  )
-    throw new Error("Payment card cannot be reached with the keyboard");
+    );
+  }
+  if (!reachedProject)
+    throw new Error("Payment row cannot be reached with the keyboard");
   await page.screenshot({
     path: "evidence/payout-mobile-paid.png",
     fullPage: true,

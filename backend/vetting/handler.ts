@@ -42,10 +42,12 @@ import {
   vettedContentSha256,
 } from "./persistence";
 import { MAX_VETTING_RESULT_BYTES } from "./result";
+import { reusableCleanScan } from "./reuse";
 import {
   isScanResult,
   parseRecordedVettingResult,
   recordedResultProblems,
+  scanSourceInventory,
 } from "./scan-result";
 
 const VETTING_SIGNATURE_CONTEXT = "slop-vetting:v1";
@@ -627,25 +629,7 @@ async function serviceResult(
       deps.projects.listEnforcements(),
     ]);
     const restriction = projectRestriction(project.id, enforcements);
-    const prior = cached?.result;
-    if (
-      pausedByFlagsOnly(restriction) ||
-      result.disposition !== "clean" ||
-      cached === null ||
-      cached.state !== "clean" ||
-      (restriction.since !== null && cached.requestedAt < restriction.since) ||
-      prior == null ||
-      !isScanResult(prior) ||
-      prior.reusedAssessmentId !== null ||
-      prior.assessed.repository.toLowerCase() !==
-        result.assessed.repository.toLowerCase() ||
-      prior.assessed.inputManifestSha256 !==
-        result.assessed.inputManifestSha256 ||
-      prior.assessed.templateSha256 !== result.assessed.templateSha256 ||
-      prior.policyVersion !== result.policyVersion ||
-      prior.scan.runId !== result.scan.runId ||
-      prior.scan.reportSha256 !== result.scan.reportSha256
-    )
+    if (!reusableCleanScan(cached, result, restriction))
       fail(
         422,
         "reuse_mismatch",
@@ -727,6 +711,69 @@ async function serviceResult(
   });
 }
 
+/** Private cache lookup after the scanner has finished its exact inventory. */
+async function serviceReuse(
+  request: Request,
+  deps: VettingApiDependencies,
+): Promise<Response> {
+  const { body } = await signedVettingRequest(request, deps, 1024);
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+  } catch {
+    fail(400, "invalid_request", "The lookup must be UTF-8 JSON");
+  }
+  if (
+    !isRecord(value) ||
+    Object.keys(value).sort().join() !==
+      "assessmentId,inputManifestSha256,policyVersion" ||
+    typeof value.assessmentId !== "string" ||
+    !/^vet_[a-f0-9]{32}$/u.test(value.assessmentId) ||
+    typeof value.inputManifestSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(value.inputManifestSha256) ||
+    typeof value.policyVersion !== "string" ||
+    !value.policyVersion.trim() ||
+    value.policyVersion.length > 200
+  )
+    fail(400, "invalid_request", "Invalid scan reuse lookup");
+  const assessment = await deps.vetting.getAssessment(value.assessmentId);
+  if (!assessment) fail(404, "not_found", "Assessment not found");
+  if (assessment.state !== "pending")
+    fail(409, "already_recorded", "This assessment already has a result");
+  const project = await deps.projects.getProject(assessment.projectId);
+  if (!project) fail(404, "not_found", "Project not found");
+  const restriction = projectRestriction(
+    project.id,
+    await deps.projects.listEnforcements(),
+  );
+  const candidates = await deps.vetting.projectAssessments(project.id);
+  for (const cached of candidates.reverse()) {
+    const prior = cached.result;
+    if (!prior || !isScanResult(prior)) continue;
+    const result = {
+      ...prior,
+      assessmentId: assessment.id,
+      projectId: assessment.projectId,
+      revision: assessment.revision,
+      manifestSha256: assessment.manifestSha256,
+      policyVersion: value.policyVersion,
+      assessed: {
+        ...prior.assessed,
+        repository: project.manifest.repositories[0]?.id ?? "",
+        commitSha: assessment.commitSha,
+        templateSha256: assessment.templateSha256,
+      },
+      reusedAssessmentId: cached.id,
+    };
+    if (scanSourceInventory(result) !== value.inputManifestSha256) continue;
+    if (!reusableCleanScan(cached, result, restriction)) continue;
+    if (recordedResultProblems(result).length > 0) continue;
+    if (!(await deps.evidence?.retained(result))) continue;
+    return json(200, { schemaVersion: "slop-vetting-reuse-v1", result });
+  }
+  return json(200, { schemaVersion: "slop-vetting-reuse-v1", result: null });
+}
+
 /** Returns null when the path belongs to another API module. */
 export async function handleVettingApi(
   request: Request,
@@ -785,6 +832,8 @@ export async function handleVettingApi(
         return await serviceQueue(request, deps);
       case "POST vetting/results":
         return await serviceResult(request, deps);
+      case "POST vetting/reuse":
+        return await serviceReuse(request, deps);
       case "POST vetting/refresh":
         return await refreshQueue(request, deps);
     }

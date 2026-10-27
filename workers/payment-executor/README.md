@@ -101,12 +101,14 @@ Any other `SIGNER_STACK` value stops the signer.
 ## Private bounty bindings
 
 The protected main release derives its attester configurations and Pages bindings
-from `MAINNET_EXECUTION` through `release-mainnets.mjs`. Disabled networks are
-not created, updated or bound. For each enabled network, the checked registry
+from `MAINNET_EXECUTION` through `release-mainnets.mjs`. A disabled network with
+retained vault pins updates its existing attester with execution disabled and
+no cron, preserving its journal and pins. It never creates a disabled service
+or grants it Pages bindings. For each enabled network, the checked registry
 supplies both ordinary and private-bounty pins. An absent empty attester can be
 bootstrapped privately without a cron or secrets; an existing empty-pin service
 is left untouched and its unverified entrypoints are not bound into Pages.
-Pinned services require exactly their network's signing-secret name and
+Enabled pinned services require exactly their network's signing-secret name and
 `PAYMENT_RPC_URLS` before publication. Release checks the active version tag
 against the tested source before adding named Pages capabilities. The same
 reviewed list generates `PAYMENT_NETWORKS`; unassembled source defaults to no

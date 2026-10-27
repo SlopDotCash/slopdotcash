@@ -23,6 +23,7 @@ import {
   externalWorkKey,
 } from "./external-sources";
 import { githubUserIdFromNodeId } from "./github-actor";
+import { githubWorkKey } from "./github-work";
 import {
   canonicalActorAvatarUrl,
   type GitHubActor,
@@ -392,6 +393,7 @@ export function loadEvaluatorAwardEvents(
   }
   const ids = new Set<string>();
   const sources = new Set<string>();
+  const githubWork = new Set<string>();
   const reviewPairs = new Set<string>();
   const externalWork = new Set<string>();
   const externalContent = new Set<string>();
@@ -421,7 +423,14 @@ export function loadEvaluatorAwardEvents(
       throw new TypeError(`${relative(root, path)} does not match projectId`);
     }
     const sourceKey = `${manifest.repository}\0${manifest.source.id}`;
-    if (ids.has(manifest.id) || sources.has(sourceKey)) {
+    // One GitHub item has a legacy and a current node ID, and its URL may use
+    // another case or a transfer alias. Key it by number and fragment too.
+    const workKey = githubWorkKey(manifest.repository, manifest.source);
+    if (
+      ids.has(manifest.id) ||
+      sources.has(sourceKey) ||
+      (workKey !== null && githubWork.has(workKey))
+    ) {
       throw new TypeError("evaluator award ids and sources must be unique");
     }
     if (manifest.source.kind === "review") {
@@ -455,6 +464,7 @@ export function loadEvaluatorAwardEvents(
     }
     ids.add(manifest.id);
     sources.add(sourceKey);
+    if (workKey !== null) githubWork.add(workKey);
     return {
       id: manifest.id,
       actor: manifest.actor,
