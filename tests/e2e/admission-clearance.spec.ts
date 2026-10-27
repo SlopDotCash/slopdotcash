@@ -141,6 +141,11 @@ test("admin distinguishes retained admission from the current revision and can r
     fullPage: true,
   });
   await card
+    .getByText("Queue scan of revision 4", { exact: true })
+    .locator("xpath=self::summary")
+    .focus();
+  await page.keyboard.press("Enter");
+  await card
     .getByLabel("Reason for the scan")
     .fill("Investigate a reported dependency");
   await card.getByRole("button", { name: "Queue scan of revision 4" }).focus();
