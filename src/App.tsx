@@ -105,9 +105,6 @@ const SponsorsPage = lazy(() =>
 const ReceiptsPage = lazy(() =>
   import("./PublicPages").then((module) => ({ default: module.ReceiptsPage })),
 );
-const ModelsPage = lazy(() =>
-  import("./PublicPages").then((module) => ({ default: module.ModelsPage })),
-);
 const OwnerAwards = lazy(() => import("./OwnerAwards"));
 const ProjectProposalPage = lazy(() => import("./ProjectProposalPage"));
 const AdminPage = lazy(() => import("./Admin"));
@@ -155,7 +152,6 @@ type PageRouteKind =
   | "home"
   | "how-it-works"
   | "receipts"
-  | "models"
   | "sponsors"
   | "cycle-archive"
   | "unknown"
@@ -191,7 +187,6 @@ const ROUTES: Record<
   home: { snapshot: false, registry: "cached" },
   "how-it-works": { snapshot: false, registry: "independent" },
   receipts: { snapshot: true, registry: "cached" },
-  models: { snapshot: true, registry: "cached" },
   sponsors: { snapshot: true, registry: "cached" },
   "cycle-archive": { snapshot: false, registry: "cached" },
   unknown: { snapshot: false, registry: "cached" },
@@ -239,7 +234,6 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
   ["account", "account"],
   ["how-it-works", "how-it-works"],
   ["receipts", "receipts"],
-  ["models", "models"],
   ["sponsors", "sponsors"],
   ["cycles", "cycle-archive"],
 ]);
@@ -1543,8 +1537,6 @@ function AppContent({ route }: { route: Route }) {
     content = <SponsorsPage retry={retry} state={state} />;
   else if (route.kind === "receipts")
     content = <ReceiptsPage retry={retry} state={state} />;
-  else if (route.kind === "models")
-    content = <ModelsPage retry={retry} state={state} />;
   else if (route.kind === "cycle-archive")
     content = <CycleArchivePage retry={retryArchive} state={archive} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;
