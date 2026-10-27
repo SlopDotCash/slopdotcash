@@ -209,6 +209,13 @@ export function SecurityProgramEditor({
           <form
             id="owner-security-form"
             className="proposal-form"
+            onInvalidCapture={(event) => {
+              let group = (event.target as HTMLElement).closest("details");
+              while (group) {
+                group.open = true;
+                group = group.parentElement?.closest("details") ?? null;
+              }
+            }}
             onSubmit={(event) => {
               event.preventDefault();
               publish();
@@ -295,77 +302,105 @@ export function SecurityProgramEditor({
                 onChange={(event) => setCommit(event.target.value)}
               />
             </fieldset>
-            <fieldset disabled={busy}>
-              <legend>Scope and terms</legend>
-              {TEXT_FIELDS.map(([key, label, help]) => (
-                <div className="form-field" key={key}>
-                  <label htmlFor={`bounty-${key}`}>{label}</label>
-                  {help ? <p id={`bounty-${key}-help`}>{help}</p> : null}
-                  <textarea
-                    id={`bounty-${key}`}
-                    aria-describedby={help ? `bounty-${key}-help` : undefined}
-                    rows={3}
-                    required={key !== "excludedDependencies"}
-                    minLength={
-                      key === "excludedDependencies"
-                        ? undefined
-                        : key === "includedAssets"
-                          ? 2
-                          : 12
-                    }
-                    maxLength={
-                      key === "safeHarbor"
-                        ? 4000
-                        : key === "includedAssets" ||
-                            key === "excludedDependencies"
-                          ? 10000
-                          : key === "exhaustionRule"
-                            ? 1000
-                            : 2000
-                    }
-                    value={text[key]}
-                    onChange={(event) =>
-                      setText({ ...text, [key]: event.target.value })
-                    }
-                  />
-                </div>
-              ))}
-            </fieldset>
-            <fieldset disabled={busy}>
-              <legend>Response targets</legend>
-              {(
+            {(
+              [
                 [
-                  ["acknowledgeHours", "Acknowledge within (hours)", 336],
-                  ["triageBusinessDays", "Triage within (business days)", 60],
-                  ["updateIntervalDays", "Send an update every (days)", 60],
-                ] as const
-              ).map(([key, label, max]) => (
-                <div className="form-field" key={key}>
-                  <label htmlFor={`bounty-${key}`}>{label}</label>
-                  <input
-                    id={`bounty-${key}`}
-                    type="number"
-                    min="1"
-                    max={max}
-                    required
-                    value={response[key]}
-                    onChange={(event) =>
-                      setResponse({
-                        ...response,
-                        [key]: Number(event.target.value),
-                      })
-                    }
-                  />
-                </div>
-              ))}
-            </fieldset>
-            <p>
-              Project contacts:{" "}
-              {(existing?.approvers.technical ?? [actor])
-                .map((person) => `@${person.githubLogin}`)
-                .join(", ")}
-              .
-            </p>
+                  "Scope and testing",
+                  [
+                    "includedAssets",
+                    "excludedDependencies",
+                    "testingPermission",
+                  ],
+                ],
+                [
+                  "Award criteria",
+                  ["severityRubric", "lossDefinition", "exhaustionRule"],
+                ],
+                ["Researcher terms", ["dispute", "disclosure", "safeHarbor"]],
+              ] as [string, TextField[]][]
+            ).map(([title, keys]) => (
+              <details className="proposal-advanced" key={title}>
+                <summary>{title}</summary>
+                <fieldset disabled={busy}>
+                  <legend>{title}</legend>
+                  {TEXT_FIELDS.filter(([key]) => keys.includes(key)).map(
+                    ([key, label, help]) => (
+                      <div className="form-field" key={key}>
+                        <label htmlFor={`bounty-${key}`}>{label}</label>
+                        {help ? <p id={`bounty-${key}-help`}>{help}</p> : null}
+                        <textarea
+                          id={`bounty-${key}`}
+                          aria-describedby={
+                            help ? `bounty-${key}-help` : undefined
+                          }
+                          rows={3}
+                          required={key !== "excludedDependencies"}
+                          minLength={
+                            key === "excludedDependencies"
+                              ? undefined
+                              : key === "includedAssets"
+                                ? 2
+                                : 12
+                          }
+                          maxLength={
+                            key === "safeHarbor"
+                              ? 4000
+                              : key === "includedAssets" ||
+                                  key === "excludedDependencies"
+                                ? 10000
+                                : key === "exhaustionRule"
+                                  ? 1000
+                                  : 2000
+                          }
+                          value={text[key]}
+                          onChange={(event) =>
+                            setText({ ...text, [key]: event.target.value })
+                          }
+                        />
+                      </div>
+                    ),
+                  )}
+                </fieldset>
+              </details>
+            ))}
+            <details className="proposal-advanced">
+              <summary>Response targets and contacts</summary>
+              <fieldset disabled={busy}>
+                <legend>Response targets</legend>
+                {(
+                  [
+                    ["acknowledgeHours", "Acknowledge within (hours)", 336],
+                    ["triageBusinessDays", "Triage within (business days)", 60],
+                    ["updateIntervalDays", "Send an update every (days)", 60],
+                  ] as const
+                ).map(([key, label, max]) => (
+                  <div className="form-field" key={key}>
+                    <label htmlFor={`bounty-${key}`}>{label}</label>
+                    <input
+                      id={`bounty-${key}`}
+                      type="number"
+                      min="1"
+                      max={max}
+                      required
+                      value={response[key]}
+                      onChange={(event) =>
+                        setResponse({
+                          ...response,
+                          [key]: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                ))}
+              </fieldset>
+              <p>
+                Project contacts:{" "}
+                {(existing?.approvers.technical ?? [actor])
+                  .map((person) => `@${person.githubLogin}`)
+                  .join(", ")}
+                .
+              </p>
+            </details>
             {error && (
               <p className="form-error" role="alert">
                 {error}

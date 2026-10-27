@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
@@ -257,6 +257,7 @@ function ActivityChart({ awards }: { awards: PointsMember["awards"] }) {
       className="activity-chart"
       aria-label={`Points per day, last ${ACTIVITY_DAYS} days`}
     >
+      <figcaption>Points · last {ACTIVITY_DAYS} days</figcaption>
       <div className="activity-bars" aria-hidden="true">
         {days.map((entry) => (
           <span
@@ -287,6 +288,7 @@ function PayoutList({
   direct: Payout[];
   total: string;
 }) {
+  const [allPayouts, setAllPayouts] = useState(false);
   const rows = [
     ...payments.map((payment) => ({ ...payment, kind: "Verified settlement" })),
     ...direct.map((payment) => ({ ...payment, kind: "Direct transfer" })),
@@ -303,7 +305,7 @@ function PayoutList({
         <span>{total}</span>
       </div>
       <ul className="payout-list">
-        {rows.map((row) => (
+        {(allPayouts ? rows : rows.slice(0, 3)).map((row) => (
           <li key={`${row.kind}:${row.href}`}>
             <ExternalLinkAnchor href={row.href}>
               <span>
@@ -318,6 +320,18 @@ function PayoutList({
           </li>
         ))}
       </ul>
+      {rows.length > 3 ? (
+        <button
+          className="button secondary-button button-small"
+          type="button"
+          aria-expanded={allPayouts}
+          onClick={() => setAllPayouts(!allPayouts)}
+        >
+          {allPayouts
+            ? "Show recent payouts"
+            : `Show all ${rows.length} payouts`}
+        </button>
+      ) : null}
     </section>
   );
 }

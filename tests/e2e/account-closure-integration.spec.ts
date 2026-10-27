@@ -20,7 +20,8 @@ for (const withObligations of [false, true])
       "u",
     );
     if (withObligations) diagnostics.allow(droppedClosure);
-    // The two refusals the closed account expects, asserted below.
+    // Explicit reopening is refused until authorized; closed-account read
+    // authorization is checked directly below without loading a hidden panel.
     diagnostics.allow(
       /^console Failed to load resource: the server responded with a status of 40[19] .* at https:\/\/[^ ]+\/api\/v1\/(payments\/me|points\/join)$/u,
     );
@@ -162,7 +163,7 @@ for (const withObligations of [false, true])
       });
       await page.goto(`${SITE}/points#people`);
       const people = page.getByRole("region", { name: "People", exact: true });
-      await people.getByLabel("GitHub username").fill(started.login);
+      await page.getByLabel("Find a contributor").fill(started.login);
       await expect(
         people.getByRole("link", { name: "X · @closing_x" }),
       ).toBeVisible();
@@ -172,7 +173,7 @@ for (const withObligations of [false, true])
       expect((await readState()).retained).toEqual(before.retained);
       await page.goto(`${SITE}/account`);
       const recovery = page.locator("#recovery");
-      await recovery.locator("#close-account > summary").click();
+      await page.locator("#close-account > summary").click();
       await expect(
         recovery.getByRole("button", { name: "Close account", exact: true }),
       ).toBeDisabled();
@@ -202,6 +203,10 @@ for (const withObligations of [false, true])
           { headers: { cookie: `__Host-slop_points=${token}` } },
         );
         expect(response.status).toBe(401);
+        const payments = await fetch(`${started.url}/site/api/v1/payments/me`, {
+          headers: { cookie: `__Host-slop_points=${token}` },
+        });
+        expect(payments.status).toBe(401);
       }
       await page.screenshot({
         path: info.outputPath("account-closed.png"),
@@ -236,10 +241,7 @@ for (const withObligations of [false, true])
       await expectAccessible(page);
       expect(retiredRequests).toEqual([]);
       expect(diagnostics.count(droppedClosure)).toBe(withObligations ? 1 : 0);
-      expect(failures).toEqual([
-        "401 /api/v1/payments/me",
-        "409 /api/v1/points/join",
-      ]);
+      expect(failures).toEqual(["409 /api/v1/points/join"]);
       await page.screenshot({
         path: info.outputPath("account-reopened.png"),
         fullPage: true,

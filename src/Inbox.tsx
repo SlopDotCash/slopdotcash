@@ -9,7 +9,6 @@ import {
   Wallet,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { InboxEmail } from "./InboxEmail";
 import { loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
@@ -213,8 +212,11 @@ export default function InboxPage() {
           {actionError}
         </p>
       ) : null}
-      {/* Optional settings follow the notices and their actions (PRD section 7). */}
-      {state.status === "ready" ? <InboxEmail /> : null}
+      {state.status === "ready" ? (
+        <p>
+          <a href="/account#notifications">Email preferences</a>
+        </p>
+      ) : null}
     </main>
   );
 }
@@ -301,8 +303,14 @@ function InboxItem({
         <span className="inbox-kind-icon">
           <Icon size={20} aria-hidden="true" />
         </span>
-        <p className="inbox-title">{title}</p>
-        <StatusBadge tone={unread ? "info" : "neutral"}>
+        <a
+          className="inbox-title"
+          href={n.actionPath}
+          aria-label={`${title}: ${notificationAction(n)}`}
+        >
+          {title}
+        </a>
+        <StatusBadge className="inbox-state" tone={unread ? "info" : "neutral"}>
           {unread ? "Unread" : "Read"}
         </StatusBadge>
       </div>
@@ -311,25 +319,25 @@ function InboxItem({
       ) : null}
       <p className="inbox-meta">
         <time dateTime={n.sourceAt}>{formatDateTime(n.sourceAt)}</time>
-        {n.emailDelivery ? (
-          <>
-            {" · "}
-            <StatusBadge
-              tone={
-                n.emailDelivery === "failed"
-                  ? "danger"
-                  : n.emailDelivery === "delivered"
-                    ? "success"
-                    : "neutral"
-              }
-            >
-              {emailDeliveryLabel(n.emailDelivery)}
-            </StatusBadge>
-          </>
-        ) : null}
       </p>
+      {n.emailDelivery === "failed" || n.emailDelivery === "uncertain" ? (
+        <StatusBadge
+          className="inbox-delivery"
+          tone={n.emailDelivery === "failed" ? "danger" : "warning"}
+        >
+          {emailDeliveryLabel(n.emailDelivery)}
+        </StatusBadge>
+      ) : n.emailDelivery ? (
+        <details className="inbox-delivery inbox-meta">
+          <summary>Email delivery</summary>
+          <StatusBadge
+            tone={n.emailDelivery === "delivered" ? "success" : "neutral"}
+          >
+            {emailDeliveryLabel(n.emailDelivery)}
+          </StatusBadge>
+        </details>
+      ) : null}
       <div className="inbox-actions">
-        <a href={n.actionPath}>{notificationAction(n)}</a>
         {n.kind === "security_case" && n.acknowledgedAt !== undefined ? (
           n.acknowledgedAt ? (
             <p>Acknowledged</p>

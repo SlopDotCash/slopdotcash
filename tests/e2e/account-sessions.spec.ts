@@ -73,13 +73,14 @@ test("Account waits for identity, revokes another session and signs out the curr
       },
     }),
   );
-  await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${site}/account#wallets`, { waitUntil: "domcontentloaded" });
   await expect(page.locator("#wallets")).toContainText("Checking your account");
   releaseIdentity();
   await expect(
     page.getByRole("button", { name: "Connect EVM wallet", exact: true }),
   ).toBeVisible();
   const panel = page.locator("#sessions");
+  await panel.locator("summary").click();
   await expect(panel).toContainText("This session");
   await expect(panel).toContainText("Other session");
   await page.screenshot({
