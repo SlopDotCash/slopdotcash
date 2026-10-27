@@ -243,6 +243,7 @@ export function useVaultTotals(
       )) as VaultResponse;
       if (
         !vault ||
+        vault.projectId !== project.id ||
         !Array.isArray(vault.snapshots) ||
         !Number.isSafeInteger(vault.staleAfterMs) ||
         Number.isNaN(Date.parse(vault.servedAt)) ||
@@ -264,10 +265,15 @@ export function useVaultTotals(
   } | null>(null);
   useEffect(() => {
     if (state.status === "ready")
-      setLastGood({ projectId: project.id, vault: state.vault });
-  }, [state, project.id]);
+      setLastGood({ projectId: state.vault.projectId, vault: state.vault });
+  }, [state]);
   useEffect(() => {
-    if (!deployed || state.status === "loading") return;
+    if (
+      !deployed ||
+      state.status === "loading" ||
+      (state.status === "ready" && state.vault.projectId !== project.id)
+    )
+      return;
     const settledAt = Date.now();
     const vault = state.status === "ready" ? state.vault : null;
     const staleAfterMs = vault?.staleAfterMs ?? VAULT_SNAPSHOT_STALE_MS;
@@ -301,8 +307,11 @@ export function useVaultTotals(
       window.removeEventListener("focus", onReturn);
       document.removeEventListener("visibilitychange", onReturn);
     };
-  }, [deployed, state, retry]);
+  }, [deployed, state, retry, project.id]);
   if (!deployed) return { status: "none" };
+  // A loader change takes effect after render; never relabel its prior result.
+  if (state.status === "ready" && state.vault.projectId !== project.id)
+    return { status: "loading" };
   if (state.status === "ready")
     return {
       status: "ready",
