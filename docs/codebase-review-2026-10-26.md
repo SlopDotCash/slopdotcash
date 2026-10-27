@@ -1,6 +1,6 @@
 # Whole-codebase simplification review — 26 October 2026
 
-Completed implementation removes **24,297 net lines** of source and tests, including 62 non-contract unit/partial suites. The final measured initial homepage JavaScript is **517,645 bytes**, down **33.18%** from 774,729 bytes. All selected findings below are implemented, including the two follow-up findings from validation. Required security, consent and payment distinctions are preserved.
+Completed implementation removes **24,296 net lines** of source and tests, including 62 non-contract unit/partial suites. The final measured initial homepage JavaScript is **517,645 bytes**, down **33.18%** from 774,729 bytes. All selected findings below are implemented, including the two follow-up findings from validation. Required security, consent and payment distinctions are preserved.
 
 ## Scope, authority and review method
 
@@ -871,7 +871,7 @@ After the first measured route extraction, the home page still loads the Solana 
 
 ## Implemented result
 
-The implementation removes 24,297 net source/test lines excluding this report. The initial audit remains above so each choice can be reviewed against its evidence. All selected changes were implemented; the keep decisions preserve required product behavior, explicit authority and immutable history. No contract, migration, project registry snapshot, points journal or instruction mirror was modified.
+The implementation removes 24,296 net source/test lines excluding this report. The initial audit remains above so each choice can be reviewed against its evidence. All selected changes were implemented; the keep decisions preserve required product behavior, explicit authority and immutable history. No contract, migration, project registry snapshot, points journal or instruction mirror was modified.
 
 ### Root and backend disposition
 
@@ -1010,3 +1010,8 @@ The existing hash observer now accepts the current href and restarts when the re
 The final immutable source revision, complete repository and browser results, conditional skips, commands and tool versions are recorded in [the local validation record](/Users/shawwalters/.codex/visualizations/2026/10/27/01a17b8b-c2b7-7f22-9204-b99ae13eca9d/codebase-review/validation.md). This evidence lives outside Git; no captured browser trace, provider input, credential or private session is committed. The detailed before/after frontend inventory is [here](/Users/shawwalters/.codex/visualizations/2026/10/27/01a17b8b-c2b7-7f22-9204-b99ae13eca9d/codebase-review/frontend/README.md).
 
 The unchanged EVM contracts also passed all 146 tests across 14 suites, including fuzz/invariant campaigns. The local parallel payment runner passed all ten Anvil scenarios and the native binding-recovery workflow. External provider, client, production, DNS/TLS and mainnet acceptance are not claimed by these local checks; no such systems were changed.
+
+
+### R-13 — Exclude linked runtime directories from fixture source copies
+
+The independent final checkout linked its existing node_modules runtime. Git's directory-only ignore rule does not ignore that symlink, so the shared copier attempted to copy it as a file and failed with ENOTSUP. Resolve file type with stat when deciding whether to skip directories; this includes linked runtime directories while preserving existing file-copy behavior. Create the browser fixture's root dependency symlink only after its source commit as well, matching the existing Solana dependency setup, so Git never records an external runtime path. The actual full integration run in the linked-runtime checkout verifies the fix; no synthetic existence-only unit test is added.
