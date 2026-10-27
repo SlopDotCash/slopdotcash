@@ -2359,6 +2359,20 @@ small {
   gap: 6px;
 }
 
+.payout-exact {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.payout-exact:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
 .payout-value strong {
   font-family: var(--brand-font-data);
   font-size: 18px;
