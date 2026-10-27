@@ -139,6 +139,7 @@ export function PrivateReportForm({
           projectId: project.id,
           idempotencyKey: saved.key,
           origin: "slop",
+          expectedReporterGithubId: owner,
           report: body(saved.draft),
         },
       );
@@ -155,6 +156,22 @@ export function PrivateReportForm({
       setError(errorMessage(cause));
       // A definite validation refusal did not accept a report. Uncertain and
       // authentication failures keep the original payload for reconciliation.
+      if (
+        cause instanceof ProjectApiError &&
+        cause.code === "reporter_changed"
+      ) {
+        try {
+          sessionStorage.removeItem(storageKey);
+        } catch {
+          /* Clear memory too. */
+        }
+        setSaved({
+          draft: { ...EMPTY_DRAFT },
+          key: crypto.randomUUID(),
+          attempted: false,
+        });
+        setReview(false);
+      }
       if (cause instanceof ProjectApiError && cause.status === 400) {
         setSaved({ ...saved, attempted: false, key: crypto.randomUUID() });
       }
