@@ -219,7 +219,12 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
   const popup = page.waitForEvent("popup");
   await signIn.click();
   const authWindow = await popup;
-  await expect(profile).toHaveCount(0);
+  await expect(
+    profile.getByRole("button", { name: /with GitHub$/u }),
+  ).toHaveCount(0);
+  await expect(
+    profile.getByRole("region", { name: "Connections", exact: true }),
+  ).toBeVisible();
   await authWindow.close();
   await expect(security).toBeVisible();
   await expect(appeals).toBeVisible();

@@ -921,13 +921,16 @@ export function AccountPage() {
     <main className="shell route-main account-page">
       <RoutePageHeader icon={<UserRound />} title="Account" />
       <AccountNav current="account" />
-      {!me && (!walletEntry || signedIn) ? (
+      {me || !walletEntry || signedIn ? (
         <div id="profile">
-          <JoinPoints onSignedIn={setSignInNotice} />
+          {me ? (
+            <SocialConnections />
+          ) : (
+            <JoinPoints onSignedIn={setSignInNotice} />
+          )}
         </div>
       ) : null}
       {me && signInNotice ? <p role="status">{signInNotice}</p> : null}
-      {me ? <SocialConnections /> : null}
       {session === "loading" || signedIn || walletEntry ? (
         <DetailsSection
           id="wallets"
