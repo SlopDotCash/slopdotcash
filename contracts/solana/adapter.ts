@@ -929,7 +929,9 @@ export async function readVaultTotals(config: {
 
 export {
   account as solanaAccount,
+  b64 as solanaBase64,
   base58 as solanaBase58,
+  decode as solanaBase64Bytes,
   digest as solanaDigest,
   pubkey as solanaPubkey,
   rpc as solanaRpc,

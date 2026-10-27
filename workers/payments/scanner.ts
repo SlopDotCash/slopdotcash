@@ -1,17 +1,13 @@
+import { bytesToHex } from "@noble/hashes/utils.js";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
-import { EVM_ESCROW_EVENT_TOPICS } from "../../contracts/evm/adapter";
-import { escrowInvocations } from "../../contracts/solana/adapter";
-export interface ScanDeployment {
-  projectId: string;
-  network: string;
-  chain: string;
-  vault: string;
-  deploymentTransaction?: string;
-  /** EVM only: blocks per eth_getLogs page, inclusive, from the reviewed deployment record. */
-  scanPageBlocks?: string;
-  projectPda?: string;
-  programId?: string;
-}
+import { EVM_ESCROW_EVENT_TOPICS, evmRpc } from "../../contracts/evm/adapter";
+import { escrowInvocations, solanaRpc } from "../../contracts/solana/adapter";
+import type { DeploymentView } from "./index";
+
+type ScanDeployment = DeploymentView<
+  "projectId" | "vault",
+  "deploymentTransaction" | "scanPageBlocks" | "projectPda" | "programId"
+>;
 export interface ScanEvent {
   projectId: string;
   network: string;
@@ -23,21 +19,6 @@ export interface ScanEvent {
 // The adapter derives each topic from the reviewed event signature.
 const RESERVED = EVM_ESCROW_EVENT_TOPICS.AwardCommitted;
 const PAID = EVM_ESCROW_EVENT_TOPICS.Paid;
-async function rpc(
-  url: string,
-  method: string,
-  params: unknown[],
-): Promise<unknown> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  if (!response.ok) throw new Error("Scanner RPC unavailable");
-  const body = (await response.json()) as { result?: unknown; error?: unknown };
-  if (body.error || !("result" in body)) throw new Error("Scanner RPC failed");
-  return body.result;
-}
 /** A cursor advances only after every recognized finalized event is durably verified and indexed. The page size comes from the reviewed deployment record. */
 export async function scanEvmPayments(
   db: D1Database,
@@ -60,14 +41,14 @@ export async function scanEvmPayments(
   else {
     if (!deployment.deploymentTransaction)
       throw new Error("Deployment transaction required for scanner origin");
-    const receipt = (await rpc(rpcUrl, "eth_getTransactionReceipt", [
+    const receipt = (await evmRpc({ rpcUrl }, "eth_getTransactionReceipt", [
       deployment.deploymentTransaction,
     ])) as { status: string; blockNumber: string } | null;
     if (receipt?.status !== "0x1")
       throw new Error("Deployment origin unavailable");
     from = BigInt(receipt.blockNumber);
   }
-  const finalized = (await rpc(rpcUrl, "eth_getBlockByNumber", [
+  const finalized = (await evmRpc({ rpcUrl }, "eth_getBlockByNumber", [
     "finalized",
     false,
   ])) as { number: string } | null;
@@ -75,7 +56,7 @@ export async function scanEvmPayments(
   const end = BigInt(finalized.number);
   if (from > end) return;
   const to = from + span < end ? from + span : end;
-  const logs = (await rpc(rpcUrl, "eth_getLogs", [
+  const logs = (await evmRpc({ rpcUrl }, "eth_getLogs", [
     {
       address: deployment.vault,
       fromBlock: `0x${from.toString(16)}`,
@@ -171,7 +152,7 @@ export async function scanSolanaPayments(
   const keys = [deployment.projectId, deployment.network, scan.generation];
   const expected = [...keys, scan.revision];
   if (!scan.ready) {
-    const result = (await rpc(rpcUrl, "getSignaturesForAddress", [
+    const result = (await solanaRpc({ rpcUrl }, "getSignaturesForAddress", [
       projectPda,
       {
         commitment: "finalized",
@@ -235,7 +216,7 @@ export async function scanSolanaPayments(
   const chunk = signatures.slice(0, SOLANA_TRANSACTIONS_PER_RUN);
   for (const item of chunk) {
     if (!item.err) {
-      const tx = (await rpc(rpcUrl, "getTransaction", [
+      const tx = (await solanaRpc({ rpcUrl }, "getTransaction", [
         item.signature,
         {
           commitment: "finalized",
@@ -257,7 +238,7 @@ export async function scanSolanaPayments(
           if (!invocation.awardId) throw new Error("Commit award ID missing");
           obligationId = invocation.awardId;
         } else {
-          const award = (await rpc(rpcUrl, "getAccountInfo", [
+          const award = (await solanaRpc({ rpcUrl }, "getAccountInfo", [
             invocation.accounts[1],
             { commitment: "finalized", encoding: "base64" },
           ])) as { value: { data: [string, string] } | null };
@@ -265,7 +246,7 @@ export async function scanSolanaPayments(
           const bytes = Uint8Array.from(atob(award.value.data[0]), (c) =>
             c.charCodeAt(0),
           );
-          obligationId = hex(bytes.slice(80, 112));
+          obligationId = bytesToHex(bytes.slice(80, 112));
         }
         await index({
           projectId: deployment.projectId,
@@ -309,5 +290,3 @@ export async function scanSolanaPayments(
       .bind(...expected),
   ]);
 }
-const hex = (value: Uint8Array) =>
-  Array.from(value, (b) => b.toString(16).padStart(2, "0")).join("");

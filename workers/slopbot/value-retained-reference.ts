@@ -1,4 +1,4 @@
-import { sha256Hex } from "./github";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { sameRepositoryCommitHints } from "./value-commit-hints";
 import type { EvidenceClient, ValueEvidence } from "./value-evidence";
 

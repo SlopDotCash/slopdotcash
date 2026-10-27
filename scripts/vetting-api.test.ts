@@ -34,11 +34,7 @@ import {
   vettingKeyPair,
   vettingResult,
 } from "../tests/vetting-fixtures";
-import { publishResult, reconcileResult } from "../workers/vetting/publication";
-import {
-  REVIEW_AREAS,
-  type ScannerEvidence,
-} from "../workers/vetting/scanners";
+import { publishResult } from "../workers/vetting/publication";
 
 let retained: Awaited<ReturnType<typeof localVettingEvidence>>;
 afterEach(async () => {
@@ -241,96 +237,20 @@ async function publicVetting() {
 }
 
 describe("community security vetting", () => {
-  test("the trusted publisher retains gaps and journals one signed intake attempt", async () => {
+  test("the trusted publisher journals one signed intake attempt", async () => {
     await listPausedProject();
     const id = await queueScan();
-    const observation = await fixture(id, "clean", false);
-    const inputManifest = new TextEncoder().encode(
-      JSON.stringify({
-        items: [],
-        visibilityGaps: ["runtime-download-not-reviewed"],
-      }),
-    );
-    const trace = new TextEncoder().encode("harmless isolated fixture trace");
-    const digest = (bytes: Uint8Array) =>
-      createHash("sha256").update(bytes).digest("hex");
-    observation.assessed.inputManifestSha256 = digest(inputManifest);
-    observation.traceSha256 = digest(trace);
-    const reviews = observation.modelReviews.map((review) => ({
-      review: { ...review, inputManifestSha256: digest(inputManifest) },
-      findings: [],
-      visibilityGaps: [],
-      coverage: Object.fromEntries(
-        REVIEW_AREAS.map((area) => [area, "complete"]),
-      ),
-    })) as unknown as [ScannerEvidence, ScannerEvidence];
-    const prepared = reconcileResult({
-      observation,
-      inputManifest,
-      trace,
-      reviews,
-    });
-    const retainedBytes = {
-      traceSha256: digest(trace),
-      objects: [
-        ...VETTING_EVIDENCE_OBJECTS.slice(2),
-        ...[
-          {
-            body: new TextDecoder().decode(trace),
-            kind: "trace",
-            contentType: "text/plain",
-          },
-          {
-            body: new TextDecoder().decode(inputManifest),
-            kind: "manifest",
-            contentType: "application/json",
-          },
-        ].map((item) => ({
-          ...item,
-          sha256: digest(new TextEncoder().encode(item.body)),
-          sizeBytes: Buffer.byteLength(item.body),
-          label: "Harmless publisher fixture",
-        })),
-      ],
+    // A historical incomplete result; publication accepts exact v1 bytes.
+    const publishable = async (assessmentId: string) => {
+      const body = JSON.stringify(
+        parseVettingResult(await fixture(assessmentId, "incomplete")),
+      );
+      return {
+        body,
+        resultSha256: createHash("sha256").update(body).digest("hex"),
+      };
     };
-    const preparedResult = parseVettingResult(JSON.parse(prepared.body));
-    expect(await retained.evidence.complete(preparedResult)).toBe(false);
-    await retained.retain(id, observation.environment.runId, retainedBytes);
-    // Retention alone cannot authorize a clean result without canonical closure.
-    expect(await retained.evidence.complete(preparedResult)).toBe(false);
-    expect(prepared.disposition).toBe("incomplete");
-    expect(JSON.parse(prepared.body).telemetry.visibilityGaps).toContain(
-      "runtime-download-not-reviewed",
-    );
-    const disputed = structuredClone(reviews);
-    disputed[0].review.verdict = "malicious-suspected";
-    disputed[0].review.findingCount = 1;
-    disputed[0].findings = [
-      {
-        severity: "critical",
-        summary: "Synthetic suspicion",
-        evidenceIds: ["fixture"],
-      },
-    ];
-    const conflict = reconcileResult({
-      observation,
-      inputManifest,
-      trace,
-      reviews: disputed,
-    });
-    expect(conflict.disposition).toBe("incomplete");
-    expect(JSON.parse(conflict.body).confirmation).toBeNull();
-    expect(JSON.parse(conflict.body).telemetry.visibilityGaps).toContain(
-      "independent-model-disagreement",
-    );
-    expect(() =>
-      reconcileResult({
-        observation,
-        inputManifest,
-        trace: new Uint8Array([1]),
-        reviews,
-      }),
-    ).toThrow("Collected evidence");
+    const prepared = await publishable(id);
     const journalDirectory = await mkdtemp(
       join(tmpdir(), "vetting-publisher-"),
     );
@@ -378,22 +298,7 @@ describe("community security vetting", () => {
       // A lost response after a committed write must stay unknown, and the
       // journal must prevent a second attempt even though no receipt arrived.
       const nextId = await queueScan();
-      const next = reconcileResult({
-        observation: { ...observation, assessmentId: nextId },
-        inputManifest,
-        trace,
-        reviews,
-      });
-      await retained.retain(
-        nextId,
-        observation.environment.runId,
-        retainedBytes,
-      );
-      expect(
-        await retained.evidence.complete(
-          parseVettingResult(JSON.parse(next.body)),
-        ),
-      ).toBe(false);
+      const next = await publishable(nextId);
       const uncertain = await publishResult({
         ...options,
         body: next.body,

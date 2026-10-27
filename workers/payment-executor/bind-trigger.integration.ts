@@ -37,9 +37,9 @@ import {
   deployUpgradeableFactory,
 } from "../../contracts/evm/integration/upgrade";
 import { onRequest } from "../../functions/api/v1/[[path]]";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
-import { sha256Hex } from "../identity/crypto";
 import { paymentStack } from "./configure.mjs";
 import { type JournalStore, pendingStoredBindings } from "./core";
 import worker, { PaymentSignerJournal, runDestinationBindings } from "./index";

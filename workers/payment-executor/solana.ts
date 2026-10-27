@@ -1,5 +1,6 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import type {
   DispatchPayment,
@@ -71,8 +72,6 @@ type Preflight = Pick<
   | "ALLOW_LOCAL_TEST_CHAIN"
   | "LOCAL_SOLANA_GENESIS"
 >;
-const hex = (bytes: Uint8Array) =>
-  Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 const int64 = (value: Uint8Array, offset: number) =>
   new DataView(value.buffer, value.byteOffset, value.byteLength).getBigInt64(
     offset,
@@ -173,7 +172,7 @@ async function authorized(
     ctx.config.projectId !== authorization.projectId ||
     solanaUint(ctx.obligation, 8).toString() !== authorization.grossBase ||
     solanaUint(ctx.obligation, 128).toString() !== authorization.feeBase ||
-    hex(ctx.obligation.slice(16, 48)) !== authorization.sourceDigest
+    bytesToHex(ctx.obligation.slice(16, 48)) !== authorization.sourceDigest
   )
     throw new Error("Finalized award differs from authorized ledger");
   return ctx;
@@ -192,7 +191,8 @@ async function readAward(
   if (
     !project ||
     solanaPubkey(project, 168) !== config.mint ||
-    hex(project.slice(72, 104)) !== hex(solanaDigest(config.networkDomain))
+    bytesToHex(project.slice(72, 104)) !==
+      bytesToHex(solanaDigest(config.networkDomain))
   )
     throw new Error("Project domain mismatch");
   if (
@@ -216,7 +216,7 @@ async function readAward(
   if (
     !obligation ||
     solanaUint(obligation, 8) === 0n ||
-    solanaAwardId(config.projectPda, hex(obligation.slice(16, 48))) !==
+    solanaAwardId(config.projectPda, bytesToHex(obligation.slice(16, 48))) !==
       input.obligationId.replace(/^0x/, "").toLowerCase() ||
     solanaPubkey(obligation, 48) !== config.projectPda ||
     solanaUint(obligation, 112).toString() !== input.githubUserId ||
@@ -271,7 +271,7 @@ async function send(
   cosigner?: string,
 ): Promise<PreparedBinding> {
   const key = `solana:${role}:${input.network}:${input.idempotencyKey}`,
-    fingerprint = hex(
+    fingerprint = bytesToHex(
       sha256(
         encoder.encode(
           JSON.stringify([
@@ -322,7 +322,7 @@ async function send(
         role === "attester" &&
         current.binding &&
         solanaPubkey(current.binding, 112) === input.destination &&
-        hex(current.binding.slice(8, 40)) === input.claimDigest
+        bytesToHex(current.binding.slice(8, 40)) === input.claimDigest
       )
         throw new Error(
           "Binding changed; finalized receipt reconciliation required",
@@ -480,8 +480,8 @@ export async function completeSolanaBinding(
   if (
     signed.length !== prepared.length ||
     signed[0] !== 2 ||
-    hex(signed.slice(1, 65)) !== hex(prepared.slice(1, 65)) ||
-    hex(signed.slice(129)) !== hex(msg)
+    bytesToHex(signed.slice(1, 65)) !== bytesToHex(prepared.slice(1, 65)) ||
+    bytesToHex(signed.slice(129)) !== bytesToHex(msg)
   )
     throw new Error("Signed transaction differs from the prepared binding");
   const walletSignature = signed.slice(65, 129);
@@ -525,12 +525,12 @@ export function createSolanaAttester(env: SolanaExecutorEnvironment): {
       if (
         ctx.binding &&
         (solanaPubkey(ctx.binding, 112) !== input.destination ||
-          hex(ctx.binding.slice(8, 40)) !== input.claimDigest)
+          bytesToHex(ctx.binding.slice(8, 40)) !== input.claimDigest)
       )
         await authorizeWalletRotation(
           env,
           input,
-          hex(ctx.binding.slice(8, 40)),
+          bytesToHex(ctx.binding.slice(8, 40)),
         );
       if (!ctx.binding) await requireWalletAuthorization(env, input);
       const version = ctx.binding ? solanaUint(ctx.binding, 144) : 0n;
@@ -605,7 +605,7 @@ async function payBoundAward(
   if (
     !ctx.binding ||
     solanaPubkey(ctx.binding, 112) !== input.destination ||
-    hex(ctx.binding.slice(8, 40)) !== input.claimDigest
+    bytesToHex(ctx.binding.slice(8, 40)) !== input.claimDigest
   )
     throw new Error(
       "Destination binding awaits the contributor's co-signature; retry after it is finalized",
@@ -682,9 +682,9 @@ export async function preparePermissionlessSolanaPayment(
   const bound: Input = {
     ...input,
     destination: solanaPubkey(ctx.binding, 112),
-    claimDigest: hex(ctx.binding.slice(8, 40)),
+    claimDigest: bytesToHex(ctx.binding.slice(8, 40)),
     claimId: ctx.bindingAddress,
-    idempotencyKey: hex(
+    idempotencyKey: bytesToHex(
       sha256(
         encoder.encode(
           JSON.stringify([input.network, input.vault, input.obligationId]),

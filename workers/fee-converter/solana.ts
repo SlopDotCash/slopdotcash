@@ -23,6 +23,8 @@ import {
   type SolanaEscrowConfig,
   solanaAccount,
   solanaBase58,
+  solanaBase64,
+  solanaBase64Bytes,
   solanaUint,
   solanaVaultAddress,
   verifySolanaDeployment,
@@ -53,7 +55,6 @@ import type { NativeGasJournal } from "./native-gas";
 
 export const JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111";
-const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ASSOCIATED_TOKEN = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 /**
  * Top-level programs a conversion may invoke: compute budget, idempotent
@@ -223,38 +224,6 @@ export function parseTransaction(raw: Uint8Array): ParsedTransaction {
   };
 }
 
-function onCurve(bytes: Uint8Array): boolean {
-  try {
-    ed25519.Point.fromBytes(bytes);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Associated token account of `owner` for `mint` under `tokenProgram`. */
-export function associatedTokenAccount(
-  owner: string,
-  mint: string,
-  tokenProgram = TOKEN_PROGRAM,
-): string {
-  const seeds = [owner, tokenProgram, mint].map(decodeBase58Bytes);
-  const program = decodeBase58Bytes(ASSOCIATED_TOKEN);
-  const marker = new TextEncoder().encode("ProgramDerivedAddress");
-  for (let bump = 255; bump >= 0; bump--) {
-    const parts = [...seeds, Uint8Array.of(bump), program, marker];
-    const input = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-    let at = 0;
-    for (const part of parts) {
-      input.set(part, at);
-      at += part.length;
-    }
-    const hash = sha256(input);
-    if (!onCurve(hash)) return solanaBase58(hash);
-  }
-  throw new Error("no associated token address");
-}
-
 function decimalBps(value: unknown): number | null {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const match = /^(\d+)(?:\.(\d+))?$/u.exec(String(value));
@@ -265,14 +234,6 @@ function decimalBps(value: unknown): number | null {
   const rest = /[1-9]/u.test(fraction.slice(4)) ? 1n : 0n;
   return Number(whole + rest);
 }
-
-const toBase64 = (bytes: Uint8Array) => {
-  let text = "";
-  for (const byte of bytes) text += String.fromCharCode(byte);
-  return btoa(text);
-};
-const fromBase64 = (value: string) =>
-  Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 
 interface JupiterQuote {
   inputMint: string;
@@ -330,11 +291,7 @@ export function solanaNativeCost(
   return actual;
 }
 
-export function createSolanaClient(
-  options: SolanaClientOptions,
-): ChainClient & {
-  address(): string | null;
-} {
+export function createSolanaClient(options: SolanaClientOptions): ChainClient {
   const { config, limits } = options;
   const doFetch = options.fetch ?? fetch;
   const wallet = config.feeWallet;
@@ -398,11 +355,13 @@ export function createSolanaClient(
       },
     });
     const text = await response.text();
-    let body: unknown;
+    let body: unknown = null;
     try {
       body = JSON.parse(text);
     } catch {
-      body = null;
+      // A refusal may carry plain text; an accepted reply must be JSON.
+      if (response.ok)
+        throw new Error(`Jupiter ${path.split("?")[0]}: unparseable response`);
     }
     if (!response.ok) {
       const detail = body as { error?: string; errorCode?: string } | null;
@@ -439,9 +398,9 @@ export function createSolanaClient(
         keys[0] !== wallet ||
         keys[2] !== wallet ||
         keys[4] !== "11111111111111111111111111111111" ||
-        keys[5] !== TOKEN_PROGRAM ||
+        keys[5] !== TOKEN ||
         !(ix.data.length === 0 || (ix.data.length === 1 && ix.data[0] <= 1)) ||
-        keys[1] !== associatedTokenAccount(wallet, keys[3])
+        keys[1] !== ata(keys[3], wallet)
       )
         throw new Error("Unbounded or unsupported associated-account creation");
       accounts.add(ix.accounts[1]);
@@ -464,7 +423,7 @@ export function createSolanaClient(
     const message = raw.slice(parsed.messageOffset);
     const fee = await rpc<{ context: { slot: number }; value: number | null }>(
       "getFeeForMessage",
-      [toBase64(message), { commitment: "confirmed" }],
+      [solanaBase64(message), { commitment: "confirmed" }],
     );
     const networkFee = nativeInteger(fee.value);
     const rent = accounts.length
@@ -490,7 +449,7 @@ export function createSolanaClient(
     const simulated = await rpc<{
       value: { err: unknown; accounts: ({ lamports: number } | null)[] | null };
     }>("simulateTransaction", [
-      toBase64(raw),
+      solanaBase64(raw),
       {
         encoding: "base64",
         sigVerify: false,
@@ -581,7 +540,7 @@ export function createSolanaClient(
         throw new Error(
           "Solana native journal lacks its reviewed signed bytes",
         );
-      const raw = fromBase64(send.rawTx);
+      const raw = solanaBase64Bytes(send.rawTx);
       const parsed = parseTransaction(raw);
       const message = raw.slice(parsed.messageOffset);
       const signature = raw.slice(
@@ -728,15 +687,53 @@ export function createSolanaClient(
       "getTokenAccountBalance",
       [account, { commitment: "confirmed" }],
     ).catch((error: Error) => {
-      if (/could not find account|Invalid param/iu.test(error.message))
-        return null;
+      // Only a proven absent account is an empty balance. It is the
+      // baseline of each simulation credit check.
+      if (/could not find account/iu.test(error.message)) return null;
       throw error;
     });
     return result ? BigInt(result.value.amount) : 0n;
   }
 
+  /** Simulates unsigned bytes and returns what they credit to `account`. */
+  async function simulatedCredit(
+    rawTx: string,
+    account: string,
+    label: string,
+  ): Promise<bigint> {
+    const before = await tokenAccountBalance(account);
+    const simulation = await rpc<{
+      value: {
+        err: unknown;
+        accounts: ({ data: [string, string] } | null)[] | null;
+      };
+    }>("simulateTransaction", [
+      rawTx,
+      {
+        encoding: "base64",
+        sigVerify: false,
+        replaceRecentBlockhash: false,
+        commitment: "confirmed",
+        accounts: { encoding: "base64", addresses: [account] },
+      },
+    ]);
+    if (simulation.value.err !== null)
+      throw new Error(
+        `${label} simulation failed: ${JSON.stringify(simulation.value.err).slice(0, 200)}`,
+      );
+    const simulated = simulation.value.accounts?.[0];
+    if (!simulated)
+      throw new Error(
+        `${label} simulation did not credit the ${label === "claim" ? "fee" : "USDC"} account`,
+      );
+    const data = solanaBase64Bytes(simulated.data[0]);
+    return (
+      new DataView(data.buffer, data.byteOffset).getBigUint64(64, true) - before
+    );
+  }
+
   async function broadcast(rawTx: string): Promise<void> {
-    const raw = fromBase64(rawTx);
+    const raw = solanaBase64Bytes(rawTx);
     const parsed = parseTransaction(raw);
     const expected = solanaBase58(
       raw.slice(parsed.messageOffset - 64, parsed.messageOffset),
@@ -812,16 +809,7 @@ export function createSolanaClient(
   async function claimReceipt(
     entry: FeeVault,
     txId: string,
-    transaction: {
-      slot: number;
-      transaction: { signatures: string[] };
-      meta: {
-        err: unknown;
-        preTokenBalances: TokenBalance[];
-        postTokenBalances: TokenBalance[];
-        logMessages: string[] | null;
-      };
-    },
+    transaction: TransactionReceipt,
   ) {
     if (
       !Number.isSafeInteger(transaction.slot) ||
@@ -847,7 +835,7 @@ export function createSolanaClient(
         programs.at(-1) === escrow.programId &&
         log.startsWith("Program data: ")
       ) {
-        const data = fromBase64(log.slice("Program data: ".length));
+        const data = solanaBase64Bytes(log.slice("Program data: ".length));
         if (!eventTag.every((byte, index) => data[index] === byte)) continue;
         if (
           amount !== null ||
@@ -933,34 +921,12 @@ export function createSolanaClient(
           data: instructionData("claim_fees"),
         },
       ]);
-      const before = await tokenAccountBalance(feeAccount);
-      const simulation = await rpc<{
-        value: {
-          err: unknown;
-          accounts: ({ data: [string, string] } | null)[] | null;
-        };
-      }>("simulateTransaction", [
-        toBase64(concat(Uint8Array.of(1), new Uint8Array(64), body)),
-        {
-          encoding: "base64",
-          sigVerify: false,
-          replaceRecentBlockhash: false,
-          commitment: "confirmed",
-          accounts: { encoding: "base64", addresses: [feeAccount] },
-        },
-      ]);
-      if (simulation.value.err !== null)
-        throw new Error(
-          `claim simulation failed: ${JSON.stringify(simulation.value.err).slice(0, 200)}`,
-        );
-      const simulated = simulation.value.accounts?.[0];
-      if (!simulated)
-        throw new Error("claim simulation did not credit the fee account");
-      const data = fromBase64(simulated.data[0]);
       if (
-        new DataView(data.buffer, data.byteOffset).getBigUint64(64, true) -
-          before <
-        amount
+        (await simulatedCredit(
+          solanaBase64(concat(Uint8Array.of(1), new Uint8Array(64), body)),
+          feeAccount,
+          "claim",
+        )) < amount
       )
         throw new Error("claim simulation credited less than the accrued fee");
 
@@ -974,7 +940,7 @@ export function createSolanaClient(
       );
       const signature = ed25519.sign(body, seed);
       const txId = solanaBase58(signature);
-      const rawTx = toBase64(concat(Uint8Array.of(1), signature, body));
+      const rawTx = solanaBase64(concat(Uint8Array.of(1), signature, body));
       await recordClaim({
         nativeGasId,
         txId,
@@ -1013,23 +979,17 @@ export function createSolanaClient(
 
       // Verify the executed FeesClaimed amount against both the fee wallet's
       // credit and the vault's debit before conversion.
-      const transaction = await rpc<{
-        slot: number;
-        transaction: { signatures: string[] };
-        meta: {
-          err: unknown;
-          preTokenBalances: TokenBalance[];
-          postTokenBalances: TokenBalance[];
-          logMessages: string[] | null;
-        };
-      } | null>("getTransaction", [
-        txId,
-        {
-          commitment: "confirmed",
-          encoding: "json",
-          maxSupportedTransactionVersion: 0,
-        },
-      ]);
+      const transaction = await rpc<TransactionReceipt | null>(
+        "getTransaction",
+        [
+          txId,
+          {
+            commitment: "confirmed",
+            encoding: "json",
+            maxSupportedTransactionVersion: 0,
+          },
+        ],
+      );
       if (!transaction || transaction.meta.err !== null)
         throw new Error(`claim ${txId} receipt is not available`);
       await claimReceipt(entry, txId, transaction);
@@ -1038,7 +998,6 @@ export function createSolanaClient(
   };
 
   return {
-    address: () => (seed ? wallet : null),
     vaultFees,
 
     reconcileNativeGas: reconcileNative,
@@ -1127,7 +1086,7 @@ export function createSolanaClient(
           },
         }),
       });
-      const raw = fromBase64(swap.swapTransaction);
+      const raw = solanaBase64Bytes(swap.swapTransaction);
       const parsed = parseTransaction(raw);
       if (
         parsed.signatureCount !== 1 ||
@@ -1162,36 +1121,10 @@ export function createSolanaClient(
       )
         throw new Error("Jupiter returned an invalid block height");
 
-      const usdcAccount = associatedTokenAccount(wallet, usdc);
-      const before = await tokenAccountBalance(usdcAccount);
-      const simulation = await rpc<{
-        value: {
-          err: unknown;
-          accounts: ({ data: [string, string] } | null)[] | null;
-        };
-      }>("simulateTransaction", [
-        toBase64(raw),
-        {
-          encoding: "base64",
-          sigVerify: false,
-          replaceRecentBlockhash: false,
-          commitment: "confirmed",
-          accounts: { encoding: "base64", addresses: [usdcAccount] },
-        },
-      ]);
-      if (simulation.value.err !== null)
-        throw new Error(
-          `swap simulation failed: ${JSON.stringify(simulation.value.err).slice(0, 200)}`,
-        );
-      const account = simulation.value.accounts?.[0];
-      if (!account)
-        throw new Error("swap simulation did not credit the USDC account");
-      const data = fromBase64(account.data[0]);
-      const after = new DataView(data.buffer, data.byteOffset).getBigUint64(
-        64,
-        true,
-      );
-      if (after - before < minAmountOut)
+      if (
+        (await simulatedCredit(solanaBase64(raw), ata(usdc, wallet), "swap")) <
+        minAmountOut
+      )
         throw new Error(
           "swap simulation returned less than the signed minimum",
         );
@@ -1207,7 +1140,7 @@ export function createSolanaClient(
       return {
         nativeGasId,
         txId: solanaBase58(signature),
-        rawTx: toBase64(raw),
+        rawTx: solanaBase64(raw),
         evmNonce: null,
         expiresAt: lastValidBlockHeight,
         approvalTxId: null,
@@ -1239,23 +1172,17 @@ export function createSolanaClient(
             kind: "failed",
             reason: `${row.kind === "claim" ? "claim" : "swap"} transaction failed on chain`,
           };
-        const transaction = await rpc<{
-          slot: number;
-          transaction: { signatures: string[] };
-          meta: {
-            err: unknown;
-            preTokenBalances: TokenBalance[];
-            postTokenBalances: TokenBalance[];
-            logMessages: string[] | null;
-          };
-        } | null>("getTransaction", [
-          row.txId,
-          {
-            commitment: "finalized",
-            encoding: "json",
-            maxSupportedTransactionVersion: 0,
-          },
-        ]);
+        const transaction = await rpc<TransactionReceipt | null>(
+          "getTransaction",
+          [
+            row.txId,
+            {
+              commitment: "finalized",
+              encoding: "json",
+              maxSupportedTransactionVersion: 0,
+            },
+          ],
+        );
         if (!transaction) return { kind: "pending" };
         if (row.kind === "claim")
           return {
@@ -1296,4 +1223,15 @@ interface TokenBalance {
   owner?: string;
   mint: string;
   uiTokenAmount: { amount: string };
+}
+/** The `getTransaction` fields a claim or swap receipt check reads. */
+interface TransactionReceipt {
+  slot: number;
+  transaction: { signatures: string[] };
+  meta: {
+    err: unknown;
+    preTokenBalances: TokenBalance[];
+    postTokenBalances: TokenBalance[];
+    logMessages: string[] | null;
+  };
 }

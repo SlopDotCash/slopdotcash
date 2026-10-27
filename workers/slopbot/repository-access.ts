@@ -7,11 +7,12 @@ import {
   parseRepositoryIdentity,
   REPOSITORY_READ_HEADER,
   REPOSITORY_READ_PATH,
+  REPOSITORY_READ_URL,
   type RepositoryAccess,
 } from "../../src/lib/project-contracts";
 import { appJwt } from "./github";
 
-export { REPOSITORY_READ_URL } from "../../src/lib/project-contracts";
+export { REPOSITORY_READ_URL };
 
 export const REPOSITORY_ACCESS_URL =
   "https://slopbot.internal/v1/repository-access";
@@ -164,6 +165,24 @@ export async function readRepositoryAccess(
       ? { repository: parseRepositoryIdentity(facts) }
       : {}),
   };
+}
+
+/** The internal repository routes, or null for any other request. Public
+ * hosts never match their origin.
+ */
+export function routeRepositoryAccess(
+  request: Request,
+  env: AccessEnv,
+  fetcher: typeof fetch = fetch,
+): Promise<Response> | null {
+  if (request.method !== "GET") return null;
+  const url = new URL(request.url);
+  const route = `${url.origin}${url.pathname}`;
+  if (route === REPOSITORY_ACCESS_URL)
+    return handleRepositoryAccess(request, env, fetcher);
+  if (route === REPOSITORY_READ_URL)
+    return handleRepositoryRead(request, env, fetcher);
+  return null;
 }
 
 /** Serves the internal route; public hosts never match its origin. */

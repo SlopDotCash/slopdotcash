@@ -58,6 +58,7 @@
     "src/lib/use-payout-wallets.ts",
     "src/lib/notifications.ts",
     "src/lib/github-actor.ts",
+    "src/lib/github-ids.ts",
     "vite.config.ts",
     "playwright.config.ts",
     "backend/**/*.ts",
