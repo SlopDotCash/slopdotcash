@@ -1804,9 +1804,11 @@ describe("private intake: analysis, access, privacy and mode", () => {
         expect(response.status).toBe(404);
       }
       const listed = await t.call(outsider, "GET", "security-submissions");
+      expect(listed.body.recipientGithubId).toBe(outsider.githubId);
       expect(listed.body.submissions).toEqual([]);
     }
     const own = await t.call(REPORTER, "GET", "security-submissions");
+    expect(own.body.recipientGithubId).toBe(REPORTER.githubId);
     expect((own.body.submissions as { id: string }[]).map((s) => s.id)).toEqual(
       [submission.id],
     );
@@ -1894,7 +1896,11 @@ describe("private intake: analysis, access, privacy and mode", () => {
     const t = setup({ mode: "off" });
     const listed = await t.call(REPORTER, "GET", "security-submissions");
     expect(listed.status).toBe(200);
-    expect(listed.body).toEqual({ automatic: false, submissions: [] });
+    expect(listed.body).toEqual({
+      recipientGithubId: REPORTER.githubId,
+      automatic: false,
+      submissions: [],
+    });
     for (const [method, path] of [
       ["POST", "security-submissions"],
       ["POST", "security-submissions/ss_case00000001/send"],

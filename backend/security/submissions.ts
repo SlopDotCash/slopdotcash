@@ -1288,6 +1288,7 @@ async function listSubmissions(
   const rows: SubmissionRow[] = [];
   for (const row of result.results ?? []) rows.push(await settle(deps, row));
   return json(200, {
+    recipientGithubId: actor.githubId,
     automatic: true,
     submissions: rows.map(submissionView),
   });
@@ -1331,8 +1332,12 @@ export async function handleSubmissionRoute(
   // reads submissions while intake is off.
   if (request.method === "GET" && parts.length === 1) {
     if (deps.intake?.mode !== "on") {
-      await requireActor(request, deps);
-      return json(200, { automatic: false, submissions: [] });
+      const actor = await requireActor(request, deps);
+      return json(200, {
+        recipientGithubId: actor.githubId,
+        automatic: false,
+        submissions: [],
+      });
     }
     return listSubmissions(request, deps);
   }

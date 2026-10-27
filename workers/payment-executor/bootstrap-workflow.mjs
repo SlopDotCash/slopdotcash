@@ -297,20 +297,20 @@ export default {
           }),
         },
       );
+      await response.text();
       if (config.name === "slop-payments-base-mainnet-attester")
         assert.equal(response.status, status, path);
       else assert(response.status >= 400, `${config.name} accepted ${path}`);
-      await response.text();
     }
     const scheduled = await runtime.dispatchFetch(
       "https://attester.internal/fixture/scheduled",
     );
+    await scheduled.text();
     assert.equal(
       scheduled.status,
       409,
       "An accidental empty cron must fail visibly",
     );
-    await scheduled.text();
     const observation = await runtime.dispatchFetch(
       "https://attester.internal/fixture/accesses",
     );

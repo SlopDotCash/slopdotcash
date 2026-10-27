@@ -153,7 +153,16 @@ export function PayoutAmount({
 }) {
   return (
     <span className="payout-value" title={title}>
-      <strong>{formatBaseUnits(base, decimals)}</strong>
+      {/* biome-ignore lint/a11y/useSemanticElements: A labelled scroll region must remain inline within amount text. */}
+      <span
+        className="payout-exact"
+        role="region"
+        aria-label="Exact amount"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the exact value.
+        tabIndex={0}
+      >
+        <strong>{formatBaseUnits(base, decimals)}</strong>
+      </span>
       {symbol ? (
         <span className="payout-unit">{symbol}</span>
       ) : (
@@ -195,8 +204,26 @@ export function NetAmount({
         address={payout.assetAddress}
       />
       <small>
-        Gross {formatAssetAmount(payout.grossBase, payout)} · fee{" "}
-        {formatAssetAmount(payout.feeBase, payout)}
+        {/* biome-ignore lint/a11y/useSemanticElements: A labelled scroll region must remain inline within amount text. */}
+        <span
+          className="payout-exact"
+          role="region"
+          aria-label="Gross amount"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the exact value.
+          tabIndex={0}
+        >
+          Gross {formatAssetAmount(payout.grossBase, payout)}
+        </span>
+        {/* biome-ignore lint/a11y/useSemanticElements: A labelled scroll region must remain inline within amount text. */}
+        <span
+          className="payout-exact"
+          role="region"
+          aria-label="Fee amount"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the exact value.
+          tabIndex={0}
+        >
+          fee {formatAssetAmount(payout.feeBase, payout)}
+        </span>
       </small>
     </span>
   );

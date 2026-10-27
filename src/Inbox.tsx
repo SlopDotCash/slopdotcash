@@ -173,11 +173,13 @@ export default function InboxPage() {
     const current = ++reportsGeneration.current;
     if (recipient === null || !needsReports) return;
     setReportsError(null);
-    void projectApiRequest<{ submissions: Submission[] }>(
-      "GET",
-      "security-submissions",
-    )
+    void projectApiRequest<{
+      recipientGithubId: string;
+      submissions: Submission[];
+    }>("GET", "security-submissions")
       .then(async (body) => {
+        if (body.recipientGithubId !== recipient)
+          throw new Error("Private report response belongs to another account");
         const session = await currentProjectSession();
         if (current !== reportsGeneration.current) return;
         if (session?.githubId !== recipient) {
