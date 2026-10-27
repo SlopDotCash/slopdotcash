@@ -1,6 +1,10 @@
 name: Migrate production environment secrets
 
-# One-time rename of the eliza-army-production environment to slop-production.
+# Preparatory utility for a separately reviewed and authorized environment
+# migration. Do not dispatch it merely because this workflow is merged.
+# The normal release still uses eliza-army-production; this does not switch it.
+# Before authorized use, reverify the target environment public key and
+# main-only access policy against the values reviewed here.
 # GitHub cannot rename an environment or reveal a secret, so this job seals
 # each production secret to the fixed slop-production public key below and
 # uploads only that ciphertext. An operator PUTs it into slop-production; only
