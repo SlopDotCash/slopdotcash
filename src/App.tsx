@@ -1081,7 +1081,7 @@ function ProjectPaymentHistory({
             Paid {formatDate(paidOn)} for {formatCycleMonth(month)} work ·{" "}
             {count} transfers ·{" "}
             <ExternalLinkAnchor
-              href={`${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/disclosures/${project.id}-${month}-direct-payments.json`}
+              href={`${browserDeployment.site}/api/v1/payments/projects/${project.id}/direct-transfers`}
             >
               Disclosure
             </ExternalLinkAnchor>
