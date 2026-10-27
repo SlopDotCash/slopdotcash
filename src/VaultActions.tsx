@@ -329,20 +329,26 @@ export function VaultActions({
           {networkLabel(deployment.network)}
         </NetworkName>
       </h3>
-      <dl className="vault-addresses">
-        <div>
-          <dt>Vault</dt>
-          <dd>
-            <code>{deployment.vault}</code>
-          </dd>
-        </div>
-        <div>
-          <dt>Token</dt>
-          <dd>
-            <code>{deployment.asset}</code>
-          </dd>
-        </div>
-      </dl>
+      <details
+        className="vault-contract-details"
+        open={Boolean(review || pending)}
+      >
+        <summary>Contract details</summary>
+        <dl className="vault-addresses">
+          <div>
+            <dt>Vault</dt>
+            <dd>
+              <code>{deployment.vault}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>Token</dt>
+            <dd>
+              <code>{deployment.asset}</code>
+            </dd>
+          </div>
+        </dl>
+      </details>
       <p className="setup-badge setup-badge--warning">
         <CircleAlert aria-hidden="true" size={14} />
         Direct transfers are not credited

@@ -4218,8 +4218,7 @@ html:has(.security-page) {
   background: var(--surface);
 }
 
-.vault-stat dt,
-.vault-stat--placeholder > span:first-child {
+.vault-stat dt {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -4228,8 +4227,7 @@ html:has(.security-page) {
   font-weight: 700;
 }
 
-.vault-stat dd,
-.vault-stat--placeholder > span:last-child {
+.vault-stat dd {
   margin: 0;
   overflow-wrap: anywhere;
   font-family: var(--brand-font-data);
@@ -4246,10 +4244,6 @@ html:has(.security-page) {
   font-family: inherit;
   font-size: 13px;
   font-weight: 500;
-}
-
-.vault-stat--placeholder > span:last-child {
-  color: var(--faint);
 }
 
 .vault-finality {
