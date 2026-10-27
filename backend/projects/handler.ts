@@ -2760,6 +2760,22 @@ export async function handleProjectApi(
         return await ownerVault(request, deps, parts[1]);
       case "GET project-setup":
         return await listSetup(request, deps);
+      case "GET project-setup/:id": {
+        const session = await requireSession(request, deps);
+        const project = await deps.persistence.getProject(parts[1]);
+        if (project === null) fail(404, "not_found", "Project not found");
+        const actor = actorOf(session);
+        const checked = await currentAuthority(deps, project.manifest, actor);
+        requireAuthority(checked);
+        return json(200, {
+          viewer: { githubId: actor.githubId },
+          canManageBounty: isProjectStewardOrAdmin(
+            project.manifest,
+            actor,
+            checked.access,
+          ),
+        });
+      }
       case "POST project-setup/:id/check":
         return await checkSetup(request, deps, parts[1]);
       case "GET project-applications/mine":

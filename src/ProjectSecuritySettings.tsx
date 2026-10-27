@@ -22,37 +22,46 @@ export function ProjectSecuritySettings({
   );
   const [open, setOpen] = useState(opened);
   const [permitted, setPermitted] = useState<string | null>(null);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [permissionAttempt, setPermissionAttempt] = useState(0);
   const actorId =
     session.status === "signed-in" ? session.session.githubId : null;
   useEffect(() => {
     let active = true;
     setPermitted(null);
-    if (actorId)
+    setPermissionError(null);
+    if (actorId && opened)
       projectApiRequest<{
         viewer: { githubId: string };
-        programs: { projectId: string; roles: string[] }[];
-      }>("GET", "security-cases").then(
+        canManageBounty: boolean;
+      }>(
+        "GET",
+        `project-setup/${encodeURIComponent(project.id)}?attempt=${permissionAttempt}`,
+      ).then(
         (result) => {
-          if (
-            active &&
-            result.viewer.githubId === actorId &&
-            result.programs.some(
-              (entry) =>
-                entry.projectId === project.id &&
-                entry.roles.includes("security-maintainer"),
-            )
-          )
+          if (!active) return;
+          if (result.viewer.githubId === actorId && result.canManageBounty)
             setPermitted(actorId);
+          else
+            setPermissionError(
+              "Only the current project steward or a repository administrator can manage this bounty.",
+            );
         },
-        () => {
-          /* No owner controls without a current authority result. */
+        (error: unknown) => {
+          if (active)
+            setPermissionError(
+              errorMessage(
+                error,
+                "Current project access could not be checked.",
+              ),
+            );
         },
       );
     return () => {
       active = false;
     };
-  }, [actorId, project.id]);
-  if (session.status !== "signed-in" || permitted !== actorId) return null;
+  }, [actorId, project.id, opened, permissionAttempt]);
+  if (session.status !== "signed-in") return null;
   return (
     <details
       className="proposal-advanced"
@@ -64,7 +73,23 @@ export function ProjectSecuritySettings({
       open={open}
     >
       <summary>Manage security program and private bounty funds</summary>
-      {opened ? (
+      {opened && permitted !== actorId ? (
+        permissionError ? (
+          <div role="alert">
+            <p>{permissionError}</p>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setPermissionAttempt((value) => value + 1)}
+            >
+              Retry management access
+            </button>
+          </div>
+        ) : (
+          <p role="status">Checking current project access…</p>
+        )
+      ) : null}
+      {opened && permitted === actorId ? (
         <SecuritySettingsEditor
           actor={session.session}
           key={`${project.id}:${session.session.githubId}`}
