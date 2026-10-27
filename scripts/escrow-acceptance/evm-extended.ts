@@ -1534,7 +1534,7 @@ export async function runEvmExtended(
             "monthly:owner-commit",
             keys.owner,
             vault,
-            await commitData(periods.open, full),
+            (await commitData(periods.open, full)) as Hex,
           )
         ).transactionHash;
         const path = "owner";
