@@ -1,5 +1,3 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
 import {
   type CensusRequest,
   collectProfileIssues,
@@ -14,15 +12,11 @@ import {
   profileIssueOutcomes,
 } from "../../src/lib/profiles";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
+import { expect, expectAccessible, test } from "./fixtures";
 
 test("profiles preserve legacy coverage and expose recorded issue history", async ({
   page,
 }, info) => {
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
-  });
   const failures: string[] = [];
   page.on("response", (r) => {
     if (
@@ -106,13 +100,7 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
   expect(
     await page.evaluate(() => document.activeElement !== document.body),
   ).toBe(true);
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("individual-profile.png"),
     fullPage: true,
@@ -192,13 +180,7 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
     })
     .filter({ hasText: "Reopened" });
   await expect(reopenedRecord.first()).toBeVisible();
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,
@@ -209,7 +191,6 @@ test("profiles preserve legacy coverage and expose recorded issue history", asyn
     fullPage: true,
   });
   expect(walletRequests).toEqual(expectedWalletRequests);
-  expect(errors).toEqual([]);
   expect(failures).toEqual([]);
 });
 

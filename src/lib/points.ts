@@ -261,14 +261,17 @@ export function pointKey(
     ]),
   );
 }
-export function pointsForScore(
+/** One legacy credit-third is ten Slop Points. */
+export const POINTS_PER_THIRD = 10;
+
+function pointsForScore(
   event: Pick<ScoreEvent, "scoreThirds" | "points"> &
     Partial<Pick<ScoreEvent, "category" | "scoreDecisionSourceId">>,
 ): number {
   const amount =
     event.scoreThirds === undefined
-      ? event.points * 30
-      : event.scoreThirds * 10;
+      ? event.points * (3 * POINTS_PER_THIRD)
+      : event.scoreThirds * POINTS_PER_THIRD;
   const assessedZero =
     amount === 0 &&
     event.category === "merged-pull-request" &&

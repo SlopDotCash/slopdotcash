@@ -39,15 +39,13 @@ export const E2E_SECURITY_ACCOUNTS = Object.freeze({
 });
 
 /**
- * One maintainer session per browser viewport. A moderator bans each one
- * with its project after a confirmed malicious result, so the shared D1
- * keeps every other session able to list projects.
+ * One maintainer session per Chromium project that runs the registry specs. A
+ * moderator bans each one with its project after a confirmed malicious result,
+ * so the shared D1 keeps every other session able to list projects.
  */
 export const E2E_MAINTAINER_ACCOUNTS = Object.freeze({
-  "maintainer-wide-desktop": "900000021",
-  "maintainer-desktop": "900000022",
-  "maintainer-tablet": "900000023",
-  "maintainer-narrow-mobile": "900000024",
+  "maintainer-desktop": "900000021",
+  "maintainer-mobile": "900000024",
 });
 
 /** A fixture user's GitHub actor ID, from its `e2e-<role>` login. */
@@ -618,16 +616,14 @@ export function startGitHubApiFixture(port) {
       response.end(
         JSON.stringify(
           ownedRepositories[1] === E2E_OWNER.login
-            ? ["wide-desktop", "desktop", "tablet", "narrow-mobile"].map(
-                (suffix) => ({
-                  ...fixtureRepository(
-                    `${E2E_OWNER.login}/owned-registry-${suffix}`,
-                  ),
-                  private: false,
-                  fork: false,
-                  archived: false,
-                }),
-              )
+            ? ["desktop", "mobile"].map((suffix) => ({
+                ...fixtureRepository(
+                  `${E2E_OWNER.login}/owned-registry-${suffix}`,
+                ),
+                private: false,
+                fork: false,
+                archived: false,
+              }))
             : [],
         ),
       );

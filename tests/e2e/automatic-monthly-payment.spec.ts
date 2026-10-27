@@ -1,8 +1,12 @@
 /** Browser-only wallet fixture; the full on-chain flow runs in vault-actions.spec.ts against Anvil. */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
 import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import {
+  expect,
+  expectAccessible,
+  serveProjectCycleIndex,
+  test,
+} from "./fixtures";
 
 const owner = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
 const other = "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
@@ -46,11 +50,6 @@ test("automatic monthly payment starts checked and only the vault owner can sign
       deployments: [deployment],
     },
   };
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (event) => {
-    if (event.type() === "error") errors.push(event.text());
-  });
   const methods: string[] = [];
   await page.exposeFunction("monthlyFixtureRequest", (method: string) => {
     methods.push(method);
@@ -80,6 +79,7 @@ test("automatic monthly payment starts checked and only the vault owner can sign
   await page.route("**/api/v1/projects/eliza", (route) =>
     route.fulfill({ json: { project, revision: 1 } }),
   );
+  await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
     route.fulfill({
       json: {
@@ -149,12 +149,5 @@ test("automatic monthly payment starts checked and only the vault owner can sign
     path: info.outputPath("automatic-monthly-payment-200-percent-text.png"),
     fullPage: true,
   });
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
-  expect(errors).toEqual([]);
+  await expectAccessible(page);
 });

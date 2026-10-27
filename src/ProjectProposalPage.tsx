@@ -2,7 +2,14 @@ import { ArrowLeft, ArrowRight } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
+import { formatBaseUnits } from "./lib/base-units.mjs";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
+import {
+  CONTRIBUTION_LABELS,
+  SKILL_RULE_FIELDS,
+  type SkillRuleField,
+} from "./lib/contribution-fields";
+import { errorMessage } from "./lib/errors";
 import {
   ESCROW_PAYOUT_FEE_BASIS_POINTS,
   ESCROW_WITHDRAWAL_FEE_BASIS_POINTS,
@@ -41,13 +48,13 @@ import {
 } from "./lib/project-proposal";
 import { classifyRevisionChanges } from "./lib/project-revision-changes";
 import {
-  formatAssetAmount,
   monthlyAmountDisplay,
   PROJECT_SKILL_TEMPLATES,
   parseAssetAmount,
 } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
+  NETWORK_NAMES,
   REWARD_ASSET_NETWORKS,
   type RewardAssetNetwork,
   rewardAssetChoice,
@@ -57,12 +64,7 @@ import { loginHref } from "./Points";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 import { SecurityProgramEditor } from "./SecurityProgramEditor";
 
-const SETTLEMENT_CHAIN_NAMES: Record<string, string> = Object.fromEntries(
-  Object.entries(REWARD_ASSET_NETWORKS).map(([id, network]) => [
-    id,
-    network.name,
-  ]),
-);
+const SETTLEMENT_CHAIN_NAMES: Record<string, string> = NETWORK_NAMES;
 const PROPOSAL_DRAFT_KEY = "slop:project-proposal:v1";
 const PROPOSAL_STEP_KEY = `${PROPOSAL_DRAFT_KEY}:step`;
 /**
@@ -127,51 +129,6 @@ const EMPTY_PROPOSAL = {
   assignmentSignedAt: "",
 };
 type Proposal = typeof EMPTY_PROPOSAL;
-/** Maintainer-authored rules that, with the scope, generate the skills. */
-const SKILL_RULE_FIELDS = [
-  "contributionGuide",
-  "supportedTasks",
-  "requiredTests",
-  "reviewExpectations",
-  "securityContact",
-  "closurePolicy",
-  "maintainerNotes",
-] as const;
-const SKILL_RULE_LABELS: Record<
-  (typeof SKILL_RULE_FIELDS)[number],
-  { label: string; placeholder: string }
-> = {
-  contributionGuide: {
-    label: "Contribution guide",
-    placeholder:
-      "How should a contributor set up, branch and submit? Leave empty to follow the repository's CONTRIBUTING.md.",
-  },
-  supportedTasks: {
-    label: "Supported tasks",
-    placeholder:
-      "Which kinds of work do you want, for example bug fixes or benchmark runs?",
-  },
-  requiredTests: {
-    label: "Required tests",
-    placeholder: "Which commands or workflows must pass before a pull request?",
-  },
-  reviewExpectations: {
-    label: "Review expectations",
-    placeholder: "What evidence must a pull request show for review?",
-  },
-  securityContact: {
-    label: "Security contact",
-    placeholder: "Where should security reports go privately?",
-  },
-  closurePolicy: {
-    label: "Closure policy",
-    placeholder: "When do maintainers close or decline a pull request?",
-  },
-  maintainerNotes: {
-    label: "Maintainer notes",
-    placeholder: "Anything else contributors should know.",
-  },
-};
 type ProposalField = keyof Proposal;
 type FieldErrors = Partial<Record<ProposalField, string>>;
 
@@ -616,10 +573,10 @@ function RepositoryPicker({
         if (!controller.signal.aborted)
           setList({
             status: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Your repositories could not be loaded.",
+            message: errorMessage(
+              error,
+              "Your repositories could not be loaded.",
+            ),
           });
       },
     );
@@ -1148,7 +1105,7 @@ export default function ProjectProposalPage() {
           "Define exact accepted outcomes with the maintainer.",
         ...(Object.fromEntries(
           SKILL_RULE_FIELDS.map((field) => [field, p[field].trim()]),
-        ) as Record<(typeof SKILL_RULE_FIELDS)[number], string>),
+        ) as Record<SkillRuleField, string>),
       },
       ...(p.automaticClosure === "true"
         ? { slopbot: { automaticClosure: true } }
@@ -1206,10 +1163,7 @@ export default function ProjectProposalPage() {
       (error: unknown) =>
         setSubmission({
           status: "error",
-          message:
-            error instanceof Error
-              ? error.message
-              : "The project was not created.",
+          message: errorMessage(error, "The project was not created."),
           install:
             error instanceof ProjectApiError &&
             error.code === "slopbot_required",
@@ -1318,7 +1272,7 @@ export default function ProjectProposalPage() {
       if (controller.signal.aborted) return;
       setLookup({
         state: "error",
-        message: `${error instanceof Error ? error.message : "GitHub lookup failed."} Nothing was filled in. Enter the facts by hand or try again.`,
+        message: `${errorMessage(error, "GitHub lookup failed.")} Nothing was filled in. Enter the facts by hand or try again.`,
       });
       setFactsOpen(true);
     }
@@ -1635,11 +1589,11 @@ export default function ProjectProposalPage() {
                 <TextField
                   error={shown(field)}
                   key={field}
-                  label={SKILL_RULE_LABELS[field].label}
+                  label={CONTRIBUTION_LABELS[field].label}
                   multiline
                   name={field}
                   onChange={set(field)}
-                  placeholder={SKILL_RULE_LABELS[field].placeholder}
+                  placeholder={CONTRIBUTION_LABELS[field].placeholder}
                   value={p[field]}
                 />
               ))}
@@ -1979,7 +1933,7 @@ type UpdateDraft = {
   tokenAddress: string;
   tokenSymbol: string;
   monthlyAmount: string;
-} & Record<(typeof SKILL_RULE_FIELDS)[number], string>;
+} & Record<SkillRuleField, string>;
 
 const DRAFT_FIELDS = [
   "automaticClosure",
@@ -2030,9 +1984,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       (error) => {
         if (active)
           setLoadError(
-            error instanceof Error
-              ? error.message
-              : "Cannot read the current revision.",
+            errorMessage(error, "Cannot read the current revision."),
           );
       },
     );
@@ -2068,13 +2020,13 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     monthlyAmount:
       capMinor === "0"
         ? ""
-        : formatAssetAmount(capMinor, decimals).replaceAll(",", ""),
+        : formatBaseUnits(capMinor, decimals, { grouping: false }),
     ...(Object.fromEntries(
       SKILL_RULE_FIELDS.map((field) => [
         field,
         current.contribution?.[field] ?? "",
       ]),
-    ) as Record<(typeof SKILL_RULE_FIELDS)[number], string>),
+    ) as Record<SkillRuleField, string>),
   };
   const key = `slop:project-update:v2:${project.id}`;
   const [saved] = useState(() => {
@@ -2135,7 +2087,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   };
   const amount = monthlyPoolValue(value.monthlyAmount);
   // The amount in the current asset's base units; null when it cannot be
-  // written with that asset's decimals. The server then refuses it.
+  // written with that asset's decimals.
   let amountMinor: string | null = null;
   if (amount.valid)
     try {
@@ -2197,6 +2149,15 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         (field) =>
           draft[field] !== undefined && draft[field] !== initial[field],
       ));
+  // A kept asset cannot hold more decimals than it has; the server would
+  // refuse the amount.
+  if (
+    choice.mode === "monthly" &&
+    amount.valid &&
+    amountMinor === null &&
+    (assetFixed || !assetTouched)
+  )
+    errors.monthlyAmount = `${current.rewardAsset?.symbol ?? "This asset"} allows at most ${decimals} decimal places.`;
   /** The submitted manifest: the current revision with the owner's edits. */
   const next = ((): ProjectDefinition => {
     const source = current;
@@ -2284,7 +2245,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
     },
     ...SKILL_RULE_FIELDS.map((field) => ({
       field,
-      label: SKILL_RULE_LABELS[field].label,
+      label: CONTRIBUTION_LABELS[field].label,
       before: current.contribution?.[field] ?? "",
       after: next.contribution?.[field] ?? "",
     })),
@@ -2343,10 +2304,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         state: "error",
         staleRevision:
           error instanceof ProjectApiError && error.code === "stale_revision",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Changes were not published.",
+        message: errorMessage(error, "Changes were not published."),
       });
     }
   }
@@ -2431,11 +2389,11 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             <TextField
               error={shown(field)}
               key={field}
-              label={SKILL_RULE_LABELS[field].label}
+              label={CONTRIBUTION_LABELS[field].label}
               multiline
               name={field}
               onChange={set(field)}
-              placeholder={SKILL_RULE_LABELS[field].placeholder}
+              placeholder={CONTRIBUTION_LABELS[field].placeholder}
               value={value[field]}
             />
           ))}
@@ -2731,10 +2689,7 @@ function OwnerProjects({ refreshKey }: { refreshKey: string }) {
         if (active)
           setState({
             status: "error",
-            message:
-              caught instanceof Error
-                ? caught.message
-                : "Your projects are unavailable.",
+            message: errorMessage(caught, "Your projects are unavailable."),
           });
       },
     );
@@ -2810,10 +2765,10 @@ function OwnerProjects({ refreshKey }: { refreshKey: string }) {
                           setPublishing({
                             id: application.id,
                             state: "error",
-                            message:
-                              caught instanceof Error
-                                ? caught.message
-                                : "The application was not published.",
+                            message: errorMessage(
+                              caught,
+                              "The application was not published.",
+                            ),
                           }),
                       );
                     }}

@@ -1,7 +1,9 @@
 /** Signed-in inbox for account, project and payment events (PRD NOT-01). */
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InboxEmail } from "./InboxEmail";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import {
   emailDeliveryLabel,
   MAX_NOTIFICATION_MARK,
@@ -11,6 +13,7 @@ import {
   notificationTitle,
   parseNotificationsResponse,
 } from "./lib/notifications";
+import { useAction } from "./lib/use-action";
 import { loginHref } from "./Points";
 import { formatDateTime } from "./Presentation";
 
@@ -80,12 +83,11 @@ async function acknowledgeSecurity(
   return "ok";
 }
 
-export function InboxPage() {
+export default function InboxPage() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [previousPages, setPreviousPages] = useState<(string | null)[]>([]);
   const [state, setState] = useState<InboxState>({ status: "loading" });
-  const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState("");
+  const { busy, error: actionError, run } = useAction();
   const [message, setMessage] = useState("");
   const generation = useRef(0);
   const load = useCallback(() => {
@@ -105,26 +107,23 @@ export function InboxPage() {
   }, [cursor]);
   useEffect(() => load(), [load]);
 
-  async function act(action: () => Promise<"ok" | "signed-out">, done: string) {
-    setBusy(true);
-    setActionError("");
+  function act(action: () => Promise<"ok" | "signed-out">, done: string) {
     setMessage("");
-    try {
-      if ((await action()) === "signed-out") {
-        setState({ status: "signed-out" });
-        return;
-      }
-      const current = ++generation.current;
-      const next = await loadInbox(new AbortController().signal, cursor);
-      if (generation.current === current) {
-        setState(next);
-        setMessage(done);
-      }
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : UNAVAILABLE);
-    } finally {
-      setBusy(false);
-    }
+    return run(
+      async () => {
+        if ((await action()) === "signed-out") {
+          setState({ status: "signed-out" });
+          return;
+        }
+        const current = ++generation.current;
+        const next = await loadInbox(new AbortController().signal, cursor);
+        if (generation.current === current) {
+          setState(next);
+          setMessage(done);
+        }
+      },
+      (error) => errorMessage(error, UNAVAILABLE),
+    );
   }
 
   return (
@@ -325,5 +324,3 @@ function InboxItem({
     </li>
   );
 }
-
-export default InboxPage;

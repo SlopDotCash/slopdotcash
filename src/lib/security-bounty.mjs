@@ -1,8 +1,16 @@
+import { formatBaseUnits } from "./base-units.mjs";
 import {
   assertEscrowTransition,
   assertSecurityEscrowPolicy,
+  ESCROW_CHAINS,
   ESCROW_NETWORKS,
 } from "./escrow-policy.mjs";
+import {
+  isExactUtc,
+  readRecord,
+  exactKeys as sharedExactKeys,
+} from "./record-validation.mjs";
+
 /**
  * Public terms of a private security bounty program (PRD SEC-01, SEC-05,
  * SEC-06, SEC-18). The terms live in the project's D1 manifest revision as
@@ -10,14 +18,14 @@ import {
  * never enters this structure; it stays in the restricted case tables.
  */
 
-export const SECURITY_PROGRAM_STATUSES = Object.freeze([
+const SECURITY_PROGRAM_STATUSES = Object.freeze([
   "draft",
   "pending-approval",
   "open",
   "paused",
   "closed",
 ]);
-export const SECURITY_REWARD_MODES = Object.freeze(["bounty-only", "separate"]);
+const SECURITY_REWARD_MODES = Object.freeze(["bounty-only", "separate"]);
 /** The owner-approved split: researcher 75%, Slop 25% of the gross amount. */
 export const SECURITY_SPLIT = Object.freeze({
   researcherBasisPoints: 7500,
@@ -25,7 +33,7 @@ export const SECURITY_SPLIT = Object.freeze({
 });
 const CURRENCIES = Object.freeze({
   USD: { decimals: 2, networks: [null] },
-  USDC: { decimals: 6, networks: ["base", "ethereum", "robinhood", "solana"] },
+  USDC: { decimals: 6, networks: ESCROW_CHAINS },
 });
 /** At most 10^15 minor units, the same bound as the monthly pool cap. */
 const MAX_GROSS_MINOR = 1_000_000_000_000_000n;
@@ -54,16 +62,11 @@ function fail(field, problem = "is invalid") {
   throw new TypeError(`project.securityBounty.${field} ${problem}`);
 }
 
-function record(value, field) {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    fail(field, "must be an object");
-  return value;
-}
+const record = (value, field) =>
+  readRecord(value, `project.securityBounty.${field}`);
 
-function exactKeys(value, keys, field) {
-  if (Object.keys(value).sort().join("\0") !== [...keys].sort().join("\0"))
-    fail(field, "has unexpected or missing fields");
-}
+const exactKeys = (value, keys, field) =>
+  sharedExactKeys(value, keys, `project.securityBounty.${field}`);
 
 function text(value, field, max = 2000, min = 1, pattern = undefined) {
   if (
@@ -83,8 +86,7 @@ function integer(value, field, min, max) {
 }
 
 function timestamp(value, field) {
-  text(value, field, 24, 24, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
-  if (new Date(value).toISOString() !== value) fail(field);
+  if (!isExactUtc(value)) fail(field);
   return value;
 }
 
@@ -117,16 +119,7 @@ export function securityBountySplit(grossMinor) {
 
 /** Formats integer minor units without floating-point conversion. */
 export function formatSecurityAmount(minorUnits, amount) {
-  const value = BigInt(minorUnits);
-  const scale = 10n ** BigInt(amount.decimals);
-  const whole = (value / scale)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/gu, ",");
-  const fraction = (value % scale)
-    .toString()
-    .padStart(amount.decimals, "0")
-    .replace(/0+$/u, "");
-  const number = fraction ? `${whole}.${fraction}` : whole;
+  const number = formatBaseUnits(minorUnits, amount.decimals);
   return amount.currency === "USD" ? `$${number}` : `${number} USDC`;
 }
 

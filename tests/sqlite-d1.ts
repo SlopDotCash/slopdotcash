@@ -2,16 +2,51 @@
  * Runs D1 statements against a SQLite database with the real migrations, so
  * registry tests exercise the actual tables and triggers. The database is in
  * memory unless `file` names one; a caller reopening a file passes no
- * migrations.
+ * migrations. Each process applies one migration list once and gives every
+ * in-memory caller its own copy of that image.
  */
 import { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ProjectD1Database } from "../backend/projects/cloudflare-persistence";
 
 type Statement = ReturnType<ProjectD1Database["prepare"]> & {
   runSync(): { success: boolean; meta: { changes: number } };
 };
+
+const root = resolve(import.meta.dir, "..", "migrations");
+
+/** Every repository migration in apply order. */
+export const MIGRATIONS = readdirSync(root)
+  .filter((name) => name.endsWith(".sql"))
+  .sort();
+
+function migrate(sqlite: Database, migrations: string[]) {
+  for (const migration of migrations)
+    sqlite.exec(readFileSync(join(root, migration), "utf8"));
+}
+
+// Migrations leave the connection with foreign keys on; a deserialized copy
+// starts with them off, so each copy restores the migrated connection's value.
+const images = new Map<string, { bytes: Uint8Array; foreignKeys: number }>();
+
+function migratedCopy(migrations: string[]): Database {
+  const key = migrations.join("\n");
+  let image = images.get(key);
+  if (!image) {
+    const source = new Database(":memory:");
+    migrate(source, migrations);
+    const { foreign_keys } = source.query("PRAGMA foreign_keys").get() as {
+      foreign_keys: number;
+    };
+    image = { bytes: source.serialize(), foreignKeys: foreign_keys };
+    source.close();
+    images.set(key, image);
+  }
+  const sqlite = Database.deserialize(image.bytes);
+  sqlite.exec(`PRAGMA foreign_keys = ${image.foreignKeys}`);
+  return sqlite;
+}
 
 export function sqliteD1(
   migrations: string[],
@@ -20,10 +55,13 @@ export function sqliteD1(
   db: ProjectD1Database;
   sqlite: Database;
 } {
-  const sqlite = new Database(file);
-  const root = resolve(import.meta.dir, "..", "migrations");
-  for (const migration of migrations)
-    sqlite.exec(readFileSync(join(root, migration), "utf8"));
+  let sqlite: Database;
+  if (file === ":memory:" && migrations.length > 0)
+    sqlite = migratedCopy(migrations);
+  else {
+    sqlite = new Database(file);
+    migrate(sqlite, migrations);
+  }
   const statement = (sql: string, values: unknown[] = []): Statement => {
     const params = values as never[];
     const runSync = () => ({

@@ -1,13 +1,3 @@
-import type { EscrowChain } from "./escrow-policy.mjs";
-
-/** Display name of each approved chain. */
-export const CHAIN_NAMES: Record<EscrowChain, string> = {
-  base: "Base",
-  solana: "Solana",
-  robinhood: "Robinhood Chain",
-  ethereum: "Ethereum",
-};
-
 // Network names only: each amount names its own vault asset.
 const NETWORK_LABELS: Record<string, string> = {
   "base-mainnet": "Base",

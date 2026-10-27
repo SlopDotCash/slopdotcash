@@ -1,6 +1,6 @@
 /**
  * Explicit payout exclusions (PRD section 7): owners, funded employees and
- * related parties keep their public Slop Score but receive no share of a
+ * related parties keep their public Points but receive no share of a
  * project's pool. An excluded weight leaves the allocation, so it never
  * reduces another contributor's share. Changes apply prospectively: a
  * revision may not change who is excluded in the open UTC month or earlier.
@@ -11,7 +11,7 @@
 
 import { githubUserIdFromNodeId } from "./github-actor.ts";
 
-export const PAYOUT_EXCLUSION_RELATIONSHIPS = Object.freeze([
+const PAYOUT_EXCLUSION_RELATIONSHIPS = Object.freeze([
   "owner",
   "funded-employee",
   "related-party",

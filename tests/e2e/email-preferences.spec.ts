@@ -1,6 +1,5 @@
 /** Actual Pages session + D1 preferences + shipped local notify Worker. No real email is sent. */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, expectAccessible, test } from "./fixtures";
 
 test("verified activity email preference persists and can be withdrawn @registry", async ({
   browser,
@@ -15,21 +14,6 @@ test("verified activity email preference persists and can be withdrawn @registry
     recordVideo: { dir: test.info().outputPath("email-preference-video") },
   });
   const page = await context.newPage();
-  const errors: string[] = [];
-  const failures: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("response", (response) => {
-    if (
-      new URL(response.url()).origin === new URL(page.url()).origin &&
-      response.status() >= 400
-    )
-      failures.push(`${response.status()} ${new URL(response.url()).pathname}`);
-  });
-  page.on("requestfailed", (request) =>
-    failures.push(
-      `${new URL(request.url()).pathname} ${request.failure()?.errorText}`,
-    ),
-  );
   await page.goto("/how-it-works", { waitUntil: "domcontentloaded" });
   await expect(
     page.getByRole("heading", { name: "How Slop works", exact: true }),
@@ -67,13 +51,7 @@ test("verified activity email preference persists and can be withdrawn @registry
     path: test.info().outputPath("optional-email-enabled.png"),
     fullPage: true,
   });
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.reload({ waitUntil: "networkidle" });
   await expect(
     preferences.getByRole("button", { name: "Turn off activity email" }),
@@ -104,18 +82,10 @@ test("verified activity email preference persists and can be withdrawn @registry
     path: test.info().outputPath("optional-email-disabled.png"),
     fullPage: true,
   });
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.reload({ waitUntil: "networkidle" });
   await expect(
     preferences.getByRole("button", { name: "Turn on activity email" }),
   ).toBeVisible();
-  expect(errors).toEqual([]);
-  expect(failures).toEqual([]);
   await context.close();
 });

@@ -20,7 +20,11 @@ import type { ConversionRow } from "./core";
 import { createEvmClient } from "./evm";
 import { runOnce } from "./index";
 import { NativeGasJournal, type NativeGasLimits } from "./native-gas";
-import { solanaNativeCost } from "./solana";
+import {
+  parseTransaction as parseSolanaWire,
+  solanaNativeCost,
+} from "./solana";
+import { LOOKUP_TABLE_PROGRAM, resolveSolanaAccounts } from "./solana-accounts";
 import { proveSolanaExpiry, type RecoveryRpc } from "./solana-expiry";
 import { sqliteD1 } from "./sqlite-d1";
 import { D1ConversionStore, LOCK_MS } from "./store";
@@ -1007,4 +1011,100 @@ test("expiry evidence and zero-cost resolution commit atomically under the curre
   expect(() =>
     f.sqlite.exec("UPDATE fee_native_gas SET solana_blockhash_slot=99"),
   ).toThrow("immutable");
+});
+
+test("versioned signed sends retain immutable account evidence atomically with the native reservation", async () => {
+  const f = await fixture();
+  const seed = new Uint8Array(32).fill(8);
+  const wallet = solanaBase58(ed25519.getPublicKey(seed));
+  await f.store.acquireLock("solana", f.run, f.now());
+  const journal = new NativeGasJournal(
+    f.db,
+    "solana",
+    wallet,
+    f.run,
+    {
+      perTransaction: "5000000",
+      perDay: "20000000",
+      additionalFeeReserve: "0",
+    },
+    f.now,
+  );
+  const legacy = solanaMessage(
+    wallet,
+    solanaBase58(new Uint8Array(32).fill(1)),
+    [],
+  );
+  const tableKey = new Uint8Array(32).fill(50);
+  const body = concat(
+    Uint8Array.of(128),
+    legacy,
+    Uint8Array.of(1),
+    tableKey,
+    Uint8Array.of(1, 0, 0),
+  );
+  const signature = ed25519.sign(body, seed);
+  const raw = concat(Uint8Array.of(1), signature, body);
+  const parsed = parseSolanaWire(raw);
+  const table = new Uint8Array(88);
+  const view = new DataView(table.buffer);
+  view.setUint32(0, 1, true);
+  view.setBigUint64(4, (1n << 64n) - 1n, true);
+  view.setBigUint64(12, 90n, true);
+  table.set(new Uint8Array(32).fill(51), 56);
+  const proof = await resolveSolanaAccounts(
+    raw,
+    parsed,
+    async <T>() =>
+      ({
+        context: { slot: 100 },
+        value: {
+          owner: LOOKUP_TABLE_PROGRAM,
+          executable: false,
+          data: [Buffer.from(table).toString("base64"), "base64"],
+        },
+      }) as T,
+  );
+  const intent = solanaBase58(sha256(body));
+  const dummy = await f.account.signTransaction(f.tx());
+  const row = (id: string) => ({
+    ...f.row(`versioned-${id}`, dummy, id),
+    network: "solana" as const,
+    feeWallet: wallet,
+    token: wallet,
+    targetToken: wallet,
+    route: "jupiter" as const,
+    rawTx: Buffer.from(raw).toString("base64"),
+    txId: solanaBase58(signature),
+    evmNonce: null,
+  });
+  const missing = await journal.reserveSolana(intent, 100);
+  await expect(
+    f.store.insert(row(missing), { runId: f.run, now: f.now() }),
+  ).rejects.toThrow("retained account evidence");
+  const changed = structuredClone(proof);
+  changed.tables[0].writableIndexes = [1];
+  const invalid = await journal.reserveSolana(intent, 100, changed);
+  await expect(
+    f.store.insert(row(invalid), { runId: f.run, now: f.now() }),
+  ).rejects.toThrow("lookup evidence");
+  expect((await journal.rows()).every((r) => r.state === "reserved")).toBe(
+    true,
+  );
+  const id = await journal.reserveSolana(intent, 100, proof);
+  await f.store.insert(row(id), { runId: f.run, now: f.now() });
+  const retained = (await journal.rows()).find((r) => r.id === id)!;
+  expect(retained.state).toBe("signed");
+  expect(JSON.parse(retained.solana_account_proof!)).toEqual(proof);
+  expect(() =>
+    f.sqlite
+      .query("UPDATE fee_native_gas SET solana_account_proof=NULL WHERE id=?")
+      .run(id),
+  ).toThrow("immutable");
+  expect(() =>
+    f.sqlite.query("DELETE FROM fee_native_gas WHERE id=?").run(id),
+  ).toThrow("permanent");
+  await expect(
+    journal.reserveSolana("unrelated-intent", 100, proof),
+  ).rejects.toThrow("reserved intent");
 });

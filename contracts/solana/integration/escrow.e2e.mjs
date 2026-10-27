@@ -1062,8 +1062,8 @@ test("veto cap is waived during a confirmed authority rotation and resumes after
 
 // Owner decisions of 18 October 2026: permissionless deposit, any classic SPL mint and
 // decimals, and the withdrawal fee, 2% since the owner decision of 19 October 2026
-// (#907). Token-2022 stays rejected.
-test("permissionless deposit, 18-, 9- and 0-decimal mints, 2% withdrawal fee, Token-2022 rejected", async () => {
+// (#907). Token-2022 with an active mint authority remains outside the approved subset.
+test("permissionless deposit, 18-, 9- and 0-decimal mints, 2% withdrawal fee, unsafe Token-2022 rejected", async () => {
   await ensureConfig(program);
   const { TOKEN_2022_PROGRAM_ID } = await import("@solana/spl-token");
   currentAuthority = authority;
@@ -1280,7 +1280,7 @@ test("permissionless deposit, 18-, 9- and 0-decimal mints, 2% withdrawal fee, To
     assert.equal(await balance(feeAccount), awardFee + withdrawalFee);
     assert.equal(await balance(vault), 0n);
   }
-  // A Token-2022 mint is not a classic SPL mint.
+  // Token-program substitution and an active Token-2022 mint authority are refused.
   const mint2022 = await createMint(
     provider.connection,
     payer,
@@ -1291,13 +1291,25 @@ test("permissionless deposit, 18-, 9- and 0-decimal mints, 2% withdrawal fee, To
     undefined,
     TOKEN_2022_PROGRAM_ID,
   );
-  await assert.rejects(
-    initializeFor(mint2022, "token-2022").send(),
-    /AccountOwnedByWrongProgram/,
+  const wrongProgram = initializeFor(mint2022, "token-2022");
+  await assert.rejects(wrongProgram.send(), /IncorrectProgramId/);
+  assert.equal(
+    await program.account.project.fetchNullable(wrongProgram.address),
+    null,
+  );
+  assert.equal(
+    await provider.connection.getAccountInfo(
+      pda(seed("vault"), key(wrongProgram.address)),
+    ),
+    null,
   );
   await assert.rejects(
     initializeFor(mint2022, "token-2022", TOKEN_2022_PROGRAM_ID).send(),
-    /InvalidProgramId|AccountOwnedByWrongProgram/,
+    /UnsupportedTokenExtension/,
+  );
+  assert.equal(
+    await program.account.project.fetchNullable(wrongProgram.address),
+    null,
   );
 });
 

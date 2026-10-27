@@ -1,14 +1,15 @@
+import type { ActorRef } from "./leaderboard-types";
 import type { SlopDatabaseWalletProof, WalletProof } from "./wallet-proof";
 
-export type {
-  GithubIssueWalletProof,
-  ProfileReadmeWalletProof,
-  SlopDatabaseWalletProof,
-  WalletProof,
-} from "./wallet-proof";
+export type { ProfileReadmeWalletProof, WalletProof } from "./wallet-proof";
 
 import {
+  boundedText,
+  CANONICAL_UINT,
+  EXACT_UTC,
   exactKeys,
+  isCanonicalUint,
+  isExactUtc,
   readRecord as record,
   nonNegativeInteger as safeInteger,
 } from "./record-validation.mjs";
@@ -37,17 +38,12 @@ import {
 
 export const REWARD_PROTOCOL_VERSION = "1" as const;
 export const REVIEW_WINDOW_DAYS = 14;
-export const SHARE_PARTS_TOTAL = 1_000_000;
-export const PLATFORM_FEE_BASIS_POINTS = 100 as const;
+const SHARE_PARTS_TOTAL = 1_000_000;
 export const MINIMUM_TRANSFER_MINOR = "2000000" as const;
 
 /** Parse the exact UTC form used at reward lifecycle boundaries. */
 export function exactUtcMilliseconds(value: string, field: string): number {
-  if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) ||
-    !Number.isFinite(Date.parse(value)) ||
-    new Date(value).toISOString() !== value
-  ) {
+  if (!isExactUtc(value)) {
     throw new TypeError(`${field} must be an exact UTC timestamp`);
   }
   return Date.parse(value);
@@ -60,13 +56,17 @@ export function exactUtcMilliseconds(value: string, field: string): number {
  */
 export type SettlementNetwork = WalletChain;
 
-export type AllocationState =
-  | "approved"
-  | "excluded"
-  | "held"
-  | "held-below-minimum"
-  | "proposed"
-  | "unclaimed";
+export const ALLOCATION_STATES = [
+  "approved",
+  "excluded",
+  "held",
+  "held-below-minimum",
+  "proposed",
+  "unclaimed",
+] as const;
+export type AllocationState = (typeof ALLOCATION_STATES)[number];
+const isAllocationState = (value: unknown): value is AllocationState =>
+  ALLOCATION_STATES.includes(value as AllocationState);
 
 /**
  * Why a row is held. `unsafe-destination` is a reviewed wallet-safety hold.
@@ -95,7 +95,7 @@ export interface UnsafeDestinationReport {
 
 export interface RewardAllocation {
   intentId: string;
-  actor: { id: string; login: string };
+  actor: ActorRef;
   score: number;
   suggestedMinor: string;
   accruedMinor?: string;
@@ -178,46 +178,29 @@ export interface ExternalContributionShareManifest {
   sourceSnapshotSha256: string;
   platformSharePartsPerMillion: number;
   entries: Array<{
-    actor: { id: string; login: string };
+    actor: ActorRef;
     score: number;
     sharePartsPerMillion: number;
     evidenceEventIds: string[];
   }>;
 }
 
-function text(
+const text = (
   value: unknown,
   path: string,
   options: { max?: number; min?: number; pattern?: RegExp } = {},
-): string {
-  const min = options.min ?? 1;
-  const max = options.max ?? 512;
-  if (
-    typeof value !== "string" ||
-    value.length < min ||
-    value.length > max ||
-    (options.pattern && !options.pattern.test(value))
-  ) {
-    throw new TypeError(`${path} is invalid`);
-  }
-  return value;
-}
+): string => boundedText(value, path, { max: 512, ...options });
 
 function iso(value: unknown, path: string): string {
-  const result = text(value, path, {
-    pattern: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
-  });
-  if (
-    !Number.isFinite(Date.parse(result)) ||
-    new Date(result).toISOString() !== result
-  ) {
+  const result = text(value, path, { pattern: EXACT_UTC });
+  if (!isExactUtc(result)) {
     throw new TypeError(`${path} is not a timestamp`);
   }
   return result;
 }
 
 function minor(value: unknown, path: string): string {
-  const result = text(value, path, { pattern: /^(?:0|[1-9]\d*)$/u });
+  const result = text(value, path, { pattern: CANONICAL_UINT });
   BigInt(result);
   return result;
 }
@@ -245,7 +228,7 @@ export function feeForPrincipal(
   principalMinor: string,
   basisPoints: number,
 ): string {
-  if (!/^(?:0|[1-9]\d*)$/u.test(principalMinor)) {
+  if (!isCanonicalUint(principalMinor)) {
     throw new TypeError("principal must be canonical integer minor units");
   }
   if (
@@ -260,10 +243,7 @@ export function feeForPrincipal(
   return ((BigInt(principalMinor) * BigInt(basisPoints)) / 10_000n).toString();
 }
 
-function assertActor(
-  value: unknown,
-  path: string,
-): { id: string; login: string } {
+function assertActor(value: unknown, path: string): ActorRef {
   const actor = record(value, path);
   exactKeys(actor, ["id", "login"], path);
   return {
@@ -290,7 +270,7 @@ function assertEvidenceIds(value: unknown, path: string): string[] {
 function assertWallet(
   value: unknown,
   path: string,
-  actor: { id: string; login: string },
+  actor: ActorRef,
   expectedChain: SettlementNetwork | null,
 ): WalletProof | null {
   if (value === null) return null;
@@ -496,7 +476,7 @@ export function isSafeSuccessorWallet(
 
 export function assertUnsafeDestinationReport(
   value: unknown,
-  actor: { id: string; login: string },
+  actor: ActorRef,
   path = "unsafe destination report",
 ): UnsafeDestinationReport {
   const report = record(value, path);
@@ -621,14 +601,7 @@ function assertAllocation(
     path,
   );
   const state = allocation.state;
-  if (
-    state !== "approved" &&
-    state !== "excluded" &&
-    state !== "held" &&
-    state !== "held-below-minimum" &&
-    state !== "proposed" &&
-    state !== "unclaimed"
-  ) {
+  if (!isAllocationState(state)) {
     throw new TypeError(`${path}.state is invalid`);
   }
   const suggestedMinor = minor(
