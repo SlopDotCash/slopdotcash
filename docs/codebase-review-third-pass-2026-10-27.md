@@ -2605,6 +2605,10 @@ PR1475 introduced `scripts/mainnet-release-plan.test.ts` after the initial inven
 
 The post-inventory release change adds one test in `scripts/mainnet-release-publication.test.js` that creates a temporary directory, supplies a provider callback returning `Unauthorized`, and only asserts that the function rejects. It never reads or verifies a produced artifact, native service or persistent refusal outcome. The existing actual bootstrap workflow already exercises authorization failures together with no-deploy/no-secret evidence. Remove that one partial callback-only declaration; retain the other three publication scenarios that write, inspect and tamper with real generated configuration files. No production release logic changes.
 
+## Final fixture liveness check
+
+`tests/value-binary-fixture.ts`, introduced after the baseline, has one consumer: the real model qualifier. Retain its synthetic source/evidence construction and the four imported exports (`collect`, `fixture`, `policy`, `repository`). Remove the entirely uncalled `required` helper and eight unnecessary export-list entries; all internally used constants/helpers stay. This is interface/dead-code trimming only; the model qualifier and source evidence remain byte-for-byte equivalent in behavior.
+
 ## Implementation results
 
 This section distinguishes the original report baseline from changes delivered by overlapping owner-directed work. The report was committed before implementation (original0cc50319; rebasedf1bbb59e). Findings were implemented in parallel; shared files and tests had explicit owners.
