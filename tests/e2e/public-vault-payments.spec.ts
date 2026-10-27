@@ -10,6 +10,7 @@ const { site } = deploymentOrigins(
 );
 const transaction = `0x${"1".repeat(64)}`;
 const tokenTransaction = `0x${"2".repeat(64)}`;
+const token = `0x${"4".repeat(40)}`;
 
 test("finalized project payments show net assets and source months on cycles and profiles, and recover a failed read", async ({
   page,
@@ -104,7 +105,7 @@ test("finalized project payments show net assets and source months on cycles and
       network: "base-mainnet",
       chain: "base",
       contributionMonth: null,
-      assetAddress: `0x${"4".repeat(40)}`,
+      assetAddress: token,
       assetDecimals: 9,
       netBase: "2500000000",
       transactionId: tokenTransaction,
@@ -139,8 +140,13 @@ test("finalized project payments show net assets and source months on cycles and
   await expect(history).not.toContainText("No finalized");
   await history.getByRole("button", { name: "Retry project payments" }).click();
   await expect(history.getByRole("article")).toHaveCount(2);
-  await expect(history).toContainText("98 USDC");
-  await expect(history).toContainText("2.5 token");
+  await expect(history).toContainText(/98\s*USDC/u);
+  await page.screenshot({
+    path: info.outputPath("cycle-vault-payments.png"),
+    fullPage: true,
+  });
+  await expect(history.locator("code")).toHaveText(token);
+  await expect(history).toContainText(/2\.5\s*Token/u);
   await expect(history).toContainText("November 2026");
   await expect(history).toContainText("Not recorded");
   await expect(
@@ -153,8 +159,23 @@ test("finalized project payments show net assets and source months on cycles and
   const transactionLink = history
     .getByRole("link", { name: "View transaction" })
     .last();
-  await transactionLink.focus();
-  await expect(transactionLink).toBeFocused();
+  await page.keyboard.press("Control+Home");
+  // Reach the actual transaction anchor using the keyboard, rather than
+  // substituting programmatic focus for keyboard navigation.
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  let reachedTransaction = false;
+  for (let step = 0; step < 40; step++) {
+    await page.keyboard.press("Tab");
+    if (
+      await transactionLink.evaluate(
+        (element) => element === document.activeElement,
+      )
+    ) {
+      reachedTransaction = true;
+      break;
+    }
+  }
+  expect(reachedTransaction).toBe(true);
   const width = await page.evaluate(() => ({
     page: document.documentElement.scrollWidth,
     viewport: window.innerWidth,
@@ -173,8 +194,26 @@ test("finalized project payments show net assets and source months on cycles and
     waitUntil: "networkidle",
   });
   await expect(history.getByRole("article")).toHaveCount(2);
-  await expect(history).toContainText("98 USDC");
+  await expect(history).toContainText(/98\s*USDC/u);
   await expect(history).not.toContainText("100 USDC");
+  await expect(history.locator("code")).toHaveText(token);
+  // The established text-enlargement fixture checks 200% text at both
+  // viewport widths; it does not claim to set native browser zoom.
+  await history.evaluate((element) => {
+    const sizes = [element, ...element.querySelectorAll<HTMLElement>("*")].map(
+      (child) => ({
+        child,
+        size: Number.parseFloat(getComputedStyle(child).fontSize),
+      }),
+    );
+    for (const { child, size } of sizes) child.style.fontSize = `${size * 2}px`;
+  });
+  await expect(history.locator("code")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("profile-vault-payments.png"),
