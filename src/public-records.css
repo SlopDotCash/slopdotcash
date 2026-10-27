@@ -79,7 +79,8 @@
 
 @media (max-width: 640px) {
   .payment-record {
-    grid-template-columns: minmax(0, 1fr) auto;
+    /* The amount and its action each need a full line at enlarged text sizes. */
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.75rem;
   }
 

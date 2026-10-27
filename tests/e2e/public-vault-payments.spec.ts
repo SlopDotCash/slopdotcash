@@ -235,6 +235,37 @@ test("finalized project payments show net assets and source months on cycles and
     for (const { child, size } of sizes) child.style.fontSize = `${size * 2}px`;
   });
   await expect(profileHistory.locator("code")).toBeVisible();
+  // A short paid amount must remain readable, rather than squeezing each
+  // digit onto a separate line beside the transaction action.
+  expect(
+    await profileHistory
+      .locator(".payout-value strong")
+      .first()
+      .evaluate((node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return new Set(
+          [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+        ).size;
+      }),
+  ).toBe(1);
+  const record = profileHistory.locator(".payment-record").first();
+  const amountBox = await record
+    .locator(".payment-record-amount")
+    .boundingBox();
+  const actionBox = await record
+    .locator(".payment-record-action")
+    .boundingBox();
+  expect(amountBox).not.toBeNull();
+  expect(actionBox).not.toBeNull();
+  expect(
+    amountBox &&
+      actionBox &&
+      amountBox.x < actionBox.x + actionBox.width &&
+      actionBox.x < amountBox.x + amountBox.width &&
+      amountBox.y < actionBox.y + actionBox.height &&
+      actionBox.y < amountBox.y + amountBox.height,
+  ).toBe(false);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
