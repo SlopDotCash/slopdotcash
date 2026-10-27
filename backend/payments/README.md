@@ -376,3 +376,24 @@ The browser reconstructs the expected message before requesting the owner's
 signature. Both flows save the pending request before the wallet call and
 support recovery after reload without a second submission. A finalized
 reservation is a commitment, not a payment.
+
+## Public finalized payments
+
+`GET /api/v1/payments/vault-payments` returns ordinary finalized payment
+records for `/cycles`; `actors/<numeric GitHub ID>/vault-payments` and
+`projects/<project ID>/vault-payments` narrow that same projection. Reads use
+the retained D1 payment ledger, never live chain or GitHub requests. Security
+payment tables are separate and are not selected. Private or closed memberships
+do not appear in this projection, and an actor-specific read refuses them.
+
+Each record carries the project, recorded contribution month (or `null` when
+no matching monthly obligation exists), net base units, exact asset/decimals,
+network and transaction. `indexedAt` is the indexing time, not a claimed block
+time or work month. The projection reconciles the paid obligation against its
+immutable finalized event before returning it. Reserved or submitted amounts
+are not paid records, and invalid evidence or failed reads return unavailable.
+
+Pages return at most 100 records. Continue with the returned `next` as `after`
+and the same `through` boundary; `total` applies to that boundary. The public
+client checks page continuity, duplicates and completeness before display, and
+keeps currencies separate. This read path creates no award or payment.
