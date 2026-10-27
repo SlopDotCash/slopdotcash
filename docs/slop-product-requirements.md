@@ -102,6 +102,8 @@ Owner decision, 26 October 2026, issue #905: Solana fee-service ceilings are 0.0
 
 Owner decision, 26 October 2026, issue #905: release an expired Solana fee-send native reservation only when two independent RPC providers agree the blockhash is invalid at finalized commitment and neither finds a signature or transaction in full-history lookups. Require retained history covering the signed blockhash's slot. Any disagreement, unavailable or missing history, or provider failure keeps the hold. Retain immutable observations and signed bytes; never turn a missing receipt alone into zero cost.
 
+Owner decision, 27 October 2026: conditionally approve Solana fee conversion, with live activation deferred while owner vault setup is on another computer. Keep Solana out of the production fee-converter network list until an independently operated full-history recovery RPC and the first registered Solana vault are verified and all existing readiness checks pass. A later reviewed `main` release activates it. The controls release and approved 0.05 SOL gas top-up are complete; do not repeat that funding or the existing program upgrade. Merging prepared work does not authorize live signing or prove conversion.
+
 Slop owners authorize sweeps to separate owner-controlled software wallets. A human or owner-authorized agent executes them outside the Worker. Sweep keys stay in the owner's local `.env`, never in the Worker. These are software wallets, not cold storage.
 
 ## 7. Points, discovery, and clear pages
