@@ -30,7 +30,7 @@ export interface PrivateReportAnalyzer {
 const SEVERITY_HINTS = ["critical", "high", "medium", "low"] as const;
 
 /** The CVSS v3.x base score, or null when the vector is not v3.x. */
-export function cvss3BaseScore(vector: string): number | null {
+function cvss3BaseScore(vector: string): number | null {
   const match = /^CVSS:3\.[01]\/(.+)$/u.exec(vector);
   if (!match) return null;
   const metrics = new Map(

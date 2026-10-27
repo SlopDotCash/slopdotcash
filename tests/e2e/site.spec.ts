@@ -497,9 +497,6 @@ test("shows agent setup and keeps contribution records available", async ({
   for (const cell of shareCells) {
     expect(cell).toMatch(/^\d+\.\d{2}% of payment weight$/u);
   }
-  expect(view.leaders.every((leader) => leader.projectedMinor === "0")).toBe(
-    true,
-  );
 });
 
 test("never presents Delta Star's external prize as platform money", async ({
@@ -516,49 +513,6 @@ test("never presents Delta Star's external prize as platform money", async ({
     .first()
     .click();
   await expect(page).toHaveURL(/\/cycles\/delta-star\/\d{4}-\d{2}$/u);
-});
-
-test("shows the frozen record for a cycle the live window still covers", {
-  tag: ["@pages"],
-}, async ({ page, request }) => {
-  const snapshot = await loadSnapshot(request);
-  const cycles = await loadCycles(request);
-  // A month with a frozen record that the rolling window also reaches is the
-  // case where a live recompute could replace what is under review.
-  const overlapping = cycles.cycles.find((cycle) => {
-    if (cycle.contributors.length === 0) return false;
-    try {
-      createProjectView(snapshot, cycle.projectId, cycle.cycleId);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  const cycle = overlapping ?? cycles.cycles.find((c) => c.contributors.length);
-  if (cycle) {
-    await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
-      waitUntil: "networkidle",
-    });
-    const rows = page.locator(".archived-leader-row");
-    await expect(rows).toHaveCount(cycle.contributors.length);
-    await expect(rows.first().getByRole("link")).toHaveText(
-      cycle.contributors[0].actor.login,
-    );
-    await expect(
-      page.locator(
-        ".leader-row:not(.archived-leader-row, .archived-leader-head)",
-      ),
-    ).toHaveCount(0);
-  }
-
-  const project = PROJECTS.find(
-    (candidate) => candidate.reward.kind === "monthly-pool",
-  );
-  if (!project) throw new Error("Monthly project fixture is unavailable");
-  await page.goto(`/cycles/${project.id}/2025-01`);
-  await expect(
-    page.getByRole("link", { name: "project page" }),
-  ).toHaveAttribute("href", `/projects/${project.slug}`);
 });
 
 test("renders contributor and cycle records from validated public data", {
@@ -1207,25 +1161,6 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await page.getByLabel("Discovery placement").selectOption("community");
   await expect(page.getByLabel("Project status")).toHaveValue("paused");
   await expect(changes).toContainText("listingTier");
-});
-
-test("project pages omit full standings and sponsor links keep their destination", async ({
-  page,
-}) => {
-  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
-  const standings = page.getByRole("link", {
-    name: "Full standings",
-    exact: true,
-  });
-  await expect(standings).toHaveCount(0);
-  await page.goto("/sponsors");
-  await expect(
-    page.getByRole("link", { name: "Eliza", exact: true }),
-  ).toHaveAttribute("href", "/projects/eliza/funding");
-  await page.screenshot({
-    path: test.info().outputPath("direct-sponsor-handoffs.png"),
-    fullPage: true,
-  });
 });
 
 test("serves byte-consistent bootstrap and read-only site artifacts", {

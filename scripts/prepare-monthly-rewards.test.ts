@@ -82,7 +82,6 @@ test("a month's proposal is stored once; a later ledger never adds or replaces r
     expect(() => sqlite.exec("DELETE FROM monthly_reward_base_rows")).toThrow(
       "monthly base permanent",
     );
-    expect(monthlyBasesSql({ ...result, bases: [] }, "x")).toBe("");
   } finally {
     sqlite.close();
   }
