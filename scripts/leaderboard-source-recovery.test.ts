@@ -609,6 +609,38 @@ test("unavailable joint context keeps the verified merge minimum without replaci
     expect(
       latestPoints(preserved).get(own.revisions[0].award.key)?.award.amount,
     ).toBe(90);
+    // A prior per-PR assessment can credit an implementation actor who is
+    // different from the actor selected by the unassessed merge minimum.
+    // Unavailability cannot add that fallback award or overturn a prior zero.
+    for (const amount of [90, 0]) {
+      const previousActorAward = {
+        ...awardForScore({
+          ...minimum,
+          actor: required(unaffected.author),
+          scoreThirds: 9,
+          scoreDecisionSourceId: `value:${recordDigest}`,
+        }),
+        amount,
+      };
+      const previousActorJournal = appendPointAwards(
+        { ...journal, revisions: [] },
+        [previousActorAward],
+        "a".repeat(64),
+        before.ruleVersion,
+        GENERATED_AT,
+      );
+      const actorChanged = applyPointsSnapshot(
+        previousActorJournal,
+        snapshot,
+        "b".repeat(64),
+        GENERATED_AT,
+      );
+      expect(
+        [...latestPoints(actorChanged).values()]
+          .filter((row) => row.award.sourceId === retained.id)
+          .map((row) => row.award),
+      ).toEqual([previousActorAward]);
+    }
     expect(f.stats().attempts).toBe(2);
     expect(f.stats().forbiddenSourceReads).toBe(0);
     assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));

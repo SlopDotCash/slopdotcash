@@ -625,6 +625,21 @@ export function applyPointsSnapshot(
   const heldSources = new Set(
     (snapshot.source.heldWorkUnits ?? []).flatMap((unit) => unit.sourceNodeIds),
   );
+  const previousOwnRecordSources = new Set(
+    [...previousPoints.values()]
+      .filter(
+        ({ award }) =>
+          award.category === "merged-pull-request" &&
+          award.key ===
+            pointKey(
+              award.projectId,
+              award.actor.id,
+              award.category,
+              award.sourceId,
+            ),
+      )
+      .map(({ award }) => award.sourceId),
+  );
   const previousJointSources = new Set(
     [...previousPoints.values()]
       .filter(
@@ -653,13 +668,16 @@ export function applyPointsSnapshot(
     .filter((a) => !batchOwned.has(a.key))
     // Unavailable source is not evidence against a recorded award. A newly
     // verified merge can earn its minimum, but cannot add another award on
-    // top of a retained joint decision or downgrade its own prior amount.
+    // top of a retained joint decision or prior per-source award, including
+    // when the fallback credits a different actor. Recorded zero awards also
+    // remain authoritative while the source is unavailable.
     .filter(
       (a) =>
         a.category !== "merged-pull-request" ||
         !a.provisional ||
         !heldSources.has(a.sourceId) ||
         (!previousPoints.has(a.key) &&
+          !previousOwnRecordSources.has(a.sourceId) &&
           !previouslyAwardedJointSources.has(a.sourceId)),
     );
   const decisions = new Map<string, PointDecision>();
