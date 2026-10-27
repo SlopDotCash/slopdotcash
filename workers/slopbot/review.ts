@@ -1482,6 +1482,24 @@ async function runReview(
     });
     return "maintainer reopened this revision; finding removed";
   }
+  // Publishing the comment can take long enough for the related original to
+  // change. Do not add a duplicate label based on the earlier observation.
+  if (
+    context.relatedOpenItem &&
+    !(await sameReviewEvidence(
+      job,
+      await loadContext(env, job, context.registration),
+      context,
+    ))
+  ) {
+    const reason = "related original or review source changed before label";
+    await store.finishReview(db, reviewKey, claimToken, "failed", {
+      verdict,
+      action: "comment",
+      skipReason: reason,
+    });
+    return reason;
+  }
   const label = categoryLabel(category);
   const labeled = await context.github.request<{ name: string }[]>(
     "POST",
