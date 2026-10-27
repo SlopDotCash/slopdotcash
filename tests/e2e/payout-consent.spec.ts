@@ -206,6 +206,28 @@ test("payout rows distinguish test networks and retain exact award details at 20
   }
   await enlargeText(page.locator(".earnings-page"));
   for (const row of await rows.all()) {
+    for (const label of ["Exact amount", "Gross amount", "Fee amount"]) {
+      const region = row.getByRole("region", { name: label, exact: true });
+      expect(
+        await region.evaluate((node) => {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          return new Set(
+            [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+          ).size;
+        }),
+      ).toBe(1);
+      await region.focus();
+      await expect(region).toBeFocused();
+      if (
+        await region.evaluate((node) => node.scrollWidth > node.clientWidth)
+      ) {
+        await page.keyboard.press("ArrowRight");
+        await expect
+          .poll(() => region.evaluate((node) => node.scrollLeft))
+          .toBeGreaterThan(0);
+      }
+    }
     expect(
       await row.evaluate(
         (element) => element.scrollWidth - element.clientWidth,
