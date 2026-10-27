@@ -302,3 +302,110 @@ test("closing a pending sign-in window lets the user start again", async ({
   ).toHaveCount(0);
   await page.goto("about:blank");
 });
+
+test("a refused sign-in names its next action and closes the blank popup", async ({
+  diagnostics,
+  page,
+  baseURL,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at https:\/\/[^ ]+\/api\/v1\/points\/me$/u,
+    /^console Failed to load resource: the server responded with a status of (?:410|429|503) \([^)]*\) at https:\/\/[^ ]+\/v1\/oauth\/(?:start|poll)$/u,
+  );
+  const expiresAt = new Date(
+    Math.floor(Date.now() / 1000) * 1000 + 240_000,
+  ).toISOString();
+  const flowId = `flow_${"f".repeat(24)}`;
+  const starts = [429, 503, 201];
+  let polls = 0;
+  await page.context().route(`${deployment.identity}/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/v1/oauth/start") {
+      const status = starts.shift();
+      if (status === 429)
+        await route.fulfill({
+          status,
+          headers: { "retry-after": "60" },
+          json: {
+            error: "rate_limited",
+            message: "Too many requests. Try again later.",
+          },
+        });
+      else if (status === 503)
+        await route.fulfill({
+          status,
+          headers: { "retry-after": "60" },
+          json: {
+            error: "service_unavailable",
+            message: "Identity service is temporarily unavailable.",
+          },
+        });
+      else
+        await route.fulfill({
+          status,
+          json: {
+            flowId,
+            pollCapability: "p".repeat(48),
+            expiresAt,
+            pollAfterSeconds: 1,
+            authorizationUrl: `${deployment.identity}/v1/oauth/authorize?flow_id=${flowId}&state=${"s".repeat(48)}`,
+          },
+        });
+    } else if (path === "/v1/oauth/authorize")
+      await route.fulfill({
+        contentType: "text/html",
+        body: "<title>Synthetic OAuth fixture</title>",
+      });
+    else {
+      polls += 1;
+      await route.fulfill({
+        status: 410,
+        json: {
+          error: "flow_unavailable",
+          message: "Identity flow is unavailable",
+        },
+      });
+    }
+  });
+  await page.route(`${deployment.site}/**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/v1/points/me") {
+      await route.fulfill({ status: 401, json: {} });
+      return;
+    }
+    if (url.pathname.startsWith("/api/")) {
+      await route.fulfill({ status: 404, json: {} });
+      return;
+    }
+    const response = await route.fetch({
+      url: `${baseURL}${url.pathname}${url.search}`,
+    });
+    await route.fulfill({ response });
+  });
+  await page.goto(`${deployment.site}/login`);
+  const main = page.getByRole("main");
+  const action = main.getByRole("button", { name: "Continue with GitHub" });
+  const status = main.getByRole("status");
+  for (const expected of [
+    "Too many sign-in attempts. Wait one minute, then try again.",
+    "Sign-in is temporarily unavailable. Try again in a few minutes.",
+  ]) {
+    const popup = page.waitForEvent("popup");
+    await action.click();
+    const opened = await popup;
+    await expect(status).toHaveText(expected);
+    await expect.poll(() => opened.isClosed()).toBe(true);
+    await expect(action).toBeEnabled();
+    await expectAccessible(page);
+  }
+  // An ended flow keeps GitHub's page, where the user can read its state.
+  const popup = page.waitForEvent("popup");
+  await action.click();
+  const authorizing = await popup;
+  await expect(status).toHaveText("Sign-in expired. Please start again.");
+  expect(authorizing.isClosed()).toBe(false);
+  await authorizing.close();
+  expect(starts).toEqual([]);
+  expect(polls).toBe(1);
+});
