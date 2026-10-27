@@ -26,7 +26,7 @@ test("social membership preserves past points and connection privacy without new
     id: "123456789",
     username: "social_member",
     verifiedAt: me.joinedAt,
-    public: 0,
+    public: 1,
   };
   // Serve the built bytes at the product origin without a second HTTP proxy.
   // Proxy requests can outlive navigation and reset reused localhost sockets.
@@ -77,14 +77,7 @@ test("social membership preserves past points and connection privacy without new
         account,
         award: { points: 10, awardedAt: me.joinedAt },
       };
-    else if (path.endsWith("/x/visibility")) {
-      expect(route.request().method()).toBe("POST");
-      account = {
-        ...account!,
-        public: route.request().postDataJSON().public ? 1 : 0,
-      };
-      value = { updated: true };
-    } else if (path.endsWith("/x/disconnect")) {
+    else if (path.endsWith("/x/disconnect")) {
       expect(route.request().method()).toBe("POST");
       account = null;
       value = { disconnected: true };
@@ -170,10 +163,8 @@ test("social membership preserves past points and connection privacy without new
     page.getByRole("region", { name: "People", exact: true }),
   ).toHaveCount(0);
   const social = page.getByRole("region", { name: "Connections" });
-  await expect(social.getByRole("checkbox")).toHaveCount(1);
-  await expect(social).toContainText(
-    "Slop requests no posting or messaging access.",
-  );
+  await expect(social.getByRole("checkbox")).toHaveCount(0);
+  await expect(social).not.toContainText("posting or messaging");
   await expect(page.getByText(/Telegram/i)).toHaveCount(0);
   await expect(social).not.toContainText("+10 points");
   await page.screenshot({
@@ -181,22 +172,13 @@ test("social membership preserves past points and connection privacy without new
     fullPage: true,
   });
   const community = page.getByRole("region", { name: "People", exact: true });
-  const visibilitySaved = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname.startsWith("/api/v1/points/x/") &&
-      response.request().method() === "POST",
-  );
-  await social
-    .getByLabel("Show my X account with my public membership", { exact: true })
-    .click();
-  await visibilitySaved;
   await page.goto(`${site}/points#people`);
   await community.getByLabel("GitHub username").fill("social-member");
   await expect(
     community.getByRole("link", { name: "X · @social_member" }),
   ).toBeVisible();
   await page.goto(`${site}/account`);
-  await expect(social.getByRole("checkbox")).toHaveCount(1);
+  await expect(social.getByRole("checkbox")).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("social-points.png"),

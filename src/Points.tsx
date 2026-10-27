@@ -62,20 +62,11 @@ const productOrigin = () =>
 
 function AdminAccountLink({ onNavigate }: { onNavigate: () => void }) {
   const session = useProjectSession();
-  if (session.status !== "signed-in") return null;
+  if (session.status !== "signed-in" || !session.session.admin) return null;
   return (
-    <>
-      {session.session.admin ? (
-        <Link href="/admin" onNavigate={onNavigate}>
-          Admin
-        </Link>
-      ) : null}
-      {session.session.traceOperator === true ? (
-        <Link href="/operator/traces" onNavigate={onNavigate}>
-          Private traces
-        </Link>
-      ) : null}
-    </>
+    <Link href="/admin" onNavigate={onNavigate}>
+      Admin
+    </Link>
   );
 }
 
@@ -579,14 +570,6 @@ export function ProfilePoints({
               ? "Points loading…"
               : "Points unavailable"
         }
-        revisions={
-          state.status === "ready" && (resolvedActorId ?? m?.actor.id)
-            ? state.journal.revisions.filter(
-                (revision) =>
-                  revision.award.actor.id === (resolvedActorId ?? m?.actor.id),
-              )
-            : undefined
-        }
         login={login}
         actorId={resolvedActorId ?? m?.actor.id}
         census={census}
@@ -597,13 +580,9 @@ export function ProfilePoints({
             <Notice />
             {state.status === "ready" && (m || identity || recorded) ? (
               <div className="profile-badges">
-                {m?.badges.map((badge) => (
-                  <span key={badge}>{badge}</span>
-                ))}
                 <PublicXLink
                   actorId={(m?.actor ?? identity?.actor ?? recorded!).id}
                 />
-                {own ? <a href="/account">Manage account</a> : null}
               </div>
             ) : state.status === "ready" ? (
               <p>
@@ -647,22 +626,30 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
   const { me, setMe, session } = usePoints();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [authorization, setAuthorization] = useState<string | null>(null);
   const [closedAccount, setClosedAccount] = useState(false);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
   async function start(reopen = false) {
     active.current?.abort();
-    const c = new AbortController();
-    active.current = c;
-    setBusy(true);
-    setMessage("");
     const popup = window.open(
       "about:blank",
       "_blank",
       "popup,width=600,height=720",
     );
-    if (popup) popup.opener = null;
+    if (!popup) {
+      // Some browsers, including embedded ones, never open the window; without
+      // it the sign-in would wait for a GitHub page nobody can see.
+      setBusy(false);
+      setMessage(
+        "Your browser did not open the GitHub sign-in window. Allow pop-ups for this site, or open it in another browser, and try again.",
+      );
+      return;
+    }
+    popup.opener = null;
+    const c = new AbortController();
+    active.current = c;
+    setBusy(true);
+    setMessage("");
     try {
       const assertion = await requestIdentityAssertion({
         origin: identityPublicOrigin(
@@ -676,10 +663,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
         ),
         audience: "slop-points-web",
         signal: c.signal,
-        authorize: (url) => {
-          setAuthorization(url);
-          if (popup) popup.location.replace(url);
-        },
+        authorize: (url) => popup.location.replace(url),
         request: async (url, init) => {
           const response = await fetchWithDeadline(url, {
             ...init,
@@ -704,8 +688,8 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(
           reopen
-            ? { assertion, public: false, reopen: true }
-            : { assertion, public: false },
+            ? { assertion, public: true, reopen: true }
+            : { assertion, public: true },
         ),
         signal: c.signal,
       });
@@ -728,10 +712,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
             : errorMessage(e, "Sign-in unavailable"),
         );
     } finally {
-      if (active.current === c) {
-        setBusy(false);
-        setAuthorization(null);
-      }
+      if (active.current === c) setBusy(false);
     }
   }
   async function signout() {
@@ -774,76 +755,35 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
         <p role="status">Could not check your session. Sign in again.</p>
       ) : null}
       {me ? (
-        <>
-          <div className="account-session-actions">
-            <a
-              className="button secondary-button"
-              href={`/contributors/${encodeURIComponent(me.actor.login)}`}
-            >
-              Your profile
-            </a>
-            <button
-              className="button ghost-button"
-              type="button"
-              onClick={() => void signout()}
-            >
-              Sign out
-            </button>
-          </div>
-          <label>
-            <input
-              type="checkbox"
-              checked={me.public}
-              onChange={(e) => {
-                void requestJson("/api/v1/points/visibility", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ public: e.target.checked }),
-                }).then(
-                  (v) => {
-                    setMe(member(v));
-                    setMessage("Visibility saved.");
-                  },
-                  () => setMessage("Could not update visibility."),
-                );
-              }}
-            />
-            Show my membership publicly
-          </label>
-        </>
-      ) : (
-        <>
-          <button
-            className="button primary-button"
-            type="button"
-            disabled={busy || session === "loading"}
-            onClick={() => void start(closedAccount)}
+        <div className="account-session-actions">
+          <a
+            className="button secondary-button"
+            href={`/contributors/${encodeURIComponent(me.actor.login)}`}
           >
-            <GithubIcon aria-hidden="true" />
-            {busy
-              ? "Waiting for GitHub…"
-              : closedAccount
-                ? "Reopen account with GitHub"
-                : "Continue with GitHub"}
+            Your profile
+          </a>
+          <button
+            className="button ghost-button"
+            type="button"
+            onClick={() => void signout()}
+          >
+            Sign out
           </button>
-          {busy ? (
-            <button
-              type="button"
-              onClick={() => {
-                active.current?.abort();
-                setBusy(false);
-                setAuthorization(null);
-              }}
-            >
-              Cancel
-            </button>
-          ) : null}
-          {authorization ? (
-            <a href={authorization} target="_blank" rel="noreferrer">
-              Open GitHub sign-in
-            </a>
-          ) : null}
-        </>
+        </div>
+      ) : (
+        <button
+          className="button primary-button"
+          type="button"
+          disabled={busy || session === "loading"}
+          onClick={() => void start(closedAccount)}
+        >
+          <GithubIcon aria-hidden="true" />
+          {busy
+            ? "Waiting for GitHub…"
+            : closedAccount
+              ? "Reopen account with GitHub"
+              : "Continue with GitHub"}
+        </button>
       )}
       <p role="status">{message}</p>
     </section>
@@ -1515,12 +1455,10 @@ function SocialConnections() {
   } | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [publish, setPublish] = useState(false);
   const [version, setVersion] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: version explicitly refreshes the server state after account mutations.
   useEffect(() => {
     setData(null);
-    setPublish(false);
     if (!me || !productOrigin()) return;
     const c = new AbortController();
     void requestJson("/api/v1/points/x/me", { signal: c.signal })
@@ -1563,9 +1501,7 @@ function SocialConnections() {
       }
       setVersion((v) => v + 1);
       if (me) setMe({ ...me });
-      setMessage(
-        path === "disconnect" ? "X disconnected." : "X visibility updated.",
-      );
+      setMessage("X disconnected.");
     } catch {
       setMessage("X request failed. Retry.");
     } finally {
@@ -1618,7 +1554,7 @@ function SocialConnections() {
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => void action("start", { public: publish })}
+                onClick={() => void action("start", { public: true })}
               >
                 {busy ? "Connecting…" : "Connect X"}
               </button>
@@ -1626,27 +1562,9 @@ function SocialConnections() {
               <span>Unavailable</span>
             )}
           </div>
-          {data.account || data.configured ? (
-            <label>
-              <input
-                type="checkbox"
-                checked={data.account ? data.account.public === 1 : publish}
-                disabled={busy}
-                onChange={(e) =>
-                  data.account
-                    ? void action("visibility", { public: e.target.checked })
-                    : setPublish(e.target.checked)
-                }
-              />
-              Show my X account with my public membership
-            </label>
-          ) : null}
           {data.account && !me.public ? (
             <p>Hidden while your membership is private.</p>
           ) : null}
-          <p className="points-meta">
-            Slop requests no posting or messaging access.
-          </p>
           <p role="status">{message}</p>
         </>
       )}

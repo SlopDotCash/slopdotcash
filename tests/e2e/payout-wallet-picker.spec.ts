@@ -8,7 +8,7 @@ const evmAddress = "0x1111111111111111111111111111111111111111";
 const solanaAddress = "11111111111111111111111111111111";
 
 type SavedWallet = {
-  chain: "base" | "solana" | "robinhood";
+  chain: "base" | "solana" | "robinhood" | "ethereum";
   claimId: string;
   address: string;
   authorized: boolean;
@@ -178,21 +178,18 @@ async function providers(
   );
 }
 
-async function openPicker(
-  page: Page,
-  chain: "Base" | "Solana" | "Robinhood Chain",
-) {
+async function openPicker(page: Page, family: "EVM" | "Solana") {
   await page
-    .getByRole("button", { name: `Connect ${chain} wallet`, exact: true })
+    .getByRole("button", { name: `Connect ${family} wallet`, exact: true })
     .click();
   const dialog = page.getByRole("dialog", {
-    name: `Connect a ${chain} wallet`,
+    name: `Connect ${family === "EVM" ? "an" : "a"} ${family} wallet`,
   });
   await expect(dialog).toBeVisible();
   return dialog;
 }
 
-test("modal routes Base and Robinhood Chain to MetaMask and Solana to Backpack despite Phantom globals", async ({
+test("modal routes EVM to MetaMask and Solana to Backpack despite Phantom globals", async ({
   page,
 }, info) => {
   const writes = await payments(page);
@@ -203,21 +200,21 @@ test("modal routes Base and Robinhood Chain to MetaMask and Solana to Backpack d
       () => (window as unknown as { walletCalls: string[] }).walletCalls,
     ),
   ).toEqual([]);
-  const base = await openPicker(page, "Base");
+  const evm = await openPicker(page, "EVM");
   await expect(
-    base.getByRole("button", { name: "Backpack Detected" }),
+    evm.getByRole("button", { name: "Backpack Detected" }),
   ).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("wallet-modal.png"),
     fullPage: true,
   });
-  await base
+  await evm
     .getByRole("button", { name: "MetaMask Detected", exact: true })
     .click();
-  await expect(base).not.toBeVisible();
+  await expect(evm).not.toBeVisible();
   await expect(
-    page.getByRole("status").filter({ hasText: "Base wallet confirmed" }),
+    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
   ).toBeVisible();
   const solana = await openPicker(page, "Solana");
   await solana
@@ -226,20 +223,8 @@ test("modal routes Base and Robinhood Chain to MetaMask and Solana to Backpack d
   await expect(
     page.getByRole("status").filter({ hasText: "Solana wallet confirmed" }),
   ).toBeVisible();
-  // Robinhood Chain is an EVM chain: the picker offers the EVM wallets only,
-  // and the claim is registered for chain robinhood, separate from Base.
-  const robinhood = await openPicker(page, "Robinhood Chain");
-  await expect(
-    robinhood.getByRole("button", { name: "Backpack Detected" }),
-  ).toHaveCount(0);
-  await robinhood
-    .getByRole("button", { name: "MetaMask Detected", exact: true })
-    .click();
-  await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "Robinhood Chain wallet confirmed" }),
-  ).toBeVisible();
+  // One EVM connection confirms Base, Robinhood Chain and Ethereum. Each
+  // chain keeps its own claim and signature.
   expect(
     await page.evaluate(
       () => (window as unknown as { walletCalls: string[] }).walletCalls,
@@ -247,19 +232,20 @@ test("modal routes Base and Robinhood Chain to MetaMask and Solana to Backpack d
   ).toEqual([
     "MetaMask:eth_requestAccounts",
     "MetaMask:personal_sign",
+    "MetaMask:personal_sign",
+    "MetaMask:personal_sign",
     "Backpack:connect",
     "Backpack:signMessage",
-    "MetaMask:eth_requestAccounts",
-    "MetaMask:personal_sign",
   ]);
   expect(
     writes.filter((w) => w.path === "wallets/register").map((w) => w.body),
   ).toEqual([
     { chain: "base", address: evmAddress },
-    { chain: "solana", address: solanaAddress },
     { chain: "robinhood", address: evmAddress },
+    { chain: "ethereum", address: evmAddress },
+    { chain: "solana", address: solanaAddress },
   ]);
-  expect(writes.filter((w) => w.path === "wallets/authorize")).toHaveLength(3);
+  expect(writes.filter((w) => w.path === "wallets/authorize")).toHaveLength(4);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth - innerWidth,
@@ -273,11 +259,11 @@ test("Escape and close cancel without wallet requests and return focus", async (
   const writes = await payments(page);
   await providers(page);
   await page.goto("/account#wallets");
-  await openPicker(page, "Base");
+  await openPicker(page, "EVM");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Connect Base wallet", exact: true }),
+    page.getByRole("button", { name: "Connect EVM wallet", exact: true }),
   ).toBeFocused();
   const solana = await openPicker(page, "Solana");
   await solana.getByRole("button", { name: "Close wallet picker" }).click();
@@ -296,13 +282,13 @@ test("wallet rejection stops registration and permits reopening the modal", asyn
   const writes = await payments(page);
   await providers(page, true);
   await page.goto("/account#wallets");
-  const dialog = await openPicker(page, "Base");
+  const dialog = await openPicker(page, "EVM");
   await dialog
     .getByRole("button", { name: "MetaMask Detected", exact: true })
     .click();
   await expect(page.getByRole("alert")).toBeVisible();
   expect(writes).toEqual([]);
-  await openPicker(page, "Base");
+  await openPicker(page, "EVM");
 });
 
 test("repeated announcements do not duplicate options and removed Solana wallet disappears", async ({
@@ -327,7 +313,7 @@ test("repeated announcements do not duplicate options and removed Solana wallet 
     dialog.getByRole("button", { name: "Backpack Detected", exact: true }),
   ).toHaveCount(0);
   await dialog.getByRole("button", { name: "Close wallet picker" }).click();
-  const base = await openPicker(page, "Base");
+  const base = await openPicker(page, "EVM");
   await expect(
     base.getByRole("button", { name: "MetaMask Detected", exact: true }),
   ).toHaveCount(1);
@@ -341,13 +327,14 @@ test("no wallets offers official install links in either network modal", async (
 }) => {
   const writes = await payments(page);
   await page.goto("/account#wallets");
+  await expect(page.getByRole("article", { name: "EVM wallet" })).toBeVisible();
   await expect(
-    page.getByRole("group", { name: "Add a payout wallet" }),
+    page.getByRole("article", { name: "Solana wallet" }),
   ).toBeVisible();
   await expect(page.getByText("No unpaid awards", { exact: true })).toHaveCount(
     0,
   );
-  for (const chain of ["Base", "Solana"] as const) {
+  for (const chain of ["EVM", "Solana"] as const) {
     const dialog = await openPicker(page, chain);
     await expect(
       dialog.getByRole("link", { name: "MetaMask Install", exact: false }),
@@ -380,12 +367,12 @@ test("legacy wallet browser remains connectable through the modal", async ({
     { evmAddress },
   );
   await page.goto("/account#wallets");
-  const dialog = await openPicker(page, "Base");
+  const dialog = await openPicker(page, "EVM");
   await dialog
     .getByRole("button", { name: "MetaMask Detected", exact: true })
     .click();
   await expect(
-    page.getByRole("status").filter({ hasText: "Base wallet confirmed" }),
+    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
   ).toBeVisible();
 });
 
@@ -395,7 +382,7 @@ test("conflicting EIP-6963 UUID removes both providers without wallet requests",
   const writes = await payments(page);
   await providers(page);
   await page.goto("/account#wallets");
-  const dialog = await openPicker(page, "Base");
+  const dialog = await openPicker(page, "EVM");
   await expect(
     dialog.getByRole("button", { name: "MetaMask Detected", exact: true }),
   ).toHaveCount(1);
@@ -515,7 +502,7 @@ test("mixed standard and legacy discovery keeps every distinct wallet", async ({
     { evmAddress, solanaAddress },
   );
   await page.goto("/account#wallets");
-  const base = await openPicker(page, "Base");
+  const base = await openPicker(page, "EVM");
   await expect(base.getByRole("button", { name: /Detected$/u })).toHaveText([
     "MetaMaskDetected",
     "Coinbase WalletDetected",
@@ -524,7 +511,7 @@ test("mixed standard and legacy discovery keeps every distinct wallet", async ({
     .getByRole("button", { name: "Coinbase Wallet Detected", exact: true })
     .click();
   await expect(
-    page.getByRole("status").filter({ hasText: "Base wallet confirmed" }),
+    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
   ).toBeVisible();
   const solana = await openPicker(page, "Solana");
   await expect(solana.getByRole("button", { name: /Detected$/u })).toHaveText([
@@ -544,6 +531,8 @@ test("mixed standard and legacy discovery keeps every distinct wallet", async ({
   ).toEqual([
     "Coinbase:eth_requestAccounts",
     "Coinbase:personal_sign",
+    "Coinbase:personal_sign",
+    "Coinbase:personal_sign",
     "Solflare:connect",
     "Solflare:signMessage",
   ]);
@@ -551,6 +540,8 @@ test("mixed standard and legacy discovery keeps every distinct wallet", async ({
     writes.filter((w) => w.path === "wallets/register").map((w) => w.body),
   ).toEqual([
     { chain: "base", address: evmAddress },
+    { chain: "robinhood", address: evmAddress },
+    { chain: "ethereum", address: evmAddress },
     { chain: "solana", address: solanaAddress },
   ]);
 });
@@ -570,7 +561,7 @@ for (const scenario of [
     await payments(page);
     await providers(page);
     await page.setViewportSize({ width: scenario.width, height: 800 });
-    for (const chain of ["Base", "Solana"] as const) {
+    for (const chain of ["EVM", "Solana"] as const) {
       await page.goto("/account#wallets");
       const dialog = await openPicker(page, chain);
       await expect(
@@ -623,12 +614,19 @@ for (const scenario of [
 }
 
 const savedAddress = "0x2222222222222222222222222222222222222222";
-const savedBase = (authorized: boolean): SavedWallet => ({
-  chain: "base",
-  claimId: "saved-claim",
+const savedEvmWallet = (
+  chain: "base" | "robinhood" | "ethereum",
+  authorized: boolean,
+): SavedWallet => ({
+  chain,
+  claimId: `saved-claim-${chain}`,
   address: savedAddress,
   authorized,
 });
+const savedEvm = (authorized: boolean): SavedWallet[] =>
+  (["base", "robinhood", "ethereum"] as const).map((chain) =>
+    savedEvmWallet(chain, authorized),
+  );
 const walletCalls = (page: Page) =>
   page.evaluate(
     () => (window as unknown as { walletCalls: string[] }).walletCalls,
@@ -636,29 +634,29 @@ const walletCalls = (page: Page) =>
 
 async function chooseMetaMask(page: Page, action: "Change" | "Connect") {
   await page
-    .getByRole("button", { name: `${action} Base wallet`, exact: true })
+    .getByRole("button", { name: `${action} EVM wallet`, exact: true })
     .click();
-  const dialog = page.getByRole("dialog", { name: "Connect a Base wallet" });
+  const dialog = page.getByRole("dialog", { name: "Connect an EVM wallet" });
   await dialog
     .getByRole("button", { name: "MetaMask Detected", exact: true })
     .click();
   await expect(dialog).not.toBeVisible();
 }
 
-test("changing a confirmed Base wallet opens the account picker and asks before registering the new account", async ({
+test("changing a confirmed EVM wallet opens the account picker and asks before registering the new account", async ({
   page,
 }, info) => {
-  const writes = await payments(page, [savedBase(true)]);
+  const writes = await payments(page, savedEvm(true));
   await providers(page, false, { connected: savedAddress });
   await page.goto("/account#wallets");
   await chooseMetaMask(page, "Change");
   const confirmation = page.getByRole("region", {
-    name: "Register a different Base address?",
+    name: "Register a different EVM address?",
   });
   await expect(confirmation).toBeVisible();
   await expect(
     confirmation.getByRole("heading", {
-      name: "Register a different Base address?",
+      name: "Register a different EVM address?",
     }),
   ).toBeFocused();
   await expect(confirmation).toContainText(`Saved address${savedAddress}`);
@@ -670,7 +668,7 @@ test("changing a confirmed Base wallet opens the account picker and asks before 
   ]);
   expect(writes).toEqual([]);
   await expect(
-    page.getByRole("button", { name: "Change Base wallet", exact: true }),
+    page.getByRole("button", { name: "Change EVM wallet", exact: true }),
   ).toBeDisabled();
   await expectAccessible(page);
   await page.screenshot({
@@ -681,22 +679,30 @@ test("changing a confirmed Base wallet opens the account picker and asks before 
     .getByRole("button", { name: "Register wallet account", exact: true })
     .click();
   await expect(
-    page.getByRole("status").filter({ hasText: "Base wallet confirmed" }),
+    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
   ).toBeVisible();
   await expect(confirmation).toHaveCount(0);
-  expect(writes.map((w) => w.path)).toEqual([
-    "wallets/register",
-    "wallets/challenge",
-    "wallets/authorize",
+  expect(writes.map((w) => w.path)).toEqual(
+    Array.from({ length: 3 }, () => [
+      "wallets/register",
+      "wallets/challenge",
+      "wallets/authorize",
+    ]).flat(),
+  );
+  expect(
+    writes.filter((w) => w.path === "wallets/register").map((w) => w.body),
+  ).toEqual([
+    { chain: "base", address: evmAddress },
+    { chain: "robinhood", address: evmAddress },
+    { chain: "ethereum", address: evmAddress },
   ]);
-  expect(writes[0].body).toEqual({ chain: "base", address: evmAddress });
   expect((await walletCalls(page)).at(-1)).toBe("MetaMask:personal_sign");
 });
 
 test("keeping the saved address registers nothing and returns focus to the wallet button", async ({
   page,
 }) => {
-  const writes = await payments(page, [savedBase(true)]);
+  const writes = await payments(page, savedEvm(true));
   await providers(page, false, { connected: savedAddress });
   await page.goto("/account#wallets");
   await chooseMetaMask(page, "Change");
@@ -704,15 +710,15 @@ test("keeping the saved address registers nothing and returns focus to the walle
     .getByRole("button", { name: "Keep saved address", exact: true })
     .click();
   await expect(
-    page.getByRole("region", { name: "Register a different Base address?" }),
+    page.getByRole("region", { name: "Register a different EVM address?" }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("status").filter({
-      hasText: "Kept your saved Base address. Nothing was registered.",
+      hasText: "Kept your saved EVM address. Nothing was registered.",
     }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Change Base wallet", exact: true }),
+    page.getByRole("button", { name: "Change EVM wallet", exact: true }),
   ).toBeFocused();
   expect(writes).toEqual([]);
   expect(await walletCalls(page)).not.toContain("MetaMask:personal_sign");
@@ -721,12 +727,12 @@ test("keeping the saved address registers nothing and returns focus to the walle
 test("connecting with an unconfirmed saved address asks before registering a different active account", async ({
   page,
 }) => {
-  const writes = await payments(page, [savedBase(false)]);
+  const writes = await payments(page, savedEvm(false));
   await providers(page);
   await page.goto("/account#wallets");
   await chooseMetaMask(page, "Connect");
   await expect(
-    page.getByRole("region", { name: "Register a different Base address?" }),
+    page.getByRole("region", { name: "Register a different EVM address?" }),
   ).toBeVisible();
   // Not a change of a confirmed wallet, so no account picker is forced.
   expect(await walletCalls(page)).toEqual(["MetaMask:eth_requestAccounts"]);
@@ -736,12 +742,12 @@ test("connecting with an unconfirmed saved address asks before registering a dif
 test("connecting the saved address confirms it without an extra step", async ({
   page,
 }) => {
-  const writes = await payments(page, [savedBase(false)]);
+  const writes = await payments(page, savedEvm(false));
   await providers(page, false, { connected: savedAddress });
   await page.goto("/account#wallets");
   await chooseMetaMask(page, "Connect");
   await expect(
-    page.getByRole("status").filter({ hasText: "Base wallet confirmed" }),
+    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
   ).toBeVisible();
   expect(writes[0]).toEqual({
     path: "wallets/register",
@@ -752,7 +758,13 @@ test("connecting the saved address confirms it without an extra step", async ({
 test("a wallet without an account picker falls back to its connected account", async ({
   page,
 }) => {
-  const writes = await payments(page, [savedBase(true)]);
+  // Base and Ethereum are already confirmed at this address; only Robinhood
+  // Chain needs a signature.
+  const writes = await payments(page, [
+    savedEvmWallet("base", true),
+    savedEvmWallet("robinhood", false),
+    savedEvmWallet("ethereum", true),
+  ]);
   await providers(page, false, {
     connected: savedAddress,
     permissions: "unsupported",
@@ -760,18 +772,23 @@ test("a wallet without an account picker falls back to its connected account", a
   await page.goto("/account#wallets");
   await chooseMetaMask(page, "Change");
   await expect(
-    page.getByRole("status").filter({ hasText: "Base wallet confirmed" }),
+    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
   ).toBeVisible();
   expect(await walletCalls(page)).toEqual([
     "MetaMask:wallet_requestPermissions",
     "MetaMask:eth_requestAccounts",
     "MetaMask:personal_sign",
   ]);
-  expect(writes[0].body).toEqual({ chain: "base", address: savedAddress });
+  expect(writes.filter((w) => w.path === "wallets/register")).toEqual([
+    {
+      path: "wallets/register",
+      body: { chain: "robinhood", address: savedAddress },
+    },
+  ]);
 });
 
 test("rejecting the account picker stops the change", async ({ page }) => {
-  const writes = await payments(page, [savedBase(true)]);
+  const writes = await payments(page, savedEvm(true));
   await providers(page, false, {
     connected: savedAddress,
     permissions: "rejected",
@@ -796,13 +813,13 @@ for (const scenario of [
       info.project.name !== "chromium-mobile",
       "Sets its own viewport; runs once",
     );
-    await payments(page, [savedBase(true)]);
+    await payments(page, savedEvm(true));
     await providers(page, false, { connected: savedAddress });
     await page.setViewportSize({ width: scenario.width, height: 800 });
     await page.goto("/account#wallets");
     await chooseMetaMask(page, "Change");
     const confirmation = page.getByRole("region", {
-      name: "Register a different Base address?",
+      name: "Register a different EVM address?",
     });
     await expect(confirmation).toBeVisible();
     if (scenario.textScale === 2)

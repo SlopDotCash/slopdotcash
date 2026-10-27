@@ -38,19 +38,22 @@ test("Account Wallets restores all saved networks and public records after reloa
   });
   await page.goto("/account#wallets", { waitUntil: "networkidle" });
   for (let visit = 0; visit < 2; visit++) {
-    for (const [chain, name, address] of wallets) {
-      const card = page
-        .getByRole("article")
-        .filter({ has: page.getByRole("heading", { name, exact: true }) });
-      await expect(card).toContainText(address);
-      await expect(card).toContainText("Not confirmed");
+    // Solana has its own card; Base, Robinhood Chain and Ethereum share the
+    // EVM card, which lists each saved address while they differ.
+    for (const [family, addresses] of [
+      ["Solana", [wallets[0][2]]],
+      ["EVM", wallets.slice(1).map(([, , address]) => address)],
+    ] as const) {
+      const card = page.getByRole("article", { name: `${family} wallet` });
+      for (const address of addresses)
+        await expect(card).toContainText(address);
       await expect(
-        card.getByRole("link", { name: "View public record" }),
-      ).toHaveAttribute(
-        "href",
-        new RegExp(`/api/v1/wallet-claims/readback_${chain}$`),
-      );
+        card.getByRole("img", { name: "Not confirmed", exact: true }),
+      ).toHaveCount(addresses.length);
     }
+    await expect(
+      page.getByRole("link", { name: "View public record" }),
+    ).toHaveCount(0);
     if (visit === 0) await page.reload({ waitUntil: "networkidle" });
   }
   expect(writes).toEqual([]);
@@ -80,7 +83,7 @@ test("unavailable wallet readback retries without inventing an empty account", a
   await page.goto("/account#wallets", { waitUntil: "networkidle" });
   await expect(page.locator("#wallets").getByRole("alert")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Connect Base wallet", exact: true }),
+    page.getByRole("button", { name: "Connect EVM wallet", exact: true }),
   ).toHaveCount(0);
   available = true;
   await page

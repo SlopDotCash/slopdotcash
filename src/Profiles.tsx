@@ -4,7 +4,7 @@ import type { CycleIndex } from "./lib/cycle-index";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import type { ScoreEvent } from "./lib/leaderboard";
 import { transactionUrl } from "./lib/payments/contracts";
-import { type PointRevision, type PointsMember, pointKey } from "./lib/points";
+import { type PointsMember, pointKey } from "./lib/points";
 import { dailyPoints } from "./lib/profile-activity";
 import {
   assertProfiles,
@@ -60,7 +60,6 @@ export function ProfileActivity({
   work,
   awards,
   pointsMissing,
-  revisions,
   login,
   actorId,
   showIdentity,
@@ -75,7 +74,6 @@ export function ProfileActivity({
   awards?: PointsMember["awards"];
   /** Shown per record while the points journal is loading or unavailable. */
   pointsMissing?: string;
-  revisions?: readonly PointRevision[];
   actorId?: string;
   showIdentity: boolean;
   cycles?: CycleIndex;
@@ -192,7 +190,6 @@ export function ProfileActivity({
       ) : counts ? (
         <PullRequestBar counts={counts} login={p?.login ?? login} />
       ) : null}
-      {revisions ? <PointsRevisionHistory revisions={revisions} /> : null}
       {children}
       <PayoutList
         payments={payments ?? []}
@@ -342,77 +339,6 @@ function PayoutList({
         ))}
       </ul>
     </section>
-  );
-}
-
-function PointsRevisionHistory({
-  revisions,
-}: {
-  revisions: readonly PointRevision[];
-}) {
-  const [expanded, setExpanded] = useState(false);
-  if (!revisions.length) return null;
-  const byId = new Map(revisions.map((revision) => [revision.id, revision]));
-  const ordered = [...revisions].reverse();
-  return (
-    <details className="points-revisions">
-      <summary>Points history ({revisions.length})</summary>
-      <ol className="points-history">
-        {(expanded ? ordered : ordered.slice(0, 10)).map((revision) => {
-          const previous = revision.previous
-            ? byId.get(revision.previous)
-            : undefined;
-          return (
-            <li key={revision.id}>
-              <ExternalLinkAnchor href={revision.award.sourceUrl}>
-                {revision.award.category.replaceAll("-", " ")}
-              </ExternalLinkAnchor>
-              <p>
-                {previous?.award.amount.toLocaleString() ?? "0"} →{" "}
-                {revision.award.amount.toLocaleString()} Points
-                {revision.award.provisional ? " · Provisional" : ""}
-              </p>
-              <p>{revision.decision?.reason ?? "No reason recorded."}</p>
-              <dl>
-                <dt>Work occurred</dt>
-                <dd>
-                  <time dateTime={revision.award.occurredAt}>
-                    {formatDateTime(revision.award.occurredAt)}
-                  </time>
-                </dd>
-                <dt>Decision effective</dt>
-                <dd>
-                  {revision.decision ? (
-                    <time dateTime={revision.decision.effectiveAt}>
-                      {formatDateTime(revision.decision.effectiveAt)}
-                    </time>
-                  ) : (
-                    "Not recorded"
-                  )}
-                </dd>
-                <dt>Recorded</dt>
-                <dd>
-                  <time dateTime={revision.recordedAt}>
-                    {formatDateTime(revision.recordedAt)}
-                  </time>
-                </dd>
-              </dl>
-            </li>
-          );
-        })}
-      </ol>
-      {ordered.length > 10 ? (
-        <button
-          type="button"
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded
-            ? "Show recent decisions"
-            : `View all ${ordered.length} decisions`}
-        </button>
-      ) : null}
-    </details>
   );
 }
 

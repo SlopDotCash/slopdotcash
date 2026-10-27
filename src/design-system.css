@@ -359,10 +359,6 @@ label {
   margin-left: 0;
 }
 
-.header-nav-short {
-  display: none;
-}
-
 .account-login:hover {
   background: #ffffff;
 }
@@ -1011,8 +1007,15 @@ label {
   color: var(--orange);
 }
 
+/* The logotype shows from 480px up; the S mark alone stands in on phones. */
+@media (max-width: 479px) {
+  .wordmark-text {
+    display: none;
+  }
+}
+
 @media (max-width: 680px) {
-  /* One row: the S mark, a compact "?" link, and the account control. */
+  /* One row: the S mark, the "How It Works" link, and the account control. */
   .header-inner {
     min-height: 72px;
     flex-wrap: nowrap;
@@ -1026,20 +1029,9 @@ label {
   }
 
   .header-nav-link {
-    min-width: 44px;
     min-height: 44px;
-    justify-content: center;
-    padding: 0;
-    font-size: 18px;
-  }
-
-  .header-nav-full,
-  .wordmark-text {
-    display: none;
-  }
-
-  .header-nav-short {
-    display: inline;
+    padding: 0 12px;
+    font-size: 14px;
   }
 
   .wordmark {
@@ -1055,7 +1047,7 @@ label {
   }
 
   .agent-prompt-box {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 16px;
   }
 
@@ -1063,8 +1055,28 @@ label {
     font-size: 15px;
   }
 
+  /* The prompt keeps its row; Copy shrinks to a square icon button. A failed
+     copy keeps its "Select text" label so the failure stays visible. */
   .command-box .button {
-    width: 100%;
+    min-width: 44px;
+    padding: 0;
+  }
+
+  .command-box .button svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .agent-prompt-box .button:not([data-copy="error"]) {
+    width: 44px;
+  }
+
+  .agent-prompt-box .button:not([data-copy="error"]) .agent-prompt-copy-label {
+    display: none;
+  }
+
+  .agent-prompt-box .button[data-copy="error"] {
+    padding: 0 12px;
   }
 
   .project-card {
@@ -1095,4 +1107,177 @@ main h2 {
   font-weight: 800;
   letter-spacing: -0.03em;
   text-transform: uppercase;
+}
+
+/* Payout wallets: one compact card per wallet family, icons instead of text. */
+.chain-icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--brand-color-raised);
+  color: var(--on-accent);
+}
+
+.chain-icon > svg {
+  width: 62%;
+  height: 62%;
+}
+
+.chain-icon[data-chain="ethereum"] {
+  background: #627eea;
+}
+
+.chain-icon[data-chain="base"] {
+  background: #0052ff;
+}
+
+.chain-icon[data-chain="solana"] {
+  background: #131210;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.chain-icon[data-chain="robinhood"] {
+  background: #ccff00;
+}
+
+.chain-icon[data-status="not confirmed"] {
+  opacity: 0.45;
+}
+
+.wallet-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  align-items: start;
+  gap: 12px;
+  margin-block: 16px;
+}
+
+.wallet-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 14px 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--brand-radius-large);
+  background: var(--surface);
+}
+
+.wallet-card[data-state="attention"] {
+  border-color: var(--warning);
+}
+
+.wallet-card[data-state="empty"] .chain-icon {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.wallet-card-chains {
+  display: flex;
+}
+
+.wallet-card-chains .chain-icon + .chain-icon {
+  margin-inline-start: -8px;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.wallet-card-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wallet-card-main h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wallet-card-address,
+.wallet-card-rows li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--brand-font-data);
+  font-size: 16px;
+}
+
+.wallet-card-rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wallet-card-rows .chain-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.wallet-ok,
+.wallet-warn {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.wallet-ok {
+  color: var(--green);
+}
+
+.wallet-warn {
+  color: var(--warning);
+}
+
+.wallet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  padding: 3px 10px 3px 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wallet-chip .chain-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.wallet-card-action svg {
+  width: 20px;
+  height: 20px;
+}
+
+.wallet-card .wallet-confirmation {
+  grid-column: 1 / -1;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.wallet-note {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@keyframes wallet-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .wallet-spin {
+    animation: wallet-spin 1s linear infinite;
+  }
 }

@@ -2525,12 +2525,6 @@ small {
 .earnings-page {
   padding-block: 2rem 4rem;
 }
-.earnings-wallets {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
-  gap: 1rem;
-  margin-block: 2rem;
-}
 .earnings-page .wallet-address {
   overflow-wrap: anywhere;
 }
@@ -4060,15 +4054,6 @@ html:has(.security-page) {
   color: var(--ink);
   font: inherit;
   font-weight: 400;
-}
-
-.points-revisions dd {
-  margin-inline-start: 0;
-  overflow-wrap: anywhere;
-}
-.points-revisions dt {
-  font-weight: 600;
-  margin-block-start: 0.5rem;
 }
 
 .reward-exact-amount {

@@ -73,7 +73,7 @@ for (const [next, expected] of [
     const member = {
       actor: { id: "U_return_member", login: "return-member" },
       joinedAt: "2026-10-01T00:00:00.000Z",
-      public: false,
+      public: true,
       welcome: 5,
       socialPoints: 0,
     };
@@ -113,14 +113,8 @@ for (const [next, expected] of [
         return;
       }
       if (url.pathname === "/api/v1/points/join") {
-        expect(route.request().postDataJSON().public).toBe(false);
+        expect(route.request().postDataJSON().public).toBe(true);
         signedIn = true;
-        await route.fulfill({ json: member });
-        return;
-      }
-      if (url.pathname === "/api/v1/points/visibility") {
-        expect(signedIn).toBe(true);
-        member.public = route.request().postDataJSON().public;
         await route.fulfill({ json: member });
         return;
       }
@@ -153,15 +147,16 @@ for (const [next, expected] of [
     await (await popup).close();
     await expect(page).toHaveURL(expected);
     await page.goto(`${deployment.site}/account#profile`);
-    const visibility = page.getByLabel("Show my membership publicly", {
-      exact: true,
-    });
-    await expect(visibility).not.toBeChecked();
-    // The controlled checkbox changes after the API acknowledges the save.
-    await visibility.click();
-    await expect(visibility).toBeChecked();
+    const profile = page.locator("#profile");
+    await expect(
+      profile.getByRole("button", { name: "Sign out" }),
+    ).toBeVisible();
+    // Membership is always public, so the account page offers no visibility choice.
+    await expect(profile.getByRole("checkbox")).toHaveCount(0);
     await page.reload();
-    await expect(visibility).toBeChecked();
+    await expect(
+      profile.getByRole("button", { name: "Sign out" }),
+    ).toBeVisible();
     await page.goto(
       `${deployment.site}/login?next=${encodeURIComponent(next)}`,
     );

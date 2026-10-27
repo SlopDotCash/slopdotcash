@@ -98,11 +98,8 @@ origin is refused. The immutable GitHub numeric ID must still be in
 create or use a grant. Admin, moderator and project-owner roles grant no access.
 The API does not return a transferable operator token. No new secret is needed.
 
-Open **Account → Private traces** (`/operator/traces`). Enter the trace digest
-and the reason, then select **Download private trace**. The browser checks the
-file digest before it requests a download. The page does not preview the trace
-or keep it in site storage. Keep the downloaded file private. If a transfer
-fails, retry to request a new grant.
+The website has no operator page for traces. Use the two routes below. Keep a
+downloaded file private. If a transfer fails, request a new grant.
 
 The route contract is:
 
