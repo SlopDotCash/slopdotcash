@@ -146,6 +146,16 @@ this fixed operation permits those pairs. Socket creation, other socket-pair
 families and io_uring remain blocked; ordinary artifacts retain their original
 blanket socket-pair refusal.
 
+The fixed operation derives object closure from its authoritative inputs.
+It requires the complete commit parent graph, complete needed tree snapshots,
+all changed and source-head blobs, and merge attributes. It also checks every
+stored object's format and expanded size. An unbundled repository has no
+installed refs, so an unrooted `git fsck` alone cannot establish completeness.
+Historical file bodies unrelated to the requested merges may be omitted;
+missing graph, tree, changed-file or attribute objects still refuse. This keeps
+the existing limits while allowing large-history repositories to supply a
+bounded operation proof. No submodule or repository code is fetched or run.
+
 Run `bun --no-env-file scripts/prepare-vetting-sandbox.mjs` from the repository
 root before a direct container build. Normal Wrangler and release commands do
 this preparation automatically. The image contains the bundled canonical
@@ -156,7 +166,8 @@ capacity or physical VM teardown.
 The existing Linux sandbox job also runs `scripts/value-merge-sdk.workflow.mjs`
 through the real bounded multipart handler, a test-only metadata publisher and
 the actual named `MergeVerifier`. Pinned public Network 97/117 objects exercise
-the complete merge, a second fresh sandbox, wrong parents, omitted paths,
+the complete merge, a second fresh sandbox, the bounded object bundle, a missing
+required head blob, wrong parents, omitted paths,
 corrupt bytes, the unchanged request cap and the expanded-object bound. No
 subscription verdict enters CI. Real session, journal and Points consumption
 need separate end-to-end evidence; this SDK control does not provide them.
