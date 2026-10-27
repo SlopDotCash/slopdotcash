@@ -27,6 +27,8 @@ export async function assessValue(
 ) {
   if (evidence.indirectAcceptance)
     throw new Error("Indirect acceptance requires joint work-unit assessment");
+  if (evidence.noChangePromotion)
+    throw new Error("Unchanged promotions require joint work-unit assessment");
   if (
     evidence.limitations.length > 0 ||
     (await binarySourceLimitations(evidence)).length > 0
@@ -77,7 +79,7 @@ export function validateEvidenceAssessment(
   value: unknown,
   evidence: ValueEvidence,
 ) {
-  if (evidence.indirectAcceptance) return null;
+  if (evidence.indirectAcceptance || evidence.noChangePromotion) return null;
   return validateValueAssessment(value, {
     evidenceUrls: new Set(evidence.evidenceUrls),
     relatedPullRequestUrls: new Set(

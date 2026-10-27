@@ -229,7 +229,7 @@ test("the header login link keeps the current page as the return route", async (
   );
 });
 
-test("closing a pending sign-in window lets the user start again", async ({
+test("a cancelled pending sign-in lets the user start again", async ({
   diagnostics,
   page,
 }) => {
@@ -292,11 +292,13 @@ test("closing a pending sign-in window lets the user start again", async ({
     const popup = await popupEvent;
     await expect(popup).toHaveURL(/\/v1\/oauth\/authorize\?/u);
     await popup.close();
-    await expect(
-      page.getByRole("status").filter({
-        hasText: "The GitHub sign-in window was closed. Try again.",
-      }),
-    ).toBeVisible();
+    const cancel = page.getByRole("button", {
+      name: "Cancel sign-in",
+      exact: true,
+    });
+    await cancel.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("status")).toContainText("Sign-in cancelled.");
     await expect(
       page.getByRole("button", { name: "Continue with GitHub", exact: true }),
     ).toBeEnabled();
@@ -304,7 +306,7 @@ test("closing a pending sign-in window lets the user start again", async ({
     expect(joins).toBe(0);
   }
   await expect(
-    page.getByRole("button", { name: "Cancel", exact: true }),
+    page.getByRole("button", { name: "Cancel sign-in", exact: true }),
   ).toHaveCount(0);
   await page.goto("about:blank");
 });
