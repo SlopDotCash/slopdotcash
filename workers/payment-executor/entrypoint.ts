@@ -38,3 +38,26 @@ export class MonthlyReserveRelease extends WorkerEntrypoint<Environment> {
     ).fetch(request);
   }
 }
+
+/** Pages may prepare/complete a Solana wallet binding, never dispatch a payment. */
+export class SolanaBinding extends WorkerEntrypoint<Environment> {
+  async fetch(request: Request): Promise<Response> {
+    const path = new URL(request.url).pathname;
+    if (
+      request.method !== "POST" ||
+      ![
+        "/v1/pay",
+        "/v1/complete-bind",
+        "/v1/security/pay",
+        "/v1/security/complete-bind",
+      ].includes(path) ||
+      this.env.SIGNER_STACK !== "production" ||
+      this.env.SIGNER_ROLE !== "attester" ||
+      this.env.CHAIN_FAMILY !== "solana"
+    )
+      return new Response("Not found", { status: 404 });
+    return this.env.JOURNAL.get(
+      this.env.JOURNAL.idFromName(SIGNER_STACKS.production.journal),
+    ).fetch(request);
+  }
+}

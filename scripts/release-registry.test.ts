@@ -180,6 +180,8 @@ test("release carries the checked D1 registry and history into canonical atteste
         "scripts/sha256.mjs",
         "scripts/prepare-payment-deployments.ts",
         "workers/payment-executor/configure.mjs",
+        "workers/payment-executor/release-plan.mjs",
+        "workers/payment-executor/mainnet-execution.mjs",
         "workers/payment-executor/signer-stacks.mjs",
         "workers/payments/registry-database.mjs",
         "wrangler.toml",
@@ -257,23 +259,21 @@ test("release carries the checked D1 registry and history into canonical atteste
         ],
         env,
       );
-    const snippet = workflow.match(
-      /attester_vaults="\$\(ATTESTER_PINS="\$attester_dir\/pinned.json" bun --eval '\n([\s\S]*?)\n {10}'\)"/,
-    );
-    if (!snippet?.[1]) throw new Error("Missing attester derivation");
     const derive = (cwd: string) =>
-      run(
-        cwd,
-        [
-          process.execPath,
-          "--eval",
-          snippet[1]
-            ?.split("\n")
-            .map((line) => line.slice(10))
-            .join("\n") ?? "",
-        ],
-        { ATTESTER_PINS: join(cwd, "pins.json") },
-      );
+      run(cwd, [
+        process.execPath,
+        "--eval",
+        `import { writeFile } from "node:fs/promises";
+import { HISTORICAL_PROJECTS } from "./src/lib/projects.mjs";
+import { mainnetReleasePlan } from "./workers/payment-executor/release-plan.mjs";
+import { readRegistryDatabase, readMonthlySchedule } from "./workers/payments/registry-database.mjs";
+const plans = mainnetReleasePlan({registry: HISTORICAL_PROJECTS,
+  registryDatabase: await readRegistryDatabase(), monthlySchedule: await readMonthlySchedule()});
+const base = plans.find(item => item.network === "base-mainnet");
+await writeFile("pins.json", base.config.vars.PAYMENT_DEPLOYMENTS);
+await writeFile("release-config.json", JSON.stringify(base.config));
+process.stdout.write(String(base.pinCount));`,
+      ]);
     expect((await derive(prepare)).stdout).toBe("1");
     expect((await derive(deploy)).stdout).toBe("0");
     expect((await verify()).code).not.toBe(0);
@@ -326,6 +326,9 @@ test("release carries the checked D1 registry and history into canonical atteste
         join(deploy, "config/slop-payments-base-mainnet-attester.json"),
         "utf8",
       ),
+    );
+    expect(config).toEqual(
+      JSON.parse(await readFile(join(deploy, "release-config.json"), "utf8")),
     );
     expect(JSON.parse(config.vars.PAYMENT_DEPLOYMENTS)).toEqual(
       JSON.parse(await readFile(freshPins, "utf8")),
