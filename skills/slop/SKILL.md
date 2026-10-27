@@ -56,15 +56,19 @@ until verified. Independently query GitHub for the current `main` head of
 `SlopDotCash/slopdotcash`. Require the manifest's committed 40-character revision
 and require every guide renderer revision to equal that manifest revision, not
 an independently moving branch name. Authorize the manifest revision only when
-it is the current `main` head, a byte-identical canonical ancestor, or an open,
-non-draft, same-repository pull request head into `main`. A pull request also
+it is the current `main` head, a byte-identical canonical ancestor, an open,
+non-draft, same-repository pull request head into `main`, or the `main`
+ancestor that is the head of the newest successful push release of `main` in
+GitHub Actions while a later `main` commit changed the template and no release
+has published it. A pull request also
 requires the maintainer-controlled `slop-release-candidate` label, applied after
 the exact current-head commit event, and must include current `main`.
 Check `protocol/skill-revocations.json` at current `main` and reject revoked
 revisions. Verify canonical bytes against GitHub at the selected immutable
 revision; reject divergent ancestry, missing or extra files, and mismatched
-bytes. A successful release alone does not authorize an older skill whose
-canonical bytes differ from current `main`. Every guide renderer revision must equal the manifest
+bytes. An older release never authorizes a skill whose canonical bytes differ
+from current `main`: only the newest successful release does, and only until
+the next one succeeds. Every guide renderer revision must equal the manifest
 revision; a guide cannot independently choose executable code. Require HTTPS on `slop.cash`, the
 selected project skill name and source, and an archive digest. Reject a
 redirect to another authority, a working-tree or unauthorized stale revision,
