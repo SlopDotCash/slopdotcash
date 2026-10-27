@@ -252,6 +252,7 @@ export function AutomaticMonthlyPayment({
         : "Turn on automatic monthly payment in wallet";
   return (
     <section
+      id={`vault-monthly-${deployment.network}-${deployment.vault}`}
       className="admin-card vault-actions"
       aria-label={`Vault monthly authorization · ${networkLabel(deployment.network)}`}
     >

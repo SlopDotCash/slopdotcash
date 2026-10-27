@@ -35,6 +35,7 @@ import {
   escapeRegExp,
   expect,
   expectAccessible,
+  openProjectSecuritySettings,
   serveProjectCycleIndex,
   test,
 } from "./fixtures";
@@ -864,6 +865,39 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   const monthly = page.getByRole("region", {
     name: "Vault monthly authorization · Base Sepolia (test)",
   });
+  await page.route("**/api/v1/payments/projects/eliza/monthly/*", (route) =>
+    route.fulfill({
+      json: {
+        projectId: "eliza",
+        period: new URL(route.request().url()).pathname.split("/").at(-1),
+        manifestSha256: "a".repeat(64),
+        automatic: false,
+        cutoffAt: null,
+        deployment,
+        asset: null,
+        proposal: null,
+        run: null,
+      },
+    }),
+  );
+  await page
+    .getByRole("button", { name: "Review monthly awards", exact: true })
+    .click();
+  const authorizationLink = page.getByRole("link", {
+    name: "Review current setting and cap",
+    exact: true,
+  });
+  await expect(authorizationLink).toHaveAttribute(
+    "href",
+    `#vault-monthly-${deployment.network}-${deployment.vault}`,
+  );
+  await authorizationLink.click();
+  await expect(monthly).toBeInViewport();
+  await expect(
+    monthly.getByText("Current setting", { exact: true }),
+  ).toHaveCount(0);
+  expect(sends).toHaveLength(0);
+  expect(await onChain()).toEqual({ cap: 0n, enabled: false });
   await monthly
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
@@ -1272,6 +1306,32 @@ test("owner creates, registers and funds a vault through the real API", async ({
       waitUntil: "networkidle",
     });
     let setup = page.getByRole("region", { name: "Set up project vault" });
+    await expect(
+      setup.getByRole("button", { name: "Review vault creation", exact: true }),
+    ).toBeVisible();
+    await expect(
+      setup.getByRole("button", {
+        name: "Recover existing vault",
+        exact: true,
+      }),
+    ).not.toBeVisible();
+    await page.screenshot({
+      path: info.outputPath("owner-vault-setup.png"),
+      fullPage: true,
+    });
+    const restoreSetupText = await enlargeText(page.locator("body"));
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: info.outputPath("owner-vault-setup-zoom.png"),
+      fullPage: true,
+    });
+    await restoreSetupText();
+    await setup.getByText("Recover an existing vault", { exact: true }).focus();
+    await page.keyboard.press("Enter");
     await setup
       .getByRole("button", { name: "Recover existing vault", exact: true })
       .click();
@@ -1343,6 +1403,11 @@ test("owner creates, registers and funds a vault through the real API", async ({
       name: "Recover existing vault",
       exact: true,
     });
+    await expect(recoverButton).not.toBeVisible();
+    await recoverySetup
+      .getByText("Recover an existing vault", { exact: true })
+      .focus();
+    await recoveryPage.keyboard.press("Enter");
     await expect(recoverButton).toBeEnabled();
     await expectAccessible(recoveryPage);
     await recoveryPage.screenshot({
@@ -1819,9 +1884,7 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await page.goto(`${origin}/projects/${id}/manage`, {
       waitUntil: "networkidle",
     });
-    await page
-      .getByText("Security program and private bounty funds", { exact: true })
-      .click();
+    await openProjectSecuritySettings(page);
     const setup = page.getByRole("region", {
       name: "Set up bounty vault",
       exact: true,
@@ -1847,9 +1910,7 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await setup.getByRole("button", { name: "Create vault in wallet" }).click();
     await expect.poll(() => sends.length).toBe(1);
     await page.reload({ waitUntil: "networkidle" });
-    await page
-      .getByText("Security program and private bounty funds", { exact: true })
-      .click();
+    await openProjectSecuritySettings(page);
     await rpc("anvil_mine", ["0x40"]);
     await setup
       .getByRole("button", { name: "Check vault registration" })
@@ -1980,9 +2041,7 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await page.goto(`${origin}/projects/${id}/manage`, {
       waitUntil: "networkidle",
     });
-    await page
-      .getByText("Security program and private bounty funds", { exact: true })
-      .click();
+    await openProjectSecuritySettings(page);
     await expect(
       page.getByRole("region", { name: "Bounty funds", exact: true }),
     ).toContainText("Available for new awards: 10 USDC");

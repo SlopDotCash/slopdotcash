@@ -1445,3 +1445,100 @@ main h2 {
     transition: none;
   }
 }
+
+/* Compact public records and their supporting details. */
+
+.cycle-current-stage {
+  color: var(--muted);
+  margin-block: 0.75rem;
+}
+.cycle-history,
+.cycle-breakdown {
+  margin-block: 0.75rem 1.25rem;
+}
+.cycle-history > summary,
+.cycle-breakdown > summary,
+.cycle-row-history > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.cycle-contributors {
+  min-width: 0;
+  table-layout: fixed;
+}
+.cycle-contributors :is(th, td) {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.cycle-contributors th:nth-child(1) {
+  width: 36%;
+}
+.cycle-contributors th:nth-child(2) {
+  width: 20%;
+}
+.cycle-contributor-state {
+  display: block;
+  color: var(--muted);
+  margin-top: 0.25rem;
+  font-weight: 400;
+}
+.cycle-current-amount {
+  display: block;
+}
+
+.cycle-row-history {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+}
+.cycle-amount-history {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.cycle-amount-history dd {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+.cycle-amount-history small {
+  display: block;
+  color: var(--muted);
+}
+.cycle-row-history .cycle-amount-history {
+  grid-template-columns: 1fr;
+  margin-top: 0.75rem;
+}
+.payment-exceptions {
+  margin-top: 1rem;
+}
+.payment-exceptions > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.payment-exceptions dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1.5rem;
+}
+.payment-exceptions dt {
+  font-weight: 700;
+}
+.payment-exceptions dd {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+}
+.who-builds .model-outcomes-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.audience-data > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.audience-data > .model-outcomes-summary {
+  margin-top: 1rem;
+}
+@media (max-width: 680px) {
+  .payment-exceptions dl,
+  .who-builds .model-outcomes-summary {
+    grid-template-columns: 1fr;
+  }
+}

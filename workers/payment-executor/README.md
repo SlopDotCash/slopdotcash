@@ -415,7 +415,10 @@ inactive release. A zero-pin release leaves any existing Worker and its
 journal unchanged; it never disables an already-served vault. Once the
 checked registry contains real vault pins, the normal release requires the
 exact `PAYMENT_RPC_URLS` and `SIGNER_PRIVATE_KEY` secret names and restores
-the existing schedule. This does not enable another network, create a
+the existing schedule. An unreadable JSON result from the secret-list command
+is retried up to three reads; a command failure or a complete but incorrect
+inventory still refuses immediately. Exhausted reads fail the release. This
+does not retry deployments. This does not enable another network, create a
 payment dispatcher or authorize a transaction. Production deployment still
 uses the reviewed main-only release workflow.
 

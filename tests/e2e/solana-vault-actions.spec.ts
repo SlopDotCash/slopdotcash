@@ -40,6 +40,7 @@ import {
   escapeRegExp,
   expect,
   expectAccessible,
+  openProjectSecuritySettings,
   serveProjectCycleIndex,
   test,
 } from "./fixtures";
@@ -1152,10 +1153,7 @@ async function ownerSetupWorkflow(
         waitUntil: "networkidle",
       },
     );
-    if (bounty)
-      await page
-        .getByText("Security program and private bounty funds", { exact: true })
-        .click();
+    if (bounty) await openProjectSecuritySettings(page);
     const setup = page.getByRole("region", {
       name: bounty ? "Set up bounty vault" : "Set up project vault",
     });
@@ -1229,10 +1227,7 @@ async function ownerSetupWorkflow(
     );
     expect(sends).toHaveLength(1);
     await page.reload({ waitUntil: "networkidle" });
-    if (bounty)
-      await page
-        .getByText("Security program and private bounty funds", { exact: true })
-        .click();
+    if (bounty) await openProjectSecuritySettings(page);
     if (!bounty) {
       const edited = structuredClone(target);
       edited.reward.monthlyCapMinor = "2000000000";

@@ -21,11 +21,7 @@ const drivers = [
     "node",
     ["workers/vetting-backup/qualification-workflow.mjs"],
   ],
-  [
-    "vetting-flags",
-    "bun",
-    ["--no-env-file", "workers/vetting-flags/workflow.ts"],
-  ],
+  ["vetting-flags", "node", ["workers/vetting-flags/run-workflow.mjs"]],
   // The inactive production attester gets no keys or provider credentials.
   [
     "attester-bootstrap",
