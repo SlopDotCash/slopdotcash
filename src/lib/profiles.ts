@@ -1,4 +1,7 @@
-import { isHistoricalRepositoryId } from "./projects.mjs";
+import {
+  findHistoricalRepository,
+  isHistoricalRepositoryId,
+} from "./projects.mjs";
 import { TARGET_REPOSITORIES } from "./repositories.mjs";
 export interface ProfileRecord {
   id: string;
@@ -360,4 +363,38 @@ export function profileCounts(p: ProfileRecord) {
     }),
     { merged: 0, open: 0, closed: 0 },
   );
+}
+
+/** Registry project behind a census repository name, if it resolves. */
+export function profileRepositoryProject(repository: string): string | null {
+  return findHistoricalRepository(repository)?.projectId ?? null;
+}
+
+/** Registry projects behind the currently collected repositories. */
+export function collectedProfileProjects(
+  collected: readonly string[],
+): ReadonlySet<string> {
+  return new Set(
+    collected
+      .map(profileRepositoryProject)
+      .filter((project): project is string => project !== null),
+  );
+}
+
+/**
+ * True when a previous census row survives into the next census. A renamed
+ * repository is collected under its current name, but a previous census
+ * names it by the name it had then; both names resolve to the same registry
+ * project, so the old row is replaced by the fresh full collection instead
+ * of added to it. Rows for retired projects, and rows the registry does not
+ * know, are still carried, preserving the archived-issue-history rule.
+ */
+export function isCarriedProfileRepository(
+  repository: string,
+  collected: ReadonlySet<string>,
+  collectedProjects: ReadonlySet<string>,
+): boolean {
+  if (collected.has(repository)) return false;
+  const project = profileRepositoryProject(repository);
+  return project === null || !collectedProjects.has(project);
 }

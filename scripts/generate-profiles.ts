@@ -2,6 +2,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import {
   assertProfiles,
+  collectedProfileProjects,
+  isCarriedProfileRepository,
   type ProfileIndex,
   type ProfileRecord,
 } from "../src/lib/profiles";
@@ -89,10 +91,19 @@ if (values.live) {
   const people = new Map<string, ProfileRecord>();
   // Carry the last counts of repositories that are no longer collected, as
   // issue history is archived, so removing a project keeps profile totals.
+  // A renamed repository is collected under its current name, so a previous
+  // row under the old name must not be carried on top of the fresh full
+  // collection; registry project identity, not the name string, decides.
   const collected = new Set(TARGET_REPOSITORIES.map((repo) => repo.id));
+  const collectedProjects = collectedProfileProjects(
+    TARGET_REPOSITORIES.map((repo) => repo.id),
+  );
   const carried = new Set<string>();
   for (const row of (previous as ProfileIndex).repositories) {
-    if (collected.has(row.repository)) continue;
+    if (
+      !isCarriedProfileRepository(row.repository, collected, collectedProjects)
+    )
+      continue;
     carried.add(row.repository);
     result.repositories.push({ ...row });
   }
