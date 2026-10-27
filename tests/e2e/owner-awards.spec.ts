@@ -258,13 +258,14 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     ),
   ).toBe(true);
   const restoreAllocationText = await enlargeText(page.locator("body"));
-  // Keep the exact saved amount together at enlarged text sizes; wrapping
+  // Keep aggregate and saved amounts together at enlarged text sizes; wrapping
   // the asset onto another line is fine, splitting the number is not.
+  await expect(awards.locator(".route-metric--info > dd")).toHaveText(
+    "2.73456789 TEST",
+  );
   expect(
     await awards
-      .locator(".owner-award-breakdown")
-      .first()
-      .locator("dd")
+      .locator(".route-metric--info > dd, .owner-award-breakdown dd")
       .evaluateAll((nodes) =>
         nodes.map((node) => {
           const text = node.firstChild;
@@ -281,7 +282,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
           ).size;
         }),
       ),
-  ).toEqual([1, 1, 1]);
+  ).toEqual([1, 1, 1, 1, 1, 1, 1]);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,
@@ -291,6 +292,9 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await page.screenshot({
     path: info.outputPath("owner-monthly-allocations-zoom.png"),
     fullPage: true,
+  });
+  await awards.locator(".route-metric--info").screenshot({
+    path: info.outputPath("allocated-total-200.png"),
   });
   await restoreAllocationText();
   await awards.getByRole("button", { name: "Finalize awards" }).click();
