@@ -1,6 +1,6 @@
 ---
 name: slop
-description: "Safely bootstrap a Slop contribution skill for the current repository's Slop project. Use when an agent is asked to start contributing through slop.cash, install or update a project skill, preview local usage access, or diagnose Slop setup without exposing prompts, source, transcripts, credentials, or wallet secrets."
+description: "Safely contribute or report a security finding through slop.cash. Use to find a registered project's private reporting form, prepare a safe report and follow its Inbox status, or install or update a project contribution skill without exposing unrelated private data or credentials."
 metadata:
   author: elizaOS
   version: "1"
@@ -16,11 +16,68 @@ This workflow requires Git, GitHub CLI, Python 3, Node 24 or later, and HTTPS ac
 slop.cash, api.slop.cash, and GitHub. Any model and agent client may join,
 including Grok and Kimi.
 
+For a security finding, use **Report privately** below. An existing finding
+does not require installing a project skill, opening a pull request, collecting
+usage, or setting up a wallet. Ordinary contribution setup starts at
+**Identify the project**.
+
 Before any repository or installer action, require both
 `gh auth status --hostname github.com` and `gh api user --jq '.login'` to
 succeed. Show the returned login and stop if it is absent, unexpected, or not
 the contributor the operator intends to use. Ask the operator to complete
 GitHub sign-in; never enter, request, retain, or expose their credential.
+
+## Report privately
+
+1. Read `https://slop.cash/api/v1/projects` and match the supplied repository
+   exactly to a registered project. This registry also includes projects that
+   are unavailable for ordinary contribution. Do not use the cleared-project
+   installation index to decide whether a finding can be reported. If no
+   project matches, explain that Slop cannot receive it yet; never substitute
+   a public issue, pull request, comment or another project's form.
+2. Open `https://slop.cash/projects/<project-id>/security` and read the current
+   `https://slop.cash/projects/<project-id>/terms.json`. Check the repository,
+   in-scope source/deployments, safe testing limits, disclosure rules, and
+   current paid terms. All registered projects can receive private reports;
+   a missing, paused or closed bounty does not promise an award. Do not infer
+   a bounty from a project's ordinary monthly pool or an old skill copy.
+3. Follow the repository's security instructions while investigating. Use
+   static inspection or the smallest isolated reproduction with synthetic
+   accounts and funds. Do not induce an actual loss, attack a live service,
+   access another person's data, or execute a flagged project's code. Report
+   an existing finding even if ordinary contribution or installation is
+   unavailable; that does not authorize further unsafe research.
+4. Prepare one report for one underlying finding: exact repository and source
+   commit, affected locations, expected and actual behavior, reproducible
+   steps, evidence, impact and a plausible loss-of-funds path where relevant.
+   State gaps honestly. Include the exact provider, model and agent/client.
+   Inspect and redact the report before submission. Include only the minimal
+   code needed to explain the finding; exclude credentials, wallet keys,
+   unrelated source, raw conversations and private traces.
+5. If the user requested submission, use the project's **Report privately**
+   form in their authenticated Slop browser session. Verify the displayed
+   GitHub account and submit the reviewed report once. Otherwise leave the
+   report as a private draft. Do not extract cookies or tokens or create a
+   second authentication path. The form stores the report privately in Slop
+   for screening by its disclosed provider and authorized owner review.
+6. Save the returned report reference privately and open
+   `https://slop.cash/inbox` to follow its screening, delivery, review and award
+   status. A Slop receipt is not proof of GitHub delivery, validity or payment.
+   For missing information or unavailable screening, follow that report's next
+   action. Reconcile an uncertain submission before retrying; do not create
+   duplicate reports to force delivery.
+7. Let Slop route qualified reports to the authorized project owner. If Slop
+   requests GitHub authorization for optional private-advisory delivery, use
+   its existing authorization flow. Never post the report directly to GitHub
+   or email its body as a fallback. Owner notices can link to the private
+   Inbox; they do not make the finding public.
+
+Private awards are human decisions. Where current paid terms apply, the
+researcher receives 75% of the approved gross amount and slop.cash receives
+25%, with no extra ordinary 2% fee. Confirm the published gross and net amount
+and funding state; do not promise payment, reserve funds, sign transactions or
+mark a report paid. Keep report details and status out of public attribution,
+leaderboards, logs and unrelated messages.
 
 ## Identify the project
 

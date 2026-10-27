@@ -304,6 +304,28 @@ bind their actual evidence; missing evidence never earns a trace bonus. A device
 signature proves byte continuity, not provider billing truth. Token evidence is
 diagnostic and never changes score, rank, share, or payment.
 
+## Private security reporting
+
+Owner decision, 27 October 2026: all registered projects retain confidential
+reporting, but only Umia Protocol has a current paid security bounty. Its
+$10,000 gross award per accepted critical loss-of-funds finding splits $7,500
+to the first qualifying reporter and $2,500 to slop.cash. The maintainer reviews
+and awards each finding. The offer is pledged with funding after approval,
+not an upfront-funded vault; reserve and pay only after verified funding. Slop fronts an approved award through the existing private
+bounty settlement; reimbursement by Umia is off chain. Publish project terms
+only through immutable D1 revisions. Preserve prior cases and funded awards.
+
+The canonical skills direct researchers to the authenticated Slop interface.
+Accept and retain the report privately before optional GitHub forwarding;
+show its receipt and status in Inbox. Screen with the approved Surplus route
+before owner notification. Missing evidence, suspected spam and unavailable
+analysis stay recoverable for human review. A model never approves an award.
+Use generic private email notices with secure Inbox links. GitHub forwarding
+requires the researcher's authorization and separate verified receipt; it is
+not a prerequisite for Slop intake or owner review. Retained private report
+reads require current case authority and an audit record. Contributor trace
+bodies remain unreadable. See PRD sections 8–10.
+
 ## Private traces
 
 Contributors may opt into the minimized contribution-specific trace defined by

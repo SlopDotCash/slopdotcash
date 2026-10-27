@@ -2,9 +2,8 @@
  * Private security bounty pages (PRD section 8, SEC-01 to SEC-18, MVP-13).
  *
  * `/projects/:id/security` shows the public program terms and starts a
- * private report through the project's GitHub private vulnerability
- * reporting only after a fresh readiness check; Slop then confirms the
- * receipt from GitHub. `/security` is the signed-in case inbox: the reporter
+ * private report in Slop before automated screening and optional private
+ * GitHub forwarding. `/inbox` and `/security` show the authorized reporter
  * sees the receipt, the owner's response and the payout; the owner sees the
  * AI summary and the request-information, award and remediation actions.
  * The API returns only the cases and fields the caller's current role allows.
@@ -31,7 +30,7 @@ import {
 import { Link } from "./Link";
 import { ProjectSecuritySettings } from "./ProjectSecuritySettings";
 import "./operations-design.css";
-import { decimalBaseUnits } from "./lib/base-units.mjs";
+import { decimalBaseUnits, formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
 import {
   clearDraft,
@@ -144,6 +143,7 @@ type Readiness = {
   checkedAt: string | null;
   stale?: boolean;
   automaticConfigured?: boolean;
+  storedIntake?: boolean;
   maxAgeSeconds: number;
   paidParticipation: "open" | "closed";
   handoffUrl: string | null;
@@ -167,19 +167,9 @@ const BLOCKED_INTAKE: Record<Exclude<Readiness["state"], "ready">, string> = {
   unavailable: "Private reporting status is unavailable.",
 };
 
-function automaticReady(value: Readiness): boolean {
-  return (
-    value.state === "ready" &&
-    value.handoffUrl !== null &&
-    value.automatic === "ready"
-  );
-}
-
 /**
- * Checks private reporting when the page opens and shows the GitHub handoff
- * only while the answer is fresh. Every other state blocks the handoff
- * (SEC-07). The report draft lives here, so an expired or failed check never
- * discards what the reporter typed; sending checks again first.
+ * Accepts a report in Slop independently of GitHub availability. The optional
+ * GitHub delivery link is shown only while the cached observation is fresh.
  */
 function IntakeHandoff({
   project,
@@ -190,11 +180,6 @@ function IntakeHandoff({
 }) {
   const [state, setState] = useState<ReadinessState>({ status: "checking" });
   const [draft, setDraft] = useState<ReportDraft>(EMPTY_DRAFT);
-  const signedIn = session.status === "signed-in";
-  const stateRef = useRef(state);
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
   const check = useCallback((): Promise<Readiness | null> => {
     setState((current) =>
       current.status === "checked"
@@ -226,24 +211,6 @@ function IntakeHandoff({
   }, [project.id]);
   useEffect(() => {
     void check();
-  }, [check]);
-  // The authenticated endpoints obtain the fresh GitHub answer.
-  const ensureReady = useCallback(async (): Promise<boolean> => {
-    const current = stateRef.current;
-    // The authenticated create/send endpoints recheck GitHub. A stale public
-    // observation must not prevent that current authority check.
-    if (
-      current.status === "checked" &&
-      current.value.automaticConfigured === true
-    )
-      return true;
-    if (current.status === "checked" && !current.stale && !current.rechecking)
-      return automaticReady(current.value);
-    const value = await check();
-    return (
-      value !== null &&
-      (value.automaticConfigured === true || automaticReady(value))
-    );
   }, [check]);
   // The answer expires on this device's clock from when it arrived, so a
   // skewed clock cannot hide or extend it. The edge serves it at most
@@ -279,98 +246,99 @@ function IntakeHandoff({
         <LockKeyhole aria-hidden="true" />
         Never post exploit details publicly.
       </p>
-      {state.status === "checking" ? (
-        <p aria-live="polite" className="admin-status">
-          Loading private reporting status…
+      {state.status === "checked" && state.value.storedIntake === true ? (
+        <AutomaticReportForm
+          session={session}
+          draft={draft}
+          onDraft={setDraft}
+          project={project}
+        />
+      ) : state.status === "checking" ? (
+        <p role="status">Checking private intake…</p>
+      ) : (
+        <p role="status">
+          Slop private intake is unavailable. The private GitHub route below
+          remains separate; never post a public report.
         </p>
-      ) : state.status === "error" ? (
-        <div className="form-error" role="alert">
-          <CircleAlert aria-hidden="true" /> {state.message}
-          {checkAgain(false)}
-        </div>
-      ) : state.value.state === "ready" && state.value.handoffUrl ? (
-        <div aria-live="polite" className="security-handoff">
-          {state.stale ? (
-            <div className="form-error" role="alert">
-              <CircleAlert aria-hidden="true" /> Private reporting status from{" "}
-              {state.value.checkedAt
-                ? formatUtc(state.value.checkedAt)
-                : "an unknown time"}{" "}
-              is out of date.
-              {state.value.automatic === "ready" && signedIn
-                ? " Your draft is kept."
-                : ""}
-              {checkAgain(state.rechecking)}
-            </div>
-          ) : (
-            <p className="admin-status security-readiness">
-              <StatusBadge tone="success" icon={<ShieldCheck />}>
-                GitHub private reporting is on
-              </StatusBadge>{" "}
-              <span>
-                (checked{" "}
+      )}
+      <details className="security-reference">
+        <summary>Private GitHub delivery status</summary>
+        {state.status === "checking" ? (
+          <p aria-live="polite" className="admin-status">
+            Loading private reporting status…
+          </p>
+        ) : state.status === "error" ? (
+          <div className="form-error" role="alert">
+            <CircleAlert aria-hidden="true" /> {state.message}
+            {checkAgain(false)}
+          </div>
+        ) : state.value.state === "ready" && state.value.handoffUrl ? (
+          <div aria-live="polite" className="security-handoff">
+            {state.stale ? (
+              <div className="form-error" role="alert">
+                <CircleAlert aria-hidden="true" /> Private reporting status from{" "}
                 {state.value.checkedAt
                   ? formatUtc(state.value.checkedAt)
-                  : "an unknown time"}
-                ).
-                {state.value.paidParticipation === "open"
-                  ? ""
-                  : " No new paid reports now."}
-              </span>
-            </p>
-          )}
-          {state.stale ? null : (
-            <a
-              className={
-                state.value.automatic === "ready"
-                  ? "text-button"
-                  : "button primary-button"
-              }
-              href={state.value.handoffUrl}
-              rel="noreferrer"
-              target="_blank"
-            >
-              {state.value.automatic === "ready"
-                ? "Or report directly on GitHub"
-                : "Report privately on GitHub"}{" "}
-              <ExternalLink aria-hidden="true" />
-            </a>
-          )}
-        </div>
-      ) : (
-        <div className="form-error" role="alert">
-          <CircleAlert aria-hidden="true" />{" "}
-          {
-            BLOCKED_INTAKE[
-              state.value.state as Exclude<Readiness["state"], "ready">
-            ]
-          }{" "}
-          {state.stale && state.value.checkedAt
-            ? ` Status from ${formatUtc(state.value.checkedAt)} is out of date.`
-            : ""}
-          Check again later.
-          {checkAgain(state.rechecking)}
-        </div>
-      )}
-      {state.status === "checked" &&
-      (state.value.automaticConfigured === true ||
-        state.value.automatic === "ready") ? (
-        <>
-          {(state.stale || state.value.state !== "ready") && (
-            <p className="admin-status">You can still prepare your report.</p>
-          )}
-          <AutomaticReportForm
-            session={session}
-            draft={draft}
-            ensureReady={ensureReady}
-            onDraft={setDraft}
-            project={project}
-          />
-        </>
-      ) : null}
-      <p>
-        Already reported on GitHub? <Link href="/security">Verify it</Link>.
-      </p>
+                  : "an unknown time"}{" "}
+                is out of date.
+                {session.status === "signed-in" ? " Your draft is kept." : ""}
+                {checkAgain(state.rechecking)}
+              </div>
+            ) : (
+              <p className="admin-status security-readiness">
+                <StatusBadge tone="success" icon={<ShieldCheck />}>
+                  GitHub private reporting is on
+                </StatusBadge>{" "}
+                <span>
+                  (checked{" "}
+                  {state.value.checkedAt
+                    ? formatUtc(state.value.checkedAt)
+                    : "an unknown time"}
+                  ).
+                  {state.value.paidParticipation === "open"
+                    ? ""
+                    : " No new paid reports now."}
+                </span>
+              </p>
+            )}
+            {state.stale ? null : (
+              <a
+                className={
+                  state.value.automatic === "ready"
+                    ? "text-button"
+                    : "button primary-button"
+                }
+                href={state.value.handoffUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {state.value.automatic === "ready"
+                  ? "Or report directly on GitHub"
+                  : "Report privately on GitHub"}{" "}
+                <ExternalLink aria-hidden="true" />
+              </a>
+            )}
+          </div>
+        ) : (
+          <div className="form-error" role="alert">
+            <CircleAlert aria-hidden="true" />{" "}
+            {
+              BLOCKED_INTAKE[
+                state.value.state as Exclude<Readiness["state"], "ready">
+              ]
+            }{" "}
+            {state.stale && state.value.checkedAt
+              ? ` Status from ${formatUtc(state.value.checkedAt)} is out of date.`
+              : ""}
+            Check again later.
+            {checkAgain(state.rechecking)}
+          </div>
+        )}
+        <p>
+          Already reported on GitHub?{" "}
+          <Link href="/inbox">Verify it in your Inbox</Link>.
+        </p>
+      </details>
     </section>
   );
 }
@@ -397,6 +365,24 @@ type Submission = {
   caseId: string | null;
   retryAllowed: boolean;
   reconcileAfter: string | null;
+  intake?: {
+    state:
+      | "queued"
+      | "running"
+      | "legitimate"
+      | "needs-information"
+      | "spam"
+      | "unavailable";
+    receivedAt: string;
+    routingState?: "pending" | "routed";
+    revision: number;
+    reason: string | null;
+    reviewedAt: string | null;
+    canReview: boolean;
+    canForward: boolean;
+    canAuthorize?: boolean;
+    canRevise?: boolean;
+  } | null;
 };
 
 function reportBody(draft: ReportDraft): Record<string, unknown> {
@@ -565,22 +551,17 @@ function ReportFields({
 }
 
 /**
- * Starts an automatic private report from the program page: the draft stays
- * in this tab, Slop creates the private submission and GitHub asks the
- * reporter to authorize the intake app for it. Sending first confirms a
- * fresh readiness answer; when intake is no longer available the page shows
- * why and the draft stays with the parent.
+ * Stores a private report before screening and opens its durable Inbox status.
+ * A rejected request leaves the typed evidence in the form for recovery.
  */
 function AutomaticReportForm({
   draft,
-  ensureReady,
   onDraft,
   project,
   session,
 }: {
   session: ProjectSessionState;
   draft: ReportDraft;
-  ensureReady: () => Promise<boolean>;
   onDraft: (draft: ReportDraft) => void;
   project: ProjectDefinition;
 }) {
@@ -597,30 +578,39 @@ function AutomaticReportForm({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void run(async () => {
-      if (!(await ensureReady())) return;
       const body = await projectApiRequest<{
         submission: Submission;
-        authorizeUrl: string;
       }>("POST", "security-submissions", {
         projectId: project.id,
         idempotencyKey: key,
         origin: "slop",
+        report: reportBody(draft),
       });
-      if (!saveDraft(body.submission.id, draft))
-        throw new Error(DRAFT_STORAGE_ERROR);
-      window.location.assign(body.authorizeUrl);
+      clearDraft(body.submission.id);
+      window.location.assign(
+        `/inbox?submission=${encodeURIComponent(body.submission.id)}`,
+      );
       return "navigating";
     });
   };
   return (
     <form className="security-form" onSubmit={submit}>
-      <IntakeConsent login={session.session.githubLogin} />
+      <p>
+        Submit as @{session.session.githubLogin}. Slop keeps the report private,
+        screens its evidence with Surplus Intelligence, and notifies the project
+        owner when it is ready for review. You can follow its status in your
+        Inbox. GitHub authorization is optional and is requested separately if
+        you choose private GitHub delivery.
+      </p>
       <ReportFields draft={draft} onChange={onDraft} />
       <FormError message={error} />
       <button className="button primary-button" disabled={busy} type="submit">
-        {busy ? "Opening GitHub…" : "Authorize GitHub to submit as you"}
+        {busy ? "Submitting…" : "Submit private report"}
       </button>
-      <IntakeReferenceNote />
+      <p className="field-hint">
+        Include the affected revision, impact, and safe reproduction steps. Do
+        not include credentials or cause a real loss of funds.
+      </p>
     </form>
   );
 }
@@ -685,7 +675,7 @@ export function SecurityProgramPage({
         }
         lead={
           <>
-            Published award: {money.gross} gross per finding. Funded by{" "}
+            Published award: {money.gross} gross per finding. Payer:{" "}
             {terms.sponsor.name}.
           </>
         }
@@ -722,12 +712,15 @@ export function SecurityProgramPage({
             </Fact>
             <Fact term="Funding">
               {terms.funding.state === "pledged"
-                ? "Pledged, not verified."
+                ? terms.fundingPolicy === "after-approval"
+                  ? "Pledged. Funds are supplied after the owner approves a qualifying finding. Payment requires verified funding."
+                  : "Pledged, not verified."
                 : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
             </Fact>
             <Fact term="Capacity">
-              {terms.capacity.awards} award
-              {terms.capacity.awards === 1 ? "" : "s"} at the published amount
+              {terms.capacity.awards === null
+                ? "No fixed award count; each first qualifying finding is reviewed separately"
+                : `${terms.capacity.awards} award${terms.capacity.awards === 1 ? "" : "s"} at the published amount`}
               {terms.capacity.closesAt
                 ? `; closes ${formatUtc(terms.capacity.closesAt)}`
                 : ""}
@@ -743,7 +736,7 @@ export function SecurityProgramPage({
             Awards are discretionary. The owner decides whether to award and how
             much; critical bugs and potential loss of funds are priorities, not
             an automatic payout. No other payout fee applies. The terms in force
-            when GitHub receives your report apply to your case.
+            when Slop receives your report apply to your case.
           </p>
         </section>
         <section aria-labelledby="security-scope" className="admin-card">
@@ -834,6 +827,7 @@ export function SecurityProgramPage({
 // Signed-in case inbox
 
 type Terms = {
+  fundingPolicy?: "after-approval";
   grossMinor: string;
   researcherMinor: string;
   slopMinor: string;
@@ -895,7 +889,11 @@ type SecurityCase = {
    * `maintainer-attested`: a maintainer entered the time. `github-verified`:
    * Slop read GitHub's own record with the reporter's authorization.
    */
-  receivedAtSource: "maintainer-attested" | "github-verified" | null;
+  receivedAtSource:
+    | "maintainer-attested"
+    | "github-verified"
+    | "slop-received"
+    | null;
   policyRevision: number | null;
   terms: Terms | null;
   awardState: string;
@@ -917,7 +915,7 @@ type SecurityCase = {
     ownerRequest: Record<string, unknown> | null;
   } | null;
   paymentDeadline: string | null;
-  advisory?: { repository: string; ghsa: string; url: string };
+  advisory?: { repository: string; ghsa: string; url: string } | null;
   receiptState?: string;
   remediationState?: string;
   disclosureState?: string;
@@ -1026,7 +1024,7 @@ const RECEIPT_LABELS: Record<string, string> = {
 };
 
 const AWARD_LABELS: Record<string, string> = {
-  "not-applicable": "No paid program was open when GitHub received it",
+  "not-applicable": "No paid program was open when this report was received",
   pending: "Award not decided yet",
   ineligible: "No award",
   reserved: "Reserved",
@@ -1308,15 +1306,40 @@ function DirectVerifyForm({
 
 /** One wording for how the GitHub receipt time was established. */
 const RECEIVED_AT_SOURCE_LABELS: Record<
-  "github-verified" | "maintainer-attested" | "unknown",
+  "github-verified" | "maintainer-attested" | "slop-received" | "unknown",
   string
 > = {
   "github-verified": " (verified from GitHub)",
+  "slop-received": " (received privately by Slop)",
   "maintainer-attested": " (maintainer-attested)",
   unknown: "",
 };
 
+const SCREENING_LABELS: Record<
+  NonNullable<Submission["intake"]>["state"],
+  string
+> = {
+  queued: "Received privately by Slop. Waiting for automated screening.",
+  running: "Received privately by Slop. Automated screening is in progress.",
+  legitimate: "Screening complete. Ready for the project owner's review.",
+  "needs-information":
+    "More evidence is needed before this report can be forwarded.",
+  spam: "Screening held this report as spam or unsupported. The owner can review it.",
+  unavailable:
+    "Your report is saved. Automated screening is temporarily unavailable.",
+};
+
 function submissionStatus(submission: Submission): string {
+  if (submission.intake && submission.state === "draft") {
+    if (
+      submission.intake.canForward &&
+      submission.intake.routingState === "pending"
+    )
+      return "Report cleared for review. The owner notification is pending.";
+    if (submission.intake.canForward && submission.intake.reviewedAt)
+      return "A maintainer cleared this report for owner review. No award has been approved by this routing decision.";
+    return SCREENING_LABELS[submission.intake.state];
+  }
   switch (submission.state) {
     case "draft":
       return submission.retryAllowed
@@ -1345,6 +1368,178 @@ function submissionStatus(submission: Submission): string {
   }
 }
 
+type PrivateReport = {
+  summary: string;
+  description: string;
+  severity?: string;
+  cvssVectorString?: string;
+  cweIds?: string[];
+};
+
+function RevisePrivateReport({
+  submission,
+  report,
+  onUpdated,
+}: {
+  submission: Submission;
+  report: PrivateReport;
+  onUpdated: (submission: Submission) => void;
+}) {
+  const [draft, setDraft] = useState<ReportDraft>(() => ({
+    summary: report.summary,
+    description: report.description,
+    severity: report.severity ?? "",
+    cvss: report.cvssVectorString ?? "",
+    cwe: (report.cweIds ?? []).join(", "),
+  }));
+  const { busy, error, run } = useAction();
+  return (
+    <details className="security-reference">
+      <summary>Add evidence or correct report</summary>
+      <form
+        className="security-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void run(async () => {
+            const result = await projectApiRequest<{ submission: Submission }>(
+              "POST",
+              `security-submissions/${encodeURIComponent(submission.id)}/report`,
+              {
+                expectedRevision: submission.intake?.revision,
+                report: reportBody(draft),
+              },
+            );
+            onUpdated(result.submission);
+          });
+        }}
+      >
+        <p>
+          The new version is screened again. Your original receipt time and
+          terms stay the same.
+        </p>
+        <ReportFields draft={draft} onChange={setDraft} />
+        <button className="button primary-button" disabled={busy} type="submit">
+          {busy ? "Saving…" : "Save and screen again"}
+        </button>
+        <FormError message={error} />
+      </form>
+    </details>
+  );
+}
+
+/** Fetch technical evidence only when its authorized reader opens the report. */
+function PrivateReportDetail({
+  submission,
+  onUpdated,
+  expanded = false,
+}: {
+  submission: Submission;
+  onUpdated: (submission: Submission) => void;
+  expanded?: boolean;
+}) {
+  const [opened, setOpened] = useState(expanded);
+  const [detail, reload] = useSecurityData<{
+    submission: Submission;
+    report: PrivateReport;
+  }>(
+    opened ? `security-submissions/${encodeURIComponent(submission.id)}` : null,
+  );
+  const [reason, setReason] = useState("");
+  const { busy, error, run } = useAction();
+  const review = (decision: "forward" | "request-information") =>
+    void run(async () => {
+      const result = await projectApiRequest<{ submission: Submission }>(
+        "POST",
+        `security-submissions/${encodeURIComponent(submission.id)}/review`,
+        { expectedRevision: submission.intake?.revision, decision, reason },
+      );
+      onUpdated(result.submission);
+      reload();
+      setReason("");
+    });
+  return (
+    <details
+      className="security-reference"
+      open={opened}
+      onToggle={(event) => setOpened(event.currentTarget.open)}
+    >
+      <summary>Read private report</summary>
+      {!opened ? null : detail.status === "loading" ? (
+        <p role="status">Loading private report…</p>
+      ) : detail.status === "ready" ? (
+        <>
+          <h4>{detail.value.report.summary}</h4>
+          <pre className="security-report-text">
+            {detail.value.report.description}
+          </pre>
+          {detail.value.report.severity ? (
+            <p>Reported severity: {detail.value.report.severity}</p>
+          ) : null}
+          {submission.intake?.canRevise ? (
+            <RevisePrivateReport
+              key={submission.intake.revision}
+              submission={submission}
+              report={detail.value.report}
+              onUpdated={(updated) => {
+                onUpdated(updated);
+                reload();
+              }}
+            />
+          ) : null}
+          {submission.intake?.canReview ? (
+            <div className="security-form">
+              <label>
+                Review reason
+                <textarea
+                  required
+                  minLength={8}
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                  rows={3}
+                />
+              </label>
+              <div className="handoff-actions">
+                <button
+                  className="button primary-button"
+                  disabled={busy || reason.trim().length < 8}
+                  type="button"
+                  onClick={() => review("forward")}
+                >
+                  Approve for owner review
+                </button>
+                <button
+                  className="button secondary-button"
+                  disabled={busy || reason.trim().length < 8}
+                  type="button"
+                  onClick={() => review("request-information")}
+                >
+                  Request more evidence
+                </button>
+              </div>
+              <p className="field-hint">
+                This routes the private report. It does not approve a bounty or
+                payment.
+              </p>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div role="alert">
+          <p>
+            {detail.status === "error"
+              ? detail.message
+              : "Sign in again to read this report."}
+          </p>
+          <button className="text-button" type="button" onClick={reload}>
+            Retry
+          </button>
+        </div>
+      )}
+      <FormError message={error} />
+    </details>
+  );
+}
+
 /** One private submission and the only action its state allows. */
 function SubmissionCard({
   session,
@@ -1364,7 +1559,7 @@ function SubmissionCard({
   );
   const { busy, error, setError, run: act } = useAction();
   const [needsGrant, setNeedsGrant] = useState(false);
-  const keepDraft = needsDraft(submission);
+  const keepDraft = !submission.intake && needsDraft(submission);
   useEffect(() => {
     if (!keepDraft) clearDraft(submission.id);
   }, [submission.id, keepDraft]);
@@ -1403,6 +1598,7 @@ function SubmissionCard({
     });
   };
   const canSend =
+    !submission.intake &&
     submission.origin === "slop" &&
     (submission.state === "draft" ||
       (submission.state === "failed" &&
@@ -1420,6 +1616,64 @@ function SubmissionCard({
       <p aria-live="polite" className="admin-status" role="status">
         {submissionStatus(submission)}
       </p>
+      {submission.intake ? (
+        <>
+          <p className="field-hint">
+            Received {formatUtc(submission.intake.receivedAt)}. Screening is
+            advisory; the owner decides awards.
+          </p>
+          {submission.intake.reason ? <p>{submission.intake.reason}</p> : null}
+          <PrivateReportDetail
+            submission={submission}
+            onUpdated={onUpdated}
+            expanded={focused}
+          />
+          {submission.intake.state === "unavailable" ||
+          (submission.intake.canForward &&
+            submission.intake.routingState === "pending") ? (
+            <button
+              className="text-button"
+              disabled={busy}
+              type="button"
+              onClick={() =>
+                run("screen", { expectedRevision: submission.intake?.revision })
+              }
+            >
+              <RotateCcw aria-hidden="true" />{" "}
+              {submission.intake.canForward
+                ? "Retry owner notification"
+                : "Retry screening"}
+            </button>
+          ) : null}
+          {submission.intake.canForward &&
+          (submission.intake.canAuthorize ?? !submission.intake.canReview) &&
+          submission.state === "draft" ? (
+            <details className="security-reference">
+              <summary>Also send privately to GitHub</summary>
+              <p>
+                Optional: authorize GitHub to submit the saved report as you.
+                Your original Slop receipt and review status are retained.
+              </p>
+              <button
+                className="button secondary-button"
+                disabled={busy}
+                type="button"
+                onClick={authorize}
+              >
+                Authorize private GitHub delivery
+              </button>
+              <button
+                className="text-button"
+                disabled={busy}
+                type="button"
+                onClick={() => run("send", { expectedRevision })}
+              >
+                Send saved report to GitHub
+              </button>
+            </details>
+          ) : null}
+        </>
+      ) : null}
       {submission.advisory ? (
         <p>
           <ExternalLinkAnchor href={submission.advisory.url}>
@@ -1427,7 +1681,7 @@ function SubmissionCard({
           </ExternalLinkAnchor>
         </p>
       ) : null}
-      {submission.state === "receipt-verified" && submission.caseId ? (
+      {submission.caseId ? (
         <button
           className="text-button"
           onClick={() => onOpenCase(submission.caseId as string)}
@@ -1556,7 +1810,7 @@ function SubmissionsPanel({
     );
   }, [onAvailability]);
   useEffect(load, [load]);
-  if (error)
+  if (error && submissions === null)
     return (
       <div className="form-error" role="alert">
         <CircleAlert aria-hidden="true" /> {error}
@@ -1565,7 +1819,9 @@ function SubmissionsPanel({
         </button>
       </div>
     );
-  const shown = (submissions ?? []).filter(
+  if (submissions === null)
+    return <p role="status">Loading private reports…</p>;
+  const shown = submissions.filter(
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
   if (shown.length === 0 && !grantError) return null;
@@ -1589,7 +1845,17 @@ function SubmissionsPanel({
   );
   return (
     <section aria-labelledby="security-submissions" className="admin-section">
-      <h2 id="security-submissions">Your private reports</h2>
+      <div className="section-heading">
+        <h2 id="security-submissions">Private reports</h2>
+        <button className="text-button" onClick={load} type="button">
+          <RotateCcw aria-hidden="true" /> Refresh reports
+        </button>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          Report status could not refresh. The previous status is shown. {error}
+        </p>
+      ) : null}
       {grantError ? (
         <p className="form-error" role="alert">
           <CircleAlert aria-hidden="true" />{" "}
@@ -1741,6 +2007,8 @@ type FieldSpec =
       kind: "amount";
       decimals: number;
       hint?: string;
+      initial?: string;
+      readOnly?: boolean;
       when?: { field: string; values: string[] };
     };
 
@@ -1798,7 +2066,9 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             name: "reason",
             label: "What you need",
             kind: "textarea",
-            hint: "The reporter answers in the private GitHub advisory.",
+            hint: record.advisory
+              ? "The reporter answers in the private GitHub advisory."
+              : "Use the private report review to request further evidence.",
           },
         ],
       };
@@ -1876,6 +2146,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
     case "award": {
       if (record.terms === null) return null;
       const decimals = record.terms.decimals;
+      const fixed = record.terms.fundingPolicy === "after-approval";
       const available = record.awardFunds
         ? money(record.awardFunds.availableMinor, record.awardFunds)
         : "no verified funds";
@@ -1888,7 +2159,10 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             label: "Decision",
             kind: "select",
             options: [
-              ["amount", "Award an amount"],
+              [
+                "amount",
+                fixed ? "Award the published amount" : "Award an amount",
+              ],
               ["none", "No award"],
             ],
           },
@@ -1897,7 +2171,15 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             label: `Gross award (${record.terms.currency})`,
             kind: "amount",
             decimals,
-            hint: `Available to reserve: ${available}.`,
+            initial: fixed
+              ? formatBaseUnits(record.terms.grossMinor, decimals, {
+                  grouping: false,
+                })
+              : undefined,
+            readOnly: fixed,
+            hint: fixed
+              ? `The published award is fixed. Available to reserve: ${available}. Without funds, it stays selected and unpaid.`
+              : `Available to reserve: ${available}.`,
             when: { field: "decision", values: ["amount"] },
           },
           {
@@ -1908,7 +2190,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
           },
           {
             name: "confirmation",
-            label: `I approve this award for @${record.reporter?.githubLogin ?? "the reporter"}. Approval reserves the amount now.`,
+            label: `I approve this award for @${record.reporter?.githubLogin ?? "the reporter"}. ${fixed ? "It remains unpaid until verified funds cover the award." : "Approval reserves the amount now."}`,
             kind: "checkbox",
             when: { field: "decision", values: ["amount"] },
           },
@@ -2126,7 +2408,7 @@ function initialValues(spec: ActionSpec): Record<string, string | boolean> {
         ? false
         : field.kind === "select"
           ? field.options[0][0]
-          : field.kind === "text" || field.kind === "textarea"
+          : "initial" in field
             ? (field.initial ?? "")
             : "";
   return values;
@@ -2260,6 +2542,7 @@ function ActionForm({
               <input
                 autoComplete="off"
                 inputMode="decimal"
+                readOnly={field.readOnly}
                 onChange={(event) => set(event.target.value)}
                 required
                 value={String(values[field.name])}
@@ -2317,7 +2600,10 @@ function caseTitle(record: SecurityCase): string {
 function awardText(record: SecurityCase): string {
   if (record.award === null || record.terms === null)
     return AWARD_LABELS[record.awardState] ?? record.awardState;
-  return `${money(record.award.researcherMinor, record.terms)} to the researcher · ${money(record.award.slopMinor, record.terms)} to Slop · ${money(record.award.grossMinor, record.terms)} gross`;
+  const amount = `${money(record.award.researcherMinor, record.terms)} to the researcher · ${money(record.award.slopMinor, record.terms)} to Slop · ${money(record.award.grossMinor, record.terms)} gross`;
+  return record.awardState === "pending"
+    ? `${record.relatedPartyReview === "pending" ? "Proposed; awaiting independent review" : "Selected; awaiting verified funding"} · ${amount}`
+    : amount;
 }
 
 const RELATED_PARTY_LABELS: Record<SecurityCase["relatedPartyReview"], string> =
@@ -2642,7 +2928,9 @@ function CaseDetail({
           <StatusBadge
             tone={record.submissionState === "verified" ? "success" : "warning"}
           >
-            {SUBMISSION_LABELS[record.submissionState]}
+            {record.receivedAtSource === "slop-received"
+              ? "Received by Slop"
+              : SUBMISSION_LABELS[record.submissionState]}
           </StatusBadge>
           {record.receivedAt
             ? ` ${formatUtc(record.receivedAt)}${RECEIVED_AT_SOURCE_LABELS[record.receivedAtSource ?? "unknown"]}`
@@ -2785,7 +3073,11 @@ function CaseDetail({
           <ol className="security-history">
             {record.events.map((event) => (
               <li key={event.revision}>
-                {formatUtc(event.at)} · {EVENT_LABELS[event.kind] ?? event.kind}
+                {formatUtc(event.at)} ·{" "}
+                {event.kind === "submit" &&
+                record.receivedAtSource === "slop-received"
+                  ? "Reporter submitted privately to Slop"
+                  : (EVENT_LABELS[event.kind] ?? event.kind)}
                 {event.reason ? ` — ${event.reason}` : ""}
                 {event.evidenceReference
                   ? ` (evidence: ${event.evidenceReference})`
@@ -2844,12 +3136,15 @@ function CheckReceipt({
 }
 
 /** The signed-in private case inbox. */
-export default function SecurityCasesPage() {
+export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
   const session = useProjectSession();
   const [list, reload] = useSecurityData<CaseList>(
     session.status === "signed-in" ? "security-cases" : null,
   );
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(() => {
+    const id = new URLSearchParams(window.location.search).get("case");
+    return id && /^sc_[A-Za-z0-9_-]{8,72}$/u.test(id) ? id : null;
+  });
   const [note, setNote] = useState<string | null>(null);
   // `null` until the submission list answers; false while intake is off.
   const [automatic, setAutomatic] = useState<boolean | null>(null);
@@ -2927,8 +3222,16 @@ export default function SecurityCasesPage() {
     body = (
       <>
         {note ? <p role="status">{note}</p> : null}
+        <SubmissionsPanel
+          session={session}
+          focusId={returned.submission}
+          grantError={returned.error}
+          onAvailability={setAutomatic}
+          onLinkFallback={setLinkFallback}
+          onOpenCase={openCase}
+        />
         <section aria-labelledby="security-cases" className="admin-section">
-          <h2 id="security-cases">Your cases</h2>
+          <h2 id="security-cases">Decisions and payments</h2>
           {list.value.authorityUnavailable ? (
             <p className="form-error" role="status">
               Some maintainer access could not be checked.{" "}
@@ -2966,14 +3269,6 @@ export default function SecurityCasesPage() {
             <CaseDetail caseId={selected} key={selected} onChanged={reload} />
           ) : null}
         </section>
-        <SubmissionsPanel
-          session={session}
-          focusId={returned.submission}
-          grantError={returned.error}
-          onAvailability={setAutomatic}
-          onLinkFallback={setLinkFallback}
-          onOpenCase={openCase}
-        />
         <details
           className="security-reference"
           open={linkFallback || directUnavailable}
@@ -3036,6 +3331,15 @@ export default function SecurityCasesPage() {
       </>
     );
   }
+  if (embedded)
+    return (
+      <section
+        className="security-page operations-page"
+        aria-label="Private security reports"
+      >
+        {body}
+      </section>
+    );
   return (
     <main className="shell route-main admin-page security-page operations-page">
       <RoutePageHeader icon={<LockKeyhole />} title="Security cases" />
@@ -3043,4 +3347,8 @@ export default function SecurityCasesPage() {
       {body}
     </main>
   );
+}
+
+export default function SecurityCasesPage() {
+  return <SecurityInbox />;
 }

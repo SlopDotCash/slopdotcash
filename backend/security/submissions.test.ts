@@ -17,6 +17,7 @@ import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { dispatchSecurityMail } from "../../workers/notify/security";
 import { slopbotRepositoryAccess } from "../projects/repository-access";
+import type { R2Bucket } from "../trace/cloudflare-persistence";
 import type { SecurityAnalysisInput, SecurityAnalyzer } from "./analysis";
 import {
   handleSecurityApi,
@@ -97,7 +98,12 @@ const REPORT = {
 };
 
 function setup(
-  options: { mode?: "on" | "off"; pvr?: boolean; noProgram?: boolean } = {},
+  options: {
+    mode?: "on" | "off";
+    pvr?: boolean;
+    noProgram?: boolean;
+    durable?: boolean;
+  } = {},
 ) {
   const { db, sqlite } = sqliteD1(migrations);
   const owner = options.noProgram
@@ -223,6 +229,36 @@ function setup(
       else jar(account).set(name, value);
     }
   };
+  const objects = new Map<
+    string,
+    { bytes: Uint8Array; metadata: Record<string, string> }
+  >();
+  const reportStorage: R2Bucket = {
+    async put(key, bytes, options) {
+      if (!objects.has(key))
+        objects.set(key, {
+          bytes: bytes.slice(),
+          metadata: options.customMetadata,
+        });
+    },
+    async head(key) {
+      const value = objects.get(key);
+      return value
+        ? { size: value.bytes.byteLength, customMetadata: value.metadata }
+        : null;
+    },
+    async get(key) {
+      const value = objects.get(key);
+      if (!value) return null;
+      const body = new Response(new Uint8Array(value.bytes).buffer).body;
+      if (!body) throw new Error("Fixture body missing");
+      return {
+        size: value.bytes.byteLength,
+        body,
+        customMetadata: value.metadata,
+      };
+    },
+  };
   const responses: string[] = [];
   let ids = 0;
   let permission: "admin" | "read" = "admin";
@@ -288,6 +324,7 @@ function setup(
       }),
       {
         db: wrapped,
+        ...(options.durable ? { reportStorage } : {}),
         now: clock,
         randomId: () => {
           ids += 1;
@@ -326,6 +363,10 @@ function setup(
   const analyzer: SecurityAnalyzer = {
     provider: "fixture",
     model: "fixture-model",
+    screen: async () => ({
+      decision: "legitimate",
+      reason: "Concrete private reproduction for human review.",
+    }),
     analyze: async (input) => {
       analyzed.push(input);
       return {
@@ -1960,10 +2001,8 @@ test("a banned reporter can reconcile a report GitHub already received", async (
   const sent = await t.send(draft.id, draft.revision);
   expect(sent.status).toBe(202);
   seedParticipationBan(t.sqlite, REPORTER, ADMIN, START);
-  const reconciled = await t.reconcile(
-    draft.id,
-    sent.body.submission!.revision,
-  );
+  if (!sent.body.submission) throw new Error("Expected a submission response");
+  const reconciled = await t.reconcile(draft.id, sent.body.submission.revision);
   expect(reconciled.status).toBe(200);
   expect(reconciled.body.submission?.state).toBe("receipt-verified");
   expect(t.github.counts.posts).toBe(1);
@@ -2003,4 +2042,109 @@ test("registered researcher can start a private report on a quarantined project"
   quarantineProject(t);
   const result = await t.create();
   expect(result.status).toBe(201);
+});
+
+describe("optional GitHub forwarding of a saved report", () => {
+  test("preserves the Slop receipt and sends the saved version once after authorization", async () => {
+    const t = setup({ durable: true });
+    const accepted = await t.create(REPORTER, { report: REPORT });
+    expect(accepted.status).toBe(201);
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const original = t.cases()[0];
+    expect(original.received_at_source).toBe("slop-received");
+    expect(original.advisory_ghsa).toBeNull();
+    t.advance(3600000);
+    const authorization = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    expect(authorization.status).toBe(200);
+    await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.status).toBe(200);
+    expect(sent.body.submission?.state).toBe("receipt-verified");
+    expect(t.github.counts.posts).toBe(1);
+    expect(t.cases()).toHaveLength(1);
+    expect(t.cases()[0]).toEqual(original);
+    const forwarded = sent.body.submission?.advisory as { ghsa: string };
+    const claimed = await t.call(REPORTER, "POST", "security-cases", {
+      mode: "claim",
+      projectId: PROJECT,
+      advisory: forwarded.ghsa,
+      idempotencyKey: t.key(),
+    });
+    expect(claimed.status).toBe(200);
+    const recorded = await t.call(MAINTAINER, "POST", "security-cases", {
+      mode: "record",
+      projectId: PROJECT,
+      advisory: forwarded.ghsa,
+      idempotencyKey: t.key(),
+      reporterGithubId: REPORTER.githubId,
+      reporterGithubLogin: REPORTER.githubLogin,
+      receivedAt: START,
+      confirmation: true,
+    });
+    expect(recorded.status).toBe(200);
+    expect(t.cases()).toHaveLength(1);
+    const repeated = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(repeated.status).toBe(200);
+    expect(t.github.counts.posts).toBe(1);
+    const viewed = await t.call(
+      REPORTER,
+      "GET",
+      `security-cases/${original.id}`,
+    );
+    expect(
+      (viewed.body.case as { advisory: { ghsa: string } }).advisory.ghsa,
+    ).toBeTruthy();
+  });
+  test("a human hold prevents forwarding even after earlier GitHub authorization", async () => {
+    const t = setup({ durable: true });
+    const accepted = await t.create(REPORTER, { report: REPORT });
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const authorization = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+    const intake = submission.intake as { revision: number };
+    const held = await t.call(
+      MAINTAINER,
+      "POST",
+      `security-submissions/${submission.id}/review`,
+      {
+        expectedRevision: intake.revision,
+        decision: "request-information",
+        reason: "Please show the isolated reproduction before forwarding.",
+      },
+    );
+    expect(held.status).toBe(200);
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.status).toBe(409);
+    expect(sent.body.error).toBe("screening_required");
+    expect(t.github.counts.posts).toBe(0);
+  });
 });
