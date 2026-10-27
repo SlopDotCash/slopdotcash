@@ -1941,6 +1941,113 @@ test("a malicious decision that closes a kept project appeal needs an independen
   });
 });
 
+test.each([1, 2])(
+  "an account release keeps a project appeal that %i malicious results kept for the independent decision",
+  async (scans) => {
+    const t = registry();
+    t.deps.moderatorGithubIds = new Set([ADMIN, OWNER]);
+    t.deps.adminGithubIds = new Set([ADMIN, OWNER]);
+    t.deps.github.fetch = async () =>
+      Response.json({ id: Number(OTHER), login: "other", type: "User" });
+    expect(
+      (await t.create("kept-release", "example/kept-release")).status,
+    ).toBe(201);
+    const project = await t.persistence.getProject("kept-release");
+    if (!project) throw new Error("Project missing");
+    const vettingBan = async (
+      sequence: number,
+      appealAfter: "none" | "requested",
+    ) => {
+      const current = await t.persistence.getProject(project.id);
+      if (!current) throw new Error("Project missing");
+      return t.persistence.appendEnforcement(
+        {
+          id: `enf_kept_release_scan_${sequence}`,
+          projectId: project.id,
+          sequence,
+          action: "ban",
+          stateAfter: "banned",
+          appealAfter,
+          reason: "Synthetic confirmed malicious scan",
+          evidenceReference: "private-case-fixture",
+          repositoryGithubId: "987654321",
+          repositoryKeys: ["example/kept-release"],
+          actor: null,
+          actorRole: "vetting-service",
+          decisionSource: "standing-rule",
+          systemIssuer: {
+            kind: "vetting-service",
+            keySha256: "a".repeat(64),
+            assessmentId: `vet_fixture_${sequence}`,
+            policyVersion: "fixture",
+            rule: "confirmed-malicious",
+          },
+          beforeRevision: current.revision,
+          beforeManifestSha256: current.manifestSha256,
+          afterRevision: null,
+          afterManifestSha256: null,
+          result: "revision_pending",
+          createdAt: NOW,
+        },
+        null,
+        [],
+      );
+    };
+    const decide = async (
+      action: string,
+      actor: string,
+      sequence: number,
+      responsibleAccounts?: { githubLogin: string }[],
+    ) =>
+      t.call("POST", "admin/projects/kept-release/enforcement", actor, {
+        action,
+        reason: `Moderator decision: ${action}`,
+        evidenceReference: "private-case-fixture",
+        expectedRevision: (await t.persistence.getProject(project.id))
+          ?.revision,
+        expectedSequence: sequence,
+        ...(responsibleAccounts ? { responsibleAccounts } : {}),
+      });
+    expect(await vettingBan(1, "none")).toBe("recorded");
+    // ADMIN places the restriction and bans OTHER.
+    expect(
+      (await decide("ban", ADMIN, 2, [{ githubLogin: "other" }])).status,
+    ).toBe(200);
+    // OTHER files an account appeal, and OWNER files the project appeal.
+    expect(
+      (
+        await t.call("POST", "project-appeals", OTHER, {
+          projectId: "kept-release",
+          reason: "Review my account ban separately",
+          evidenceReference: "private-account-appeal-fixture",
+        })
+      ).status,
+    ).toBe(200);
+    expect((await decide("request_reinstatement", OWNER, 4)).status).toBe(200);
+    // New confirmed malicious results keep both appeals open.
+    for (let index = 0; index < scans; index += 1)
+      expect(await vettingBan(5 + index, "requested")).toBe("recorded");
+    // An independent moderator releases OTHER. The kept project appeal is
+    // still undecided, so the release does not record it as granted.
+    const release = await decide("reinstate_accounts", OWNER, 5 + scans, [
+      { githubLogin: "other" },
+    ]);
+    expect(release.status).toBe(200);
+    expect(release.body.record).toMatchObject({
+      action: "reinstate_accounts",
+      appealAfter: "requested",
+    });
+    // The malicious decision still closes the kept project appeal, so ADMIN,
+    // who placed the restriction, cannot make it.
+    const placerDecision = await decide("ban", ADMIN, 6 + scans, []);
+    expect(placerDecision.status).toBe(403);
+    expect(placerDecision.body.error).toBe("independent_review_required");
+    const independent = await decide("ban", OWNER, 6 + scans, []);
+    expect(independent.status).toBe(200);
+    expect(independent.body.record).toMatchObject({ appealAfter: "denied" });
+  },
+);
+
 test("account-reinstatement upgrade preserves prior releases and separates future project decisions", async () => {
   const names = readdirSync(new URL("../migrations/", import.meta.url))
     .filter((name) => name.endsWith(".sql"))

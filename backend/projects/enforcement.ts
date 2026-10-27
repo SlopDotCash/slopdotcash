@@ -546,8 +546,10 @@ export function planEnforcement(input: {
         );
       const releasedIds = new Set(selected.map((account) => account.githubId));
       requireIndependentAccountModerator(restriction, actor, releasedIds);
+      // A project appeal that confirmed malicious Bans kept stays open for
+      // the moderator decision on those Bans; a release does not grant it.
       const appealStillOpen =
-        projectAppealState(restriction) === "requested" ||
+        projectAppealOpen(restriction.records, true) ||
         restriction.bannedMaintainers.some(
           (account) =>
             !releasedIds.has(account.githubId) &&
