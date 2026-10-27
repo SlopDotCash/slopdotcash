@@ -97,7 +97,12 @@ test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
     has: page.getByRole("heading", { name: "Past cycles", exact: true }),
   });
   const pastCycle = history.getByRole("link");
+  // The points shards finish before each navigation, so none is canceled.
+  const pointsLoading = page
+    .getByRole("region", { name: "Slop Points" })
+    .getByText("Loading points…");
   await expect(pastCycle).toHaveAttribute("href", "/cycles/eliza/2026-07");
+  await expect(pointsLoading).toHaveCount(0);
   await expect(pastCycle).toContainText("210 points");
   await expect(pastCycle).toContainText("$1");
   // Historical accepted work stays on its archived project record. The
@@ -111,6 +116,7 @@ test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
   await expect(page).toHaveURL(/\/cycles\/eliza\/2026-07$/u);
   await page.goBack();
   await expect(pastCycle).toBeVisible();
+  await expect(pointsLoading).toHaveCount(0);
   await page.reload();
   await expect(pastCycle).toBeVisible();
   await expectAccessible(page);
