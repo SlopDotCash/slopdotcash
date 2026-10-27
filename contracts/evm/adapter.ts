@@ -185,15 +185,24 @@ function uint128(word: string): bigint {
 }
 async function rpc(config: EvmRpc, method: string, params: unknown[]) {
   if (config.request) return config.request(method, params);
-  const response = await fetch(config.rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`RPC HTTP failure: ${response.status}`);
-  const body = object(await response.json());
-  if (body.id !== 1) throw new Error("RPC request failed");
+  let body: RpcObject;
+  try {
+    const response = await fetch(config.rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok)
+      throw new EvmRpcUnavailable(`RPC HTTP failure: ${response.status}`);
+    body = object(await response.json());
+  } catch (error) {
+    if (error instanceof EvmRpcUnavailable) throw error;
+    // A refused connection, a timeout or an unreadable body. Keep the cause
+    // for the caller; the URL and the response body are not in the message.
+    throw new EvmRpcUnavailable("RPC request failed", { cause: error });
+  }
+  if (body.id !== 1) throw new EvmRpcUnavailable("RPC request failed");
   if (body.error) {
     const error = object(body.error);
     throw new EvmRpcError(
@@ -203,7 +212,7 @@ async function rpc(config: EvmRpc, method: string, params: unknown[]) {
     );
   }
   if (!("result" in body)) {
-    throw new Error("RPC request failed");
+    throw new EvmRpcUnavailable("RPC request failed");
   }
   return body.result;
 }
@@ -211,8 +220,21 @@ async function rpc(config: EvmRpc, method: string, params: unknown[]) {
 /** Only a proved empty EVM revert means an older reviewed implementation lacks a method.
  * Transport, provider and malformed-response errors must never select a legacy fallback. */
 export class EvmRpcError extends Error {
-  constructor(public emptyRevert: boolean) {
-    super("RPC request failed");
+  constructor(
+    public emptyRevert: boolean,
+    message = "RPC request failed",
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
+/** The configured RPC endpoint gave no usable answer: a network failure, a
+ * timeout, an HTTP error such as 429, or a malformed JSON-RPC response. It
+ * proves nothing about chain state, so it is never a verification mismatch;
+ * the caller can only try again later. */
+export class EvmRpcUnavailable extends EvmRpcError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(false, message, options);
   }
 }
 export {
@@ -246,12 +268,7 @@ export async function readEvmBindingVersion(
 
 /** The reviewed factory rotates the identity authority only after this notice period. */
 export const EVM_AUTHORITY_ROTATION_DELAY = 0n;
-async function runtimeSha256(
-  config: EvmRpc,
-  address: string,
-  blockTag: unknown,
-) {
-  const code = await rpc(config, "eth_getCode", [address, blockTag]);
+function codeSha256(code: unknown) {
   if (typeof code !== "string" || !/^0x(?:[0-9a-fA-F]{2})+$/.test(code))
     throw new Error("Escrow runtime code unavailable");
   const bytes = Uint8Array.from(code.slice(2).match(/../g) ?? [], (part) =>
@@ -260,6 +277,18 @@ async function runtimeSha256(
   return Array.from(sha256(bytes), (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");
+}
+async function runtimeSha256(
+  config: EvmRpc,
+  address: string,
+  blockTag: unknown,
+) {
+  return codeSha256(await rpc(config, "eth_getCode", [address, blockTag]));
+}
+/** The result of one independent read, or its failure, taken in check order. */
+function settled<T>(result: PromiseSettledResult<T>): T {
+  if (result.status === "rejected") throw result.reason;
+  return result.value;
 }
 async function getter(
   config: EvmRpc,
@@ -377,7 +406,7 @@ export async function verifyEvmFactory(
     vaultImplementation,
     vaultCode,
     identityAuthority,
-    creationFactoryCode,
+    currentFactoryCode,
   ] = await Promise.all([
     rpc(config, "eth_chainId", []),
     runtimeSha256(config, config.factory, blockTag),
@@ -402,8 +431,10 @@ export async function verifyEvmFactory(
     forCreation
       ? getter(config, config.factory, "identityAuthority()", blockTag)
       : null,
-    forCreation && upgrade
-      ? runtimeSha256(config, upgrade.factoryImplementation, blockTag)
+    // The live slot normally names the current reviewed implementation. Its
+    // raw code is hashed only if the slot names it, after the earlier checks.
+    upgrade
+      ? rpc(config, "eth_getCode", [upgrade.factoryImplementation, blockTag])
       : null,
   ]);
   if (quantity(chainId) !== config.chainId) throw new Error("Wrong chain");
@@ -415,11 +446,11 @@ export async function verifyEvmFactory(
     throw new Error("Proxy deployment has no reviewed implementation");
   if (upgrade) {
     const factorySlot = slot.toLowerCase();
-    // Preload the current creation implementation, then bind it to the live
-    // slot. Historical event verification still reads its actual implementation.
+    // Bind the preloaded current implementation to the live slot. Any other
+    // slot, such as a historical event's, is read at its own address.
     const factoryDigest =
-      forCreation && factorySlot === addressWord(upgrade.factoryImplementation)
-        ? creationFactoryCode
+      factorySlot === addressWord(upgrade.factoryImplementation)
+        ? codeSha256(currentFactoryCode)
         : await runtimeSha256(config, `0x${factorySlot.slice(-40)}`, blockTag);
     if (
       !reviews.some(
@@ -482,25 +513,64 @@ export async function verifyEvmDeployment(
     )
   )
     throw new Error("Reviewed deployment identity is incomplete");
-  if (
-    (await runtimeSha256(config, config.vault, blockTag)) !== config.codeSha256
-  )
-    throw new Error("Escrow runtime code does not match reviewed deployment");
-  const slot = await rpc(config, "eth_getStorageAt", [
-    config.vault,
-    "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
-    blockTag,
+  // Read the independent vault facts in one wave of nine reads, and the two
+  // that depend on them in a second wave. Each check then runs in its
+  // original order, so the first failed check keeps its refusal.
+  const vaultGetter = (signature: string) =>
+    getter(config, config.vault, signature, blockTag);
+  const [
+    code,
+    slotRead,
+    token,
+    owner,
+    feeRecipient,
+    factory,
+    bindingDelay,
+    purpose,
+    projectIdRead,
+  ] = await Promise.allSettled([
+    runtimeSha256(config, config.vault, blockTag),
+    rpc(config, "eth_getStorageAt", [
+      config.vault,
+      "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+      blockTag,
+    ]),
+    vaultGetter("token()"),
+    vaultGetter("owner()"),
+    vaultGetter("feeRecipient()"),
+    vaultGetter("factory()"),
+    vaultGetter("bindingDelay()"),
+    vaultGetter("purpose()"),
+    vaultGetter("projectId()"),
   ]);
+  if (settled(code) !== config.codeSha256)
+    throw new Error("Escrow runtime code does not match reviewed deployment");
+  const slot = settled(slotRead);
   if (typeof slot !== "string" || !HASH.test(slot))
     throw new Error("Invalid implementation slot");
   if (!config.evmUpgrade && BigInt(slot) !== 0n)
     throw new Error("Proxy deployment has no reviewed implementation");
+  const [implementation, mapped] = await Promise.allSettled([
+    config.evmUpgrade
+      ? runtimeSha256(config, `0x${slot.slice(-40)}`, blockTag)
+      : null,
+    projectIdRead.status === "fulfilled"
+      ? getter(
+          config,
+          config.factory,
+          "vaults(bytes32)",
+          blockTag,
+          evmVaultKey({
+            owner: config.owner,
+            projectId: projectIdRead.value,
+            asset: config.asset,
+            payoutPolicy: config.payoutPolicy,
+          }).slice(2),
+        )
+      : null,
+  ]);
   if (config.evmUpgrade) {
-    const digest = await runtimeSha256(
-      config,
-      `0x${slot.slice(-40)}`,
-      blockTag,
-    );
+    const digest = settled(implementation);
     if (
       !reviews.some(
         (review) =>
@@ -512,48 +582,25 @@ export async function verifyEvmDeployment(
         "Escrow implementation does not match reviewed deployment",
       );
   }
-  for (const [signature, expected] of [
-    ["token()", config.asset],
-    ["owner()", config.owner],
-    ["feeRecipient()", config.feeRecipient],
-    ["factory()", config.factory],
-  ]) {
-    if (
-      (await getter(config, config.vault, signature, blockTag)) !==
-      addressWord(expected)
-    )
+  for (const [read, expected] of [
+    [token, config.asset],
+    [owner, config.owner],
+    [feeRecipient, config.feeRecipient],
+    [factory, config.factory],
+  ] as const) {
+    if (settled(read) !== addressWord(expected))
       throw new Error(
         "Escrow asset, factory or registrar does not match reviewed deployment",
       );
   }
-  if (
-    BigInt(await getter(config, config.vault, "bindingDelay()", blockTag)) !==
-    BigInt(config.bindingDelaySeconds)
-  )
+  if (BigInt(settled(bindingDelay)) !== BigInt(config.bindingDelaySeconds))
     throw new Error("Escrow delays do not match reviewed deployment");
-  if (
-    BigInt(await getter(config, config.vault, "purpose()", blockTag)) !==
-    evmVaultPurpose(config.payoutPolicy)
-  )
+  if (BigInt(settled(purpose)) !== evmVaultPurpose(config.payoutPolicy))
     throw new Error("Escrow purpose does not match the payout policy");
-  const projectId = await getter(config, config.vault, "projectId()", blockTag);
+  const projectId = settled(projectIdRead);
   if (expectedProjectId && projectId !== hash(expectedProjectId))
     throw new Error("The vault belongs to a different registry project");
-  const key = evmVaultKey({
-    owner: config.owner,
-    projectId,
-    asset: config.asset,
-    payoutPolicy: config.payoutPolicy,
-  });
-  if (
-    (await getter(
-      config,
-      config.factory,
-      "vaults(bytes32)",
-      blockTag,
-      key.slice(2),
-    )) !== addressWord(config.vault)
-  )
+  if (settled(mapped) !== addressWord(config.vault))
     throw new Error("Escrow vault was not created by the reviewed factory");
 }
 
@@ -1215,21 +1262,24 @@ export async function verifyEvmVaultCreation(
   transactionId: string,
 ) {
   const transactionHash = hash(transactionId);
-  const receiptValue = await rpc(config, "eth_getTransactionReceipt", [
-    transactionHash,
+  // Read independent facts together and check them in the original order, so
+  // the first failed check keeps its refusal.
+  const [receiptRead, transaction, finalizedRead] = await Promise.allSettled([
+    rpc(config, "eth_getTransactionReceipt", [transactionHash]),
+    rpc(config, "eth_getTransactionByHash", [transactionHash]),
+    rpc(config, "eth_getBlockByNumber", ["finalized", false]),
   ]);
+  const receiptValue = settled(receiptRead);
   if (!receiptValue) return null;
   const receipt = object(receiptValue);
-  const finalized = object(
-    await rpc(config, "eth_getBlockByNumber", ["finalized", false]),
-  );
+  const finalized = object(settled(finalizedRead));
   if (quantity(receipt.blockNumber) > quantity(finalized.number)) return null;
-  const [transaction, canonicalBlock] = await Promise.all([
-    rpc(config, "eth_getTransactionByHash", [transactionHash]),
+  const [canonicalBlock, vaultRead] = await Promise.allSettled([
     rpc(config, "eth_getBlockByNumber", [receipt.blockNumber, false]),
+    creationVault(config, input, String(receipt.blockNumber)),
   ]);
-  const tx = object(transaction);
-  const canonical = object(canonicalBlock);
+  const tx = object(settled(transaction));
+  const canonical = object(settled(canonicalBlock));
   if (
     hash(receipt.transactionHash) !== transactionHash ||
     hash(tx.hash) !== transactionHash ||
@@ -1251,7 +1301,7 @@ export async function verifyEvmVaultCreation(
     throw new EvmVaultCreationFailed(
       "The vault creation transaction failed. Review a new request.",
     );
-  const vault = await creationVault(config, input, String(receipt.blockNumber));
+  const vault = settled(vaultRead);
   const created = {
     ...config,
     vault,
@@ -1259,20 +1309,30 @@ export async function verifyEvmVaultCreation(
     asset: input.asset,
     payoutPolicy: input.payoutPolicy,
   };
-  await verifyEvmDeployment(created, receipt.blockNumber, {
-    expectedProjectId: input.projectId,
-  });
-  await verifyEvmDeployment(created, "finalized", {
-    expectedProjectId: input.projectId,
-  });
-  if (input.payoutPolicy !== "security-bounty") {
-    // Read the policy at the creation block: a later owner change must not block registration.
-    const cap = BigInt(
-      await getter(created, vault, "monthlyCap()", receipt.blockNumber),
-    );
-    const enabled = BigInt(
-      await getter(created, vault, "monthlyEnabled()", receipt.blockNumber),
-    );
+  // Both verifications and the policy reads are independent, so they run at
+  // the same time. Each verification reads at most nine facts at once.
+  const policyReads =
+    input.payoutPolicy === "security-bounty"
+      ? null
+      : // Read the policy at the creation block: a later owner change must not block registration.
+        Promise.allSettled([
+          getter(created, vault, "monthlyCap()", receipt.blockNumber),
+          getter(created, vault, "monthlyEnabled()", receipt.blockNumber),
+        ]);
+  const [atCreation, atFinalized] = await Promise.allSettled([
+    verifyEvmDeployment(created, receipt.blockNumber, {
+      expectedProjectId: input.projectId,
+    }),
+    verifyEvmDeployment(created, "finalized", {
+      expectedProjectId: input.projectId,
+    }),
+  ]);
+  settled(atCreation);
+  settled(atFinalized);
+  if (policyReads) {
+    const [capRead, enabledRead] = await policyReads;
+    const cap = BigInt(settled(capRead));
+    const enabled = BigInt(settled(enabledRead));
     if (
       cap !== BigInt(input.monthlyCap) ||
       enabled !== (input.monthlyEnabled ? 1n : 0n)
