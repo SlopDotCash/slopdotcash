@@ -112,6 +112,23 @@ mod tests {
     }
 
     #[test]
+    fn revoked_authorities_keep_key_bytes_but_are_no_longer_authorities() {
+        use anchor_lang::solana_program::{program_option::COption, program_pack::Pack};
+        let mut bytes = include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
+        let mut mint = MintState::unpack(&bytes[..82]).unwrap();
+        mint.mint_authority = COption::Some(Pubkey::new_from_array([9; 32]));
+        mint.freeze_authority = COption::Some(Pubkey::new_from_array([7; 32]));
+        MintState::pack(mint, &mut bytes[..82]).unwrap();
+        assert!(inspect_mint(bytes.clone()).is_err());
+        mint.mint_authority = COption::None;
+        mint.freeze_authority = COption::None;
+        MintState::pack(mint, &mut bytes[..82]).unwrap();
+        assert_eq!(&bytes[4..36], &[9; 32]);
+        assert_eq!(&bytes[50..82], &[7; 32]);
+        assert!(inspect_mint(bytes).unwrap());
+    }
+
+    #[test]
     fn economic_hooks_and_unknown_mint_extensions_are_refused() {
         for kind in [
             ExtensionType::TransferFeeConfig as u16,
