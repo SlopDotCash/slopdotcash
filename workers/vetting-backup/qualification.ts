@@ -31,7 +31,7 @@ export const qualificationMigrations = [
 // The assessment is synthetic; all evidence tables and their guards use the
 // real migrations. No project, scan result or operational attestation is made.
 export const qualificationSchema = `
-CREATE TABLE vetting_assessments(id TEXT PRIMARY KEY, state TEXT, completed_at TEXT);
+CREATE TABLE vetting_assessments(id TEXT PRIMARY KEY, state TEXT, completed_at TEXT, result TEXT);
 CREATE TABLE qualification_results(phase TEXT PRIMARY KEY, result TEXT NOT NULL CHECK(json_valid(result)));
 CREATE TABLE qualification_deliveries(id TEXT PRIMARY KEY, action TEXT NOT NULL);
 `;
@@ -145,7 +145,7 @@ async function seed(env: Environment) {
   const manifest = JSON.stringify({ fixture: true, sha256: sha, chunks });
   await db
     .prepare(
-      "INSERT OR IGNORE INTO vetting_assessments VALUES(?,'incomplete',?)",
+      "INSERT OR IGNORE INTO vetting_assessments(id,state,completed_at) VALUES(?,'incomplete',?)",
     )
     .bind(assessment, now)
     .run();
