@@ -932,7 +932,7 @@ for (const scenario of [
 // current claim is paid (backend/payments/wallet-registration.ts, dispatch.ts).
 test("a rejected signature after a wallet change shows the saved unconfirmed address and paused payouts", async ({
   page,
-}) => {
+}, info) => {
   const wallets = savedEvm(true);
   const writes = await payments(page, wallets);
   await page.route("**/api/v1/payments/wallets/register", async (route) => {
@@ -967,9 +967,38 @@ test("a rejected signature after a wallet change shows the saved unconfirmed add
   await expect(
     saved.getByRole("img", { name: "Ethereum, confirmed", exact: true }),
   ).toBeVisible();
+  async function expectReadableAddresses(label: string) {
+    await saved.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: info.outputPath(`wallet-address-layout-${label}.png`),
+      fullPage: true,
+    });
+    const addressLines = await saved
+      .locator(".wallet-card-rows span[title]")
+      .evaluateAll((addresses) =>
+        addresses.map((address) => {
+          const range = document.createRange();
+          range.selectNodeContents(address);
+          return new Set(
+            Array.from(range.getClientRects(), (rect) => Math.round(rect.top)),
+          ).size;
+        }),
+      );
+    expect(addressLines.length).toBe(3);
+    expect(
+      addressLines,
+      "short wallet addresses remain readable on one line",
+    ).toEqual([1, 1, 1]);
+    await expectAccessible(page);
+  }
+  await expectReadableAddresses("viewport");
+  if (info.project.name === "chromium-mobile") {
+    // The grid must not squeeze the addresses into narrow tablet columns.
+    await page.setViewportSize({ width: 768, height: 1000 });
+    await expectReadableAddresses("tablet");
+  }
   expect(writes.map((w) => w.path)).toEqual([
     "wallets/register",
     "wallets/challenge",
   ]);
-  await expectAccessible(page);
 });
