@@ -23,7 +23,6 @@ import {
   cycleStateLabel,
   DataNotice,
   EmptyState,
-  EvidenceNav,
   ExternalLinkAnchor,
   formatCycleMonth,
   formatDate,
@@ -516,7 +515,6 @@ export function CycleArchivePage({
           </p>
         ) : null}
       </RoutePageHeader>
-      <EvidenceNav current="cycles" />
       {all.length > 0 ? (
         <div className="points-controls cycle-filters">
           {offered.map((key) => (
