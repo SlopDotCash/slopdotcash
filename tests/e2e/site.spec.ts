@@ -290,7 +290,7 @@ test("security reports recover a failed list and share one session across submis
     fullPage: true,
   });
   await expect(
-    page.getByRole("heading", { name: "Your private reports" }),
+    page.getByRole("heading", { name: "Private reports", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(3);
   await expect(page.getByRole("alert")).toHaveCount(0);
