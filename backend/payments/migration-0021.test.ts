@@ -98,7 +98,9 @@ describe("migration 0021", () => {
   test("keeps rows and children, names the reviewed asset, and copies amounts as 6-decimal base units", () => {
     const db = open();
     seed(db);
+    db.exec("BEGIN");
     migrate(db);
+    db.exec("COMMIT");
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(
       db
@@ -176,15 +178,6 @@ describe("migration 0021", () => {
     expect(
       db.query("SELECT gross_micro FROM payment_obligations").get(),
     ).toEqual({ gross_micro: "100" });
-  });
-
-  test("applies inside one transaction with child rows present (the D1 path)", () => {
-    const db = open();
-    seed(db);
-    db.exec("BEGIN");
-    migrate(db);
-    expect(() => db.exec("COMMIT")).not.toThrow();
-    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 
   test("vault snapshots keep uint128 text, NULL counters, a fixed asset and a monotonic block", () => {

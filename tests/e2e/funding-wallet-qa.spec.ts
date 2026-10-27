@@ -2,6 +2,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page, TestInfo } from "@playwright/test";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { enlargeText } from "../text-size";
 import { expect, serveProjectCycleIndex, test } from "./fixtures";
 
 test("legacy wallet links open Account Wallets on direct navigation and reload", {
@@ -109,20 +110,7 @@ async function keyboardTo(
 
 /** Doubles every computed font size and line height (WCAG 1.4.4 text resize). */
 async function doubleTextSize(page: Page) {
-  await page.evaluate(() => {
-    const sizes = [...document.querySelectorAll<HTMLElement>("body *")].map(
-      (element) => ({
-        element,
-        font: getComputedStyle(element).fontSize,
-        line: getComputedStyle(element).lineHeight,
-      }),
-    );
-    for (const { element, font, line } of sizes) {
-      element.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-      if (line !== "normal")
-        element.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-    }
-  });
+  await enlargeText(page.locator("body"));
 }
 
 test("funding and wallet keyboard flows remain accessible at 200 percent text size", async ({

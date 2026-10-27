@@ -129,7 +129,10 @@ export function InboxEmail() {
   }
 
   return (
-    <section aria-labelledby="inbox-email-heading">
+    <section
+      className="inbox-email-settings"
+      aria-labelledby="inbox-email-heading"
+    >
       <h2 id="inbox-email-heading">Email preferences</h2>
       <p>Security notices are sent separately.</p>
       {state.status === "loading" ? (

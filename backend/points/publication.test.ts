@@ -1,12 +1,16 @@
 // PRD section 3: publication happens on authenticated sign-in, never a read.
 import { expect, test } from "bun:test";
 import { ME, seedAccountClosure } from "../../tests/account-closure-fixture";
-import { handlePointsApi } from "./handler";
+import { sqliteD1 } from "../../tests/sqlite-d1";
+import { sha256Hex } from "../../workers/identity/crypto";
+import { handleIdentityRequest } from "../../workers/identity/handler";
+import { D1IdentityPersistence } from "../../workers/identity/persistence";
+import { handlePointsApi, type PointsDependencies } from "./handler";
 
 const NOW = "2026-10-26T12:00:00.000Z";
 const ASSERTION = `slop_assert_v1_${"a".repeat(48)}`;
 
-async function harness() {
+async function harness(identityService?: PointsDependencies["identity"]) {
   const { db, sqlite, tokens } = await seedAccountClosure();
   sqlite.exec(`
     UPDATE points_members SET public=0 WHERE actor_id='${ME.actor}';
@@ -37,7 +41,7 @@ async function harness() {
         db,
         now: () => new Date(NOW),
         rateLimitSecret: "fixture-publication-secret".repeat(3),
-        identity: {
+        identity: identityService ?? {
           fetch: async () =>
             Response.json({
               audience: "slop-points-web",
@@ -65,6 +69,97 @@ async function harness() {
     );
   return { sqlite, identity, call, snapshot };
 }
+
+test("an identity storage outage leaves publication untouched and does not expire the assertion", async () => {
+  const identity = sqliteD1();
+  const persistence = new D1IdentityPersistence(identity.db);
+  const expired = `slop_assert_v1_${"e".repeat(48)}`;
+  const otherAudience = `slop_assert_v1_${"t".repeat(48)}`;
+  for (const [token, audience, expiresAt] of [
+    [ASSERTION, "slop-points-web", "2026-10-26T12:01:00.000Z"],
+    [expired, "slop-points-web", "2026-10-26T11:59:00.000Z"],
+    [otherAudience, "private-trace-api", "2026-10-26T12:01:00.000Z"],
+  ] as const)
+    await persistence.createAssertion({
+      tokenHash: await sha256Hex(token),
+      githubActorId: ME.github,
+      githubLogin: ME.login,
+      githubNodeId: ME.actor,
+      audience,
+      createdAt: "2026-10-26T11:59:30.000Z",
+      expiresAt,
+      consumedAt: null,
+    });
+  let workerStatus = 0;
+  const { sqlite, call, snapshot } = await harness({
+    async fetch(request) {
+      const response = await handleIdentityRequest(request, {
+        persistence,
+        stateEncryptionSecret: "unused-by-assertion-consumption",
+        assertionSecret: "unused-by-assertion-consumption",
+        githubClientId: "local-publication-fixture",
+        now: () => new Date(NOW),
+        randomToken: () => "unused-by-assertion-consumption",
+        resolveGithubIdentity: async () => null,
+      });
+      workerStatus = response.status;
+      return response;
+    },
+  });
+  try {
+    const before = snapshot(["identity_rate_limits"]);
+    identity.sqlite.exec("PRAGMA query_only = ON");
+    const unavailable = await call(
+      "join",
+      { assertion: ASSERTION, public: true },
+      null,
+    );
+    expect(workerStatus).toBe(500);
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toEqual({ error: "points_unavailable" });
+    expect(snapshot(["identity_rate_limits"])).toEqual(before);
+    expect(
+      identity.sqlite
+        .query("SELECT consumed_at FROM identity_assertions WHERE token_hash=?")
+        .get(await sha256Hex(ASSERTION)),
+    ).toEqual({ consumed_at: null });
+
+    identity.sqlite.exec("PRAGMA query_only = OFF");
+    for (const assertion of [expired, otherAudience]) {
+      const refused = await call("join", { assertion, public: true }, null);
+      expect(workerStatus).toBe(401);
+      expect(refused.status).toBe(401);
+      expect(await refused.json()).toEqual({ error: "identity_expired" });
+    }
+    expect(snapshot(["identity_rate_limits"])).toEqual(before);
+
+    const joined = await call(
+      "join",
+      { assertion: ASSERTION, public: true },
+      null,
+    );
+    expect(joined.status).toBe(200);
+    expect(workerStatus).toBe(200);
+    expect(joined.headers.get("set-cookie")).toContain("Secure; HttpOnly");
+    expect(
+      identity.sqlite
+        .query("SELECT consumed_at FROM identity_assertions WHERE token_hash=?")
+        .get(await sha256Hex(ASSERTION)),
+    ).toEqual({ consumed_at: NOW });
+    const after = snapshot(["identity_rate_limits"]);
+    const replay = await call(
+      "join",
+      { assertion: ASSERTION, public: true },
+      null,
+    );
+    expect(replay.status).toBe(401);
+    expect(await replay.json()).toEqual({ error: "identity_expired" });
+    expect(snapshot(["identity_rate_limits"])).toEqual(after);
+  } finally {
+    identity.sqlite.close();
+    sqlite.close();
+  }
+});
 
 test("only sign-in publishes an existing private membership and connected X link", async () => {
   const { sqlite, call, snapshot } = await harness();

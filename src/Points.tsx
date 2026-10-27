@@ -1,4 +1,10 @@
-import { ArrowDown, ChevronDown } from "lucide-react";
+import {
+  ArrowDown,
+  ChartNoAxesColumnIncreasing,
+  ChevronDown,
+  LogIn,
+  UserRound,
+} from "lucide-react";
 import {
   createContext,
   lazy,
@@ -55,7 +61,9 @@ import {
   formatMicroUsdc,
   NotFound,
   Pager,
+  RoutePageHeader,
 } from "./Presentation";
+import "./account-design.css";
 import { ProfileActivity, useProfiles } from "./Profiles";
 
 const EarningsPage = lazy(() =>
@@ -821,7 +829,7 @@ export function LoginPage() {
   }, [me]);
   return (
     <main className="shell route-main login-page">
-      <h1>{me ? "Signed in" : "Log in"}</h1>
+      <RoutePageHeader icon={<LogIn />} title={me ? "Signed in" : "Log in"} />
       {me ? (
         <p role="status">Redirecting…</p>
       ) : (
@@ -834,12 +842,24 @@ export function AccountPage() {
   const accountSession = useProjectSession();
   const { me, session } = usePoints();
   const [closedNotice, setClosedNotice] = useState("");
+  const closure = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (me) setClosedNotice("");
+    const revealRecovery = () => {
+      if (
+        closure.current &&
+        ["#recovery", "#close-account"].includes(window.location.hash)
+      ) {
+        closure.current.open = true;
+      }
+    };
+    revealRecovery();
+    window.addEventListener("hashchange", revealRecovery);
+    return () => window.removeEventListener("hashchange", revealRecovery);
   }, [me]);
   return (
-    <main className="shell route-main points-page">
-      <h1>Account</h1>
+    <main className="shell route-main account-page">
+      <RoutePageHeader icon={<UserRound />} title="Account" />
       <nav className="account-sections" aria-label="Account sections">
         <a href="#profile">Profile</a>
         {me ? <a href="#connections">Connections</a> : null}
@@ -850,7 +870,7 @@ export function AccountPage() {
         {accountSession.status === "signed-in" ? (
           <a href="#appeals">Appeals</a>
         ) : null}
-        <a href="#recovery">{me ? "Recovery and closure" : "Recovery"}</a>
+        <a href="#recovery">Recovery</a>
       </nav>
       <div id="profile">
         <JoinPoints />
@@ -869,7 +889,7 @@ export function AccountPage() {
       {me ? <AccountSessions /> : null}
       {accountSession.status === "signed-in" ? <AccountAppeals /> : null}
       <section id="recovery">
-        <h2>{me ? "Recovery and closure" : "Recovery"}</h2>
+        <h2>Recovery</h2>
         {closedNotice ? <p role="status">{closedNotice}</p> : null}
         <p>
           Lost access to your account?{" "}
@@ -879,7 +899,14 @@ export function AccountPage() {
           .
         </p>
         {me ? (
-          <AccountClosure login={me.actor.login} onClosed={setClosedNotice} />
+          <details
+            className="account-close-details"
+            id="close-account"
+            ref={closure}
+          >
+            <summary>Close account</summary>
+            <AccountClosure login={me.actor.login} onClosed={setClosedNotice} />
+          </details>
         ) : null}
       </section>
     </main>
@@ -1049,8 +1076,11 @@ const POINT_CATEGORIES: readonly (readonly [string, string])[] = [
 ];
 export function PointsPage() {
   return (
-    <main className="shell route-main points-page">
-      <h1>Leaderboard</h1>
+    <main className="shell route-main points-page standings-page">
+      <RoutePageHeader
+        icon={<ChartNoAxesColumnIncreasing />}
+        title="Leaderboard"
+      />
       <ContributorStandings />
       <section className="points-panel" id="rules">
         <h2>Ways to earn Points</h2>
@@ -1100,21 +1130,27 @@ function StandingsCoverage({
         ? monthStart
         : snapshot.window.from;
   return (
-    <p className="points-meta points-coverage">
-      {rankedFrom !== null &&
-      Date.parse(rankedFrom) < Date.parse(snapshot.window.to)
-        ? `This month ranks ${formatDateTime(rankedFrom)} to ${formatDateTime(snapshot.window.to)}. `
-        : null}
-      Snapshot window: {formatDateTime(snapshot.window.from)} to{" "}
-      {formatDateTime(snapshot.window.to)}. Source
-      {projectId ? " (all projects)" : ""}:{" "}
-      {countFormat.format(counts.mergedPullRequests)} merged pull requests and{" "}
-      {countFormat.format(counts.closedIssues)} closed issues across{" "}
-      {countFormat.format(snapshot.repositories.length)} repositories.
-      {month === null
-        ? ` Includes ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
-        : null}
-    </p>
+    <details className="points-coverage-details">
+      <summary>
+        Updated {formatDateTime(snapshot.generatedAt)} ·{" "}
+        {countFormat.format(snapshot.repositories.length)} repositories
+      </summary>
+      <p className="points-meta points-coverage">
+        {rankedFrom !== null &&
+        Date.parse(rankedFrom) < Date.parse(snapshot.window.to)
+          ? `This month ranks ${formatDateTime(rankedFrom)} to ${formatDateTime(snapshot.window.to)}. `
+          : null}
+        Snapshot window: {formatDateTime(snapshot.window.from)} to{" "}
+        {formatDateTime(snapshot.window.to)}. Source
+        {projectId ? " (all projects)" : ""}:{" "}
+        {countFormat.format(counts.mergedPullRequests)} merged pull requests and{" "}
+        {countFormat.format(counts.closedIssues)} closed issues across{" "}
+        {countFormat.format(snapshot.repositories.length)} repositories.
+        {month === null
+          ? ` Includes ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
+          : null}
+      </p>
+    </details>
   );
 }
 
@@ -1554,10 +1590,7 @@ function SocialConnections() {
       ) : (
         <>
           {!data.account && data.configured ? (
-            <p>
-              Connecting X is optional. Your X profile link will be public when
-              your Slop membership is public.
-            </p>
+            <p>Connecting X is optional. Your X profile link will be public.</p>
           ) : null}
           <div className="connection-row">
             <strong>X</strong>

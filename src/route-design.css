@@ -1,0 +1,669 @@
+/* Inner-route presentation only. Never select shared chrome or home content. */
+.route-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  margin-bottom: 2rem;
+}
+.route-page-heading {
+  min-width: 0;
+}
+.route-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.route-page-header h1 {
+  font-size: clamp(1.75rem, 4vw, 3rem);
+  line-height: 1.06;
+  letter-spacing: -0.055em;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.route-page-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.6rem;
+  background: #ff5c001a;
+  color: #ff7c3b;
+}
+.route-page-icon svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+.route-eyebrow {
+  margin-bottom: 0.8rem;
+  font-size: 0.82rem;
+  color: #aaa69b;
+}
+.route-lead {
+  max-width: 68ch;
+  color: #b9b5aa;
+  line-height: 1.6;
+  margin: 0.9rem 0 0;
+}
+.route-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+.route-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid #aaa69b33;
+  border-radius: 0.4rem;
+  background: #aaa69b12;
+  color: #c8c4b9;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.3;
+  vertical-align: middle;
+}
+.route-badge > span {
+  display: inline-flex;
+}
+.route-badge svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+.route-badge--success {
+  color: #5be09a;
+  border-color: #5be09a40;
+  background: #5be09a12;
+}
+.route-badge--warning {
+  color: #ffcb79;
+  border-color: #ffcb7940;
+  background: #ffcb7912;
+}
+.route-badge--danger {
+  color: #ff9387;
+  border-color: #ff938740;
+  background: #ff938712;
+}
+.route-badge--info {
+  color: #9cc9ff;
+  border-color: #9cc9ff40;
+  background: #9cc9ff12;
+}
+.route-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  gap: 0.75rem;
+  margin: 1.25rem 0;
+}
+.route-metric {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid #aaa69b26;
+  border-radius: 0.75rem;
+  background: #1b1a15;
+}
+.route-metric dt {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #b9b5aa;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.route-metric dt > span {
+  display: inline-flex;
+}
+.route-metric dt svg {
+  width: 1rem;
+  height: 1rem;
+}
+.route-metric dd {
+  margin: 0.5rem 0 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: clamp(1.1rem, 2.6vw, 1.6rem);
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.route-metric .route-metric-detail {
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 400;
+  color: #b9b5aa;
+}
+.route-metric--success > dd:first-of-type {
+  color: #5be09a;
+}
+.route-metric--warning > dd:first-of-type {
+  color: #ffcb79;
+}
+.route-metric--info > dd:first-of-type {
+  color: #9cc9ff;
+}
+.route-metric--danger > dd:first-of-type {
+  color: #ff9387;
+}
+.route-empty {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid #aaa69b30;
+  border-radius: 0.75rem;
+  background: #1b1a15;
+}
+.route-empty > svg {
+  color: #ffcb79;
+  flex-shrink: 0;
+}
+.route-empty p {
+  margin: 0 0 0.8rem;
+}
+.route-empty p:last-child {
+  margin-bottom: 0;
+}
+
+/* Education and discovery share density, not homepage layout rules. */
+.route-guide,
+.route-models,
+.route-sponsors,
+.route-cycle-archive {
+  padding-block: 3rem 4rem;
+}
+.route-guide .how-paths {
+  gap: 1.75rem;
+  margin-bottom: 2rem;
+}
+.route-guide .mechanism-flow {
+  margin: 0;
+}
+.route-guide .mechanism-flow li {
+  padding: 1.15rem;
+  min-height: 0;
+  background: #1b1a15;
+}
+.route-guide .mechanism-flow p {
+  margin: 0.55rem 0 0;
+  font-size: 0.88rem;
+}
+.route-guide .mechanism-flow strong {
+  font-size: 0.9rem;
+}
+.route-step-icon {
+  display: block;
+  color: #ff7c3b;
+  width: 1.35rem;
+  height: 1.35rem;
+  margin-bottom: 0.65rem;
+}
+.route-guide .worked-example,
+.route-guide .custody-proof,
+.route-sponsors .worked-example,
+.route-sponsors .custody-proof {
+  padding: 1.5rem;
+  margin-block: 1.5rem;
+}
+.route-guide .worked-example h2,
+.route-guide .custody-proof h2,
+.route-sponsors .worked-example h2,
+.route-sponsors .custody-proof h2 {
+  font-size: clamp(1.25rem, 2.5vw, 2rem);
+  line-height: 1.2;
+}
+.route-guide .worked-example p,
+.route-sponsors .worked-example p {
+  font-size: 0.9rem;
+}
+.route-guide .score-tier-table td {
+  color: #ffab7f;
+  font-weight: 700;
+}
+.route-guide .equation-card dd,
+.route-sponsors .equation-card dd {
+  color: #ffab7f;
+  font-size: 1.2rem;
+}
+.route-guide .payment-stages {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 1.5rem;
+}
+.route-guide .payment-stages li {
+  padding-top: 1.1rem;
+}
+.route-sponsor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+}
+.route-sponsor-card {
+  min-width: 0;
+  padding: 1.1rem;
+  border: 1px solid #aaa69b30;
+  border-radius: 0.65rem;
+  background: #11100d;
+}
+.route-sponsor-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 1.05rem;
+  text-decoration: none;
+}
+.route-sponsor-link svg {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  color: #ff7c3b;
+}
+.route-sponsor-card p {
+  color: #c6c1b6;
+  font-size: 0.86rem;
+  margin: 0.65rem 0;
+}
+.route-sponsor-card > .network-name {
+  font-size: 0.8rem;
+  color: #b9b5aa;
+}
+.route-sponsor-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+.route-sponsor-card > small {
+  display: block;
+  margin-top: 0.6rem;
+  color: #b9b5aa;
+}
+.route-models .model-outcomes-section {
+  margin-block: 1.6rem;
+}
+.route-models .model-outcomes-section h2 {
+  font-size: 1.2rem;
+  margin-bottom: 1rem;
+}
+.route-models .model-outcome-list > li {
+  padding: 0.85rem 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.4rem 1.5rem;
+}
+.route-models .model-outcome-list h3 {
+  margin: 0;
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  font-size: 0.9rem;
+}
+.route-model-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.route-model-name > span {
+  color: #aaa69b;
+}
+.route-model-mark {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  object-fit: contain;
+  color: #aaa69b;
+  vertical-align: middle;
+}
+img.route-model-mark {
+  filter: invert(82%) sepia(14%) saturate(399%) hue-rotate(353deg)
+    brightness(89%);
+}
+.route-models .model-outcome-metrics {
+  align-content: center;
+  gap: 0.35rem 1rem;
+  font-size: 0.8rem;
+  color: #b9b5aa;
+}
+.route-models .model-outcome-metrics strong {
+  color: #efece4;
+}
+.route-models .model-outcome-bar {
+  grid-column: 1 / -1;
+  margin: 0.45rem 0 0;
+  height: 5px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.route-models .model-outcome-bar > span {
+  background: #ff7c3b;
+}
+.route-models .model-outcome-details {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.route-models .model-outcome-details > summary {
+  padding-block: 0.5rem;
+  font-size: 0.78rem;
+  min-height: 2rem;
+  color: #b9b5aa;
+}
+.route-models .model-outcome-details[open] {
+  background: #1b1a15;
+  padding: 0.6rem;
+  border-radius: 0.5rem;
+}
+.route-models .model-outcomes-summary {
+  padding: 0.8rem 1rem;
+  border-left: 3px solid #ff7c3b;
+  background: #1b1a15;
+  border-radius: 0.3rem;
+}
+.route-receipts .receipt-record {
+  padding: 0.9rem 0;
+}
+.route-receipts .receipt-links {
+  gap: 0.4rem 1rem;
+}
+.route-receipts .receipt-links > a {
+  color: #b9b5aa;
+  font-size: 0.84rem;
+}
+.route-receipts .receipt-record summary {
+  font-size: 0.8rem;
+  min-height: 2.2rem;
+}
+.route-receipts .receipt-record summary > span {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.route-receipts .route-model-mark {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.route-receipts .receipt-details {
+  border-left: 2px solid #ff7c3b;
+  padding-left: 1rem;
+}
+.route-cycle .cycle-hero {
+  align-items: start;
+  padding-bottom: 1.5rem;
+  gap: 1.5rem;
+}
+.route-cycle .route-page-header {
+  margin: 0;
+}
+.route-cycle .route-page-header h1 {
+  font-size: clamp(1.7rem, 4vw, 3rem);
+  margin: 0;
+}
+.route-cycle .route-page-header .route-badge {
+  margin-top: 1rem;
+}
+.route-cycle .cycle-number {
+  padding: 1.25rem;
+}
+.route-cycle .cycle-number strong {
+  font-size: 1.9rem;
+}
+.route-cycle .section {
+  padding-block: 2rem;
+}
+.route-cycle .section-heading h2 {
+  font-size: clamp(1.4rem, 3vw, 2rem);
+}
+.route-cycle-archive .cycle-record {
+  padding-block: 1.1rem;
+}
+.route-cycle-archive .cycle-record h2 {
+  font-size: 1rem;
+}
+.route-cycle-archive .cycle-record p {
+  margin-top: 0.5rem;
+}
+.route-funding .funding-records {
+  margin-top: 0;
+  gap: 1rem;
+}
+.route-funding .route-funding-summary {
+  width: 16rem;
+  max-width: 100%;
+  margin: 0;
+}
+.route-funding .route-funding-summary--unfunded {
+  width: 28rem;
+}
+.route-funding .route-funding-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.route-funding .section.project-funding {
+  padding-top: 0;
+}
+.route-funding .vault-header h2 {
+  font-size: clamp(1.2rem, 2.5vw, 1.5rem);
+}
+.route-funding .vault-stats {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+}
+.route-funding .vault-stat dd {
+  font-size: clamp(1.1rem, 2vw, 1.5rem);
+  overflow-wrap: normal;
+}
+.route-funding .vault-stat .vault-stat-note {
+  font-size: 0.75rem;
+}
+.route-project .project-hero {
+  padding-block: 2.5rem;
+}
+.route-project .project-hero-grid {
+  gap: 1.5rem;
+}
+.route-project-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+}
+.route-project-title > svg {
+  color: #ff7c3b;
+  width: 2rem;
+  height: 2rem;
+  margin-top: 0.4rem;
+  flex-shrink: 0;
+}
+.route-project .project-hero h1 {
+  font-size: clamp(1.9rem, 4.5vw, 3.5rem);
+  margin-bottom: 1rem;
+}
+.route-project .hero-copy {
+  font-size: 1rem;
+  line-height: 1.6;
+}
+.route-project .project-reward-status {
+  color: #ffcb79;
+}
+.route-project #start {
+  padding-block: 1rem;
+}
+.route-project #start h2 {
+  font-size: 1.1rem;
+  color: #ffcb79;
+  margin-bottom: 0.5rem;
+}
+.route-project .section {
+  padding-block: 2rem;
+}
+.route-project .section-heading h2 {
+  font-size: clamp(1.4rem, 3vw, 2rem);
+}
+.profile-page .profile-hero {
+  margin-bottom: 1.75rem;
+}
+.profile-page .profile-hero h1 {
+  font-size: clamp(1.75rem, 4.5vw, 3.5rem);
+  overflow-wrap: anywhere;
+}
+.profile-page .profile-totals {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+}
+.profile-page .profile-totals > div > strong {
+  white-space: nowrap;
+  font-size: clamp(1.2rem, 2.5vw, 1.8rem);
+}
+.profile-page .profile-section {
+  padding-block: 2rem;
+}
+.profile-page .profile-section-heading h2 {
+  font-size: clamp(1.4rem, 3vw, 2rem);
+}
+.route-not-found {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 26rem;
+}
+.route-not-found .route-page-header {
+  margin-bottom: 1.5rem;
+}
+.route-guide .empty-state,
+.route-models .empty-state,
+.route-receipts .empty-state,
+.route-cycle .empty-state,
+.route-project .empty-state {
+  padding: 1.5rem;
+  min-height: 0;
+}
+
+@media (max-width: 600px) {
+  .route-page-header {
+    margin-bottom: 1.5rem;
+  }
+  .route-title-row {
+    align-items: flex-start;
+    gap: 0.6rem;
+  }
+  .route-page-icon {
+    width: 2rem;
+    height: 2rem;
+  }
+  .route-page-icon svg {
+    width: 1.15rem;
+    height: 1.15rem;
+  }
+  .route-page-actions {
+    width: 100%;
+  }
+  .route-empty {
+    align-items: flex-start;
+  }
+  .route-guide,
+  .route-models,
+  .route-sponsors,
+  .route-cycle-archive {
+    padding-block: 2rem 3rem;
+  }
+  .route-guide .mechanism-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .route-guide .mechanism-flow li {
+    padding: 0.9rem;
+  }
+  .route-guide .mechanism-flow p {
+    font-size: 0.8rem;
+  }
+  .route-guide .worked-example,
+  .route-guide .custody-proof,
+  .route-sponsors .worked-example,
+  .route-sponsors .custody-proof {
+    padding: 1rem;
+  }
+  .route-guide .payment-stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.25rem 0;
+  }
+  .route-sponsor-grid {
+    grid-template-columns: 1fr;
+  }
+  .route-models .model-outcome-list > li {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+  }
+  img.route-model-mark {
+    filter: invert(82%) sepia(14%) saturate(399%) hue-rotate(353deg)
+      brightness(89%);
+  }
+  .route-models .model-outcome-metrics {
+    font-size: 0.76rem;
+    gap: 0.3rem 0.6rem;
+  }
+  .route-receipts .receipt-record summary {
+    grid-template-columns: minmax(0, 1fr) 1rem;
+  }
+  .route-receipts .receipt-record summary time {
+    grid-column: 1;
+    padding-left: 1.6rem;
+  }
+  .route-receipts .receipt-record summary > svg {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+  .route-cycle .cycle-hero {
+    grid-template-columns: 1fr;
+  }
+  .route-cycle .cycle-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .route-funding .vault-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem;
+  }
+  .route-funding .vault-stat {
+    padding: 0.75rem;
+  }
+  .route-funding .vault-stat dd {
+    font-size: 1rem;
+    overflow-wrap: anywhere;
+  }
+  .route-funding .vault-stat--available {
+    grid-column: 1 / -1;
+  }
+  .route-funding .vault-stat--available dd {
+    font-size: 1.5rem;
+  }
+  .route-project-title {
+    gap: 0.6rem;
+  }
+  .route-project-title > svg {
+    width: 1.4rem;
+    height: 1.4rem;
+    margin-top: 0.2rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .route-guide .mechanism-flow {
+    grid-template-columns: 1fr;
+  }
+}
+
+.route-funding .vault-contract-details {
+  margin-block: 0.5rem;
+}
+.route-funding .vault-contract-details summary {
+  font-size: 0.85rem;
+  color: #b9b5aa;
+}
+.route-funding .vault-contract-details[open] summary {
+  margin-bottom: 0.65rem;
+}

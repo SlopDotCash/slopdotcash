@@ -265,14 +265,20 @@ export function AutomaticMonthlyPayment({
         Commits each month&apos;s awards after the month ends (UTC), up to the
         monthly amount. Only the vault owner can change it.
       </p>
-      <dl className="vault-addresses">
-        <div>
-          <dt>Owner</dt>
-          <dd>
-            <code>{deployment.owner}</code>
-          </dd>
-        </div>
-      </dl>
+      <details
+        className="vault-contract-details"
+        open={Boolean(review || pending)}
+      >
+        <summary>Owner details</summary>
+        <dl className="vault-addresses">
+          <div>
+            <dt>Owner</dt>
+            <dd>
+              <code>{deployment.owner}</code>
+            </dd>
+          </div>
+        </dl>
+      </details>
       {error && (
         <p role="alert" className="form-error">
           {error}

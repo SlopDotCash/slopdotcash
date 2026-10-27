@@ -16,7 +16,7 @@ import {
   type EnforcementPreview,
   projectApiRequest,
 } from "./lib/project-api";
-import { formatDateTime } from "./Presentation";
+import { formatDateTime, StatusBadge } from "./Presentation";
 
 const ACTION_LABELS: Record<EnforcementAction, string> = {
   quarantine: "Quarantine",
@@ -153,9 +153,17 @@ export function ProjectEnforcementPanel({
     <section aria-labelledby={headingId} className="admin-enforcement">
       <header>
         <h4 id={headingId}>Enforcement</h4>
-        <span className={`admin-badge admin-badge-${enforcement.state}`}>
+        <StatusBadge
+          tone={
+            enforcement.state === "clear"
+              ? "success"
+              : enforcement.state === "banned"
+                ? "danger"
+                : "warning"
+          }
+        >
           {stateLabel(enforcement.state)}
-        </span>
+        </StatusBadge>
       </header>
       <dl className="admin-facts">
         <div>

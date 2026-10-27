@@ -1068,6 +1068,141 @@ describe("monthly coordinator", () => {
       "month_open",
     );
   });
+
+  test("monthly HTTP writes distinguish storage outages from allocation races", async () => {
+    clock = beforeCutoff;
+    const service = owner();
+    const token = "w".repeat(43);
+    sqlite
+      .prepare(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('write-owner',?,'owner',?,0)",
+      )
+      .run(OWNER, clock.toISOString());
+    sqlite
+      .prepare("INSERT INTO points_sessions VALUES(?,?,?)")
+      .run(await sha256Hex(token), "write-owner", "2027-01-01T00:00:00.000Z");
+    const call = (action: string, body: unknown) =>
+      handlePaymentsApi(
+        new Request(
+          `https://slop.cash/api/v1/payments/projects/${project.id}/${action}`,
+          {
+            method: "POST",
+            headers: {
+              origin: "https://slop.cash",
+              "content-type": "application/json",
+              cookie: `__Host-slop_points=${token}`,
+            },
+            body: JSON.stringify(body),
+          },
+        ),
+        { db, monthly: service, now: () => clock },
+      );
+    const allocation = (
+      githubUserId: string,
+      grossBase: string,
+      expectedSequence: number,
+    ) =>
+      call("monthly/2026-11/allocations", {
+        githubUserId,
+        grossBase,
+        expectedSequence,
+      });
+    expect((await call("monthly-settings", { automatic: false })).status).toBe(
+      200,
+    );
+    expect((await allocation(B, "300", 0)).status).toBe(200);
+    const records = () =>
+      Object.fromEntries(
+        [
+          "monthly_allocation_changes",
+          "monthly_payment_settings",
+          "monthly_payment_runs",
+          "monthly_payment_obligations",
+        ].map((table) => [
+          table,
+          sqlite.query(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+        ]),
+      );
+    const before = records();
+    sqlite.exec("PRAGMA query_only = ON");
+    try {
+      for (const response of [
+        await allocation(B, "200", 1),
+        await call("monthly-settings", { automatic: true }),
+      ]) {
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({
+          error: "payments_unavailable",
+        });
+      }
+      expect(records()).toEqual(before);
+    } finally {
+      sqlite.exec("PRAGMA query_only = OFF");
+    }
+    expect((await call("monthly-settings", { automatic: true })).status).toBe(
+      200,
+    );
+
+    // Another real owner operation commits after our read and before our INSERT.
+    // The losing write must remain a conflict, including the freeze trigger.
+    const prepare = db.prepare.bind(db);
+    const beforeAllocationWrite = (competing: () => Promise<unknown>) => {
+      db.prepare = (query) => {
+        const statement = prepare(query);
+        if (!query.startsWith("INSERT INTO monthly_allocation_changes("))
+          return statement;
+        return {
+          ...statement,
+          bind(...values: unknown[]) {
+            const bound = statement.bind(...values);
+            return {
+              ...bound,
+              async run() {
+                db.prepare = prepare;
+                await competing();
+                return bound.run();
+              },
+            };
+          },
+        };
+      };
+    };
+    try {
+      beforeAllocationWrite(() =>
+        service.changeAllocation(project.id, "2026-11", actor, {
+          githubUserId: A,
+          grossBase: "500",
+          expectedSequence: 1,
+        }),
+      );
+      const raced = await allocation(B, "200", 1);
+      expect(raced.status).toBe(409);
+      expect(await raced.json()).toMatchObject({
+        error: "allocations_changed",
+      });
+      expect(count("monthly_allocation_changes")).toBe(2);
+      expect(
+        (
+          await service.view(project.id, "2026-11", actor)
+        ).proposal?.allocations.map((row) => row.grossBase),
+      ).toEqual(["500", "300"]);
+
+      vault("1000");
+      beforeAllocationWrite(() =>
+        service.finalize(project.id, "2026-11", actor, 2),
+      );
+      const frozen = await allocation(B, "200", 2);
+      expect(frozen.status).toBe(409);
+      expect(await frozen.json()).toMatchObject({
+        error: "allocations_changed",
+      });
+      expect(count("monthly_allocation_changes")).toBe(2);
+      expect(count("monthly_payment_runs")).toBe(1);
+      expect(count("monthly_payment_obligations")).toBe(2);
+    } finally {
+      db.prepare = prepare;
+    }
+  });
 });
 
 describe("monthly attestation input", () => {

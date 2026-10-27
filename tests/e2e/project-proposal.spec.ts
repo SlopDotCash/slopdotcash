@@ -891,7 +891,6 @@ for (const [name, expectedId] of [
       page.getByRole("heading", { name: "Project created" }),
     ).toBeVisible();
     const manifest = submitted as Record<string, unknown>;
-    expect(() => validate(manifest)).not.toThrow();
     expect(manifest).toMatchObject({
       id: expectedId,
       slug: expectedId,

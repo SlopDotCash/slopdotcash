@@ -1,10 +1,28 @@
-import { ChevronRight } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpen,
+  CalendarCheck,
+  ChevronRight,
+  Cpu,
+  GitPullRequest,
+  HandCoins,
+  ListChecks,
+  ReceiptText,
+  Search,
+  ShieldCheck,
+  Wallet,
+} from "lucide-react";
 import { useState } from "react";
 import { PENALTY_TABLE } from "../workers/slopbot/penalties";
+import chatgptMark from "./agent-logos/chatgpt.svg";
+import claudeMark from "./agent-logos/claude.svg";
+import grokMark from "./agent-logos/grok.svg";
+import metaMark from "./agent-logos/meta-ai.svg";
 import { Link } from "./Link";
 import { browserDeployment } from "./lib/browser-deployment";
 import { modelIdentityKey, summarizeModelOutcomes } from "./lib/model-outcomes";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
+import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import {
   MAX_CREDITED_REVIEWERS,
   VALUE_SCORING_POLICY_EFFECTIVE_AT,
@@ -24,24 +42,26 @@ import {
   formatDate,
   formatPointsFromThirds,
   monthlyPoolLabel,
+  NetworkName,
   Pager,
   PaymentLifecycle,
   paymentStateLabel,
+  RoutePageHeader,
   reviewBudgetLabel,
+  StatusBadge,
   vaultStateLabel,
 } from "./Presentation";
 
 export function HowItWorksPage() {
   return (
-    <main className="shell evidence-page how-it-works">
-      <section className="evidence-page-hero">
-        <h1>How Slop works</h1>
-      </section>
+    <main className="shell evidence-page how-it-works route-guide">
+      <RoutePageHeader title="How Slop works" icon={<BookOpen />} />
       <div className="how-paths">
         <section aria-labelledby="contributor-path">
           <h2 id="contributor-path">For contributors</h2>
           <ol className="mechanism-flow">
             <li>
+              <Search className="route-step-icon" aria-hidden="true" />
               <strong>1. Choose work</strong>
               <p>
                 Find an active <Link href="/#projects">project</Link>, read its
@@ -49,6 +69,7 @@ export function HowItWorksPage() {
               </p>
             </li>
             <li>
+              <GitPullRequest className="route-step-icon" aria-hidden="true" />
               <strong>2. Submit a PR</strong>
               <p>
                 Use any agent. Test the result and disclose the exact provider,
@@ -56,16 +77,19 @@ export function HowItWorksPage() {
               </p>
             </li>
             <li>
+              <ShieldCheck className="route-step-icon" aria-hidden="true" />
               <strong>3. Maintainer review</strong>
               <p>
-                Maintainers decide what merges. Only merged work earns points.
+                Maintainers accept the work. Accepted work and useful reviews
+                earn Points.
               </p>
             </li>
             <li>
+              <Wallet className="route-step-icon" aria-hidden="true" />
               <strong>4. Points and payout</strong>
               <p>
-                Merged work earns points. Funded projects with payments enabled
-                pay monthly by points share.
+                Funded projects pay monthly by accepted-work Points share when
+                payments are enabled.
               </p>
             </li>
           </ol>
@@ -74,16 +98,17 @@ export function HowItWorksPage() {
           <h2 id="maintainer-path">For maintainers</h2>
           <ol className="mechanism-flow">
             <li>
+              <GitPullRequest className="route-step-icon" aria-hidden="true" />
               <strong>1. Add a project</strong>
               <p>
                 <Link href="/projects/new">
                   Add your repository and contribution rules
                 </Link>
-                . Install the free Slopbot; the project goes live when the
-                security scan passes.
+                . Install free Slopbot and complete the security checks.
               </p>
             </li>
             <li>
+              <Wallet className="route-step-icon" aria-hidden="true" />
               <strong>2. Fund the pool</strong>
               <p>
                 Only funds in the project vault pay awards. Unused funds roll
@@ -91,6 +116,7 @@ export function HowItWorksPage() {
               </p>
             </li>
             <li>
+              <ListChecks className="route-step-icon" aria-hidden="true" />
               <strong>3. Adjust awards</strong>
               <p>
                 Change proposed amounts within the cap before the monthly
@@ -98,6 +124,7 @@ export function HowItWorksPage() {
               </p>
             </li>
             <li>
+              <CalendarCheck className="route-step-icon" aria-hidden="true" />
               <strong>4. Automatic payment</strong>
               <p>
                 When payments are enabled, funded awards pay automatically 72
@@ -530,57 +557,60 @@ export function SponsorsPage({
     (project) => project.reward.kind === "external-prize-share",
   );
   return (
-    <main className="shell evidence-page">
-      <section className="evidence-page-hero">
-        <h1>Fund a project.</h1>
-        <p>
-          Deposit into a project&apos;s vault. When payments are enabled, funded
-          awards pay contributors automatically each month.
-        </p>
-      </section>
+    <main className="shell evidence-page route-sponsors">
+      <RoutePageHeader
+        title="Fund a project"
+        icon={<HandCoins />}
+        lead="Deposit into a project’s vault. Funded awards pay monthly when payments are enabled."
+      />
       <section className="custody-proof sponsor-pools">
         <h2>Projects</h2>
-        <section
-          className="plain-table-wrap"
-          aria-label="Project funding pools"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
-          tabIndex={0}
-        >
-          <table className="plain-table sponsor-pools-table">
-            <thead>
-              <tr>
-                <th scope="col">Project</th>
-                <th scope="col">Pool</th>
-                <th scope="col">Payments</th>
-                {hasReviewBudget ? <th scope="col">Review line</th> : null}
-                <th scope="col">Vault</th>
-              </tr>
-            </thead>
-            <tbody>
-              {PROJECTS.map((project) => {
-                return (
-                  <tr key={project.id}>
-                    <th scope="row">
-                      <Link href={`/projects/${project.slug}/funding`}>
-                        {project.name}
-                      </Link>
-                    </th>
-                    <td>{sponsorPoolLabel(project.reward)}</td>
-                    <td>{paymentStateLabel(project)}</td>
-                    {hasReviewBudget ? (
-                      <td>
-                        {project.reward.reviewBudget
-                          ? reviewBudgetLabel(project.reward.reviewBudget)
-                          : "none"}
-                      </td>
-                    ) : null}
-                    <td>{vaultStateLabel(project)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
+        <ul className="route-sponsor-grid" aria-label="Project funding pools">
+          {PROJECTS.map((project) => {
+            return (
+              <li className="route-sponsor-card" key={project.id}>
+                <Link
+                  className="route-sponsor-link"
+                  href={`/projects/${project.slug}/funding`}
+                >
+                  <strong>{project.name}</strong>
+                  <ArrowRight aria-hidden="true" />
+                </Link>
+                <p>{sponsorPoolLabel(project.reward)}</p>
+                {project.reward.chain ? (
+                  <NetworkName chain={project.reward.chain}>
+                    {NETWORK_NAMES[project.reward.chain]}
+                  </NetworkName>
+                ) : null}
+                <div className="route-sponsor-status">
+                  <StatusBadge
+                    tone={
+                      project.escrow?.deployments.length ? "info" : "neutral"
+                    }
+                  >
+                    Vault: {vaultStateLabel(project)}
+                  </StatusBadge>
+                  <StatusBadge
+                    tone={
+                      project.reward.paymentMode === "enabled"
+                        ? "success"
+                        : "neutral"
+                    }
+                  >
+                    Payments: {paymentStateLabel(project)}
+                  </StatusBadge>
+                </div>
+                {hasReviewBudget ? (
+                  project.reward.reviewBudget ? (
+                    <small>
+                      {reviewBudgetLabel(project.reward.reviewBudget)}
+                    </small>
+                  ) : null
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
       </section>
       <section className="worked-example sponsor-fee">
         <div>
@@ -740,14 +770,14 @@ export function ReceiptsPage({
     (current + 1) * RECEIPTS_PAGE_SIZE,
   );
   return (
-    <main className="shell evidence-page receipt-page">
-      <section className="evidence-page-hero">
-        <h1>Run receipts</h1>
-        <p>
-          Model and usage are self-reported and not verified with the provider.
-        </p>
+    <main className="shell evidence-page receipt-page route-receipts">
+      <RoutePageHeader
+        title="Run receipts"
+        icon={<ReceiptText />}
+        lead="Model and usage are self-reported, not provider-verified."
+      >
         <DataNotice retry={retry} state={state} />
-      </section>
+      </RoutePageHeader>
       {state.status === "ready" && receipts.length > 0 ? (
         <label className="receipt-search">
           Find a receipt
@@ -807,6 +837,7 @@ export function ReceiptsPage({
               <details>
                 <summary>
                   <span>
+                    <ModelMark model={run.model} />
                     {run.provider}/{run.model}
                   </span>
                   <time dateTime={run.completedAt}>

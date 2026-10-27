@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 test(
@@ -16,6 +17,8 @@ test(
     ).toHaveAttribute("aria-sort", "descending");
     // The period states the snapshot's exact bounds and source coverage.
     const coverage = page.locator(".points-coverage");
+    await page.locator(".points-coverage-details > summary").click();
+    await expect(coverage).toBeVisible();
     await expect(coverage).toHaveText(
       /^(This month ranks .+ UTC to .+ UTC\. )?Snapshot window: .+ UTC to .+ UTC\. Source: [\d,]+ merged pull requests and [\d,]+ closed issues across [\d,]+ repositories\.$/u,
     );
@@ -90,20 +93,7 @@ test(
     });
     // Match the repository's 200% text-enlargement fixture without reducing
     // a 320px viewport below the supported reflow width through CSS zoom.
-    await page.evaluate(() => {
-      const typography = [...document.querySelectorAll<HTMLElement>("body *")]
-        .filter((el) => el instanceof HTMLElement)
-        .map((el) => ({
-          el,
-          font: getComputedStyle(el).fontSize,
-          line: getComputedStyle(el).lineHeight,
-        }));
-      for (const { el, font, line } of typography) {
-        el.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-        if (line !== "normal")
-          el.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-      }
-    });
+    await enlargeText(page.locator("body"));
     expect(
       await page.evaluate(() => {
         const overflow =

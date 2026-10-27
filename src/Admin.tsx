@@ -6,9 +6,10 @@
  * only hides controls a session cannot use.
  */
 
-import { CircleAlert, RotateCcw } from "lucide-react";
+import { CircleAlert, RotateCcw, ShieldCheck } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { ProjectEnforcementPanel } from "./AdminProjectEnforcement";
+import "./operations-design.css";
 import { ActivationClearance, VettingSection } from "./AdminVetting";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
@@ -30,7 +31,14 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
-import { formatDateTime, SignInPanel } from "./Presentation";
+import {
+  formatDateTime,
+  MetricGrid,
+  MetricTile,
+  RoutePageHeader,
+  SignInPanel,
+  StatusBadge,
+} from "./Presentation";
 
 function LoadNotice({
   state,
@@ -761,6 +769,28 @@ function ProjectsSection({
       <div className="admin-section-heading">
         <h2 id="admin-projects">Projects</h2>
       </div>
+      {!selectedProject && state.status === "ready" ? (
+        <MetricGrid className="operations-summary">
+          <MetricTile label="Registered" value={state.projects.length} />
+          <MetricTile
+            label="Active"
+            value={
+              state.projects.filter((project) => project.status === "active")
+                .length
+            }
+            tone="success"
+          />
+          <MetricTile
+            label="Need moderator"
+            value={
+              state.projects.filter(
+                (project) => project.enforcement.decisionRequired,
+              ).length
+            }
+            tone="warning"
+          />
+        </MetricGrid>
+      ) : null}
       {selectedProject ? (
         <button
           type="button"
@@ -797,9 +827,11 @@ function ProjectsSection({
               <article className="admin-card" key={project.id}>
                 <header>
                   <h3>{project.manifest.name}</h3>
-                  <span className={`admin-badge admin-badge-${project.status}`}>
+                  <StatusBadge
+                    tone={project.status === "active" ? "success" : "warning"}
+                  >
                     {project.status}
-                  </span>
+                  </StatusBadge>
                 </header>
                 <dl className="admin-facts">
                   <div>
@@ -875,9 +907,20 @@ function ProjectsSection({
                 <div>
                   <h3>{project.manifest.name}</h3>
                   <p>
-                    {project.id} · {project.status} ·{" "}
+                    {project.id} · Revision {project.revision} ·{" "}
                     {project.manifest.listingTier}
                   </p>
+                  <StatusBadge
+                    tone={
+                      project.enforcement.decisionRequired
+                        ? "danger"
+                        : project.status === "active"
+                          ? "success"
+                          : "warning"
+                    }
+                  >
+                    {project.status}
+                  </StatusBadge>
                   {project.enforcement.decisionRequired ? (
                     <p className="form-error">
                       <CircleAlert aria-hidden="true" /> Moderator decision
@@ -956,10 +999,8 @@ export default function AdminPage() {
     );
   }
   return (
-    <main className="shell route-main admin-page">
-      <div className="admin-intro">
-        <h1>Admin</h1>
-      </div>
+    <main className="shell route-main admin-page operations-page">
+      <RoutePageHeader icon={<ShieldCheck />} title="Admin" />
       {body}
     </main>
   );
