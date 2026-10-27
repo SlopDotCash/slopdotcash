@@ -105,12 +105,18 @@ export function finalizedRouteCredit(
   };
   const before = balances(receipt.meta.preTokenBalances),
     after = balances(receipt.meta.postTokenBalances);
+  const sourceIndex = proof.keys.indexOf(
+    ata(expected.inputMint, expected.wallet, expected.inputProgram),
+  );
+  const destinationIndex = proof.keys.indexOf(
+    ata(expected.outputMint, expected.wallet, expected.outputProgram),
+  );
   const change = (
+    index: number,
     mint: string,
     program: string,
     allowMissingBefore: boolean,
   ) => {
-    const index = proof.keys.indexOf(ata(mint, expected.wallet, program));
     const pre = before.get(index),
       post = after.get(index);
     for (const balance of [pre, post]) {
@@ -131,8 +137,18 @@ export function finalizedRouteCredit(
       BigInt(pre?.uiTokenAmount.amount ?? "0")
     );
   };
-  const debit = -change(expected.inputMint, expected.inputProgram, false);
-  const credit = change(expected.outputMint, expected.outputProgram, true);
+  const debit = -change(
+    sourceIndex,
+    expected.inputMint,
+    expected.inputProgram,
+    false,
+  );
+  const credit = change(
+    destinationIndex,
+    expected.outputMint,
+    expected.outputProgram,
+    true,
+  );
   if (debit !== expected.amountIn || credit < expected.minimumOut)
     throw new Error(
       "Finalized swap did not debit its exact input and credit its minimum output",
@@ -140,8 +156,8 @@ export function finalizedRouteCredit(
   for (const [index, pre] of before) {
     if (
       pre.owner !== expected.wallet ||
-      pre.mint === expected.inputMint ||
-      pre.mint === expected.outputMint
+      index === sourceIndex ||
+      index === destinationIndex
     )
       continue;
     const post = after.get(index);
