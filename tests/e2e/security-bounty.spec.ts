@@ -2606,6 +2606,7 @@ test("home advertises only open security terms with the 75/25 split @registry", 
     section.getByRole("status", { name: "Agent prompt" }),
   ).toContainText("/SKILL.md");
   await expectAccessible(page);
+  await page.evaluate(() => window.scrollTo({ top: 0 }));
   await page.screenshot({
     path: test.info().outputPath("home-security-bounty.png"),
     fullPage: true,
@@ -2665,6 +2666,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await page
       .getByRole("textbox", { name: /^Description/u })
       .fill(description);
+    await page.evaluate(() => window.scrollTo({ top: 0 }));
     await page.screenshot({
       path: test.info().outputPath("slop-report-before.png"),
       fullPage: true,
@@ -2680,14 +2682,30 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await page.keyboard.press("Enter");
     const response = await created;
     expect(response.status()).toBe(201);
-    const result = await response.json();
-    const submissionId = result.submission.id as string;
+    const payload = response.request().postDataJSON();
+    await expect(page).toHaveURL(/\/inbox\?submission=ss_[A-Za-z0-9_-]+$/u);
+    const submissionId = new URL(page.url()).searchParams.get(
+      "submission",
+    ) as string;
+    const ownList = await api(
+      request,
+      "GET",
+      "security-submissions",
+      TOKENS["reporter-a"],
+    );
+    expect(ownList.status).toBe(200);
+    const submitted = (
+      ownList.body.submissions as {
+        id: string;
+        caseId: string;
+        intake: { receivedAt: string };
+      }[]
+    ).find((entry) => entry.id === submissionId);
+    expect(submitted).toBeDefined();
+    const result = { submission: submitted as NonNullable<typeof submitted> };
     expect(result.submission.caseId).toMatch(/^sc_/u);
     expect(result.submission.intake.receivedAt).toBeTruthy();
-    expect(JSON.stringify(result)).not.toContain(description);
-    await expect(page).toHaveURL(
-      new RegExp(`/inbox\\?submission=${submissionId}$`),
-    );
+    expect(JSON.stringify(ownList.body)).not.toContain(description);
     const report = page.locator(
       `[aria-labelledby="submission-${submissionId}"]`,
     );
@@ -2700,6 +2718,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       report.getByRole("button", { name: "Authorize private GitHub delivery" }),
     ).toHaveCount(0);
     await expectAccessible(page);
+    await page.evaluate(() => window.scrollTo({ top: 0 }));
     await page.screenshot({
       path: test.info().outputPath("slop-report-inbox.png"),
       fullPage: true,
@@ -2723,7 +2742,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await expect(report.locator(".security-report-text")).toHaveText(
       description,
     );
-    const payload = response.request().postDataJSON();
     const replay = await api(
       request,
       "POST",
