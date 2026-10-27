@@ -1540,6 +1540,10 @@ main h2 {
 .audience-data > .model-outcomes-summary {
   margin-top: 1rem;
 }
+.points-person > .avatar {
+  width: 40px;
+  height: 40px;
+}
 @media (max-width: 680px) {
   .payment-exceptions dl,
   .who-builds .model-outcomes-summary {
