@@ -17,6 +17,7 @@ import { valueModelSource } from "../workers/slopbot/value-model-source";
 import { assessValue } from "../workers/slopbot/value-review";
 import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import { assessWorkUnits } from "../workers/slopbot/value-work-unit-review";
+import { qualificationResponse } from "./qualification-response";
 
 const ENDPOINT = "https://api.surplusintelligence.ai/anthropic/v1/messages";
 const PATH_BUDGET = 1_000_000;
@@ -65,14 +66,12 @@ export function qualificationTransport(fetcher: typeof fetch) {
         redirect: "error",
         signal: request.signal,
       });
-      const receipt = response.headers.get("x-si-buyer-cost-micro");
-      requireThat(receipt !== null && /^(0|[1-9][0-9]*)$/u.test(receipt));
-      const cost = Number(receipt);
-      requireThat(Number.isSafeInteger(cost));
-      spent += cost;
+      const receipt = await qualificationResponse(response);
+      requireThat(receipt.cost !== null);
+      spent += receipt.cost;
       requireThat(spent <= PATH_BUDGET);
       uncertain = false;
-      return response;
+      return receipt.response;
     }) as typeof fetch,
     requestCount: () => requests,
   };
