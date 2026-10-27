@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { sqliteD1 } from "../../workers/fee-converter/sqlite-d1";
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import { FEE_CONVERSIONS_PATH, handleFeeConversionsApi } from "./handler";
 
 const WALLET = "0x8f77c37d8650776bfe73c9b12b15209ee15d9b86";

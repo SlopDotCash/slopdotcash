@@ -1,6 +1,6 @@
 /**
  * Projects now live in the D1 registry, whose committed snapshot may be empty.
- * Unit tests keep exercising real policy against the frozen fixture registry.
+ * Integration tests keep exercising real policy against the frozen fixture registry.
  */
 import { mock } from "bun:test";
 import { fileURLToPath } from "node:url";

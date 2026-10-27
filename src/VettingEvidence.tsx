@@ -1,10 +1,10 @@
 import { type FormEvent, useState } from "react";
 import { sha256Hex } from "./lib/async-sha256.mjs";
+import { loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { projectApiRequest, useProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
-import { loginHref } from "./Points";
 
 type EvidenceObject = {
   sha256: string;

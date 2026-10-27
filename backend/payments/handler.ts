@@ -31,7 +31,7 @@ import {
 } from "../../src/lib/payments/contracts";
 import { isWalletAddress, isWalletChain } from "../../src/lib/wallets";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
-import { cookieValue, isSameOriginJsonWrite } from "../http";
+import { cookieValue, isSameOriginJsonWrite, json } from "../http";
 import { sessionGithubActor } from "../points/handler";
 import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
 import {
@@ -119,16 +119,6 @@ export interface PaymentDeploymentIdentity {
 }
 /** The attester must still have this long to submit a binding authorization. */
 const BINDING_SUBMISSION_WINDOW_SECONDS = 600;
-function json(status: number, body: unknown) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "content-type": "application/json",
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
-    },
-  });
-}
 async function directTransfers(
   db: D1Database,
   column: "project_id" | "github_user_id",

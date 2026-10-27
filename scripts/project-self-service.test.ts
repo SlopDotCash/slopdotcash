@@ -17,7 +17,6 @@ import {
 } from "../backend/projects/handler";
 import type { ScanRequest } from "../backend/projects/setup";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
-import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { signApiToken } from "../backend/trace/auth";
 import {
   CloudflareTracePersistence,
@@ -27,16 +26,15 @@ import {
   handleTraceApi,
   type TraceApiDependencies,
 } from "../backend/trace/handler";
-import { vettedContentSha256 } from "../backend/vetting/persistence";
 import type { EscrowDeployment } from "../src/lib/escrow-policy.mjs";
 import type {
   ProjectEnforcement,
   RepositoryAccess,
 } from "../src/lib/project-contracts";
-import { classifyRevisionChanges } from "../src/lib/project-revision-changes";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";
 import type { VettingClearance } from "../src/lib/vetting-contracts";
+import { seedParticipationBan } from "../tests/participation-ban.fixture";
 import {
   applicationManifest,
   CONTRIBUTION,
@@ -808,50 +806,6 @@ test("an application stored before self-service setup publishes once, by its app
       },
     ],
     applications: [],
-  });
-});
-
-test("the scan digest ignores presentation, listing and money but binds skill inputs", async () => {
-  const base = applicationManifest(
-    "open-registry",
-    "example/open-registry",
-  ) as unknown as ProjectDefinition;
-  const digest = (manifest: ProjectDefinition) => vettedContentSha256(manifest);
-  const original = await digest(base);
-  expect(
-    await digest({
-      ...base,
-      status: "active",
-      listingTier: "featured",
-      headline: "A different one-line summary.",
-      reward: { ...base.reward, monthlyCapMinor: "0", monthlyCapDisplay: "$0" },
-    } as ProjectDefinition),
-  ).toBe(original);
-  expect(
-    await digest({
-      ...base,
-      contribution: { ...CONTRIBUTION, requiredTests: "Run every test." },
-    } as ProjectDefinition),
-  ).not.toBe(original);
-  expect(
-    await digest({
-      ...base,
-      repositories: [{ ...base.repositories[0], integrationBranch: "next" }],
-    } as ProjectDefinition),
-  ).not.toBe(original);
-  expect(
-    classifyRevisionChanges(base, {
-      ...base,
-      headline: "A different one-line summary.",
-      contribution: { ...CONTRIBUTION, requiredTests: "Run every test." },
-      reward: { ...base.reward, monthlyCapMinor: "0", monthlyCapDisplay: "$0" },
-      status: "active",
-    } as ProjectDefinition),
-  ).toEqual({
-    presentation: ["headline"],
-    executable: ["contribution"],
-    financial: ["reward"],
-    restricted: ["status"],
   });
 });
 

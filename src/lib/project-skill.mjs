@@ -1,7 +1,7 @@
 /**
  * Renders a project's contributor or reviewer skill from its canonical
  * template and approved registry revision (PRD SKL-03). The installer's
- * Python authority in scripts/skill-kit/skill-authority.mjs implements the
+ * Python authority in skills/project-contributor-template/scripts/skill-authority.mjs implements the
  * same rendering byte for byte; change both together.
  */
 

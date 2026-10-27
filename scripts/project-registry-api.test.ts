@@ -25,7 +25,6 @@ import {
 import type { SkillTemplateIndex } from "../backend/projects/skill-publication";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
-import { seedParticipationBan } from "../backend/security/participation-ban.fixture";
 import { readSecurityProgramFunds } from "../backend/security/program-funds";
 import { vettingScanRequester } from "../backend/vetting/handler";
 import {
@@ -52,6 +51,7 @@ import {
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";
 import type { SecurityBountyTerms } from "../src/lib/security-bounty.mjs";
+import { seedParticipationBan } from "../tests/participation-ban.fixture";
 import {
   applicationManifest,
   CONTRIBUTION,

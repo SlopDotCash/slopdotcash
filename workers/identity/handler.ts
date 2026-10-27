@@ -1,4 +1,4 @@
-import { type ApiError, fail } from "../../backend/http";
+import { type ApiError, cookieValue, fail } from "../../backend/http";
 import { readLimitedBody } from "../../backend/trace/validation";
 import brand from "../../brand/tokens.json" with { type: "json" };
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
@@ -102,15 +102,6 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
     fail(400, "invalid_request", "Request body must be a JSON object");
   }
   return value as Record<string, unknown>;
-}
-
-function cookieValue(request: Request, name: string): string | null {
-  const header = request.headers.get("cookie") ?? "";
-  for (const part of header.split(";")) {
-    const [key, ...rest] = part.trim().split("=");
-    if (key === name) return rest.join("=");
-  }
-  return null;
 }
 
 function clearStateCookie(headers: Headers): void {

@@ -132,16 +132,18 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     page.getByRole("heading", { name: "Monthly awards", exact: true }),
   ).toBeVisible();
   await page.getByLabel("Contribution month").fill("2026-11");
-  const load = page.getByRole("button", { name: "Load awards", exact: true });
-  await load.focus();
-  await page.keyboard.press("Enter");
+  const load = page.getByRole("button", {
+    name: "Refresh awards",
+    exact: true,
+  });
   await expect(
     page.getByRole("link", {
       name: "Sign in with GitHub",
     }),
   ).toHaveAttribute("href", /next=.*awards/);
   status = 403;
-  await load.click();
+  await load.focus();
+  await page.keyboard.press("Enter");
   await expect(page.getByRole("alert")).toContainText("maintainer authority");
   status = 200;
   await load.click();
@@ -253,7 +255,6 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
     },
   );
   await page.goto("/projects/eliza/awards");
-  await page.getByRole("button", { name: "Load awards", exact: true }).click();
   const details = page.locator(".owner-reserve-release");
   await details.locator("summary").focus();
   await page.keyboard.press("Enter");
@@ -286,7 +287,6 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
     ),
   );
   await page.reload();
-  await page.getByRole("button", { name: "Load awards", exact: true }).click();
   await details.locator("summary").click();
   await expect(
     details.getByRole("button", { name: "Check reserve", exact: true }),

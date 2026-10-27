@@ -7,8 +7,9 @@
 // FEE_CONVERTER_GAS_MULTIPLE, FEE_CONVERTER_MAX_SLIPPAGE_BPS,
 // FEE_CONVERTER_MAX_PRICE_IMPACT_BPS, FEE_CONVERTER_RUN_CAP_MICRO and
 // FEE_CONVERTER_DAILY_CAP_MICRO in the environment.
+
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import { runOnce } from "./index";
-import { sqliteD1 } from "./sqlite-d1";
 
 const [baseWallet, baseToken, solanaWallet, solanaMint] = process.argv.slice(2);
 if (!solanaMint) {
