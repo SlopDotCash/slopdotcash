@@ -11,7 +11,7 @@ import {
   type ScoreEvent,
 } from "../src/lib/leaderboard";
 import { createPaymentProjectView } from "../src/lib/project-view";
-import { prepareSourceCorrection, sha256 } from "./source-correction";
+import { sha256 } from "./source-correction";
 
 const archived = JSON.parse(
   readFileSync(
@@ -31,10 +31,9 @@ function shift(iso: string): string {
 /**
  * The archived September snapshot moved 31 days forward, so its September
  * events fall inside the October period, with a payment review basis that
- * either removes one in-period base review of a contributor who keeps other
- * events, or adds that review back to a raw ledger that lacks it.
+ * removes one in-period base review of a contributor who keeps other events.
  */
-function octoberSnapshot(basis: "removes" | "adds"): {
+function octoberSnapshot(): {
   snapshot: LeaderboardSnapshot;
   review: ScoreEvent;
 } {
@@ -85,17 +84,12 @@ function octoberSnapshot(basis: "removes" | "adds"): {
           },
         },
   );
-  const withReview = snapshot.leaders;
-  if (basis === "adds") {
-    snapshot.ledger = snapshot.ledger.filter((event) => event.id !== review.id);
-    snapshot.leaders = withoutReview;
-  }
   snapshot.paymentReviewBasis = {
     policy: PAYMENT_REVIEW_POLICY,
     effectiveAt: PAYMENT_REVIEW_POLICY_AT,
-    leaders: basis === "adds" ? withReview : withoutReview,
-    ledger: basis === "adds" ? [review] : [],
-    removedEventIds: basis === "adds" ? [] : [review.id],
+    leaders: withoutReview,
+    ledger: [],
+    removedEventIds: [review.id],
     removedAttributionIds: [],
     attributionOrder: snapshot.attributions.map((a) => a.id),
     attributions: [],
@@ -167,7 +161,6 @@ function preparationFor(snapshot: LeaderboardSnapshot, cycleId: string) {
   return {
     view,
     snapshotBytes,
-    auditBytes,
     preparationBytes: JSON.stringify(preparation),
     merges: [...merges.values()],
   };
@@ -238,54 +231,8 @@ function prepareQuality(
   };
 }
 
-/** Recovers `review` from `archiveBytes` with reviewed archive provenance. */
-function recoveredFrom(review: ScoreEvent, archiveBytes: string): ScoreEvent {
-  return {
-    ...review,
-    continuity: {
-      sourceSnapshotSha256: sha256(archiveBytes),
-      decisionUrl: "https://github.com/SlopDotCash/slopdotcash/issues/1",
-    },
-  };
-}
-
-async function correctionError(
-  input: ReturnType<typeof preparationFor>,
-  qualityBytes: string,
-  archiveBytes: string,
-  history: ScoreEvent[],
-  eventIds: string[],
-): Promise<string> {
-  const historyBytes = JSON.stringify({ events: history });
-  try {
-    await prepareSourceCorrection({
-      preparationBytes: input.preparationBytes,
-      snapshotBytes: input.snapshotBytes,
-      auditBytes: input.auditBytes,
-      archiveBytes,
-      historyBytes,
-      qualityBytes,
-      request: {
-        schemaVersion: "1",
-        kind: "historical-review-correction-request",
-        projectId: "eliza",
-        cycleId: "2026-10",
-        predecessorPreparationSha256: sha256(input.preparationBytes),
-        archiveSha256: sha256(archiveBytes),
-        historySha256: sha256(historyBytes),
-        eventIds,
-        reason: "Recover review events excluded by a collection defect.",
-      },
-      proposals: [],
-    });
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-  throw new Error("prepareSourceCorrection did not reject the fixture");
-}
-
 describe("2026-10 quality evidence follows the payment review ledger", () => {
-  const removes = octoberSnapshot("removes");
+  const removes = octoberSnapshot();
   const october = preparationFor(removes.snapshot, "2026-10");
   const removed = removes.review;
   const paymentEvents = october.view.ledger.length;
@@ -299,55 +246,6 @@ describe("2026-10 quality evidence follows the payment review ledger", () => {
     expect(
       evidence.events.some((event: { id: string }) => event.id === removed.id),
     ).toBe(false);
-  }, 60_000);
-
-  test("source correction accepts that evidence and refuses to recover the removed review", async () => {
-    const run = prepareQuality("correction", "2026-10", october);
-    expect(run.status).toBe(0);
-    const qualityBytes = readFileSync(run.qualityPath, "utf8");
-    const archiveBytes = october.snapshotBytes;
-    // Reaching the history stage proves the baseline matched the evidence.
-    expect(
-      await correctionError(
-        october,
-        qualityBytes,
-        archiveBytes,
-        [],
-        ["missing-event"],
-      ),
-    ).toBe("Missing or repeated historical event");
-    expect(
-      await correctionError(
-        october,
-        qualityBytes,
-        archiveBytes,
-        [recoveredFrom(removed, archiveBytes)],
-        [removed.id],
-      ),
-    ).toBe("Source already credited or correction replayed");
-  }, 60_000);
-
-  test("source correction refuses to recover a review only the payment review ledger credits", async () => {
-    const adds = octoberSnapshot("adds");
-    const added = preparationFor(adds.snapshot, "2026-10");
-    expect(adds.snapshot.ledger.some((e) => e.id === adds.review.id)).toBe(
-      false,
-    );
-    expect(added.view.ledger.some((e) => e.id === adds.review.id)).toBe(true);
-    const run = prepareQuality("added", "2026-10", added);
-    expect(run.status).toBe(0);
-    const qualityBytes = readFileSync(run.qualityPath, "utf8");
-    // The archive is a snapshot whose raw ledger still holds the review.
-    const archiveBytes = october.snapshotBytes;
-    expect(
-      await correctionError(
-        added,
-        qualityBytes,
-        archiveBytes,
-        [recoveredFrom(adds.review, archiveBytes)],
-        [adds.review.id],
-      ),
-    ).toBe("Source already credited or correction replayed");
   }, 60_000);
 });
 

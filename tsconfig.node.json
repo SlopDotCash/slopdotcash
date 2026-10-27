@@ -55,6 +55,7 @@
     "src/lib/notifications.ts",
     "src/lib/github-actor.ts",
     "src/lib/github-ids.ts",
+    "src/lib/login-return.ts",
     "vite.config.ts",
     "playwright.config.ts",
     "backend/**/*.ts",
@@ -96,6 +97,7 @@
     "src/lib/leaderboard-types.ts",
     "src/lib/reviewer-leaders.ts",
     "src/lib/profiles.ts",
+    "src/lib/model-outcomes.ts",
     "src/lib/deployment.ts"
   ],
   "exclude": ["tests/registry-preload.ts"]

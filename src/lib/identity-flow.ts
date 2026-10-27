@@ -45,6 +45,8 @@ function delay(ms: number, signal: AbortSignal) {
 export async function requestIdentityAssertion(options: {
   audience: "private-trace-api" | "slop-points-web";
   origin?: string;
+  /** Local development only: accept the dev server's own origin as the identity origin. */
+  allowLoopback?: boolean;
   signal: AbortSignal;
   now?: () => number;
   resume?: unknown;
@@ -58,6 +60,7 @@ export async function requestIdentityAssertion(options: {
   const identityOrigin = identityPublicOrigin(
     options.origin,
     deploymentTier(import.meta.env.VITE_SLOP_ENVIRONMENT),
+    { loopback: options.allowLoopback },
   );
   const now = options.now ?? Date.now;
   const signal = options.signal;

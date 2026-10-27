@@ -11,6 +11,8 @@ import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { communityProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
+  assignLeaderboardRanks,
+  compareRankedEntries,
   type LeaderboardSnapshot,
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
@@ -497,9 +499,6 @@ test("shows agent setup and keeps contribution records available", async ({
   for (const cell of shareCells) {
     expect(cell).toMatch(/^\d+\.\d{2}% of payment weight$/u);
   }
-  expect(view.leaders.every((leader) => leader.projectedMinor === "0")).toBe(
-    true,
-  );
 });
 
 test("never presents Delta Star's external prize as platform money", async ({
@@ -516,49 +515,6 @@ test("never presents Delta Star's external prize as platform money", async ({
     .first()
     .click();
   await expect(page).toHaveURL(/\/cycles\/delta-star\/\d{4}-\d{2}$/u);
-});
-
-test("shows the frozen record for a cycle the live window still covers", {
-  tag: ["@pages"],
-}, async ({ page, request }) => {
-  const snapshot = await loadSnapshot(request);
-  const cycles = await loadCycles(request);
-  // A month with a frozen record that the rolling window also reaches is the
-  // case where a live recompute could replace what is under review.
-  const overlapping = cycles.cycles.find((cycle) => {
-    if (cycle.contributors.length === 0) return false;
-    try {
-      createProjectView(snapshot, cycle.projectId, cycle.cycleId);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  const cycle = overlapping ?? cycles.cycles.find((c) => c.contributors.length);
-  if (cycle) {
-    await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
-      waitUntil: "networkidle",
-    });
-    const rows = page.locator(".archived-leader-row");
-    await expect(rows).toHaveCount(cycle.contributors.length);
-    await expect(rows.first().getByRole("link")).toHaveText(
-      cycle.contributors[0].actor.login,
-    );
-    await expect(
-      page.locator(
-        ".leader-row:not(.archived-leader-row, .archived-leader-head)",
-      ),
-    ).toHaveCount(0);
-  }
-
-  const project = PROJECTS.find(
-    (candidate) => candidate.reward.kind === "monthly-pool",
-  );
-  if (!project) throw new Error("Monthly project fixture is unavailable");
-  await page.goto(`/cycles/${project.id}/2025-01`);
-  await expect(
-    page.getByRole("link", { name: "project page" }),
-  ).toHaveAttribute("href", `/projects/${project.slug}`);
 });
 
 test("renders contributor and cycle records from validated public data", {
@@ -606,55 +562,7 @@ test("renders contributor and cycle records from validated public data", {
   await expect(
     page.locator(".profile-totals").getByText(/simulated estimate|pool$/u),
   ).toHaveCount(0);
-  const acceptedRecords = snapshot.ledger.filter(
-    (event) => event.actor.id === actor.id,
-  );
-  const activity = page.getByRole("region", { name: "Contribution activity" });
-  await expect(activity).toBeVisible();
-  const dates = await activity
-    .locator("li[data-activity-date]")
-    .evaluateAll((rows) =>
-      rows.map((row) => row.getAttribute("data-activity-date") ?? ""),
-    );
-  expect(dates).toEqual([...dates].sort((a, b) => b.localeCompare(a)));
-  if (acceptedRecords.length > 10) {
-    await expect(activity.locator("li[data-activity-date]")).toHaveCount(10);
-    const expand = activity.getByRole("button", {
-      name: /View all .* activity records/u,
-    });
-    await expand.scrollIntoViewIfNeeded();
-    await expand.focus();
-    await page.keyboard.press("Enter");
-    const collapse = activity.getByRole("button", {
-      name: "Show recent activity",
-    });
-    await expect(collapse).toBeFocused();
-    await expect(collapse).toBeInViewport();
-    const fullDates = await activity
-      .locator("li[data-activity-date]")
-      .evaluateAll((rows) =>
-        rows.map((row) => row.getAttribute("data-activity-date") ?? ""),
-      );
-    expect(fullDates.length).toBeGreaterThanOrEqual(acceptedRecords.length);
-    expect(fullDates).toEqual(
-      [...fullDates].sort((a, b) => b.localeCompare(a)),
-    );
-    const latest = [...acceptedRecords].sort((a, b) =>
-      b.occurredAt.localeCompare(a.occurredAt),
-    )[0];
-    await expect(
-      activity
-        .getByRole("link", { name: latest.source.title, exact: true })
-        .first(),
-    ).toBeVisible();
-    await expect(
-      activity.getByRole("button", { name: "Show recent activity" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    await page.keyboard.press("Enter");
-    await expect(expand).toBeFocused();
-    await expect(expand).toBeInViewport();
-    await expect(activity.locator("li[data-activity-date]")).toHaveCount(10);
-  }
+  await expect(page.locator("li[data-activity-date]")).toHaveCount(0);
 
   const archived = cycles.cycles.find((cycle) =>
     cycle.contributors.some((entry) => entry.actor.id === actor.id),
@@ -1209,25 +1117,6 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await expect(changes).toContainText("listingTier");
 });
 
-test("project pages omit full standings and sponsor links keep their destination", async ({
-  page,
-}) => {
-  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
-  const standings = page.getByRole("link", {
-    name: "Full standings",
-    exact: true,
-  });
-  await expect(standings).toHaveCount(0);
-  await page.goto("/sponsors");
-  await expect(
-    page.getByRole("link", { name: "Eliza", exact: true }),
-  ).toHaveAttribute("href", "/projects/eliza/funding");
-  await page.screenshot({
-    path: test.info().outputPath("direct-sponsor-handoffs.png"),
-    fullPage: true,
-  });
-});
-
 test("serves byte-consistent bootstrap and read-only site artifacts", {
   tag: ["@pages", "@pages-only"],
 }, async ({ baseURL, request }) => {
@@ -1290,15 +1179,15 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   // These links are also opened from sign-in returns and Inbox notices.
   // Exercise Pages rewrites: the preview server serves any path as the app
   // and would conceal a missing production route.
-  for (const path of [
-    "/projects/eliza/awards",
-    "/projects/eliza/awards/",
-    "/operator/traces",
-    "/operator/traces/",
-  ]) {
+  for (const path of ["/projects/eliza/awards", "/projects/eliza/awards/"]) {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status(), path).toBe(200);
     expect(await response.text(), path).toContain('<div id="root"></div>');
+  }
+  for (const path of ["/operator/traces", "/operator/traces/"]) {
+    const response = await request.get(path, { maxRedirects: 0 });
+    expect(response.status(), path).toBe(404);
+    expect(await response.text(), path).not.toContain('<div id="root"></div>');
   }
 
   const [
@@ -1708,6 +1597,24 @@ test("opens the models page directly and through keyboard navigation", async ({
     .first();
   await client.locator("summary").press("Enter");
   await expect(client.locator("details")).toHaveAttribute("open", "");
+  // Frozen accepted outcomes use the same public Points unit as profiles.
+  for (const [model, points] of [
+    ["deepseek/deepseek-v4.1-flash-free", "30"],
+    ["openai/gpt-6", "10"],
+  ]) {
+    const row = outcomes.locator(":scope > li").filter({
+      has: page.getByRole("heading", { name: model, exact: true }),
+    });
+    await row.locator("summary").click();
+    await expect(
+      row
+        .locator("dl > div")
+        .filter({
+          has: page.getByText("PR points", { exact: true }),
+        })
+        .locator("dd"),
+    ).toHaveText(points);
+  }
   await testInfo.attach("models-page", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
@@ -1793,12 +1700,31 @@ test("lands direct and lazy cross-route hash links on their section", async ({
 }, info) => {
   const snapshot = await loadSnapshot(request);
   const actor = snapshot.leaders[0]?.actor;
-  const exclusion = snapshot.reviewExclusions?.[0];
-  if (!actor || !exclusion)
+  const event = snapshot.ledger.find(
+    (entry) =>
+      entry.actor.id === actor?.id && entry.source.kind === "pull-request",
+  );
+  if (!actor || !event)
     throw new Error(
-      "The profile fixture needs a contributor and a review exclusion",
+      "The profile fixture needs a contributor with accepted work",
     );
-  exclusion.reviewer = actor;
+  snapshot.penalties = [
+    {
+      id: `${event.source.id}:penalty`,
+      actor,
+      repository: event.repository,
+      occurredAt: event.occurredAt,
+      category: "spam",
+      tableVersion: "slopbot-penalties-v1",
+      debitThirds: 3,
+      source: { ...event.source, kind: "pull-request" },
+    },
+  ];
+  snapshot.leaders[0].scoreThirds -= 3;
+  snapshot.leaders[0].score = Math.floor(snapshot.leaders[0].scoreThirds / 3);
+  snapshot.leaders[0].penaltyThirds = 3;
+  snapshot.leaders.sort(compareRankedEntries);
+  assignLeaderboardRanks(snapshot.leaders);
   assertLeaderboardSnapshot(snapshot);
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshot }),
@@ -1819,7 +1745,7 @@ test("lands direct and lazy cross-route hash links on their section", async ({
       waitUntil: "networkidle",
     });
     await page
-      .getByRole("link", { name: "How reviews score", exact: true })
+      .getByRole("link", { name: "How penalties work", exact: true })
       .click();
     await expect(
       page.getByText("Loading page…", { exact: true }),

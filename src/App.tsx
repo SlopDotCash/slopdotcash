@@ -107,7 +107,6 @@ const ProjectProposalPage = lazy(() => import("./ProjectProposalPage"));
 const AdminPage = lazy(() => import("./Admin"));
 const InboxPage = lazy(() => import("./Inbox"));
 const VettingEvidencePage = lazy(() => import("./VettingEvidence"));
-const OperatorTracesPage = lazy(() => import("./OperatorTraces"));
 const SecurityCasesPage = lazy(() => import("./SecurityBounty"));
 const SecurityProgramPage = lazy(() =>
   import("./SecurityBounty").then((module) => ({
@@ -163,7 +162,6 @@ type PageRouteKind =
   | "admin"
   | "new-project"
   | "vetting-evidence"
-  | "operator-traces"
   | "security-cases";
 type Route =
   | { kind: PageRouteKind }
@@ -211,11 +209,6 @@ const ROUTES: Record<
     snapshot: false,
     registry: "independent",
     privateTitle: "Private vetting evidence",
-  },
-  "operator-traces": {
-    snapshot: false,
-    registry: "independent",
-    privateTitle: "Private traces",
   },
   "security-cases": {
     snapshot: false,
@@ -278,8 +271,6 @@ function internalRoute(pathname: string): Route {
     const kind = PAGE_ROUTES.get(first);
     if (kind) return { kind };
   }
-  if (segments.length === 2 && first === "operator" && second === "traces")
-    return { kind: "operator-traces" };
   // Admin emails sent before self-service setup link /admin/applications/<id>.
   if (segments.length === 3 && first === "admin" && second === "applications")
     return { kind: "admin" };
@@ -337,9 +328,7 @@ function routeHead(route: Route): { title: string; path: string | null } {
           ? null
           : route.kind === "security-cases"
             ? "/security"
-            : route.kind === "operator-traces"
-              ? "/operator/traces"
-              : `/${route.kind}`,
+            : `/${route.kind}`,
     };
   }
   if (route.kind === "profile") {
@@ -428,10 +417,7 @@ function Header() {
           className="header-nav-link"
           href="/how-it-works"
         >
-          <span className="header-nav-full">How It Works</span>
-          <span aria-hidden="true" className="header-nav-short">
-            ?
-          </span>
+          How It Works
         </Link>
         <PointsNav />
       </div>
@@ -855,6 +841,7 @@ function AgentPromptBox({
             ? "button primary-button agent-prompt-copied"
             : "button primary-button"
         }
+        data-copy={copy}
         onClick={() => void copyPrompt()}
         type="button"
       >
@@ -1560,7 +1547,6 @@ function AppContent({ route }: { route: Route }) {
     content = <CycleArchivePage retry={retryArchive} state={archive} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;
   else if (route.kind === "vetting-evidence") content = <VettingEvidencePage />;
-  else if (route.kind === "operator-traces") content = <OperatorTracesPage />;
   else if (route.kind === "security-cases") content = <SecurityCasesPage />;
   else if (route.kind === "security-program")
     content = withProject(route, (project) => (

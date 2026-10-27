@@ -24,7 +24,6 @@ let runtime;
 let browser;
 let server;
 let proxy;
-let staticHandler;
 const sockets = new Set();
 try {
   const entry = join(directory, "entry.ts");
@@ -217,6 +216,26 @@ export default { fetch(request, env, ctx) {
     "PASS: exact-byte one-use read, actor/digest binding, reason, 60-second expiry and atomic audit",
   );
 
+  // Keep the storage-outage recovery check after removing the operator UI.
+  const unavailableGrant = await (await create()).json();
+  const storedKey = `traces/sha256/${digests[0].slice(0, 2)}/${digests[0]}`;
+  await bucket.delete(storedKey);
+  const unavailable = await read(unavailableGrant.grant);
+  assert.equal(unavailable.status, 503);
+  assert.equal((await unavailable.json()).error, "object_unavailable");
+  await bucket.put(storedKey, contents[0], {
+    customMetadata: { sha256: digests[0] },
+    httpMetadata: { contentType: "text/plain" },
+  });
+  const recoveryGrant = await (await create()).json();
+  const recovered = await read(recoveryGrant.grant);
+  assert.equal(recovered.status, 200);
+  assert.equal(hash(Buffer.from(await recovered.arrayBuffer())), digests[0]);
+  assert.equal((await read(recoveryGrant.grant)).status, 403);
+  console.log(
+    "PASS: unavailable trace object refuses, then recovers with a new one-use grant",
+  );
+
   for (const extra of [
     { origin: null },
     { origin: "https://evil.example" },
@@ -400,10 +419,6 @@ export default { fetch(request, env, ctx) {
     async (request, response) => {
       try {
         assert.equal(request.headers.host, "slop.cash");
-        if (!request.url.startsWith("/api/") && staticHandler) {
-          await staticHandler(request, response);
-          return;
-        }
         if (request.url === "/") {
           response.writeHead(200, { "content-type": "text/html" });
           response.end("<!doctype html><title>Local trace workflow</title>");
@@ -562,26 +577,6 @@ export default { fetch(request, env, ctx) {
     "PASS: actual Chromium sign-in, operator-only session flag, browser-controlled same-origin GET, exact bytes and replay refusal",
   );
 
-  if (process.env.SLOP_TRACE_UI_BUILD) {
-    const { runTraceOperatorUi } = await import(
-      pathToFileURL(resolve("tests/trace-operator-browser.mjs")).href
-    );
-    await runTraceOperatorUi({
-      runtime,
-      db,
-      bucket,
-      site,
-      signIn,
-      digests,
-      contents,
-      directory,
-      browser,
-      proxyUrl: `http://127.0.0.1:${proxy.address().port}`,
-      setStaticHandler: (handler) => {
-        staticHandler = handler;
-      },
-    });
-  }
   console.log(
     "Private trace operator Pages/D1/R2 workflow passed. Local synthetic content only.",
   );

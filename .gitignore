@@ -42,3 +42,6 @@ public/skill-templates/
 
 # Operator-owned keeper deployment configuration; never part of Slop releases.
 workers/operator-keeper/wrangler.operator.toml
+
+# Local development backend data (scripts/dev-backend.ts).
+.slop-dev/

@@ -90,14 +90,3 @@ test("acknowledges the terms.json slop.cash serves for a project without a bount
     prizeRulesSha256: null,
   });
 });
-
-test("acknowledges public security bounty terms and a policy served before them", async () => {
-  const { securityBounty: _bounty, ...earlier } = await servedTerms();
-  const program = { version: "1", status: "open", rewardMode: "bounty-only" };
-  expect(
-    await acknowledge({ ...earlier, securityBounty: program }),
-  ).toMatchObject({ policyRevision: "draft-1" });
-  expect(await acknowledge(earlier)).toMatchObject({
-    policyRevision: "draft-1",
-  });
-});

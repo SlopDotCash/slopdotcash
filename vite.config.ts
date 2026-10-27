@@ -6,12 +6,27 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type ProxyOptions } from "vite";
 
 const publicDirectory = `${fileURLToPath(new URL("./public", import.meta.url))}${sep}`;
 // Local UI development reads the registry and the published snapshots from one
 // public origin, so the snapshots validate against the registry they cite.
 const localReadOrigin = "https://slop.cash";
+
+// Local sign-in: `bun run dev:local` points the dev server at a backend that
+// `bun run dev:backend` runs on this machine (the identity Worker and the API on
+// a local database). Sign-in and API calls, with their cookies, go only there.
+const localBackend = process.env.SLOP_DEV_BACKEND;
+if (
+  localBackend !== undefined &&
+  !["localhost", "127.0.0.1"].includes(new URL(localBackend).hostname)
+)
+  throw new Error("SLOP_DEV_BACKEND must be a localhost address");
+const localBackendProxy: Record<string, ProxyOptions> = localBackend
+  ? {
+      "^/(?:api/|v1/oauth/)": { target: localBackend, changeOrigin: false },
+    }
+  : {};
 
 export default defineConfig({
   plugins: [
@@ -51,6 +66,9 @@ export default defineConfig({
       },
     },
   ],
+  define: localBackend
+    ? { "import.meta.env.VITE_SLOP_LOCAL_BACKEND": JSON.stringify("1") }
+    : {},
   // Local UI development reads the public registry, independently of build
   // outputs, and the public direct-transfer totals behind "Money received".
   // The legacy file URL is also supported for existing sessions.
@@ -98,6 +116,7 @@ export default defineConfig({
             });
           },
         },
+      ...localBackendProxy,
     },
   },
   build: {
