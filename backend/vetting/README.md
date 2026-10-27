@@ -173,8 +173,11 @@ addition to the final reviewed `inputManifestSha256`. Their private v2 scan
 report binds both retained inventories and every original execution report;
 the evidence checker verifies that the final inventory preserves the source
 items and appends only those exact execution items. Reuse retains the original
-final inventory, model review inputs, run IDs and dates. Existing text-only
-results can still reuse by their final inventory hash; legacy native results
+final inventory, model review inputs, run IDs and dates.
+Clean execution evidence uses the fresh runner's bounded parser and must cover
+each requested artifact, match the recorded image and time bounds, and retain
+disabled internet access. Source and result artifact identities must agree.
+Existing text-only results can still reuse by their final inventory hash; legacy native results
 without the explicit source binding cannot reuse. No trace-body route is added.
 
 ## Scanner service dependency

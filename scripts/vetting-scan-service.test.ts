@@ -763,13 +763,24 @@ function emptyCommit(message: string) {
 }
 
 /** An explicitly accepted native fixture: proves reuse routing, not malware detection. */
-async function retainedNativeFixture(legacy = false, incomplete = false) {
+type NativeExecutionDefect = "artifact" | "image" | "egress" | "uncovered";
+async function retainedNativeFixture(
+  legacy = false,
+  incomplete = false,
+  defect?: NativeExecutionDefect,
+) {
   await mkdir(config.workDirectory, { recursive: true });
   await mkdir(config.journalDirectory, { recursive: true });
   const native = new Uint8Array(32);
   native.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]);
   native[18] = 0x3e;
-  await commit({ "bin/helper": native }, "Retain native fixture source");
+  const nativeFiles: Record<string, Uint8Array> = { "bin/helper": native };
+  if (defect === "uncovered") {
+    const second = native.slice();
+    second[30] = 2;
+    nativeFiles["bin/second-helper"] = second;
+  }
+  await commit(nativeFiles, "Retain native fixture source");
   const project = await projects.getProject("open-registry");
   if (!project) throw new Error("Missing native fixture project");
   expect(
@@ -802,11 +813,11 @@ async function retainedNativeFixture(legacy = false, incomplete = false) {
       runId: "00000000-0000-4000-8000-000000000001",
       startedAt: NOW.toISOString(),
       completedAt: NOW.toISOString(),
-      imageSha256: "c".repeat(64),
+      imageSha256: defect === "image" ? "e".repeat(64) : "c".repeat(64),
       sourceSha: "d".repeat(40),
-      artifactSha256: digest(native),
+      artifactSha256: defect === "artifact" ? "f".repeat(64) : digest(native),
       interpreter: "binary",
-      internetEnabled: false,
+      internetEnabled: defect === "egress",
       status: "exited",
       exitCode: 0,
       stdoutBase64: "",
@@ -933,7 +944,7 @@ async function retainedNativeFixture(legacy = false, incomplete = false) {
       at: clock,
       fetch: config.connection.fetch,
     }),
-  ).toMatchObject({ outcome: "accepted" });
+  ).toMatchObject({ outcome: defect ? "rejected" : "accepted" });
   await rm(acquired.directory, { recursive: true, force: true });
   return {
     result: composed.result,
@@ -944,6 +955,15 @@ async function retainedNativeFixture(legacy = false, incomplete = false) {
     reportSha: digest(composed.report),
     native,
   };
+}
+
+for (const defect of ["artifact", "image", "egress", "uncovered"] as const) {
+  test(`an invalid native execution binding (${defect}) cannot produce clean admission`, async () => {
+    const original = await retainedNativeFixture(false, false, defect);
+    expect(
+      (await vetting.getAssessment(original.result.assessmentId))?.state,
+    ).toBe("pending");
+  });
 }
 
 function refuseFreshNativeWork() {
@@ -961,6 +981,59 @@ function refuseFreshNativeWork() {
   }) as typeof fetch;
   return attempts;
 }
+
+test("protocol-valid native execution stays quarantined without an accepted clean analysis", async () => {
+  const native = new Uint8Array(32);
+  native.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]);
+  native[18] = 0x3e;
+  await commit({ "bin/helper": native }, "Native execution transport fixture");
+  const transport = config.connection.fetch;
+  if (!transport) throw new Error("Missing transport");
+  let executions = 0;
+  config.connection.fetch = (async (input, init) => {
+    if (!String(input).endsWith("/api/v1/vetting/sandbox"))
+      return transport(input, init);
+    executions++;
+    const request = JSON.parse(
+      new TextDecoder().decode(init?.body as Uint8Array),
+    );
+    expect(request.artifactSha256).toBe(digest(native));
+    return Response.json({
+      schema: "slop-isolated-artifact-v1",
+      runId: "00000000-0000-4000-8000-000000000001",
+      startedAt: NOW.toISOString(),
+      completedAt: NOW.toISOString(),
+      imageSha256: "c".repeat(64),
+      sourceSha: "d".repeat(40),
+      artifactSha256: request.artifactSha256,
+      interpreter: "binary",
+      internetEnabled: false,
+      status: "exited",
+      exitCode: 0,
+      stdoutBase64: "",
+      stderrBase64: "",
+      outputComplete: true,
+    });
+  }) as typeof fetch;
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({
+    state: "published",
+    disposition: "incomplete",
+    outcome: "accepted",
+  });
+  const assessment = await vetting.getAssessment(
+    pass.assessments[0].assessmentId,
+  );
+  if (!assessment?.result || !isScanResult(assessment.result))
+    throw new Error("Missing native result");
+  expect(executions).toBe(1);
+  expect(assessment.result.artifacts[0]).toMatchObject({
+    state: "quarantined",
+    analysis: "pending",
+    requestedExecution: true,
+  });
+  expect(await retained.evidence.retained(assessment.result)).toBe(true);
+});
 
 test("identical native inputs reuse original execution and reviews before calling the sandbox", async () => {
   const original = await retainedNativeFixture();
