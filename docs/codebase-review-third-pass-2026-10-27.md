@@ -2724,3 +2724,13 @@ At local source `1036d9f1c159bbbd603065f956ff75606199d8c9`, `bun run verify:code
 The whole30-case registry file was then exercised against the integrated application:22passed,2failed,6were blocked by its serial dependency. One failure was the now-fixed exact Download selector after adding Copy; the other was a local ProxyWorker `Network connection lost` response during mobile legacy setup. All assertions before that transport failure passed. No error allowance or application fallback was added. The release coordinator owns the final serial combined-tree rerun and main promotion; these pending results must not be reported as green before that run completes.
 
 The additional rerun started here was stopped at the coordinator's request to avoid two local registry servers competing during the final run. Its interrupted status is not acceptance evidence. All report and cleanup source work is committed; final delivery confirmation follows the release coordinator's evidence.
+
+### Completed combined verification
+
+The final combined run at `085b271bb730e05b1cfbe94796f4afaf9656f344` supersedes the pending rerun above. `bun run verify` passed: 757 tests, one existing disposable-sandbox skip, all five integration drivers and the production build. Formatting passed, and AGENTS/CLAUDE remained identical.
+
+The full browser matrix passed with no failed or flaky tests: 326 preview cases, 47 serial-registry cases and five Pages cases. The 20 explicit skips cover 14 separate native-chain cases, four duplicate viewport cases and two opt-in private-intake cases. These skips are not counted as acceptance. Screenshots, videos, manifests, fixture-source comparisons and logs are retained with the release review.
+
+Later bounded changes have separate evidence: #1503 passed four desktop/mobile profile-recovery cases; #1504 preserved every parsed ledger value while reducing the prepared artifact from 29,460,889 to 22,652,089 bytes and passing the complete build; #1506 passed an isolated frozen install, typecheck and bundle build after removing unused QR-code dependencies. The original homepage remains unchanged.
+
+The native payout repair in #1505 retains the real payment, amount, fee, network, keyboard and accessibility checks. See [release PR #1493](https://github.com/SlopDotCash/slopdotcash/pull/1493) for native-chain and opt-in private-intake results, final source ancestry, protected real-provider qualification and deployment evidence. This source-verification record does not declare MVP completion or authorize a financial activation.
