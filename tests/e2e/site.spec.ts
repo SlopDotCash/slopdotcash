@@ -740,9 +740,22 @@ test("renders contributor and cycle records from validated public data", {
     await expect(
       page.getByRole("heading", { name: "Contributors", exact: true }),
     ).toBeVisible();
-    await expect(page.locator(".archived-leader-row")).toHaveCount(
+    const contributors = page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    });
+    await expect(contributors.locator("tbody tr")).toHaveCount(
       archived.contributors.length,
     );
+    for (const contributor of archived.contributors)
+      await expect(
+        contributors.getByRole("link", {
+          name: contributor.actor.login,
+          exact: true,
+        }),
+      ).toHaveAttribute(
+        "href",
+        `/contributors/${encodeURIComponent(contributor.actor.login)}`,
+      );
     await expect(
       page.getByRole("heading", { name: "Evidence", exact: true }),
     ).toHaveCount(0);
