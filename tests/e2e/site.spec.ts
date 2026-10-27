@@ -101,6 +101,78 @@ test("project setup shares one sign-in read with its owner inventory", async ({
   await expectAccessible(page);
 });
 
+test("shared navigation preserves project drafts and account sign-in destinations", async ({
+  diagnostics,
+  page,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allowResponse(401, "GET", "/api/v1/payments/me");
+  diagnostics.allowResponse(401, "GET", "/api/v1/notifications");
+  await page.route("**/api/v1/payments/me", (route) =>
+    route.fulfill({ status: 401, json: { error: "unauthorized" } }),
+  );
+  await page.route("**/api/v1/notifications", (route) =>
+    route.fulfill({ status: 401, json: { error: "unauthorized" } }),
+  );
+  await page.goto("/projects/eliza");
+  const projectNav = page.getByRole("navigation", {
+    name: "Project navigation",
+  });
+  await projectNav.getByRole("link", { name: "Funds & awards" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Eliza funding" }),
+  ).toBeVisible();
+  await projectNav.getByRole("link", { name: "Settings" }).click();
+  const draft = "Draft retained across project navigation";
+  await page.getByLabel("Short description").fill(draft);
+  await projectNav.getByRole("link", { name: "Security" }).click();
+  await expect(page).toHaveURL(/\/projects\/eliza\/security$/u);
+  await expect(
+    projectNav.getByRole("link", { name: "Security" }),
+  ).toHaveAttribute("aria-current", "page");
+  await projectNav.getByRole("link", { name: "Settings" }).click();
+  await expect(page.getByLabel("Short description")).toHaveValue(draft);
+
+  await page.goto("/account");
+  const accountNav = page.getByRole("navigation", {
+    name: "Account navigation",
+  });
+  await accountNav.getByRole("link", { name: "Payouts" }).click();
+  await expect(page).toHaveURL(/\/earnings$/u);
+  await expect(
+    page.getByRole("main").getByRole("link", { name: "Sign in with GitHub" }),
+  ).toHaveAttribute("href", /next=%2Fearnings$/u);
+  await accountNav.getByRole("link", { name: "Inbox" }).click();
+  await expect(page).toHaveURL(/\/inbox$/u);
+  await expect(
+    page.getByRole("main").getByRole("link", { name: "Sign in with GitHub" }),
+  ).toHaveAttribute("href", /next=%2Finbox$/u);
+  await accountNav.getByRole("link", { name: "Settings" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Account", exact: true }),
+  ).toBeVisible();
+
+  await page.goto("/cycles");
+  const records = page.getByRole("navigation", { name: "Public records" });
+  await records.getByRole("link", { name: "Receipts" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Run receipts" }),
+  ).toBeVisible();
+  await records.getByRole("link", { name: "Cycles" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Payment cycles" }),
+  ).toBeVisible();
+  await enlargeText(page.locator("body"));
+  await expectAccessible(page);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+});
+
 test("security reports recover a failed list and share one session across submissions", async ({
   page,
   diagnostics,
@@ -772,6 +844,22 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
     project.contribution?.approvedScope ?? "",
   );
+  const instructions = page.locator("details.proposal-skill-rules");
+  await instructions.locator("summary").click();
+  await page
+    .getByLabel("Required tests", { exact: true })
+    .fill("x".repeat(2001));
+  await page.getByRole("button", { name: "Publish changes" }).click();
+  await expect(page.locator("#field-requiredTests-error")).toBeVisible();
+  await instructions.locator("summary").click();
+  await expect(instructions).not.toHaveAttribute("open", "");
+  await page.getByRole("button", { name: "Publish changes" }).click();
+  await expect(page.locator("#field-requiredTests-error")).toBeVisible();
+  expect(submission).toBeNull();
+  await page
+    .getByLabel("Required tests", { exact: true })
+    .fill(project.contribution?.requiredTests ?? "");
+  await expect(instructions).toHaveAttribute("open", "");
   const scope =
     "Fix reproducible defects and provide the affected workflow evidence.";
   await page.getByLabel("Acceptance criteria").fill(scope);

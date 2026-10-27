@@ -57,8 +57,10 @@ import {
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
 import {
+  AccountNav,
   ExternalLinkAnchor,
   formatNullableUtc as formatUtc,
+  ProjectNav,
   RoutePageHeader,
   SignInPanel,
   StatusBadge,
@@ -650,6 +652,7 @@ export function SecurityProgramPage({
           }
           lead="No published bounty terms, so no award is promised."
         />
+        <ProjectNav project={project} current="security" />
         <IntakeHandoff project={project} />
       </main>
     );
@@ -676,6 +679,7 @@ export function SecurityProgramPage({
           {PROGRAM_STATUS_LABELS[terms.status]}
         </StatusBadge>
       </RoutePageHeader>
+      <ProjectNav project={project} current="security" />
       <IntakeHandoff project={project} />
       <div className="security-program-terms">
         <section aria-labelledby="security-terms" className="admin-card">
@@ -2942,6 +2946,7 @@ export default function SecurityCasesPage() {
   return (
     <main className="shell route-main admin-page security-page operations-page">
       <RoutePageHeader icon={<LockKeyhole />} title="Security cases" />
+      <AccountNav current="security" />
       {body}
     </main>
   );

@@ -42,10 +42,12 @@
   font-size: 1.3rem;
   line-height: 1.25;
 }
+.route-section-nav,
 .account-page .account-sections {
   gap: 0.4rem;
   margin-bottom: 1.5rem;
 }
+.route-section-nav a,
 .account-page .account-sections a {
   padding: 0.4rem 0.7rem;
   border: 1px solid var(--line);
@@ -54,6 +56,9 @@
   font-size: 0.85rem;
   text-decoration: none;
 }
+.route-section-nav a:hover,
+.route-section-nav a:focus-visible,
+.route-section-nav a[aria-current="page"],
 .account-page .account-sections a:hover,
 .account-page .account-sections a:focus-visible {
   color: var(--ink);

@@ -64,6 +64,7 @@ import {
   monthlyPoolPointsOnly,
   monthlyPoolUnfunded,
   NotFound,
+  ProjectNav,
   paymentStateLabel,
   RoutePageHeader,
   reviewBudgetLabel,
@@ -285,6 +286,16 @@ function internalRoute(pathname: string): Route {
 const LEGACY_SECTIONS = new Map([["wallet", "/account#wallets"]]);
 
 function canonicalPath(): string {
+  const awards = /^\/projects\/([^/]+)\/awards\/?$/.exec(
+    window.location.pathname,
+  );
+  if (awards) {
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `/projects/${awards[1]}/funding${window.location.search}${window.location.hash || "#monthly-awards"}`,
+    );
+  }
   const legacy = LEGACY_SECTIONS.get(
     window.location.pathname.replace(/^\/|\/$/gu, ""),
   );
@@ -1234,6 +1245,7 @@ function ProjectFundingPage({
           </MetricGrid>
         }
       />
+      <ProjectNav project={project} current="funding" />
       <section className="funding-records">
         {!project.escrow ? (
           <div className="route-funding-status">
@@ -1321,6 +1333,7 @@ function ProjectPage({
                   )}
                 </h1>
               </div>
+              <ProjectNav project={project} current="overview" />
               <p className="hero-copy">
                 {monthlyPoolPointsOnly(project.reward)
                   ? project.contribution?.approvedScope ||

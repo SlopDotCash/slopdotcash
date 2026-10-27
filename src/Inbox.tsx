@@ -23,7 +23,12 @@ import {
   parseNotificationsResponse,
 } from "./lib/notifications";
 import { useAction } from "./lib/use-action";
-import { formatDateTime, RoutePageHeader, StatusBadge } from "./Presentation";
+import {
+  AccountNav,
+  formatDateTime,
+  RoutePageHeader,
+  StatusBadge,
+} from "./Presentation";
 
 type InboxState =
   | { status: "loading" }
@@ -137,6 +142,7 @@ export default function InboxPage() {
   return (
     <main className="shell route-main inbox-page">
       <RoutePageHeader icon={<Inbox />} title="Inbox" />
+      <AccountNav current="inbox" />
       {state.status === "loading" ? (
         <p role="status">Loading your inbox…</p>
       ) : null}

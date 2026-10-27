@@ -24,7 +24,7 @@ function scrollToTarget(targetId: string): boolean {
   const target = targetId ? document.getElementById(targetId) : null;
   if (!target) return false;
   for (
-    let parent = target.parentElement;
+    let parent: HTMLElement | null = target;
     parent;
     parent = parent.parentElement
   ) {
@@ -67,12 +67,14 @@ export function useHashScroll(href: string): void {
 }
 
 export function Link({
+  ariaCurrent,
   ariaLabel,
   children,
   className,
   href,
   onNavigate,
 }: {
+  ariaCurrent?: "page";
   ariaLabel?: string;
   children: ReactNode;
   className?: string;
@@ -81,13 +83,14 @@ export function Link({
 }) {
   const scrollAfterNavigation = () => {
     window.setTimeout(() => {
-      const destination = new URL(href, window.location.href);
+      const destination = new URL(window.location.href);
       if (scrollToTarget(hashTargetId(destination.hash))) return;
       window.scrollTo({ top: 0, behavior: "auto" });
     }, 0);
   };
   return (
     <a
+      aria-current={ariaCurrent}
       aria-label={ariaLabel}
       className={className}
       href={href}

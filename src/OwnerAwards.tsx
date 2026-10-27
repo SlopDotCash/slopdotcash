@@ -261,6 +261,7 @@ export default function OwnerAwards({
       : null;
   return (
     <section
+      id="monthly-awards"
       className="section owner-awards"
       aria-labelledby="monthly-awards-heading"
     >
