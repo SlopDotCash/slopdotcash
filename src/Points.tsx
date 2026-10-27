@@ -721,8 +721,17 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
             cache: "no-store",
             referrerPolicy: "no-referrer",
           });
-          if (!response.ok) throw new Error("Sign-in expired. Start again.");
           const body = await readBoundedJson(response, 16384, "sign-in");
+          if (
+            localBackendOrigin !== null &&
+            response.status === 503 &&
+            (body as { error?: unknown } | null)?.error === "github_app_missing"
+          ) {
+            popup?.close();
+            window.location.assign(`${localBackendOrigin}/__dev/setup`);
+            throw new Error("Set up the local GitHub App to continue.");
+          }
+          if (!response.ok) throw new Error("Sign-in expired. Start again.");
           if (!body || typeof body !== "object" || Array.isArray(body))
             throw new Error("Sign-in failed. Start again.");
           return {

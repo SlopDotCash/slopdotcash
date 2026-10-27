@@ -1276,3 +1276,115 @@ main h2 {
     animation: wallet-spin 1s linear infinite;
   }
 }
+
+/* Inbox email preferences: one compact settings card with an on/off switch. */
+.email-card {
+  display: grid;
+  gap: 12px;
+  margin-block: 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--brand-radius-large);
+  background: var(--surface);
+}
+
+.email-card > * {
+  margin: 0;
+}
+
+.email-card h2 {
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.email-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.email-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.email-text strong {
+  font-size: 18px;
+}
+
+.email-detail {
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+/* The button is 44px tall for touch; the track and knob are drawn inside it. */
+.email-switch {
+  position: relative;
+  flex: none;
+  width: 56px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.email-switch::before {
+  content: "";
+  position: absolute;
+  inset: 7px 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--brand-color-raised);
+  transition: background 0.15s ease;
+}
+
+.email-switch::after {
+  content: "";
+  position: absolute;
+  top: 11px;
+  left: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: transform 0.15s ease;
+}
+
+.email-switch[aria-checked="true"]::before {
+  border-color: var(--orange);
+  background: var(--orange);
+}
+
+.email-switch[aria-checked="true"]::after {
+  background: var(--on-accent);
+  transform: translateX(24px);
+}
+
+.email-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.email-switch[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.email-switch:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .email-switch::before,
+  .email-switch::after {
+    transition: none;
+  }
+}
