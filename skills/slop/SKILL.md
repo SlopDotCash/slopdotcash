@@ -56,22 +56,18 @@ until verified. Independently query GitHub for the current `main` head of
 `SlopDotCash/slopdotcash`. Require the manifest's committed 40-character revision
 and require every guide renderer revision to equal that manifest revision, not
 an independently moving branch name. Authorize the manifest revision only when
-it is the current `main` head, a byte-identical canonical ancestor, an open,
-non-draft, same-repository pull request head into `main`, or the `main`
-ancestor used by the latest verified production publication from a push or
-manual release of the canonical GitHub Actions workflow while a later `main`
-commit changed the template. Require its successful production job and source,
-publication and served-byte checks, ordered by completion, including earlier
-successful rerun attempts. Missing, ambiguous or unbounded proof refuses.
+it is the current `main` head, a canonical main ancestor, or an open,
+non-draft, same-repository pull request head into `main`.
 A pull request also
 requires the maintainer-controlled `slop-release-candidate` label, applied after
 the exact current-head commit event, and must include current `main`.
 Check `protocol/skill-revocations.json` at current `main` and reject revoked
 revisions. Verify canonical bytes against GitHub at the selected immutable
 revision; reject divergent ancestry, missing or extra files, and mismatched
-bytes. An older publication never authorizes a skill whose canonical bytes
-differ from current `main`: only the latest verified publication does, until
-the next verified publication. Live project clearance remains required.
+bytes. An outdated version remains usable when its own bytes verify. At the start of
+each work session, check for a newer template and report it without forcing an
+update. A failed update lookup does not disable the verified installed version.
+Live project restrictions and explicit revocations remain enforced.
 Every guide renderer revision must equal the manifest
 revision; a guide cannot independently choose executable code. Require HTTPS on `slop.cash`, the
 selected project skill name and source, and an archive digest. Reject a

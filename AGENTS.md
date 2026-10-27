@@ -269,19 +269,17 @@ that those fields come from Slop's registry. The generated installer may
 authorize this template revision:
 
 1. current `main`;
-2. a `main` ancestor whose complete canonical template tree is byte-identical
-   to current `main`; or
+2. a `main` ancestor whose bytes match its own immutable canonical source; or
 3. an open, non-draft, same-repository PR head into `main` with the
    maintainer-controlled `slop-release-candidate` label applied after the exact
-   current-head commit event; or
-4. the `main` ancestor used by the latest verified production publication,
-   from a push or manual release of the canonical GitHub Actions workflow,
-   while a later `main` commit changed the template. Require a successful
-   production job with completed source, publication and served-byte checks;
-   select by its completion, including successful earlier rerun attempts.
-   Only that revision qualifies until the next verified publication. Missing,
-   ambiguous or unbounded proof refuses; current `protocol/skill-revocations.json`
-   still overrides this exception. Project clearance and rollback checks stay.
+   current-head commit event.
+
+Owner decision, 27 October 2026: an outdated skill remains usable. Check for
+updates at the start of each work session and before GitHub writes. Report a
+verified newer template without forcing installation; a failed update lookup
+must not disable the verified installed version. Explicit revocations, current
+project restrictions, immutable-byte verification and rollback checks remain
+required. Release age alone never revokes a skill.
 
 Reject candidates behind or divergent from `main`, missing or extra files,
 working-tree provenance, stale label events, mutable redirects, and byte
