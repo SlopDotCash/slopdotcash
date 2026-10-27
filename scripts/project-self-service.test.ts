@@ -1928,6 +1928,32 @@ async function keptAppealFlow() {
   return { t, decide };
 }
 
+test("a kept appeal does not expose project reinstatement until a fresh project appeal is filed", async () => {
+  const { t, decide } = await keptAppealFlow();
+  const enforcement = async () => {
+    const response = await t.call("GET", "admin/projects", OWNER);
+    expect(response.status).toBe(200);
+    const projects = response.body.projects as {
+      id: string;
+      enforcement: { appeal: string; projectAppeal: string };
+    }[];
+    return projects.find((project) => project.id === "kept-appeal")
+      ?.enforcement;
+  };
+  expect(await enforcement()).toMatchObject({
+    appeal: "requested",
+    projectAppeal: "none",
+  });
+  const stale = await decide("reinstate", OWNER, 7);
+  expect(stale.status).toBe(409);
+  expect(stale.body.error).toBe("no_open_appeal");
+  expect((await decide("request_reinstatement", OWNER, 7)).status).toBe(200);
+  expect(await enforcement()).toMatchObject({
+    appeal: "requested",
+    projectAppeal: "requested",
+  });
+});
+
 test("a malicious decision that closes a kept project appeal needs an independent moderator while an account appeal is open", async () => {
   const { t, decide } = await keptAppealFlow();
   // The decision closes the kept project appeal, so ADMIN, who placed the

@@ -1089,6 +1089,18 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   await postVettingResult(request, project.id, project.repository, "malicious");
   // The newer confirmed-malicious ban supersedes the original project appeal.
   // Its owner must appeal this restriction before a moderator can review it.
+  await moderator.reload({ waitUntil: "networkidle" });
+  const actionOptions = moderatorPanel.getByLabel("Action").locator("option");
+  await moderator.screenshot({
+    path: test.info().outputPath("kept-appeal-actions.png"),
+    fullPage: true,
+  });
+  await expect(
+    actionOptions.filter({ hasText: "Reinstate after review" }),
+  ).toHaveCount(0);
+  await expect(
+    actionOptions.filter({ hasText: "Request reinstatement" }),
+  ).toHaveCount(1);
   const reappealed = await moderator.request.post("/api/v1/project-appeals", {
     headers: {
       origin: new URL(moderator.url()).origin,
