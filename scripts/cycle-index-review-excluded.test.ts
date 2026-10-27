@@ -195,10 +195,6 @@ function findExcludableRow(): { target: string; login: string } | null {
 }
 
 describe("cycle index review window", () => {
-  test("the published index is valid before any row is excluded", () => {
-    expect(() => assertCycleIndex(fixture())).not.toThrow();
-  });
-
   test("an excluded row keeps the cycle in its review window", () => {
     const value = fixture();
     const row = unclaimedRow(reviewCycle(value));

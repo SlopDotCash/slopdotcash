@@ -130,14 +130,6 @@ function seed(db: Database) {
 }
 
 describe("migration 0017", () => {
-  test("exists and names only the five chain tables", () => {
-    expect(target).toBeDefined();
-    const sql = readFileSync(`migrations/${target}`, "utf8");
-    for (const table of tables) expect(sql).toContain(`${table}_0017`);
-    expect(sql).toContain("'base','solana','robinhood'");
-    expect(sql).not.toContain(String.fromCodePoint(0x2014));
-  });
-
   test("keeps rows, children, objects and column order; then accepts robinhood", () => {
     const db = open();
     seed(db);

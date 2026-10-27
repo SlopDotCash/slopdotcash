@@ -5,8 +5,6 @@
  * from the real snapshot builder; only the GitHub census is synthetic. The
  * worker-to-score path is covered in workers/slopbot/penalty-appeal.test.ts.
  */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
 import { createLeaderboardSnapshot } from "../../src/lib/leaderboard";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
@@ -23,6 +21,7 @@ import {
   PROJECT_OWNER,
   penaltyScoreInput,
 } from "../penalty-score-fixture";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const VIEWED_AT = new Date(Date.parse(GENERATED_AT) + 60 * 60 * 1000);
 
@@ -49,36 +48,9 @@ function publishedSnapshot() {
   }
 }
 
-function watch(page: Page) {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
-  page.on("response", (response) => {
-    if (
-      new URL(response.url()).origin === new URL(page.url()).origin &&
-      response.status() >= 400
-    )
-      errors.push(`${response.status()} ${response.url()}`);
-  });
-  return errors;
-}
-
-async function expectAccessible(page: Page) {
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
-}
-
 test("How it works explains the current scoring policy once", async ({
   page,
 }, info) => {
-  const errors = watch(page);
   await page.goto("/how-it-works", { waitUntil: "networkidle" });
   const score = page.locator(".score-contract");
   await expect(score.getByRole("heading", { name: "Points" })).toHaveCount(1);
@@ -141,7 +113,6 @@ test("How it works explains the current scoring policy once", async ({
     path: info.outputPath("how-it-works-score.png"),
     fullPage: true,
   });
-  expect(errors).toEqual([]);
 });
 
 test("a published debit and a payout exclusion show on the profile and the cycle", async ({
@@ -204,7 +175,6 @@ test("a published debit and a payout exclusion show on the profile and the cycle
   await page.route("https://avatars.githubusercontent.com/**", async (route) =>
     route.fulfill({ response: await page.request.get("/slop-mark.svg") }),
   );
-  const errors = watch(page);
 
   await page.goto(`/contributors/${PENALIZED_AUTHOR.login}`, {
     waitUntil: "networkidle",
@@ -253,5 +223,4 @@ test("a published debit and a payout exclusion show on the profile and the cycle
     path: info.outputPath("cycle-penalty-exclusion-mobile.png"),
     fullPage: true,
   });
-  expect(errors).toEqual([]);
 });

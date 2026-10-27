@@ -1,19 +1,20 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { copyFixtureSkills } from "../tests/fixture-overlay.mjs";
 
-const ROOT = resolve(import.meta.dir, "..");
 const COMMIT = "a".repeat(40);
 
-// A rendered skill copy: the shared scripts read the project.json beside them.
+// Rendered skill copies: the shared scripts read the project.json beside them.
+const skills = mkdtempSync(join(tmpdir(), "contributor-skills-"));
+copyFixtureSkills(skills);
+afterAll(() => rmSync(skills, { recursive: true, force: true }));
+
 const { auditPrEvidence } = (await import(
-  pathToFileURL(
-    resolve(
-      ROOT,
-      "tests/fixtures/skills/contribute-to-feed/scripts/live-report.mjs",
-    ),
-  ).href
+  pathToFileURL(join(skills, "contribute-to-feed/scripts/live-report.mjs")).href
 )) as {
   auditPrEvidence: (
     body: string,
@@ -55,7 +56,7 @@ function disclose(skill: string): string {
   const result = spawnSync(
     process.execPath,
     [
-      resolve(ROOT, "tests/fixtures/skills", skill, "scripts/run-receipt.mjs"),
+      join(skills, skill, "scripts/run-receipt.mjs"),
       "disclose",
       "--provider",
       "Anthropic",

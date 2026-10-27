@@ -1,8 +1,7 @@
 import { join } from "node:path";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { expectHeaderRow } from "../header-row";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -11,16 +10,6 @@ const { site } = deploymentOrigins(
 test("social membership preserves past points and connection privacy without new awards", async ({
   page,
 }, info) => {
-  const errors: string[] = [];
-  const failures: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
-  });
-  page.on("response", (r) => {
-    if (new URL(r.url()).origin === site && r.status() >= 400)
-      failures.push(`${r.status()} ${r.url()}`);
-  });
   const me = {
     actor: { id: "U_social_member", login: "social-member" },
     joinedAt: "2026-09-21T12:00:00.000Z",
@@ -163,13 +152,7 @@ test("social membership preserves past points and connection privacy without new
   await expect(
     accountPanel.getByRole("link", { name: "View profile" }),
   ).toBeFocused();
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({ path: info.outputPath("account-menu.png") });
   await page.keyboard.press("Escape");
   await expect(accountButton).toBeFocused();
@@ -214,10 +197,7 @@ test("social membership preserves past points and connection privacy without new
     .getByRole("link", { name: "Account settings", exact: true })
     .click();
   await expect(social.getByRole("checkbox")).toHaveCount(1);
-  const a11y = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-    .analyze();
-  expect(a11y.violations).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("social-points.png"),
     fullPage: true,
@@ -246,6 +226,4 @@ test("social membership preserves past points and connection privacy without new
       .locator("..")
       .locator("strong"),
   ).toHaveText("15");
-  expect(errors).toEqual([]);
-  expect(failures).toEqual([]);
 });

@@ -4,8 +4,7 @@
  * response has the shape that backend/payments/monthly.test.ts reads from the
  * real handler after the real monthly workflow.
  */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const asset = {
   network: "base-sepolia",
@@ -59,11 +58,6 @@ const account = {
 test("Your payouts lists approved monthly awards with their payment state", async ({
   page,
 }, info) => {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
   await page.route("**/api/v1/payments/**", (route) =>
     route.fulfill({ json: account }),
   );
@@ -90,13 +84,9 @@ test("Your payouts lists approved monthly awards with their payment state", asyn
   await expect(
     rows.nth(0).getByRole("link", { name: "eliza" }),
   ).toHaveAttribute("href", "/projects/eliza");
-  const { violations } = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(violations).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("earnings-monthly-awards.png"),
     fullPage: true,
   });
-  expect(errors).toEqual([]);
 });

@@ -6,8 +6,7 @@
  * in the published shape and pass the snapshot validator.
  */
 import { join } from "node:path";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import {
   assertLeaderboardSnapshot,
@@ -27,6 +26,7 @@ import {
   PROJECT_OWNER,
   penaltyScoreInput,
 } from "../penalty-score-fixture";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const VIEWED_AT = new Date(Date.parse(GENERATED_AT) + 60 * 60 * 1000);
 const ASI = "https://github.com/SlopDotCash/asi/pull";
@@ -71,22 +71,6 @@ function publishedSnapshot() {
   }
 }
 
-function watch(page: Page) {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
-  page.on("response", (response) => {
-    if (
-      new URL(response.url()).origin === new URL(page.url()).origin &&
-      response.status() >= 400
-    )
-      errors.push(`${response.status()} ${response.url()}`);
-  });
-  return errors;
-}
-
 async function prepareProfile(
   page: Page,
   snapshot: ReturnType<typeof createLeaderboardSnapshot>,
@@ -121,14 +105,13 @@ async function prepareProfile(
   await page.route("https://avatars.githubusercontent.com/**", async (route) =>
     route.fulfill({ response: await page.request.get("/slop-mark.svg") }),
   );
-  return watch(page);
 }
 
 test("a profile lists its own excluded reviews with their reasons", async ({
   page,
 }, info) => {
   const snapshot = publishedSnapshot();
-  const errors = await prepareProfile(page, snapshot);
+  await prepareProfile(page, snapshot);
   await page.goto(`/contributors/${PENALIZED_AUTHOR.login}`, {
     waitUntil: "networkidle",
   });
@@ -147,13 +130,7 @@ test("a profile lists its own excluded reviews with their reasons", async ({
     `${ASI}/72#pullrequestreview-7201`,
   );
   await expect(section).not.toContainText("#74");
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("profile-review-exclusions.png"),
     fullPage: true,
@@ -170,7 +147,6 @@ test("a profile lists its own excluded reviews with their reasons", async ({
     path: info.outputPath("profile-review-exclusions-mobile.png"),
     fullPage: true,
   });
-  expect(errors).toEqual([]);
 });
 
 const REVIEW_ONLY: GitHubActor = {
@@ -277,7 +253,7 @@ test("a review-only nonmember sees accurate snapshot omissions", async ({
     "review-credit-outside-window",
     "review-credit-zero-share",
   ]);
-  const errors = await prepareProfile(page, snapshot);
+  await prepareProfile(page, snapshot);
   await page.goto(`/contributors/${REVIEW_ONLY.login}`, {
     waitUntil: "networkidle",
   });
@@ -296,20 +272,13 @@ test("a review-only nonmember sees accurate snapshot omissions", async ({
   const explanation = section.getByRole("link", { name: "How reviews score" });
   await explanation.focus();
   await expect(explanation).toBeFocused();
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("review-only-profile.png"),
     fullPage: true,
   });
   await explanation.press("Enter");
   await expect(page).toHaveURL(/\/how-it-works#points$/u);
-  expect(errors).toEqual([]);
 });
 
 /** Membership lookup runs only on the product origin, so serve the build there. */
@@ -342,7 +311,7 @@ test("a stale review-only profile shows the stale notice and zero points", async
   page,
 }) => {
   const site = await serveProductSite(page);
-  const errors = await prepareProfile(
+  await prepareProfile(
     page,
     reviewOnlySnapshot(),
     [],
@@ -363,7 +332,6 @@ test("a stale review-only profile shows the stale notice and zero points", async
       .locator("xpath=preceding-sibling::strong"),
   ).toHaveText("0");
   await expect(points).not.toContainText("Unavailable");
-  expect(errors).toEqual([]);
 });
 
 test("the current directory vetoes a renamed or recycled review-only login", async ({
@@ -375,7 +343,7 @@ test("the current directory vetoes a renamed or recycled review-only login", asy
     login: "renamed-reviewer",
     url: "https://github.com/renamed-reviewer",
   };
-  const errors = await prepareProfile(page, snapshot, [renamed]);
+  await prepareProfile(page, snapshot, [renamed]);
   await page.goto(`/contributors/${REVIEW_ONLY.login}`, {
     waitUntil: "networkidle",
   });
@@ -411,7 +379,6 @@ test("the current directory vetoes a renamed or recycled review-only login", asy
   await expect(
     page.getByRole("region", { name: "Review credit exclusions" }),
   ).toHaveCount(0);
-  expect(errors).toEqual([]);
 });
 
 test("legacy snapshots without reviewer metadata do not report zero exclusions", async ({
@@ -420,7 +387,7 @@ test("legacy snapshots without reviewer metadata do not report zero exclusions",
   const snapshot = publishedSnapshot();
   for (const row of snapshot.reviewExclusions ?? []) delete row.reviewer;
   assertLeaderboardSnapshot(snapshot);
-  const errors = await prepareProfile(page, snapshot);
+  await prepareProfile(page, snapshot);
   await page.goto(`/contributors/${PENALIZED_AUTHOR.login}`, {
     waitUntil: "networkidle",
   });
@@ -430,5 +397,4 @@ test("legacy snapshots without reviewer metadata do not report zero exclusions",
   await expect(
     page.getByRole("region", { name: "Review credit exclusions" }),
   ).toHaveCount(0);
-  expect(errors).toEqual([]);
 });
