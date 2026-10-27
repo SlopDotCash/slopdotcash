@@ -227,7 +227,10 @@ test("the financial filter keeps remediation distinct from payment", async ({
   });
   await page.goto("/inbox?view=reports", { waitUntil: "networkidle" });
   await expect(page.getByText(pending.nextStep, { exact: true })).toBeVisible();
-  const filter = page.getByLabel("Show reports", { exact: true });
+  const filter = page.getByRole("combobox", {
+    name: "Show reports",
+    exact: true,
+  });
   await filter.selectOption({ label: "Paid or ineligible" });
   await expect(page.getByText(pending.nextStep, { exact: true })).toHaveCount(
     0,
