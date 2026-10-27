@@ -3682,8 +3682,11 @@ small {
 .admin-actions select,
 .admin-actions textarea,
 .admin-editor textarea,
+.admin-editor select,
 .admin-editor input {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
