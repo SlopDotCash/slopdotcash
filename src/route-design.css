@@ -621,6 +621,7 @@ img.route-model-mark {
   margin-bottom: 0.75rem;
 }
 .site-footer--compact {
+  color: var(--ink);
   padding-block: 1.5rem;
   background: #181713;
 }
@@ -639,7 +640,7 @@ img.route-model-mark {
   font-size: 0.85rem;
 }
 .site-footer--compact .footer-links a {
-  color: var(--text);
+  color: var(--ink);
 }
 .site-footer--compact a:focus-visible {
   outline: 2px solid var(--orange);
