@@ -1,4 +1,8 @@
 /** NOT-01 optional activity delivery; essential wallet notices do not use the activity preference. */
+import {
+  PROJECT_AFFECTED_CONTRIBUTORS,
+  PROJECT_OWNERS,
+} from "../../backend/notifications/events";
 import type { SecurityD1Database } from "../../backend/security/handler";
 import { SENDER_ADDRESS } from "./contracts";
 import {
@@ -21,6 +25,7 @@ export type ActivityMailConfig = {
 };
 export type ActivityMailDependencies = {
   db: SecurityD1Database;
+  adminGithubIds?: ReadonlySet<string>;
   moderatorGithubIds?: ReadonlySet<string>;
   config: ActivityMailConfig;
   fromAddress: string;
@@ -45,6 +50,72 @@ export async function activityMailEligibility(
     email: destination.email,
     destinationVersion: await destinationDigest(destination),
   } as const;
+}
+
+/** Owner notices that name the project in `subject` (migration 0029). */
+const PROJECT_OWNER_KINDS = new Set([
+  "project_ready",
+  "project_revision",
+  "project_scan_failed",
+  "project_installation_lost",
+  "project_quarantined",
+  "project_banned",
+  "reinstatement_requested",
+  "project_reinstated",
+  "reinstatement_denied",
+]);
+
+/**
+ * PRD section 9: recheck roles before sending. A payout exception mails only
+ * the project's current GitHub steward, and an owner notice only a current
+ * owner. A vetting ban also reaches its current affected contributors and
+ * staff; the shared event key can retain an owner link for a staff recipient.
+ */
+async function stillProjectRecipient(
+  db: SecurityD1Database,
+  row: Delivery,
+  currentStaff: boolean,
+): Promise<boolean> {
+  const notice = await db
+    .prepare(
+      `SELECT n.kind,
+              n.action_path,
+              n.recipient_github_id = (
+                SELECT json_extract(manifest, '$.steward.github.actorId')
+                  FROM projects WHERE id = n.subject
+              ) AS steward,
+              n.recipient_github_id IN ${PROJECT_OWNERS("n.subject")} AS owner,
+              EXISTS (
+                SELECT 1 FROM project_enforcements e
+                 WHERE e.id = substr(n.event_key, length('project-enforcement:') + 1)
+                   AND n.event_key = 'project-enforcement:' || e.id
+                   AND e.project_id = n.subject AND e.action = 'ban'
+                   AND e.actor_role = 'vetting-service'
+              ) AS vetting_ban,
+              n.recipient_github_id IN ${PROJECT_AFFECTED_CONTRIBUTORS("n.subject")} AS affected_contributor
+         FROM notifications n
+        WHERE n.event_key = ? AND n.recipient_github_id = ?`,
+    )
+    .bind(row.event_key, row.recipient_github_id)
+    .first<{
+      kind: string;
+      action_path: string;
+      steward: number | null;
+      owner: number | null;
+      vetting_ban: number;
+      affected_contributor: number;
+    }>();
+  if (!notice) return true;
+  if (notice.kind === "payout_exception") return notice.steward === 1;
+  // The owner writer can win the shared event key before the staff writer.
+  // Recheck the actual audience, not the link that happened to be retained.
+  if (notice.kind === "project_banned" && notice.vetting_ban === 1)
+    return (
+      notice.owner === 1 || notice.affected_contributor === 1 || currentStaff
+    );
+  if (PROJECT_OWNER_KINDS.has(notice.kind) && notice.action_path !== "/admin")
+    return notice.owner === 1;
+  return true;
 }
 
 type Delivery = {
@@ -101,6 +172,17 @@ export async function dispatchActivityMail(
         await recordDelivery(deps, row, "suppressed", null, "activity");
         continue;
       }
+    }
+    if (
+      !(await stillProjectRecipient(
+        deps.db,
+        row,
+        deps.adminGithubIds?.has(row.recipient_github_id) === true ||
+          deps.moderatorGithubIds?.has(row.recipient_github_id) === true,
+      ))
+    ) {
+      await recordDelivery(deps, row, "suppressed", null, "activity");
+      continue;
     }
     const destination = await activityMailEligibility(
       deps.config,

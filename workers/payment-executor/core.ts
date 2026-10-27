@@ -193,9 +193,9 @@ export async function authorizeRegistry(
   )
     throw new Error("Payout attempt mode mismatch");
   const select =
-    "SELECT o.id obligationId,o.project_id projectId,o.network,o.vault,o.github_user_id githubUserId,o.gross_base grossBase,o.fee_base feeBase,o.source_digest sourceDigest,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination,c.message,a.signature,c.id challengeId,c.expires_at expiresAt FROM payment_obligations o JOIN wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=o.github_user_id JOIN payment_wallet_challenges c ON c.id=a.challenge_id AND c.claim_id=w.id AND c.github_user_id=o.github_user_id";
+    "SELECT o.id obligationId,o.project_id projectId,o.network,o.vault,o.github_user_id githubUserId,o.gross_base grossBase,o.fee_base feeBase,o.source_digest sourceDigest,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination,c.message,a.signature,c.id challengeId,c.expires_at expiresAt FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=o.github_user_id JOIN payment_wallet_challenges c ON c.id=a.challenge_id AND c.claim_id=w.id AND c.github_user_id=o.github_user_id";
   const current =
-    "o.chain=? AND c.consumed_at IS NOT NULL AND c.consumed_at<=c.expires_at AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)";
+    "o.chain=? AND c.consumed_at IS NOT NULL AND c.consumed_at<=c.expires_at";
   // Without a payout attempt, only an unpaid reserved award of the named
   // claim qualifies.
   const authorization = await (attempt === "none"
@@ -1474,7 +1474,7 @@ export async function bindingCandidates(
   const candidates: BindingCandidate[] = [];
   for (const deployment of pinned) {
     const row = await env.PAYMENTS_DB.prepare(
-      "SELECT json_group_array(json_object('obligationId',obligationId,'network',network,'vault',vault,'githubUserId',githubUserId,'claimId',claimId,'claimDigest',claimDigest,'destination',destination)) items FROM (SELECT MIN(o.id) obligationId,o.network network,o.vault vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination FROM payment_obligations o JOIN wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=o.github_user_id WHERE o.state='reserved' AND o.network=? AND lower(o.vault)=? AND w.source='d1_registry' AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id) AND EXISTS(SELECT 1 FROM payment_binding_authorizations b WHERE b.claim_id=w.id AND b.github_user_id=o.github_user_id AND b.network=o.network AND b.vault=lower(o.vault) AND CAST(b.expires_at AS INTEGER)>?) GROUP BY o.github_user_id,w.id ORDER BY MIN(o.created_at) LIMIT ?)",
+      "SELECT json_group_array(json_object('obligationId',obligationId,'network',network,'vault',vault,'githubUserId',githubUserId,'claimId',claimId,'claimDigest',claimDigest,'destination',destination)) items FROM (SELECT MIN(o.id) obligationId,o.network network,o.vault vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=o.github_user_id WHERE o.state='reserved' AND o.network=? AND lower(o.vault)=? AND w.source='d1_registry' AND EXISTS(SELECT 1 FROM payment_binding_authorizations b WHERE b.claim_id=w.id AND b.github_user_id=o.github_user_id AND b.network=o.network AND b.vault=lower(o.vault) AND CAST(b.expires_at AS INTEGER)>?) GROUP BY o.github_user_id,w.id ORDER BY MIN(o.created_at) LIMIT ?)",
     )
       .bind(
         deployment.network,
@@ -1752,7 +1752,7 @@ async function cancelObsoleteStoredBinding(
   const nonce = original.nonce;
   if (!cancellation) {
     const successor = await env.PAYMENTS_DB.prepare(
-      "SELECT id FROM wallet_claims WHERE supersedes_claim_id=? AND github_user_id=? AND chain=?",
+      "SELECT w.id FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id!=? AND w.github_user_id=? AND w.chain=?",
     )
       .bind(input.claimId, input.githubUserId, deployment.chain)
       .first<{ id: string }>();
@@ -2219,7 +2219,7 @@ export async function retireUnsignedAttempt(
   if (!previous || !isEscrowChain(previous.chain))
     throw new Error("Unknown payment attempt");
   const successor = await env.PAYMENTS_DB.prepare(
-    "SELECT w.id claimId,w.wallet_address address,w.record_sha256 claimDigest,c.id nonce,c.expires_at expiresAt,c.message,a.signature FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id JOIN payment_wallet_challenges c ON c.id=a.challenge_id AND c.claim_id=w.id AND c.github_user_id=w.github_user_id WHERE w.github_user_id=? AND w.chain=? AND c.consumed_at IS NOT NULL AND c.consumed_at<=c.expires_at AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
+    "SELECT w.id claimId,w.wallet_address address,w.record_sha256 claimDigest,c.id nonce,c.expires_at expiresAt,c.message,a.signature FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id JOIN payment_wallet_challenges c ON c.id=a.challenge_id AND c.claim_id=w.id AND c.github_user_id=w.github_user_id WHERE w.github_user_id=? AND w.chain=? AND c.consumed_at IS NOT NULL AND c.consumed_at<=c.expires_at",
   )
     .bind(previous.actorId, previous.chain)
     .first<{
