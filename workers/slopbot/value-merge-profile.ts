@@ -4,9 +4,13 @@ import type { ValueEvidence } from "./value-evidence";
 import type { ValueMergeResolution } from "./value-merge-resolution";
 
 export const MERGE_GIT_VERSION = "git version 2.56.0" as const;
-export const MERGE_PROFILE = "git-2.56.0-v1" as const;
+export const LEGACY_MERGE_PROFILE = "git-2.56.0-v1" as const;
+export const MERGE_PROFILE = "git-2.56.0-v2" as const;
+export type ValueMergeProfile =
+  | typeof LEGACY_MERGE_PROFILE
+  | typeof MERGE_PROFILE;
 export interface ValueMergeRecipe {
-  profile: typeof MERGE_PROFILE;
+  profile: ValueMergeProfile;
   inputSha256: string;
 }
 
@@ -48,7 +52,8 @@ export function validMergeRecipe(value: unknown): value is ValueMergeRecipe {
   const recipe = value as Record<string, unknown>;
   return (
     Object.keys(recipe).sort().join() === "inputSha256,profile" &&
-    recipe.profile === MERGE_PROFILE &&
+    (recipe.profile === MERGE_PROFILE ||
+      recipe.profile === LEGACY_MERGE_PROFILE) &&
     typeof recipe.inputSha256 === "string" &&
     /^[a-f0-9]{64}$/u.test(recipe.inputSha256)
   );

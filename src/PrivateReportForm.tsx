@@ -6,10 +6,15 @@ import {
   useState,
 } from "react";
 import { errorMessage } from "./lib/errors";
-import { EMPTY_DRAFT, type ReportDraft } from "./lib/intake-drafts";
+import {
+  clearAllDrafts,
+  EMPTY_DRAFT,
+  type ReportDraft,
+} from "./lib/intake-drafts";
 import {
   currentProjectSession,
   ProjectApiError,
+  type ProjectSessionState,
   projectApiRequest,
 } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
@@ -17,6 +22,23 @@ import { SecurityOffer } from "./SecurityOffer";
 
 const PREFIX = "slop-report-compose:";
 type SavedReport = { draft: ReportDraft; key: string; attempted: boolean };
+
+/** Only a confirmed identity change invalidates the tab's private drafts. */
+export function usePrivateDraftSession(session: ProjectSessionState): void {
+  const previousActor = useRef<string | null>(null);
+  const actor =
+    session.status === "signed-in" ? session.session.githubId : null;
+  useEffect(() => {
+    if (session.status === "signed-out") {
+      clearAllDrafts();
+      previousActor.current = null;
+    } else if (actor !== null) {
+      if (previousActor.current !== null && previousActor.current !== actor)
+        clearAllDrafts();
+      previousActor.current = actor;
+    }
+  }, [actor, session.status]);
+}
 
 function restore(owner: string, project: string): SavedReport {
   const fresh = {

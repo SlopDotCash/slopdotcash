@@ -527,7 +527,7 @@
           "automaticTree": "81dd4eb5e5c7ade1528b19d1f29e0e7f03503e6e",
           "resolvedTree": "7c40a6d5698b82597fc591e0a83ac25aedd8e2b0",
           "hadConflicts": true,
-          "patchSha256": "542cd97ae8ecac1e773a9056ef4870b115bc2950ec691fabeb7ebd3a174f2d03",
+          "patchSha256": "6631d638cd262a319466689ad155eb4e63a4889e3dcb20537814095708277954",
           "paths": [
             "deploy/backend/backend.test.ts",
             "deploy/backend/backend.ts",
@@ -548,7 +548,7 @@
             "packages/platform/src/api.ts",
             "packages/platform/src/cloud-delegation.ts"
           ],
-          "patchBytes": 62847
+          "patchBytes": 64035
         }
       ]
     }

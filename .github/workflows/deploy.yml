@@ -664,7 +664,7 @@ jobs:
     environment:
       # Every release, scheduled or not, publishes the tested main head and
       # needs the Workers-scoped production credentials for the identity Worker.
-      name: eliza-army-production
+      name: slop-production
       url: https://slop.cash
     steps:
       - name: Checkout exact deployment tooling
@@ -791,9 +791,9 @@ jobs:
             exit 1
           fi
 
-      - name: Qualify unviewed-media value assessments with the real provider
+      - name: Qualify Slopbot review and value models with the real provider
         if: steps.release-input.outputs.superseded != 'true' && vars.SLOPBOT_RELEASE == 'enabled'
-        timeout-minutes: 9
+        timeout-minutes: 11
         env:
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
         # This main-only environment supplies the key only to this step.
