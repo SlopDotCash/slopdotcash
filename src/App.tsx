@@ -949,7 +949,12 @@ function ProjectParticipation({
   }
   if (projectPromotionEligible(project, cycles, displayCycleId))
     return (
-      <ProjectInstallPanel project={project} view={view} outdated={outdated} />
+      <ProjectInstallPanel
+        key={project.id}
+        project={project}
+        view={view}
+        outdated={outdated}
+      />
     );
   return (
     <section className="section" id="start">
