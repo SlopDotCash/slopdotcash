@@ -221,12 +221,16 @@ export type ProjectSessionState =
   | { status: "signed-in"; session: ProjectSession };
 
 /** Reads the site session on mount and when the caller needs fresh identity. */
-export function useProjectSession(revision = 0): ProjectSessionState {
+export function useProjectSession(
+  revision: number | string = 0,
+  enabled = true,
+): ProjectSessionState {
   const [snapshot, setSnapshot] = useState<{
-    revision: number;
+    revision: number | string;
     state: ProjectSessionState;
   }>({ revision, state: { status: "checking" } });
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
     currentProjectSession().then(
       (session) => {
@@ -256,9 +260,9 @@ export function useProjectSession(revision = 0): ProjectSessionState {
     return () => {
       active = false;
     };
-  }, [revision]);
+  }, [revision, enabled]);
   // Never show the old actor while a requested identity check is pending.
-  return snapshot.revision === revision
+  return enabled && snapshot.revision === revision
     ? snapshot.state
     : { status: "checking" };
 }
