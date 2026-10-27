@@ -225,6 +225,14 @@ export function paymentDeploymentRecord(projectId, deployment) {
       : {}),
   };
 }
+/** Canonical positive uint256 native base units; never a floating-point amount. */
+export function isMaxNativeCostWei(value) {
+  return (
+    typeof value === "string" &&
+    /^[1-9][0-9]{0,77}$/.test(value) &&
+    BigInt(value) <= (1n << 256n) - 1n
+  );
+}
 /** Chains a policy may name, in registry order; each maps to exactly one family. */
 export const ESCROW_CHAINS = Object.freeze([
   ...new Set(Object.values(ESCROW_NETWORKS).map((network) => network.chain)),
@@ -309,6 +317,9 @@ function validateEscrowPolicy(value, feeBasisPoints) {
   for (const deployment of value.deployments) {
     keys(deployment, [
       ...(deployment.evmUpgrade === undefined ? [] : ["evmUpgrade"]),
+      ...(deployment.maxNativeCostWei === undefined
+        ? []
+        : ["maxNativeCostWei"]),
       "network",
       "vault",
       "programId",
@@ -329,6 +340,12 @@ function validateEscrowPolicy(value, feeBasisPoints) {
       "factoryCodeSha256",
       "registrar",
     ]);
+    if (
+      deployment.maxNativeCostWei !== undefined &&
+      (chainFamily(value.chain) !== "evm" ||
+        !isMaxNativeCostWei(deployment.maxNativeCostWei))
+    )
+      throw new TypeError("Invalid EVM native cost limit");
     if (deployment.evmUpgrade !== undefined) {
       const upgrade = deployment.evmUpgrade;
       keys(upgrade, [
@@ -567,6 +584,9 @@ export function assertEscrowTransition(
       !successor ||
       Boolean(deployment.evmUpgrade) !== Boolean(successor.evmUpgrade) ||
       Object.keys(deployment).some((key) => {
+        // This off-chain execution restriction is not historical chain evidence.
+        // Every already-signed operation retains its own original bound.
+        if (key === "maxNativeCostWei") return false;
         // Owner revisions retain prior deployment evidence. Only an already
         // upgradeable deployment may update its reviewed implementation.
         const evmUpgrade = deployment.evmUpgrade && successor.evmUpgrade;

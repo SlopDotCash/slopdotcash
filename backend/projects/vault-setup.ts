@@ -76,9 +76,11 @@ function networkUnavailable(): never {
  * so it is never copied to a new deployment or used to verify its creation.
  */
 function currentReview(template: EscrowDeployment): EscrowDeployment {
-  if (!template.evmUpgrade) return template;
-  const { history: _history, ...current } = template.evmUpgrade;
-  return { ...template, evmUpgrade: current };
+  // Another project's execution budget is not a factory or program trust pin.
+  const { maxNativeCostWei: _nativeLimit, ...infrastructure } = template;
+  if (!infrastructure.evmUpgrade) return infrastructure;
+  const { history: _history, ...current } = infrastructure.evmUpgrade;
+  return { ...infrastructure, evmUpgrade: current };
 }
 
 export function ownerVaultSetupService(deps: {

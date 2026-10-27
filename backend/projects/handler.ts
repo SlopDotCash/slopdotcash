@@ -439,6 +439,15 @@ function prospectiveFinancialChange(
   next: ProjectDefinition,
   now: Date,
 ): ProjectDefinition {
+  // Native execution limits are owner policy, not a change to verified chain
+  // identity. Preserve every other deployment field when comparing evidence.
+  const chainEscrow = (escrow: ProjectDefinition["escrow"]) =>
+    escrow && {
+      ...escrow,
+      deployments: escrow.deployments.map(
+        ({ maxNativeCostWei: _limit, ...deployment }) => deployment,
+      ),
+    };
   const before = previous.reward;
   const after = next.reward;
   if (before.kind !== "monthly-pool" || after.kind !== "monthly-pool")
@@ -466,8 +475,8 @@ function prospectiveFinancialChange(
   // separate owner vault-setup route verifies chain state before appending it.
   if (
     !sameValue(
-      previous.escrow?.deployments ?? [],
-      next.escrow?.deployments ?? [],
+      chainEscrow(previous.escrow)?.deployments ?? [],
+      chainEscrow(next.escrow)?.deployments ?? [],
     )
   )
     fail(
@@ -485,7 +494,7 @@ function prospectiveFinancialChange(
   if (
     funded &&
     (!sameValue(previous.rewardAsset, next.rewardAsset) ||
-      !sameValue(previous.escrow, next.escrow))
+      !sameValue(chainEscrow(previous.escrow), chainEscrow(next.escrow)))
   )
     fail(
       422,

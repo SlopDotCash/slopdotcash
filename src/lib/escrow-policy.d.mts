@@ -1,6 +1,8 @@
 export const ESCROW_PAYOUT_FEE_BASIS_POINTS: 200;
 export const ESCROW_WITHDRAWAL_FEE_BASIS_POINTS: 200;
 export interface EscrowDeployment {
+  /** Optional EVM per-operation gas envelope, in native base units. Not a lifetime budget. */
+  maxNativeCostWei?: string;
   evmUpgrade?: import("../../contracts/evm/adapter").EvmUpgrade;
   network:
     | "base-sepolia"
@@ -81,6 +83,7 @@ export declare const ESCROW_CHAINS: readonly EscrowChain[];
 export declare const EVM_CHAINS: readonly EscrowChain[];
 export declare function isEscrowChain(value: unknown): value is EscrowChain;
 export declare function chainFamily(chain: string): EscrowFamily;
+export declare function isMaxNativeCostWei(value: unknown): value is string;
 export declare function assertEscrowPolicy(value: unknown): EscrowPolicy;
 export declare function assertEscrowTransition(
   previous: EscrowPolicy | undefined,
