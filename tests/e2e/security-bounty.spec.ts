@@ -2656,10 +2656,12 @@ test("home advertises only open security terms with the 75/25 split @registry", 
   });
   await expect(section.locator(".security-bounty-card")).toHaveCount(1);
   await expect(section).toContainText("7,500 USDC");
-  await expect(section).toContainText("7,500 USDC to the researcher (75%)");
-  await expect(section).toContainText("2,500 USDC to slop.cash (25%)");
+  await expect(section).toContainText("7,500 USDC to the researcher");
   await expect(section).toContainText(
-    "Pledged; payment requires owner approval and verified funding.",
+    "10,000 USDC total award · 2,500 USDC to Slop",
+  );
+  await expect(section).toContainText(
+    "Pledged — funded after approval. Payment requires verified funding.",
   );
   const link = section.getByRole("link", {
     name: "Report privately",
