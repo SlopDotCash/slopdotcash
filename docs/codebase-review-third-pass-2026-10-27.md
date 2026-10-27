@@ -2716,3 +2716,11 @@ The initial visual implementation adds1,874net source lines, including1,375CSS l
 The canonical Solana build was attempted. The cached Anchor binary is Linux x86-64 while this host is macOS arm64, so it exits126; no current program artifact could be built here. No stale program binary was substituted and no fresh Solana-native pass is claimed. Solana source/ordinary browser controls and native tests remain; no contract source was changed by this cleanup. Likewise, unchanged Linux disposable-sandbox and real-provider qualification are separate from these local UI/refactor results.
 
 No production activation, live transaction, deployment, DNS change or final-main completion is inferred from source merging. Final release coordination and exact delivered revision are recorded below when confirmed.
+
+### Combined-tree verification checkpoint
+
+At local source `1036d9f1c159bbbd603065f956ff75606199d8c9`, `bun run verify:code` completed successfully: **702 tests passed, one disposable-sandbox-only skip, zero failures, 5,910 assertions**, followed by all five integration drivers. Typecheck/lint and format passed, and AGENTS/CLAUDE remained identical. The production build at the preceding same-application-source checkpoint passed. These are explicit source-bound results, not a claim about a later branch.
+
+The whole30-case registry file was then exercised against the integrated application:22passed,2failed,6were blocked by its serial dependency. One failure was the now-fixed exact Download selector after adding Copy; the other was a local ProxyWorker `Network connection lost` response during mobile legacy setup. All assertions before that transport failure passed. No error allowance or application fallback was added. The release coordinator owns the final serial combined-tree rerun and main promotion; these pending results must not be reported as green before that run completes.
+
+The additional rerun started here was stopped at the coordinator's request to avoid two local registry servers competing during the final run. Its interrupted status is not acceptance evidence. All report and cleanup source work is committed; final delivery confirmation follows the release coordinator's evidence.
