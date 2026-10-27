@@ -3260,24 +3260,6 @@ a.payout-tx:hover {
   width: 100%;
 }
 
-.account-session-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.account-closure {
-  display: grid;
-  gap: 0.75rem;
-  max-width: 40rem;
-  margin-block: 1.5rem;
-}
-
-.account-closure .button {
-  justify-self: start;
-}
-
 /* Contributor profile: tiles, charts and payout states. */
 .profile-page .profile-totals {
   gap: 12px;

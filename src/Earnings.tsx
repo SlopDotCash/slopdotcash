@@ -484,212 +484,206 @@ export function EarningsPage({
           {error && <p>Showing the last verified data.</p>}
           {!walletsOnly && <ReferralClaims />}
           {walletsOnly ? (
-            <>
-              <section aria-label="Payout wallets" className="wallet-cards">
-                {WALLET_FAMILIES.map((family) => {
-                  const rows = family.chains.map((chain) => ({
-                    chain,
-                    wallet: data.wallets.find((w) => w.chain === chain),
-                    // Each network and asset keeps its own balance; never summed.
-                    unpaid: data.balances.filter(
-                      (b) => b.chain === chain && b.netBase !== "0",
-                    ),
-                  }));
-                  const addresses = [
-                    ...new Set(
-                      rows.flatMap((r) => (r.wallet ? [r.wallet.address] : [])),
-                    ),
-                  ];
-                  const confirmed =
-                    addresses.length === 1 &&
-                    rows.every((r) => r.wallet?.authorized);
-                  // Only a confirmed wallet can be changed; any other state connects.
-                  const changing = rows.some((r) => r.wallet?.authorized);
-                  const state =
-                    addresses.length === 0
-                      ? "empty"
-                      : confirmed
-                        ? "confirmed"
-                        : "attention";
-                  const status = (ok: boolean) =>
-                    ok ? (
-                      <Check
-                        className="wallet-ok"
-                        role="img"
-                        aria-label="Confirmed"
-                      />
-                    ) : (
-                      <TriangleAlert
-                        className="wallet-warn"
-                        role="img"
-                        aria-label="Not confirmed"
-                      />
-                    );
-                  return (
-                    <article
-                      key={family.id}
-                      className="wallet-card"
-                      data-state={state}
-                      aria-label={`${family.label} wallet`}
-                    >
-                      <div className="wallet-card-chains">
-                        {rows.map(({ chain, wallet }) => (
-                          <ChainIcon
-                            key={chain}
-                            chain={chain}
-                            status={
-                              wallet
-                                ? wallet.authorized && addresses.length === 1
-                                  ? "confirmed"
-                                  : "not confirmed"
-                                : undefined
-                            }
-                          />
-                        ))}
-                      </div>
-                      <div className="wallet-card-main">
-                        <h3>{family.label}</h3>
-                        {addresses.length === 1 ? (
-                          <p className="wallet-card-address">
-                            <span aria-hidden="true" title={addresses[0]}>
-                              {shortAddress(addresses[0])}
-                            </span>
-                            <span className="visually-hidden">
-                              {addresses[0]}
-                            </span>
-                            {status(confirmed)}
-                          </p>
-                        ) : (
-                          rows.some((r) => r.wallet) && (
-                            <ul className="wallet-card-rows">
-                              {rows.map(({ chain, wallet }) =>
-                                wallet ? (
-                                  <li key={chain}>
-                                    <ChainIcon chain={chain} decorative />
-                                    <span
-                                      aria-hidden="true"
-                                      title={wallet.address}
-                                    >
-                                      {shortAddress(wallet.address)}
-                                    </span>
-                                    <span className="visually-hidden">
-                                      {NETWORK_NAMES[chain]} {wallet.address}
-                                    </span>
-                                    {status(wallet.authorized)}
-                                  </li>
-                                ) : null,
-                              )}
-                            </ul>
-                          )
-                        )}
-                        {rows.flatMap(({ chain, unpaid }) =>
-                          unpaid.map((b) => (
-                            <span
-                              key={`${chain}:${b.network}:${b.assetAddress}`}
-                              className="wallet-chip"
-                              title={`Unpaid${b.network === chainDefaultNetwork(chain) ? "" : ` on ${networkLabel(b.network)}`}`}
-                            >
-                              <ChainIcon chain={chain} decorative />
-                              <strong>{formatAssetAmount(b.netBase, b)}</strong>
-                              <span className="visually-hidden">
-                                unpaid on {NETWORK_NAMES[chain]}
-                              </span>
-                            </span>
-                          )),
-                        )}
-                      </div>
-                      <button
-                        id={`${heading}-${family.id}`}
-                        className="button secondary-button icon-button wallet-card-action"
-                        type="button"
-                        disabled={busy !== null || pendingChange !== null}
-                        aria-label={
-                          busy === family.id
-                            ? "Confirm in your wallet…"
-                            : `${changing ? "Change" : "Connect"} ${family.label} wallet`
-                        }
-                        onClick={() => setPicker(family.id)}
-                      >
-                        {busy === family.id ? (
-                          <LoaderCircle
-                            className="wallet-spin"
-                            aria-hidden="true"
-                          />
-                        ) : changing ? (
-                          <Pencil aria-hidden="true" />
-                        ) : (
-                          <Plus aria-hidden="true" />
-                        )}
-                      </button>
-                      {pendingChange?.family === family.id && (
-                        <section
-                          className="wallet-confirmation"
-                          aria-labelledby={`${heading}-${family.id}-change`}
-                        >
-                          <h3
-                            id={`${heading}-${family.id}-change`}
-                            className="wallet-heading"
-                            ref={changeHeading}
-                            tabIndex={-1}
-                          >
-                            Register a different {family.label} address?
-                          </h3>
-                          <p>
-                            Your wallet returned a different account. Nothing is
-                            registered yet.
-                          </p>
-                          <dl>
-                            <div>
-                              <dt>Saved address</dt>
-                              <dd>
-                                <code className="wallet-address">
-                                  {pendingChange.saved}
-                                </code>
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Wallet account</dt>
-                              <dd>
-                                <code className="wallet-address">
-                                  {pendingChange.address}
-                                </code>
-                              </dd>
-                            </div>
-                          </dl>
-                          <p className="wallet-consequence">
-                            <strong>
-                              Your GitHub identity and this address become a
-                              public, permanent record.
-                            </strong>{" "}
-                            The earlier address stays public.
-                          </p>
-                          <div className="wallet-change-actions">
-                            <button
-                              className="button primary-button"
-                              type="button"
-                              onClick={confirmChange}
-                            >
-                              Register wallet account
-                            </button>
-                            <button
-                              className="button secondary-button"
-                              type="button"
-                              onClick={keepSaved}
-                            >
-                              Keep saved address
-                            </button>
-                          </div>
-                        </section>
-                      )}
-                    </article>
+            <section aria-label="Payout wallets" className="wallet-cards">
+              {WALLET_FAMILIES.map((family) => {
+                const rows = family.chains.map((chain) => ({
+                  chain,
+                  wallet: data.wallets.find((w) => w.chain === chain),
+                  // Each network and asset keeps its own balance; never summed.
+                  unpaid: data.balances.filter(
+                    (b) => b.chain === chain && b.netBase !== "0",
+                  ),
+                }));
+                const addresses = [
+                  ...new Set(
+                    rows.flatMap((r) => (r.wallet ? [r.wallet.address] : [])),
+                  ),
+                ];
+                const confirmed =
+                  addresses.length === 1 &&
+                  rows.every((r) => r.wallet?.authorized);
+                // Only a confirmed wallet can be changed; any other state connects.
+                const changing = rows.some((r) => r.wallet?.authorized);
+                const state =
+                  addresses.length === 0
+                    ? "empty"
+                    : confirmed
+                      ? "confirmed"
+                      : "attention";
+                const status = (ok: boolean) =>
+                  ok ? (
+                    <Check
+                      className="wallet-ok"
+                      role="img"
+                      aria-label="Confirmed"
+                    />
+                  ) : (
+                    <TriangleAlert
+                      className="wallet-warn"
+                      role="img"
+                      aria-label="Not confirmed"
+                    />
                   );
-                })}
-              </section>
-              <p className="wallet-note">
-                Payments publish your address on chain. Confirming a wallet
-                moves no funds.
-              </p>
-            </>
+                return (
+                  <article
+                    key={family.id}
+                    className="wallet-card"
+                    data-state={state}
+                    aria-label={`${family.label} wallet`}
+                  >
+                    <div className="wallet-card-chains">
+                      {rows.map(({ chain, wallet }) => (
+                        <ChainIcon
+                          key={chain}
+                          chain={chain}
+                          status={
+                            wallet
+                              ? wallet.authorized && addresses.length === 1
+                                ? "confirmed"
+                                : "not confirmed"
+                              : undefined
+                          }
+                        />
+                      ))}
+                    </div>
+                    <div className="wallet-card-main">
+                      <h3>{family.label}</h3>
+                      {addresses.length === 1 ? (
+                        <p className="wallet-card-address">
+                          <span aria-hidden="true" title={addresses[0]}>
+                            {shortAddress(addresses[0])}
+                          </span>
+                          <span className="visually-hidden">
+                            {addresses[0]}
+                          </span>
+                          {status(confirmed)}
+                        </p>
+                      ) : (
+                        rows.some((r) => r.wallet) && (
+                          <ul className="wallet-card-rows">
+                            {rows.map(({ chain, wallet }) =>
+                              wallet ? (
+                                <li key={chain}>
+                                  <ChainIcon chain={chain} decorative />
+                                  <span
+                                    aria-hidden="true"
+                                    title={wallet.address}
+                                  >
+                                    {shortAddress(wallet.address)}
+                                  </span>
+                                  <span className="visually-hidden">
+                                    {NETWORK_NAMES[chain]} {wallet.address}
+                                  </span>
+                                  {status(wallet.authorized)}
+                                </li>
+                              ) : null,
+                            )}
+                          </ul>
+                        )
+                      )}
+                      {rows.flatMap(({ chain, unpaid }) =>
+                        unpaid.map((b) => (
+                          <span
+                            key={`${chain}:${b.network}:${b.assetAddress}`}
+                            className="wallet-chip"
+                            title={`Unpaid${b.network === chainDefaultNetwork(chain) ? "" : ` on ${networkLabel(b.network)}`}`}
+                          >
+                            <ChainIcon chain={chain} decorative />
+                            <strong>{formatAssetAmount(b.netBase, b)}</strong>
+                            <span className="visually-hidden">
+                              unpaid on {NETWORK_NAMES[chain]}
+                            </span>
+                          </span>
+                        )),
+                      )}
+                    </div>
+                    <button
+                      id={`${heading}-${family.id}`}
+                      className="button secondary-button icon-button wallet-card-action"
+                      type="button"
+                      disabled={busy !== null || pendingChange !== null}
+                      aria-label={
+                        busy === family.id
+                          ? "Confirm in your wallet…"
+                          : `${changing ? "Change" : "Connect"} ${family.label} wallet`
+                      }
+                      onClick={() => setPicker(family.id)}
+                    >
+                      {busy === family.id ? (
+                        <LoaderCircle
+                          className="wallet-spin"
+                          aria-hidden="true"
+                        />
+                      ) : changing ? (
+                        <Pencil aria-hidden="true" />
+                      ) : (
+                        <Plus aria-hidden="true" />
+                      )}
+                    </button>
+                    {pendingChange?.family === family.id && (
+                      <section
+                        className="wallet-confirmation"
+                        aria-labelledby={`${heading}-${family.id}-change`}
+                      >
+                        <h3
+                          id={`${heading}-${family.id}-change`}
+                          className="wallet-heading"
+                          ref={changeHeading}
+                          tabIndex={-1}
+                        >
+                          Register a different {family.label} address?
+                        </h3>
+                        <p>
+                          Your wallet returned a different account. Nothing is
+                          registered yet.
+                        </p>
+                        <dl>
+                          <div>
+                            <dt>Saved address</dt>
+                            <dd>
+                              <code className="wallet-address">
+                                {pendingChange.saved}
+                              </code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Wallet account</dt>
+                            <dd>
+                              <code className="wallet-address">
+                                {pendingChange.address}
+                              </code>
+                            </dd>
+                          </div>
+                        </dl>
+                        <p className="wallet-consequence">
+                          <strong>
+                            Your GitHub identity and this address become a
+                            public, permanent record.
+                          </strong>{" "}
+                          The earlier address stays public.
+                        </p>
+                        <div className="wallet-change-actions">
+                          <button
+                            className="button primary-button"
+                            type="button"
+                            onClick={confirmChange}
+                          >
+                            Register wallet account
+                          </button>
+                          <button
+                            className="button secondary-button"
+                            type="button"
+                            onClick={keepSaved}
+                          >
+                            Keep saved address
+                          </button>
+                        </div>
+                      </section>
+                    )}
+                  </article>
+                );
+              })}
+            </section>
           ) : (
             <>
               <section aria-labelledby={`${heading}-payments`}>

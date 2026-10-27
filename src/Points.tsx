@@ -764,19 +764,6 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       if (active.current === c) setBusy(false);
     }
   }
-  async function signout() {
-    try {
-      await requestJson("/api/v1/points/signout", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      });
-      clearAllDrafts();
-      setMe(null);
-    } catch {
-      setMessage("Could not sign out. Retry.");
-    }
-  }
   if (!productOrigin()) {
     const destination = new URL("/login", browserDeployment.site);
     const next = returnPath();
@@ -795,45 +782,27 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       </section>
     );
   }
+  // The header account menu offers the profile link and sign out.
+  if (me) return null;
   return (
     <section className="points-panel">
-      {showHeading ? (
-        <h2>{me ? `@${me.actor.login}` : "Sign in to Slop"}</h2>
-      ) : null}
-      {!me && session === "error" ? (
+      {showHeading ? <h2>Sign in to Slop</h2> : null}
+      {session === "error" ? (
         <p role="status">Could not check your session. Sign in again.</p>
       ) : null}
-      {me ? (
-        <div className="account-session-actions">
-          <a
-            className="button secondary-button"
-            href={`/contributors/${encodeURIComponent(me.actor.login)}`}
-          >
-            Your profile
-          </a>
-          <button
-            className="button ghost-button"
-            type="button"
-            onClick={() => void signout()}
-          >
-            Sign out
-          </button>
-        </div>
-      ) : (
-        <button
-          className="button primary-button"
-          type="button"
-          disabled={busy || session === "loading"}
-          onClick={() => void start(closedAccount)}
-        >
-          <GithubIcon aria-hidden="true" />
-          {busy
-            ? "Waiting for GitHub…"
-            : closedAccount
-              ? "Reopen account with GitHub"
-              : "Continue with GitHub"}
-        </button>
-      )}
+      <button
+        className="button primary-button"
+        type="button"
+        disabled={busy || session === "loading"}
+        onClick={() => void start(closedAccount)}
+      >
+        <GithubIcon aria-hidden="true" />
+        {busy
+          ? "Waiting for GitHub…"
+          : closedAccount
+            ? "Reopen account with GitHub"
+            : "Continue with GitHub"}
+      </button>
       <p role="status">{message}</p>
     </section>
   );
@@ -860,28 +829,27 @@ export function LoginPage() {
 export function AccountPage() {
   const accountSession = useProjectSession();
   const { me, session } = usePoints();
-  const [closedNotice, setClosedNotice] = useState("");
-  useEffect(() => {
-    if (me) setClosedNotice("");
-  }, [me]);
+  // Signed in, the header account menu covers the profile link and sign out.
+  const signedOut = !me && session !== "loading";
   return (
     <main className="shell route-main points-page">
       <h1>Account</h1>
       <nav className="account-sections" aria-label="Account sections">
-        <a href="#profile">Profile</a>
+        {signedOut ? <a href="#profile">Sign in</a> : null}
         {me ? <a href="#connections">Connections</a> : null}
         <a href="#wallets">Wallets</a>
         <a href="/earnings">Payouts</a>
         <a href="/inbox">Inbox</a>
-        {me ? <a href="#sessions">Sessions</a> : null}
         {accountSession.status === "signed-in" ? (
           <a href="#appeals">Appeals</a>
         ) : null}
-        <a href="#recovery">{me ? "Recovery and closure" : "Recovery"}</a>
+        {signedOut ? <a href="#recovery">Recovery</a> : null}
       </nav>
-      <div id="profile">
-        <JoinPoints />
-      </div>
+      {signedOut ? (
+        <div id="profile">
+          <JoinPoints />
+        </div>
+      ) : null}
       <div id="connections">
         <SocialConnections />
       </div>
@@ -893,177 +861,22 @@ export function AccountPage() {
       ) : (
         <EarningsPage walletsOnly key={me?.actor.id ?? "signed-out"} />
       )}
-      {me ? <AccountSessions /> : null}
       {accountSession.status === "signed-in" ? <AccountAppeals /> : null}
-      <section id="recovery">
-        <h2>{me ? "Recovery and closure" : "Recovery"}</h2>
-        {closedNotice ? <p role="status">{closedNotice}</p> : null}
-        <p>
-          Lost access to your account?{" "}
-          <a href={`${CONTACT_MAILTO}?subject=Account%20recovery`}>
-            Request private account recovery
-          </a>
-          .
-        </p>
-        {me ? (
-          <AccountClosure login={me.actor.login} onClosed={setClosedNotice} />
-        ) : null}
-      </section>
+      {signedOut ? (
+        <section id="recovery">
+          <h2>Recovery</h2>
+          <p>
+            Lost access to your account?{" "}
+            <a href={`${CONTACT_MAILTO}?subject=Account%20recovery`}>
+              Request private account recovery
+            </a>
+            .
+          </p>
+        </section>
+      ) : null}
     </main>
   );
 }
-/**
- * Self-service closure (PRD section 3). Closing ends every session and
- * removes optional connections; obligations and records stay, and signing in
- * again with the same GitHub account can reopen it.
- */
-function AccountClosure({
-  login,
-  onClosed,
-}: {
-  login: string;
-  onClosed: (notice: string) => void;
-}) {
-  const { setMe } = usePoints();
-  const [confirmation, setConfirmation] = useState("");
-  const { busy, error, run } = useAction();
-  const inputId = useId();
-  const matches = confirmation.trim().toLowerCase() === login.toLowerCase();
-  return (
-    <form
-      className="account-closure"
-      aria-labelledby={`${inputId}-heading`}
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!matches || busy) return;
-        void run(
-          async () => {
-            await requestJson("/api/v1/points/account/close", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ login: confirmation.trim() }),
-            });
-            onClosed(
-              "Your account is closed and every session is signed out. Sign in with GitHub to reopen it.",
-            );
-            setMe(null);
-          },
-          (caught) =>
-            caught instanceof PointsRequestError &&
-            caught.code === "confirmation_mismatch"
-              ? "The username does not match this account."
-              : caught instanceof PointsRequestError && caught.status === 401
-                ? "Your session ended. Sign in again to close your account."
-                : "Could not confirm whether your account closed. Reload this page before trying again.",
-        );
-      }}
-    >
-      <h3 id={`${inputId}-heading`}>Close your account</h3>
-      <p>Closing your account:</p>
-      <ul>
-        <li>signs out every session;</li>
-        <li>removes your X connection and turns off activity email;</li>
-        <li>hides your membership from Slop people lists and profiles.</li>
-      </ul>
-      <p>
-        Unpaid awards, wallets, payment records, private cases and points
-        history are kept. Sign in again to reopen.
-      </p>
-      <label htmlFor={inputId}>
-        Type your GitHub username, {login}, to confirm
-      </label>
-      <input
-        id={inputId}
-        autoComplete="off"
-        spellCheck={false}
-        value={confirmation}
-        onChange={(event) => setConfirmation(event.target.value)}
-      />
-      <button
-        className="button danger-button"
-        type="submit"
-        disabled={!matches || busy}
-      >
-        {busy ? "Closing account…" : "Close account"}
-      </button>
-      {error ? <p role="alert">{error}</p> : null}
-    </form>
-  );
-}
-function AccountSessions() {
-  const [sessions, setSessions] = useState<
-    { id: string; expiresAt: string; current: boolean }[] | null
-  >(null);
-  const [error, setError] = useState("");
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    let active = true;
-    requestJson(`/api/v1/points/sessions?refresh=${attempt}`).then(
-      (body) => {
-        if (active) {
-          setSessions(
-            (body as { sessions: NonNullable<typeof sessions> }).sessions,
-          );
-          setError("");
-        }
-      },
-      () => {
-        if (active) setError("Sessions could not load.");
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [attempt]);
-  return (
-    <section id="sessions">
-      <h2>Sessions</h2>
-      {error ? (
-        <p role="alert">{error}</p>
-      ) : sessions === null ? (
-        <p role="status">Loading sessions…</p>
-      ) : (
-        <ul>
-          {sessions.map((session) => (
-            <li key={session.id}>
-              {session.current ? "This session" : "Other session"} · expires{" "}
-              {formatDateTime(session.expiresAt)}{" "}
-              <button
-                className="button secondary-button button-small"
-                type="button"
-                onClick={async () => {
-                  try {
-                    await requestJson("/api/v1/points/sessions/revoke", {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ id: session.id }),
-                    });
-                    if (session.current) {
-                      clearAllDrafts();
-                      window.location.assign("/login");
-                    } else setAttempt((value) => value + 1);
-                  } catch {
-                    setError("Could not sign out that session.");
-                  }
-                }}
-              >
-                Sign out{session.current ? " here" : " this session"}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <button
-        className="button secondary-button button-small"
-        type="button"
-        onClick={() => setAttempt((value) => value + 1)}
-      >
-        Refresh sessions
-      </button>
-    </section>
-  );
-}
-
 /** Categories from protocol/points-v1.md: activity and points. */
 const POINT_CATEGORIES: readonly (readonly [string, string])[] = [
   [

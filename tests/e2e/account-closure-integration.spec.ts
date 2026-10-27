@@ -175,24 +175,26 @@ for (const withObligations of [false, true])
       expect((await readState()).connections).toEqual(before.connections);
       expect((await readState()).retained).toEqual(before.retained);
       await page.goto(`${SITE}/account`);
-      const recovery = page.locator("#recovery");
+      // The account page has no closure form or session list; closure remains
+      // an authenticated API action that the page cannot confirm for itself.
+      await expect(page.locator("#recovery")).toHaveCount(0);
       await expect(
-        recovery.getByRole("button", { name: "Close account", exact: true }),
-      ).toBeDisabled();
-      await recovery
-        .getByLabel(/Type your GitHub username/u)
-        .fill(started.login);
-      await recovery
-        .getByRole("button", { name: "Close account", exact: true })
-        .click();
-      if (withObligations) {
-        await expect(recovery.getByRole("alert")).toContainText(
-          "Could not confirm whether your account closed.",
-        );
-        await page.reload();
-      } else {
-        await expect(recovery).toContainText("Your account is closed");
-      }
+        page.getByRole("button", { name: "Close account", exact: true }),
+      ).toHaveCount(0);
+      const closing = await page.evaluate(async (login) => {
+        try {
+          const response = await fetch("/api/v1/points/account/close", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ login }),
+          });
+          return response.status;
+        } catch {
+          return "failed";
+        }
+      }, started.login);
+      expect(closing).toBe(withObligations ? "failed" : 200);
+      await page.reload();
       const closed = await readState();
       expect(closed.retained).toEqual(before.retained);
       expect(closed.member.public).toBe(0);
