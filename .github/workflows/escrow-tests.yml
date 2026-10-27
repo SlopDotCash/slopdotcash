@@ -21,6 +21,8 @@ on:
       - 'src/WalletRegistration.tsx'
       - 'src/VaultActions.tsx'
       - 'src/OwnerAwards.tsx'
+      - 'src/OwnerMonthlyFinalization.tsx'
+      - 'src/lib/monthly-finalization-actions.ts'
       - 'src/OwnerCommitment.tsx'
       - 'src/lib/*vault-actions.ts'
       - 'src/lib/*commitment-actions.ts'

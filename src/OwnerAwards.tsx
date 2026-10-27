@@ -333,7 +333,8 @@ export default function OwnerAwards({
             {view.automatic
               ? "Finalize the allocation when ready. Automatic payment follows your authorization and full funding; there is no deadline."
               : "Finalize and pay each month when ready; there is no deadline."}
-            {project.reward.paymentMode !== "enabled" &&
+            {!view.deployment &&
+              project.reward.paymentMode !== "enabled" &&
               " Payments are disabled for this project."}
           </p>
           <button
