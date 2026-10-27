@@ -196,6 +196,18 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     });
   await expect(firstBreakdown).toContainText("1.209876532 TEST");
   await expect(firstBreakdown).toContainText("0.024691358 TEST");
+  const basis = firstBreakdown.locator("details");
+  await expect(
+    basis.getByText("Proposed gross", { exact: true }),
+  ).not.toBeVisible();
+  await basis.getByText("Allocation basis", { exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    basis.getByText("Proposed gross", { exact: true }),
+  ).toBeVisible();
+  await expect(basis).toContainText("1.23456789 TEST");
+  await basis.getByText("Allocation basis", { exact: true }).focus();
+  await page.keyboard.press("Enter");
   const secondBreakdown = awards
     .getByRole("list", { name: "Allocations", exact: true })
     .locator("li")
