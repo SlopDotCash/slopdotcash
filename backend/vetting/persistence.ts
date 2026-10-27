@@ -594,15 +594,9 @@ export class CloudflareVettingPersistence {
       )
       .bind(projectId)
       .first<{ found: number }>();
-    const revisions = await this.revisionContents(projectId);
-    if (
-      grandfathered &&
-      !malicious &&
-      !forReinstatement &&
-      repositoryIdentity !== null &&
-      revisions[0]?.repositoryIdentity === repositoryIdentity
-    )
+    if (grandfathered && !malicious && !forReinstatement)
       return { state: "cleared", assessment: null, grandfathered: true };
+    const revisions = await this.revisionContents(projectId);
     const window = new Map<number, string>();
     for (let index = revisions.length - 1; index >= 0; index -= 1) {
       const revision = revisions[index];

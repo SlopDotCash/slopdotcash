@@ -3,8 +3,9 @@
 PRD section 8 requires a scan of submitted project code for malicious
 behavior before contributors install or run it: wallet drainers, password
 and credential theft, secret exfiltration, harmful installation scripts and
-agent prompt injection. The result binds the checked revision. One successful admission scan persists
-for routine later changes to the same immutable repository (PRD section 8,
+agent prompt injection. The result binds the checked revision. Outside the permanent
+existing-project exemption, one successful admission scan persists for routine
+later changes to the same immutable repository (PRD section 8,
 27 October 2026). Explicit investigations and fresh reinstatement scans still use
 this complete pipeline; later content is never relabelled as scanned. A scan is not
 a guarantee of safety, and an incomplete scan never establishes clearance.
