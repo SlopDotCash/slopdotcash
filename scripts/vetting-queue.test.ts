@@ -34,6 +34,7 @@ const now = new Date("2026-10-19T12:00:00Z");
 const assessmentId = `vet_${"a".repeat(32)}`;
 const templateText = "Harmless contributor and reviewer fixture.";
 const rendererText = "export const fixture = true;";
+const sharedTemplatePath = "skills/contributor/SKILL.md";
 const templateInputs = {
   contributor: {
     sourcePath: "skills/contributor",
@@ -43,7 +44,10 @@ const templateInputs = {
     sourcePath: "skills/reviewer",
     files: [{ path: "SKILL.md", sha256: digest(templateText) }],
   },
-  rendererSources: [{ path: "src/render.mjs", sha256: digest(rendererText) }],
+  rendererSources: [
+    { path: "src/render.mjs", sha256: digest(rendererText) },
+    { path: sharedTemplatePath, sha256: digest(templateText) },
+  ],
   acceptedRevisions: ["1"],
 };
 const templateSha256 = digest(JSON.stringify(templateInputs));
@@ -229,6 +233,8 @@ beforeAll(async () => {
       if (path.startsWith("/skill-templates/"))
         return new Response(mode === "template" ? "changed" : templateText);
       if (path.endsWith("/src/render.mjs")) return new Response(rendererText);
+      if (path.endsWith(`/${sharedTemplatePath}`))
+        return new Response(templateText);
       if (path.endsWith(`/commits/${commitSha}`))
         return Response.json({ sha: commitSha, tree: { sha: treeSha } });
       if (path.endsWith(`/trees/${treeSha}`))
@@ -317,6 +323,74 @@ test("signed real queue and SQLite revision acquire exact Git and template bytes
       },
     );
   }
+});
+
+test("conflicting digests for a shared template path refuse acquisition", async () => {
+  mode = "normal";
+  const conflictingText = "export const conflicting = true;";
+  const conflictingInputs = {
+    ...templateInputs,
+    rendererSources: templateInputs.rendererSources.map((file) =>
+      file.path === sharedTemplatePath
+        ? { ...file, sha256: digest(conflictingText) }
+        : file,
+    ),
+  };
+  const conflictingSha256 = digest(JSON.stringify(conflictingInputs));
+  const conflicted: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (
+        path.endsWith(`/${sharedTemplatePath}`) &&
+        !path.startsWith("/skill-templates/")
+      )
+        return new Response(conflictingText);
+      const response = await connection.fetch!(input, init);
+      if (path === "/api/v1/vetting/requests") {
+        const queue = await response.json();
+        for (const assessment of queue.assessments)
+          if (assessment.assessmentId === assessmentId)
+            assessment.templateSha256 = conflictingSha256;
+        return Response.json(queue);
+      }
+      if (path === "/skill-templates/index.json") {
+        const index = await response.json();
+        index.templateSha256 = conflictingSha256;
+        index.renderer.sources = conflictingInputs.rendererSources;
+        return Response.json(index);
+      }
+      return response;
+    }) as typeof fetch,
+  };
+  const before = await readdir(root);
+  await expect(
+    acquireQueuedAssessment(conflicted, assessmentId, root),
+  ).rejects.toThrow("Conflicting template input digests");
+  expect(await readdir(root)).toEqual(before);
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
+});
+
+test("shared template inputs still verify the second source URL", async () => {
+  mode = "normal";
+  const changed: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (
+        path.endsWith(`/${sharedTemplatePath}`) &&
+        !path.startsWith("/skill-templates/")
+      )
+        return new Response("changed renderer source bytes");
+      return connection.fetch!(input, init);
+    }) as typeof fetch,
+  };
+  const before = await readdir(root);
+  await expect(
+    acquireQueuedAssessment(changed, assessmentId, root),
+  ).rejects.toThrow("Template file bytes changed");
+  expect(await readdir(root)).toEqual(before);
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
 });
 
 test("changed revision/template bytes and wrong signer leave queue pending and no completed bundle", async () => {
