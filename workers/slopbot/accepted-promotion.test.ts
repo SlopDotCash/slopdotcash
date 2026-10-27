@@ -193,6 +193,31 @@ test("a closed promotion of previously accepted same-author commits adds no attr
   expect(before).toEqual([original, promotion, integration]);
 });
 
+test("an existing authenticated retention acknowledgement keeps its binding", async () => {
+  const { original, promotion, integration } = fixture();
+  promotion.evidence.comments = [
+    {
+      node_id: "IC_retained",
+      html_url: `https://github.com/${repository.id}/pull/2#issuecomment-1`,
+      body: `Merged in ${integrated}.`,
+      user: actor,
+      created_at: "2026-10-04T10:00:00Z",
+      updated_at: "2026-10-04T10:00:00Z",
+    },
+  ];
+  promotion.evidence.pull.comments = 1;
+  const result = await retainedCopyBindings([original, promotion, integration]);
+  expect(result.limitations).toEqual([]);
+  expect([...result.bindings.values()]).toMatchObject([
+    {
+      originalCommitSha: accepted,
+      acceptedCommitSha: accepted,
+      path: file.filename,
+      original: { evidence: { pull: { node_id: "PR_closed_promotion" } } },
+    },
+  ]);
+});
+
 for (const change of [
   "no-prior-acceptance",
   "different-author",

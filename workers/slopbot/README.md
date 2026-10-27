@@ -368,8 +368,9 @@ An abandoned promotion needs no new retention acknowledgement when every
 commit is an exact squash already accepted from the same author, before the
 promotion closed, and each complete original PR is supplied. Preparation keeps
 those original claims and adds no implementation claim for the closed
-promotion. Missing origins, changed authors or edits, and newly introduced
-commits retain the acknowledgement requirement and any source limitations.
+promotion. Existing authenticated retention acknowledgements keep their bindings.
+Missing origins, changed authors or edits, and newly introduced commits retain
+the acknowledgement requirement and any source limitations.
 
 Historical resolution evidence must
 remain source-bound and pass the joint record's freshness and publication gates.
