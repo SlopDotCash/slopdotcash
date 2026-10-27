@@ -1270,6 +1270,7 @@ export default function ProjectProposalPage() {
   function clearDraft() {
     lookupController.current?.abort();
     setProposal(EMPTY_PROPOSAL);
+    setSubmission({ status: "idle" });
     suggestedText.current = { name: "", headline: "", goal: "", criteria: "" };
     setTermsOpen(false);
     setAttempted(SETUP_STEPS.map(() => false));
