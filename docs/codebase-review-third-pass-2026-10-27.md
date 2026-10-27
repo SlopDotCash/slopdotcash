@@ -2593,6 +2593,10 @@ Selected disposition: delete this new non-contract unit suite under the user's e
 
 This addendum is recorded before deleting the newly adopted file. It changes the final inventory relative to the report baseline, not the historical baseline counts above.
 
+## Post-rebase cleanup within existing TT01/TT06 criteria
+
+The newly adopted fee-converter cap cases perform a real `runNetwork`→SQL-state workflow and stay. Their preliminary direct `h.chain.quote` call and `quote.priceImpactBps` assertion repeat the helper in isolation before the workflow repeats it; remove those two statements only, retaining both exact-cap and above-cap persisted outcomes. The newly adopted registry browser case also repeats the same 200% typography mutation; use the shared TT06 helper without changing its outcome assertions. Newly adopted trace-route refusal/upload-retention and registry browser revision scenarios cross real boundaries and stay.
+
 ## Implementation results
 
 Report-first checkpoint: this section is intentionally unfilled at the report commit. Implementation, disposition of all finding IDs, final source revision, measured changes, validations and any remaining environment limits will be added after the selected work is completed.

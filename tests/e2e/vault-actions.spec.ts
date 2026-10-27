@@ -30,6 +30,7 @@ import {
   applicationManifest,
   CONTRIBUTION,
 } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import {
   escapeRegExp,
   expect,
@@ -483,35 +484,13 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     );
   expect(await overflow()).toBeLessThanOrEqual(1);
   // Controlled text enlargement, distinct from native browser zoom.
-  await actions.evaluate((section) => {
-    const sizes = [...section.querySelectorAll<HTMLElement>("*")].map(
-      (element) => ({
-        element,
-        font: getComputedStyle(element).fontSize,
-        line: getComputedStyle(element).lineHeight,
-        original: element.getAttribute("style"),
-      }),
-    );
-    for (const { element, font, line, original } of sizes) {
-      element.dataset.vaultOriginalStyle = original ?? "";
-      element.style.fontSize = `${parseFloat(font) * 2}px`;
-      if (line !== "normal")
-        element.style.lineHeight = `${parseFloat(line) * 2}px`;
-    }
-  });
+  const restoreText = await enlargeText(actions);
   expect(await overflow()).toBeLessThanOrEqual(1);
   await page.screenshot({
     path: info.outputPath("owner-withdrawal-200-percent-text.png"),
     fullPage: true,
   });
-  await actions.evaluate((section) => {
-    for (const element of section.querySelectorAll<HTMLElement>(
-      "[data-vault-original-style]",
-    )) {
-      element.setAttribute("style", element.dataset.vaultOriginalStyle ?? "");
-      delete element.dataset.vaultOriginalStyle;
-    }
-  });
+  await restoreText();
   const confirmWithdrawal = actions.getByRole("button", {
     name: "Confirm withdrawal in wallet",
   });

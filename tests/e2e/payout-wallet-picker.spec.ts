@@ -1,5 +1,6 @@
 /** Provider/API fixtures exercise the real page; they never register a real wallet. */
 import type { Page } from "@playwright/test";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 test.beforeEach(({ diagnostics }) => diagnostics.allowPreviewApiMisses());
@@ -586,22 +587,7 @@ for (const scenario of [
       await expect(
         dialog.getByRole("button", { name: /Detected$/u }),
       ).toHaveCount(2);
-      if (scenario.textScale === 2)
-        await page.evaluate(() => {
-          // Read every size first so nested text is enlarged exactly once.
-          const typography = [
-            ...document.querySelectorAll<HTMLElement>("body *"),
-          ].map((element) => ({
-            element,
-            font: getComputedStyle(element).fontSize,
-            line: getComputedStyle(element).lineHeight,
-          }));
-          for (const { element, font, line } of typography) {
-            element.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-            if (line !== "normal")
-              element.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-          }
-        });
+      if (scenario.textScale === 2) await enlargeText(page.locator("body"));
       await expect(
         dialog.getByRole("button", { name: "Close wallet picker" }),
       ).toBeInViewport();
@@ -902,21 +888,7 @@ for (const scenario of [
       name: "Register a different EVM address?",
     });
     await expect(confirmation).toBeVisible();
-    if (scenario.textScale === 2)
-      await page.evaluate(() => {
-        const typography = [
-          ...document.querySelectorAll<HTMLElement>("body *"),
-        ].map((element) => ({
-          element,
-          font: getComputedStyle(element).fontSize,
-          line: getComputedStyle(element).lineHeight,
-        }));
-        for (const { element, font, line } of typography) {
-          element.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-          if (line !== "normal")
-            element.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-        }
-      });
+    if (scenario.textScale === 2) await enlargeText(page.locator("body"));
     // The site lays out at a 320px minimum, so the 160px case checks only
     // that nothing escapes the confirmation itself.
     if (scenario.width === 320)

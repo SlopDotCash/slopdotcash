@@ -5,6 +5,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProjectD1Database } from "../backend/projects/cloudflare-persistence";
 import { EVIDENCE_CHUNK_BYTES } from "../backend/vetting/evidence-chunks";
+import { enlargeText } from "../tests/text-size";
 import {
   EVIDENCE_OWNER_GITHUB_ID,
   localVettingEvidence,
@@ -491,28 +492,8 @@ export async function captureAssemblyConsole(
         await page.evaluate(() => {
           document.documentElement.style.zoom = "2";
         });
-      const originalTypography =
-        name === "mobile"
-          ? await page.evaluate(() => {
-              const items = [
-                ...document.querySelectorAll<HTMLElement>("body *"),
-              ]
-                .filter((element) => element instanceof HTMLElement)
-                .map((element, index) => ({
-                  element,
-                  index,
-                  style: element.getAttribute("style"),
-                  font: getComputedStyle(element).fontSize,
-                  line: getComputedStyle(element).lineHeight,
-                }));
-              for (const { element, font, line } of items) {
-                element.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-                if (line !== "normal")
-                  element.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-              }
-              return items.map(({ index, style }) => ({ index, style }));
-            })
-          : [];
+      const restoreText =
+        name === "mobile" ? await enlargeText(page.locator("body")) : undefined;
       assert.ok(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth + 1,
@@ -537,16 +518,7 @@ export async function captureAssemblyConsole(
         document.documentElement.style.zoom = "1";
         window.scrollTo(0, 0);
       });
-      await page.evaluate((original) => {
-        const elements = [
-          ...document.querySelectorAll<HTMLElement>("body *"),
-        ].filter((element) => element instanceof HTMLElement);
-        for (const { index, style } of original) {
-          const element = elements[index];
-          if (style === null) element.removeAttribute("style");
-          else element.setAttribute("style", style);
-        }
-      }, originalTypography);
+      await restoreText?.();
       await page.screenshot({
         path: join(directory, "assembly.png"),
         fullPage: false,

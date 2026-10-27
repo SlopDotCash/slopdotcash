@@ -18,6 +18,7 @@ import {
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { CONTRIBUTION } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 const deployment = deploymentOrigins(
@@ -1331,30 +1332,7 @@ for (const scenario of [
         await page.setViewportSize({ width: scenario.width, height: 1000 });
         await page.goto(path, { waitUntil: "networkidle" });
         if (scenario.textScale === 2) {
-          await page.evaluate(() => {
-            // Capture every original computed size before changing any ancestor,
-            // so nested text receives exactly 200%, not compounded enlargement.
-            const typography = [
-              ...document.querySelectorAll<HTMLElement>("body *"),
-            ]
-              .filter((element) => element instanceof HTMLElement)
-              .map((element) => ({
-                element,
-                font: getComputedStyle(element).fontSize,
-                line: getComputedStyle(element).lineHeight,
-              }));
-            for (const { element, font, line } of typography) {
-              element.style.setProperty(
-                "font-size",
-                `${Number.parseFloat(font) * 2}px`,
-              );
-              if (line !== "normal")
-                element.style.setProperty(
-                  "line-height",
-                  `${Number.parseFloat(line) * 2}px`,
-                );
-            }
-          });
+          await enlargeText(page.locator("body"));
         }
         // The skip link is the first stop; it hands keyboard users the content.
         await page.keyboard.press("Tab");

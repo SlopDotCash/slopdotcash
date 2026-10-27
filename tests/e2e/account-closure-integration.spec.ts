@@ -172,6 +172,7 @@ for (const withObligations of [false, true])
       expect((await readState()).retained).toEqual(before.retained);
       await page.goto(`${SITE}/account`);
       const recovery = page.locator("#recovery");
+      await recovery.locator("#close-account > summary").click();
       await expect(
         recovery.getByRole("button", { name: "Close account", exact: true }),
       ).toBeDisabled();

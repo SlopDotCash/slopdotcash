@@ -8,9 +8,11 @@
  * A throwaway Ed25519 key stands in for the external secure-VM vetting
  * service, so the lane signs harmless scan results the way the service must.
  */
+
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
+import { enlargeText } from "../text-size";
 import {
   signedVettingHeaders,
   VETTING_EVIDENCE_OBJECTS,
@@ -753,20 +755,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     path: test.info().outputPath("admin-routine-edit.png"),
     fullPage: true,
   });
-  await admin.evaluate(() => {
-    const typography = [
-      ...document.querySelectorAll<HTMLElement>("body *"),
-    ].map((el) => ({
-      el,
-      font: getComputedStyle(el).fontSize,
-      line: getComputedStyle(el).lineHeight,
-    }));
-    for (const { el, font, line } of typography) {
-      el.style.fontSize = `${Number.parseFloat(font) * 2}px`;
-      if (line !== "normal")
-        el.style.lineHeight = `${Number.parseFloat(line) * 2}px`;
-    }
-  });
+  await enlargeText(admin.locator("body"));
   expect(
     await admin.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,
