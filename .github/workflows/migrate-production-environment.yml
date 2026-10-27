@@ -1,0 +1,70 @@
+name: Migrate production environment secrets
+
+# One-time rename of the eliza-army-production environment to slop-production.
+# GitHub cannot rename an environment or reveal a secret, so this job seals
+# each production secret to the fixed slop-production public key below and
+# uploads only that ciphertext. An operator PUTs it into slop-production; only
+# GitHub can open it. The key is pinned in reviewed source so a dispatch
+# cannot redirect secrets to another key. Remove this workflow once
+# slop-production holds every secret.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: "1.3.14"
+  # GET /repos/SlopDotCash/slopdotcash/environments/slop-production/secrets/public-key
+  SLOP_PRODUCTION_KEY: "lOOzYM/O/A8pRWN0q3XRCc/YEHihyVe4jiVWkln59CQ="
+  SLOP_PRODUCTION_KEY_ID: "3380204578043523366"
+
+jobs:
+  seal:
+    if: github.repository == 'SlopDotCash/slopdotcash' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: eliza-army-production
+    concurrency:
+      group: slop-production-migration
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Seal production secrets to slop-production
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
+          SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
+          X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+          X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          mkdir -p sealed
+          bun scripts/seal-environment-secrets.mjs \
+            "$SLOP_PRODUCTION_KEY" "$SLOP_PRODUCTION_KEY_ID" sealed/slop-production.json \
+            CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN SLOP_VETTING_SIGNING_JWK \
+            SURPLUS_API_KEY X_CLIENT_ID X_CLIENT_SECRET
+
+      - name: Upload sealed secrets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slop-production-sealed-secrets
+          path: sealed/slop-production.json
+          if-no-files-found: error
+          retention-days: 1
