@@ -83,10 +83,19 @@ export function intakeQualified(row: StoredIntake): boolean {
     (row.review_decision === null && row.screening_state === "legitimate")
   );
 }
+function screeningRecoverable(row: StoredIntake, now: Date): boolean {
+  return (
+    ["queued", "unavailable"].includes(row.screening_state) ||
+    (row.screening_state === "running" &&
+      now.getTime() - Date.parse(row.screening_started_at ?? row.received_at) >
+        LOST_SCREEN_MS)
+  );
+}
 function intakeView(
   row: StoredIntake,
   roles: Set<Role>,
   submission: SubmissionRow,
+  now: Date,
 ) {
   const reporter = roles.has("reporter");
   return {
@@ -102,6 +111,9 @@ function intakeView(
     reviewedAt: row.reviewed_at,
     canReview: roles.has("security-maintainer"),
     canForward: intakeQualified(row),
+    canRetryScreening: intakeQualified(row)
+      ? row.routed_at === null
+      : row.review_decision === null && screeningRecoverable(row, now),
     canAuthorize:
       reporter && intakeQualified(row) && submission.advisory_ghsa === null,
     canRevise:
@@ -130,7 +142,7 @@ export async function decorateSubmission(
   const stored = await storedIntake(deps, row.id);
   if (!stored) return { ...submissionView(row), intake: null };
   const roles = await rolesFor(deps, stored, actor);
-  const view = intakeView(stored, roles, row);
+  const view = intakeView(stored, roles, row, deps.now());
   const record = await loadCase(deps, stored.case_id);
   view.canRevise =
     (view.canRevise || record?.receipt_state === "needs-information") &&
@@ -157,7 +169,10 @@ export async function storedIntakeViewForCase(
   if (!stored) return null;
   const row = await loadSubmission(deps, stored.submission_id);
   if (!row) return null;
-  return { submissionId: row.id, ...intakeView(stored, roles, row) };
+  return {
+    submissionId: row.id,
+    ...intakeView(stored, roles, row, deps.now()),
+  };
 }
 
 async function reportVersion(
@@ -350,13 +365,7 @@ export async function screenStoredReport(
     return;
   }
   if (row.review_decision !== null) return;
-  const stale =
-    row.screening_state === "running" &&
-    deps.now().getTime() -
-      Date.parse(row.screening_started_at ?? row.received_at) >
-      LOST_SCREEN_MS;
-  if (!["queued", "unavailable"].includes(row.screening_state) && !stale)
-    return;
+  if (!screeningRecoverable(row, deps.now())) return;
   const at = deps.now().toISOString();
   const claimed = await deps.db.batch([
     deps.db
@@ -851,10 +860,9 @@ export async function actStoredIntake(
   if (action === "screen") {
     exactKeys(body, ["expectedRevision"]);
     if (
-      !["queued", "unavailable", "running", "legitimate"].includes(
-        stored.screening_state,
-      ) ||
-      stored.review_decision !== null
+      !intakeQualified(stored) &&
+      (!["queued", "unavailable", "running"].includes(stored.screening_state) ||
+        stored.review_decision !== null)
     )
       fail(
         409,

@@ -37,9 +37,11 @@ type Actor = typeof OWNER;
 type Intake = {
   state: string;
   routingState: string;
-  revision: number;
+  receivedAt: string;
   reportVersion: number;
+  revision: number;
   canForward: boolean;
+  canRetryScreening: boolean;
   canReview: boolean;
   reason: string | null;
 };
@@ -329,6 +331,18 @@ function fixture() {
     advance: (milliseconds: number) => {
       clock += milliseconds;
     },
+    addReviewer: () =>
+      publish({
+        ...manifest,
+        securityBounty: {
+          ...program(),
+          approvers: {
+            technical: [OWNER, OTHER],
+            financial: [FINANCE],
+            dispute: [],
+          },
+        },
+      }),
     revokeOwner: () =>
       publish({
         ...manifest,
@@ -708,6 +722,105 @@ describe("durable private report controls", () => {
     );
     expect(revoked.status).toBe(404);
     expect(revoked.body.report).toBeUndefined();
+  });
+
+  test.each(["queued", "running"] as const)(
+    "a retained %s report exposes recovery after its worker is lost",
+    async (state) => {
+      const t = fixture();
+      const accepted = await t.create();
+      const original = required(accepted.body.submission);
+      t.sqlite
+        .query(
+          "UPDATE security_submission_intake SET screening_state=?,screening_started_at=?,screening_finished_at=NULL,screening_reason=NULL,routed_at=NULL,revision=revision+1 WHERE submission_id=?",
+        )
+        .run(state, state === "running" ? START : null, original.id);
+      if (state === "running") {
+        const active = await t.call(
+          REPORTER,
+          "GET",
+          `security-submissions/${original.id}`,
+        );
+        expect(required(active.body.submission).intake.canRetryScreening).toBe(
+          false,
+        );
+        t.advance(16 * 60 * 1000);
+      }
+      const retained = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${original.id}`,
+      );
+      const submission = required(retained.body.submission);
+      expect(submission.intake.canRetryScreening).toBe(true);
+      expect(retained.body.report).toEqual(REPORT);
+      const retried = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${original.id}/screen`,
+        {
+          expectedRevision: submission.intake.revision,
+        },
+      );
+      expect(retried.status).toBe(200);
+      const recovered = required(retried.body.submission);
+      expect(recovered.intake.state).toBe("legitimate");
+      expect(recovered.intake.routingState).toBe("routed");
+      expect(recovered.intake.receivedAt).toBe(original.intake.receivedAt);
+      expect(recovered.intake.reportVersion).toBe(1);
+      expect(t.screeningCalls()).toBe(2);
+      expect(t.notices(OWNER)).toHaveLength(1);
+    },
+  );
+
+  test("a human routing decision can retry a failed notification without re-screening", async () => {
+    const t = fixture();
+    t.addReviewer();
+    t.decision("needs-information");
+    const accepted = await t.create();
+    const original = required(accepted.body.submission);
+    t.failRouting(true);
+    const reviewed = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${original.id}/review`,
+      {
+        expectedRevision: original.intake.revision,
+        decision: "forward",
+        reason:
+          "The maintainer independently reproduced the synthetic finding.",
+      },
+    );
+    expect(reviewed.status).toBe(500);
+    t.failRouting(false);
+    const retained = await t.call(
+      REPORTER,
+      "GET",
+      `security-submissions/${original.id}`,
+    );
+    const submission = required(retained.body.submission);
+    const retried = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${original.id}/screen`,
+      {
+        expectedRevision: submission.intake.revision,
+      },
+    );
+    expect(retried.status).toBe(200);
+    expect(submission.intake.canRetryScreening).toBe(true);
+    expect(required(retried.body.submission).intake.routingState).toBe(
+      "routed",
+    );
+    expect(t.screeningCalls()).toBe(1);
+    expect(t.notices(OTHER)).toHaveLength(1);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT review_decision FROM security_submission_intake WHERE submission_id=?",
+        )
+        .get(original.id),
+    ).toEqual({ review_decision: "forward" });
   });
 
   test("retries an interrupted owner notification without re-screening or duplicate mail", async () => {
