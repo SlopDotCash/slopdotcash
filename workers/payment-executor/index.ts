@@ -640,7 +640,14 @@ export async function runMonthlyAttester(env: Environment) {
     return sync;
   }
   if (!schedule) throw new Error("Monthly schedule missing");
-  await runMonthlyCoordinator(worker);
+  // A project month that cannot be frozen is reported with the other
+  // failures. It must not withhold the funded months of other projects.
+  const failures: unknown[] = [...sync.failures];
+  try {
+    await runMonthlyCoordinator(worker);
+  } catch (error) {
+    failures.push(error);
+  }
   const report = await publishMonthlyAuthorizations({
     db: env.PAYMENTS_DB,
     networks,
@@ -674,8 +681,12 @@ export async function runMonthlyAttester(env: Environment) {
       )) as MonthlyAuthorization;
     },
   });
-  if (sync.failures.length || report.failures.length)
-    throw new Error("Monthly indexing or authorization incomplete");
+  failures.push(...report.failures);
+  if (failures.length)
+    throw new AggregateError(
+      failures,
+      "Monthly indexing or authorization incomplete",
+    );
   return report;
 }
 
