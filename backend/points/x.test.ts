@@ -59,9 +59,14 @@ test("X connection and reconnect reserve identity without granting points", asyn
         }),
         deps,
       );
-    const connect = async (historical = false) => {
-      const start = await call("start", { public: true });
+    const connect = async (historical = false, oldPrivateFlow = false) => {
+      const start = await call("start", { public: !oldPrivateFlow });
       expect(start.status).toBe(200);
+      expect(sqlite.prepare("SELECT public FROM points_x_flows").all()).toEqual(
+        [{ public: 1 }],
+      );
+      // A flow created before the policy change still completes publicly.
+      if (oldPrivateFlow) sqlite.exec("UPDATE points_x_flows SET public=0");
       const { authorizationUrl } = (await start.json()) as {
         authorizationUrl: string;
       };
@@ -77,8 +82,8 @@ test("X connection and reconnect reserve identity without granting points", asyn
         sqlite.prepare("SELECT x_id,actor_id FROM points_x_claims").all(),
       ).toEqual([{ x_id: "123456789", actor_id: "U_fixture" }]);
       expect(
-        sqlite.prepare("SELECT x_id,username FROM points_x_links").all(),
-      ).toEqual([{ x_id: "123456789", username: "fixture_user" }]);
+        sqlite.prepare("SELECT x_id,username,public FROM points_x_links").all(),
+      ).toEqual([{ x_id: "123456789", username: "fixture_user", public: 1 }]);
       expect(
         sqlite.prepare("SELECT points,awarded_at FROM points_x_awards").all(),
       ).toEqual(
@@ -87,7 +92,7 @@ test("X connection and reconnect reserve identity without granting points", asyn
           : [],
       );
     };
-    await connect();
+    await connect(false, true);
     expect((await call("disconnect", {})).status).toBe(200);
     await connect();
     // A historical award is retained through disconnect and reconnect.
