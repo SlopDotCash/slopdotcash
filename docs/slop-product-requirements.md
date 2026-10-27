@@ -135,6 +135,8 @@ Exclude Slopbot from scoring and human rankings.
 
 Use explicit payout exclusions for owners, funded employees, and related parties. Apply changes prospectively. Excluded weights cannot reduce other contributors' shares.
 
+Owner decision, 26 October 2026: configure no contributor payout exclusions for November 2026 for Slop (`slopdotcash`), Eliza (`eliza`), TheNetwork (`thenetwork`) or ASI (`asi`). Keep those projects' payout-exclusion lists empty. This decision does not remove participation bans or change funded awards.
+
 Slopbot triages each dispute first and drafts a resolution; a moderator decides escalated disputes. Awards use an honor and reputation model. Owners may change proposed amounts; do not publish adjustment history or require a public explanation. Keep only the records needed for allocation, dispute handling, and payment reconciliation. A ban does not erase a funded award.
 
 Slopbot assesses size and value from the PR and its evidence. Use these accepted-work point bands: micro 10, small 30, medium 90, large 240, XL 450, exceptional 750. Review bands are triage 10, standard 30, deep 90, specialist 240. These are the existing credit amounts expressed in points, not additional awards. Keep source, rubric, model, and corrections with the points. Preserve historical awards and prevent duplicate credit across stacked or indirect merges.
