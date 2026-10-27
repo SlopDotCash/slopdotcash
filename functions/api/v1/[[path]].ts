@@ -572,7 +572,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     persistence: new CloudflareTracePersistence(db, env.PRIVATE_TRACES),
     authSecret: env.TRACE_AUTH_SECRET,
     operatorGithubIds: walletOperatorGithubIds,
-    bindingRecovery: env.BINDING_RECOVERY,
+    bindingRecoveryForNetwork: (network) => {
+      if (network === "base-mainnet") return env.BINDING_RECOVERY;
+      if (network === "ethereum") return env.BINDING_RECOVERY_ETHEREUM;
+      if (network === "robinhood-mainnet")
+        return env.BINDING_RECOVERY_ROBINHOOD;
+      return undefined;
+    },
     operatorSession: sessionActor,
     now,
     randomId,
