@@ -235,7 +235,12 @@ for (const withObligations of [false, true])
           .getByRole("status")
           .filter({ hasText: "Your account is open again." }),
       ).toBeVisible();
-      await expect(profile).toHaveCount(0);
+      await expect(
+        profile.getByRole("button", { name: /with GitHub$/u }),
+      ).toHaveCount(0);
+      await expect(
+        profile.getByRole("region", { name: "Connections", exact: true }),
+      ).toBeVisible();
       await expect.poll(() => reopenWindow.isClosed()).toBe(true);
       expect(page.isClosed()).toBe(false);
       const reopened = await readState();

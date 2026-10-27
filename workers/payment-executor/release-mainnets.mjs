@@ -12,6 +12,14 @@ import { MAINNET_EXECUTION } from "./mainnet-execution.mjs";
 import { mainnetReleasePlan } from "./release-plan.mjs";
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+// Wrangler's async API commands must use the workflow-pinned Node runtime.
+// Under Bun 1.3.14 secret list can exit zero without producing its JSON.
+export const mainnetWranglerProvider = (args, env = process.env) =>
+  spawnSync("node", ["node_modules/wrangler/bin/wrangler.js", ...args], {
+    encoding: "utf8",
+    timeout: 120_000,
+    env,
+  });
 const run = async (provider, args) => {
   const result = await provider(args);
   if (result.status !== 0) throw new Error(`Attester ${args[0]} failed`);
@@ -233,13 +241,7 @@ if (
   const [command, directory, path] = process.argv.slice(2);
   if (!directory) throw new Error("Release directory required");
   const sha = process.env.GITHUB_SHA;
-  const provider = (args) =>
-    spawnSync(
-      // This entry point runs under Bun; Wrangler requires the installed Node runtime.
-      "node",
-      ["node_modules/wrangler/bin/wrangler.js", ...args],
-      { encoding: "utf8", timeout: 120_000 },
-    );
+  const provider = mainnetWranglerProvider;
   if (command === "prepare")
     await prepareMainnetRelease({
       directory,

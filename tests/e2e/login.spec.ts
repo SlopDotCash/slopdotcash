@@ -170,7 +170,10 @@ for (const [next, expected] of [
     // region is the member's own.
     const connections = page.getByRole("region", { name: "Connections" });
     await expect(connections).toBeVisible();
-    await expect(page.locator("#profile")).toHaveCount(0);
+    await expect(page.locator("#profile")).toContainText("Connections");
+    await expect(
+      page.getByRole("button", { name: "Continue with GitHub", exact: true }),
+    ).toHaveCount(0);
     // Membership is always public, so the account page offers no visibility choice.
     await expect(page.getByRole("main").getByRole("checkbox")).toHaveCount(0);
     await page.reload();
