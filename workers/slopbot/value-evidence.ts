@@ -34,6 +34,11 @@ import {
 } from "./value-indirect";
 import type { ValueMergeResolution } from "./value-merge-resolution";
 import {
+  collectNoChangePromotion,
+  NO_CHANGE_PROMOTION_CONTEXT,
+  type NoChangePromotionProof,
+} from "./value-no-change-promotion";
+import {
   addedValuePatchRecovery,
   hasCompleteValuePatch,
   valueAdditionCount,
@@ -552,6 +557,7 @@ export interface ValueEvidence {
   eligibleReviewIds: string[];
   implementationActorNodeIds: string[];
   historicalBranchPolicy?: ValueBranchPolicy;
+  noChangePromotion?: NoChangePromotionProof;
   commitAttribution: CommitAttribution[];
   mergeResolutions?: ValueMergeResolution[];
   retainedMergeReferences?: RetainedMergeReference[];
@@ -1023,6 +1029,7 @@ export async function collectValueEvidence(
   const implementationActors = new Set<string>();
   if (pull.user.type !== "Bot") implementationActors.add(pull.user.node_id);
   let historicalBranchPolicy: ValueBranchPolicy | undefined;
+  let noChangePromotion: NoChangePromotionProof | null = null;
   if (
     pull.merged_at !== null &&
     repositoryPolicy !== null &&
@@ -1045,8 +1052,18 @@ export async function collectValueEvidence(
         pull.base.sha,
       );
     } catch {
+      try {
+        noChangePromotion = await collectNoChangePromotion(client, repository, {
+          pull,
+          mergeCommitEvidence,
+        });
+      } catch {
+        // Unavailable or malformed Git objects never waive branch authority.
+      }
       limitations.push(
-        "Historical integration branch authority is unavailable or ambiguous",
+        noChangePromotion
+          ? NO_CHANGE_PROMOTION_CONTEXT
+          : "Historical integration branch authority is unavailable or ambiguous",
       );
     }
   }
@@ -1090,6 +1107,10 @@ export async function collectValueEvidence(
         review.user !== null &&
         review.user.type !== "Bot" &&
         !implementationActors.has(review.user.node_id) &&
+        (!noChangePromotion ||
+          !commits.some(
+            (commit) => commit.author?.node_id === review.user?.node_id,
+          )) &&
         review.submitted_at !== null &&
         review.state !== "PENDING" &&
         (outcomeAt === null ||
@@ -1130,6 +1151,7 @@ export async function collectValueEvidence(
     eligibleReviewIds,
     implementationActorNodeIds: [...implementationActors].sort(),
     ...(historicalBranchPolicy === undefined ? {} : { historicalBranchPolicy }),
+    ...(noChangePromotion === null ? {} : { noChangePromotion }),
     commitAttribution,
     relatedPullRequests: related.references,
   };

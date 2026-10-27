@@ -15,6 +15,10 @@ import {
 } from "./value-evidence";
 import type { ValueMergeRecipe } from "./value-merge-profile";
 import { mergeResolutionMatches } from "./value-merge-resolution";
+import {
+  NO_CHANGE_PROMOTION_CONTEXT,
+  noChangePromotionMatches,
+} from "./value-no-change-promotion";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { valueSourceDigest } from "./value-review";
 
@@ -106,8 +110,12 @@ export async function prepareWorkUnitEvidence(
       );
     ids.add(pull.node_id);
     projects.add(repository.projectId);
+    const noChangePromotion = noChangePromotionMatches(evidence);
+    if (evidence.noChangePromotion && !noChangePromotion)
+      limitations.add(`${pull.node_id}: invalid unchanged promotion proof`);
     for (const limitation of evidence.limitations)
-      limitations.add(`${pull.node_id}: ${limitation}`);
+      if (!(noChangePromotion && limitation === NO_CHANGE_PROMOTION_CONTEXT))
+        limitations.add(`${pull.node_id}: ${limitation}`);
     for (const limitation of await binarySourceLimitations(evidence))
       limitations.add(`${pull.node_id}: ${limitation}`);
     sourceDigests.push({
@@ -238,6 +246,12 @@ export async function prepareWorkUnitEvidence(
           origin.pull.merged_at !== null &&
           Date.parse(origin.pull.merged_at) < mergedAt,
       );
+      if (noChangePromotion && origins.length !== 1) {
+        limitations.add(
+          `${pull.node_id}: unchanged promotion needs one complete original PR for ${commit.sha}`,
+        );
+        continue;
+      }
       if (
         origins.length > 0 ||
         evidence.acceptedRange?.parentSha === commit.sha
