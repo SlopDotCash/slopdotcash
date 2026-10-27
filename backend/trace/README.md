@@ -15,8 +15,11 @@ the contributor's required pre-upload inspection.
 Optional trace upload requires a fresh authenticated observation that GitHub's
 private vulnerability reporting is enabled. The hourly health workflow renews
 that observation independently of website publication. The client reads the
-bounded server-authoritative preflight; stale or unavailable status blocks trace
-upload only. Ordinary GitHub submission and website deployment remain available.
+bounded server-authoritative preflight; stale, disabled or unavailable status
+blocks trace upload only. The capability upload checks the same observation
+before it reserves or writes bytes and refuses with HTTP 503
+`private_intake_unavailable`, so a client that skips the preflight cannot store
+a trace. Ordinary GitHub submission and website deployment remain available.
 An advisory URL alone is not evidence of availability, and a public issue is
 never a private intake.
 
