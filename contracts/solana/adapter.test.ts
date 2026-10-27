@@ -6,6 +6,7 @@ import {
   solanaBase58,
   solanaConfigAddress,
   solanaMintDecimals,
+  solanaMintDetails,
   solanaVaultAddress,
 } from "./adapter";
 
@@ -341,9 +342,7 @@ describe("readVaultTotals", () => {
 });
 
 describe("solanaMintDecimals", () => {
-  // Vault creation, funding and the monthly commitment read decimals here and build
-  // classic Token program instructions, so a Token-2022 mint must stop them.
-  test("refuses a Token-2022 mint that the classic owner paths cannot use", async () => {
+  test("reads admitted token programs for the complete owner paths and refuses unsafe mints", async () => {
     const answer = (owner: string, data: Uint8Array) => {
       globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body));
@@ -361,8 +360,16 @@ describe("solanaMintDecimals", () => {
     answer(TOKEN, mintAccount(9));
     expect(await solanaMintDecimals(config, MINT)).toBe(9);
     answer(TOKEN_2022, token2022Mint(6));
+    expect(await solanaMintDecimals(config, MINT)).toBe(6);
+    expect(await solanaMintDetails(config, MINT)).toEqual({
+      decimals: 6,
+      tokenProgram: TOKEN_2022,
+    });
+    const unsafe = token2022Mint(6);
+    unsafe[46] = 1;
+    answer(TOKEN_2022, unsafe);
     await expect(solanaMintDecimals(config, MINT)).rejects.toThrow(
-      "Not a classic SPL Token account",
+      "Token-2022 freeze authority is not disabled",
     );
   });
 });

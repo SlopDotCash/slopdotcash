@@ -1,12 +1,11 @@
 /// <reference types="bun-types" />
 /**
  * Generator-level tests for the retained review history batch in
- * generate-points.ts: corrections, removals, replay, and rejection.
+ * generate-points.ts: corrections, removals, replay, and rejection; and the
+ * evaluated-review dedup of the points projection.
  */
-import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
 import {
   createLeaderboardSnapshot,
   type LeaderboardSnapshot,
@@ -19,13 +18,16 @@ import {
   appendPointAwards,
   applyPointsSnapshot,
   awardForScore,
+  canonicalReviewIdentity,
   emptyPointsJournal,
   latestPoints,
+  POINTS_RULE,
   type PointAward,
   type PointsJournal,
   pointMembers,
 } from "../src/lib/points";
 import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
+import { MIGRATIONS, sqliteD1 } from "../tests/sqlite-d1";
 import {
   applyRetainedHistoryBatch,
   pointsSql,
@@ -39,11 +41,7 @@ const T1 = "2026-10-02T00:00:00.000Z";
 const T2 = "2026-10-03T00:00:00.000Z";
 
 it("replays an already completed older import without rolling back newer points", () => {
-  const db = new Database(":memory:");
-  for (const path of readdirSync("migrations")
-    .filter((path) => path.endsWith(".sql"))
-    .sort())
-    db.exec(readFileSync(`migrations/${path}`, "utf8"));
+  const { sqlite: db } = sqliteD1(MIGRATIONS);
   const before = seedJournal(awardForScore(reviewEvent(3)));
   const after = appendPointAwards(
     before,
@@ -579,5 +577,281 @@ describe("snapshots never rewrite batch-owned retained awards", () => {
     const latest = latestPoints(journal).get(award.key);
     expect(latest?.award.amount).toBe(120);
     expect(latest?.sourceDigest).toBe(digest);
+  });
+});
+
+const AT = "2026-10-14T17:30:00.000Z";
+const MONTH = "2026-10";
+
+function award(over: Partial<PointAward> & { key: string }): PointAward {
+  return {
+    actor: { id: "1", login: "alice" },
+    projectId: "slopdotcash",
+    category: "evaluated-contribution",
+    amount: 100,
+    occurredAt: `${MONTH}-05T10:00:00.000Z`,
+    sourceId: "e1",
+    sourceUrl: "https://github.com/SlopDotCash/slopdotcash/pull/5",
+    workUnitId: "w1",
+    provisional: false,
+    ...over,
+  };
+}
+
+function journal(awards: PointAward[]): PointsJournal {
+  return {
+    schemaVersion: "1",
+    ruleVersion: POINTS_RULE,
+    generatedAt: AT,
+    coverage: [],
+    revisions: awards.map((a, i) => ({
+      id: `r${i}`,
+      previous: null,
+      recordedAt: AT,
+      sourceDigest: "digest",
+      sourceRule: POINTS_RULE,
+      award: a,
+    })),
+  };
+}
+
+function aliceTotal(j: PointsJournal): number {
+  return pointMembers(j, MONTH)[0]?.total ?? 0;
+}
+
+describe("evaluated-review dedup set fragment scoping", () => {
+  it("dedups a substantive review when the evaluated award uses a discussion_r URL", () => {
+    const evaluated = award({
+      key: "e1",
+      category: "evaluated-contribution",
+      amount: 100,
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/5#discussion_r123",
+      workUnitId: "w1",
+    });
+    const review = award({
+      key: "r1",
+      category: "substantive-review",
+      amount: 10,
+      sourceId: "s1",
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/5#pullrequestreview-1",
+      workUnitId: "w2",
+    });
+    expect(aliceTotal(journal([evaluated, review]))).toBe(100);
+  });
+
+  it("still dedups through the legacy pullrequestreview fragment", () => {
+    const evaluated = award({
+      key: "e1",
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/5#pullrequestreview-9",
+      workUnitId: "w1",
+    });
+    const review = award({
+      key: "r1",
+      category: "substantive-review",
+      amount: 10,
+      sourceId: "s1",
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/5#pullrequestreview-1",
+      workUnitId: "w2",
+    });
+    expect(aliceTotal(journal([evaluated, review]))).toBe(100);
+  });
+
+  it("does not let a non-evaluated discussion_r award populate the dedup set", () => {
+    const review = award({
+      key: "r1",
+      category: "substantive-review",
+      amount: 10,
+      sourceId: "s1",
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/5#discussion_r123",
+      workUnitId: "w2",
+    });
+    // Without the parentheses the fragment disjunction escapes the
+    // amount/category predicates, so this review suppresses itself.
+    expect(aliceTotal(journal([review]))).toBe(10);
+  });
+
+  it("does not let a zero-amount discussion_r award populate the dedup set", () => {
+    const correction = award({
+      key: "e0",
+      amount: 0,
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/5#discussion_r1",
+      workUnitId: "w1",
+    });
+    const review = award({
+      key: "r1",
+      category: "substantive-review",
+      amount: 10,
+      sourceId: "s1",
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/5#discussion_r123",
+      workUnitId: "w2",
+    });
+    expect(aliceTotal(journal([correction, review]))).toBe(10);
+  });
+
+  it("dedups when the evaluated award URL differs only in repo-path casing", () => {
+    const evaluated = award({
+      key: "e1",
+      category: "evaluated-contribution",
+      amount: 100,
+      sourceUrl:
+        "https://github.com/slopdotcash/SLOPDOTCASH/pull/5#discussion_r123",
+      workUnitId: "w1",
+    });
+    const review = award({
+      key: "r1",
+      category: "substantive-review",
+      amount: 10,
+      sourceId: "s1",
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/5#pullrequestreview-1",
+      workUnitId: "w2",
+    });
+    // The journal validator accepts owner/repo casing variants and preserves
+    // the raw URL; without case normalization the dedup key misses and the
+    // substantive review double-counts (110 instead of 100).
+    expect(aliceTotal(journal([evaluated, review]))).toBe(100);
+  });
+
+  it.each([
+    [
+      "mixed-case review fragment",
+      "https://github.com/SlopDotCash/slopdotcash/pull/5#Discussion_R123",
+    ],
+    [
+      "explicit default port",
+      "https://github.com:443/SlopDotCash/slopdotcash/pull/5#discussion_r123",
+    ],
+    [
+      "empty query marker",
+      "https://github.com/SlopDotCash/slopdotcash/pull/5?#discussion_r123",
+    ],
+    [
+      "dot-segment path",
+      "https://github.com/SlopDotCash/slopdotcash/tmp/../pull/5#discussion_r123",
+    ],
+    [
+      "percent-encoded dot-segment path",
+      "https://github.com/SlopDotCash/slopdotcash/%2e/pull/5#discussion_r123",
+    ],
+  ])(
+    "dedups when the evaluated award URL is a validator-accepted variant (%s)",
+    (_name, sourceUrl) => {
+      const evaluated = award({
+        key: "e1",
+        category: "evaluated-contribution",
+        amount: 100,
+        sourceUrl,
+        workUnitId: "w1",
+      });
+      const review = award({
+        key: "r1",
+        category: "substantive-review",
+        amount: 10,
+        sourceId: "s1",
+        sourceUrl:
+          "https://github.com/SlopDotCash/slopdotcash/pull/5#pullrequestreview-1",
+        workUnitId: "w2",
+      });
+      // assertEvaluatorAwardManifest accepts each variant and keeps the raw
+      // string; keying the dedup set on the raw URL lets them evade the
+      // evaluated-review suppression and double-count (110 instead of 100).
+      expect(aliceTotal(journal([evaluated, review]))).toBe(100);
+    },
+  );
+
+  it("dedups when the evaluated award uses a registered repository alias and the review uses the canonical id", () => {
+    const evaluated = award({
+      key: "e1",
+      projectId: "asi",
+      category: "evaluated-contribution",
+      amount: 100,
+      sourceUrl: "https://github.com/SlopDotCash/asi/pull/1#discussion_r1",
+      workUnitId: "w1",
+    });
+    const review = award({
+      key: "r1",
+      projectId: "asi",
+      category: "substantive-review",
+      amount: 10,
+      sourceId: "s1",
+      sourceUrl: "https://github.com/elizaOS/asi/pull/1#pullrequestreview-2",
+      workUnitId: "w2",
+    });
+    // The journal validator accepts the alias path (SlopDotCash/asi) as a
+    // review source for the canonically-registered elizaOS/asi repository.
+    // Without alias canonicalization the two URLs yield different dedup
+    // identities and the substantive review double-counts (110 instead of
+    // 100), bypassing the PRD section 14 no-duplicate rule.
+    expect(aliceTotal(journal([evaluated, review]))).toBe(100);
+  });
+
+  it.each([
+    [
+      "explicit non-default port",
+      "https://github.com:444/SlopDotCash/slopdotcash/pull/5#discussion_r1",
+    ],
+    [
+      "non-empty query",
+      "https://github.com/SlopDotCash/slopdotcash/pull/5?x=1#discussion_r1",
+    ],
+  ])(
+    "yields no identity for a review URL the journal validator rejects (%s)",
+    (_name, sourceUrl) => {
+      // assertEvaluatorAwardManifest rejects both forms while the helper
+      // used to return an identity, so such a URL could falsely suppress
+      // credit for a legitimate review.
+      expect(canonicalReviewIdentity(sourceUrl)).toBeUndefined();
+    },
+  );
+
+  it("does not dedup a substantive review for a different PR number", () => {
+    const evaluated = award({
+      key: "e1",
+      category: "evaluated-contribution",
+      amount: 100,
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/6#discussion_r123",
+      workUnitId: "w1",
+    });
+    const review = award({
+      key: "r1",
+      category: "substantive-review",
+      amount: 10,
+      sourceId: "s1",
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/5#pullrequestreview-1",
+      workUnitId: "w2",
+    });
+    // Same repo, different PR: genuinely different work units, so both count.
+    expect(aliceTotal(journal([evaluated, review]))).toBe(110);
+  });
+
+  it("does not dedup a substantive review whose URL is not a review URL", () => {
+    const evaluated = award({
+      key: "e1",
+      category: "evaluated-contribution",
+      amount: 100,
+      sourceUrl:
+        "https://github.com/SlopDotCash/slopdotcash/pull/5#discussion_r123",
+      workUnitId: "w1",
+    });
+    const review = award({
+      key: "r1",
+      category: "substantive-review",
+      amount: 10,
+      sourceId: "s1",
+      sourceUrl: "https://github.com/SlopDotCash/slopdotcash/pull/5",
+      workUnitId: "w2",
+    });
+    // A fragment-free URL is not a review identity, so the canonical dedup
+    // never suppresses it; the points engine still counts it.
+    expect(aliceTotal(journal([evaluated, review]))).toBe(110);
   });
 });

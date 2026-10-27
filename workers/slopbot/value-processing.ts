@@ -1,15 +1,25 @@
 import type { D1Database } from "./persistence";
 
-export type ValueClaim = { deliveryId: string; token: string };
+export type ValueClaim = {
+  deliveryId: string;
+  token: string;
+  claimedAt: string;
+};
 export type ValueOutcome =
   | "published"
   | "current"
   | "open"
+  | "historical"
   | "source-incomplete"
   | "authority"
   | "budget"
   | "retry";
-const terminal = new Set<ValueOutcome>(["published", "current", "open"]);
+const terminal = new Set<ValueOutcome>([
+  "published",
+  "current",
+  "open",
+  "historical",
+]);
 const LEASE_MS = 10 * 60 * 1000;
 
 /** Claim an existing durable request. One atomic statement handles the first
@@ -49,7 +59,7 @@ export async function claimValueRequest(
       stamp,
     )
     .first();
-  return row ? { deliveryId, token } : null;
+  return row ? { deliveryId, token, claimedAt: stamp } : null;
 }
 
 export async function ownsValueRequest(
@@ -70,6 +80,9 @@ export async function ownsValueRequest(
 
 /** Outcomes are fixed codes, never model output or provider exception text.
  * Incomplete evidence and budget/authority blocks remain retryable, not zero.
+ * The consumer reads the PR from GitHub after its claim, so the outcome also
+ * settles every waiting or unread delivery for the same PR received by the
+ * claim time. A later delivery keeps its own request.
  */
 export async function finishValueRequest(
   db: D1Database,
@@ -85,19 +98,33 @@ export async function finishValueRequest(
       (!retryAt || !Number.isFinite(retryAt.getTime()) || retryAt <= at))
   )
     throw new Error("Value request retry time does not match its outcome");
+  // One statement: without the current lease no row is selected or written.
   const row = await db
     .prepare(
-      `UPDATE slopbot_value_processing SET state=?,outcome=?,retry_at=?,updated_at=?
-       WHERE delivery_id=? AND claim_token=? AND state='running' AND lease_until>?
+      `INSERT INTO slopbot_value_processing
+       (delivery_id,claim_token,lease_until,state,outcome,retry_at,updated_at)
+       SELECT r.delivery_id,?2,?7,?4,?5,?6,?7
+       FROM slopbot_value_processing owner
+       JOIN slopbot_value_requests claimed ON claimed.delivery_id=owner.delivery_id
+       JOIN slopbot_value_requests r ON r.repository_id=claimed.repository_id
+         AND r.pull_request_number=claimed.pull_request_number
+         AND (r.delivery_id=owner.delivery_id OR r.received_at<=?3)
+       WHERE owner.delivery_id=?1 AND owner.claim_token=?2
+         AND owner.state='running' AND owner.lease_until>?7
+       ON CONFLICT(delivery_id) DO UPDATE SET claim_token=excluded.claim_token,
+         state=excluded.state,outcome=excluded.outcome,retry_at=excluded.retry_at,
+         updated_at=excluded.updated_at
+       WHERE slopbot_value_processing.delivery_id=?1
+          OR slopbot_value_processing.state='waiting'
        RETURNING delivery_id`,
     )
     .bind(
+      claim.deliveryId,
+      claim.token,
+      claim.claimedAt,
       complete ? "completed" : "waiting",
       outcome,
       retryAt?.toISOString() ?? null,
-      at.toISOString(),
-      claim.deliveryId,
-      claim.token,
       at.toISOString(),
     )
     .first();

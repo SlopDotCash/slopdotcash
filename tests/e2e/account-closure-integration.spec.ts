@@ -1,20 +1,24 @@
 /** Browser -> Pages -> SQLite -> identity handlers; external GitHub is synthetic. */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
 
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const { site: SITE, identity: IDENTITY } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
 
 for (const withObligations of [false, true])
-  test(`account closure ${withObligations ? "with unpaid awards and a private case" : "without awards"} requires an explicit authenticated reopen @registry`, async ({
+  test(`account closure ${withObligations ? "with unpaid awards and a private case" : "without awards"} requires an explicit authenticated reopen`, async ({
     context,
+    diagnostics,
     page,
   }, info) => {
+    // The two refusals the closed account expects, asserted below.
+    diagnostics.allow(
+      /^console Failed to load resource: the server responded with a status of 40[19] .* at https:\/\/[^ ]+\/api\/v1\/(payments\/me|points\/join)$/u,
+    );
     const child = spawn(
       "bun",
       [
@@ -58,7 +62,6 @@ for (const withObligations of [false, true])
           reject(error);
         });
       });
-      const errors: string[] = [];
       const failures: string[] = [];
       const retiredRequests: string[] = [];
       page.on("request", (request) => {
@@ -66,7 +69,6 @@ for (const withObligations of [false, true])
         if (url.pathname.startsWith("/api/v1/points/telegram/"))
           retiredRequests.push(url.pathname);
       });
-      page.on("pageerror", (error) => errors.push(error.message));
       page.on("response", (response) => {
         if (response.url().startsWith(SITE) && response.status() >= 400)
           failures.push(
@@ -214,14 +216,7 @@ for (const withObligations of [false, true])
       expect(reopened.member).toEqual({ public: 0, closed_at: null });
       expect(reopened.connections).toEqual([]);
       expect(reopened.preferences.enabled).toBe(0);
-      expect(
-        (
-          await new AxeBuilder({ page })
-            .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-            .analyze()
-        ).violations,
-      ).toEqual([]);
-      expect(errors).toEqual([]);
+      await expectAccessible(page);
       expect(retiredRequests).toEqual([]);
       expect(failures).toEqual([
         "401 /api/v1/payments/me",

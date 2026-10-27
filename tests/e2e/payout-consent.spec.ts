@@ -1,9 +1,9 @@
 /** Real page + deterministic wallet/API fixtures. Live chain acceptance is recorded separately. */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { privateKeyToAccount } from "viem/accounts";
 import { verifyEvmBindingSignature } from "../../backend/payments/possession";
 import { evmBindingTypedData } from "../../contracts/evm/adapter";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const recipient = privateKeyToAccount(`0x${"0".repeat(63)}1`);
 const vault = `0x${"2".repeat(40)}`;
@@ -133,11 +133,6 @@ async function setup(
 test("a recipient reviews the exact vault and signs consent without claiming payment", async ({
   page,
 }, info) => {
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (e) => {
-    if (e.type() === "error") errors.push(e.text());
-  });
   const authorized = await setup(page);
   await page.getByRole("button", { name: "Authorize payout wallet" }).click();
   const review = page.getByRole("dialog", {
@@ -149,10 +144,7 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
   await expect(
     page.getByText("Paid, verified on chain", { exact: true }),
   ).toHaveCount(0);
-  const { violations } = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(violations).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("payout-consent-review.png"),
     fullPage: true,
@@ -175,7 +167,6 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
   await expect(
     page.getByRole("cell", { name: /^Held, funds remain reserved/ }),
   ).toBeVisible();
-  expect(errors).toEqual([]);
 });
 
 for (const fault of ["account", "domain", "reject"] as const) {
@@ -205,11 +196,6 @@ for (const fault of ["account", "domain", "reject"] as const) {
 test("Solana recipient co-signs only the prepared binding and waits for payment finality", async ({
   page,
 }) => {
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (e) => {
-    if (e.type() === "error") errors.push(e.text());
-  });
   const { ed25519 } = await import("@noble/curves/ed25519.js");
   const { solanaBase58 } = await import("../../contracts/solana/adapter");
   const { bytes, encoder, instructionData, le, message, pda, SYSTEM } =
@@ -389,7 +375,6 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
     page.getByRole("status").filter({ hasText: "Binding submitted" }),
   ).toBeVisible();
   expect(completed).toBe(1);
-  expect(errors).toEqual([]);
   await expect(
     page.getByText("Paid, verified on chain", { exact: true }),
   ).toHaveCount(0);

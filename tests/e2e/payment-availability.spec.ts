@@ -1,8 +1,13 @@
 /** A monthly target must not look like an active payment offer. */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import {
+  expect,
+  expectAccessible,
+  serveProjectCycleIndex,
+  test,
+} from "./fixtures";
 
 test("disabled payouts are visible from discovery through the project page", async ({
   page,
@@ -22,6 +27,7 @@ test("disabled payouts are visible from discovery through the project page", asy
   await page.route("**/api/v1/projects/eliza", (route) =>
     route.fulfill({ json: { project, revision: 1 } }),
   );
+  await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
   );
@@ -77,13 +83,7 @@ test("disabled payouts are visible from discovery through the project page", asy
       .getByRole("cell")
       .nth(paymentsColumn - 1),
   ).toHaveText("Disabled");
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth - innerWidth,
@@ -112,13 +112,7 @@ test("a cycle record offers a funding check without inventing a vault balance", 
     path: test.info().outputPath("cycle-funding-check.png"),
     fullPage: true,
   });
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   const link = notice.getByRole("link", { name: "View project funding" });
   await expect(link).toHaveAttribute("href", "/projects/eliza/funding");
   await link.click();

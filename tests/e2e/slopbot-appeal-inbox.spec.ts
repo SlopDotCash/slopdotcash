@@ -1,13 +1,14 @@
 import { execFileSync } from "node:child_process";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
 import { notifySlopbotAppeal } from "../../backend/notifications/events";
+import { expect, expectAccessible, test } from "./fixtures";
 
 // The worker workflow test covers the actual escalation and mail dispatch.
 // This browser check uses its writer against the real local Pages/D1 fixture.
 test("an escalated contribution appeal opens from the moderator Inbox and shows resolution @registry", async ({
+  diagnostics,
   page,
 }) => {
+  diagnostics.allowCanceledBackgroundReads();
   const persist = process.env.SLOP_E2E_PERSIST_TO;
   const token = process.env.SLOP_E2E_MODERATOR_TOKEN;
   if (!persist || !token) throw new Error("Missing isolated registry fixture");
@@ -49,18 +50,6 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
   );
   sql(`INSERT INTO slopbot_appeals(appeal_key,repository_id,item_node_id,appellant_github_id,job_json,opened_at,due_at,escalated_at,escalation)
     VALUES (${quote(key)},1,${quote(key)},'900000002',${quote(job)},${quote(at)},'2099-01-01T00:00:00.000Z',${quote(at)},'A moderator decision is required'); ${notice};`);
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
-  page.on("response", (response) => {
-    if (
-      response.url().startsWith(test.info().project.use.baseURL as string) &&
-      response.status() >= 400
-    )
-      errors.push(`${response.status()} ${new URL(response.url()).pathname}`);
-  });
   await page.goto("/how-it-works", { waitUntil: "networkidle" });
   await page.evaluate((value) => {
     document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
@@ -94,7 +83,7 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
   await item.getByRole("button", { name: "Mark as read" }).focus();
   await page.keyboard.press("Enter");
   await expect(item.locator(".inbox-state")).toHaveText("Read");
-  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await expectAccessible(page, { everyRule: true });
   await page.screenshot({
     path: test.info().outputPath("appeal-review.png"),
     fullPage: true,
@@ -115,5 +104,4 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
     path: test.info().outputPath("appeal-resolved.png"),
     fullPage: true,
   });
-  expect(errors).toEqual([]);
 });

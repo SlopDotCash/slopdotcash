@@ -2021,7 +2021,7 @@ function appealComment(
     ].join("\n");
   const draft =
     appeal.draft === "uphold"
-      ? "uphold the appeal. Slopbot would reopen this item if it closed it, and reverse any penalty from this finding."
+      ? "uphold the appeal. Slopbot would reopen this item only if Slopbot made its current close, and reverse any penalty from this finding. If another account closed it later, it stays closed."
       : "deny the appeal. Slopbot's finding stands.";
   return [
     "<!-- slopbot:appeal -->",
