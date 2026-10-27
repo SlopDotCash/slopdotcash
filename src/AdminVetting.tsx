@@ -3,9 +3,9 @@ import { CopyIdentifier } from "./Operations";
 import { StatusBadge, formatNullableUtc as time } from "./Presentation";
 /**
  * The admin view of community project security vetting (PRD VET-01 to
- * VET-08). It shows each project's revision-bound clearance, the restricted
+ * VET-08). It shows each project's admission clearance, the restricted
  * scan results and quarantine records, active contributor flags, and queues a
- * scan of the current revision. Routine scans queue automatically; the
+ * scan of the current revision. Admission and flag-recovery scans queue automatically; the
  * scanner service is external, and when it is not configured the view says
  * so and offers no scan control.
  */
@@ -84,7 +84,9 @@ const LABELS: Record<Clearance["state"], string> = {
 function clearanceLabel(clearance: Clearance): string {
   return clearance.state === "cleared" && clearance.assessment === null
     ? "Exempt"
-    : LABELS[clearance.state];
+    : clearance.state === "cleared" && clearance.basis === "admission"
+      ? "Admitted"
+      : LABELS[clearance.state];
 }
 
 const STATE_TEXT: Record<AssessmentState, string> = {
@@ -394,14 +396,14 @@ export function VettingSection({ projectId }: { projectId: string }) {
                         <dt>Decided by</dt>
                         <dd>
                           {clearance.state === "unscanned"
-                            ? "No scan of this content yet"
+                            ? "No admission scan for this repository yet"
                             : clearance.state === "unverified"
                               ? clearance.reason
                               : clearance.assessment === null
                                 ? "Existing-project exemption"
                                 : clearance.state === "stale"
                                   ? `Live head ${clearance.live.commitSha} (template ${clearance.live.templateSha256}) is not scanned. Last scan: ${clearance.assessment.commitSha}.`
-                                  : `Scan of revision ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`}
+                                  : `${clearance.state === "cleared" && clearance.basis === "admission" ? "Admission scan" : "Scan"} of revision ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`}
                         </dd>
                       </div>
                       {"assessment" in clearance &&

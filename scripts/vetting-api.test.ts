@@ -384,9 +384,10 @@ describe("community security vetting", () => {
     expect((await publicVetting()).state).toBe("queued");
     livePin = { commitSha: "e".repeat(40), templateSha256: "f".repeat(64) };
     expect((await activate()).status).toBe(422);
-    // An unreadable head never counts as cleared, and no scan can be queued.
+    // The original pending assessment remains pending; no new scan can be
+    // queued while the current pin is unreadable.
     livePin = null;
-    expect((await publicVetting()).state).toBe("unverified");
+    expect((await publicVetting()).state).toBe("queued");
     expect((await activate()).status).toBe(422);
     const unqueued = await vettingApi(
       sessionRequest("POST", "admin/vetting/assessments", "admin", {
