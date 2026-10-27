@@ -53,6 +53,15 @@ for (const [next, expected] of [
     `${deployment.site}/projects/new?step=2#draft`,
   ],
   ["//evil.example/steal", `${deployment.site}/contributors/return-member`],
+  ["/.//evil.example/steal", `${deployment.site}/contributors/return-member`],
+  [
+    "/foo/..//evil.example/steal",
+    `${deployment.site}/contributors/return-member`,
+  ],
+  [
+    "/%2e%2e//evil.example/steal",
+    `${deployment.site}/contributors/return-member`,
+  ],
   ["earnings", `${deployment.site}/earnings`],
 ]) {
   test(`login returns ${next} to a safe destination`, async ({

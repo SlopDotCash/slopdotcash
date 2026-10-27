@@ -30,6 +30,7 @@ import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
 import type { ScoreEvent } from "./lib/leaderboard";
 import type { ActorRef } from "./lib/leaderboard-types";
+import { loginReturnPath } from "./lib/login-return";
 import {
   assemblePoints,
   POINTS_NOTICE,
@@ -151,19 +152,7 @@ async function loadPoints(signal: AbortSignal) {
 }
 /** Same-origin path from `next`; anything else falls back to the profile. */
 function returnPath(search = window.location.search): string | null {
-  const next = new URLSearchParams(search).get("next");
-  if (!next) return null;
-  if (next === "earnings") return "/earnings";
-  if (!next.startsWith("/") || next.startsWith("//") || next.includes("\\"))
-    return null;
-  try {
-    const url = new URL(next, window.location.origin);
-    if (url.origin !== window.location.origin || url.pathname === "/login")
-      return null;
-    return `${url.pathname}${url.search}${url.hash}`;
-  } catch {
-    return null;
-  }
+  return loginReturnPath(search, window.location.origin);
 }
 function member(value: unknown): Membership {
   const m = value as Membership;
