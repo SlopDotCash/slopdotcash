@@ -1156,6 +1156,21 @@ test("reaches and reads older inbox notifications without losing the page", asyn
 test("the inbox keeps delivery, read and acknowledgment distinct and links to account email preferences", async ({
   page,
 }) => {
+  // Inbox also loads the signed-in account's private reports and decisions.
+  await page.route("**/api/v1/security-cases", (route) =>
+    route.fulfill({
+      json: {
+        viewer: { githubId: "4242", githubLogin: "example" },
+        programs: [],
+        cases: [],
+      },
+    }),
+  );
+  await page.route("**/api/v1/security-submissions", (route) =>
+    route.fulfill({
+      json: { automatic: false, storedIntake: false, submissions: [] },
+    }),
+  );
   const paymentReads: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/v1/payments/me")
