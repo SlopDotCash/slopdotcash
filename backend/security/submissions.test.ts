@@ -12,18 +12,18 @@ import {
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import { FAKE_OAUTH, fakeGithub } from "../../tests/github-advisories.fake";
+import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { dispatchSecurityMail } from "../../workers/notify/security";
 import { slopbotRepositoryAccess } from "../projects/repository-access";
 import type { SecurityAnalysisInput, SecurityAnalyzer } from "./analysis";
-import { FAKE_OAUTH, fakeGithub } from "./github-advisories.fake";
 import {
   handleSecurityApi,
   type SecurityD1Database,
   securityNotificationAccess,
 } from "./handler";
 import { githubIntakeOAuth, type IntakeConfig } from "./intake-grant";
-import { seedParticipationBan } from "./participation-ban.fixture";
 import { cvss3BaseScore, deterministicAnalyzer } from "./report-analysis";
 import {
   type ReportingObservation,

@@ -11,8 +11,6 @@ import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
   copyFileSync,
-  existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -28,6 +26,7 @@ import {
   copyFixtureHistory,
   copyFixtureSkills,
 } from "../tests/fixture-overlay.mjs";
+import { copyWorkingTree } from "./copy-working-tree.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtures = join(repositoryRoot, "tests", "fixtures");
@@ -36,25 +35,6 @@ export const FIXTURE_REGISTRY_SYNCED_AT = "2026-10-16T06:00:00.000Z";
 
 function run(command, args, cwd, env = process.env) {
   execFileSync(command, args, { cwd, env, stdio: "inherit" });
-}
-
-/** Copies tracked and unignored files, so local edits are tested as well. */
-function copyWorkingTree(workspace) {
-  const files = execFileSync(
-    "git",
-    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-    { cwd: repositoryRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-  )
-    .split("\0")
-    .filter(Boolean);
-  for (const file of files) {
-    const source = join(repositoryRoot, file);
-    // A deleted but still-indexed path has nothing to copy.
-    if (!existsSync(source) || lstatSync(source).isDirectory()) continue;
-    const target = join(workspace, file);
-    mkdirSync(dirname(target), { recursive: true });
-    copyFileSync(source, target);
-  }
 }
 
 /** Restores the frozen registry, its skills, and its history in the copy. */
@@ -78,73 +58,80 @@ function overlayFixtures(workspace) {
 
 export async function prepareE2eFixture() {
   const workspace = mkdtempSync(join(tmpdir(), "slop-e2e-fixture-"));
-  copyWorkingTree(workspace);
-  overlayFixtures(workspace);
-  symlinkSync(
-    join(repositoryRoot, "node_modules"),
-    join(workspace, "node_modules"),
-  );
-  run("git", ["init", "-q"], workspace);
-  run("git", ["add", "-A"], workspace);
-  run(
-    "git",
-    [
-      "-c",
-      "user.name=Slop E2E fixture",
-      "-c",
-      "user.email=e2e-fixture@slop.invalid",
-      "-c",
-      "commit.gpgsign=false",
-      "commit",
-      "-q",
-      "-m",
-      "E2E fixture workspace",
-    ],
-    workspace,
-  );
-  // Runtime dependencies are not fixture source, including symlinks that a
-  // directory-only .gitignore rule would otherwise let git add capture.
-  if (process.env.SLOP_E2E_SOLANA_VAULT === "1") {
-    for (const directory of ["node_modules", "target"]) {
-      symlinkSync(
-        join(repositoryRoot, "contracts", "solana", directory),
-        join(workspace, "contracts", "solana", directory),
-      );
+  try {
+    copyWorkingTree(repositoryRoot, workspace);
+    overlayFixtures(workspace);
+    run("git", ["init", "-q"], workspace);
+    run("git", ["add", "-A"], workspace);
+    run(
+      "git",
+      [
+        "-c",
+        "user.name=Slop E2E fixture",
+        "-c",
+        "user.email=e2e-fixture@slop.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "E2E fixture workspace",
+      ],
+      workspace,
+    );
+    // Runtime dependencies are not fixture source, including symlinks that a
+    // directory-only .gitignore rule would otherwise let git add capture.
+    symlinkSync(
+      join(repositoryRoot, "node_modules"),
+      join(workspace, "node_modules"),
+    );
+    if (process.env.SLOP_E2E_SOLANA_VAULT === "1") {
+      for (const directory of ["node_modules", "target"]) {
+        symlinkSync(
+          join(repositoryRoot, "contracts", "solana", directory),
+          join(workspace, "contracts", "solana", directory),
+        );
+      }
     }
+    // The last production ledger published before the D1 registry, with an
+    // open cycle, is frozen as a fixture. Its cycle month comes from its own
+    // window, so it does not age. Rebind it the way pull-request builds do.
+    const ledger = join(workspace, "public", "data", "fixture-ledger.json");
+    mkdirSync(dirname(ledger), { recursive: true });
+    writeFileSync(
+      ledger,
+      gunzipSync(
+        readFileSync(join(fixtures, "leaderboard-2026-10-16.json.gz")),
+      ),
+    );
+    run(
+      "bun",
+      ["scripts/prepare-pr-ledger.ts", ledger, "public/data/leaderboard.json"],
+      workspace,
+    );
+    rmSync(ledger);
+    // The browser reads the registry at runtime. The fixture build serves the
+    // frozen registry as a static file in the API's response shape, so its
+    // specs need no D1 rows.
+    const { RAW_PROJECT_DEFINITIONS } = await import(
+      pathToFileURL(join(fixtures, "project-registry.mjs")).href
+    );
+    writeFileSync(
+      join(workspace, "public", "data", "fixture-project-registry.json"),
+      `${JSON.stringify({ schemaVersion: "1", projects: RAW_PROJECT_DEFINITIONS })}\n`,
+    );
+    run("bun", ["run", "build"], workspace, {
+      ...process.env,
+      // The caller may build the live registry with a different profile input.
+      // This isolated workspace must use the matching frozen profile inventory.
+      SLOP_PROFILES_INPUT: join(workspace, "data", "profiles", "seed.json"),
+      VITE_SLOP_PROJECT_REGISTRY_URL: "/data/fixture-project-registry.json",
+    });
+    return workspace;
+  } catch (error) {
+    rmSync(workspace, { recursive: true, force: true });
+    throw error;
   }
-  // The last production ledger published before the D1 registry, with an
-  // open cycle, is frozen as a fixture. Its cycle month comes from its own
-  // window, so it does not age. Rebind it the way pull-request builds do.
-  const ledger = join(workspace, "public", "data", "fixture-ledger.json");
-  mkdirSync(dirname(ledger), { recursive: true });
-  writeFileSync(
-    ledger,
-    gunzipSync(readFileSync(join(fixtures, "leaderboard-2026-10-16.json.gz"))),
-  );
-  run(
-    "bun",
-    ["scripts/prepare-pr-ledger.ts", ledger, "public/data/leaderboard.json"],
-    workspace,
-  );
-  rmSync(ledger);
-  // The browser reads the registry at runtime. The fixture build serves the
-  // frozen registry as a static file in the API's response shape, so its
-  // specs need no D1 rows.
-  const { RAW_PROJECT_DEFINITIONS } = await import(
-    pathToFileURL(join(fixtures, "project-registry.mjs")).href
-  );
-  writeFileSync(
-    join(workspace, "public", "data", "fixture-project-registry.json"),
-    `${JSON.stringify({ schemaVersion: "1", projects: RAW_PROJECT_DEFINITIONS })}\n`,
-  );
-  run("bun", ["run", "build"], workspace, {
-    ...process.env,
-    // The caller may build the live registry with a different profile input.
-    // This isolated workspace must use the matching frozen profile inventory.
-    SLOP_PROFILES_INPUT: join(workspace, "data", "profiles", "seed.json"),
-    VITE_SLOP_PROJECT_REGISTRY_URL: "/data/fixture-project-registry.json",
-  });
-  return workspace;
 }
 
 if (import.meta.main) process.stdout.write(`${await prepareE2eFixture()}\n`);

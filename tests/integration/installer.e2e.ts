@@ -42,7 +42,8 @@ const primaryInstallOptions = {
 } as const;
 const normalizeArchive = join(
   packageRoot,
-  "scripts",
+  "tests",
+  "integration",
   "normalize-skill-archive.py",
 );
 const revisionA = "a".repeat(40);
@@ -866,7 +867,7 @@ exec ${realPython} - ${shellQuote(pathToFileURL(artifact).href)} ${shellQuote(au
     );
     for (const name of ["run-receipt.mjs", "skill-authority.mjs"])
       files[`scripts/${name}`] = readFileSync(
-        join(packageRoot, "scripts/skill-kit", name),
+        join(packageRoot, "skills/project-contributor-template/scripts", name),
       );
     const artifact = writeArtifact(root, revisionA, files);
     const authority = configureAuthority(root, {

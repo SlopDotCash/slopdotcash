@@ -1,9 +1,9 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { SignInPanel } from "./Admin";
 import { sha256Hex } from "./lib/async-sha256.mjs";
 import { fetchWithDeadline } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { projectApiRequest, useProjectSession } from "./lib/project-api";
+import { SignInPanel } from "./Presentation";
 
 const MAX_TRACE_BYTES = 8 * 1024 * 1024;
 

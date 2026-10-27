@@ -12,8 +12,8 @@ import {
   reviewReferralClaim,
   sendReferralClaim,
 } from "../../src/lib/referral-claims";
+import { sqliteD1 } from "../../tests/sqlite-d1";
 import { buildTree } from "../../workers/referral-accrual/merkle";
-import { sqliteD1 } from "../../workers/referral-accrual/sqlite-d1";
 import { activeClaimEpoch, type ClaimSnapshot } from "./cache";
 import { handleReferralClaims } from "./claims";
 
