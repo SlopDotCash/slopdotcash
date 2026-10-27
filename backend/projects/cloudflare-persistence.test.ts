@@ -157,3 +157,63 @@ test("a legal transfer revision (alias append) keeps the repository resolvable",
   expect(resolved.projectId).toBe("asi");
   expect(resolved.capabilities.mayOfferContributorWork).toBe(true);
 });
+
+test("a repository path acquired by another project before commit refuses the whole revision", async () => {
+  const { db, sqlite } = sqliteD1(migrations);
+  const persistence = new CloudflareProjectPersistence(db);
+  const original = JSON.parse(
+    JSON.stringify(asiFixture()).replaceAll("SlopDotCash/asi", "elizaOS/asi"),
+  ) as ProjectDefinition;
+  const before: ProjectDefinition = {
+    ...original,
+    status: "paused",
+    repositories: [
+      {
+        ...original.repositories[0],
+        aliases: undefined,
+        displayName: "elizaOS/asi",
+        githubUrl: "https://github.com/elizaOS/asi",
+      },
+    ],
+  };
+  await createPaused(persistence, before);
+  const other = findProject("canonry");
+  if (!other) throw new Error("Second fixture missing");
+  await createPaused(persistence, {
+    ...structuredClone(other),
+    status: "paused",
+  });
+  // Another committed writer acquires the proposed path after the caller's
+  // registry snapshot. The unique D1 index is the final authority at commit.
+  sqlite
+    .query(
+      "INSERT INTO project_repositories(repository_key,project_id) VALUES (?,?)",
+    )
+    .run("slopdotcash/asi", other.id);
+  const after = { ...asiFixture(), status: "active" } as ProjectDefinition;
+  const text = JSON.stringify(after);
+  const result = await persistence.appendProjectRevision(
+    {
+      projectId: "asi",
+      expectedRevision: 1,
+      manifest: after,
+      manifestText: text,
+      manifestSha256: sha(text),
+      reason: "Record transfer",
+      actor: ACTOR,
+      at: R,
+    },
+    0,
+  );
+  expect({
+    result,
+    revision: (await persistence.getProject("asi"))?.revision,
+    aliasOwner: (
+      sqlite
+        .query(
+          "SELECT project_id FROM project_repositories WHERE repository_key=?",
+        )
+        .get("slopdotcash/asi") as { project_id: string }
+    ).project_id,
+  }).toEqual({ result: "conflict", revision: 1, aliasOwner: other.id });
+});
