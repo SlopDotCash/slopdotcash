@@ -12,11 +12,9 @@ PROJECT_MODERATOR_GITHUB_IDS = "18633264,202660855"
 # Monthly payment period (owner decision D1, 24 October 2026): calendar UTC
 # month from 2026-11; the cutoff is 72 hours after the month ends.
 MONTHLY_PAYMENT_SCHEDULE = '{"firstPeriod":"2026-11","cutoffSecondsAfterPeriodEnd":259200}'
-# Registry networks whose vaults accept wallet bindings and monthly owner
-# actions here (contracts/DEPLOY-MAINNET.md section 3.2). Base mainnet only:
-# owner activation of 24 October 2026; its attester is
-# slop-payments-base-mainnet-attester.
-PAYMENT_NETWORKS = '["base-mainnet"]'
+# The protected release derives PAYMENT_NETWORKS and attester bindings from
+# MAINNET_EXECUTION. An unassembled local artifact cannot activate payments.
+PAYMENT_NETWORKS = '[]'
 # Automatic private-report intake (PRD section 8; owner activation of 26
 # October 2026). Routes stay closed unless every intake App secret is set.
 SLOP_PRIVATE_INTAKE_MODE = "on"
@@ -60,18 +58,6 @@ service = "slop-identity"
 [[services]]
 binding = "SLOP_NOTIFY"
 service = "slop-notify"
-
-# Only observe an explicitly named finalized winner. No default signer access.
-[[services]]
-binding = "BINDING_RECOVERY"
-service = "slop-payments-base-mainnet-attester"
-entrypoint = "BindingRecovery"
-
-# Only owner-requested wrong-sum release attestations; never default signer access.
-[[services]]
-binding = "MONTHLY_RELEASE_BASE"
-service = "slop-payments-base-mainnet-attester"
-entrypoint = "MonthlyReserveRelease"
 
 # Cloudflare's non-inheritable bindings must be declared separately for every
 # environment. Keeping preview explicit and binding-free prevents preview

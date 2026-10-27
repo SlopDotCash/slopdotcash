@@ -72,6 +72,9 @@ export type TraceApiDependencies = {
   operatorSession?: (request: Request) => Promise<GithubActor | null>;
   /** Named observation-only service binding, never the default signing entrypoint. */
   bindingRecovery?: { fetch(request: Request): Promise<Response> };
+  bindingRecoveryForNetwork?: (
+    network: string,
+  ) => { fetch(request: Request): Promise<Response> } | undefined;
   now: () => Date;
   randomId: () => string;
   verifyIdentityAssertion: (assertion: string) => Promise<GithubActor | null>;
@@ -1170,8 +1173,10 @@ async function reconcileWalletBinding(
       "invalid_request",
       "An exact binding, winner and recovery reason are required",
     );
-  if (!deps.bindingRecovery)
-    fail(503, "recovery_unavailable", "Recovery is unavailable");
+  const recovery = deps.bindingRecoveryForNetwork
+    ? deps.bindingRecoveryForNetwork(input.network)
+    : deps.bindingRecovery;
+  if (!recovery) fail(503, "recovery_unavailable", "Recovery is unavailable");
   const audit = {
     actorGithubId: actor.githubId,
     target: `binding:${input.originalTransactionId.toLowerCase()}`,
@@ -1197,7 +1202,7 @@ async function reconcileWalletBinding(
   await record("wallet_binding.reconciliation_requested");
   let response: Response;
   try {
-    response = await deps.bindingRecovery.fetch(
+    response = await recovery.fetch(
       new Request("https://attester.internal/v1/reconcile-binding", {
         method: "POST",
         headers: { "content-type": "application/json" },
