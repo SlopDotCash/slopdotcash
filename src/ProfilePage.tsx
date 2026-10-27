@@ -105,7 +105,8 @@ export function ProfilePage({
         />
         <p className="data-notice" role="status">
           {profiles.state.status === "loading" ||
-          membership.joinStatus === "loading"
+          membership.joinStatus === "loading" ||
+          membership.sessionStatus === "loading"
             ? "Checking contributor…"
             : profiles.state.status === "error"
               ? "Contributor records are unavailable."
@@ -467,9 +468,14 @@ function currentProfileActor(
     actors.some((actor) =>
       actor.id === candidate.id ? !matchesLogin(actor) : matchesLogin(actor),
     );
-  // Membership and activity records can retain an old login; wait for the
-  // directory's veto before either one names the current actor.
-  if (profiles.status !== "ready") return;
+  // Every identity source can veto a stale login. Wait for the session,
+  // membership and directory before selecting the actor for wallet/history reads.
+  if (
+    profiles.status !== "ready" ||
+    membership.sessionStatus === "loading" ||
+    (!membership.own && membership.joinStatus === "loading")
+  )
+    return;
   const directoryConflict = (candidate: { id: string }) =>
     profiles.index.people.some((person) =>
       person.id === candidate.id ? !matchesLogin(person) : matchesLogin(person),
