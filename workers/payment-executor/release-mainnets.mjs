@@ -18,7 +18,7 @@ const run = async (provider, args) => {
   return result.stdout;
 };
 
-// Preflight every enabled network before changing any deployed service.
+// Preflight enabled networks and existing services that must stop execution.
 export async function prepareMainnetRelease({
   directory,
   account,
@@ -43,7 +43,7 @@ export async function prepareMainnetRelease({
     const bytes = `${JSON.stringify(entry.config, null, 2)}\n`;
     await writeFile(path, bytes);
     let release = true;
-    if (entry.pinCount) {
+    if (entry.enabled && entry.pinCount) {
       const inventory = JSON.parse(
         await run(provider, ["secret", "list", "--config", path]),
       );
@@ -65,7 +65,7 @@ export async function prepareMainnetRelease({
         path,
         "--json",
       ]);
-      if (existing.status === 0) release = false;
+      if (existing.status === 0) release = !entry.enabled;
       else {
         const output = `${existing.stdout}\n${existing.stderr}`;
         const resource = `/accounts/${account}/workers/scripts/${entry.config.name}/deployments`;
@@ -76,10 +76,13 @@ export async function prepareMainnetRelease({
           !/\[code: 10007\]/.test(output)
         )
           throw new Error(`Cannot prove ${entry.network} attester absent`);
+        // A disabled network may stop an existing service, never create one.
+        release = entry.enabled;
       }
     }
     services.push({
       network: entry.network,
+      enabled: entry.enabled,
       name: entry.config.name,
       bindings: entry.bindings,
       configSha256: digest(bytes),
@@ -101,10 +104,17 @@ async function readPlan(directory, sha) {
     plan.sha !== sha ||
     !/^[a-f0-9]{40}$/.test(sha) ||
     !Array.isArray(plan.services) ||
+    plan.services.some(
+      (entry) => entry.enabled !== MAINNET_EXECUTION[entry.network],
+    ) ||
     JSON.stringify(plan.services.map((entry) => entry.network)) !==
       JSON.stringify(
         Object.entries(MAINNET_EXECUTION)
-          .filter(([, enabled]) => enabled)
+          .filter(
+            ([network, enabled]) =>
+              enabled ||
+              plan.services.some((entry) => entry.network === network),
+          )
           .map(([network]) => network),
       )
   )
@@ -178,14 +188,16 @@ export async function assembleMainnetBindings({ directory, sha, path }) {
   if (plan.services.some((entry) => entry.release && !entry.published))
     throw new Error("Attester publication is not verified");
   config.vars.PAYMENT_NETWORKS = JSON.stringify(
-    plan.services.map((entry) => entry.network),
+    plan.services
+      .filter((entry) => entry.enabled)
+      .map((entry) => entry.network),
   );
   config.services = (config.services ?? []).filter(
     (entry) => !reserved.has(entry.binding),
   );
   config.services.push(
     ...plan.services
-      .filter((entry) => entry.published)
+      .filter((entry) => entry.enabled && entry.published)
       .flatMap((entry) => entry.bindings),
   );
   await writeFile(path, `${JSON.stringify(config, null, 2)}\n`);

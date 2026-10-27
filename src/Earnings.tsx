@@ -43,7 +43,7 @@ import {
   PayoutRow,
   RECEIVED_STATUS,
 } from "./PayoutRows";
-import { formatCycleMonth, RoutePageHeader } from "./Presentation";
+import { AccountNav, formatCycleMonth, RoutePageHeader } from "./Presentation";
 import { ReferralClaims } from "./ReferralClaims";
 
 function chainDefaultNetwork(chain: EscrowChain): string {
@@ -389,6 +389,7 @@ export function EarningsPage({
           }
         />
       )}
+      {!walletsOnly ? <AccountNav current="payouts" /> : null}
       <dialog
         ref={dialog}
         className="wallet-picker"
@@ -747,6 +748,14 @@ export function EarningsPage({
                         )}
                         transactionLabel="View transaction"
                       >
+                        {payment.deliveryState === "needs_wallet" ? (
+                          <p className="payout-consent">
+                            <a href="/account#wallets">
+                              Add or confirm your {NETWORK_NAMES[payment.chain]}{" "}
+                              wallet
+                            </a>
+                          </p>
+                        ) : null}
                         <PayoutConsent
                           key={
                             data.wallets.find(

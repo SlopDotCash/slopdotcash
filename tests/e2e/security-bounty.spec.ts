@@ -514,6 +514,93 @@ async function expectOutsiderRefused(
   }
 }
 
+test("maintainers can verify or reject a manually linked private report @registry", async ({
+  page,
+  request,
+}) => {
+  const id = `manual-report-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  await listProject(request, TOKENS.security, repository, id, {});
+  const claims = [];
+  for (const advisory of ["GHSA-2c3f-4g5h-6j7m", "GHSA-3c4f-5g6h-7j8m"]) {
+    const claimed = await api(
+      request,
+      "POST",
+      "security-cases",
+      TOKENS["reporter-a"],
+      {
+        mode: "claim",
+        projectId: id,
+        advisory,
+        idempotencyKey: key(),
+      },
+    );
+    expect(claimed.status, JSON.stringify(claimed.body)).toBe(201);
+    claims.push((claimed.body.case as { id: string }).id);
+  }
+  await signIn(page, TOKENS.security);
+  await page.goto("/security", { waitUntil: "networkidle" });
+  await page
+    .getByRole("button", { name: new RegExp(`${id} GHSA-2c3f-4g5h-6j7m`) })
+    .click();
+  const detail = page.locator(`[aria-labelledby="case-${claims[0]}"]`);
+  const verify = detail.getByRole("form", { name: "Verify the GitHub report" });
+  await expect(
+    verify.getByRole("button", { name: "Verify report", exact: true }),
+  ).toBeVisible();
+  const receivedAt = new Date(Date.now() - 60_000).toISOString().slice(0, 16);
+  await verify
+    .getByLabel("Time GitHub received the report (UTC)")
+    .fill(receivedAt);
+  await verify.getByRole("checkbox").check();
+  await verify
+    .getByRole("button", { name: "Verify report", exact: true })
+    .click();
+  await expect(detail.getByRole("status").first()).toHaveText(
+    "Verify the GitHub report: saved.",
+  );
+  const verified = await api(
+    request,
+    "GET",
+    `security-cases/${claims[0]}`,
+    TOKENS.security,
+  );
+  expect(verified.body.case).toMatchObject({
+    submissionState: "verified",
+    receivedAt: `${receivedAt}:00.000Z`,
+    receivedAtSource: "maintainer-attested",
+  });
+
+  await page
+    .getByRole("button", { name: new RegExp(`${id} GHSA-3c4f-5g6h-7j8m`) })
+    .click();
+  const rejectedDetail = page.locator(`[aria-labelledby="case-${claims[1]}"]`);
+  const reject = rejectedDetail.getByRole("form", { name: "Reject this link" });
+  const reason = "The advisory does not identify this account as the reporter.";
+  await reject.getByLabel("Private reason").fill(reason);
+  await expect(reject.getByLabel("Private reason")).toHaveValue(reason);
+  await reject
+    .getByRole("button", { name: "Reject link", exact: true })
+    .click();
+  await expect(rejectedDetail.getByRole("status").first()).toHaveText(
+    "Reject this link: saved.",
+  );
+  const rejected = await api(
+    request,
+    "GET",
+    `security-cases/${claims[1]}`,
+    TOKENS.security,
+  );
+  expect(rejected.body.case).toMatchObject({
+    submissionState: "link-rejected",
+  });
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("manual-report-decision.png"),
+    fullPage: true,
+  });
+});
+
 test("owners publish and control bounty programs with verified funding @registry", async ({
   browser,
   request,
@@ -2731,7 +2818,10 @@ test("automatic private intake files as the reporter and verifies receipt @regis
     await classification
       .getByText("Additional classification", { exact: false })
       .click();
-    const severity = page.getByLabel("Severity (optional)", { exact: true });
+    const severity = page.getByRole("combobox", {
+      name: "Severity (optional)",
+      exact: true,
+    });
     const cvss = page.getByLabel(
       "CVSS vector (optional, instead of severity)",
       { exact: true },

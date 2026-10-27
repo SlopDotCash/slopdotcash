@@ -36,7 +36,6 @@ export function mainnetReleasePlan({
   for (const [network, enabled] of Object.entries(execution)) {
     if (!Object.hasOwn(bindings, network) || typeof enabled !== "boolean")
       throw new Error("Unknown mainnet release policy");
-    if (!enabled) continue;
     const { configs, secret } = paymentStack({
       stack: "production",
       network,
@@ -51,6 +50,11 @@ export function mainnetReleasePlan({
       config.vars.SECURITY_PAYMENT_DEPLOYMENTS ?? "[]",
     );
     const pins = [...ordinary, ...privatePins];
+    // A disabled network with retained obligations still needs the reviewed
+    // stop code deployed to its existing service. Never provision one merely
+    // because a disabled network is present in the policy.
+    if (!enabled && !pins.length) continue;
+    if (!enabled) config.triggers.crons = [];
     const policy = ESCROW_NETWORKS[network];
     if (
       config.workers_dev !== false ||
@@ -62,11 +66,12 @@ export function mainnetReleasePlan({
       config.vars.CHAIN_FAMILY !== policy.family ||
       !pins.every((pin) => pin.network === network) ||
       JSON.stringify(config.triggers.crons) !==
-        JSON.stringify(pins.length ? ["*/5 * * * *"] : [])
+        JSON.stringify(enabled && pins.length ? ["*/5 * * * *"] : [])
     )
       throw new Error("Mainnet attester boundary drifted");
     result.push({
       network,
+      enabled,
       config,
       pinCount: pins.length,
       secrets: ["PAYMENT_RPC_URLS", secret].sort(),

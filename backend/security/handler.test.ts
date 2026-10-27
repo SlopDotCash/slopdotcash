@@ -522,6 +522,90 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
 }
 
 describe("automatic private intake", () => {
+  test("only a maintainer can verify or reject a claimed private report", async () => {
+    const env = open();
+    env.setAnalyzerConfigured(false);
+    const verifiedId = "sc_manualverify";
+    const rejectedId = "sc_manualreject";
+    env.claim(verifiedId, "GHSA-2c3f-4g5h-6j7m", REPORTER);
+    env.claim(rejectedId, "GHSA-3c4f-5g6h-7j8m", REPORTER);
+    const verification = {
+      action: "verify-link",
+      confirmation: true,
+      receivedAt: "2026-10-19T09:10:00.000Z",
+    };
+    expect((await env.decide(verifiedId, "unverified-report")).body.error).toBe(
+      "not_verified",
+    );
+    const request = {
+      ...verification,
+      expectedRevision: 1,
+      idempotencyKey: env.key(),
+    };
+    const verified = await env.call(
+      MAINTAINER,
+      "POST",
+      `security-cases/${verifiedId}/actions`,
+      request,
+    );
+    expect(verified.status).toBe(200);
+    expect(verified.body.case).toMatchObject({
+      revision: 2,
+      submissionState: "verified",
+      receivedAt: verification.receivedAt,
+      receivedAtSource: "maintainer-attested",
+      awardState: "pending",
+    });
+    const replay = await env.call(
+      MAINTAINER,
+      "POST",
+      `security-cases/${verifiedId}/actions`,
+      request,
+    );
+    expect(replay.body).toMatchObject({
+      replayed: true,
+      case: { revision: 2 },
+    });
+    expect(
+      (await env.act(MAINTAINER, verifiedId, verification)).body.error,
+    ).toBe("action_not_allowed");
+
+    expect((await env.act(REPORTER, rejectedId, verification)).status).toBe(
+      403,
+    );
+    expect(
+      (
+        await env.act(REPORTER, rejectedId, {
+          action: "reject-link",
+          reason: "This report is not from the claimed reporter.",
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await env.act(MAINTAINER, rejectedId, {
+          ...verification,
+          confirmation: false,
+        })
+      ).body.error,
+    ).toBe("confirmation_required");
+
+    const rejected = await env.act(MAINTAINER, rejectedId, {
+      action: "reject-link",
+      reason: "This report is not from the claimed reporter.",
+    });
+    expect(rejected.status).toBe(200);
+    expect(rejected.body.case).toMatchObject({
+      revision: 2,
+      submissionState: "link-rejected",
+    });
+    expect(
+      (await env.act(MAINTAINER, rejectedId, verification)).body.error,
+    ).toBe("action_not_allowed");
+    expect(env.reservations()).toEqual([]);
+    env.sqlite.close();
+  });
+
   // Reporter submission, OAuth and uncertain-send recovery are exercised
   // by submissions.test.ts against the canonical automatic intake route.
   test("a maintainer imports direct GitHub reports and settles older links", async () => {
