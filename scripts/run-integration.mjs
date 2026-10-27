@@ -1,5 +1,5 @@
 /**
- * Runs the Miniflare workflow drivers at the same time. Each driver starts its
+ * Runs Miniflare workflow drivers one at a time. Each driver starts its
  * own runtime on free ports with temporary storage. The run fails when any
  * driver fails or exceeds its deadline.
  */
@@ -22,6 +22,9 @@ const drivers = [
     ["workers/vetting-backup/qualification-workflow.mjs"],
   ],
   ["vetting-flags", "node", ["workers/vetting-flags/run-workflow.mjs"]],
+  // Keep each native runtime separate: concurrent runs reproduced transport
+  // resets during response reads and database setup. Every driver still runs
+  // once, with its original deadline and assertions.
   // The inactive production attester gets no keys or provider credentials.
   [
     "attester-bootstrap",
@@ -36,18 +39,17 @@ const drivers = [
     childEnvironment(),
   ],
 ];
-const statuses = await Promise.all(
-  drivers.map(([label, command, args, env = process.env]) =>
-    runE2ePhase({
-      label,
-      command,
-      args,
-      cwd: root,
-      env,
-      timeoutMs: 10 * 60_000,
-    }),
-  ),
-);
+const runDriver = ([label, command, args, env = process.env]) =>
+  runE2ePhase({
+    label,
+    command,
+    args,
+    cwd: root,
+    env,
+    timeoutMs: 10 * 60_000,
+  });
+const statuses = [];
+for (const driver of drivers) statuses.push(await runDriver(driver));
 const failed = drivers.filter((_, index) => statuses[index] !== 0);
 if (failed.length > 0) {
   process.stderr.write(

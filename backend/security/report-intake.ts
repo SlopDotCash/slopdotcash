@@ -824,6 +824,7 @@ export async function listStoredSubmissions(
   }
   rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return json(200, {
+    recipientGithubId: actor.githubId,
     automatic: deps.intake?.mode === "on",
     storedIntake:
       Boolean(deps.reportStorage) && deps.reportIntakeEnabled !== false,

@@ -62,6 +62,7 @@ type Case = {
   award: { grossMinor: string; researcherMinor: string; slopMinor: string };
 };
 type Body = {
+  recipientGithubId?: string;
   error?: string;
   authorityUnavailable?: boolean;
   replayed?: boolean;
@@ -451,9 +452,13 @@ describe("durable private report controls", () => {
     expect(retained.status).toBe(200);
     expect(retained.body.report).toEqual(REPORT);
     const listed = await t.call(REPORTER, "GET", "security-submissions");
+    expect(listed.body.recipientGithubId).toBe(REPORTER.githubId);
     expect(required(listed.body.submissions).map((row) => row.id)).toEqual([
       submission.id,
     ]);
+    const foreign = await t.call(OTHER, "GET", "security-submissions");
+    expect(foreign.body.recipientGithubId).toBe(OTHER.githubId);
+    expect(foreign.body.submissions).toEqual([]);
     expect(t.objects.size).toBe(1);
   });
 

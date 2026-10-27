@@ -256,6 +256,7 @@ test("security reports recover a failed list and share one session across submis
         })
       : route.fulfill({
           json: {
+            recipientGithubId: "4242",
             automatic: true,
             submissions: [1, 2, 3].map((number) => ({
               id: `ss_example${number}`,
@@ -1180,7 +1181,12 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   );
   await page.route("**/api/v1/security-submissions", (route) =>
     route.fulfill({
-      json: { automatic: false, storedIntake: false, submissions: [] },
+      json: {
+        recipientGithubId: "4242",
+        automatic: false,
+        storedIntake: false,
+        submissions: [],
+      },
     }),
   );
   const paymentReads: string[] = [];
