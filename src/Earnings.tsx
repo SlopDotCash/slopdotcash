@@ -176,11 +176,8 @@ function account(value: unknown): PaymentsAccount {
 
 export function EarningsPage({
   walletsOnly = false,
-  showSignIn = true,
 }: {
   walletsOnly?: boolean;
-  /** The Account page already supplies sign-in when its session is signed out. */
-  showSignIn?: boolean;
 } = {}) {
   const wallets = usePayoutWallets();
   const [picker, setPicker] = useState<WalletFamily | null>(null);
@@ -473,7 +470,7 @@ export function EarningsPage({
         </div>
       </dialog>
       {loading && <p role="status">Checking your payouts…</p>}
-      {signedOut && !loading && showSignIn && (
+      {signedOut && !loading && (
         <div>
           <a
             className="button"

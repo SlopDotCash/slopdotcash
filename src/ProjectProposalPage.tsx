@@ -1363,7 +1363,7 @@ export default function ProjectProposalPage() {
                     )}
                   </span>
                   <span>
-                    <strong>{index + 1}.</strong> {label}
+                    <strong>{index + 1}</strong> {label}
                   </span>
                   {attempted[index] && count > 0 ? (
                     <small>{count} to fix</small>

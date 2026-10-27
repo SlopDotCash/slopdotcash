@@ -884,11 +884,7 @@ export function AccountPage() {
           <p role="status">Checking your account…</p>
         </section>
       ) : (
-        <EarningsPage
-          walletsOnly
-          showSignIn={Boolean(me)}
-          key={me?.actor.id ?? "signed-out"}
-        />
+        <EarningsPage walletsOnly key={me?.actor.id ?? "signed-out"} />
       )}
       {me ? <AccountSessions /> : null}
       {accountSession.status === "signed-in" ? <AccountAppeals /> : null}
