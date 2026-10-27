@@ -211,7 +211,7 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
   await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });
   const sections = page.getByRole("navigation", { name: "Account sections" });
   const appealsLink = sections.getByRole("link", { name: "Appeals" });
-  const appeals = page.getByRole("heading", { name: "Account appeals" });
+  const appeals = page.getByRole("heading", { name: "Appeals", exact: true });
   const profile = page.locator("#profile");
   const signIn = profile.getByRole("button", { name: "Continue with GitHub" });
   await expect(signIn).toBeEnabled();
