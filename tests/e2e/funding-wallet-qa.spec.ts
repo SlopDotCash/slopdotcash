@@ -401,6 +401,19 @@ test("vault totals stay current without a refresh button and keep each state dis
   await page.reload();
   await expect(section.getByRole("status")).toHaveText("Totals not read yet");
   await expect(section.getByText("USDC")).toHaveCount(0);
+  // An empty successful read must not hide a later refresh failure.
+  read = { status: 503, snapshots: [] };
+  await page.clock.fastForward(61_000);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(section.getByRole("alert")).toContainText(
+    "Vault totals are unavailable.",
+  );
+  await expect(section.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(section.getByText("USDC")).toHaveCount(0);
+  read = { status: 200, snapshots: [] };
+  await section.getByRole("button", { name: "Retry" }).click();
+  await expect(section.getByRole("alert")).toHaveCount(0);
+  await expect(section.getByRole("status")).toHaveText("Totals not read yet");
   read = { status: 503, snapshots: [] };
   await page.reload();
   await expect(section.getByRole("alert")).toContainText(
