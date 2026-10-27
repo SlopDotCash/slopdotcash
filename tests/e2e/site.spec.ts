@@ -1013,6 +1013,26 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     "Publishes now: Contribution rules.",
   );
   await expect(exemptChanges).not.toContainText("Needs a new security scan");
+  // A normal successful admission has the same routine-edit permission,
+  // without relabelling it as the older existing-project exemption.
+  Object.assign(setup.checks.scan, {
+    state: "cleared",
+    exempt: undefined,
+    message: "Repository admission passed at revision 1.",
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByText("Exempt", { exact: true })).toHaveCount(0);
+  await openOwnerSettings(page, "Contribution rules");
+  await page.getByLabel("Acceptance criteria").fill(scope);
+  const admittedChanges = page.getByRole("region", { name: "Changes" });
+  await expect(admittedChanges).toContainText(
+    "Publishes now: Contribution rules.",
+  );
+  await expect(admittedChanges).not.toContainText("Needs a new security scan");
+  await page.screenshot({
+    path: test.info().outputPath("admitted-owner-edit.png"),
+    fullPage: true,
+  });
 });
 
 test("reaches and reads older inbox notifications without losing the page", async ({
