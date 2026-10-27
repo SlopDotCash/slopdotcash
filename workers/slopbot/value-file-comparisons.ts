@@ -84,6 +84,59 @@ export async function recoverFullValueComparisons(
   }
 }
 
+export function needsAddedValueComparison(file: FileChange): boolean {
+  return (
+    file.status === "added" &&
+    file.previous_filename === undefined &&
+    file.additions === 0 &&
+    file.deletions === 0 &&
+    file.patch === undefined &&
+    !hasCompleteValuePatch(file)
+  );
+}
+
+/** GitHub can omit both the added patch and its line count. Prove an empty
+ * parent path and a regular accepted text blob without changing those fields. */
+export async function recoverAddedValueComparisons(
+  client: EvidenceClient,
+  repository: string,
+  files: FileChange[],
+  baseSha: string,
+  headSha: string,
+): Promise<void> {
+  const missing = files.filter(needsAddedValueComparison);
+  if (missing.length === 0) return;
+  const before = await readValueTree(client, repository, baseSha);
+  const after = await readValueTree(client, repository, headSha);
+  if (!before || !after) return;
+  const read = valueFileReader(client, repository);
+  for (const file of missing) {
+    const entry = after.get(file.filename);
+    if (
+      before.has(file.filename) ||
+      entry?.type !== "blob" ||
+      !["100644", "100755"].includes(entry.mode)
+    )
+      continue;
+    const blob = await read(file.filename, headSha);
+    if (!blob || blob.sha !== entry.sha) continue;
+    try {
+      const text = new TextDecoder("utf-8", {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(blob.bytes);
+      if (text.includes("\0")) continue;
+      file.addedComparison = {
+        baseSha,
+        headSha,
+        after: { blobSha: blob.sha, text },
+      };
+    } catch {
+      // Binary or invalid UTF-8 remains an explicit evidence gap.
+    }
+  }
+}
+
 export function needsRemovedValueComparison(file: FileChange): boolean {
   return (
     file.status === "removed" &&

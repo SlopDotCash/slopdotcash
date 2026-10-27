@@ -68,6 +68,7 @@ export function needsAddedBinaryProof(file: FileChange): boolean {
     file.deletions === 0 &&
     file.patch === undefined &&
     file.fullComparison === undefined &&
+    file.addedComparison === undefined &&
     file.removedComparison === undefined &&
     file.unchangedRename === undefined
   );

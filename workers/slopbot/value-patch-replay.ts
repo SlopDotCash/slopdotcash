@@ -1,6 +1,10 @@
 import { valueFileReader } from "./value-blob";
 import type { EvidenceClient, FileChange } from "./value-evidence";
-import { hasCompleteValuePatch } from "./value-patch";
+import {
+  hasCompleteValuePatch,
+  valueAdditionCount,
+  valuePatch,
+} from "./value-patch";
 import { readValuePaths } from "./value-tree";
 
 interface Hunk {
@@ -30,9 +34,9 @@ export interface AcceptedPatchReplay {
 
 /** Parse complete unified hunks without normalizing any content bytes. */
 function hunks(file: FileChange): Hunk[] | null {
-  if (!hasCompleteValuePatch(file) || typeof file.patch !== "string")
-    return null;
-  const lines = file.patch.split("\n");
+  const patch = valuePatch(file);
+  if (!hasCompleteValuePatch(file) || typeof patch !== "string") return null;
+  const lines = patch.split("\n");
   if (lines.at(-1) === "") lines.pop();
   const result: Hunk[] = [];
   let delta = 0;
@@ -229,7 +233,7 @@ export async function collectAcceptedPatchReplay(
       b.previous_filename !== undefined ||
       a.fullComparison ||
       b.fullComparison ||
-      a.additions !== b.additions ||
+      valueAdditionCount(a) !== valueAdditionCount(b) ||
       a.deletions !== b.deletions
     )
       return null;
