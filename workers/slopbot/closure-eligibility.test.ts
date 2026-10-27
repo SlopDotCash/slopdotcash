@@ -48,8 +48,6 @@ describe("closure eligibility", () => {
 
   const base = {
     config: { ...labelOnlyConfig(), closure: true },
-    installationActive: true,
-    repositoryPrivate: false,
     itemKind: "pull_request" as const,
     itemOpen: true,
     draft: false,

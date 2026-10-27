@@ -16,9 +16,9 @@ import {
   type FeeConverterConfig,
   type FeeConverterEnv,
   isTokenAddress,
+  type Network,
   type NetworkConfig,
   networkKey,
-  normalizeToken,
   parseConfig,
 } from "./config";
 import {
@@ -58,7 +58,6 @@ export function chainClient(
   network: NetworkConfig,
   overrides: {
     fetch?: typeof fetch;
-    chainIdOverride?: number;
     localBlockhash?: boolean;
     nativeGas?: NativeGasJournal;
     now?: () => Date;
@@ -84,7 +83,6 @@ export function chainClient(
         kyberClientId: config.kyberClientId,
         privateKey: secret,
         fetch: overrides.fetch,
-        chainIdOverride: overrides.chainIdOverride,
         nativeGas: overrides.nativeGas,
         now: overrides.now,
       })
@@ -99,6 +97,14 @@ export function chainClient(
         recoveryRpcUrl: env.SOLANA_RECOVERY_RPC_URL,
         nativeGas: overrides.nativeGas,
       });
+}
+
+/** Project manifests store validated addresses; anything else is corrupt
+ * registry data that must stop the run, not disappear from it. */
+function storedAddress(network: Network, value: string): string {
+  if (!isTokenAddress(network, value))
+    throw new Error(`A stored ${network} project address is malformed`);
+  return value;
 }
 
 export async function runOnce(
@@ -132,16 +138,14 @@ export async function runOnce(
                 n.network,
                 n.definition.escrowNetworks,
               )
-            )
-              .filter((token) => isTokenAddress(n.network, token))
-              .map((token) => normalizeToken(n.network, token)),
+            ).map((token) => storedAddress(n.network, token)),
           projectVaults: async (n) =>
-            (await projectVaults(env.FEE_DB, n.definition.escrowNetworks))
-              .filter((entry) => isTokenAddress(n.network, entry.vault))
-              .map((entry) => ({
+            (await projectVaults(env.FEE_DB, n.definition.escrowNetworks)).map(
+              (entry) => ({
                 ...entry,
-                vault: normalizeToken(n.network, entry.vault),
-              })),
+                vault: storedAddress(n.network, entry.vault),
+              }),
+            ),
           client: (n, runId) =>
             chainClient(env, config, n, {
               ...overrides,

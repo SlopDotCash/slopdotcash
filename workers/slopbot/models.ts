@@ -26,10 +26,9 @@ const FALLBACK: Step = {
 };
 
 // Owner decision (10 October 2026): Surplus serves both Opus 5.5 and
-// the GPT-6.1 Sol fallback. Confirmation is a second,
+// the GPT-6.1 Sol fallback. Confirmation reuses this route as a second,
 // independent call at higher effort, not a different seller guarantee.
 export const TRIAGE_ROUTE = [SURPLUS, FALLBACK];
-export const CONFIRM_ROUTE = [SURPLUS, FALLBACK];
 
 export type CallRecord = {
   routeStep: number;
@@ -116,6 +115,8 @@ export async function runStructuredRoute<T>(
   servedBy: CallRecord | null;
   budgetResetAt?: string;
   blocked: boolean;
+  /** The authority check failed. The caller records `calls`, then rethrows. */
+  failure?: unknown;
 }> {
   const calls: CallRecord[] = [];
   for (const [index, step] of route.entries()) {
@@ -123,9 +124,9 @@ export async function runStructuredRoute<T>(
     try {
       if (!(await mayCall()))
         return { verdict: null, calls, servedBy: null, blocked: true };
-    } catch {
+    } catch (failure) {
       // Return prior usage so the caller records it before retrying the job.
-      return { verdict: null, calls, servedBy: null, blocked: true };
+      return { verdict: null, calls, servedBy: null, blocked: true, failure };
     }
     const record: CallRecord = {
       routeStep: index + 1,

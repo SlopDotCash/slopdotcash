@@ -17,7 +17,6 @@ import {
   inspectRepository,
   type QueuedScan,
   readAcquiredSource,
-  reuseCleanScan,
   type ScanInputFile,
   surfacesOf,
 } from "../workers/vetting/bounded-scan";
@@ -190,7 +189,7 @@ test("a harmless revision passes every check, and its digest keys the cache", as
   );
   expect(scanProblems(parsed)).toEqual([]);
 
-  // A new binary is quarantined and cannot reuse earlier clean clearance.
+  // A new binary is quarantined and changes the digest that keys the cache.
   const withBinary = inspectRepository({
     files: [
       ...harmless,
@@ -201,43 +200,7 @@ test("a harmless revision passes every check, and its digest keys the cache", as
     ],
   });
   expect(withBinary.artifacts[0]?.state).toBe("quarantined");
-  expect(() =>
-    reuseCleanScan({
-      queued: {
-        ...queued,
-        assessmentId: `vet_${"4".repeat(32)}`,
-        commitSha: "f".repeat(40),
-      },
-      original: parsed,
-      originalAssessmentId: queued.assessmentId,
-      inventorySha256: withBinary.inventorySha256,
-    }),
-  ).toThrow("does not cover");
-
-  // A later commit with the same executable inventory reuses the result.
-  const reused = reuseCleanScan({
-    queued: {
-      ...queued,
-      assessmentId: `vet_${"3".repeat(32)}`,
-      commitSha: "e".repeat(40),
-    },
-    original: parsed,
-    originalAssessmentId: queued.assessmentId,
-    inventorySha256: docsOnly.inventorySha256,
-  });
-  expect(reused).toMatchObject({
-    reusedAssessmentId: queued.assessmentId,
-    assessed: { commitSha: "e".repeat(40) },
-    scan: parsed.scan,
-  });
-  expect(() =>
-    reuseCleanScan({
-      queued,
-      original: parsed,
-      originalAssessmentId: queued.assessmentId,
-      inventorySha256: changed.inventorySha256,
-    }),
-  ).toThrow("does not cover");
+  expect(withBinary.inventorySha256).not.toBe(inspection.inventorySha256);
 });
 
 test("risky content is flagged, downloads stay incomplete and escalation needs a specialist", async () => {
@@ -290,33 +253,6 @@ test("risky content is flagged, downloads stay incomplete and escalation needs a
   expect(composed.result.disposition).toBe("incomplete");
   expect(composed.needsSpecialist).toBe(true);
   expect(composed.result.primaryReview.risk).toBe("ambiguous");
-
-  // A retrieved, readable, harmless download is statically released.
-  const retrieved = inspectRepository({
-    files: harmless.map((item) =>
-      item.path === "package.json"
-        ? file(
-            "package.json",
-            JSON.stringify({
-              scripts: {
-                postinstall:
-                  "curl -o setup.sh https://example.invalid/setup.sh",
-              },
-            }),
-          )
-        : item,
-    ),
-    retrievedDownloads: [
-      {
-        url: "https://example.invalid/setup.sh",
-        bytes: new TextEncoder().encode("echo configured\n"),
-      },
-    ],
-  });
-  expect(retrieved.coverage.downloads.state).toBe("complete");
-  expect(retrieved.artifacts).toMatchObject([
-    { type: "second-stage", state: "released", analysis: "static-clean" },
-  ]);
 });
 
 test("acquired source is reread by digest and its gaps keep the scan incomplete", async () => {
@@ -346,7 +282,7 @@ test("acquired source is reread by digest and its gaps keep the scan incomplete"
     );
     await writeFile(join(directory, "objects", digest), "changed");
     await expect(readAcquiredSource(directory)).rejects.toThrow(
-      "Acquired source bytes changed",
+      "Acquired object bytes changed",
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

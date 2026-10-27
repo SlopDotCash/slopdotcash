@@ -1,12 +1,13 @@
 /** Call only through the configured journal authority. Hashes authenticate
  * bytes within that history; they do not authenticate an arbitrary web host.
  */
+
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   REGISTERED_REPOSITORIES,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
 import { VALUE_RUBRIC_VERSION } from "../../src/lib/value-assessment";
-import { sha256Hex } from "./github";
 import { validValueContextSelections } from "./value-context";
 import { validMergeRecipe } from "./value-merge-profile";
 import { isValueProducer } from "./value-producer";

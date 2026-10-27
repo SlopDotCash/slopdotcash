@@ -19,10 +19,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { sha256Hex } from "../../backend/trace/validation";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   composeScanResult,
   inspectRepository,
+  readAcquiredObject,
   readAcquiredSource,
   type ScanInputFile,
 } from "./bounded-scan";
@@ -43,7 +44,7 @@ import {
   type ScannerProfile,
   validateProfile,
 } from "./scanners";
-import { signedServiceHeaders, vettingServiceSigner } from "./service";
+import { signedVettingFetch, vettingServiceSigner } from "./service";
 
 /**
  * Source-inventory gaps of the historical secure-VM contract that the
@@ -116,6 +117,8 @@ export type AssessmentOutcome =
         | "primary-review"
         | "specialist-review"
         | "evidence";
+      /** The error name of a step that threw, never its message. */
+      reason?: string;
     }
   | {
       assessmentId: string;
@@ -137,22 +140,29 @@ async function signedRequest(
   body: Uint8Array,
   contentType: string,
 ): Promise<Response> {
-  return (connection.fetch ?? fetch)(`${connection.origin}${path}`, {
+  return signedVettingFetch(connection, {
     method,
-    redirect: "error",
-    signal: AbortSignal.timeout(30_000),
-    headers: {
-      "content-type": contentType,
-      ...(await signedServiceHeaders({
-        signer: connection,
-        method,
-        pathAndQuery: path,
-        body,
-        at: connection.now?.(),
-      })),
-    },
-    body: new Uint8Array(body),
+    path,
+    body,
+    contentType,
+    timeoutMs: 30_000,
   });
+}
+/** A retry for a step that threw. It names the error, never the message,
+ * which can carry source or provider text. An unsupported pin names
+ * AcquisitionRefusal; an outage or changed input keeps its own error name.
+ */
+function retry(
+  assessmentId: string,
+  step: "acquire" | "isolated-execution",
+  error: unknown,
+): AssessmentOutcome {
+  return {
+    assessmentId,
+    state: "retry",
+    step,
+    reason: error instanceof Error ? error.name : "unknown",
+  };
 }
 
 /** POST /api/v1/vetting/refresh: Slop queues every changed project. */
@@ -190,17 +200,11 @@ async function acquiredInputs(directory: string) {
   if (queued.schema !== "slop-queued-inputs-v1")
     throw new Error("Unknown queued input bundle");
   const templates: ScanInputFile[] = [];
-  for (const input of queued.inputs) {
-    // The digest names the object file, so it must not name another path.
-    if (!/^[0-9a-f]{64}$/u.test(input.sha256))
-      throw new Error("Invalid template object digest");
-    const bytes = new Uint8Array(
-      await readFile(join(directory, "objects", input.sha256)),
-    );
-    if ((await sha256Hex(bytes)) !== input.sha256)
-      throw new Error("Acquired template bytes changed");
-    templates.push({ path: `${TEMPLATE_PREFIX}/${input.path}`, bytes });
-  }
+  for (const input of queued.inputs)
+    templates.push({
+      path: `${TEMPLATE_PREFIX}/${input.path}`,
+      bytes: await readAcquiredObject(directory, input.sha256),
+    });
   return {
     repository: queued.repositoryIdentity.fullName,
     files: [...source.files, ...templates],
@@ -282,16 +286,16 @@ async function scanOne(
         config.workDirectory,
       )
     ).directory;
-  } catch {
-    return { assessmentId, state: "retry", step: "acquire" };
+  } catch (error) {
+    return retry(assessmentId, "acquire", error);
   }
   try {
     const startedAt = now().toISOString();
     let inputs: Awaited<ReturnType<typeof acquiredInputs>>;
     try {
       inputs = await acquiredInputs(directory);
-    } catch {
-      return { assessmentId, state: "retry", step: "acquire" };
+    } catch (error) {
+      return retry(assessmentId, "acquire", error);
     }
     const inspection = inspectRepository(inputs);
     let isolated: Awaited<ReturnType<typeof inspectIsolatedArtifacts>>;
@@ -301,8 +305,8 @@ async function scanOne(
         files: inputs.files,
         inspection,
       });
-    } catch {
-      return { assessmentId, state: "retry", step: "isolated-execution" };
+    } catch (error) {
+      return retry(assessmentId, "isolated-execution", error);
     }
     const executionEvidenceSha256s = await Promise.all(
       isolated.reports.map(sha256Hex),

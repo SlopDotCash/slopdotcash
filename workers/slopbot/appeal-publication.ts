@@ -1,10 +1,6 @@
 // PRD sections 5 and 9: a lost response is not permission to post again.
-import {
-  findReviewComment,
-  type GitHubClient,
-  GitHubError,
-  sha256Hex,
-} from "./github";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { findReviewComment, type GitHubClient, GitHubError } from "./github";
 import {
   type D1TransactionalDatabase,
   hasRecordedAction,

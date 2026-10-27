@@ -1,6 +1,5 @@
 import {
   collectTargetRepositories,
-  REGISTERED_REPOSITORIES,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
 import type { Job } from "./contracts";
@@ -35,7 +34,7 @@ export async function verifyCurrentWorkUnitSource(
   github: ValueClient,
   supplied: WorkUnitEvidence,
   result: Pick<Result, "sourceDigest">,
-  repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
+  repositories: readonly TargetRepository[],
 ) {
   const original = await prepareWorkUnitEvidence(
     supplied.sources,

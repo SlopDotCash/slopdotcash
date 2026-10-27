@@ -328,13 +328,6 @@ export async function verifyEvmFactory(
     BigInt(config.bindingDelaySeconds) > U64
   )
     throw new Error("Reviewed deployment identity is incomplete");
-  if (quantity(await rpc(config, "eth_chainId", [])) !== config.chainId)
-    throw new Error("Wrong chain");
-  if (
-    (await runtimeSha256(config, config.factory, blockTag)) !==
-    config.factoryCodeSha256
-  )
-    throw new Error("Escrow factory code does not match reviewed deployment");
   // Proxy bytecode alone does not identify the logic. Check its reviewed implementation.
   // Historical reviews apply only to the exact earlier payment event.
   const implementationSlot =
@@ -370,22 +363,64 @@ export async function verifyEvmFactory(
     )
   )
     throw new Error("Escrow upgrade review is invalid");
-  const slot = await rpc(config, "eth_getStorageAt", [
-    config.factory,
-    implementationSlot,
-    blockTag,
+  // These reads are independent. Await every fact before accepting the factory,
+  // without making owner recovery pay the network latency once per getter.
+  const [
+    chainId,
+    factoryCode,
+    slot,
+    registrar,
+    feeRecipient,
+    bindingDelay,
+    rotationDelay,
+    authority,
+    vaultImplementation,
+    vaultCode,
+    identityAuthority,
+    creationFactoryCode,
+  ] = await Promise.all([
+    rpc(config, "eth_chainId", []),
+    runtimeSha256(config, config.factory, blockTag),
+    rpc(config, "eth_getStorageAt", [
+      config.factory,
+      implementationSlot,
+      blockTag,
+    ]),
+    getter(config, config.factory, "registrar()", blockTag),
+    getter(config, config.factory, "feeRecipient()", blockTag),
+    getter(config, config.factory, "bindingDelay()", blockTag),
+    getter(config, config.factory, "AUTHORITY_ROTATION_DELAY()", blockTag),
+    upgrade
+      ? getter(config, config.factory, "upgradeAuthority()", blockTag)
+      : null,
+    forCreation && upgrade
+      ? getter(config, config.factory, "vaultImplementation()", blockTag)
+      : null,
+    forCreation && upgrade
+      ? runtimeSha256(config, upgrade.vaultImplementation, blockTag)
+      : null,
+    forCreation
+      ? getter(config, config.factory, "identityAuthority()", blockTag)
+      : null,
+    forCreation && upgrade
+      ? runtimeSha256(config, upgrade.factoryImplementation, blockTag)
+      : null,
   ]);
+  if (quantity(chainId) !== config.chainId) throw new Error("Wrong chain");
+  if (factoryCode !== config.factoryCodeSha256)
+    throw new Error("Escrow factory code does not match reviewed deployment");
   if (typeof slot !== "string" || !HASH.test(slot))
     throw new Error("Invalid implementation slot");
   if (!upgrade && BigInt(slot) !== 0n)
     throw new Error("Proxy deployment has no reviewed implementation");
   if (upgrade) {
     const factorySlot = slot.toLowerCase();
-    const factoryDigest = await runtimeSha256(
-      config,
-      `0x${factorySlot.slice(-40)}`,
-      blockTag,
-    );
+    // Preload the current creation implementation, then bind it to the live
+    // slot. Historical event verification still reads its actual implementation.
+    const factoryDigest =
+      forCreation && factorySlot === addressWord(upgrade.factoryImplementation)
+        ? creationFactoryCode
+        : await runtimeSha256(config, `0x${factorySlot.slice(-40)}`, blockTag);
     if (
       !reviews.some(
         (review) =>
@@ -396,63 +431,34 @@ export async function verifyEvmFactory(
       throw new Error(
         "Escrow implementation does not match reviewed deployment",
       );
-    const authority = await getter(
-      config,
-      config.factory,
-      "upgradeAuthority()",
-      blockTag,
-    );
     if (!reviews.some((review) => authority === addressWord(review.authority)))
       throw new Error(
         "Escrow upgrade authority does not match reviewed deployment",
       );
   }
-  for (const [target, signature, expected] of [
-    [config.factory, "registrar()", config.registrar],
-    [config.factory, "feeRecipient()", config.feeRecipient],
-  ]) {
-    if (
-      (await getter(config, target, signature, blockTag)) !==
-      addressWord(expected)
-    )
-      throw new Error(
-        "Escrow asset, factory or registrar does not match reviewed deployment",
-      );
-  }
-  for (const [target, signature, expected] of [
-    [config.factory, "bindingDelay()", BigInt(config.bindingDelaySeconds)],
-    [
-      config.factory,
-      "AUTHORITY_ROTATION_DELAY()",
-      config.evmUpgrade ? EVM_AUTHORITY_ROTATION_DELAY : 604800n,
-    ],
-  ] as const) {
-    if (BigInt(await getter(config, target, signature, blockTag)) !== expected)
-      throw new Error("Escrow delays do not match reviewed deployment");
-  }
+  if (
+    registrar !== addressWord(config.registrar) ||
+    feeRecipient !== addressWord(config.feeRecipient)
+  )
+    throw new Error(
+      "Escrow asset, factory or registrar does not match reviewed deployment",
+    );
+  if (
+    BigInt(bindingDelay) !== BigInt(config.bindingDelaySeconds) ||
+    BigInt(rotationDelay) !==
+      (config.evmUpgrade ? EVM_AUTHORITY_ROTATION_DELAY : 604800n)
+  )
+    throw new Error("Escrow delays do not match reviewed deployment");
   if (forCreation) {
     if (
       !upgrade ||
-      (await getter(
-        config,
-        config.factory,
-        "vaultImplementation()",
-        blockTag,
-      )) !== addressWord(upgrade.vaultImplementation) ||
-      (await runtimeSha256(config, upgrade.vaultImplementation, blockTag)) !==
-        upgrade.vaultImplementationCodeSha256
+      vaultImplementation !== addressWord(upgrade.vaultImplementation) ||
+      vaultCode !== upgrade.vaultImplementationCodeSha256
     )
       throw new Error(
         "The factory's new-vault implementation is not reviewed.",
       );
-    if (
-      (await getter(
-        config,
-        config.factory,
-        "identityAuthority()",
-        blockTag,
-      )) !== addressWord(config.identityAuthority)
-    )
+    if (identityAuthority !== addressWord(config.identityAuthority))
       throw new Error(
         "The factory identity authority differs from the creation review.",
       );
