@@ -651,7 +651,13 @@ export function ProfilePoints({
     </section>
   );
 }
-function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
+function JoinPoints({
+  showHeading = true,
+  onSignedIn,
+}: {
+  showHeading?: boolean;
+  onSignedIn?: (message: string) => void;
+}) {
   const { me, setMe, session } = usePoints();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -796,11 +802,11 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       });
       setClosedAccount(false);
       setMe(member(joined));
-      setMessage(
-        reopen
-          ? "Your account is open again. Connections and activity email are off."
-          : "You’re signed in.",
-      );
+      const notice = reopen
+        ? "Your account is open again. Connections and activity email are off."
+        : "You’re signed in.";
+      setMessage(notice);
+      onSignedIn?.(notice);
     } catch (e) {
       // A same-tab or resumed local sign-in has no window to close.
       if (!authorized) popup?.close();
@@ -905,8 +911,10 @@ export function AccountPage() {
     };
   }, []);
   const [closedNotice, setClosedNotice] = useState("");
+  const [signInNotice, setSignInNotice] = useState("");
   useEffect(() => {
     if (me) setClosedNotice("");
+    else setSignInNotice("");
   }, [me]);
   return (
     <main className="shell route-main account-page">
@@ -914,9 +922,10 @@ export function AccountPage() {
       <AccountNav current="account" />
       {!me && (!walletEntry || signedIn) ? (
         <div id="profile">
-          <JoinPoints />
+          <JoinPoints onSignedIn={setSignInNotice} />
         </div>
       ) : null}
+      {me && signInNotice ? <p role="status">{signInNotice}</p> : null}
       {me ? <SocialConnections /> : null}
       {session === "loading" || signedIn || walletEntry ? (
         <DetailsSection
