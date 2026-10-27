@@ -127,29 +127,41 @@ async function rotateAfterFirstAward(
   paidBy: string | null,
 ) {
   const { sql, db } = open();
-  await registerWallet(sql, "claim-old", oldWallet, oldDigest, null);
-  await chainEvent(db, "reserved", firstAward, `0x${"01".repeat(32)}`);
-  await dispatchPayment(db, { submit }, firstAward, new Date(registered)).catch(
-    () => {},
-  );
-  if (paidBy) await chainEvent(db, "paid", firstAward, paidBy);
-  await registerWallet(sql, "claim-new", newWallet, newDigest, "claim-old");
-  await chainEvent(db, "reserved", laterAward, `0x${"02".repeat(32)}`);
-  return dispatchPayment(
-    db,
-    {
-      async submit(input) {
-        await authorizeWalletRotation(
-          { PAYMENTS_DB: db },
-          input,
-          `0x${oldDigest}`,
-        );
-        return { transactionId: `0x${"88".repeat(32)}` };
+  try {
+    await registerWallet(sql, "claim-old", oldWallet, oldDigest, null);
+    await chainEvent(db, "reserved", firstAward, `0x${"01".repeat(32)}`);
+    const firstDispatch = dispatchPayment(
+      db,
+      { submit },
+      firstAward,
+      new Date(registered),
+    );
+    if (submit === lostResponse)
+      await expect(firstDispatch).rejects.toThrow(
+        "Payment execution service rejected request",
+      );
+    else expect(await firstDispatch).toBe("submitted");
+    if (paidBy) await chainEvent(db, "paid", firstAward, paidBy);
+    await registerWallet(sql, "claim-new", newWallet, newDigest, "claim-old");
+    await chainEvent(db, "reserved", laterAward, `0x${"02".repeat(32)}`);
+    return await dispatchPayment(
+      db,
+      {
+        async submit(input) {
+          await authorizeWalletRotation(
+            { PAYMENTS_DB: db },
+            input,
+            `0x${oldDigest}`,
+          );
+          return { transactionId: `0x${"88".repeat(32)}` };
+        },
       },
-    },
-    laterAward,
-    new Date(),
-  ).catch((error: Error) => error.message);
+      laterAward,
+      new Date(),
+    ).catch((error: Error) => error.message);
+  } finally {
+    sql.close();
+  }
 }
 
 const lostResponse = async (): Promise<{ transactionId: string }> => {

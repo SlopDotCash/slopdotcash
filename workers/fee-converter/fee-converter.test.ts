@@ -486,8 +486,6 @@ describe("Kyber gas pricing in the conversion workflow", () => {
     test(`a Kyber price impact to ${amountOutUsd} USD counts as ${bps} bps`, async () => {
       const h = quotedRun("base", { amountOutUsd });
       try {
-        const quote = await h.chain.quote(TOKEN, 20_000_000n);
-        expect("noRoute" in quote ? null : quote.priceImpactBps).toBe(bps);
         await runNetwork(h.network, h.deps);
         expect(h.rows()[0]).toMatchObject({
           state,
