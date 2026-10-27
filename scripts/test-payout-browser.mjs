@@ -206,17 +206,15 @@ try {
     if (!bounds || bounds.x < 0 || bounds.x + bounds.width > 390)
       throw new Error(`Mobile payment value is off screen: ${label}`);
   }
-  const transaction = paidRow.getByRole("link", {
-    name: "View transaction",
-    exact: true,
-  });
-  await transaction.focus();
+  await history.focus();
+  await page.keyboard.press("Tab");
+  const projectLink = paidRow.locator('td[data-label="Project"] a');
   if (
-    !(await transaction.evaluate(
+    !(await projectLink.evaluate(
       (element) => element === document.activeElement,
     ))
   )
-    throw new Error("Payment transaction link cannot receive keyboard focus");
+    throw new Error("Payment card cannot be reached with the keyboard");
   await page.screenshot({
     path: "evidence/payout-mobile-paid.png",
     fullPage: true,
