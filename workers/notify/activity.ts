@@ -173,6 +173,15 @@ export async function dispatchActivityMail(
         continue;
       }
     }
+    // A reinstatement review (ELG-02) asks the moderators who may decide the
+    // request. A removed moderator no longer belongs to that audience.
+    if (
+      row.event_key.startsWith("reinstatement-review:") &&
+      !deps.moderatorGithubIds?.has(row.recipient_github_id)
+    ) {
+      await recordDelivery(deps, row, "suppressed", null, "activity");
+      continue;
+    }
     if (
       !(await stillProjectRecipient(
         deps.db,
