@@ -758,7 +758,26 @@ async function refreshQueue(
       );
       if (clearance.state === "unscanned")
         reason = "Automatic scan of new project content";
-      else if (clearance.state === "queued") {
+      else if (
+        clearance.state === "queued" ||
+        (clearance.state === "cleared" && clearance.assessment === null)
+      ) {
+        // Exempt projects can still have explicitly requested investigations.
+        // Recover only an existing pending assignment; never create a normal
+        // scan requirement for an exempt project or rescan completed admission.
+        const pending =
+          clearance.state === "queued"
+            ? await deps.vetting.getAssessment(clearance.assessment.id)
+            : (await deps.vetting.projectAssessments(project.id)).at(-1);
+        if (
+          !pending ||
+          pending.projectId !== project.id ||
+          pending.state !== "pending"
+        ) {
+          if (clearance.state === "queued")
+            skipped.push({ projectId: project.id, reason: "queue_changed" });
+          continue;
+        }
         let live: VettingPin;
         try {
           live = await deps.livePin(project.manifest);
@@ -770,18 +789,8 @@ async function refreshQueue(
         // assignment to an older bundle cannot be acquired after a release.
         // Preserve that row and queue the replacement; completed admission
         // above remains valid and never reaches this branch.
-        if (clearance.assessment.templateSha256 !== live.templateSha256) {
-          templateRetry =
-            (await deps.vetting.getAssessment(clearance.assessment.id)) ??
-            undefined;
-          if (
-            !templateRetry ||
-            templateRetry.projectId !== project.id ||
-            templateRetry.state !== "pending"
-          ) {
-            skipped.push({ projectId: project.id, reason: "queue_changed" });
-            continue;
-          }
+        if (pending.templateSha256 !== live.templateSha256) {
+          templateRetry = pending;
           reason = "Automatic replacement of an unavailable queued template";
         }
       }

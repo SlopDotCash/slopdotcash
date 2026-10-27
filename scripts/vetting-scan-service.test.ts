@@ -735,6 +735,67 @@ test("a pending admission recovers from a replaced template without an admin req
   expect(provider.calls).toHaveLength(1);
 });
 
+test("a pending investigation on an exempt project recovers without changing its exemption", async () => {
+  await runScanPass(config);
+  // Model a project present at migration 0075; the migration deliberately
+  // prevents application code from granting this permanent exemption later.
+  sqlite.exec("DROP TRIGGER vetting_grandfathered_projects_no_insert");
+  sqlite
+    .query(
+      "INSERT INTO vetting_grandfathered_projects(project_id,granted_at) VALUES(?,?)",
+    )
+    .run("open-registry", clock.toISOString());
+  await commit(
+    { "src/investigation.ts": "export const inspectMe = true;\n" },
+    "Explicit investigation source",
+  );
+  await requestInvestigation();
+  provider.up = false;
+  await runScanPass(config);
+  const original = (await vetting.pendingAssessments())[0];
+  expect(original.state).toBe("pending");
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("Missing exempt project");
+  const clearance = () =>
+    vetting.manifestClearance(
+      project.id,
+      project.manifest,
+      project.revision,
+      readLivePin,
+    );
+  expect(await clearance()).toEqual({
+    state: "cleared",
+    assessment: null,
+    grandfathered: true,
+  });
+  templateInputs.acceptedRevisions = ["1", "2"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
+  provider.up = true;
+  const next = await runScanPass(config);
+  expect(next.assessments).toMatchObject([
+    { state: "published", disposition: "clean" },
+  ]);
+  const completed = await vetting.getAssessment(
+    next.assessments[0].assessmentId,
+  );
+  expect(completed).toMatchObject({
+    state: "clean",
+    commitSha: original.commitSha,
+    revision: original.revision,
+    manifestSha256: original.manifestSha256,
+    templateSha256,
+  });
+  expect(await vetting.getAssessment(original.id)).toEqual(original);
+  expect(await clearance()).toEqual({
+    state: "cleared",
+    assessment: null,
+    grandfathered: true,
+  });
+  templateInputs.acceptedRevisions = ["1", "2", "3"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
+  expect((await runScanPass(config)).assessments).toEqual([]);
+});
+
 test("a provider outage leaves the scan pending; the next pass clears the project with one Surplus review", async () => {
   provider.up = false;
   const failed = await runScanPass(config);
