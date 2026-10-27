@@ -586,13 +586,16 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
         // revision that records a rename or transfer (an appended alias)
         // keeps the project resolvable under its current name. Guarded on
         // the revision row landing, like the application approval above;
-        // OR IGNORE makes unchanged paths no-ops.
+        // Existing paths for this project are no-ops. A path held by another
+        // project must hit the unique constraint and roll back the revision.
         ...repositoryKeys(input.manifest).map((key) =>
           this.db
             .prepare(
-              `INSERT OR IGNORE INTO project_repositories (repository_key, project_id)
+              `INSERT INTO project_repositories (repository_key, project_id)
                SELECT ?, ? WHERE EXISTS (SELECT 1 FROM project_revisions
-                 WHERE project_id = ? AND revision = ? AND manifest_sha256 = ? AND created_at = ?)`,
+                 WHERE project_id = ? AND revision = ? AND manifest_sha256 = ? AND created_at = ?)
+               AND NOT EXISTS (SELECT 1 FROM project_repositories
+                 WHERE repository_key = ? AND project_id = ?)`,
             )
             .bind(
               key,
@@ -601,6 +604,8 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
               nextRevision,
               input.manifestSha256,
               input.at,
+              key,
+              input.projectId,
             ),
         ),
         notifyProjectRevision(
