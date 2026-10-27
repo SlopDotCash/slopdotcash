@@ -15,6 +15,7 @@ import {
 import { parseNotificationsResponse } from "../../src/lib/notifications";
 import { createProjectView } from "../../src/lib/project-view";
 import { findProject } from "../../src/lib/projects.mjs";
+import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import {
   AFTER_NOVEMBER,
   GENERATED_AT,
@@ -59,6 +60,7 @@ type Run = {
   inbox(actor: number, moderators?: string, path?: string): Promise<Response>;
   enableMail(): Promise<void>;
   mail(moderators?: string): Promise<string[]>;
+  ban: () => void;
   review: () => Promise<string>;
   deliver: (job: Job) => Promise<string>;
   tick: () => Promise<Job[]>;
@@ -73,6 +75,7 @@ type Run = {
     loseResponse?: boolean;
     afterWrite?: () => void;
   }) => { entered: Promise<void>; release: () => void };
+  beforeAppealResolution: (callback: () => void) => void;
   beforePenaltyInsert: (callback: () => Promise<void>) => void;
   currentState: () => string;
   closerEvidence: (available: boolean) => void;
@@ -109,10 +112,24 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       .filter((p) => p.endsWith(".sql"))
       .sort(),
   );
+  let beforeAppealResolution: (() => void) | null = null;
   let beforePenaltyInsert: (() => Promise<void>) | null = null;
   const prepare = db.prepare.bind(db);
   db.prepare = (sql) => {
     const statement = prepare(sql);
+    if (sql.startsWith("UPDATE slopbot_appeals SET resolved_at")) {
+      const wrapResolution = (inner: typeof statement): typeof statement => ({
+        ...inner,
+        bind: (...values) => wrapResolution(inner.bind(...values)),
+        run: async () => {
+          const callback = beforeAppealResolution;
+          beforeAppealResolution = null;
+          callback?.();
+          return inner.run();
+        },
+      });
+      return wrapResolution(statement);
+    }
     if (!sql.startsWith("INSERT OR IGNORE INTO slopbot_penalties"))
       return statement;
     const wrap = (inner: typeof statement): typeof statement => ({
@@ -752,6 +769,16 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       closureEnabled: (value) => {
         env.SLOPBOT_CLOSURE_ENABLED = String(value);
       },
+      beforeAppealResolution: (callback) => {
+        beforeAppealResolution = callback;
+      },
+      ban: () =>
+        seedParticipationBan(
+          sqlite,
+          { githubId: String(AUTHOR), githubLogin: "author" },
+          { githubId: String(MODERATOR), githubLogin: "moderator" },
+          new Date().toISOString(),
+        ),
       sql: (q) => sqlite.query(q).all(),
       feed: ((url: Parameters<typeof fetch>[0]) =>
         worker.fetch(
@@ -1986,3 +2013,51 @@ test("a delayed genuine reopen reverses the bot close that raced before queue de
     expect(run.sql("SELECT reversed_at FROM slopbot_penalties")).toEqual(first);
   });
 });
+
+for (const timing of [
+  "before triage",
+  "after triage",
+  "during acceptance",
+] as const) {
+  test(`an account banned ${timing} needs a moderator to resolve its public appeal`, async () => {
+    await closedItem(async (run) => {
+      expect(await run.review()).toBe("closed (spam)");
+      if (timing === "before triage") run.ban();
+      run.model("none", 0.95);
+      expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+        timing === "before triage"
+          ? "appeal escalated: the appellant has an active participation ban"
+          : "appeal drafted (uphold)",
+      );
+      if (timing === "after triage") run.ban();
+      if (timing === "during acceptance") run.beforeAppealResolution(run.ban);
+      for (const senderId of [AUTHOR, MAINTAINER]) {
+        expect(
+          await run.deliver(
+            run.job("appeal_command", {
+              command: "accept",
+              senderId,
+            }),
+          ),
+        ).toBe("a Slop moderator decides this appeal");
+      }
+      expect(run.sql(APPEAL)).toEqual([
+        { draft: "uphold", escalated: 1, resolution: null, resolved_by: null },
+      ]);
+      expect(run.currentState()).toBe("closed");
+      expect(
+        await run.deliver(
+          run.job("appeal_command", {
+            command: "uphold",
+            senderId: MODERATOR,
+          }),
+        ),
+      ).toBe("appeal upheld by the moderator");
+      expect(run.currentState()).toBe("open");
+      // Resolving a work appeal cannot reinstate a banned account.
+      expect(run.sql("SELECT * FROM project_account_reinstatements")).toEqual(
+        [],
+      );
+    });
+  });
+}
