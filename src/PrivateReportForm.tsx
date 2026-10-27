@@ -212,7 +212,9 @@ export function PrivateReportForm({
         </p>
       ) : (
         <p className="field-hint">
-          Draft kept in this tab for @{login}. It is not submitted yet.
+          {saved.attempted
+            ? `This tab keeps the report for @${login}. Its receipt is not confirmed.`
+            : `Draft kept in this tab for @${login}. It is not submitted yet.`}
         </p>
       )}
       {review ? (
