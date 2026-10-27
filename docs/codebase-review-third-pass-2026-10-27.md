@@ -2734,3 +2734,93 @@ The full browser matrix passed with no failed or flaky tests: 326 preview cases,
 Later bounded changes have separate evidence: #1503 passed four desktop/mobile profile-recovery cases; #1504 preserved every parsed ledger value while reducing the prepared artifact from 29,460,889 to 22,652,089 bytes and passing the complete build; #1506 passed an isolated frozen install, typecheck and bundle build after removing unused QR-code dependencies. The original homepage remains unchanged.
 
 The native payout repair in #1505 retains the real payment, amount, fee, network, keyboard and accessibility checks. See [release PR #1493](https://github.com/SlopDotCash/slopdotcash/pull/1493) for native-chain and opt-in private-intake results, final source ancestry, protected real-provider qualification and deployment evidence. This source-verification record does not declare MVP completion or authorize a financial activation.
+
+
+## Reactivated-goal audit: current integration, 27 October 2026
+
+This is the report-before-implementation checkpoint for the reactivated whole-codebase review. The checked-out baseline is `dfc224d2` (tree-equivalent to the then-current `main` release `a835e47c`). This section supplements the exhaustive file, test and visual review above; it does not reclassify historical failed runs as passes or claim an unrelated live deployment is complete.
+
+### Coverage and source continuity
+
+The current tracked tree has 1,152 paths, including 758 source/script/contract paths with TypeScript, JavaScript, Python, Rust or Solidity extensions. The completed review above remains the baseline for unchanged code. The subsequent receipt/cycle evidence removal and private reporting/vetting/response presentation changes are delivered in PRs #1533 and #1546, with their own exact-source desktop/mobile, clipboard, permission and payment evidence. This pass inventories the complete tree again, runs the application's no-unused-locals/no-unused-parameters compiler check, and individually reviews every integration change since `3b13f9c4` below. Previously reviewed historical fixtures and native contracts remain covered by their retained acceptance workflows; absence of a same-named unit test is not treated as a defect.
+
+The 38 newly changed paths are:
+
+- `.github/workflows/deploy.yml`
+- `AGENTS.md`
+- `CLAUDE.md`
+- `CONTRIBUTING.md`
+- `README.md`
+- `backend/notifications/events.ts`
+- `backend/pages.ts`
+- `backend/projects/handler.ts`
+- `backend/security/README.md`
+- `backend/security/analysis.ts`
+- `backend/security/handler.ts`
+- `backend/security/report-intake.test.ts`
+- `backend/security/report-intake.ts`
+- `backend/security/submissions.test.ts`
+- `backend/security/submissions.ts`
+- `docs/security/private-reporting-rollout.md`
+- `docs/slop-product-requirements.md`
+- `functions/api/v1/[[path]].ts`
+- `migrations/0101_durable_security_intake.sql`
+- `protocol/private-trace-v1.md`
+- `scripts/collect-value-evidence.ts`
+- `scripts/project-registry-api.test.ts`
+- `scripts/qualify-security-screening.ts`
+- `skills/project-contributor-template/SKILL.md`
+- `skills/project-contributor-template/references/security-report.md`
+- `skills/project-reviewer-template/SKILL.md`
+- `skills/slop/SKILL.md`
+- `src/App.tsx`
+- `src/Inbox.tsx`
+- `src/SecurityBounty.tsx`
+- `src/SecurityProgramEditor.tsx`
+- `src/design-system.css`
+- `src/lib/security-bounty.d.mts`
+- `src/lib/security-bounty.mjs`
+- `tests/e2e/evidence-download.spec.ts`
+- `tests/e2e/security-bounty.spec.ts`
+- `tests/e2e/site.spec.ts`
+- `tests/github-api-fixture.mjs`
+
+The new homepage bounty section is already part of this baseline. This audit does not add, remove or restyle it. The earlier homepage comparison belongs to its stated historical revision; it must not be cited as a byte comparison for this later owner-directed feature. All new fixes in this pass must leave the current homepage rendering and brand styles unchanged.
+
+### Findings selected for implementation
+
+| ID | Finding and concrete impact | Required change | Acceptance evidence |
+| --- | --- | --- | --- |
+| FA01 | `InboxPage.load()` sets notification state to `loading`; the JSX then removes the independently authenticated `SecurityInbox`. Paging notifications or retrying a notification error destroys `RevisePrivateReport`'s unsaved local text and selection. | Keep the private panel mounted during notification refresh. A signed-out result must still dispose of private content and drafts. Do not add persistence of private bodies to storage. | Actual browser: open a saved private report, edit its correction without submitting, page notifications and retry a notification failure, and verify the same text survives. Then return a signed-out response and verify the private text is removed. |
+| FA02 | `listStoredSubmissions` catches unavailable GitHub authority in its first project-discovery pass, but not in per-candidate role resolution or the repeated resolution inside `decorateSubmission`. A later outage converts the whole list to 503, hiding the actor's own durable receipts. | Handle only recognized retryable authority failures across a complete candidate's authorization/decoration. Omit the unverified foreign candidate, keep owned records, and explicitly return `authorityUnavailable`. Unknown and storage failures must remain failures. | Real migrated SQLite and HTTP reproduction: healthy listing 200/two records; authority failure on the second or third old read produces 503 with no records; direct owned-record read still returns 200. Regression must prove owned-record preservation, withheld foreign records and explicit unavailable state. |
+| FA03 | `decorateSubmission` loads a case through `rolesFor` and immediately loads it again. Listed foreign candidates also perform role resolution once for selection and again during decoration. | Reuse one freshly loaded case/roles result within this request only. Keep direct reads and mutations independently authorized. Combine this with FA02 at the same canonical boundary rather than introducing a global permission cache. | Existing cross-account, role-revocation, immutable-version and HTTP workflow checks remain. Compare real query/authority calls in the failing listing workflow where useful; do not create a mock-count-only unit suite. |
+| FA04 | The asynchronous screening regression sleeps 16 seconds solely to hold a provider answer pending. Measured baseline: one case, four assertions, 16.27 seconds; the case itself takes 16,130 ms. | Replace elapsed sleep with a deferred promise. Prove the HTTP response returns while the provider is still blocked, then release it, drain the actual background task, and inspect the retained report and completed screening state. | Preserve the existing 15-second browser deadline assertion and the real HTTP/SQL response/state assertions. The provider must not resolve before the response; an immediate answer would remove the regression coverage. |
+
+### Test and error-handling dispositions
+
+The new `backend/security/report-intake.test.ts` contains 28 expanded real HTTP/migrated-SQL cases. They exercise immutable report storage, authorization, billing-rate admission, duplicate suppression, interrupted routing, owner decisions, funding and retry. The changed submission tests exercise actual forwarding and durable state. Their injected provider/transport outputs isolate external services; call counts in these workflows enforce limits on paid work and prevent duplicate sends. They are not standalone mocked-call or literal-shape tests and must not be deleted under the unit-test cleanup request. No new unit-only declaration was found in this integration delta. FA04 removes test waiting without removing behavior coverage.
+
+`screenStoredReport` deliberately converts provider/validation failures into a durable unavailable state; the report stays saved and recoverable. The outer scheduler catch retains that receipt when background work fails. No reproduced success claim or lost record was found at that boundary in this pass, so it is not replaced with speculative propagation that could invite duplicate submissions. In contrast, FA02 is a reproduced whole-list outage and is selected for correction. Reconciliation, signature, privacy, failed-refresh and monetary checks remain fail-closed where they determine authority or payment.
+
+### Consolidation, interface and visual dispositions
+
+- The existing API/domain/UI directories still express separate security and deployment boundaries. Moving the new durable intake code into a monolithic handler would increase coupling; no duplicate implementation was found that justifies it.
+- The current shared `CopyButton`/`CopyIdentifier`, route heading, status badge, private-operation styling and native disclosure patterns remain the presentation standard. Receipt browsing and monthly Evidence blocks remain removed. Full identifiers remain available for explicit copying.
+- New report bodies are escaped and fetched only when an authorized reader opens them. Their privacy, provider-consent, current-state, funding and exact payment information are required; they are not decorative disclaimers to delete.
+- New UI work in this pass is limited to FA01 lifecycle preservation. There is no evidence for another blanket restyle, homepage change, new graphic library or additional confirmation screen. The prior full non-home screenshot inventory plus PR #1546's fresh before/after private-page evidence covers the relevant presentation; the new failing path needs a real browser recording and current screenshots.
+- Automatic refresh may update notifications, but must not remount an unrelated editor. No report submission, evidence read, financial decision, signature, disclosure or confirmation becomes automatic.
+
+### Additional acceptance criteria used by this pass
+
+1. Use current request-scoped authority; never cache a permission across requests.
+2. Keep independent panels mounted through unrelated loading/error states; unmount on real sign-out.
+3. Retain explicit partial-unavailable status rather than silently replacing a failing list with empty success.
+4. Preserve private unsaved text in memory only; do not add durable browser storage for report bodies.
+5. Remove duplicated work at one canonical boundary rather than adding repeated defensive guards.
+6. Drive background-work tests with explicit start/release signals, not wall-clock sleeps.
+7. Measure actual HTTP, SQL, rendered and clipboard behavior; avoid new helper-inventory or mocked-call-only tests.
+8. Preserve raw downloads, immutable data, held awards, current consent and exact payment amounts.
+9. Leave the current homepage and all signing/deployment activation settings unchanged.
+10. Keep source-bound evidence and final validation results separate from prior baselines and live production claims.
+
+Implementation and final validation results for FA01–FA04 will be appended after they actually complete.
