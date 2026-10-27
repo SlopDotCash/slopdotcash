@@ -1087,20 +1087,49 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   });
   await queueScan(moderator, project.id, "Confirm the reported finding", 3);
   await postVettingResult(request, project.id, project.repository, "malicious");
-  // The newer confirmed-malicious ban supersedes the original project appeal.
-  // Its owner must appeal this restriction before a moderator can review it.
-  const reappealed = await moderator.request.post("/api/v1/project-appeals", {
-    headers: {
-      origin: new URL(moderator.url()).origin,
-      cookie: `__Host-slop_points=${APPLICANT_TOKEN}`,
-    },
-    data: appeal,
+  await moderator.reload({ waitUntil: "networkidle" });
+  // The old request is kept in history but cannot authorize reinstatement.
+  // The moderator can record a new project request through the same UI.
+  await expect(
+    moderatorPanel.getByRole("option", {
+      name: "Reinstate after review",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await moderatorPanel
+    .getByLabel("Action")
+    .selectOption({ label: "Request reinstatement" });
+  await moderatorPanel
+    .getByLabel("Reason (private audit record)")
+    .fill("Request a fresh review after the malicious result");
+  await moderatorPanel
+    .getByLabel("Evidence reference (link or case id)")
+    .fill(evidence);
+  await moderatorPanel.getByRole("button", { name: "Preview action" }).focus();
+  await moderator.keyboard.press("Enter");
+  await moderator.screenshot({
+    path: test.info().outputPath("kept-appeal-request-preview.png"),
+    fullPage: true,
   });
-  expect(reappealed.status()).toBe(200);
-  expect((await reappealed.json()).record).toMatchObject({
-    actorRole: "project-steward",
-    decisionSource: "owner-request",
-    appealAfter: "requested",
+  await moderatorPanel
+    .getByRole("button", {
+      name: "Confirm: Request reinstatement",
+      exact: true,
+    })
+    .focus();
+  await moderator.keyboard.press("Enter");
+  await expect(moderator.getByRole("status").first()).toContainText(
+    "Request reinstatement recorded",
+  );
+  await expect(
+    moderatorPanel.getByRole("option", {
+      name: "Reinstate after review",
+      exact: true,
+    }),
+  ).toHaveCount(1);
+  await moderator.screenshot({
+    path: test.info().outputPath("kept-appeal-requested.png"),
+    fullPage: true,
   });
   await queueScan(
     moderator,
@@ -1146,12 +1175,13 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     410,
   );
 
-  // The independent moderator was asked to review the appeal in the inbox.
+  // The applicant's first request notified this independent moderator. The
+  // moderator's own new request does not notify its author a second time.
   await moderator.goto("/inbox", { waitUntil: "networkidle" });
   const review = moderator.locator(".inbox-item", {
     hasText: `A reinstatement request for ${project.id} needs your independent review.`,
   });
-  await expect(review).toHaveCount(2);
+  await expect(review).toHaveCount(1);
   for (const notice of await review.all())
     await expect(
       notice.getByRole("link", { name: "Open admin" }),
@@ -1394,6 +1424,19 @@ test("a moderator decides a confirmed malicious result and bans the project and 
       has: independent.getByText(project.id, { exact: true }),
     })
     .getByRole("region", { name: "Enforcement", exact: true });
+  // An account-only appeal cannot authorize reinstatement of its project.
+  await expect(
+    accountPanel.getByRole("option", {
+      name: "Reinstate after review",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    accountPanel.getByRole("option", {
+      name: "Request reinstatement",
+      exact: true,
+    }),
+  ).toHaveCount(1);
   await accountPanel.getByLabel("Action").selectOption("reinstate_accounts");
   await accountPanel.getByLabel("GitHub accounts to reinstate").fill(login);
   await accountPanel
