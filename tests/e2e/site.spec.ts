@@ -725,18 +725,23 @@ test("renders contributor and cycle records from validated public data", {
         exact: true,
       }),
     ).toBeVisible();
-    const records = page.getByText("Original records", {
-      exact: true,
-    });
-    await records.focus();
-    await page.keyboard.press("Enter");
-    const frozen = page.getByRole("link", {
-      name: /Source data/u,
-    });
-    await expect(frozen).toHaveAttribute(
-      "href",
-      archived.files.sourceSnapshot.url,
+    await expect(
+      page.getByRole("heading", { name: "Contributors", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".archived-leader-row")).toHaveCount(
+      archived.contributors.length,
     );
+    await expect(
+      page.getByRole("heading", { name: "Evidence", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Original records", { exact: true }),
+    ).toHaveCount(0);
+    for (const file of Object.values(archived.files)) {
+      if (file)
+        await expect(page.locator(`a[href="${file.url}"]`)).toHaveCount(0);
+    }
+    // The UI omits evidence links; the canonical download remains intact.
     const download = await request.get(archived.files.sourceSnapshot.url);
     expect(download.ok()).toBe(true);
     expect(
