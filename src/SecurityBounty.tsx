@@ -612,61 +612,57 @@ export function SecurityProgramPage({
           Check covered source and safe testing rules
         </a>
       </p>
-      <IntakeHandoff project={project} session={session} />
-      <ProjectSecuritySettings
-        key={project.id}
-        onProjectChange={setProject}
-        project={project}
-        session={session}
-      />
       <div className="security-program-terms">
-        <section aria-labelledby="security-terms" className="admin-card">
-          <h2 id="security-terms">Award terms</h2>
-          <section className="security-award-split" aria-label="Award split">
-            <div>
-              <span>Researcher · 75%</span>
-              <strong>{money.researcher}</strong>
-            </div>
-            <div>
-              <span>Slop · 25%</span>
-              <strong>{money.slop}</strong>
-            </div>
+        <details className="security-reference">
+          <summary>Full award terms</summary>
+          <section aria-labelledby="security-terms" className="admin-card">
+            <h2 id="security-terms">Award terms</h2>
+            <section className="security-award-split" aria-label="Award split">
+              <div>
+                <span>Researcher · 75%</span>
+                <strong>{money.researcher}</strong>
+              </div>
+              <div>
+                <span>Slop · 25%</span>
+                <strong>{money.slop}</strong>
+              </div>
+            </section>
+            <dl className="admin-facts">
+              <Fact term="Currency">
+                {terms.amount.currency}
+                {terms.amount.network ? ` on ${terms.amount.network}` : ""}
+              </Fact>
+              <Fact term="Funding">
+                {terms.funding.state === "pledged"
+                  ? terms.fundingPolicy === "after-approval"
+                    ? "Pledged. Funds are supplied after the owner approves a qualifying finding. Payment requires verified funding."
+                    : "Pledged, not verified."
+                  : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
+              </Fact>
+              <Fact term="Capacity">
+                {terms.capacity.awards === null
+                  ? "No fixed award count; each first qualifying finding is reviewed separately"
+                  : `${terms.capacity.awards} award${terms.capacity.awards === 1 ? "" : "s"} at the published amount`}
+                {terms.capacity.closesAt
+                  ? `; closes ${formatUtc(terms.capacity.closesAt)}`
+                  : ""}
+                . {terms.capacity.exhaustionRule}
+              </Fact>
+              <Fact term="Other work">
+                {terms.rewardMode === "bounty-only"
+                  ? "Bounty only. Other work, including fixes, earns no monthly pool cash."
+                  : "Contribution rewards are separate; one outcome is never paid twice."}
+              </Fact>
+            </dl>
+            <p>
+              Awards are discretionary. The owner decides whether to award;
+              fixed after-approval awards use the amount published at receipt;
+              critical bugs and potential loss of funds are priorities, not an
+              automatic payout. No other payout fee applies. The terms in force
+              when Slop receives your report apply to your case.
+            </p>
           </section>
-          <dl className="admin-facts">
-            <Fact term="Currency">
-              {terms.amount.currency}
-              {terms.amount.network ? ` on ${terms.amount.network}` : ""}
-            </Fact>
-            <Fact term="Funding">
-              {terms.funding.state === "pledged"
-                ? terms.fundingPolicy === "after-approval"
-                  ? "Pledged. Funds are supplied after the owner approves a qualifying finding. Payment requires verified funding."
-                  : "Pledged, not verified."
-                : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
-            </Fact>
-            <Fact term="Capacity">
-              {terms.capacity.awards === null
-                ? "No fixed award count; each first qualifying finding is reviewed separately"
-                : `${terms.capacity.awards} award${terms.capacity.awards === 1 ? "" : "s"} at the published amount`}
-              {terms.capacity.closesAt
-                ? `; closes ${formatUtc(terms.capacity.closesAt)}`
-                : ""}
-              . {terms.capacity.exhaustionRule}
-            </Fact>
-            <Fact term="Other work">
-              {terms.rewardMode === "bounty-only"
-                ? "Bounty only. Other work, including fixes, earns no monthly pool cash."
-                : "Contribution rewards are separate; one outcome is never paid twice."}
-            </Fact>
-          </dl>
-          <p>
-            Awards are discretionary. The owner decides whether to award; fixed
-            after-approval awards use the amount published at receipt; critical
-            bugs and potential loss of funds are priorities, not an automatic
-            payout. No other payout fee applies. The terms in force when Slop
-            receives your report apply to your case.
-          </p>
-        </section>
+        </details>
         <section aria-labelledby="security-scope" className="admin-card">
           <h2 id="security-scope">Scope</h2>
           <dl className="admin-facts">
@@ -717,35 +713,46 @@ export function SecurityProgramPage({
             potential loss.
           </p>
         </section>
-        <section aria-labelledby="security-trust" className="admin-card">
-          <h2 id="security-trust">Decisions, disputes and disclosure</h2>
-          <dl className="admin-facts">
-            <Fact term="Findings and awards">
-              {people(terms.approvers.technical)}
-            </Fact>
-            <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
-            <Fact term="Disputes">
-              Contact {people(terms.approvers.dispute)}. {terms.dispute.process}{" "}
-              A Slop moderator decides escalated appeals.
-            </Fact>
-            <Fact term="Response targets">
-              Acknowledge within {terms.responseTargets.acknowledgeHours} hours;
-              first triage within {terms.responseTargets.triageBusinessDays}{" "}
-              business days; updates every{" "}
-              {terms.responseTargets.updateIntervalDays} days. A missed target
-              never publishes a report or approves an award.
-            </Fact>
-            <Fact term="Disclosure">{terms.disclosure}</Fact>
-            <Fact term="Safe harbor">{terms.safeHarbor}</Fact>
-          </dl>
-          <p>
-            Slop never publishes cases; rejected, duplicate, disputed and paid
-            reports stay private, and you decide separately whether your name is
-            public. Repository administrators and security managers can read the
-            advisory on GitHub. A public-chain payment shows its addresses,
-            amount and time.
-          </p>
-        </section>
+        <IntakeHandoff project={project} session={session} />
+        <ProjectSecuritySettings
+          key={project.id}
+          onProjectChange={setProject}
+          project={project}
+          session={session}
+        />
+        <details className="security-reference">
+          <summary>Response, disclosure and researcher terms</summary>
+          <section aria-labelledby="security-trust" className="admin-card">
+            <h2 id="security-trust">Decisions, disputes and disclosure</h2>
+            <dl className="admin-facts">
+              <Fact term="Findings and awards">
+                {people(terms.approvers.technical)}
+              </Fact>
+              <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
+              <Fact term="Disputes">
+                Contact {people(terms.approvers.dispute)}.{" "}
+                {terms.dispute.process} A Slop moderator decides escalated
+                appeals.
+              </Fact>
+              <Fact term="Response targets">
+                Acknowledge within {terms.responseTargets.acknowledgeHours}{" "}
+                hours; first triage within{" "}
+                {terms.responseTargets.triageBusinessDays} business days;
+                updates every {terms.responseTargets.updateIntervalDays} days. A
+                missed target never publishes a report or approves an award.
+              </Fact>
+              <Fact term="Disclosure">{terms.disclosure}</Fact>
+              <Fact term="Safe harbor">{terms.safeHarbor}</Fact>
+            </dl>
+            <p>
+              Slop never publishes cases; rejected, duplicate, disputed and paid
+              reports stay private, and you decide separately whether your name
+              is public. Repository administrators and security managers can
+              read the advisory on GitHub. A public-chain payment shows its
+              addresses, amount and time.
+            </p>
+          </section>
+        </details>
       </div>
     </main>
   );
