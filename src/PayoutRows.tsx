@@ -153,7 +153,14 @@ export function PayoutAmount({
 }) {
   return (
     <span className="payout-value" title={title}>
-      <strong>{formatBaseUnits(base, decimals)}</strong>
+      <span
+        className="payout-exact"
+        role="region"
+        aria-label="Exact amount"
+        tabIndex={0}
+      >
+        <strong>{formatBaseUnits(base, decimals)}</strong>
+      </span>
       {symbol ? (
         <span className="payout-unit">{symbol}</span>
       ) : (
@@ -195,8 +202,22 @@ export function NetAmount({
         address={payout.assetAddress}
       />
       <small>
-        Gross {formatAssetAmount(payout.grossBase, payout)} · fee{" "}
-        {formatAssetAmount(payout.feeBase, payout)}
+        <span
+          className="payout-exact"
+          role="region"
+          aria-label="Gross amount"
+          tabIndex={0}
+        >
+          Gross {formatAssetAmount(payout.grossBase, payout)}
+        </span>
+        <span
+          className="payout-exact"
+          role="region"
+          aria-label="Fee amount"
+          tabIndex={0}
+        >
+          fee {formatAssetAmount(payout.feeBase, payout)}
+        </span>
       </small>
     </span>
   );
