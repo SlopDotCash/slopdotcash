@@ -2,6 +2,8 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { copyFixtureSkills } from "../tests/fixture-overlay.mjs";
 
 type SessionReport = { sessions: Record<string, Record<string, unknown>> };
 type RunReceiptUsage = {
@@ -16,20 +18,23 @@ type RunReceiptUsage = {
   ): Record<string, unknown>;
 };
 
-// The shared skill script has no declaration file; type only what this test uses.
-const source = new URL(
-  "../tests/fixtures/skills/contribute-to-eliza/scripts/run-receipt.mjs",
-  import.meta.url,
-).href;
+// A rendered skill copy: the shared script reads the project.json beside it.
+// It has no declaration file; type only what this test uses.
+const skills = mkdtempSync(join(tmpdir(), "run-receipt-skills-"));
+copyFixtureSkills(skills);
 const { normalizeSessionReport, usageDelta }: RunReceiptUsage = await import(
-  source
+  pathToFileURL(join(skills, "contribute-to-eliza/scripts/run-receipt.mjs"))
+    .href
 );
 
 // A native absolute root: the dashed Claude Code directory name that scopes a
 // session is derived from the same platform path the script normalizes.
 const repositoryRoot = mkdtempSync(join(tmpdir(), "run-receipt-usage-"));
 
-afterAll(() => rmSync(repositoryRoot, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(repositoryRoot, { recursive: true, force: true });
+  rmSync(skills, { recursive: true, force: true });
+});
 
 /** The dashed directory name Claude Code derives from a repository root. */
 function claudeProjectDirectoryName(value: string): string {

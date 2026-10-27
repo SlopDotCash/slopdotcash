@@ -12,7 +12,8 @@ import {
  * static-server assertion. Each phase owns its own port and output folder, so
  * the two phases run concurrently and neither can serve the other's bytes.
  * SLOP_E2E_LANE=preview|pages|registry runs one phase only, so CI can split
- * the phases (and preview shards passed as --shard=N/M) across separate runners.
+ * the phases (and preview or registry shards passed as --shard=N/M) across
+ * separate runners. Each registry shard gets its own local D1.
  *
  * The D1 project registry may be empty, so the preview and Pages phases run
  * in the fixture workspace from prepare-e2e-fixture.mjs, which restores the
@@ -327,12 +328,7 @@ if (insideFixture) {
     {
       server: "pages",
       port: String(basePort + 1),
-      args: [
-        "--project=wide-desktop-chromium",
-        "--grep",
-        "@pages",
-        ...extraArgs,
-      ],
+      args: ["--project=chromium-desktop", "--grep", "@pages", ...extraArgs],
     },
   ];
   statuses = await Promise.all(

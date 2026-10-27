@@ -64,7 +64,7 @@ jobs:
       group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/development' }}
     # The public elizaOS ledger can contain several thousand accepted outcomes.
-    # Leave room for complete fail-closed hydration plus four browser projects.
+    # Leave room for complete fail-closed hydration.
     timeout-minutes: 180
     steps:
       - name: Checkout
@@ -232,9 +232,6 @@ jobs:
       - name: Validate reward lifecycle
         run: bun run cycles:check
 
-      - name: Check code
-        run: bun run verify:code
-
       - name: Build production site
         env:
           # Trusted refreshes use the census produced above; PR builds use the captured seed.
@@ -270,9 +267,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Run installer lifecycle end-to-end checks
-        run: bun run test:installer:e2e
-
       - name: Upload Cloudflare Pages bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -281,6 +275,51 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+
+  # Unit, integration and installer checks run beside the build, so the browser
+  # lanes start as soon as the bundle exists. The quality gate needs both.
+  check:
+    name: Unit, integration and installer checks
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELEASE_SHA: ${{ needs.source.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Verify check checkout
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install frozen workspace dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Check code
+        run: bun run verify:code
+
+      - name: Run installer lifecycle end-to-end checks
+        run: bun run test:installer:e2e
 
   browsers:
     name: Browser ${{ matrix.lane }}
@@ -300,10 +339,14 @@ jobs:
           - lane: pages
             server: pages
             shard: 1/1
-          # The shipped bundle with Pages Functions and a fresh local D1.
-          - lane: registry
+          # The shipped bundle with Pages Functions. Each shard runs on its own
+          # runner with its own fresh local D1, Wrangler and GitHub fixture.
+          - lane: registry-1
             server: registry
-            shard: 1/1
+            shard: 1/2
+          - lane: registry-2
+            server: registry
+            shard: 2/2
     env:
       VITE_SLOP_ENVIRONMENT: ${{ (github.ref == 'refs/heads/development' || github.base_ref == 'development') && 'staging' || 'production' }}
       SLOP_E2E_PREBUILT: '1'
@@ -380,6 +423,11 @@ jobs:
         env:
           BROWSER_SHARD: ${{ matrix.shard }}
         run: node scripts/run-e2e.mjs --shard="$BROWSER_SHARD"
+      # The private trace operator workflow: Pages routing, native D1 and R2,
+      # and a Chromium sign-in. One registry runner is enough.
+      - name: Run private trace operator workflow
+        if: matrix.lane == 'registry-1'
+        run: bun run test:trace
       - name: Upload browser diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -399,16 +447,18 @@ jobs:
   quality:
     name: Skill, data, build, and browser checks
     if: always()
-    needs: [prepare, browsers, isolated-artifact]
+    needs: [prepare, check, browsers, isolated-artifact]
     runs-on: ubuntu-24.04
     steps:
-      - name: Require the checked bundle and every browser lane
+      - name: Require the checked bundle, code checks and every browser lane
         env:
           PREPARE_RESULT: ${{ needs.prepare.result }}
+          CHECK_RESULT: ${{ needs.check.result }}
           BROWSER_RESULT: ${{ needs.browsers.result }}
           SANDBOX_RESULT: ${{ needs.isolated-artifact.result }}
         run: |
           test "$PREPARE_RESULT" = success
+          test "$CHECK_RESULT" = success
           test "$BROWSER_RESULT" = success
           test "$SANDBOX_RESULT" = success
 

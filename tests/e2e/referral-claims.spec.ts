@@ -1,6 +1,5 @@
 /** Real page/wallet interaction; backend SQLite and local-chain proof live in the referral suites. */
-import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import {
   decodeFunctionData,
   encodeFunctionResult,
@@ -12,6 +11,7 @@ import {
   type ReferralAccount,
 } from "../../src/lib/referral-claims";
 import { buildTree } from "../../workers/referral-accrual/merkle";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const unit = 10n ** 18n;
 const wallet = "0x1111111111111111111111111111111111111111";
@@ -154,13 +154,6 @@ async function setup(page: Page) {
 test("referrer reviews, signs once, and waits for verified claim status", async ({
   page,
 }, info) => {
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
-  });
-  const failures: string[] = [];
-  page.on("requestfailed", (r) => failures.push(r.url()));
   const h = await setup(page);
   await page.goto("/earnings", { waitUntil: "networkidle" });
   const section = page.getByRole("region", { name: "Referral rewards" });
@@ -175,13 +168,7 @@ test("referrer reviews, signs once, and waits for verified claim status", async 
   ).toBeVisible();
   expect(h.calls).not.toContain("eth_sendTransaction");
   await expect(section).toContainText("No token approval is required");
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("referral-review.png"),
     fullPage: true,
@@ -206,8 +193,6 @@ test("referrer reviews, signs once, and waits for verified claim status", async 
     path: info.outputPath("referral-verified.png"),
     fullPage: true,
   });
-  expect(errors).toEqual([]);
-  expect(failures).toEqual([]);
 });
 
 test("unactivated referrals stay hidden; stale, paused and unknown claims cannot sign", async ({

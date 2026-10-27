@@ -1,11 +1,10 @@
 /** Actual Pages/D1/R2 signed transport and native browser attachment workflow. */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
 import { fixtureRepository } from "../github-api-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
 import { signedVettingHeaders } from "../vetting-fixtures";
+import { expect, expectAccessible, test } from "./fixtures";
 
 test("large private evidence downloads with a single-use browser grant @registry", async ({
   page,
@@ -13,18 +12,6 @@ test("large private evidence downloads with a single-use browser grant @registry
   baseURL,
 }, info) => {
   const origin = new URL(baseURL!).origin;
-  const errors: string[] = [],
-    failures: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
-  page.on("requestfailed", (req) => {
-    if (new URL(req.url()).origin === origin)
-      failures.push(
-        `${req.method()} ${new URL(req.url()).pathname}: ${req.failure()?.errorText}`,
-      );
-  });
   const suffix = info.project.name.replaceAll(/[^a-z0-9-]/g, "-");
   const project = `large-evidence-${suffix}`;
   const api = (path: string, body: unknown, admin = false) =>
@@ -250,13 +237,7 @@ test("large private evidence downloads with a single-use browser grant @registry
       () => document.documentElement.scrollWidth <= innerWidth + 1,
     ),
   ).toBe(true);
-  expect(
-    (
-      await new AxeBuilder({ page })
-        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-        .analyze()
-    ).violations,
-  ).toEqual([]);
+  await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("large-evidence-zoom.png"),
     fullPage: false,
@@ -289,8 +270,6 @@ test("large private evidence downloads with a single-use browser grant @registry
     path: info.outputPath("large-evidence.png"),
     fullPage: false,
   });
-  expect(errors).toEqual([]);
-  expect(failures).toEqual([]);
   const video = page.video();
   await page.close();
   if (video)
