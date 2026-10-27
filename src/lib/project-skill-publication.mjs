@@ -30,10 +30,7 @@ export const GUIDE_RENDERER_PATHS = Object.freeze([
 ]);
 /** Revisions the generated installer may authorize, for every skill manifest. */
 export const ACCEPTED_SKILL_REVISIONS = Object.freeze([
-  "current main head",
-  "main ancestor whose complete canonical skill tree is byte-identical to current main",
-  "open non-draft same-repository PR head into main, zero behind current main, with a release-candidate label event after the exact current-head event",
-  "main ancestor used by the latest verified production publication from a push or manual release, with successful source, publication and served-byte checks; current revocations and project clearance remain required",
+  "any committed template revision in the canonical GitHub repository, without main ancestry or release-status requirements",
 ]);
 
 const encoder = new TextEncoder();
@@ -270,9 +267,8 @@ async function publishRole({
       apiOrigin: "https://api.github.com",
       rawOrigin: "https://raw.githubusercontent.com",
       canonicalPath: sourcePath,
-      releaseCandidateLabel: "slop-release-candidate",
       acceptedRevisions: [...template.acceptedRevisions],
-      // The trust root is (template revision on main, this digest); the
+      // The trust root is (committed template revision, this digest); the
       // maintainer-authored fields come from Slop's registry.
       registry: {
         ...binding,
