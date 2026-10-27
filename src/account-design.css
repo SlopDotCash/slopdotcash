@@ -37,7 +37,8 @@
 .account-page :is(h2, .earnings-page > h2),
 .earnings-page h2,
 .inbox-page h2,
-.manage-page .project-setup-status h2 {
+.manage-page .project-setup-status h2,
+.proposal-page .project-setup-status h2 {
   margin: 0 0 1rem;
   font-size: 1.3rem;
   line-height: 1.25;
