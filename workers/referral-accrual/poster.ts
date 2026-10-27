@@ -3,7 +3,7 @@
  * simulates and signs one postRoot transaction from the poster hot key,
  * broadcasts it and reconciles its receipt. The policy of what to post lives
  * in core.ts; this file knows only the chain. The key can post a capped root
- * that the owner can void for seven days; it holds no tokens.
+ * that is immediately claimable; the owner can void it only before its first successful claim. It holds no tokens.
  */
 
 import {
