@@ -2342,6 +2342,7 @@ small {
 
 .payout-amount {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -2353,6 +2354,8 @@ small {
 }
 
 .payout-value {
+  min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
