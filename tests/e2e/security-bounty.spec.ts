@@ -2183,11 +2183,22 @@ test("private settlement requires visibility consent and produces an unsigned re
   await expect(page.locator(".security-case > .admin-facts")).toContainText(
     "Waiting for the vault owner",
   );
+  await page.getByText("Case details and history", { exact: true }).click();
+  await page.getByRole("button", { name: "Copy case ID" }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    caseId,
+  );
+  await page.getByText("Case details and history", { exact: true }).click();
   await page.getByText("Unsigned owner request", { exact: true }).click();
   await page.getByRole("button", { name: "Copy unsigned request" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Request copied." }),
-  ).toBeVisible();
+  ).toHaveText("Request copied.");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    await page
+      .getByRole("textbox", { name: "Unsigned transaction request" })
+      .inputValue(),
+  );
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth + 1,

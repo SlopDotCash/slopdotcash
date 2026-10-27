@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assembleMainnetBindings,
+  mainnetWranglerProvider,
   prepareMainnetRelease,
   publishMainnetRelease,
 } from "../workers/payment-executor/release-mainnets.mjs";
@@ -11,6 +13,72 @@ import {
 const sha = "a".repeat(40);
 const account = "b".repeat(32);
 const name = "slop-payments-base-mainnet-attester";
+
+test("the real Wrangler inventory command returns JSON through the release provider", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "slop-wrangler-inventory-"));
+  // Separate process: the synchronous CLI caller cannot service HTTP itself.
+  const server = spawn(
+    "node",
+    [
+      "-e",
+      `
+    const http=require('node:http');
+    const server=http.createServer((req,res)=>{
+      if(req.method!=='GET'||req.url!=='/accounts/${account}/workers/scripts/fixture-attester/secrets') {
+        res.writeHead(404);res.end();return;
+      }
+      res.setHeader('content-type','application/json');
+      res.end(JSON.stringify({success:true,errors:[],messages:[],result:[{name:'FIXTURE_KEY',type:'secret_text'}]}));
+    });
+    server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
+  `,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  try {
+    const port = await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("Fixture startup timeout")),
+        10000,
+      );
+      server.once("error", reject);
+      server.stdout.once("data", (data) => {
+        clearTimeout(timer);
+        resolve(Number(String(data).trim()));
+      });
+    });
+    const path = join(directory, "wrangler.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        name: "fixture-attester",
+        account_id: account,
+        compatibility_date: "2026-07-30",
+        send_metrics: false,
+      }),
+    );
+    const result = mainnetWranglerProvider(
+      ["secret", "list", "--config", path],
+      {
+        PATH: process.env.PATH,
+        HOME: directory,
+        CI: "true",
+        CLOUDFLARE_ACCOUNT_ID: account,
+        CLOUDFLARE_API_TOKEN: "fixture-only",
+        CLOUDFLARE_API_BASE_URL: `http://127.0.0.1:${port}`,
+        WRANGLER_SEND_METRICS: "false",
+        WRANGLER_WRITE_LOGS: "false",
+      },
+    );
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([
+      { name: "FIXTURE_KEY", type: "secret_text" },
+    ]);
+  } finally {
+    server.kill();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 40000);
 const ok = (value) => ({
   status: 0,
   stdout: JSON.stringify(value),

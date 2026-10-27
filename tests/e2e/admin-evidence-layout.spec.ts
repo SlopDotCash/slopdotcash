@@ -284,6 +284,15 @@ test("evidence deep links load only after sign-in and select one reasoned reader
     fullPage: true,
   });
   expect(automaticReads).toBe(1);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByText("Run details and retention", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Copy storage inventory digest" })
+    .click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "c".repeat(64),
+  );
+  await page.getByText("Run details and retention", { exact: true }).click();
   await expect(page.getByLabel("Reason to inspect First trace")).toHaveCount(0);
   await page
     .getByRole("button", { name: `Select First trace, ${hash.slice(0, 12)}` })
