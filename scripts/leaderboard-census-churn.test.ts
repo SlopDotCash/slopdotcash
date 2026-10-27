@@ -113,7 +113,16 @@ async function harness(
 
 test("a vanished census PR discards the collection and publishes only a complete fresh collection", async () => {
   await harness(
-    (request, ids) => response(ids[0], request === 2, request),
+    (request, ids) => {
+      const body = response(ids[0], request === 2, request);
+      body.data.nodes.push({
+        __typename: "PullRequest",
+        id: ids[1],
+        updatedAt,
+        reviews: { totalCount: request <= 2 ? 1 : 3 },
+      });
+      return body;
+    },
     async ({ client, output, snapshot }) => {
       let collections = 0;
       let writes = 0;
@@ -123,7 +132,10 @@ test("a vanished census PR discards the collection and publishes only a complete
         createClient: () => client,
         generate: async (currentClient) => {
           collections += 1;
-          const refs = [{ id: collections === 1 ? OLD : CURRENT }];
+          const refs = [
+            { id: collections === 1 ? OLD : CURRENT },
+            { id: "PR_surviving_fixture" },
+          ];
           const initial = await collectPullRequestReviewCounts(
             currentClient,
             refs,
@@ -134,6 +146,7 @@ test("a vanished census PR discards the collection and publishes only a complete
             refs,
           );
           expect([...final]).toEqual([...initial]);
+          expect(final.get("PR_surviving_fixture")?.reviewCount).toBe(3);
           return snapshot;
         },
         write: async (complete, path) => {
@@ -146,7 +159,10 @@ test("a vanished census PR discards the collection and publishes only a complete
         },
       });
       expect(collections).toBe(2);
-      expect(collected).toEqual([[OLD], [CURRENT]]);
+      expect(collected).toEqual([
+        [OLD, "PR_surviving_fixture"],
+        [CURRENT, "PR_surviving_fixture"],
+      ]);
       expect(writes).toBe(1);
       expect(JSON.parse(await readFile(output, "utf8"))).toEqual(snapshot);
       expect(client.getRateLimit().consumedDuringRun).toBe(4);
