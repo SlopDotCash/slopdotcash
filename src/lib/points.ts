@@ -2,6 +2,7 @@
 import type {
   GitHubActor,
   LeaderboardSnapshot,
+  PublishedPenalty,
   ScoreEvent,
 } from "./leaderboard";
 import {
@@ -11,17 +12,24 @@ import {
   isHistoricalRepositoryId,
 } from "./projects.mjs";
 import { findRegisteredRepositoryById } from "./repositories.mjs";
+import { penaltyDeductions } from "./score-penalties";
 import { VALUE_SCORING_APPROVED_HISTORY_FROM } from "./scoring-policy";
 import { sha256Hex } from "./sha256";
 
 export const POINTS_RULE = "slop-points-v1";
+/**
+ * A published Slopbot debit recorded as a negative Points award for the UTC
+ * month of the close (PRD section 7). Points are the one public measure, so
+ * the debit is applied here as well as to the score and the payment weight.
+ */
+export const PENALTY_DEBIT_CATEGORY = "penalty-debit";
 export const POINTS_NOTICE =
   "Points have no cash value and cannot be transferred or redeemed.";
 export interface PointAward {
   key: string;
   actor: Pick<GitHubActor, "id" | "login">;
   projectId: string;
-  category: ScoreEvent["category"] | "payout-received";
+  category: ScoreEvent["category"] | "payout-received" | "penalty-debit";
   amount: number;
   occurredAt: string;
   sourceId: string;
@@ -68,6 +76,7 @@ const categories = new Set([
   "substantive-review",
   "evaluated-contribution",
   "payout-received",
+  PENALTY_DEBIT_CATEGORY,
 ]);
 function iso(value: unknown): value is string {
   return (
@@ -137,7 +146,7 @@ export function assertPointsJournal(
       !isHistoricalProjectId(a.projectId) ||
       !categories.has(a.category) ||
       !Number.isSafeInteger(a.amount) ||
-      a.amount < 0 ||
+      (a.category === PENALTY_DEBIT_CATEGORY ? a.amount > 0 : a.amount < 0) ||
       !iso(a.occurredAt) ||
       !iso(r.recordedAt) ||
       r.recordedAt > p.generatedAt ||
@@ -167,6 +176,14 @@ export function assertPointsJournal(
         a.sourceUrl !== `https://slop.cash/cycles/${a.projectId}/${cycle}`
       )
         throw new Error("Invalid payout recognition");
+    } else if (a.category === PENALTY_DEBIT_CATEGORY) {
+      // A debit keeps Slopbot's recorded close, never a later GitHub event.
+      if (
+        r.sourceRule !== "slop-score-v2" ||
+        a.provisional ||
+        a.workUnitId !== a.sourceId
+      )
+        throw new Error("Invalid penalty debit");
     } else if (r.sourceRule === "verified-payout-v1")
       throw new Error("Payout rule requires payout evidence");
     const url = new URL(a.sourceUrl);
@@ -315,6 +332,42 @@ export function latestPoints(
 ): Map<string, PointRevision> {
   return new Map(journal.revisions.map((r) => [r.award.key, r]));
 }
+/** The project a published debit belongs to, from the registered repository. */
+function debitProjectOf(repository: string): string {
+  const projectId = findRegisteredRepositoryById(repository)?.projectId;
+  if (!projectId) throw new Error("Points require a registered project");
+  return projectId;
+}
+/**
+ * One published Slopbot debit as a negative Points award for the UTC month of
+ * the close. `appliedThirds` is the snapshot's own applied debit, already
+ * bounded by that month's credit, so the month never falls below zero.
+ */
+export function awardForPenalty(
+  penalty: PublishedPenalty,
+  appliedThirds: number,
+): PointAward {
+  if (!Number.isSafeInteger(appliedThirds) || appliedThirds <= 0)
+    throw new Error("A published debit needs positive applied thirds");
+  const projectId = debitProjectOf(penalty.repository);
+  return {
+    key: pointKey(
+      projectId,
+      penalty.actor.id,
+      PENALTY_DEBIT_CATEGORY,
+      penalty.id,
+    ),
+    actor: { id: penalty.actor.id, login: penalty.actor.login },
+    projectId,
+    category: PENALTY_DEBIT_CATEGORY,
+    amount: -appliedThirds * POINTS_PER_THIRD,
+    occurredAt: new Date(penalty.occurredAt).toISOString(),
+    sourceId: penalty.id,
+    sourceUrl: penalty.source.url,
+    workUnitId: penalty.id,
+    provisional: false,
+  };
+}
 export function appendPointAwards(
   journal: PointsJournal,
   awards: PointAward[],
@@ -430,6 +483,25 @@ export function applyPointsSnapshot(
       .map((a) => `${a.projectId}\0${a.sourceId}`),
   );
   const repositoryIds = new Set(snapshot.repositories.map((r) => r.id));
+  // A published debit lowers the same UTC month's accepted-work points. It uses
+  // the snapshot's own applied thirds, so Points, score and payment weight
+  // agree and a month never falls below zero (PRD section 7).
+  const publishedPenalties = (snapshot.penalties ?? []).filter((penalty) =>
+    repositoryIds.has(penalty.repository),
+  );
+  const appliedDebits = penaltyDeductions(
+    snapshot.ledger,
+    publishedPenalties,
+    debitProjectOf,
+  ).byPenalty;
+  for (const penalty of publishedPenalties) {
+    const thirds = appliedDebits.get(penalty.id) ?? 0;
+    if (thirds <= 0) continue;
+    const award = awardForPenalty(penalty, thirds);
+    if (batchOwned.has(award.key) || keys.has(award.key)) continue;
+    awards.push(award);
+    keys.add(award.key);
+  }
   // An adverse ruling can correct a review before the rolling window. A
   // policy or window omission does not revoke its previously earned credit.
   const excludedReviews = new Set<string>();
@@ -446,6 +518,12 @@ export function applyPointsSnapshot(
   // deletion from missing pages or a shortened rolling window.
   for (const previous of latestPoints(journal).values()) {
     const a = previous.award;
+    if (a.category === PENALTY_DEBIT_CATEGORY && !keys.has(a.key)) {
+      // A reversed debit is absent from the published feed, so the next
+      // snapshot restores that month's points instead of keeping a stale debit.
+      awards.push({ ...a, amount: 0 });
+      keys.add(a.key);
+    }
     const omission =
       a.category === "substantive-review"
         ? omittedReviews.get(`${a.projectId}\0${a.sourceId}`)
@@ -670,10 +748,13 @@ export function pointMembers(
     if (!a.amount || (projectId && a.projectId !== projectId)) continue;
     // The first contribution date comes from every counted record, not
     // only the surviving award: one work unit can have records in more than
-    // one month, and the dedup below keeps only one of them.
-    const first = firstContributionAt.get(a.actor.id);
-    if (first === undefined || a.occurredAt < first)
-      firstContributionAt.set(a.actor.id, a.occurredAt);
+    // one month, and the dedup below keeps only one of them. A published
+    // debit is not a contribution and never sets it.
+    if (a.category !== PENALTY_DEBIT_CATEGORY) {
+      const first = firstContributionAt.get(a.actor.id);
+      if (first === undefined || a.occurredAt < first)
+        firstContributionAt.set(a.actor.id, a.occurredAt);
+    }
     const key = JSON.stringify([
       a.projectId,
       a.actor.id,
@@ -744,15 +825,20 @@ export function pointMembers(
       (a, b) =>
         b.occurredAt.localeCompare(a.occurredAt) || a.key.localeCompare(b.key),
     );
-    m.projects = new Set(m.awards.map((a) => a.projectId)).size;
+    // A debit counts against the totals but is not a contribution: it adds no
+    // project and earns no badge.
+    const counted = m.awards.filter(
+      (a) => a.category !== PENALTY_DEBIT_CATEGORY,
+    );
+    m.projects = new Set(counted.map((a) => a.projectId)).size;
     m.badges = [
-      ...(m.awards.some((a) => a.category !== "payout-received")
+      ...(counted.some((a) => a.category !== "payout-received")
         ? ["First accepted contribution"]
         : []),
-      ...(m.awards.some((a) => a.category === "payout-received")
+      ...(counted.some((a) => a.category === "payout-received")
         ? ["Verified payout"]
         : []),
-      ...(m.awards.some((a) => a.category === "substantive-review")
+      ...(counted.some((a) => a.category === "substantive-review")
         ? ["First qualifying review"]
         : []),
       ...(m.projects >= 3 ? ["Contributions in 3 projects"] : []),
