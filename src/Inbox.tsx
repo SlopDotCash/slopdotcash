@@ -64,6 +64,11 @@ async function loadInbox(
   signal: AbortSignal,
   cursor: string | null = null,
 ): Promise<InboxState> {
+  // Signed out is an ordinary state. Read the session first so a signed-out
+  // visit never sends a notifications request the browser logs as a 401. When
+  // the session read itself fails, the notifications request still decides.
+  const session = await currentProjectSession().catch(() => undefined);
+  if (session === null) return { status: "signed-out" };
   const response = await fetchWithDeadline(
     `/api/v1/notifications${cursor ? `?${new URLSearchParams({ cursor })}` : ""}`,
     {

@@ -29,7 +29,7 @@ import {
   transactionUrl,
   UNRESERVED_AWARD_STATES,
 } from "./lib/payments/contracts";
-import { apiRequest } from "./lib/project-api";
+import { apiRequest, currentProjectSession } from "./lib/project-api";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { isDirectTransfer } from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
@@ -232,11 +232,19 @@ export function EarningsPage({
     const controller = new AbortController();
     setLoading(true);
     setLoadError("");
-    request("me", undefined, controller.signal)
+    // Signed out is an ordinary state. Read the session first so a signed-out
+    // visit never sends a payouts request the browser logs as a 401. When the
+    // session read itself fails, the payouts request still decides.
+    (async () => {
+      const session = await currentProjectSession().catch(() => undefined);
+      if (controller.signal.aborted) return undefined;
+      if (session === null) throw new SignedOutError();
+      return account(await request("me", undefined, controller.signal));
+    })()
       .then((value) => {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && value !== undefined) {
           setSignedOut(false);
-          setData(account(value));
+          setData(value);
         }
       })
       .catch((e: unknown) => {
