@@ -1085,6 +1085,77 @@ try {
   await assertOneWinner(clippedOriginal, []);
   await chain("evm_setAutomine", [true]);
 
+  // A tighter current per-operation envelope prevents a fee replacement,
+  // without rewriting the already-signed original or its gas reservation.
+  const nativeAward = await fundAward("native-cost-replacement-bound");
+  await chain("evm_setAutomine", [false]);
+  const nativeOriginal = outcome(await tick(), nativeAward).transactionId;
+  assert(nativeOriginal);
+  const nativeTx = (await chain("eth_getTransactionByHash", [
+    nativeOriginal,
+  ])) as {
+    gas: Hex;
+    maxFeePerGas: Hex;
+  };
+  const nativeFee = BigInt(nativeTx.maxFeePerGas);
+  const nativeLimit = (BigInt(nativeTx.gas) * nativeFee * 110n) / 100n;
+  const reviseNativeLimit = (limit: string | undefined) => {
+    const row = sqlite
+      .query<{ revision: number; manifest: string }, [string]>(
+        "SELECT revision,manifest FROM projects WHERE id=?",
+      )
+      .get(projectId);
+    assert(row);
+    const changed = JSON.parse(row.manifest);
+    for (const pin of changed.escrow.deployments) {
+      if (limit === undefined) delete pin.maxNativeCostWei;
+      else pin.maxNativeCostWei = limit;
+    }
+    const text = JSON.stringify(changed),
+      revision = row.revision + 1;
+    sqlite
+      .query(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,?,?)",
+      )
+      .run(
+        projectId,
+        revision,
+        text,
+        hash(text),
+        "Local native envelope fixture",
+        now.toISOString(),
+      );
+    sqlite
+      .query(
+        "UPDATE projects SET revision=?,manifest=?,manifest_sha256=? WHERE id=?",
+      )
+      .run(revision, text, hash(text), projectId);
+  };
+  reviseNativeLimit(nativeLimit.toString());
+  await chain("anvil_dropTransaction", [nativeOriginal]);
+  await nextBaseFee((nativeFee * 120n) / 100n);
+  await chain("anvil_mine", ["0x1"]);
+  await later();
+  const beforeNativeReplacement = signatures;
+  const nativeHeld = outcome(await tick(), nativeAward);
+  assert(
+    nativeHeld.error?.includes("native cost limit"),
+    JSON.stringify(nativeHeld),
+  );
+  assert.equal(
+    signatures,
+    beforeNativeReplacement,
+    "Native cap refused before replacement signing",
+  );
+  assert.equal((await replacements(nativeOriginal)).length, 0);
+  await nextBaseFee(1n);
+  await tick();
+  await finalize();
+  await tick();
+  await assertOneWinner(nativeOriginal, []);
+  reviseNativeLimit(undefined);
+  await chain("evm_setAutomine", [true]);
+
   // 1. A send stalled by a high base fee is replaced once and the replacement lands.
   const stalledAward = await fundAward("fee-bump-lands");
   await chain("evm_setAutomine", [false]);
@@ -1297,6 +1368,7 @@ try {
         "fee cap of three times stops signing and reports waiting",
         "restart mid-bump continues from the journal without a new nonce",
         "replacement refused when its reserve does not fit the budget",
+        "current native envelope refuses replacement before signing and preserves the original",
         "fee read outage still rebroadcasts the latest verified attempt",
       ],
       payments: 6,
