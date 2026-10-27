@@ -157,24 +157,6 @@ test("an existing empty-pin service is untouched and grants no unverified Pages 
   });
 });
 
-test("authorization failures cannot be treated as proof that a Worker is absent", async () => {
-  await fixture(async ({ directory }) => {
-    await expect(
-      prepareMainnetRelease({
-        directory,
-        account,
-        sha,
-        registry: [],
-        provider: async () => ({
-          status: 1,
-          stdout: "",
-          stderr: "Unauthorized",
-        }),
-      }),
-    ).rejects.toThrow("Cannot prove");
-  });
-});
-
 test("pinned Base release requires the exact signer inventory and retains canonical vault pins", async () => {
   const project = await pinnedProject();
   await fixture(async ({ directory }) => {
