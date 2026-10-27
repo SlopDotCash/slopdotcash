@@ -4,6 +4,8 @@ export interface EscrowDeployment {
   /** Optional EVM per-operation gas envelope, in native base units. Not a lifetime budget. */
   maxNativeCostWei?: string;
   evmUpgrade?: import("../../contracts/evm/adapter").EvmUpgrade;
+  /** EVM only: retain one attester nonce per exact signed destination-binding consent. */
+  bindingConsentNonceLimit?: 1;
   network:
     | "base-sepolia"
     | "base-mainnet"
