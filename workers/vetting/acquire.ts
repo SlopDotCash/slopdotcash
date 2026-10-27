@@ -15,8 +15,56 @@ const object = (value: unknown) => readRecord(value, "GitHub object");
 
 /** The pinned input is outside the acquisition policy, so a retry of the
  * same pin cannot pass. Outages and changed bytes are not refusals. */
+export type AcquisitionRefusalReason =
+  | "An exact repository and commit SHA are required"
+  | "Source entry limit exceeded"
+  | "Invalid source tree path or digest"
+  | "Unsupported source tree entry"
+  | "Source byte limit exceeded"
+  | "Unsupported repository inventory"
+  | "Immutable repository identity mismatch"
+  | "Template acquisition size limit"
+  | "Input response size limit exceeded"
+  | "Source blob size limit exceeded"
+  | "Source tree is truncated";
+
 export class AcquisitionRefusal extends Error {
   override name = "AcquisitionRefusal";
+  constructor(
+    readonly reason: AcquisitionRefusalReason,
+    readonly capacity?: {
+      unit: "entries" | "bytes";
+      observed?: number;
+      maximum: number;
+    },
+  ) {
+    super(reason);
+  }
+  /** Only fixed policy text and counters, never an upstream error message. */
+  get summary(): string {
+    if (!this.capacity) return this.reason;
+    return this.capacity.observed === undefined
+      ? `${this.reason}: maximum ${this.capacity.maximum} ${this.capacity.unit}; complete size unavailable`
+      : `${this.reason}: observed ${this.capacity.observed} ${this.capacity.unit}, maximum ${this.capacity.maximum}`;
+  }
+}
+
+/** Distinguish the acquisition size policy from transient transport failures. */
+export async function readAcquisitionBody(
+  response: Response,
+  maximum: number,
+): Promise<Uint8Array> {
+  try {
+    return await readLimitedBody(response, maximum);
+  } catch (error) {
+    const failure = error as { status?: number; code?: string } | null;
+    if (failure?.status === 413 && failure.code === "payload_too_large")
+      throw new AcquisitionRefusal("Input response size limit exceeded", {
+        unit: "bytes",
+        maximum,
+      });
+    throw error;
+  }
 }
 
 export async function acquireRepository(input: {
@@ -53,7 +101,7 @@ export async function acquireRepository(input: {
     if (!response.ok || response.body === null)
       throw new Error("Immutable source is unavailable");
     // Each read stays within its own limit and the cumulative transfer cap.
-    const bytes = await readLimitedBody(
+    const bytes = await readAcquisitionBody(
       response,
       Math.min(limit, MAX_BYTES * 2 - transferred),
     );
@@ -70,12 +118,17 @@ export async function acquireRepository(input: {
   const tree = await get(`trees/${treeSha}?recursive=1`, 4 * 1024 * 1024);
   if (
     tree.sha !== treeSha ||
-    tree.truncated !== false ||
+    typeof tree.truncated !== "boolean" ||
     !Array.isArray(tree.tree)
   )
     throw new Error("Incomplete commit tree");
+  if (tree.truncated) throw new AcquisitionRefusal("Source tree is truncated");
   if (tree.tree.length > MAX_FILES)
-    throw new AcquisitionRefusal("Source entry limit exceeded");
+    throw new AcquisitionRefusal("Source entry limit exceeded", {
+      unit: "entries",
+      observed: tree.tree.length,
+      maximum: MAX_FILES,
+    });
   const names = new Set<string>();
   const entries = tree.tree.map((value) => {
     const row = object(value);
@@ -192,10 +245,15 @@ export async function acquireRepository(input: {
         blob.encoding !== "base64" ||
         typeof blob.content !== "string" ||
         !Number.isSafeInteger(blob.size) ||
-        (blob.size as number) < 0 ||
-        (blob.size as number) > 8 * 1024 * 1024
+        (blob.size as number) < 0
       )
         throw new Error("Invalid immutable blob");
+      if ((blob.size as number) > 8 * 1024 * 1024)
+        throw new AcquisitionRefusal("Source blob size limit exceeded", {
+          unit: "bytes",
+          observed: blob.size as number,
+          maximum: 8 * 1024 * 1024,
+        });
       const encoded = blob.content.replaceAll("\n", "");
       const content = Buffer.from(encoded, "base64");
       if (
@@ -209,7 +267,11 @@ export async function acquireRepository(input: {
         throw new Error("Blob bytes do not match the Git object");
       bytes += content.length;
       if (bytes > MAX_BYTES)
-        throw new AcquisitionRefusal("Source byte limit exceeded");
+        throw new AcquisitionRefusal("Source byte limit exceeded", {
+          unit: "bytes",
+          observed: bytes,
+          maximum: MAX_BYTES,
+        });
       const sha256 = hash(content);
       if (!stored.has(sha256)) {
         await writeFile(join(directory, "objects", sha256), content, {

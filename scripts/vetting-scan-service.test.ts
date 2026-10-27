@@ -27,7 +27,10 @@ import {
   queueAutomaticScan,
   signedVettingRequest,
 } from "../backend/vetting/handler";
-import { CloudflareVettingPersistence } from "../backend/vetting/persistence";
+import {
+  CloudflareVettingPersistence,
+  summarize,
+} from "../backend/vetting/persistence";
 import { isScanResult } from "../backend/vetting/scan-result";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
@@ -99,6 +102,7 @@ let acquisitionRequests: { host: string; authorization: string | null }[];
 let publicGitHubLimit: number;
 /** The inventory items the primary reviewer last received. */
 let reviewedItems: { id: string; text: string }[] = [];
+let sourceResponse: "normal" | "oversized" | "truncated" = "normal";
 /** What the synthetic Surplus provider answers on each transport. */
 let provider: {
   up: boolean;
@@ -311,10 +315,12 @@ function github(url: URL): Response {
       sha: object[2],
       tree: { sha: git("rev-parse", `${object[2]}^{tree}`).toString().trim() },
     });
+  if (object?.[1] === "trees" && sourceResponse === "oversized")
+    return new Response(new Uint8Array(4 * 1024 * 1024 + 1));
   if (object?.[1] === "trees")
     return Response.json({
       sha: object[2],
-      truncated: false,
+      truncated: sourceResponse === "truncated",
       tree: git("ls-tree", "-r", "-t", object[2])
         .toString()
         .split("\n")
@@ -482,6 +488,7 @@ beforeEach(async () => {
   templateInputs.acceptedRevisions = ["1"];
   templateSha256 = digest(JSON.stringify(templateInputs));
   clock = NOW;
+  sourceResponse = "normal";
   root = await mkdtemp(join(tmpdir(), "slop-scan-service-"));
   repository = join(root, "git");
   await mkdir(repository);
@@ -1170,3 +1177,92 @@ test.skipIf(!SANDBOX_URL)(
   },
   120000,
 );
+
+for (const scenario of [
+  { source: "entries", evidenceUp: true },
+  { source: "entries", evidenceUp: false },
+  { source: "oversized", evidenceUp: true },
+  { source: "truncated", evidenceUp: true },
+] as const) {
+  test(`an acquisition ${scenario.source} policy refusal completes as incomplete and notifies each owner once (evidence available: ${scenario.evidenceUp})`, async () => {
+    const { evidenceUp } = scenario;
+    if (scenario.source === "entries")
+      await commit(
+        Object.fromEntries(
+          Array.from({ length: 1030 }, (_, index) => [
+            `many/file-${String(index).padStart(4, "0")}.ts`,
+            "export const value = 1;\n",
+          ]),
+        ),
+        "Exceed the supported source inventory",
+      );
+    if (scenario.source !== "entries") sourceResponse = scenario.source;
+    provider.evidenceUp = evidenceUp;
+    const pass = await runScanPass(config);
+    expect(pass.assessments).toHaveLength(1);
+    const outcome = pass.assessments[0];
+    expect(outcome).toMatchObject({
+      state: "published",
+      disposition: "incomplete",
+      outcome: "accepted",
+      specialist: false,
+      evidence: evidenceUp ? "retained" : "failed",
+    });
+    const assessment = await vetting.getAssessment(outcome.assessmentId);
+    expect(assessment?.state).toBe("incomplete");
+    const result = assessment?.result;
+    if (!assessment || !result || !isScanResult(result))
+      throw new Error("Missing incomplete scan result");
+    expect(result.assessed.commitSha).toBe(commitSha);
+    expect(result.assessed.templateSha256).toBe(TEMPLATE);
+    const reason =
+      scenario.source === "entries"
+        ? `Source entry limit exceeded: observed ${git("ls-tree", "-r", "-t", "HEAD").toString().trim().split("\n").length} entries, maximum 1024`
+        : scenario.source === "oversized"
+          ? "Input response size limit exceeded: maximum 4194304 bytes; complete size unavailable"
+          : "Source tree is truncated";
+    expect(result.visibilityGaps).toEqual([
+      `Acquisition refused before inspection: ${reason}`,
+    ]);
+    for (const coverage of Object.values(result.coverage))
+      expect(coverage).toEqual({ state: "unsupported", items: 0 });
+    expect(
+      Object.values(result.checks).every((state) => state === "not-run"),
+    ).toBe(true);
+    expect(result.primaryReview).toMatchObject({
+      status: "not-started",
+      verdict: null,
+      risk: null,
+      findingCount: 0,
+    });
+    expect(result.specialistReview).toBeNull();
+    expect(summarize(assessment).modelRuns).toEqual([]);
+    expect(provider.calls).toEqual([]);
+    expect(await retained.evidence.retained(result)).toBe(evidenceUp);
+    expect((await activate()).status).toBe(422);
+    const notices = () =>
+      sqlite
+        .query(
+          "SELECT recipient_github_id, action_path FROM notifications WHERE kind='project_scan_failed' ORDER BY recipient_github_id",
+        )
+        .all();
+    const project = await projects.getProject("open-registry");
+    if (!project) throw new Error("Missing fixture project");
+    const owners = [
+      ...new Set([
+        APPLICANT.githubId,
+        String(project.manifest.steward.github.actorId),
+      ]),
+    ].sort();
+    expect(notices()).toEqual(
+      owners.map((recipient_github_id) => ({
+        recipient_github_id,
+        action_path: "/projects/open-registry",
+      })),
+    );
+    // The same pin is now resolved, not polled forever or notified again.
+    expect((await runScanPass(config)).assessments).toEqual([]);
+    expect(notices()).toHaveLength(owners.length);
+    expect(provider.calls).toEqual([]);
+  });
+}
