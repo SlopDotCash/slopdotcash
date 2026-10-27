@@ -112,10 +112,12 @@ describe("reward token metadata", () => {
     });
   });
 
-  test("refuses the approved Token-2022 subset until vaults support it", async () => {
+  test("refuses every Token-2022 account until vaults support it", async () => {
     // Vault creation would otherwise plan a classic `initialize` that the program
     // refuses, and funding and the monthly commitment would use the classic program.
-    for (const mint of [token2022Mint(9), classicMint(6)]) {
+    const authorized = token2022Mint(6);
+    authorized[46] = 1;
+    for (const mint of [token2022Mint(9), authorized, classicMint(6, 170)]) {
       const { metadata } = read(TOKEN_2022, mint);
       await expect(metadata).rejects.toThrow(
         "The mint is not a classic SPL Token mint",
@@ -124,39 +126,27 @@ describe("reward token metadata", () => {
     }
   });
 
-  test("refuses a Token-2022 mint outside the subset", async () => {
-    const authorized = token2022Mint(6);
-    authorized[46] = 1;
-    await expect(read(TOKEN_2022, authorized).metadata).rejects.toThrow(
-      "Token-2022 freeze authority is not disabled",
-    );
-    const extra = token2022Mint(6);
-    extra[234] = 1;
-    extra[235] = 0;
-    await expect(read(TOKEN_2022, extra).metadata).rejects.toThrow(
-      "Unsupported Token-2022 extension 1",
-    );
-    await expect(
-      read(TOKEN_2022, classicMint(6, 120)).metadata,
-    ).rejects.toThrow("Truncated Token-2022 account");
-  });
-
   test("refuses an account that is not a mint or not a token program", async () => {
-    // A 165-byte token account that is initialized but is not a mint.
-    await expect(read(TOKEN, classicMint(6, 165)).metadata).rejects.toThrow(
-      "Classic mint layout mismatch",
-    );
-    await expect(read(TOKEN, classicMint(6, 83)).metadata).rejects.toThrow(
-      "Classic mint layout mismatch",
-    );
+    // A classic token account: mint, owner, amount, then the state byte (1) at 108.
+    // Byte 45 lies inside the owner key, so it is 1 only by chance.
+    for (const ownerByte of [7, 1]) {
+      const tokenAccount = new Uint8Array(165);
+      tokenAccount.set(MINT_BYTES, 0);
+      tokenAccount.fill(ownerByte, 32, 64);
+      tokenAccount[108] = 1;
+      await expect(read(TOKEN, tokenAccount).metadata).rejects.toThrow(
+        "The account is not an SPL mint",
+      );
+    }
     const uninitialized = classicMint(6);
     uninitialized[45] = 0;
-    await expect(read(TOKEN, uninitialized).metadata).rejects.toThrow(
-      "Mint is not initialized",
-    );
+    for (const account of [classicMint(6, 83), uninitialized])
+      await expect(read(TOKEN, account).metadata).rejects.toThrow(
+        "The account is not an SPL mint",
+      );
     await expect(
       read("11111111111111111111111111111111", classicMint(6)).metadata,
-    ).rejects.toThrow("Not a supported token program account");
+    ).rejects.toThrow("The mint is not a classic SPL Token mint");
   });
 
   test("reports a missing account and wraps every refusal as a token metadata error", async () => {
