@@ -62,15 +62,19 @@ async function chooseCaseAction(
     .locator(".security-action")
     .first()
     .waitFor({ state: "attached" });
-  const selector = scope.getByRole("combobox", { name: "Action", exact: true });
+  const selector = scope.getByRole("combobox", {
+    name: "Action",
+    exact: true,
+    includeHidden: true,
+  });
   if (
     typeof action === "string" &&
     (await scope.locator(`[data-case-action-selector="${action}"]`).count())
   )
     await scope.locator(`[data-case-action-selector="${action}"]`).click();
   else if (await selector.count()) {
-    const more = scope.locator(".security-actions details");
-    if (!(await selector.isVisible())) await more.locator("summary").click();
+    if (!(await selector.isVisible()))
+      await scope.getByText("Other case actions", { exact: true }).click();
     await selector.selectOption(action);
   } else if (typeof action === "string")
     await expect(
@@ -615,6 +619,9 @@ test("maintainers can verify or reject a manually linked private report @registr
   });
 
   await page
+    .getByRole("button", { name: "Back to reports", exact: true })
+    .click();
+  await page
     .getByRole("button", { name: new RegExp(`${id} GHSA-3c4f-5g6h-7j8m`) })
     .click();
   const rejectedDetail = page.locator(`[aria-labelledby="case-${claims[1]}"]`);
@@ -1129,6 +1136,12 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(page.locator(".route-page-header .route-lead")).toHaveText(
       "Published award: 10,000 USDC gross per finding. Payer: Slop.",
     );
+    const offer = page.getByRole("region", { name: "Published bounty offer" });
+    await expect(offer).toContainText("7,500 USDC to the researcher");
+    await expect(offer).toContainText(
+      "10,000 USDC total award · 2,500 USDC to Slop",
+    );
+    await page.getByText("Full award terms", { exact: true }).click();
     const facts = page.getByRole("region", { name: "Award terms" });
     await expect(facts).toContainText("Researcher · 75%7,500 USDC");
     await expect(facts).toContainText("Awards are discretionary.");
@@ -1143,6 +1156,10 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(page.locator(".route-page-header .route-lead")).toContainText(
       "100,000 USDC gross per finding",
     );
+    await expect(
+      page.getByRole("region", { name: "Published bounty offer" }),
+    ).toContainText("75,000 USDC to the researcher");
+    await page.getByText("Full award terms", { exact: true }).click();
     const split = page.getByRole("region", { name: "Award split" });
     await expect(split).toContainText("Researcher · 75%75,000 USDC");
     await expect(split).toContainText("Slop · 25%25,000 USDC");
