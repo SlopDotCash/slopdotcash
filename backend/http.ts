@@ -137,11 +137,24 @@ export function exactKeys(
     fail(400, "invalid_request", "Request body has unexpected fields");
 }
 
-export async function requireActor<A>(
+export async function requireActor<A extends { githubId: string }>(
   request: Request,
   deps: { sessionActor(request: Request): Promise<A | null> },
 ): Promise<A> {
   const actor = await deps.sessionActor(request);
   if (actor === null) fail(401, "unauthorized", "Sign in with GitHub");
+  // The caller may bind a private request to the actor shown in its UI. This
+  // only narrows the authenticated session; it never supplies authority.
+  const expected = request.headers.get("x-slop-expected-github-id");
+  if (expected !== null) {
+    if (!/^[1-9]\d{0,19}$/u.test(expected))
+      fail(400, "invalid_expected_actor", "Expected GitHub actor is invalid");
+    if (expected !== actor.githubId)
+      fail(
+        403,
+        "actor_changed",
+        "Your account changed. Reload your private view before continuing.",
+      );
+  }
   return actor;
 }

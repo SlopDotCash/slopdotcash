@@ -19,9 +19,11 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import {
+  createContext,
   type FormEvent,
   type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useMemo,
@@ -29,7 +31,7 @@ import {
   useState,
 } from "react";
 import { Link } from "./Link";
-import { PrivateReportForm } from "./PrivateReportForm";
+import { PrivateReportForm, usePrivateDraftSession } from "./PrivateReportForm";
 import {
   GRANT_ERRORS,
   githubSubmissionStatus,
@@ -44,6 +46,7 @@ import "./private-report-design.css";
 import { decimalBaseUnits, formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
 import {
+  clearAllDrafts,
   clearDraft,
   EMPTY_DRAFT,
   loadDraft,
@@ -54,6 +57,7 @@ import {
   TERMINAL_FAILURES,
 } from "./lib/intake-drafts";
 import {
+  currentProjectSession,
   ProjectApiError,
   type ProjectSessionState,
   projectApiRequest,
@@ -556,6 +560,7 @@ export function SecurityProgramPage({
   } | null>(null);
   const [sessionEpoch, setSessionEpoch] = useState(0);
   const session = useProjectSession(sessionEpoch);
+  usePrivateDraftSession(session);
   useEffect(() => {
     const check = () => setSessionEpoch((value) => value + 1);
     window.addEventListener("focus", check);
@@ -927,9 +932,17 @@ type Loaded<T> =
   | { status: "error"; message: string }
   | { status: "ready"; value: T };
 
+const PrivateRequestContext =
+  createContext<typeof projectApiRequest>(projectApiRequest);
+
+function usePrivateRequest() {
+  return useContext(PrivateRequestContext);
+}
+
 function useSecurityData<T>(
   path: string | null,
 ): [Loaded<T>, () => void, (value: T) => void] {
+  const privateRequest = usePrivateRequest();
   const [state, setState] = useState<Loaded<T>>({ status: "loading" });
   const generation = useRef(0);
   const load = useCallback(() => {
@@ -939,7 +952,7 @@ function useSecurityData<T>(
     setState((previous) =>
       previous.status === "ready" ? previous : { status: "loading" },
     );
-    projectApiRequest<T>("GET", path).then(
+    privateRequest<T>("GET", path).then(
       (value) => {
         if (generation.current === current)
           setState({ status: "ready", value });
@@ -953,7 +966,7 @@ function useSecurityData<T>(
         );
       },
     );
-  }, [path]);
+  }, [path, privateRequest]);
   useEffect(() => {
     load();
     return () => {
@@ -1096,6 +1109,7 @@ function ImportReports({
   projects: ProjectDefinition[];
   onImported: () => void;
 }) {
+  const privateRequest = usePrivateRequest();
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [note, setNote] = useState<string | null>(null);
   const { busy, error, run: act } = useAction();
@@ -1103,7 +1117,7 @@ function ImportReports({
     event.preventDefault();
     setNote(null);
     void act(async () => {
-      const body = await projectApiRequest<{
+      const body = await privateRequest<{
         state: "ok" | "unavailable";
         received: number;
       }>("POST", "security-cases", { mode: "import", projectId });
@@ -1148,6 +1162,7 @@ function ClaimForm({
   programProjects: ProjectDefinition[];
   onCreated: (created: SecurityCase) => void;
 }) {
+  const privateRequest = usePrivateRequest();
   const [projectId, setProjectId] = useState(programProjects[0]?.id ?? "");
   const [advisory, setAdvisory] = useState("");
   const [key, setKey] = useState(requestKey);
@@ -1159,7 +1174,7 @@ function ClaimForm({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void run(async () => {
-      const body = await projectApiRequest<{ case: SecurityCase }>(
+      const body = await privateRequest<{ case: SecurityCase }>(
         "POST",
         "security-cases",
         {
@@ -1216,6 +1231,7 @@ function DirectVerifyForm({
   onUnavailable: () => void;
   programProjects: ProjectDefinition[];
 }) {
+  const privateRequest = usePrivateRequest();
   const [projectId, setProjectId] = useState(programProjects[0]?.id ?? "");
   const [advisory, setAdvisory] = useState("");
   const [key] = useState(requestKey);
@@ -1228,7 +1244,7 @@ function DirectVerifyForm({
     event.preventDefault();
     void run(async () => {
       try {
-        const body = await projectApiRequest<{
+        const body = await privateRequest<{
           submission: Submission;
           authorizeUrl: string;
         }>("POST", "security-submissions", {
@@ -1307,6 +1323,7 @@ function RevisePrivateReport({
   report: PrivateReport;
   onUpdated: (submission: Submission) => void;
 }) {
+  const privateRequest = usePrivateRequest();
   const [draft, setDraft] = useState<ReportDraft>(() => ({
     summary: report.summary,
     description: report.description,
@@ -1323,7 +1340,7 @@ function RevisePrivateReport({
         onSubmit={(event) => {
           event.preventDefault();
           void run(async () => {
-            const result = await projectApiRequest<{ submission: Submission }>(
+            const result = await privateRequest<{ submission: Submission }>(
               "POST",
               `security-submissions/${encodeURIComponent(submission.id)}/report`,
               {
@@ -1359,6 +1376,7 @@ function PrivateReportDetail({
   onUpdated: (submission: Submission) => void;
   expanded?: boolean;
 }) {
+  const privateRequest = usePrivateRequest();
   const [opened, setOpened] = useState(expanded);
   const [detail, reload] = useSecurityData<{
     submission: Submission;
@@ -1370,7 +1388,7 @@ function PrivateReportDetail({
   const { busy, error, run } = useAction();
   const review = (decision: "forward" | "request-information") =>
     void run(async () => {
-      const result = await projectApiRequest<{ submission: Submission }>(
+      const result = await privateRequest<{ submission: Submission }>(
         "POST",
         `security-submissions/${encodeURIComponent(submission.id)}/review`,
         { expectedRevision: submission.intake?.revision, decision, reason },
@@ -1480,6 +1498,7 @@ function SubmissionCard({
   onUpdated: (submission: Submission) => void;
   onOpenCase: (caseId: string) => void;
 }) {
+  const privateRequest = usePrivateRequest();
   const [draft, setDraft] = useState<ReportDraft>(
     () => loadDraft(submission.id) ?? EMPTY_DRAFT,
   );
@@ -1492,7 +1511,7 @@ function SubmissionCard({
   const run = (path: string, body: Record<string, unknown>) =>
     void act(async () => {
       try {
-        const result = await projectApiRequest<{ submission: Submission }>(
+        const result = await privateRequest<{ submission: Submission }>(
           "POST",
           `security-submissions/${encodeURIComponent(submission.id)}/${path}`,
           body,
@@ -1514,7 +1533,7 @@ function SubmissionCard({
       return;
     }
     void act(async () => {
-      const body = await projectApiRequest<{ authorizeUrl: string }>(
+      const body = await privateRequest<{ authorizeUrl: string }>(
         "POST",
         `security-submissions/${encodeURIComponent(submission.id)}/authorize`,
         {},
@@ -1753,6 +1772,7 @@ function SubmissionsPanel({
   onOpenCase: (caseId: string) => void;
   onKnownCases: (ids: string[]) => void;
 }) {
+  const privateRequest = usePrivateRequest();
   const [submissions, setSubmissions] = useState<Submission[] | null>(null);
   const [authorityUnavailable, setAuthorityUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1775,7 +1795,7 @@ function SubmissionsPanel({
   const load = useCallback(() => {
     const current = ++generation.current;
     setError(null);
-    projectApiRequest<{
+    privateRequest<{
       recipientGithubId: string;
       automatic: boolean;
       submissions: Submission[];
@@ -1800,7 +1820,7 @@ function SubmissionsPanel({
     return () => {
       generation.current++;
     };
-  }, [onAvailability, session.session.githubId]);
+  }, [onAvailability, session.session.githubId, privateRequest]);
   useEffect(load, [load]);
   if (error && submissions === null)
     return (
@@ -1892,6 +1912,7 @@ function RecordForm({
   programProjects: ProjectDefinition[];
   onCreated: (created: SecurityCase) => void;
 }) {
+  const privateRequest = usePrivateRequest();
   const [projectId, setProjectId] = useState(programProjects[0]?.id ?? "");
   const [advisory, setAdvisory] = useState("");
   const [reporterId, setReporterId] = useState("");
@@ -1903,7 +1924,7 @@ function RecordForm({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void run(async () => {
-      const body = await projectApiRequest<{ case: SecurityCase }>(
+      const body = await privateRequest<{ case: SecurityCase }>(
         "POST",
         "security-cases",
         {
@@ -2437,6 +2458,7 @@ function ActionForm({
   onDone: (updated: SecurityCase | null, note: string) => void;
   headingId?: string;
 }) {
+  const privateRequest = usePrivateRequest();
   const spec = actionSpec(action, record);
   const [values, setValues] = useState(() => (spec ? initialValues(spec) : {}));
   const [key] = useState(requestKey);
@@ -2474,7 +2496,7 @@ function ActionForm({
       else body[field.name] = value;
     }
     void run(async () => {
-      const response = await projectApiRequest<{ case: SecurityCase }>(
+      const response = await privateRequest<{ case: SecurityCase }>(
         "POST",
         `security-cases/${encodeURIComponent(record.id)}/actions`,
         body,
@@ -2639,11 +2661,12 @@ function AnalysisPanel({
   record: SecurityCase;
   onRetry: () => void;
 }) {
+  const privateRequest = usePrivateRequest();
   const analysis = record.analysis ?? null;
   const { busy, error, run } = useAction();
   const retry = () =>
     void run(async () => {
-      await projectApiRequest<{ case: SecurityCase }>(
+      await privateRequest<{ case: SecurityCase }>(
         "POST",
         `security-cases/${encodeURIComponent(record.id)}/actions`,
         {
@@ -2725,11 +2748,12 @@ function AppealTriagePanel({
   record: SecurityCase;
   onRetry: () => void;
 }) {
+  const privateRequest = usePrivateRequest();
   const triage = record.appealTriage ?? null;
   const { busy, error, run } = useAction();
   const retry = () =>
     void run(async () => {
-      await projectApiRequest<{ case: SecurityCase }>(
+      await privateRequest<{ case: SecurityCase }>(
         "POST",
         `security-cases/${encodeURIComponent(record.id)}/actions`,
         {
@@ -3158,10 +3182,11 @@ function CheckReceipt({
   record: SecurityCase;
   onDone: () => void;
 }) {
+  const privateRequest = usePrivateRequest();
   const { busy, error, run } = useAction();
   const check = () =>
     void run(async () => {
-      await projectApiRequest(
+      await privateRequest(
         "POST",
         `security-cases/${encodeURIComponent(record.id)}/actions`,
         {
@@ -3188,9 +3213,180 @@ function CheckReceipt({
 }
 
 /** The signed-in private case inbox. */
-export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
+export function SecurityInbox({
+  embedded = false,
+  expectedActorId,
+  onIdentityChange,
+}: {
+  embedded?: boolean;
+  expectedActorId?: string;
+  onIdentityChange?: (actorId: string | null) => void;
+}) {
+  const [sessionEpoch, setSessionEpoch] = useState(0);
+  const session = useProjectSession(sessionEpoch);
+  usePrivateDraftSession(session);
+  const [problem, setProblem] = useState<string | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const actorId =
+    session.status === "signed-in" ? session.session.githubId : null;
+  const refreshIdentity = useCallback(() => {
+    setProblem(null);
+    setSessionEpoch((value) => value + 1);
+  }, []);
+  useEffect(() => {
+    if (embedded) return;
+    window.addEventListener("focus", refreshIdentity);
+    return () => window.removeEventListener("focus", refreshIdentity);
+  }, [embedded, refreshIdentity]);
+  useEffect(() => {
+    if (session.status === "signed-out") onIdentityChange?.(null);
+    else if (
+      session.status === "signed-in" &&
+      expectedActorId &&
+      actorId !== expectedActorId
+    )
+      onIdentityChange?.(actorId);
+  }, [session.status, actorId, expectedActorId, onIdentityChange]);
+  const privateRequest = useCallback(
+    async <T,>(
+      method: "GET" | "POST" | "PUT",
+      path: string,
+      body?: unknown,
+    ): Promise<T> => {
+      if (actorId === null)
+        throw new Error("Sign in before accessing private reports.");
+      const verifyIdentity = async () => {
+        let current: Awaited<ReturnType<typeof currentProjectSession>>;
+        try {
+          current = await currentProjectSession();
+        } catch {
+          if (mounted.current)
+            setProblem(
+              "Your private session could not be verified. Retry before viewing reports.",
+            );
+          throw new Error("Your private session could not be verified.");
+        }
+        if (!mounted.current)
+          throw new Error("This private report view was closed.");
+        if (!current || current.githubId !== actorId) {
+          clearAllDrafts();
+          setProblem(
+            "Your account changed or signed out. Reload your private reports.",
+          );
+          onIdentityChange?.(current?.githubId ?? null);
+          throw new Error("Your account changed or signed out.");
+        }
+      };
+      await verifyIdentity();
+      let value: T;
+      try {
+        value = await projectApiRequest<T>(method, path, body, {
+          expectedActorGithubId: actorId,
+        });
+      } catch (cause) {
+        if (
+          cause instanceof ProjectApiError &&
+          [401, 403, 404, 410].includes(cause.status)
+        ) {
+          if (mounted.current) {
+            setProblem(
+              "Private report access changed. Reload your private reports.",
+            );
+            if (cause.status === 401) {
+              clearAllDrafts();
+              onIdentityChange?.(null);
+            }
+          }
+          throw cause;
+        }
+        // Only retain the old private view after a transient error when this
+        // request still belongs to the currently authenticated account.
+        await verifyIdentity();
+        throw cause;
+      }
+      await verifyIdentity();
+      const identity = value as {
+        recipientGithubId?: string;
+        viewer?: { githubId?: string };
+      } | null;
+      if (
+        identity &&
+        ((identity.recipientGithubId &&
+          identity.recipientGithubId !== actorId) ||
+          (identity.viewer?.githubId && identity.viewer.githubId !== actorId))
+      ) {
+        setProblem(
+          "This private response belongs to another account. Reload your private reports.",
+        );
+        throw new Error("Private report account mismatch.");
+      }
+      return value;
+    },
+    [actorId, onIdentityChange],
+  );
+  let body: ReactNode;
+  if (problem)
+    body = (
+      <div className="form-error" role="alert">
+        <p>{problem}</p>
+        <button className="text-button" type="button" onClick={refreshIdentity}>
+          Retry private session
+        </button>
+      </div>
+    );
+  else if (
+    session.status === "signed-in" &&
+    (!expectedActorId || actorId === expectedActorId)
+  )
+    body = (
+      <PrivateRequestContext.Provider value={privateRequest}>
+        <SecurityInboxContent
+          embedded={embedded}
+          session={session}
+          key={actorId}
+        />
+      </PrivateRequestContext.Provider>
+    );
+  else if (session.status === "checking" || session.status === "signed-in")
+    body = <p role="status">Checking private session…</p>;
+  else
+    body = (
+      <SignInPanel
+        next={embedded ? "/inbox?view=reports" : "/security"}
+        purpose="Sign in to see your security cases."
+        state={session}
+      />
+    );
+  return embedded ? (
+    <section
+      className="security-page operations-page"
+      aria-label="Private security reports"
+    >
+      {body}
+    </section>
+  ) : (
+    <main className="shell route-main admin-page security-page operations-page">
+      <RoutePageHeader icon={<LockKeyhole />} title="Security cases" />
+      <AccountNav current="security" />
+      {body}
+    </main>
+  );
+}
+
+function SecurityInboxContent({
+  embedded,
+  session,
+}: {
+  embedded: boolean;
+  session: ProjectSessionState;
+}) {
   const [filter, setFilter] = useState<ReportFilter>("all");
-  const session = useProjectSession();
   const [list, reload] = useSecurityData<CaseList>(
     session.status === "signed-in" ? "security-cases" : null,
   );
@@ -3470,22 +3666,7 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
       </>
     );
   }
-  if (embedded)
-    return (
-      <section
-        className="security-page operations-page"
-        aria-label="Private security reports"
-      >
-        {body}
-      </section>
-    );
-  return (
-    <main className="shell route-main admin-page security-page operations-page">
-      <RoutePageHeader icon={<LockKeyhole />} title="Security cases" />
-      <AccountNav current="security" />
-      {body}
-    </main>
-  );
+  return <>{body}</>;
 }
 
 export default function SecurityCasesPage() {
