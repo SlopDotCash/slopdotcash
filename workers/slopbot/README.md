@@ -627,6 +627,17 @@ are written to artifacts. `bun --no-env-file scripts/qualify-value-models.ts
 --dry-run` checks preparation without provider calls and cannot qualify the
 model behavior.
 
+The same protected step also makes one synthetic general-review request with
+the canonical review prompt and verdict schema. An empty marker file whose
+loader is absent from the supplied evidence must retain a relevant limitation
+and fail the production closure-confirmation predicate. This negative case
+does not qualify positive closure behavior. It has no GitHub, production
+storage or notification actions, permits one request with at most 2,048 output
+tokens and a $1 cost ceiling, and logs only provider, model, count and outcome.
+Together with the two value paths, the step allows at most five requests and
+$3; the same main-only credential and unknown-cost refusal apply. Its dry run
+makes no provider calls.
+
 For a rename with no patch and zero added or deleted lines, the collector
 checks the old path at the submitted merge base and the new path at the head.
 For the accepted range, it checks the first parent and merge commit instead.
