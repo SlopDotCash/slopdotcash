@@ -544,6 +544,9 @@ test("maintainers can verify or reject a manually linked private report @registr
     .getByRole("button", { name: new RegExp(`${id} GHSA-2c3f-4g5h-6j7m`) })
     .click();
   const detail = page.locator(`[aria-labelledby="case-${claims[0]}"]`);
+  await detail
+    .getByLabel("Action", { exact: true })
+    .selectOption("verify-link");
   const verify = detail.getByRole("form", { name: "Verify the GitHub report" });
   await expect(
     verify.getByRole("button", { name: "Verify report", exact: true }),
@@ -575,6 +578,9 @@ test("maintainers can verify or reject a manually linked private report @registr
     .getByRole("button", { name: new RegExp(`${id} GHSA-3c4f-5g6h-7j8m`) })
     .click();
   const rejectedDetail = page.locator(`[aria-labelledby="case-${claims[1]}"]`);
+  await rejectedDetail
+    .getByLabel("Action", { exact: true })
+    .selectOption("reject-link");
   const reject = rejectedDetail.getByRole("form", { name: "Reject this link" });
   const reason = "The advisory does not identify this account as the reporter.";
   await reject.getByLabel("Private reason").fill(reason);

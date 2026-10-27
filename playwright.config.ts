@@ -79,8 +79,6 @@ if (
   !/^[A-Za-z0-9+/]{43}=$/u.test(registryVettingKey)
 )
   throw new Error("SLOP_E2E_VETTING_PUBLIC_KEY must be a base64 Ed25519 key");
-// Registry fixtures use an explicit test network. The unassembled production
-// config deliberately serves none; inheriting it makes setup reads fail closed.
 const registryArguments = registryPersistTo
   ? // Positive local registry workflows must explicitly select test networks;
     // the release configuration intentionally has no network enabled by default.
