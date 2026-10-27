@@ -469,7 +469,11 @@ function currentProfileActor(
     );
   // Membership and activity records can retain an old login; wait for the
   // directory's veto before either one names the current actor.
-  if (profiles.status !== "ready") return;
+  if (
+    profiles.status !== "ready" ||
+    (!membership.own && membership.joinStatus === "loading")
+  )
+    return;
   const directoryConflict = (candidate: { id: string }) =>
     profiles.index.people.some((person) =>
       person.id === candidate.id ? !matchesLogin(person) : matchesLogin(person),
