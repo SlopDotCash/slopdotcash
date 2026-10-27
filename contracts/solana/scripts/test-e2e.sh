@@ -62,4 +62,8 @@ bun build ../../workers/payments/scanner.ts ../../backend/payments/ledger.ts ../
 bun build ../../workers/payment-executor/core.ts --target=node --outfile=.local/executor-core.mjs
 bun build ../../workers/payments/index.ts --target=node --outfile=.local/payments-worker.mjs
 bun build ../../backend/payments/dispatch.ts --target=node --outfile=.local/dispatch.mjs
-bash scripts/run-test-stage.sh lifecycle node --test --test-force-exit --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs integration/token-2022.e2e.mjs
+# TAP emits failures immediately; spec retains custom error fields for receipt collection.
+bash scripts/run-test-stage.sh lifecycle node --test --test-force-exit \
+  --test-reporter=tap --test-reporter=spec \
+  --test-reporter-destination=stdout --test-reporter-destination=stderr \
+  --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs integration/token-2022.e2e.mjs
