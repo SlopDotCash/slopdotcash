@@ -120,25 +120,28 @@ export default function InboxPage() {
   const generation = useRef(0);
   const [recipient, setRecipient] = useState<string | null>(null);
   const previousRecipient = useRef<string | null>(null);
+  const acceptRecipient = useCallback((id: string | null) => {
+    const changed =
+      previousRecipient.current !== null && previousRecipient.current !== id;
+    if (id === null || changed) {
+      clearAllDrafts();
+      const url = new URL(window.location.href);
+      for (const key of ["case", "submission", "intake"])
+        url.searchParams.delete(key);
+      window.history.replaceState(window.history.state, "", url);
+      setCursor(null);
+      setPreviousPages([]);
+    }
+    previousRecipient.current = id;
+    setRecipient(id);
+    return changed;
+  }, []);
   const receive = useCallback(
     (next: InboxState) => {
       if (next.status === "ready" || next.status === "signed-out") {
-        const id =
-          next.status === "ready" ? next.value.recipientGithubId : null;
-        const changed =
-          previousRecipient.current !== null &&
-          previousRecipient.current !== id;
-        if (next.status === "signed-out" || changed) {
-          clearAllDrafts();
-          const url = new URL(window.location.href);
-          for (const key of ["case", "submission", "intake"])
-            url.searchParams.delete(key);
-          window.history.replaceState(window.history.state, "", url);
-          setCursor(null);
-          setPreviousPages([]);
-        }
-        previousRecipient.current = id;
-        setRecipient(id);
+        const changed = acceptRecipient(
+          next.status === "ready" ? next.value.recipientGithubId : null,
+        );
         if (changed && next.status === "ready" && cursor !== null) {
           setState({ status: "loading" });
           return;
@@ -146,7 +149,7 @@ export default function InboxPage() {
       }
       setState(next);
     },
-    [cursor],
+    [cursor, acceptRecipient],
   );
   const load = useCallback(() => {
     const current = ++generation.current;
@@ -159,28 +162,26 @@ export default function InboxPage() {
       async () => {
         if (generation.current !== current) return;
         setState({ status: "error", message: UNAVAILABLE });
-        // Private reports remain reachable when notification delivery is down.
-        // Later successful lists supply their own authenticated recipient.
-        if (previousRecipient.current !== null) return;
+        // Notification failure does not prove the previous account is still
+        // signed in. Revalidate before retaining its private editor.
         try {
           const session = await currentProjectSession();
           if (generation.current !== current) return;
           if (session === null) receive({ status: "signed-out" });
-          else {
-            previousRecipient.current = session.githubId;
-            setRecipient(session.githubId);
-          }
+          else acceptRecipient(session.githubId);
         } catch {
-          if (generation.current === current)
+          if (generation.current === current) {
+            setRecipient(null);
             setState({
               status: "error",
               message: "The inbox and private session could not load. Retry.",
             });
+          }
         }
       },
     );
     return () => controller.abort();
-  }, [cursor, receive]);
+  }, [cursor, receive, acceptRecipient]);
   useEffect(() => load(), [load]);
 
   function act(action: () => Promise<"ok" | "signed-out">, done: string) {
