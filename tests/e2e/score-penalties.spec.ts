@@ -90,11 +90,10 @@ test("How it works explains the current scoring policy once", async ({
     "the latest request for changes that the merged code answered",
   ])
     await expect(page.locator("main")).not.toContainText(retired);
-  // The questions agree with the rules instead of repeating old ones.
-  await page.getByText("Do reviews earn points?", { exact: true }).click();
-  await expect(page.locator("main")).toContainText(
-    "It can find a correction or validate the change; a request for changes is not required.",
-  );
+  // The review rules appear once, in the Points rules above.
+  await expect(
+    page.getByText("Do reviews earn points?", { exact: true }),
+  ).toHaveCount(0);
   const modelQuestion = page.getByText("Does the model I use matter?", {
     exact: true,
   });

@@ -167,7 +167,6 @@ test("referrer reviews, signs once, and waits for verified claim status", async 
     page.getByRole("region", { name: "Review referral claim" }),
   ).toBeVisible();
   expect(h.calls).not.toContain("eth_sendTransaction");
-  await expect(section).toContainText("No token approval is required");
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("referral-review.png"),
@@ -228,7 +227,7 @@ test("unactivated referrals stay hidden; stale, paused and unknown claims cannot
   unknown.pendingBase = null;
   h.set(unknown);
   await section.getByRole("button", { name: "Refresh record" }).click();
-  await expect(section).toContainText("Amounts stay unknown");
+  await expect(section).toContainText("The claim record is not available yet.");
   await expect(section.getByText("Unknown", { exact: true })).toHaveCount(4);
   expect(h.calls).toEqual([]);
 });

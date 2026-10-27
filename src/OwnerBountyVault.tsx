@@ -76,12 +76,9 @@ export function OwnerBountyVault({
     <section className="owner-section" aria-label="Bounty funds">
       <h2>Bounty funds</h2>
       <div className="owner-form">
-        <p>
-          These funds are separate from contribution rewards. Slop shows this
-          balance only to project owners.
-        </p>
+        <p>Separate from contribution rewards.</p>
         {state.status === "loading" ? (
-          <p role="status">Loading private bounty funds…</p>
+          <p role="status">Loading bounty funds…</p>
         ) : null}
         {state.status === "error" ? <p role="alert">{state.message}</p> : null}
         {state.status === "ready" ? (
@@ -92,17 +89,15 @@ export function OwnerBountyVault({
                 {state.funds
                   ? "Last verified balance is stale."
                   : "Last verified vault information is shown."}{" "}
-                New setup and deposits are disabled until a successful refresh.
-                Existing transaction checks and owner withdrawals remain
-                available.
+                Setup and deposits resume after a successful refresh.
               </p>
             ) : null}
             {!state.canSetup && !state.refreshError ? (
               <p>
                 This project is restricted. New setup and deposits are disabled.
                 {deployments.length > 0
-                  ? " The owner can still check existing deposit or withdrawal transactions and withdraw free funds."
-                  : " Vault registration can resume after reinstatement."}
+                  ? " You can still withdraw free funds."
+                  : " Setup resumes after reinstatement."}
               </p>
             ) : null}
             {state.funds ? (
@@ -121,10 +116,7 @@ export function OwnerBountyVault({
                 </p>
               </>
             ) : (
-              <p>
-                No current finalized balance is available. After a deposit, wait
-                for the private scanner, then refresh.
-              </p>
+              <p>No finalized balance yet. After a deposit, refresh later.</p>
             )}
             {deployments.length === 0 && state.canSetup ? (
               <OwnerVaultSetup

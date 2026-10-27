@@ -104,12 +104,6 @@ export function GeneratedSkillPreview({
   }
   return (
     <>
-      {draft ? (
-        <p>
-          Draft preview. The revision and digest are set when you create the
-          project.
-        </p>
-      ) : null}
       {previews.map(({ role, files }) => (
         <details key={role}>
           <summary>Preview generated {role.toLowerCase()}</summary>

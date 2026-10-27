@@ -66,20 +66,16 @@ test("Your payouts lists approved monthly awards with their payment state", asyn
   );
   await page.goto("/earnings", { waitUntil: "networkidle" });
   const table = page.getByRole("table", {
-    name: "Approved awards and verified payments",
+    name: "Payment history",
   });
   const rows = table.locator("tbody tr");
   await expect(rows).toHaveCount(3);
   await expect(rows.nth(0)).toContainText("eliza (November 2026)");
   await expect(rows.nth(0)).toContainText("600 USDC");
   await expect(rows.nth(0)).toContainText("588 USDC");
-  await expect(rows.nth(0)).toContainText(
-    "Approved, underfunded: waiting for the project to add funds",
-  );
+  await expect(rows.nth(0)).toContainText("Approved, underfunded");
   await expect(rows.nth(1)).toContainText("eliza (October 2026)");
-  await expect(rows.nth(1)).toContainText(
-    "Approved, funded: the project vault reserves it next",
-  );
+  await expect(rows.nth(1)).toContainText("Approved, awaiting reservation");
   await expect(rows.nth(2)).toContainText("Payment queued");
   await expect(
     rows.nth(0).getByRole("link", { name: "eliza" }),

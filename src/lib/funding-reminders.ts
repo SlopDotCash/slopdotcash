@@ -45,7 +45,6 @@ export function cycleSettlementReminder(input: {
   if (BigInt(input.capMinor) === 0n) return null;
   return {
     kind: "funding-check",
-    message:
-      "Check current vault funds before this cycle is paid. This record does not verify the month's funding status.",
+    message: "This record does not verify the month's funding status.",
   };
 }

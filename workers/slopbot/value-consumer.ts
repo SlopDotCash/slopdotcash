@@ -332,7 +332,8 @@ const RUN_MS = 4 * 60 * 1000;
 /** Processes due requests until none remain, ten are processed or four
  * minutes have passed. The limits keep one scheduled run inside its
  * five-minute interval and the per-invocation D1 query limit. Each outcome
- * settles the earlier deliveries for its PR, so a run usually covers ten PRs.
+ * settles the earlier deliveries for its PR under the same installation and
+ * repository name, so a run usually covers ten PRs.
  */
 export async function consumePendingValueRequests(env: ValueConsumerEnv) {
   const started = Date.now();

@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import { projectApiRequest } from "./lib/project-api";
 import type { AppealState, RestrictionState } from "./lib/project-contracts";
+import { findProject } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 
 type AccountAppeal = {
@@ -35,11 +36,15 @@ export function AccountAppeals() {
   }, [reload]);
   return (
     <section id="appeals" aria-labelledby="account-appeals-heading">
-      <h2 id="account-appeals-heading">Account appeals</h2>
+      <h2 id="account-appeals-heading">Appeals</h2>
       {error ? (
         <p role="alert">
           {error}{" "}
-          <button type="button" onClick={() => setReload((value) => value + 1)}>
+          <button
+            className="button secondary-button button-small"
+            type="button"
+            onClick={() => setReload((value) => value + 1)}
+          >
             Try again
           </button>
         </p>
@@ -49,10 +54,7 @@ export function AccountAppeals() {
         <p>No account restrictions.</p>
       ) : (
         <>
-          <p>
-            A ban stops new participation. Funded awards and appeals remain
-            available.
-          </p>
+          <p>A ban stops new participation. Funded awards are kept.</p>
           {appeals.map((appeal) => (
             <AccountAppealForm
               key={appeal.projectId}
@@ -96,7 +98,7 @@ function AccountAppealForm({
       onSubmit={submit}
       aria-label={`Account appeal for ${appeal.projectId}`}
     >
-      <h3>{appeal.projectId}</h3>
+      <h3>{findProject(appeal.projectId)?.name ?? appeal.projectId}</h3>
       {sent || appeal.appeal === "requested" ? (
         <p role="status">
           Appeal recorded. The ban stays in place until a moderator clears your
@@ -122,10 +124,7 @@ function AccountAppealForm({
               onChange={(event) => setEvidence(event.target.value)}
             />
           </label>
-          <p>
-            Use a private case reference for sensitive evidence. Do not enter
-            passwords or keys.
-          </p>
+          <p>Do not enter passwords or keys.</p>
           {error ? <p role="alert">{error}</p> : null}
           <button
             className="button secondary-button"

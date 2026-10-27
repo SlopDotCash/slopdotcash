@@ -49,6 +49,7 @@ import {
   formatDateTime,
   formatMicroUsdc,
   NotFound,
+  Pager,
 } from "./Presentation";
 import { ProfileActivity, useProfiles } from "./Profiles";
 
@@ -209,11 +210,11 @@ export function PointsProvider({
           members: pointMembers(value, new Date().toISOString().slice(0, 7)),
         });
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         if (!controller.signal.aborted)
           setState({
             status: "error",
-            message: `Points could not load: ${errorMessage(error)}`,
+            message: "Points could not load.",
           });
       });
     return () => controller.abort();
@@ -326,7 +327,7 @@ export function PointsNav() {
         setMe(null);
         setOpen(false);
       },
-      () => "Could not sign out. Please retry.",
+      () => "Could not sign out. Retry.",
     );
   }
   if (!me && window.location.pathname === "/login") return null;
@@ -689,11 +690,10 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
             cache: "no-store",
             referrerPolicy: "no-referrer",
           });
-          if (!response.ok)
-            throw new Error("Sign-in expired. Please start again.");
+          if (!response.ok) throw new Error("Sign-in expired. Start again.");
           const body = await readBoundedJson(response, 16384, "sign-in");
           if (!body || typeof body !== "object" || Array.isArray(body))
-            throw new Error("Invalid sign-in response");
+            throw new Error("Sign-in failed. Start again.");
           return {
             status: response.status,
             body: body as Record<string, unknown>,
@@ -714,20 +714,18 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       setMe(member(joined));
       setMessage(
         reopen
-          ? "Your account is open again. Connections and activity email stay off until you turn them on."
+          ? "Your account is open again. Connections and activity email are off."
           : "You’re signed in.",
       );
     } catch (e) {
       if (c.signal.aborted) return;
       if (e instanceof PointsRequestError && e.code === "account_closed") {
         setClosedAccount(true);
-        setMessage(
-          "You closed this account. Reopen it to sign in; your records and unpaid awards are unchanged.",
-        );
+        setMessage("You closed this account. Reopen it to sign in.");
       } else
         setMessage(
           e instanceof TypeError
-            ? "Could not reach Slop. Check your connection and try again."
+            ? "Could not reach Slop. Try again."
             : errorMessage(e, "Sign-in unavailable"),
         );
     } finally {
@@ -747,7 +745,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
       clearAllDrafts();
       setMe(null);
     } catch {
-      setMessage("Could not sign out. Please retry.");
+      setMessage("Could not sign out. Retry.");
     }
   }
   if (!productOrigin()) {
@@ -774,9 +772,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
         <h2>{me ? `@${me.actor.login}` : "Sign in to Slop"}</h2>
       ) : null}
       {!me && session === "error" ? (
-        <p role="status">
-          We couldn’t check your session. Sign in with GitHub to try again.
-        </p>
+        <p role="status">Could not check your session. Sign in again.</p>
       ) : null}
       {me ? (
         <>
@@ -807,9 +803,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
                 }).then(
                   (v) => {
                     setMe(member(v));
-                    setMessage(
-                      "Membership visibility saved. Public contribution records are unchanged.",
-                    );
+                    setMessage("Visibility saved.");
                   },
                   () => setMessage("Could not update visibility."),
                 );
@@ -866,9 +860,9 @@ export function LoginPage() {
   }, [me]);
   return (
     <main className="shell route-main login-page">
-      <h1>{me ? "Signed in" : "Log in to slop.cash"}</h1>
+      <h1>{me ? "Signed in" : "Log in"}</h1>
       {me ? (
-        <p role="status">Opening your destination…</p>
+        <p role="status">Redirecting…</p>
       ) : (
         <JoinPoints showHeading={false} />
       )}
@@ -917,7 +911,7 @@ export function AccountPage() {
         <h2>{me ? "Recovery and closure" : "Recovery"}</h2>
         {closedNotice ? <p role="status">{closedNotice}</p> : null}
         <p>
-          Lost access to GitHub, or someone else controls your account?{" "}
+          Lost access to your account?{" "}
           <a href={`${CONTACT_MAILTO}?subject=Account%20recovery`}>
             Request private account recovery
           </a>
@@ -927,9 +921,6 @@ export function AccountPage() {
           <AccountClosure login={me.actor.login} onClosed={setClosedNotice} />
         ) : null}
       </section>
-      <p>
-        <a href="/points#rules">Points and earning rules</a>
-      </p>
     </main>
   );
 }
@@ -965,7 +956,7 @@ function AccountClosure({
               body: JSON.stringify({ login: confirmation.trim() }),
             });
             onClosed(
-              "Your account is closed and every session is signed out. Sign in with GitHub to reopen it and claim any unpaid award.",
+              "Your account is closed and every session is signed out. Sign in with GitHub to reopen it.",
             );
             setMe(null);
           },
@@ -975,7 +966,7 @@ function AccountClosure({
               ? "The username does not match this account."
               : caught instanceof PointsRequestError && caught.status === 401
                 ? "Your session ended. Sign in again to close your account."
-                : "Could not confirm whether your account closed. Reload this page to check your sign-in state before trying again.",
+                : "Could not confirm whether your account closed. Reload this page before trying again.",
         );
       }}
     >
@@ -987,10 +978,8 @@ function AccountClosure({
         <li>hides your membership from Slop people lists and profiles.</li>
       </ul>
       <p>
-        Unpaid awards stay reserved for you, and your wallets, payment and
-        settlement records, private cases and points history are kept. Public
-        GitHub work stays public. Sign in again with this GitHub account to
-        reopen it and claim a payout.
+        Unpaid awards, wallets, payment records, private cases and points
+        history are kept. Sign in again to reopen.
       </p>
       <label htmlFor={inputId}>
         Type your GitHub username, {login}, to confirm
@@ -1030,8 +1019,8 @@ function AccountSessions() {
           setError("");
         }
       },
-      (caught) => {
-        if (active) setError(errorMessage(caught, "Sessions unavailable"));
+      () => {
+        if (active) setError("Sessions could not load.");
       },
     );
     return () => {
@@ -1052,6 +1041,7 @@ function AccountSessions() {
               {session.current ? "This session" : "Other session"} · expires{" "}
               {formatDateTime(session.expiresAt)}{" "}
               <button
+                className="button secondary-button button-small"
                 type="button"
                 onClick={async () => {
                   try {
@@ -1064,8 +1054,8 @@ function AccountSessions() {
                       clearAllDrafts();
                       window.location.assign("/login");
                     } else setAttempt((value) => value + 1);
-                  } catch (caught) {
-                    setError(errorMessage(caught, "Could not revoke session"));
+                  } catch {
+                    setError("Could not sign out that session.");
                   }
                 }}
               >
@@ -1075,7 +1065,11 @@ function AccountSessions() {
           ))}
         </ul>
       )}
-      <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+      <button
+        className="button secondary-button button-small"
+        type="button"
+        onClick={() => setAttempt((value) => value + 1)}
+      >
         Refresh sessions
       </button>
     </section>
@@ -1089,17 +1083,13 @@ const POINT_CATEGORIES: readonly (readonly [string, string])[] = [
     "10 · 30 · 90 · 240 · 450 · 750",
   ],
   ["Reviews: triage, standard, deep, specialist", "10 · 30 · 90 · 240"],
-  ["Historical merged PR before scoring records", "10 each"],
-  ["Finalized payout cycle", "25 per project and month"],
+  ["Merged PR before scoring began", "10 each"],
+  ["Verified payout", "25 per project and month"],
 ];
 export function PointsPage() {
   return (
     <main className="shell route-main points-page">
       <h1>Leaderboard</h1>
-      <p>
-        <a href="/account">Account settings</a> ·{" "}
-        <a href="#people">Find people</a> · <a href="#rules">Ways to earn</a>
-      </p>
       <ContributorStandings />
       <section className="points-panel" id="rules">
         <h2>Ways to earn Points</h2>
@@ -1112,16 +1102,7 @@ export function PointsPage() {
             </li>
           ))}
         </ul>
-        <p className="points-meta">
-          Joining and connecting X earn no points. Welcome and X-connection
-          points recorded before 24 October 2026 stay in total points but not in
-          earned-point standings. Only accepted-work points count toward
-          payouts; those historical points and payment-recognition bonuses do
-          not. Money received records verified payments separately. Points
-          persist across months, and corrections stay in the history.
-        </p>
         <a href="/protocol/points-v1.md">Read the points rules</a> ·{" "}
-        <a href="/#projects">Find a project</a> ·{" "}
         <a href="/data/points.json" download>
           Download points index
         </a>
@@ -1164,13 +1145,13 @@ function StandingsCoverage({
         ? `This month ranks ${formatDateTime(rankedFrom)} to ${formatDateTime(snapshot.window.to)}. `
         : null}
       Snapshot window: {formatDateTime(snapshot.window.from)} to{" "}
-      {formatDateTime(snapshot.window.to)} ({snapshot.window.days} days). Source
+      {formatDateTime(snapshot.window.to)}. Source
       {projectId ? " (all projects)" : ""}:{" "}
       {countFormat.format(counts.mergedPullRequests)} merged pull requests and{" "}
       {countFormat.format(counts.closedIssues)} closed issues across{" "}
       {countFormat.format(snapshot.repositories.length)} repositories.
       {month === null
-        ? ` Recorded history adds ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
+        ? ` Includes ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
         : null}
     </p>
   );
@@ -1302,7 +1283,7 @@ export function ContributorStandings({
       className="points-panel"
       aria-label={title ?? "Contributor standings"}
     >
-      <h2>{title ?? "Contributor standings"}</h2>
+      {compact ? <h2>{title ?? "Contributor standings"}</h2> : null}
       {showDataNotice ? (
         <DataNotice state={scores} retry={retryScore ?? retryLoadedScore} />
       ) : null}
@@ -1324,7 +1305,7 @@ export function ContributorStandings({
             {(
               [
                 ["month", "This month (UTC)"],
-                ["lifetime", "Recorded history"],
+                ["lifetime", "Lifetime"],
               ] as const
             ).map(([value, label]) => (
               <button
@@ -1385,9 +1366,6 @@ export function ContributorStandings({
           : scores.status === "ready"
       ) ? (
         <>
-          <p className="standings-scroll-hint">
-            Scroll the table to see Points and Money received.
-          </p>
           <section
             className="points-table"
             aria-label="Contributor standings table"
@@ -1465,29 +1443,14 @@ export function ContributorStandings({
           </section>
           {rows.length === 0 &&
           (sort !== "money" || projection.moneyAvailable) ? (
-            <p>No recorded contributions match this view.</p>
+            <p>No contributors match this view.</p>
           ) : null}
           {rows.length > pageSize ? (
-            <div className="points-controls points-pagination">
-              <button
-                type="button"
-                disabled={currentPage === 0}
-                onClick={() => setPage(currentPage - 1)}
-              >
-                Previous
-              </button>
-              <span>
-                Page {currentPage + 1} of{" "}
-                {Math.max(1, Math.ceil(rows.length / pageSize))}
-              </span>
-              <button
-                type="button"
-                disabled={(currentPage + 1) * pageSize >= rows.length}
-                onClick={() => setPage(currentPage + 1)}
-              >
-                Next
-              </button>
-            </div>
+            <Pager
+              onPage={setPage}
+              page={currentPage}
+              pages={Math.ceil(rows.length / pageSize)}
+            />
           ) : null}
         </>
       ) : null}
@@ -1573,8 +1536,7 @@ function SocialConnections() {
         setData(v);
       })
       .catch(() => {
-        if (!c.signal.aborted)
-          setMessage("X connection details are unavailable. Retry below.");
+        if (!c.signal.aborted) setMessage("X details unavailable.");
       });
     return () => c.abort();
   }, [me, version]);
@@ -1603,12 +1565,10 @@ function SocialConnections() {
       setVersion((v) => v + 1);
       if (me) setMe({ ...me });
       setMessage(
-        path === "disconnect"
-          ? "X disconnected. Your earned points are retained."
-          : "X visibility updated.",
+        path === "disconnect" ? "X disconnected." : "X visibility updated.",
       );
     } catch {
-      setMessage("Could not complete the X connection request. Please retry.");
+      setMessage("X request failed. Retry.");
     } finally {
       setBusy(false);
     }
@@ -1623,8 +1583,8 @@ function SocialConnections() {
         <p role="status">X connection cancelled.</p>
       ) : outcome === "failed" ? (
         <p role="status">
-          X could not be connected. Try again; an X account already claimed by
-          another Slop member cannot be reused.
+          X could not be connected. An X account linked to another member cannot
+          be reused.
         </p>
       ) : null}
       {!data ? (
@@ -1683,11 +1643,10 @@ function SocialConnections() {
             </label>
           ) : null}
           {data.account && !me.public ? (
-            <p>Your membership is private, so your X link stays hidden.</p>
+            <p>Hidden while your membership is private.</p>
           ) : null}
           <p className="points-meta">
-            Connections grant no authority. Slop does not request posting or
-            messaging permissions.
+            Slop requests no posting or messaging access.
           </p>
           <p role="status">{message}</p>
         </>
@@ -1795,7 +1754,6 @@ function People() {
   return (
     <section className="points-panel" id="people" aria-labelledby="people-h">
       <h2 id="people-h">People</h2>
-      <p>Members and contributors with a recorded pull request.</p>
       <label>
         GitHub username{" "}
         <input
@@ -1811,7 +1769,7 @@ function People() {
         <p role="status">Loading contributors…</p>
       ) : census.state.status === "error" ? (
         <p role="status">
-          Contributor records are unavailable.{" "}
+          Contributors unavailable.{" "}
           <button type="button" onClick={census.retry}>
             Retry contributors
           </button>
@@ -1829,7 +1787,7 @@ function People() {
         <p role="status">Loading members…</p>
       ) : members.status === "error" ? (
         <p role="status">
-          Public members are unavailable.{" "}
+          Members unavailable.{" "}
           <button type="button" onClick={() => setAttempt((v) => v + 1)}>
             Retry members
           </button>
@@ -1887,26 +1845,8 @@ function People() {
                 );
               })}
           </ul>
-          {matches.length === 0 ? <p>No people match this username.</p> : null}
-          <div className="points-controls">
-            <button
-              type="button"
-              disabled={current === 0}
-              onClick={() => setPage(current - 1)}
-            >
-              Previous people
-            </button>
-            <span>
-              Page {current + 1} of {pages}
-            </span>
-            <button
-              type="button"
-              disabled={current + 1 >= pages}
-              onClick={() => setPage(current + 1)}
-            >
-              Next people
-            </button>
-          </div>
+          {matches.length === 0 ? <p>No matches.</p> : null}
+          <Pager noun="people" onPage={setPage} page={current} pages={pages} />
         </>
       ) : null}
     </section>

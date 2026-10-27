@@ -84,9 +84,9 @@ import {
   monthlyPoolPointsOnly,
   monthlyPoolUnfunded,
   NotFound,
+  Pager,
   PaymentLifecycle,
   reviewBudgetLabel,
-  UNFUNDED_POOL_HEADLINE,
 } from "./Presentation";
 import { ProfilePage } from "./ProfilePage";
 import { ProjectRiskFlag } from "./ProjectRiskFlag";
@@ -636,9 +636,6 @@ function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
       aria-labelledby="community-projects"
     >
       <h3 id="community-projects">Community</h3>
-      <p className="project-tier-note">
-        Listed by their owners, not featured by Slop.
-      </p>
       <ul className="project-rows">
         {visible.map((project) => (
           <ProjectRow key={project.id} project={project} />
@@ -721,10 +718,7 @@ function HomePage() {
           </Link>
         </div>
         {featuredProjects.length + listedCommunityProjects.length === 0 ? (
-          <p className="project-tier-note">
-            No projects are listed yet. Maintainers add one with GitHub sign-in;
-            it goes live when its setup checks pass.
-          </p>
+          <p className="project-tier-note">No projects yet.</p>
         ) : (
           <>
             {featuredProjects.length > 0 ? (
@@ -951,10 +945,7 @@ function ProjectParticipation({
     return (
       <section className="section" id="start">
         <h2>Project paused</h2>
-        <p>
-          Do not install this project's skill or start work while the project is
-          paused.
-        </p>
+        <p>Do not install this project's skill or start work.</p>
       </section>
     );
   }
@@ -967,7 +958,7 @@ function ProjectParticipation({
         {cycles === null
           ? "Loading funding history…"
           : displayCycleId === null
-            ? "Contribution data appears after the next refresh."
+            ? "No contribution data yet."
             : "Agent setup is paused after two unfunded cycles. Accepted work still earns Points."}
       </p>
     </section>
@@ -1033,10 +1024,10 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
       {ready ? null : (
         <p>
           {eligibility === "loading"
-            ? "Checking project clearance. The general prompt below works now."
+            ? "Checking project clearance…"
             : eligibility === "blocked"
-              ? "This project revision is not cleared for agent installation. The general prompt below selects only cleared projects."
-              : "Project clearance could not be checked. The general prompt below selects only cleared projects."}
+              ? "This project is not cleared for agents. The prompt below picks only cleared projects."
+              : "Project clearance could not be checked. The prompt below picks only cleared projects."}
           {eligibility === "blocked" ? (
             <>
               {" "}
@@ -1093,17 +1084,19 @@ function ProjectPaymentHistory({
         {externalPrize ? null : (
           <Link href={`/projects/${project.slug}/funding`}>Manage funding</Link>
         )}
-        <Link href={`/projects/${project.slug}/manage`}>
-          Draft a project update
-        </Link>
+        <Link href={`/projects/${project.slug}/manage`}>Manage project</Link>
         {project.escrow && (
           <Link href={`/projects/${project.slug}/awards`}>Monthly awards</Link>
         )}
       </div>
       {directState.status === "error" && !externalPrize ? (
         <p role="status">
-          Direct payment records are unavailable.{" "}
-          <button type="button" onClick={retryDirect}>
+          Direct payments unavailable.{" "}
+          <button
+            className="button secondary-button button-small"
+            type="button"
+            onClick={retryDirect}
+          >
             Retry direct payments
           </button>
         </p>
@@ -1184,7 +1177,7 @@ function ProjectFunding({ project }: { project: ProjectDefinition }) {
   else if (totals.status === "error")
     summary = <span role="alert">Vault totals unavailable</span>;
   else if (totals.vault.snapshots.length === 0)
-    summary = "Vault recorded · no finalized vault read yet";
+    summary = "Vault totals not read yet";
   else
     summary = totals.vault.snapshots.map((snapshot, index) => {
       const amount = (value: string | null) =>
@@ -1221,9 +1214,7 @@ function paymentStateLabel(project: ProjectDefinition): string {
 function vaultStateLabel(project: ProjectDefinition): string {
   if (project.reward.kind === "external-prize-share") return "Not applicable";
   if (!project.escrow?.deployments.length) return "Not set up";
-  return project.reward.paymentMode === "enabled"
-    ? "Live"
-    : "Recorded · payments disabled";
+  return project.reward.paymentMode === "enabled" ? "Live" : "Set up";
 }
 
 function fundingStateLabel(project: ProjectDefinition): string {
@@ -1286,26 +1277,9 @@ function ProjectFundingPage({
           ) : null}
         </dl>
         {project.reward.kind === "external-prize-share" ? (
-          <p>
-            The organizer pays this external prize. Slop has no vault for this
-            project.
-          </p>
+          <p>The organizer pays this prize.</p>
         ) : project.escrow ? (
-          globalThis.__SLOP_PROJECT_REGISTRY_STALE__ ? (
-            // A stale registry may name an old vault, so deposits need the live one.
-            <section
-              className="section project-funding"
-              aria-label="Project escrow"
-            >
-              <h2>Project vault</h2>
-              <p role="status">
-                Funding actions are unavailable until the current project
-                registry loads.
-              </p>
-            </section>
-          ) : (
-            <EscrowFunding project={project} onRegistered={setRegistered} />
-          )
+          <EscrowFunding project={project} onRegistered={setRegistered} />
         ) : (
           <div>
             <EmptyState text="This project has no vault yet." />
@@ -1318,10 +1292,6 @@ function ProjectFundingPage({
             </p>
           </div>
         )}
-        <p className="funding-records-note">
-          Monthly cycle states are in the{" "}
-          <Link href="/cycles">cycle archive</Link>.
-        </p>
       </section>
     </main>
   );
@@ -1412,8 +1382,7 @@ function ProjectPage({
                 <p className="project-terms-line">
                   Reward asset: {project.rewardAsset.symbol} on{" "}
                   {REWARD_ASSET_NETWORKS[project.rewardAsset.network].name} ·{" "}
-                  <code>{project.rewardAsset.address}</code> ·{" "}
-                  {project.rewardAsset.decimals} decimals
+                  <code>{project.rewardAsset.address}</code>
                 </p>
               ) : null}
             </div>
@@ -1439,11 +1408,7 @@ function ProjectPage({
                   {monthlyPoolPointsOnly(project.reward) ? (
                     "$0 + points"
                   ) : project.reward.kind === "monthly-pool" ? (
-                    monthlyPoolUnfunded(project.reward) ? (
-                      UNFUNDED_POOL_HEADLINE
-                    ) : (
-                      `${monthlyPoolCapLabel(project)} / mo`
-                    )
+                    `${monthlyPoolCapLabel(project)} / mo`
                   ) : (
                     <>
                       <span className="reward-exact-amount">
@@ -1464,17 +1429,7 @@ function ProjectPage({
                       Full prize terms
                     </a>
                   </details>
-                ) : (
-                  <p>
-                    {monthlyPoolPointsOnly(project.reward)
-                      ? "Points only. Accepted work earns Slop points. This project has no money pool."
-                      : project.reward.kind === "monthly-pool"
-                        ? monthlyPoolUnfunded(project.reward)
-                          ? `Target ${project.reward.monthlyCapDisplay} per month. No payments scheduled.`
-                          : `${formatMicroUsdc(project.reward.committedMinor)} funded toward a ${project.reward.monthlyCapDisplay} monthly target.`
-                        : null}
-                  </p>
-                )}
+                ) : null}
                 <div>
                   {project.reward.reviewBudget ? (
                     <small>
@@ -1492,7 +1447,6 @@ function ProjectPage({
             ) : (
               <aside className="reward-card">
                 <strong>Not funded this month</strong>
-                <p>Accepted work still earns Points.</p>
               </aside>
             )}
           </div>
@@ -1515,7 +1469,7 @@ function ProjectPage({
             ),
         ) ? (
           <p className="data-notice" role="status">
-            Activity for this project has not been collected yet.
+            No activity collected yet.
           </p>
         ) : null}
         <ProjectPaymentHistory
@@ -1545,10 +1499,6 @@ function HowItWorksPage() {
     <main className="shell evidence-page how-it-works">
       <section className="evidence-page-hero">
         <h1>How Slop works</h1>
-        <p>
-          Ship useful work on GitHub. Maintainers accept it; Slop publishes the
-          points and payment record.
-        </p>
       </section>
       <div className="how-paths">
         <section aria-labelledby="contributor-path">
@@ -1558,7 +1508,7 @@ function HowItWorksPage() {
               <strong>1. Choose work</strong>
               <p>
                 Find an active <Link href="/#projects">project</Link>, read its
-                skill and choose unblocked work. No token is required.
+                skill and choose unblocked work.
               </p>
             </li>
             <li>
@@ -1571,15 +1521,14 @@ function HowItWorksPage() {
             <li>
               <strong>3. Maintainer review</strong>
               <p>
-                The repository decides what merges. Open PRs and agent activity
-                do not earn accepted-work credit.
+                Maintainers decide what merges. Only merged work earns points.
               </p>
             </li>
             <li>
-              <strong>4. Points and reward review</strong>
+              <strong>4. Points and payout</strong>
               <p>
-                Accepted outcomes receive Points. Funded projects with payments
-                enabled pay out monthly by share of accepted-work points.
+                Merged work earns points. Funded projects with payments enabled
+                pay monthly by points share.
               </p>
             </li>
           </ol>
@@ -1600,23 +1549,22 @@ function HowItWorksPage() {
             <li>
               <strong>2. Fund the pool</strong>
               <p>
-                A cap is a target. Only funds in the project escrow pay awards.{" "}
-                <Link href="/sponsors">Funding options</Link>
+                Only funds in the project vault pay awards. Unused funds roll
+                over. <Link href="/sponsors">Funding options</Link>
               </p>
             </li>
             <li>
               <strong>3. Adjust awards</strong>
               <p>
-                Change any proposed amount privately within the cap before the
-                monthly cutoff, or leave it to the automatic default.
+                Change proposed amounts within the cap before the monthly
+                cutoff.
               </p>
             </li>
             <li>
               <strong>4. Automatic payment</strong>
               <p>
-                When payments are enabled, funded awards pay out from the
-                project vault after the 72-hour monthly cutoff, unless you turn
-                automatic payment off.
+                When payments are enabled, funded awards pay automatically 72
+                hours after the month ends, unless you turn this off.
               </p>
             </li>
           </ol>
@@ -1628,10 +1576,8 @@ function HowItWorksPage() {
           <p>
             Slopbot sizes each accepted pull request with the tiers in this
             table and awards points. Every accepted merge earns at least 10
-            points. Points this month and total points are views of the same
-            history. Only accepted-work points count toward project payouts;
-            historical welcome and X-connection points and payment-recognition
-            bonuses do not. Joining and connecting X earn no points.
+            points. Only accepted-work points count toward payouts. Joining and
+            connecting X earn no points.
           </p>
           <details>
             <summary>Points rules and evidence</summary>
@@ -1657,18 +1603,16 @@ function HowItWorksPage() {
               appeal or a maintainer reopen removes it.
             </p>
             <p>
-              Owners, funded employees and related parties can have an explicit
-              payout exclusion. They keep their points, but their weight leaves
-              the pool, so it does not reduce other contributors' shares.
-              Exclusions apply from the next UTC month.
+              Owners, funded employees and related parties may be excluded from
+              payouts. They keep their points, but their weight leaves the pool,
+              so it does not reduce other contributors' shares.
             </p>
             <p>
               These rules apply to work accepted from{" "}
               {formatDate(VALUE_SCORING_POLICY_EFFECTIVE_AT)} UTC. Earlier work
-              keeps its recorded terms. Signed receipts and reviewed private
-              trace uploads are optional; declining them does not block
-              submission. Token volume, cost, lines, commits and account count
-              stay diagnostic and never change points, rank, share or payment.
+              keeps its recorded terms. Signed receipts and private traces are
+              optional. Token use, cost, lines and commits never change points
+              or payment.
             </p>
           </details>
         </div>
@@ -1719,17 +1663,13 @@ function HowItWorksPage() {
         <div>
           <h2>Example allocation</h2>
           <p>
-            Your accepted-work points ÷ project accepted-work points × funded
-            pool = projected allocation.
+            Your points ÷ project points × funded pool = projected allocation.
           </p>
           <details>
             <summary>Exact calculation</summary>
             <p>
-              A Large contribution earns 240 points and a standard review earns
-              30, for 270 accepted-work points. Against 900 project
-              accepted-work points, the share is 30%. Allocations use integer
-              USDC micro-units; original weights and event IDs remain in the
-              cycle records.
+              A Large contribution (240 points) plus a standard review (30)
+              makes 270 points. Against 900 project points, the share is 30%.
             </p>
           </details>
         </div>
@@ -1751,24 +1691,6 @@ function HowItWorksPage() {
       <section className="custody-proof money-states">
         <h2>Payment stages</h2>
         <PaymentLifecycle />
-        <details>
-          <summary>Funding and cycle rules</summary>
-          <p>
-            A cap is a target, not a balance. A pool is unfunded until its
-            project escrow holds funds, awards never exceed the free escrow
-            balance, and unused funds roll over without raising the cap. A
-            project may add an optional review budget as a second cash line that
-            pays on top of the unchanged shared pool, and only after its own
-            funding is committed.
-          </p>
-          <p>
-            The owner may change proposed amounts privately before the monthly
-            cutoff; if payments are enabled, current allocations are then
-            distributed automatically unless the owner turned that off. A funded
-            award can wait for a wallet; confirming one later does not require
-            another monthly cycle.
-          </p>
-        </details>
       </section>
       <section
         className="custody-proof faq"
@@ -1779,28 +1701,13 @@ function HowItWorksPage() {
         <details>
           <summary>Which repositories count?</summary>
           <p>
-            Repositories listed by an active project on Slop. Each project page
-            names them and links its skill. Pull requests elsewhere are not in
-            any pool.
+            Repositories listed by an active project. Each project page names
+            them.
           </p>
         </details>
         <details>
           <summary>Do I need to claim an issue first?</summary>
-          <p>
-            No. There is no assignment, claiming, or reservation. Pick unblocked
-            work, open a pull request, and the maintainers decide what merges.
-            Only merged work earns points.
-          </p>
-        </details>
-        <details>
-          <summary>Do reviews earn points?</summary>
-          <p>
-            Yes, when the review is useful. It can find a correction or validate
-            the change; a request for changes is not required. The first{" "}
-            {MAX_CREDITED_REVIEWERS} distinct qualifying reviewers share the
-            pull request&apos;s review pool, as the Points rules above explain.
-            Reviews of earlier work keep the rules recorded when they were made.
-          </p>
+          <p>No. Pick unblocked work and open a pull request.</p>
         </details>
         <details>
           <summary>Does work outside code earn points?</summary>
@@ -1811,31 +1718,22 @@ function HowItWorksPage() {
             a reviewed award of 1 to 8 points.
           </p>
           <p>
-            A maintainer opens each award as its own public pull request, with
-            an archived copy of the work and the concrete result it produced.
-            Only your newest three awards on a project count. Likes, views, and
-            follower counts are never a reason for an award. To put your work in
-            front of a maintainer, post the link and tag @SlopCash.
+            Only your newest three awards on a project count. To submit work,
+            post the link and tag @SlopCash.
           </p>
         </details>
         <details>
           <summary>When will my work show up?</summary>
           <p>
-            Open pull requests do not earn points. Once a pull request merges,
-            it and its qualifying reviews appear at the next site release. Each
-            one is dated when it happened, so points can appear spread through
-            the day. There is no waiting period and no minimum account age.
+            Merged pull requests and their qualifying reviews appear at the next
+            site update. There is no waiting period or minimum account age.
           </p>
         </details>
         <details>
           <summary>What is my merge worth before Slopbot sizes it?</summary>
           <p>
-            Every accepted merge earns at least 10 points. When Slopbot sizes
-            it, the points follow the tier table above. A valid maintainer
-            ratification takes precedence. Related or split pull requests share
-            one work unit. Merges before{" "}
-            {formatDate(VALUE_SCORING_POLICY_EFFECTIVE_AT)} keep their recorded
-            points.
+            At least 10 points. After Slopbot sizes it, points follow the tier
+            table above. Related or split pull requests count as one work unit.
           </p>
         </details>
         <details>
@@ -1853,68 +1751,55 @@ function HowItWorksPage() {
         <details>
           <summary>How do I get paid?</summary>
           <p>
-            Connect and confirm a wallet in{" "}
-            <Link href="/account#wallets">Account wallets</Link> for your
-            award's network: Base, Solana, Robinhood Chain or Ethereum. Wallet
-            confirmation requires your signature. An approved award also needs
-            reserved funding and a verified wallet binding before payment.
-            Missing wallets do not erase awards.
+            Add a wallet for your award's network (Base, Solana, Robinhood Chain
+            or Ethereum) in <Link href="/account#wallets">Account wallets</Link>
+            . Wallet confirmation requires your signature. Awards wait for your
+            wallet.
           </p>
         </details>
         <details>
           <summary>When are payments sent?</summary>
           <p>
-            Monthly. When a calendar month ends (UTC), the owner has 72 hours to
-            adjust or finalize its awards. If the project has payments enabled,
-            a funded vault then pays the current allocations automatically
-            unless the owner turned that off. With payments disabled, no payment
-            is sent. Submitted means verification is pending; paid means
-            finalized evidence reconciles the award and fee.
+            Monthly. After a UTC month ends, the owner has 72 hours to adjust
+            awards. Then, if payments are enabled, the vault pays funded awards
+            automatically unless the owner turned that off.
           </p>
         </details>
         <details>
           <summary>What does projected mean? Is the pool funded?</summary>
           <p>
-            Projected is a live estimate from accepted-work points at the
-            project&apos;s cap. It is not a balance or a guarantee. A cap is a
-            target, and a pool can allocate only funds committed on-chain. Funds
-            committed after a month freezes apply to later months, not to that
-            one.
+            A live estimate at the project&apos;s cap. It is not a balance or a
+            guarantee: a cap is a target, and only funds in the vault can be
+            allocated. Funds added after a month freezes count toward later
+            months.
           </p>
         </details>
         <details>
           <summary>Who decides the monthly amounts?</summary>
           <p>
-            The project owner. After a month closes, the owner may change
-            proposed amounts privately until the monthly cutoff. Slop publishes
-            the final awards and their payment evidence, not the changes. This
-            is separate from pull request reviews on GitHub.
+            The project owner, until the monthly cutoff. Slop publishes final
+            awards and payment evidence, not the changes.
           </p>
         </details>
       </section>
       <details className="mechanism-sources how-details">
-        <summary>Technical references</summary>
+        <summary>References</summary>
         <ul>
           <li>
             <ExternalLinkAnchor href={`${protocolRoot}/scoring-v2.md`}>
-              Points v2 contract
-            </ExternalLinkAnchor>
-          </li>
-          <li>
-            <ExternalLinkAnchor href={`${protocolRoot}/review-budget-v1.md`}>
-              Additive review budget v1
+              Points rules
             </ExternalLinkAnchor>
           </li>
           <li>
             <ExternalLinkAnchor href={`${protocolRoot}/private-trace-v1.md`}>
-              Private trace privacy contract
+              Private trace policy
             </ExternalLinkAnchor>
           </li>
           <li>
             <Link href="/receipts">Public receipts</Link>
           </li>
           <li>
-            <Link href="/models">Models and harnesses</Link>
+            <Link href="/models">Models</Link>
           </li>
           <li>
             <Link href="/cycles">Cycle archive</Link>
@@ -1989,11 +1874,8 @@ function WhoBuildsOnSlop({
     >
       <h2 id="who-builds-heading">Who builds on Slop.</h2>
       <p>
-        Most of the people on the leaderboard spend the rest of their year
-        building AI agents and LLM tooling, largely in small repositories, and
-        some of them have merged into the best-known projects in the field. This
-        is what the {count.format(all.size)} contributors on the leaderboard as
-        of {dateLabel} did across the rest of GitHub in 2026.
+        What the {count.format(all.size)} contributors on the leaderboard as of{" "}
+        {dateLabel} did elsewhere on GitHub in 2026.
       </p>
       <div className="money-summary model-outcomes-summary">
         <span>
@@ -2121,22 +2003,14 @@ function WhoBuildsOnSlop({
           )}{" "}
           of merged pull requests name the model that did the work (
           {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
-          {count.format(models.totals.mergedPullRequests)}). Those two figures
-          move with every refresh; everything above is frozen to the dated
-          snapshot.
+          {count.format(models.totals.mergedPullRequests)}).
         </p>
       ) : null}
       <p className="who-builds-sources">
-        Public GitHub data only: merged pull requests since 1 January 2026
-        outside the Slop projects plus each contributor&apos;s own public
-        repositories, one keyword-assigned focus per repository{massNote}. The
-        snapshot is committed to this repository and pinned by hash.{" "}
+        Public GitHub data since 1 January 2026{massNote}.{" "}
         <ExternalLinkAnchor href={pinnedFile(pin.snapshotPath)}>
           Snapshot JSON, {pin.date}
-        </ExternalLinkAnchor>{" "}
-        <code title={`sha256 ${pin.snapshotSha256}`}>
-          sha256 {pin.snapshotSha256.slice(0, 12)}
-        </code>
+        </ExternalLinkAnchor>
         {" · "}
         <ExternalLinkAnchor href={pinnedFile(pin.methodPath)}>
           Method and caveats
@@ -2156,15 +2030,16 @@ function SponsorsPage({
   const hasReviewBudget = PROJECTS.some(
     (project) => project.reward.reviewBudget,
   );
+  const hasExternalPrize = PROJECTS.some(
+    (project) => project.reward.kind === "external-prize-share",
+  );
   return (
     <main className="shell evidence-page">
       <section className="evidence-page-hero">
         <h1>Fund a project.</h1>
         <p>
-          Deposit into a project&apos;s vault. Maintainers accept the work on
-          GitHub. When a project has payments enabled, funded awards pay
-          contributors automatically each month. Each project below shows its
-          payment state.
+          Deposit into a project&apos;s vault. When payments are enabled, funded
+          awards pay contributors automatically each month.
         </p>
       </section>
       <section className="custody-proof sponsor-pools">
@@ -2213,15 +2088,17 @@ function SponsorsPage({
       </section>
       <section className="worked-example sponsor-fee">
         <div>
-          <h2>Awards, fee and total.</h2>
+          <h2>Fees</h2>
           <p>
-            Escrow payouts deduct 2% from the gross award: 100 USDC becomes 98
-            USDC for the contributor and 2 USDC in fees.
+            Payouts deduct a 2% fee: a 100 USDC award pays 98 USDC to the
+            contributor and 2 USDC in fees.
           </p>
-          <p>
-            External prize shares use the terms published for that project. The
-            prize sponsor controls eligibility and payment.
-          </p>
+          {hasExternalPrize ? (
+            <p>
+              External prize shares use the terms published for that project.
+              The prize sponsor controls eligibility and payment.
+            </p>
+          ) : null}
         </div>
         <dl
           className="equation-card"
@@ -2244,107 +2121,45 @@ function SponsorsPage({
       <section className="worked-example sponsor-start">
         <div>
           <h2>Add your own project.</h2>
-          <p>
-            Sign in with GitHub and add a project. It goes live when you have
-            installed Slopbot and the security scan passes.
-          </p>
         </div>
         <ul>
           <li>
             <Link href="/projects/new">Add a project</Link>
           </li>
-          <li>
-            <ExternalLinkAnchor href="/api/v1/project-revisions">
-              Reviewed project revisions
-            </ExternalLinkAnchor>
-          </li>
-          <li>
-            <a href={CONTACT_MAILTO}>Email {CONTACT_EMAIL}</a>
-          </li>
-          <li>
-            <ExternalLinkAnchor href={SOURCE_REPOSITORY}>
-              View the repository on GitHub
-            </ExternalLinkAnchor>
-          </li>
         </ul>
       </section>
       <details className="sponsor-details">
-        <summary>Funding rules and payment stages</summary>
-        <ol className="mechanism-flow" aria-label="What funding a pool buys">
-          <li>
-            <strong>01 · Set the monthly amount</strong>
-            <p>
-              The project owner sets the monthly cap and the reward start during
-              setup. The pool shows only funds held in the project escrow, never
-              a target as a balance. Contributors then use any agent to
-              contribute. Accepted merges, eligible reviews, and separately
-              reviewed awards follow the published scoring policy.
-            </p>
-          </li>
-          <li>
-            <strong>02 · The month closes</strong>
-            <p>
-              When the calendar month ends (UTC), the monthly workflow prepares
-              allocations under the cap from complete source data. Every row
-              names its source events, its integer weights, and the scoring rule
-              version, so anyone can recompute it.
-            </p>
-          </li>
-          <li>
-            <strong>03 · Automatic payment</strong>
-            <p>
-              The project owner may change proposed awards privately within the
-              cap until 72 hours after the month ends. If payments are enabled,
-              the vault then pays the current allocations automatically, unless
-              the owner turned that off. An award is marked paid when finalized
-              on-chain evidence reconciles the award and the fee.
-            </p>
-          </li>
-        </ol>
+        <summary>Funding rules</summary>
         <section className="worked-example sponsor-controls">
           <div>
-            <h2>What you decide.</h2>
+            <h2>What you decide</h2>
             <ul>
-              <li>The monthly cap, with exact-cycle overrides.</li>
+              <li>The monthly cap.</li>
               <li>
-                Proposed awards may change privately within the cap before the
-                monthly cutoff. When payments are enabled, automatic monthly
-                payment is on by default and can be turned off.
+                Award changes before the monthly cutoff, and whether automatic
+                payment runs.
               </li>
-              <li>Withdrawals of unused funds, with the 2% fee.</li>
             </ul>
+            <p>
+              <Link href="/how-it-works">Payment stages</Link>
+            </p>
           </div>
         </section>
-        <section className="custody-proof money-states">
-          <h2>Awards and payments</h2>
-          <PaymentLifecycle />
-          <p>
-            A wallet added later unlocks a reserved award without waiting for
-            another cycle.
-          </p>
-        </section>
         <section className="custody-proof">
-          <h2>Fund the project escrow.</h2>
+          <h2>Custody and keys</h2>
           <ul>
             <li>
-              Project funds are held by the escrow contracts. Ordinary awards
-              and private bounties use separate vaults. The contracts enforce
-              reserved awards, fees and exact-once payment.
+              Funds are held by the project vault contract. Private bounties use
+              a separate vault.
             </li>
             <li>
               The owner can withdraw free funds with the 2% fee. Reserved awards
               cannot be withdrawn.
             </li>
             <li>
-              Slop’s fee key can claim accrued fees to its fee wallet and
-              convert received fees. It cannot withdraw free funds or reserved
-              awards.
-            </li>
-            <li>
-              Slop’s identity attester signs payout-wallet bindings and bounded
-              monthly allocations. A compromised attester key can redirect
-              unpaid awards. Slop’s owner holds upgrade keys that can change the
-              contracts. Read the{" "}
+              Slop’s fee key can only claim and convert fees. A compromised
+              identity attester key can redirect unpaid awards, and Slop’s
+              upgrade keys can change the contracts. Read the{" "}
               <ExternalLinkAnchor
                 href={`${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/docs/slop-product-requirements.md#11-source-delivery-and-acceptance`}
               >
@@ -2374,18 +2189,13 @@ function SponsorsPage({
           <li>
             <Link href="/cycles">Cycle archive</Link>
           </li>
-          <li>
-            <ExternalLinkAnchor
-              href={`${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/funding/README.md`}
-            >
-              Escrow funding
-            </ExternalLinkAnchor>
-          </li>
         </ul>
       </section>
     </main>
   );
 }
+
+const RECEIPTS_PAGE_SIZE = 25;
 
 function ReceiptsPage({
   state,
@@ -2397,6 +2207,7 @@ function ReceiptsPage({
   const [query, setQuery] = useState(
     () => new URLSearchParams(window.location.search).get("q") ?? "",
   );
+  const [page, setPage] = useState(0);
   const search = query.trim().toLowerCase();
   const receipts =
     state.status === "ready"
@@ -2425,17 +2236,20 @@ function ReceiptsPage({
       .toLowerCase()
       .includes(search),
   );
+  // One page of receipts keeps the page short and its links large enough.
+  const pages = Math.max(1, Math.ceil(matching.length / RECEIPTS_PAGE_SIZE));
+  const current = Math.min(page, pages - 1);
+  const shown = matching.slice(
+    current * RECEIPTS_PAGE_SIZE,
+    (current + 1) * RECEIPTS_PAGE_SIZE,
+  );
   return (
     <main className="shell evidence-page receipt-page">
       <section className="evidence-page-hero">
         <h1>Run receipts</h1>
-        <details>
-          <summary>About receipts</summary>
-          <p>
-            Device signatures attest byte continuity. Model and usage
-            declarations are self-reported; private traces stay private.
-          </p>
-        </details>
+        <p>
+          Model and usage are self-reported and not verified with the provider.
+        </p>
         <DataNotice retry={retry} state={state} />
       </section>
       {state.status === "ready" && receipts.length > 0 ? (
@@ -2444,7 +2258,10 @@ function ReceiptsPage({
           <input
             type="search"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(0);
+            }}
             placeholder="Contributor, model, client or run ID"
             disabled={state.status !== "ready"}
           />
@@ -2468,7 +2285,7 @@ function ReceiptsPage({
         <Link href="/#projects">Browse projects</Link>
       ) : null}
       <div className="receipt-list">
-        {matching.map((entry) => {
+        {shown.map((entry) => {
           const run = entry.run;
           const workLabel = new URL(entry.sourceUrl).pathname
             .slice(1)
@@ -2528,35 +2345,9 @@ function ReceiptsPage({
                       </dd>
                     </div>
                     <div>
-                      <dt>Usage evidence</dt>
-                      <dd>{run.usage.confidence}</dd>
-                    </div>
-                    <div>
                       <dt>Skill revision</dt>
                       <dd>
                         <code>{run.skillRevision}</code>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Skill digest</dt>
-                      <dd>
-                        <code>{run.skillSha256}</code>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Device key</dt>
-                      <dd>
-                        <code>{run.deviceKeyId}</code>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Private trace digest</dt>
-                      <dd>
-                        {run.traceUpload ? (
-                          <code>{run.traceUpload.sha256}</code>
-                        ) : (
-                          "Not available"
-                        )}
                       </dd>
                     </div>
                   </dl>
@@ -2566,6 +2357,9 @@ function ReceiptsPage({
           );
         })}
       </div>
+      {pages > 1 ? (
+        <Pager onPage={setPage} page={current} pages={pages} />
+      ) : null}
     </main>
   );
 }
@@ -2577,7 +2371,6 @@ function ModelsPage({ state, retry }: { state: DataState; retry: () => void }) {
     <main className="shell evidence-page">
       <section className="evidence-page-hero">
         <h1>Models</h1>
-        <p>Accepted work, grouped by the model contributors declared.</p>
         <DataNotice retry={retry} state={state} />
       </section>
       {summary ? <ModelOutcomes summary={summary} /> : null}
@@ -2603,7 +2396,7 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
       row.mergedPullRequests >= 40 && (row.topContributorShare ?? 0) > 0.5,
   );
   if (totals.declarations === 0) {
-    return <EmptyState text="No model declarations in this snapshot." />;
+    return <EmptyState text="No model declarations yet." />;
   }
   return (
     <>
@@ -2633,31 +2426,11 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
             </strong>{" "}
             of accepted reviews name a model
           </span>
-          <span>
-            <strong>{count.format(totals.declarations)}</strong> declarations by{" "}
-            {count.format(totals.declaringContributors)} contributors,{" "}
-            {count.format(totals.signedDeclarations)} signed across{" "}
-            {count.format(totals.distinctClients)} harnesses
-          </span>
-          {totals.declarationsWithoutExactModel > 0 ? (
-            <span>
-              <strong>
-                {count.format(totals.declarationsWithoutExactModel)}
-              </strong>{" "}
-              more state that the exact model was unavailable and count toward
-              no model
-            </span>
-          ) : null}
         </details>
       </div>
 
       <section className="model-outcomes-section">
         <h2>Accepted outcomes by model</h2>
-        <p>
-          Counts use declarations by the person who authored the work. Bars
-          compare merged PR counts. Shares include all merged PRs and can
-          overlap for multi-model work.
-        </p>
         <ol
           className="model-outcome-list"
           aria-label="Accepted outcomes by model"
@@ -2699,7 +2472,7 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
                 />
               </div>
               <details className="model-outcome-details">
-                <summary>Evidence and diagnostics</summary>
+                <summary>Details</summary>
                 <dl>
                   <div>
                     <dt>Signed PRs</dt>
@@ -2737,41 +2510,20 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
                         : `${count.format(row.topContributorOutcomes)} of ${count.format(row.mergedPullRequests + row.acceptedReviews)} outcomes`}
                     </dd>
                   </div>
-                  <div>
-                    <dt>Exact declarations</dt>
-                    <dd>
-                      <ul>
-                        {row.declaredAs.map((declaration) => (
-                          <li key={declaration.identifier}>
-                            <code>{declaration.identifier}</code> (
-                            {count.format(declaration.count)})
-                          </li>
-                        ))}
-                      </ul>
-                    </dd>
-                  </div>
                 </dl>
               </details>
             </li>
           ))}
         </ol>
         <p className="model-outcomes-note">
-          {count.format(totals.distinctDeclaredIdentifiers)} distinct declared
-          strings fold to {count.format(totals.distinctModels)} models by case
-          and a short provider alias list. Some rows are still one model under
-          two names. The list shows models with at least one accepted outcome,
-          up to 30.
+          Shows up to 30 models with at least one accepted outcome.
         </p>
       </section>
 
       <details className="model-outcomes-section model-clients">
         <summary>Clients from signed receipts</summary>
-        <p>
-          Client counts cover signed runs only. Output tokens use receipts with
-          exact usage.
-        </p>
         {summary.clients.length === 0 ? (
-          <EmptyState text="No signed receipts in this snapshot." />
+          <EmptyState text="No signed receipts yet." />
         ) : (
           <ul className="model-outcome-list" aria-label="Client outcomes">
             {summary.clients.map((row) => (
@@ -2827,14 +2579,12 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
         <ul className="model-outcomes-notes">
           <li>
             This is not a benchmark. Contributors choose their own tasks, repos
-            and models. A model with many merges is a model that busy
-            contributors declared on work they chose. Reviews are not blinded to
-            those declarations.
+            and models.
           </li>
           <li>
-            Model is confounded with person.{" "}
+            Results reflect who uses each model.
             {concentrated.length > 0
-              ? `Of the models with 40 or more merged PRs, ${concentrated
+              ? ` Of the models with 40 or more merged PRs, ${concentrated
                   .map(
                     (row) =>
                       `${row.key} (${percent(row.topContributorShare ?? 0, 1)})`,
@@ -2842,18 +2592,12 @@ function ModelOutcomes({ summary }: { summary: ModelOutcomeSummary }) {
                   .join(
                     ", ",
                   )} take over half of their outcomes from one contributor.`
-              : "No model with 40 or more merged PRs takes over half of its outcomes from one contributor in this snapshot."}
+              : ""}
           </li>
           <li>
-            Neither a declaration nor a receipt is verified against the model
-            provider. A receipt proves that a device claimed a model at a time;
-            it does not prove the API served that model.
+            Declarations and receipts are not verified with the model provider.
           </li>
-          <li>
-            The leaderboard is a rolling window and regenerates on a schedule,
-            so every figure moves. Points record contributions; they are not
-            money.
-          </li>
+          <li>Points record contributions; they are not money.</li>
         </ul>
       </details>
     </>
@@ -2892,7 +2636,7 @@ function AppContent({ route }: { route: Route }) {
   const registryError =
     globalThis.__SLOP_PROJECT_REGISTRY_ERROR__ ??
     (staleRegistry && registry === "current"
-      ? `${staleRegistry.reason} This page needs the current project registry.`
+      ? "This page needs current project data."
       : undefined);
   const blocked = Boolean(registryError) && !registryIndependent;
   const needsSnapshot = !blocked && snapshot;
@@ -2958,10 +2702,7 @@ function AppContent({ route }: { route: Route }) {
     ) : (
       <main className="shell route-main">
         <h1>Project not found</h1>
-        <p>
-          This project isn&apos;t listed. If you flagged it, sign in to view or
-          withdraw your flag.
-        </p>
+        <p>This project isn&apos;t listed.</p>
         <ProjectRiskFlag
           key={`flag:${route.projectId}`}
           projectId={route.projectId}
@@ -2994,12 +2735,12 @@ function AppContent({ route }: { route: Route }) {
       <div className="skip-target" id="main" tabIndex={-1}>
         {staleRegistry && !blocked && !registryIndependent ? (
           <aside
-            aria-label="Project registry status"
+            aria-label="Project data status"
             className="shell registry-stale"
           >
             <p className="data-notice data-stale" role="status">
               Projects may be outdated · updated{" "}
-              {formatDateTime(staleRegistry.syncedAt)}. {staleRegistry.reason}
+              {formatDateTime(staleRegistry.syncedAt)}.
               <button onClick={() => window.location.reload()} type="button">
                 Try again
               </button>

@@ -488,6 +488,22 @@ test("a v0 Token-2022 swap signs only after account review and retains the revie
       (r: RouteReceipt) => {
         r.meta.postTokenBalances.push(r.meta.postTokenBalances[0]);
       },
+      (r: RouteReceipt) => {
+        r.meta.preTokenBalances.push(
+          balance(6, f.input, TOKEN_2022_PROGRAM, "500"),
+        );
+        r.meta.postTokenBalances.push(
+          balance(6, f.input, TOKEN_2022_PROGRAM, "499"),
+        );
+      },
+      (r: RouteReceipt) => {
+        r.meta.preTokenBalances.push(
+          balance(6, f.output, TOKEN_PROGRAM, "500"),
+        );
+        r.meta.postTokenBalances.push(
+          balance(6, f.output, TOKEN_PROGRAM, "499"),
+        );
+      },
     ]) {
       const invalid = structuredClone(receipt);
       corrupt(invalid);

@@ -129,15 +129,10 @@ try {
       .getByRole("button", { name: "Refresh payments" })
       .waitFor({ state: "visible" });
     await page.waitForLoadState("networkidle");
-    if (
-      await page.getByText("Paid, verified on chain", { exact: true }).count()
-    )
-      break;
+    if (await page.getByText("Paid", { exact: true }).count()) break;
     await page.waitForTimeout(1000);
   }
-  await page
-    .getByText("Paid, verified on chain", { exact: true })
-    .waitFor({ timeout: 10000 });
+  await page.getByText("Paid", { exact: true }).waitFor({ timeout: 10000 });
   const paid = await (
     await fetch("http://127.0.0.1:18548/api/v1/payments/me")
   ).json();
@@ -180,7 +175,7 @@ try {
     .getByRole("navigation", { name: "Account sections" })
     .getByRole("link", { name: "Payouts", exact: true })
     .click();
-  await page.getByText("Paid, verified on chain", { exact: true }).waitFor();
+  await page.getByText("Paid", { exact: true }).waitFor();
   await page.screenshot({
     path: "evidence/payout-desktop-paid.png",
     fullPage: true,
@@ -192,13 +187,34 @@ try {
   const history = page.getByRole("region", {
     name: "Payment history details; scroll horizontally for all columns",
   });
+  // Narrow screens show labelled payment cards. Every value must fit on
+  // screen without the horizontal scrolling required by the old table.
+  const paidRow = history.getByRole("row").filter({
+    has: page.getByText("Paid", { exact: true }),
+  });
+  for (const label of [
+    "Project",
+    "Network",
+    "Gross award",
+    "Fee",
+    "You receive",
+    "Status",
+  ]) {
+    const cell = paidRow.locator(`td[data-label="${label}"]`);
+    await cell.waitFor({ state: "visible" });
+    const bounds = await cell.boundingBox();
+    if (!bounds || bounds.x < 0 || bounds.x + bounds.width > 390)
+      throw new Error(`Mobile payment value is off screen: ${label}`);
+  }
   await history.focus();
-  await page.keyboard.press("ArrowRight");
-  await page.waitForTimeout(200);
-  if (!(await history.evaluate((element) => element.scrollLeft > 0)))
-    throw new Error(
-      "Mobile payment table cannot be scrolled with the keyboard",
-    );
+  await page.keyboard.press("Tab");
+  const projectLink = paidRow.locator('td[data-label="Project"] a');
+  if (
+    !(await projectLink.evaluate(
+      (element) => element === document.activeElement,
+    ))
+  )
+    throw new Error("Payment card cannot be reached with the keyboard");
   await page.screenshot({
     path: "evidence/payout-mobile-paid.png",
     fullPage: true,

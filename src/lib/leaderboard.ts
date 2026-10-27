@@ -1522,7 +1522,7 @@ export function leaderboardMethodology(
           ? `one pool per pull request: the credited reviewers' bands, capped at the pull request's assessed size, minimum 10 Points; at most ${valuePolicy.reviewCredit.maxReviewers} distinct reviewers; one credited record per reviewer`
           : "from 2026-10-01, one ordinary review award per merged pull request; no self-review and no duplicate reviewer credit on one artifact",
         qualification: valuePolicy
-          ? `${policyStart}complete source-bound assessments value distinct evidenced review outcomes, including useful validation; a request for changes is not required. Reviews by implementation actors, bots, after merge or closure, and duplicate findings do not qualify. A qualifying review submitted outside the scoring window publishes review-credit-outside-window and takes no reviewer slot or share. The remaining reviews are grouped by immutable reviewer ID and ordered by their first in-window qualifying review's submission time, then review node ID. The first ${valuePolicy.reviewCredit.maxReviewers} share the pull request's review pool by their highest in-window assessed band using integer largest remainder, earlier reviewers first on equal remainders. Later reviewers publish review-credit-reviewer-limit. Valid human decisions and reviewed evaluation awards take precedence. Missing, stale or unresolved assessments do not receive legacy review credit. Reviews of pull requests accepted earlier keep the SCR-05 rule.`
+          ? `${policyStart}complete source-bound assessments value distinct evidenced review outcomes, including useful validation; a request for changes is not required. Reviews by implementation actors, bots, after merge or closure, and duplicate findings do not qualify. Each pull request's allocation window has the scoring window's length and ends at its merge or closure, so every run selects the same reviewers and divides the same pool. A qualifying review submitted before that window publishes review-credit-outside-window and takes no reviewer slot or share. A credited review inside it but before the current scoring window keeps its slot and share, publishes review-credit-outside-window and keeps its earlier Points. The remaining reviews are grouped by immutable reviewer ID and ordered by their first qualifying review's submission time in the allocation window, then review node ID. The first ${valuePolicy.reviewCredit.maxReviewers} share the pull request's review pool by their highest assessed band in that window using integer largest remainder, earlier reviewers first on equal remainders. Later reviewers publish review-credit-reviewer-limit. Valid human decisions and reviewed evaluation awards take precedence. Missing, stale or unresolved assessments do not receive legacy review credit. Reviews of pull requests accepted earlier keep the SCR-05 rule.`
           : "Every merged pull request with a formal review is selected through a separate bounded review census, independent of the pull-request author's detail cap. A pre-merge APPROVED or CHANGES_REQUESTED review of human-authored work has substantive text or inline discussion. Before 2026-10-01 such a review scores standard credit. From 2026-10-01 only the latest CHANGES_REQUESTED review on a commit other than the merged head scores, at triage credit; approvals and ignored requests do not. Higher review tiers require maintainer ratification. Excluded formal reviews publish a machine-readable reason.",
       },
       {
@@ -3931,6 +3931,7 @@ function createSnapshotWithReviewCutoff(
   // takes no second share; the returned reviewers are now credited too.
   const allocateValueReviews = (
     pullRequest: MergedPullRequestReviewRecord,
+    acceptedAt: string,
     candidates: readonly ValueReviewCandidate[],
     awardedReviewers: ReadonlySet<string> = new Set(),
     assessedSizeFloor = 0,
@@ -3948,10 +3949,15 @@ function createSnapshotWithReviewCutoff(
     }
     if (!eligible.length) return [];
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
-    // Review credit keeps the review's submission time. A review outside this
-    // scoring window cannot be published here, so it must not take one of the
-    // five reviewer slots or a share of the pool from a review that can.
+    // Review credit keeps the review's submission time. The allocation covers
+    // the window that ended at acceptance, so every later run that still
+    // scores this pull request selects the same reviewers and divides the
+    // same pool. A review before that window must not take one of the five
+    // reviewer slots or a share of the pool. A review inside it but before
+    // this run's window keeps its slot and share, and its award is omitted
+    // here, not reissued: the journal keeps the earlier award.
     const scoringFrom = parseIsoTime(input.windowFrom);
+    const allocationFrom = parseIsoTime(acceptedAt) - (windowTo - scoringFrom);
     const inWindow: ValueReviewCandidate[] = [];
     for (const candidate of eligible) {
       // Apply the same prospective ban as the ledger before selecting the
@@ -3972,7 +3978,7 @@ function createSnapshotWithReviewCutoff(
         continue;
       }
       const reviewedAt = parseIsoTime(candidate.submittedAt);
-      if (reviewedAt < scoringFrom || reviewedAt >= windowTo) {
+      if (reviewedAt < allocationFrom || reviewedAt >= windowTo) {
         excludeReview(
           pullRequest,
           candidate.review,
@@ -4014,6 +4020,10 @@ function createSnapshotWithReviewCutoff(
       }
       for (const reviewId of credited.repeatedReviewIds)
         exclude(reviewId, "already-awarded-reviewer");
+      if (parseIsoTime(candidate.submittedAt) < scoringFrom) {
+        exclude(candidate.reviewId, "review-credit-outside-window");
+        continue;
+      }
       addScore(entries, ledger, participationBans, {
         id: `${pullRequest.id}:value-review:${candidate.reviewId}`,
         actor: candidate.actor,
@@ -4369,6 +4379,7 @@ function createSnapshotWithReviewCutoff(
     }
     for (const reviewerId of allocateValueReviews(
       pullRequest,
+      pullRequest.mergedAt,
       valueReviewCandidates,
       awardedReviewers,
       assessedSizeFloor,
@@ -4508,6 +4519,7 @@ function createSnapshotWithReviewCutoff(
     }
     allocateValueReviews(
       pull,
+      pull.closedAt,
       candidates,
       new Set<string>(),
       assessedSizeFloor,
