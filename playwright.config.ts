@@ -125,12 +125,14 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   fullyParallel: true,
   // Wrangler's Pages proxy can terminate while serving concurrent browser
-  // workers, so the Pages phase keeps one worker. The static preview server
-  // serves the full desktop/mobile matrix in parallel. SLOP_E2E_WORKERS
-  // overrides either default.
+  // workers, so the Pages phase keeps one worker. Explicit local-chain runs
+  // also share a chain port between viewport projects. Other preview checks
+  // run in parallel. SLOP_E2E_WORKERS overrides either default.
   workers:
     requestedWorkers === undefined
-      ? localServer === "pages"
+      ? localServer === "pages" ||
+        process.env.SLOP_E2E_VAULT_ACTIONS === "1" ||
+        process.env.SLOP_E2E_SOLANA_VAULT === "1"
         ? 1
         : "50%"
       : requestedWorkers.endsWith("%")

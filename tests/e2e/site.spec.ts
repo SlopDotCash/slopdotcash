@@ -1468,6 +1468,25 @@ for (const scenario of [
           geometry.page,
           `${scenario.name} ${path} horizontal overflow`,
         ).toBeLessThanOrEqual(geometry.viewport);
+        const obscuredFooterLinks = await page.evaluate(() => {
+          const brand = document.querySelector(".footer-brand-row .slop-mark");
+          if (!brand) throw new Error("Footer brand is missing");
+          const mark = brand.getBoundingClientRect();
+          return [...document.querySelectorAll(".footer-links a")]
+            .filter((link) => {
+              const box = link.getBoundingClientRect();
+              return (
+                box.left < mark.right &&
+                box.right > mark.left &&
+                box.top < mark.bottom &&
+                box.bottom > mark.top
+              );
+            })
+            .map((link) => link.textContent);
+        });
+        expect(obscuredFooterLinks, "footer links covered by the logo").toEqual(
+          [],
+        );
       });
     }
   });
