@@ -15,6 +15,10 @@ type EthereumWallet = {
   isMetaMask?: boolean;
   isPhantom?: boolean;
   isCoinbaseWallet?: boolean;
+  isRabby?: boolean;
+  isBraveWallet?: boolean;
+  isTrust?: boolean;
+  isTrustWallet?: boolean;
 };
 type SolanaWallet = {
   connect(): Promise<{ publicKey: { toString(): string } }>;
@@ -133,14 +137,25 @@ function evmWallet(
   };
 }
 
+/**
+ * Names for a wallet that injects only `window.ethereum` and does not announce
+ * itself (EIP-6963). Several wallets also set isMetaMask for compatibility, so
+ * MetaMask is the last flag checked.
+ */
+const LEGACY_EVM_NAMES = [
+  ["isRabby", "Rabby"],
+  ["isBraveWallet", "Brave Wallet"],
+  ["isPhantom", "Phantom"],
+  ["isTrust", "Trust Wallet"],
+  ["isTrustWallet", "Trust Wallet"],
+  ["isCoinbaseWallet", "Coinbase Wallet"],
+  ["isMetaMask", "MetaMask"],
+] as const satisfies readonly (readonly [keyof EthereumWallet, string])[];
+
 function legacyEvmName(provider: EthereumWallet) {
-  return provider.isPhantom
-    ? "Phantom"
-    : provider.isMetaMask
-      ? "MetaMask"
-      : provider.isCoinbaseWallet
-        ? "Coinbase Wallet"
-        : "Browser wallet";
+  return (
+    LEGACY_EVM_NAMES.find(([flag]) => provider[flag])?.[1] ?? "Browser wallet"
+  );
 }
 
 function legacySolanaName(provider: SolanaWallet, browser: WalletWindow) {
