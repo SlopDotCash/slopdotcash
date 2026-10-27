@@ -1022,6 +1022,7 @@ export async function handleVettingApi(
     if (admin && request.method !== "GET" && !isSameOriginJsonWrite(request))
       fail(403, "origin_forbidden", "Requests must come from this site");
     if (
+      admin &&
       request.method === "POST" &&
       parts.length === 5 &&
       parts[2] === "exemptions" &&
