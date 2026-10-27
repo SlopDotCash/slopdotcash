@@ -10,6 +10,8 @@ on:
       - 'workers/payments/**'
       - 'workers/security-payments/**'
       - 'workers/payment-executor/**'
+      - 'workers/fee-converter/**'
+      - 'backend/fee-conversions/**'
       - 'workers/referral-accrual/**'
       - 'backend/referrals/**'
       - 'src/lib/payments/**'
@@ -177,6 +179,10 @@ jobs:
       - run: bun run test:contracts:evm
       - run: bun run test:payments
       - run: bun run test:referral-accrual:anvil
+      - name: Exercise fee conversion and claim recovery on an isolated local chain
+        env:
+          SLOP_TEST_CLAIM_FAULTS: before,lease,finalized-role
+        run: bun run test:fee-converter:fork --local
       - run: bunx playwright install --with-deps chromium
       - name: Load deployed public ledger for browser checks
         run: |
