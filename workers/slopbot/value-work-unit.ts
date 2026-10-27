@@ -2,14 +2,13 @@
  * Commit/path claims are shared across PR carriers before they are valued.
  * This is evidence preparation, not journal publication or payout approval.
  */
+
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { isCreditEligibleCommitAuthor } from "../../src/lib/commit-credit";
-import {
-  REGISTERED_REPOSITORIES,
-  type TargetRepository,
-} from "../../src/lib/repositories.mjs";
-import { sha256Hex } from "./github";
+import type { TargetRepository } from "../../src/lib/repositories.mjs";
 import { matchesHistoricalIntegrationBranch } from "./value-branch-policy";
 import {
+  findRepository,
   type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
@@ -60,7 +59,7 @@ const ordered = (values: Iterable<string>) =>
  */
 export async function prepareWorkUnitEvidence(
   input: readonly WorkUnitSource[],
-  repositories: readonly TargetRepository[] = REGISTERED_REPOSITORIES,
+  repositories: readonly TargetRepository[],
 ): Promise<WorkUnitEvidence> {
   if (input.length === 0) throw new Error("Joint value sources are missing");
   const sources = [...input].sort((a, b) =>
@@ -68,7 +67,7 @@ export async function prepareWorkUnitEvidence(
   );
   const ids = new Set<string>();
   const projects = new Set<string>();
-  const retained = retainedCopyBindings(sources);
+  const retained = await retainedCopyBindings(sources);
   const limitations = new Set<string>(retained.limitations);
   const sourceDigests: WorkUnitEvidence["sourceDigests"] = [];
   const commits = new Map<string, string>();
@@ -90,11 +89,7 @@ export async function prepareWorkUnitEvidence(
   for (const source of sources) {
     const { evidence, policy } = source;
     const { pull } = evidence;
-    const repository = repositories.find((entry) =>
-      [entry.id, ...entry.aliases].some(
-        (id) => id.toLowerCase() === evidence.repository.toLowerCase(),
-      ),
-    );
+    const repository = findRepository(repositories, evidence.repository);
     if (
       !repository ||
       !valueEvidenceMatchesRepository(evidence, repository) ||
@@ -353,23 +348,26 @@ export async function prepareWorkUnitEvidence(
       if (origin.pull.user.type !== "Bot") actors.add(origin.pull.user.node_id);
       // A retained copy is accepted by the integration carrier, even when
       // the original historical branch has since been renamed. Preserve a
-      // linked primary author only when both immutable commits agree.
+      // linked primary author only when both immutable commits agree. An
+      // unlinked or ineligible original author cannot hide a different one.
+      const acceptedAuthor = copied.integration.evidence.commits.find(
+        (commit) => commit.sha === copied.acceptedCommitSha,
+      )?.author;
       if (
+        (acceptedAuthor?.node_id ?? null) !==
+        (originCommit.author?.node_id ?? null)
+      )
+        limitations.add(
+          `${origin.pull.node_id}: retained primary author identity differs between commits`,
+        );
+      else if (
         originCommit.author &&
         isCreditEligibleCommitAuthor({
           id: originCommit.author.node_id,
           kind: originCommit.author.type,
         })
-      ) {
-        const acceptedAuthor = copied.integration.evidence.commits.find(
-          (commit) => commit.sha === copied.acceptedCommitSha,
-        )?.author;
-        if (acceptedAuthor?.node_id !== originCommit.author.node_id)
-          limitations.add(
-            `${origin.pull.node_id}: retained primary author identity differs between commits`,
-          );
-        else actors.add(originCommit.author.node_id);
-      }
+      )
+        actors.add(originCommit.author.node_id);
       prepared.push({
         id: await sha256Hex(
           JSON.stringify([

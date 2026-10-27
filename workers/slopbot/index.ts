@@ -1,6 +1,7 @@
-// Slopbot GitHub App service (draft, docs/slopbot-v2-proposal.md).
+// Slopbot GitHub App service (protocol/slopbot-v2.md).
 // fetch: verify and deduplicate webhooks, then enqueue identifiers only.
 // queue: re-read GitHub state and run the review pipeline.
+import { readLimitedBody } from "../../backend/trace/validation";
 import { dispatchDueAppeals } from "./appeals";
 import { resumeBudgetBlocks } from "./budget-blocks";
 import { APPEAL_COMMANDS, type Job } from "./contracts";
@@ -17,12 +18,7 @@ import {
   reviewRegistration,
 } from "./registry";
 import { type ReopenItem, recordReopenSource } from "./reopen-source";
-import {
-  handleRepositoryAccess,
-  handleRepositoryRead,
-  REPOSITORY_ACCESS_URL,
-  REPOSITORY_READ_URL,
-} from "./repository-access";
+import { routeRepositoryAccess } from "./repository-access";
 import {
   applyAppealCommand,
   applyMaintainerHold,
@@ -38,7 +34,6 @@ import {
 import { valueHistory } from "./value-journal";
 import { recordValueRequest } from "./value-requests";
 import { workUnitHistory } from "./value-work-unit-journal";
-import { readWebhookBody } from "./webhook-body";
 
 type Queue = { send(body: Job): Promise<void> };
 type Env = Omit<ValueConsumerEnv, "SLOPBOT_DB"> & {
@@ -164,6 +159,13 @@ export function jobFor(
   return null;
 }
 
+const INSTALLATION_STATES = new Map<string, "removed" | "suspended" | "active">(
+  [
+    ["deleted", "removed"],
+    ["suspend", "suspended"],
+    ["unsuspend", "active"],
+  ],
+);
 async function handleInstallation(
   env: Env,
   payload: Payload,
@@ -184,39 +186,18 @@ async function handleInstallation(
   if (!Number.isSafeInteger(sourceUpdatedAt) || sourceUpdatedAt < 0) {
     throw new Error("installation.updated_at is invalid");
   }
-  if (
+  const identity = { id: installation.id, account: installation.account };
+  const state = INSTALLATION_STATES.get(payload.action ?? "");
+  await store.completeInstallationDelivery(
+    env.SLOPBOT_DB,
+    deliveryId,
     payload.action === "created" ||
-    payload.action === "new_permissions_accepted"
-  ) {
-    await store.completeInstallationDelivery(env.SLOPBOT_DB, deliveryId, {
-      kind: "upsert",
-      installation: { id: installation.id, account: installation.account },
-      sourceUpdatedAt,
-    });
-  } else if (payload.action === "deleted") {
-    await store.completeInstallationDelivery(env.SLOPBOT_DB, deliveryId, {
-      kind: "state",
-      installation: { id: installation.id, account: installation.account },
-      state: "removed",
-      sourceUpdatedAt,
-    });
-  } else if (payload.action === "suspend") {
-    await store.completeInstallationDelivery(env.SLOPBOT_DB, deliveryId, {
-      kind: "state",
-      installation: { id: installation.id, account: installation.account },
-      state: "suspended",
-      sourceUpdatedAt,
-    });
-  } else if (payload.action === "unsuspend") {
-    await store.completeInstallationDelivery(env.SLOPBOT_DB, deliveryId, {
-      kind: "state",
-      installation: { id: installation.id, account: installation.account },
-      state: "active",
-      sourceUpdatedAt,
-    });
-  } else {
-    await store.completeInstallationDelivery(env.SLOPBOT_DB, deliveryId, null);
-  }
+      payload.action === "new_permissions_accepted"
+      ? { kind: "upsert", installation: identity, sourceUpdatedAt }
+      : state
+        ? { kind: "state", installation: identity, state, sourceUpdatedAt }
+        : null,
+  );
 }
 
 export default {
@@ -339,23 +320,21 @@ export default {
         );
       }
     }
-    if (
-      request.method === "GET" &&
-      url.origin === new URL(REPOSITORY_ACCESS_URL).origin &&
-      url.pathname === new URL(REPOSITORY_ACCESS_URL).pathname
-    )
-      return handleRepositoryAccess(request, env);
-    if (
-      request.method === "GET" &&
-      url.origin === new URL(REPOSITORY_READ_URL).origin &&
-      url.pathname === new URL(REPOSITORY_READ_URL).pathname
-    )
-      return handleRepositoryRead(request, env);
+    const repositoryRoute = routeRepositoryAccess(request, env);
+    if (repositoryRoute) return repositoryRoute;
     if (request.method !== "POST" || url.pathname !== "/github/webhook") {
       return new Response("not found", { status: 404 });
     }
-    const body = await readWebhookBody(request, MAX_WEBHOOK_BYTES);
-    if (body === null) {
+    // The HMAC covers the exact received bytes. A missing or false
+    // Content-Length never makes the read unbounded.
+    let body: Uint8Array<ArrayBuffer>;
+    try {
+      // readLimitedBody returns a fresh, unshared buffer.
+      body = (await readLimitedBody(
+        request,
+        MAX_WEBHOOK_BYTES,
+      )) as Uint8Array<ArrayBuffer>;
+    } catch {
       return new Response("payload too large", { status: 413 });
     }
     if (

@@ -1755,8 +1755,13 @@ small {
   overflow-wrap: anywhere;
 }
 
-.profile-penalties > li > span {
+.profile-penalties > li > span,
+.profile-review-reasons {
   color: var(--muted);
+}
+
+.profile-review-reasons {
+  overflow-wrap: anywhere;
 }
 
 .profile-page .event-list,

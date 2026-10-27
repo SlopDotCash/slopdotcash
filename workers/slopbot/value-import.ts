@@ -10,7 +10,7 @@ import {
   collectValueContext,
   validValueContextSelections,
 } from "./value-context";
-import { collectValueEvidence } from "./value-evidence";
+import { collectValueEvidence, findRepository } from "./value-evidence";
 import { mergeInput, mergeRecipe } from "./value-merge-profile";
 import {
   isSubscriptionProvenance,
@@ -132,10 +132,9 @@ export async function importSubscriptionAssessment(
     });
     const repository =
       project &&
-      collectTargetRepositories([project]).find((entry) =>
-        [entry.id, ...entry.aliases].some(
-          (id) => id.toLowerCase() === selection.repository.toLowerCase(),
-        ),
+      findRepository(
+        collectTargetRepositories([project]),
+        selection.repository,
       );
     if (!repository) throw new Error("Historical source is not registered");
     repositories.push(repository);

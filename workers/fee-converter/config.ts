@@ -3,9 +3,11 @@
  * a missing or malformed value refuses the run instead of guessing.
  */
 
+import type { EscrowChain } from "../../src/lib/escrow-policy.mjs";
 import { type NativeGasLimits, validateNativeLimits } from "./native-gas";
 
-export type Network = "base" | "ethereum" | "robinhood" | "solana";
+export type Network = EscrowChain;
+/** A signing job's run mode; `off` and `dry_run` never load a key. */
 export type Mode = "off" | "dry_run" | "live";
 
 export const NETWORKS: readonly Network[] = [
@@ -94,7 +96,7 @@ export interface FeeConverterEnv {
   FEE_CONVERTER_RUN_CAP_MICRO?: string;
   FEE_CONVERTER_DAILY_CAP_MICRO?: string;
   FEE_CONVERTER_SOLANA_FEE_MICRO?: string;
-  /** Per-network exact wei limits; no defaults and no inherited keeper caps. */
+  /** Exact native base units: wei on EVM, lamports on Solana. No inherited caps. */
   FEE_CONVERTER_NATIVE_BUDGETS?: string;
   FEE_WALLET_BASE?: string;
   FEE_WALLET_ETHEREUM?: string;
@@ -104,6 +106,7 @@ export interface FeeConverterEnv {
   RPC_URL_ETHEREUM?: string;
   RPC_URL_ROBINHOOD?: string;
   RPC_URL_SOLANA?: string;
+  SOLANA_RECOVERY_RPC_URL?: string;
   KYBERSWAP_CLIENT_ID?: string;
   JUPITER_API_URL?: string;
   JUPITER_API_KEY?: string;
@@ -153,13 +156,6 @@ export function isTokenAddress(network: Network, value: unknown): boolean {
   return NETWORK_DEFINITIONS[network].family === "evm"
     ? EVM_ADDRESS.test(value)
     : SOLANA_ADDRESS.test(value);
-}
-
-/** Lowercases EVM addresses; Solana addresses are case-sensitive. */
-export function normalizeToken(network: Network, value: string): string {
-  return NETWORK_DEFINITIONS[network].family === "evm"
-    ? value.toLowerCase()
-    : value;
 }
 
 /**
@@ -230,9 +226,9 @@ export function parseConfig(env: FeeConverterEnv): FeeConverterConfig {
     return {
       network,
       definition,
-      feeWallet: normalizeToken(network, feeWallet),
+      feeWallet,
       rpcUrl,
-      allowlist: (list as string[]).map((t) => normalizeToken(network, t)),
+      allowlist: list as string[],
     };
   });
   if (env.FEE_CONVERTER_NATIVE_BUDGETS?.trim()) {
@@ -265,7 +261,6 @@ export function parseConfig(env: FeeConverterEnv): FeeConverterConfig {
   for (const network of networks as NetworkConfig[])
     if (
       mode === "live" &&
-      network.definition.family === "evm" &&
       network.definition.usdc !== null &&
       !network.nativeBudget
     )

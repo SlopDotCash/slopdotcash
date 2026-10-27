@@ -1,10 +1,10 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   VALUE_ASSESSMENT_SCHEMA,
   VALUE_RUBRIC_VERSION,
   VALUE_SYSTEM_PROMPT,
   validateValueAssessment,
 } from "../../src/lib/value-assessment";
-import { sha256Hex } from "./github";
 import type { ModelEnv } from "./models";
 import type { ValueEvidence } from "./value-evidence";
 import {

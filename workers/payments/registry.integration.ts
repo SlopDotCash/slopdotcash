@@ -35,9 +35,9 @@ import {
   payoutReadiness,
   probeRpc,
 } from "../../scripts/check-payout-readiness";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
-import { sha256Hex } from "../identity/crypto";
 import {
   type PaymentStackInput,
   paymentStack,
@@ -832,25 +832,36 @@ try {
   );
 
   // 4. One corrupted manifest is reported and never hides the other vaults.
+  //    The ordinary run also reports a malformed private bounty policy,
+  //    which the cross-scope vault-sharing check cannot read.
   sql.exec("DROP TRIGGER projects_match_revision_insert");
-  sql
-    .prepare(
-      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('broken','paused',1,?,?,?,?)",
-    )
-    .run(
-      JSON.stringify({
-        id: "broken",
-        status: "paused",
-        escrow: { ...withEscrow.escrow, feeBasisPoints: 100 },
-      }),
-      "0".repeat(64),
-      new Date().toISOString(),
-      new Date().toISOString(),
-    );
+  for (const [id, policy] of [
+    ["broken", { escrow: { ...withEscrow.escrow, feeBasisPoints: 100 } }],
+    [
+      "broken-bounty",
+      { securityBounty: { settlement: { ...withEscrow.escrow } } },
+    ],
+  ] as const)
+    sql
+      .prepare(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'paused',1,?,?,?,?)",
+      )
+      .run(
+        id,
+        JSON.stringify({ id, status: "paused", ...policy }),
+        "0".repeat(64),
+        new Date().toISOString(),
+        new Date().toISOString(),
+      );
   const partial = await syncRegistryVaults(env);
   assert.equal(partial.deployments.length, 1);
-  assert.equal(partial.failures.length, 1);
-  assert.match(String(partial.failures[0]), /Project broken escrow/);
+  assert.deepEqual(
+    partial.failures.map((failure) => String(failure)),
+    [
+      "Error: Project broken-bounty security-bounty policy invalid",
+      "Error: Project broken escrow deployments unavailable",
+    ],
+  );
 
   // 5. The readiness report: the probe proves the Base Sepolia chain id and
   //    a finalized head, and a mainnet that is not enabled stays off by review.

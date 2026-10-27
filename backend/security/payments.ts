@@ -81,13 +81,14 @@ import {
   evmAwardId,
 } from "../../contracts/evm/adapter";
 import { solanaAwardId } from "../../contracts/solana/adapter";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import {
   chainFamily,
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import { payoutFee } from "../../src/lib/payments/contracts";
-import { fail } from "../api-error";
+import { fail } from "../http";
 
 /** A private vault snapshot older than this does not prove free funds. */
 export const VAULT_SNAPSHOT_MAX_AGE_MS = 30 * 60_000;
@@ -173,10 +174,7 @@ export async function prepareSecuritySettlement(
       "The finalized private vault balance does not cover this award",
     );
   // Public chain IDs are random commitments, never hashes of private evidence.
-  const sourceDigest = Array.from(
-    crypto.getRandomValues(new Uint8Array(32)),
-    (b) => b.toString(16).padStart(2, "0"),
-  ).join("");
+  const sourceDigest = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
   const obligationId =
     chainFamily(deployment.chain) === "evm"
       ? evmAwardId(

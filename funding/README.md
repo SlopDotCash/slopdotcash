@@ -38,20 +38,13 @@ setup. The API verifies its on-chain identity and appends an immutable registry
 revision; routine admin approval is not required. GitHub identity does not prove
 wallet control.
 
-[`docs/payouts-mvp.md`](../docs/payouts-mvp.md) and
-[`docs/base-solana-payout-plan.md`](../docs/base-solana-payout-plan.md) retain
-historical implementation decisions. They do not override the current PRD or
-change existing funded awards and payment records.
-
 ## Removed legacy mode
 
 The committed-instrument mode is removed. It used Squads v4 multisig vaults on
 Solana, Sablier Lockup v4 streams on Base, direct-funding records committed as
 JSON, and unsigned monthly-pool settlement plans (PAY-09). No project used it,
 and its execution ledger was empty. Its records and tools remain in Git
-history. The empty `executions/ledger.json` and `payment-reservations.json`
-stay only until this removal merges, because the trusted append-only gates
-on the base branch refuse their deletion; no code reads them.
+history.
 
 The site reads no chain and no GitHub API on a page view. Escrow payment state
 comes from the escrow indexer.

@@ -139,7 +139,7 @@ environment's `VETTING_CONTROLLER_RELEASE` to `enabled`, then dispatch the
 workflow on that branch for qualification. Set the repository's
 `VETTING_CONTROLLER_SCHEDULE` to `enabled` only after qualification. Scheduled
 dispatch occurs every 15 minutes and skips a branch with an active controller
-run. These settings do not attest evidence retention or recovery controls.
+run.
 
 The workflow and journal source do not establish deployment or provider
 acceptance. Verify the full scan, private evidence, publication and recovery
@@ -151,10 +151,11 @@ The inventory digest covers executable content and the digests of retained
 binary, archive and quarantined artifacts. Documentation that is not an agent
 instruction file does not change it. A later commit whose
 executable inventory, skill template and scan policy are byte-identical to a
-clean scan reuses that result with `reuseCleanScan`; the intake checks that
-the cited original is a clean, non-reused scan of the same repository,
-inventory, template, policy, run and report. Any change to executable
-content produces a new digest and a new scan.
+clean scan may cite that result; the intake checks that the cited original is
+a clean, non-reused scan of the same repository, inventory, template, policy,
+run and report. The controller does not produce such citations today: each
+queued assessment gets a new scan. Any change to executable content produces
+a new digest and a new scan.
 
 The signed service calls `POST /api/v1/vetting/refresh` before reading the
 queue. Slop then queues, for the project steward, a scan of every listed
@@ -242,15 +243,15 @@ inventory; every record stays `quarantined`. A host that blocks namespace
 creation fails closed. A namespace isolates this parser; it is not a hardware
 VM.
 
-## Remaining work and operator decisions
+## Deployment requirements and operator decisions
 
-| Item | Status |
+| Item | Requirement or decision |
 | --- | --- |
-| Scanner service deployment | `run.ts` is the service source; it is not deployed by this source. It needs a private host, its Ed25519 key, the public key in `VETTING_RESULT_PUBLIC_KEYS`, `SURPLUS_API_KEY` and the evidence store policy. |
+| Scanner service deployment | `run.ts` is the service source; this source does not deploy it. It needs a private host, its Ed25519 key, the public key in `VETTING_RESULT_PUBLIC_KEYS`, `SURPLUS_API_KEY` and the evidence store policy. |
 | Provider and model | Owner decision D16: Surplus `claude-opus-5.5` is the primary model and Surplus `gpt-6.1-sol` is the specialist, only for ambiguous or high-risk results. Scanner profiles accept only these two Surplus endpoint and model pairs (`PINNED_SCANNER_PROFILES` in `scanners.ts`) and fail closed on any other. The operator names both in the configuration file; the source has no default. |
 | Isolated runner | Owner decision D16: Cloudflare Sandboxes/Containers, one disposable sandbox per risky artifact, with `enableInternet: false` set explicitly and no secrets. Adapting this worker from the Bubblewrap host to that runner is follow-up work. |
 | Specialist authority | Owner decision D3: moderators confirm malice and release quarantined artifacts. A model label alone cannot; a signed malicious result restricts the project until a moderator decides. |
-| Live acceptance | Clean, incomplete, malicious, flag and reinstatement paths on staging with the real services. |
+| Live acceptance | Prove the clean, incomplete, malicious, flag and reinstatement paths on staging with the real services (PRD section 11). |
 
 ### Private artifact execution
 

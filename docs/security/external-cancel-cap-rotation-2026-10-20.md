@@ -1,6 +1,6 @@
 # Owner cancel cap shortens the authority-rotation cover (externally reported)
 
-**Status:** fix proposed, awaiting the repository owner's review and merge. Nothing is deployed on mainnet and every project has payments disabled, so no funds were at risk.
+**Status:** fixed in `617de6e8`, which is part of the mainnet deployment source `bce5b0df` (24 October 2026). No funds were at risk before the fix: nothing was deployed on mainnet and every project had payments disabled.
 **Reported by:** an outside security firm, by email to the Operator, 20 October 2026; credit withheld until the reporter agrees to be named. External, unsolicited report; no engagement or payment is attached to it. This is not an audit of the contracts.
 **Reporter's severity:** Medium. **Lead assessment:** Medium, agreed: it needs a stolen identity authority key (review finding H-1) plus one earlier cancel on the target actor with no payment since, and it is bounded to that actor's committed awards.
 **Verified by:** Drew Pierson on `development` at `42c62a7`, by reading `contracts/evm/src/ProjectEscrow.sol` and `contracts/solana/programs/slop-escrow/src/lib.rs` and by the failing Foundry test below.
@@ -30,4 +30,4 @@ The cap exists to bound a griefing owner's power to delay a contributor. It shou
 
 ## Not changed
 
-The PRD (PAY-05 and the section 22 "Payout execution authority" row) still describes the owner's cancel during the delay accurately and is not edited here. No deployment, registry entry, adapter or executor changes; the instruction signatures and the Solana IDL are unchanged. The 12 October review report carries a pointer to this entry under H-1 and M-2.
+The PRD of that date (PAY-05 and its section 22 "Payout execution authority" row) still described the owner's cancel during the delay accurately and was not edited here. No deployment, registry entry, adapter or executor changes; the instruction signatures and the Solana IDL are unchanged. The 12 October review report carries a pointer to this entry under H-1 and M-2.

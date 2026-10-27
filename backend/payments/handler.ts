@@ -12,6 +12,10 @@ import {
 } from "../../contracts/solana/monthly-commitment";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
+  type DeploymentTier,
+  deploymentOrigins,
+} from "../../src/lib/deployment";
+import {
   ESCROW_CHAINS,
   ESCROW_NETWORKS,
   EVM_CHAINS,
@@ -26,8 +30,10 @@ import {
   VAULT_SNAPSHOT_STALE_MS,
 } from "../../src/lib/payments/contracts";
 import { isWalletAddress, isWalletChain } from "../../src/lib/wallets";
-import { sha256Hex } from "../../workers/identity/crypto";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
+import { cookieValue, isSameOriginJsonWrite } from "../http";
+import { sessionGithubActor } from "../points/handler";
+import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
 import {
   type MonthlyCommitmentInput,
   type MonthlyOwnerService,
@@ -60,6 +66,7 @@ function isMonthlyCommitmentInput(
 }
 
 export interface PaymentsDependencies {
+  tier?: DeploymentTier;
   /** The owner's private monthly allocations; absent where they are not served. */
   monthly?: MonthlyOwnerService;
   db: D1Database;
@@ -97,10 +104,7 @@ export interface PaymentsDependencies {
     vault: string,
   ) => Promise<SolanaEscrowConfig>;
   /** Edge cache for public vault snapshot reads (caches.default on Pages). */
-  edgeCache?: {
-    match(request: Request): Promise<Response | undefined>;
-    put(request: Request, response: Response): Promise<void>;
-  };
+  edgeCache?: EdgeCache;
 }
 /** The payments cron writes snapshots every 5 minutes; one minute keeps reads near it. */
 const VAULT_EDGE_CACHE_SECONDS = 60;
@@ -115,11 +119,6 @@ export interface PaymentDeploymentIdentity {
 }
 /** The attester must still have this long to submit a binding authorization. */
 const BINDING_SUBMISSION_WINDOW_SECONDS = 600;
-const origins = new Set([
-  "https://slop.cash",
-  "https://slop.tech",
-  "https://eliza.army",
-]);
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
     status,
@@ -151,12 +150,12 @@ export async function handlePaymentsApi(
   const path = url.pathname.replace("/api/v1/payments", "");
   const now = (deps.now?.() ?? new Date()).toISOString();
   if (
-    !new Set([...origins, ...(deps.allowedOrigins ?? [])]).has(url.origin) ||
+    !new Set([
+      ...deploymentOrigins(deps.tier).browserOrigins,
+      ...(deps.allowedOrigins ?? []),
+    ]).has(url.origin) ||
     (request.method !== "GET" &&
-      (request.method !== "POST" ||
-        request.headers.get("origin") !== url.origin ||
-        request.headers.get("content-type")?.split(";")[0] !==
-          "application/json"))
+      (request.method !== "POST" || !isSameOriginJsonWrite(request)))
   )
     return json(403, { error: "origin_forbidden" });
   try {
@@ -332,30 +331,28 @@ export async function handlePaymentsApi(
     // Vault counters cached by the payments worker from finalized reads. A
     // page view never reaches a chain RPC; the edge cache keeps D1 reads low.
     const vaultRoute = /^\/projects\/([a-z0-9][a-z0-9-]*)\/vault$/.exec(path);
-    if (vaultRoute && request.method === "GET") {
-      const key = new Request(url.toString(), { method: "GET" });
-      const cached = await deps.edgeCache?.match(key);
-      if (cached) return cached;
-      const snapshots = await projectVaultSnapshots(deps.db, vaultRoute[1]);
-      const response = new Response(
-        JSON.stringify({
-          projectId: vaultRoute[1],
-          snapshots,
-          staleAfterMs: VAULT_SNAPSHOT_STALE_MS,
-          servedAt: now,
-        }),
-        {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-            "cache-control": `public, max-age=${VAULT_EDGE_CACHE_SECONDS}, s-maxage=${VAULT_EDGE_CACHE_SECONDS}`,
-            "x-content-type-options": "nosniff",
-          },
-        },
+    if (vaultRoute && request.method === "GET")
+      return await cachedPublicResponse(
+        deps.edgeCache,
+        request,
+        async () =>
+          new Response(
+            JSON.stringify({
+              projectId: vaultRoute[1],
+              snapshots: await projectVaultSnapshots(deps.db, vaultRoute[1]),
+              staleAfterMs: VAULT_SNAPSHOT_STALE_MS,
+              servedAt: now,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json",
+                "cache-control": `public, max-age=${VAULT_EDGE_CACHE_SECONDS}, s-maxage=${VAULT_EDGE_CACHE_SECONDS}`,
+                "x-content-type-options": "nosniff",
+              },
+            },
+          ),
       );
-      await deps.edgeCache?.put(key, response.clone());
-      return response;
-    }
     const directRoute =
       /^\/(?:projects\/([a-z0-9][a-z0-9-]*)|actors\/([1-9]\d{0,15}))\/direct-transfers$/.exec(
         path,
@@ -373,20 +370,15 @@ export async function handlePaymentsApi(
           .toString(),
       });
     }
-    const token = (request.headers.get("cookie") ?? "")
-      .split(";")
-      .map((v) => v.trim())
-      .find((v) => v.startsWith("__Host-slop_points="))
-      ?.slice("__Host-slop_points=".length);
-    if (!token || !/^[A-Za-z0-9_-]{40,128}$/.test(token))
-      return json(401, { error: "not_signed_in" });
-    const member = await deps.db
-      .prepare(
-        "SELECT m.github_id,m.login FROM points_members m JOIN points_sessions s ON s.actor_id=m.actor_id WHERE s.token_hash=? AND s.expires_at>?",
-      )
-      .bind(await sha256Hex(token), now)
-      .first<{ github_id: string; login: string }>();
-    if (!member) return json(401, { error: "session_expired" });
+    const member = await sessionGithubActor(request, deps.db, now);
+    if (!member)
+      return json(401, {
+        error: /^[A-Za-z0-9_-]{40,128}$/.test(
+          cookieValue(request, "__Host-slop_points") ?? "",
+        )
+          ? "session_expired"
+          : "not_signed_in",
+      });
     const solanaCommitmentRoute =
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))\/solana-commitment$/.exec(
         path,
@@ -417,7 +409,7 @@ export async function handlePaymentsApi(
           const award = await deps.monthly.commitment(
             solanaCommitmentRoute[1],
             solanaCommitmentRoute[2],
-            { githubId: member.github_id, githubLogin: member.login },
+            member,
             body,
           );
           if (
@@ -522,7 +514,6 @@ export async function handlePaymentsApi(
     if (monthlyRoute || monthlySettingsRoute) {
       if (!deps.monthly)
         return json(503, { error: "monthly_awards_unavailable" });
-      const actor = { githubId: member.github_id, githubLogin: member.login };
       const sequence = (value: unknown): value is number =>
         Number.isSafeInteger(value) && (value as number) >= 0;
       try {
@@ -538,7 +529,7 @@ export async function handlePaymentsApi(
             200,
             await deps.monthly.setAutomatic(
               monthlySettingsRoute[1],
-              actor,
+              member,
               body.automatic,
             ),
           );
@@ -546,7 +537,7 @@ export async function handlePaymentsApi(
         if (monthlyRoute && !monthlyRoute[3] && request.method === "GET")
           return json(
             200,
-            await deps.monthly.view(monthlyRoute[1], monthlyRoute[2], actor),
+            await deps.monthly.view(monthlyRoute[1], monthlyRoute[2], member),
           );
         if (monthlyRoute?.[3] && request.method === "POST") {
           const body = (await readBoundedJson(
@@ -573,7 +564,7 @@ export async function handlePaymentsApi(
               return json(400, { error: "invalid_release_review" });
             return json(
               200,
-              await deps.monthly.releaseReserve(projectId, period, actor, {
+              await deps.monthly.releaseReserve(projectId, period, member, {
                 network: body.network,
                 manifestSha256: body.manifestSha256,
                 ...("planId" in body
@@ -594,7 +585,7 @@ export async function handlePaymentsApi(
               return json(400, { error: "invalid_allocation" });
             return json(
               200,
-              await deps.monthly.changeAllocation(projectId, period, actor, {
+              await deps.monthly.changeAllocation(projectId, period, member, {
                 githubUserId: body.githubUserId,
                 grossBase: body.grossBase,
                 expectedSequence: body.expectedSequence,
@@ -609,7 +600,7 @@ export async function handlePaymentsApi(
               await deps.monthly.finalize(
                 projectId,
                 period,
-                actor,
+                member,
                 body.expectedSequence,
               ),
             );
@@ -618,7 +609,7 @@ export async function handlePaymentsApi(
             return json(400, { error: "invalid_commitment_review" });
           return json(
             200,
-            await deps.monthly.commitment(projectId, period, actor, body),
+            await deps.monthly.commitment(projectId, period, member, body),
           );
         }
       } catch (error) {
@@ -631,7 +622,7 @@ export async function handlePaymentsApi(
       }
     }
     if (path === "/admin/wallet-proposals" && request.method === "POST") {
-      if (!deps.operatorIds?.includes(member.github_id))
+      if (!deps.operatorIds?.includes(member.githubId))
         return json(403, { error: "operator_required" });
       const body = (await readBoundedJson(
         request,
@@ -656,7 +647,7 @@ export async function handlePaymentsApi(
           body.githubUserId,
           body.chain,
           body.address,
-          member.github_id,
+          member.githubId,
           body.reason,
           now,
         )
@@ -699,7 +690,7 @@ export async function handlePaymentsApi(
         .prepare(
           "SELECT id,chain,wallet_address,record_sha256 FROM wallet_claims w WHERE id=? AND github_user_id=? AND source='d1_registry' AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
         )
-        .bind(body.claimId, member.github_id)
+        .bind(body.claimId, member.githubId)
         .first<{
           id: string;
           chain: string;
@@ -710,7 +701,7 @@ export async function handlePaymentsApi(
       const id = crypto.randomUUID();
       const expiresAt = new Date(Date.parse(now) + 15 * 60000).toISOString();
       const message = buildPaymentWalletMessage({
-        actorId: member.github_id,
+        actorId: member.githubId,
         chain: wallet.chain,
         address: wallet.wallet_address,
         claimId: wallet.id,
@@ -720,7 +711,7 @@ export async function handlePaymentsApi(
       });
       await deps.db
         .prepare("INSERT INTO payment_wallet_challenges VALUES(?,?,?,?,?,NULL)")
-        .bind(id, wallet.id, member.github_id, message, expiresAt)
+        .bind(id, wallet.id, member.githubId, message, expiresAt)
         .run();
       return json(200, {
         challengeId: id,
@@ -746,7 +737,7 @@ export async function handlePaymentsApi(
         .prepare(
           "SELECT c.message,w.chain,w.wallet_address FROM payment_wallet_challenges c JOIN wallet_claims w ON w.id=c.claim_id WHERE c.id=? AND c.claim_id=? AND c.github_user_id=? AND c.expires_at>? AND c.consumed_at IS NULL AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
         )
-        .bind(body.challengeId, body.claimId, member.github_id, now)
+        .bind(body.challengeId, body.claimId, member.githubId, now)
         .first<{ message: string; chain: string; wallet_address: string }>();
       if (
         !challenge ||
@@ -776,13 +767,13 @@ export async function handlePaymentsApi(
             body.challengeId,
             body.signature,
             body.claimId,
-            member.github_id,
+            member.githubId,
           ),
         deps.db
           .prepare(
             "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND o.state='reserved' AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id) ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'",
           )
-          .bind(now, body.claimId, member.github_id),
+          .bind(now, body.claimId, member.githubId),
       ]);
       if (result.some((r) => !r.success))
         throw new Error("Authorization failed");
@@ -790,7 +781,7 @@ export async function handlePaymentsApi(
         .prepare(
           "SELECT a.claim_id FROM payment_wallet_authorizations a JOIN wallet_claims w ON w.id=a.claim_id WHERE a.claim_id=? AND a.github_user_id=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
         )
-        .bind(body.claimId, member.github_id)
+        .bind(body.claimId, member.githubId)
         .first();
       return authorized
         ? json(200, { authorized: true })
@@ -868,12 +859,12 @@ export async function handlePaymentsApi(
         .prepare(
           `SELECT w.id,w.wallet_address,w.record_sha256 FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry' AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)`,
         )
-        .bind(body.claimId, member.github_id, deployments[0].chain)
+        .bind(body.claimId, member.githubId, deployments[0].chain)
         .first<{ id: string; wallet_address: string; record_sha256: string }>();
       if (!wallet) return json(409, { error: "claim_not_current" });
       const expectedVersion =
         body.expectedVersion ??
-        (await deps.bindingVersion?.(body.network, vault, member.github_id));
+        (await deps.bindingVersion?.(body.network, vault, member.githubId));
       if (!decimal(expectedVersion))
         return json(503, { error: "binding_version_unavailable" });
       const nowSeconds = Math.floor(Date.parse(now) / 1000);
@@ -881,7 +872,7 @@ export async function handlePaymentsApi(
         ? (body.expiresAt as string)
         : String(nowSeconds + 90 * 24 * 60 * 60);
       const binding = {
-        githubUserId: member.github_id,
+        githubUserId: member.githubId,
         destination: wallet.wallet_address,
         expectedVersion,
         claimDigest: `0x${wallet.record_sha256}`,
@@ -914,7 +905,7 @@ export async function handlePaymentsApi(
         )
         .bind(
           wallet.id,
-          member.github_id,
+          member.githubId,
           body.network,
           vault,
           chainId.toString(),
@@ -932,7 +923,7 @@ export async function handlePaymentsApi(
         )
         .bind(
           wallet.id,
-          member.github_id,
+          member.githubId,
           body.network,
           vault,
           chainId.toString(),
@@ -981,25 +972,25 @@ export async function handlePaymentsApi(
       let privateBinding = false;
       let payment = await deps.db
         .prepare(bindingQuery)
-        .bind(body.obligationId, member.github_id)
+        .bind(body.obligationId, member.githubId)
         .first<Record<string, string>>();
       if (!payment && deps.securityPayments) {
         const owned = await deps.db
           .prepare(
             "SELECT s.case_id FROM security_settlements s JOIN security_cases c ON c.id=s.case_id WHERE s.obligation_id=? AND c.reporter_github_id=?",
           )
-          .bind(body.obligationId, member.github_id)
+          .bind(body.obligationId, member.githubId)
           .first<{ case_id: string }>();
         if (owned) {
           await deps.db
             .prepare(
               "INSERT INTO security_case_access_log(case_id,actor_github_id,actor_role,action,at) VALUES(?,?,'reporter','write',?)",
             )
-            .bind(owned.case_id, member.github_id, now)
+            .bind(owned.case_id, member.githubId, now)
             .run();
           payment = await deps.securityPayments.db
             .prepare(bindingQuery)
-            .bind(body.obligationId, member.github_id)
+            .bind(body.obligationId, member.githubId)
             .first<Record<string, string>>();
           attester = deps.securityPayments.solanaAttester;
           privateBinding = true;
@@ -1031,7 +1022,7 @@ export async function handlePaymentsApi(
           programId: deployment.programId,
           projectPda: deployment.projectPda,
           networkDomain: deployment.networkDomain,
-          githubUserId: member.github_id,
+          githubUserId: member.githubId,
           destination: payment.destination,
           claimDigest: payment.claimDigest,
         };
@@ -1080,13 +1071,13 @@ export async function handlePaymentsApi(
         .prepare(
           "SELECT json_group_array(json_object('chain',w.chain,'claimId',w.id,'address',w.wallet_address,'authorized',json(CASE WHEN a.claim_id IS NULL THEN 'false' ELSE 'true' END))) items FROM wallet_claims w LEFT JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.github_user_id=? AND NOT EXISTS(SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id=w.id)",
         )
-        .bind(member.github_id)
+        .bind(member.githubId)
         .first<{ items: string }>();
       const paymentRows = await deps.db
         .prepare(
           "SELECT json_group_array(json_object('id',o.id,'vault',o.vault,'projectId',project_id,'network',network,'chain',chain,'assetAddress',asset_address,'assetDecimals',asset_decimals,'grossBase',gross_base,'feeBase',fee_base,'state',o.state,'transactionId',paid_transaction,'submittedTransactionId',(SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id=o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),'deliveryState',CASE WHEN o.state='paid' THEN 'paid' WHEN q.state='submitted' THEN 'submitted' WHEN q.state='held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END)) items FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id=o.id WHERE github_user_id=?",
         )
-        .bind(member.github_id)
+        .bind(member.githubId)
         .first<{ items: string }>();
       const payments = JSON.parse(
         paymentRows?.items ?? "[]",
@@ -1098,7 +1089,7 @@ export async function handlePaymentsApi(
         .prepare(
           "SELECT json_group_array(json_object('projectId',project_id,'period',period,'network',network,'assetAddress',asset,'assetDecimals',decimals,'grossBase',gross,'feeBase',fee,'netBase',net,'state',state)) items FROM (SELECT r.project_id,r.period,r.network,json_extract(r.snapshot,'$.asset') asset,COALESCE((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id=r.project_id AND v.network=r.network AND v.vault=r.vault AND lower(v.asset_address)=lower(json_extract(r.snapshot,'$.asset'))),CASE WHEN lower(json_extract(b.manifest,'$.rewardAsset.address'))=lower(json_extract(r.snapshot,'$.asset')) THEN json_extract(b.manifest,'$.rewardAsset.decimals') END) decimals,json_extract(a.value,'$.grossBase') gross,json_extract(a.value,'$.feeBase') fee,json_extract(a.value,'$.netBase') net,CASE WHEN EXISTS(SELECT 1 FROM payment_obligations c WHERE c.network=r.network AND c.vault=r.vault AND c.source_digest=json_extract(a.value,'$.sourceDigest')) THEN 'conflict' WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END state FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period, json_each(r.snapshot,'$.awards') a WHERE json_extract(a.value,'$.githubUserId')=? AND NOT EXISTS(SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id=r.project_id AND e.period=r.period AND e.source_digest=json_extract(a.value,'$.sourceDigest')) AND NOT EXISTS(SELECT 1 FROM payment_obligations o WHERE o.network=r.network AND o.vault=r.vault AND o.source_digest=json_extract(a.value,'$.sourceDigest') AND o.github_user_id=json_extract(a.value,'$.githubUserId') AND o.gross_base=json_extract(a.value,'$.grossBase')) ORDER BY r.period DESC,r.project_id)",
         )
-        .bind(member.github_id)
+        .bind(member.githubId)
         .first<{ items: string }>();
       const monthlyAwards = (
         JSON.parse(monthlyRows?.items ?? "[]") as Omit<
@@ -1149,7 +1140,7 @@ export async function handlePaymentsApi(
         )
         .map(({ net, ...asset }) => ({ ...asset, netBase: net.toString() }));
       const account: PaymentsAccount = {
-        githubUserId: member.github_id,
+        githubUserId: member.githubId,
         wallets: JSON.parse(walletRows?.items ?? "[]"),
         payments,
         monthlyAwards,
@@ -1157,7 +1148,7 @@ export async function handlePaymentsApi(
         directTransfers: await directTransfers(
           deps.db,
           "github_user_id",
-          member.github_id,
+          member.githubId,
         ),
         walletObservations: JSON.parse(
           (
@@ -1165,7 +1156,7 @@ export async function handlePaymentsApi(
               .prepare(
                 "SELECT json_group_array(json_object('chain',chain,'address',address,'proofLevel',proof_level,'sourceUrl',source_url,'observedAt',observed_at)) items FROM (SELECT * FROM wallet_observations WHERE github_user_id=? ORDER BY observed_at DESC)",
               )
-              .bind(member.github_id)
+              .bind(member.githubId)
               .first<{ items: string }>()
           )?.items ?? "[]",
         ),
@@ -1174,6 +1165,7 @@ export async function handlePaymentsApi(
     }
     return json(404, { error: "not_found" });
   } catch {
+    console.error("payments API failure");
     return json(503, { error: "payments_unavailable" });
   }
 }

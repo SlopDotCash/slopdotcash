@@ -18,7 +18,7 @@ import {
 } from "../../workers/referral-accrual/config";
 import type { ReferralD1Database } from "../../workers/referral-accrual/store";
 
-export const REFERRAL_EVENTS = parseAbi([
+const REFERRAL_EVENTS = parseAbi([
   "event RootPosted(uint256 indexed epoch,bytes32 root,uint256 total,uint64 claimableAt)",
   "event RootVoided(uint256 indexed epoch,bytes32 root)",
   "event Claimed(address indexed account,uint256 indexed epoch,uint256 amount,uint256 cumulative)",

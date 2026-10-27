@@ -1,9 +1,10 @@
 # Escrow: release of an unsettleable monthly reserve
 
-Status: contract change in review (PR #1271), bundled into the pending EVM V2
-upgrade. It is not deployed. It needs the reviewed upgrade and testnet
-qualification on each network before use. Section 9 records the owner
-decisions.
+Status: merged in PR #1271 (`7fdedd35`). The EVM V2 upgrade that contains it
+finalized on Base, Ethereum and Robinhood Chain on 26 October 2026
+(`contracts/DEPLOY-MAINNET.md`, "Bundled monthly reserve V2 upgrade"). The
+Solana program upgrade is pending. Each network still needs the testnet
+qualification in section 7 before use. Section 9 records the owner decisions.
 
 Source: owner action list on issue #914, and the owner decision of 25 October
 2026: "Plan a contract fix: design a reviewed contract change that lets the
@@ -367,18 +368,10 @@ are separate):
 - `contracts/solana/integration/escrow.e2e.mjs` tests the same rules on a
   local validator with a tree that repeats a source.
 
-## 8. Proposed PRD wording (for the maintainer)
+## 8. PRD wording
 
-Replace the "Consequence" sentence of the "Funded-award expiry" row in PRD
-section 11 with this text:
-
-> If a signed monthly allocation can never settle (an attester fault), the
-> owner can release only its unsettleable gross to the free balance. The
-> release needs the owner's transaction and a fresh identity-attester
-> signature over the month's exact unsettled gross. The attester signs only
-> after every settleable leaf has settled and the fault is recorded. Committed
-> awards and settleable leaves stay reserved, and the period stays committed.
-> Time alone never releases a reserve.
+PRD section 6 and the section 11 "Wrong-sum reserve release" row record the
+adopted rule (owner decision, 25 October 2026).
 
 ## 9. Owner decisions (25 October 2026, in chat)
 

@@ -1,7 +1,7 @@
 # Staging and production releases
 
-DEP-01 in the product requirements and MVP-11 define this split. Issue #534
-records the maintainer's request for separate staging login and writes.
+PRD section 11 ("Release workflow") defines this flow. Issue #534 records the
+maintainer's request for separate staging login and writes.
 
 | Branch | Website | Pages project | Database | Identity Worker |
 | --- | --- | --- | --- | --- |
@@ -12,7 +12,6 @@ Use a feature branch and a pull request into `development`. After staging
 acceptance, open a promotion pull request from `development` into `main`.
 Both branches require the full build, browser, and policy checks. A failed check
 must prevent publication. Never publish a local build or a pull-request build.
-The temporary `develop` branch has no publication authority after migration.
 
 Owner decision, 25 October 2026: branch protections and rulesets are not
 release requirements. Do not add or restore them during release work unless
@@ -73,9 +72,9 @@ No operator identity is assigned by the staging deployment.
 
 Associate `staging.slop.cash` with the staging Pages project. Its proxied DNS
 CNAME must target `slop-staging.pages.dev`. The identity Worker uses its own
-custom domain, `identity-staging.slop.cash`. Configure production environment
-branch allowlists and the production Pages branch to `main` during cutover.
-Production retains its existing storage and secrets. Do not change those IDs.
+custom domain, `identity-staging.slop.cash`. The production environment branch
+allowlist and the production Pages branch are `main`. Production retains its
+existing storage and secrets. Do not change those IDs.
 
 Before the first staging publication, verify in Cloudflare that `slop-staging`
 has no Pages deployment. Run the checked-in `slop.cash` workflow manually on
@@ -105,8 +104,3 @@ Revert a faulty source change through a reviewed pull request, then release the
 new verified revision. Do not copy production storage to make a failed staging
 check pass. Existing installed skill receipts
 retain their format; new installer authorization reads canonical `main`.
-
-During migration, keep the default branch and live production release policy on
-`develop` until the migration pull request passes. Change the default branch to
-`main` only after the release workflow and operational workflows are present
-there. Scheduled production refreshes must run from the new default branch.

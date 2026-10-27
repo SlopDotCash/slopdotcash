@@ -1,4 +1,5 @@
 import type { D1TransactionalDatabase as D1Database } from "../d1";
+import { json } from "../http";
 
 /** Public per-repository Slopbot aggregates (PRD BOT-07, LDR-04). */
 export interface SlopbotRepositorySummary {
@@ -13,12 +14,7 @@ export interface SlopbotRepositorySummary {
   lastActivityAt: string | null;
 }
 
-const headers = {
-  "content-type": "application/json; charset=utf-8",
-  "cache-control": "public, max-age=60",
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "no-referrer",
-};
+const PUBLIC_CACHE_CONTROL = "public, max-age=60";
 
 // Counts and sums only: no verdicts, comment bodies, authors, or item IDs leave
 // the database. Skipped and running reviews are excluded, so private
@@ -62,34 +58,35 @@ export async function handleSlopbotApi(
 ): Promise<Response> {
   const route = new URL(request.url).pathname.replace("/api/v1/slopbot", "");
   if (route !== "/summary")
-    return new Response(JSON.stringify({ error: "not_found" }), {
-      status: 404,
-      headers,
-    });
+    return json(
+      404,
+      { error: "not_found" },
+      { cacheControl: PUBLIC_CACHE_CONTROL },
+    );
   if (request.method !== "GET")
-    return new Response(JSON.stringify({ error: "method_not_allowed" }), {
-      status: 405,
-      headers: { ...headers, allow: "GET" },
-    });
+    return json(
+      405,
+      { error: "method_not_allowed" },
+      { cacheControl: PUBLIC_CACHE_CONTROL, headers: { allow: "GET" } },
+    );
   try {
     const row = await db.prepare(SUMMARY_QUERY).first<{ items: string }>();
     const repositories = JSON.parse(
       row?.items ?? "[]",
     ) as SlopbotRepositorySummary[];
-    return new Response(
-      JSON.stringify({
+    return json(
+      200,
+      {
         generatedAt: new Date().toISOString(),
         repositories: repositories.map((repository) => ({
           ...repository,
           lastActivityAt: repository.lastActivityAt || null,
         })),
-      }),
-      { status: 200, headers },
+      },
+      { cacheControl: PUBLIC_CACHE_CONTROL },
     );
   } catch {
-    return new Response(JSON.stringify({ error: "unavailable" }), {
-      status: 503,
-      headers: { ...headers, "cache-control": "no-store" },
-    });
+    console.error("Slopbot summary API failure");
+    return json(503, { error: "unavailable" }, { cacheControl: "no-store" });
   }
 }

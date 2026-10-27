@@ -4,7 +4,12 @@
  * serves a project (PRD VET-01, VET-06, VET-07).
  */
 
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { canonicalJson } from "../../src/lib/canonical-json";
+import type {
+  GithubActor,
+  ProjectEnforcement,
+} from "../../src/lib/project-contracts";
 import { executableManifestContent } from "../../src/lib/project-revision-changes";
 import type {
   AssessmentState,
@@ -22,14 +27,12 @@ import {
   enforcementStatement,
   type ProjectD1Database,
 } from "../projects/cloudflare-persistence";
-import type { GithubActor, ProjectEnforcement } from "../projects/contracts";
 import {
   enforcedManifest,
   planScanReinstatement,
   projectRestriction,
   repositoryIdentity,
 } from "../projects/enforcement";
-import { sha256Hex } from "../trace/validation";
 import type { VettingArtifact } from "./result";
 import {
   isScanResult,
@@ -616,7 +619,18 @@ export class CloudflareVettingPersistence {
         )
       )
         return { state: "banned", assessment: summarize(malicious) };
-      if (!(await this.retainedEvidence?.(finished)))
+      let retained: boolean | undefined;
+      try {
+        retained = await this.retainedEvidence?.(finished);
+      } catch {
+        console.error("vetting evidence read failure");
+        return {
+          state: "unverified",
+          reason:
+            "Slop could not read the retained evidence of the clean assessment. Retry later.",
+        };
+      }
+      if (!retained)
         return {
           state: "unverified",
           reason:

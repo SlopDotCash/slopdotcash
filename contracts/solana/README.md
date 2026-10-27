@@ -158,7 +158,7 @@ awards still applies under the eligibility policy.
 The 2% fee is deducted from each gross award: 100 pays 98 to the contributor
 and 2 to the fee recipient, reserving 100. Integer arithmetic rounds gross/50 up
 once per immutable award. An unused-funds withdrawal pays the same 2%:
-`ceil(gross / 50)`, rounded up once per withdrawal (PRD section 18). Withdrawing
+`ceil(gross / 50)`, rounded up once per withdrawal (PRD section 6). Withdrawing
 850 USDC pays 17 USDC and returns 833 USDC. Every award or withdrawal of at least
 one base unit pays at least one unit of fee, so splitting never lowers the fee
 (owner decision of 24 October 2026; the earlier rounding down let a split into

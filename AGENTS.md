@@ -3,7 +3,7 @@
 Slop is a GitHub-native incentive network for open-source work. The public
 product promise is **make money shipping open source**: contributors use any
 agent or model to ship useful work, maintainers accept outcomes in the project’s
-own repository, and Slop publishes the score, review state, and verified
+own repository, and Slop publishes Points, review state, and the verified
 settlement record.
 
 This is a private application, not a library. Cloudflare Pages serves the
@@ -33,18 +33,19 @@ alias only.
     #1100), so a stolen attester key with a wallet it controls can redirect and
     pay any matured unpaid award before the owner can cancel. Protection rests
     on custody of this key (`docs/security/red-team-2026-10-24.md`). A rotation
-    by the registrar replaces the key, and the attester cannot block it. Owner decision of 24 October 2026: after the reviewed contract
-    change, it also signs each funded project's monthly
-    allocation root (the owner waived the independent audit, PRD section 11
-    "External reviews"). The contract limits that commitment to the owner's
-    monthly cap, one commitment per period, and the owner's opt-out; the
-    attester still cannot withdraw, redirect, or pay funds. Owner decision of
-    25 October 2026: it may automatically cancel its own obsolete pending EVM
-    wallet-binding transaction with a same-nonce, zero-native-value transfer
-    to itself, with empty data and the existing gas limits. Retain both signed
-    attempts and reconcile either canonical finalized winner. The old binding
-    may still win. Missing evidence is not cancellation proof. This exception
-    does not authorize cancellation of payments or monthly commitments.
+    by the registrar replaces the key, and the attester cannot block it. Owner
+    decision of 24 October 2026: after the reviewed contract change, it also
+    signs each funded project's monthly allocation root (the owner waived the
+    independent audit, PRD section 11 "External reviews"). The contract limits
+    that commitment to the owner's monthly cap, one commitment per period, and
+    the owner's opt-out; the attester still cannot withdraw, redirect, or pay
+    funds. Owner decision of 25 October 2026: it may automatically cancel its
+    own obsolete pending EVM wallet-binding transaction with a same-nonce,
+    zero-native-value transfer to itself, with empty data and the existing gas
+    limits. Retain both signed attempts and reconcile either canonical
+    finalized winner. The old binding may still win. Missing evidence is not
+    cancellation proof. This exception does not authorize cancellation of
+    payments or monthly commitments.
     Owner decision of 25 October 2026: on a current project owner request,
     the attester may sign release of the whole untouched monthly reserve only
     after fresh finalized evidence proves that the complete retained allocation
@@ -53,18 +54,20 @@ alias only.
     signs the release transaction. The Worker never submits it or withdraws funds.
   - One fee-wallet hot key per network (PRD TOK-07, MVP-07c, owner decision
     of 18 October 2026). It controls only the network fee wallet. It signs
-    only the conversion of fees received in that wallet to USDC, through allowlisted routes, within the slippage limit,
-    with output to the same wallet. Robinhood Chain retains each received
-    asset without conversion or bridging (PRD section 11, 25 October 2026).
-    Owner decision of 24 October 2026: it may
-    also submit permissionless fee claims on reviewed vaults, moving only
-    accrued fees to that same fee wallet. It holds no vault role and cannot
-    withdraw free funds or touch contributor principal, reserved awards or payments. Per-run and
-    daily caps bound it. Owners authorize USDC sweeps to separate
-    owner-controlled software wallets, with sweep keys held in their local
-    `.env`, not by the Worker (PRD sections 6 and 11, 24 October 2026).
-    The job runs in dry run until a
-    reviewed activation record enables signing.
+    only the conversion of fees received in that wallet to USDC, through
+    allowlisted routes, within the slippage limit, with output to the same
+    wallet. Robinhood Chain retains each received asset without conversion or
+    bridging (PRD section 11, 25 October 2026). Owner decision of 24 October
+    2026: it may also submit permissionless fee claims on reviewed vaults,
+    moving only accrued fees to that same fee wallet. It holds no vault role
+    and cannot withdraw free funds or touch contributor principal, reserved
+    awards or payments. Per-run and daily caps bound it. Owners authorize USDC
+    sweeps to separate owner-controlled software wallets, with sweep keys held
+    in their local `.env`, not by the Worker (PRD sections 6 and 11,
+    24 October 2026). `workers/fee-converter/wrangler.toml` sets the mode of
+    each network. The Worker deploys only when the
+    `SLOP_FEE_CONVERTER_RELEASE` repository variable is `enabled`. Fee handling starts only after the fee wallets are
+    funded and the limits and readiness are verified (PRD section 11, #1285).
   - The referral root-posting key (PRD section 11, "Referral program", owner
     decision of 25 October 2026). It posts cumulative Merkle roots to the
     ReferralDistributor and is separate from the contract owner key. It does
@@ -85,92 +88,44 @@ alias only.
   decision, 25 October 2026; PRD section 11). Stay within the authorized
   financial scope. Never print secrets or signing material. This permission
   does not expand application-service signer powers or waive acceptance,
-  explicit mainnet activation or the reviewed release flow. The vote-only
-  Squads project vault key is removed with Squads.
+  explicit mainnet activation or the reviewed release flow.
 - Never publish secrets, prompts, responses, source files, credentials, session
   identifiers, private trajectories, or signing material.
 
-## MVP scope and phase gate
+## Scope and contribution rules
 
-The [canonical Slop PRD](docs/slop-product-requirements.md) defines
-product scope, acceptance, and completion.
-The Google Docs version mirrors the repository PRD. The repository governs.
-Read the PRD before selecting work, proposing a change, reviewing a PR, or
-implementing a feature. In every implementation PR, cite the PRD section that
-the change serves (for example "PRD section 5, Slopbot") and the acceptance
-result that it proves. The PRD defines no work-package IDs; cite an older
-requirement or package ID only where existing records already use it, and do
-not ask maintainers for IDs that the PRD does not define. Existing code, an
-open issue, a model suggestion, or a PRD entry marked Future does not approve
-implementation.
+The [canonical Slop PRD](docs/slop-product-requirements.md) defines product
+scope, acceptance, and completion. The repository PRD governs; the Google Docs
+version mirrors it. [CONTRIBUTING.md](CONTRIBUTING.md) holds the full
+contributor rules. Read both before you select work, propose a change, review
+a PR, or implement a feature. The hard rules:
 
-Work must correct a demonstrated defect in the MVP, fulfill a missing approved
-MVP requirement, or prove a relevant improvement to that required behavior.
-Do not invent work from coverage gaps, preferences, or hypothetical failures.
-Reuse existing implementations and simplify the affected code. Explain the
-useful result and why the selected implementation is needed.
-
-A new requirement must first be discussed with humans and added to the PRD.
-Maintainers must approve its scope, phase, and delivery requirements in the PRD
-before implementation starts. Unresolved choices in the PRD are decision gates,
-not authority for an agent to choose economic,
-security, or product policy. Keep proposals distinct from approved work.
-
-Do not start the rest of the PRD until maintainers explicitly confirm that the
-whole MVP is finished, verified, tested, and validated. The confirmation must
-be a reviewed completion record in the PRD. It must cover every MVP requirement
-and release gate with exact tested revisions, real end-to-end
-results, deployment/provider/chain evidence where applicable, and resolution
-of blocking defects. A merged PR, a local test pass, partial rollout, or an
-agent's statement cannot close the MVP. After that record is approved, humans
-select and approve the next PRD phase before agents implement it.
-
-### Contributor bounty rules
-
-This repository is a Slop project with a $1,000 monthly contributor pool. Follow
-CONTRIBUTING.md "Before you start" and "Slop bounty: what is accepted":
-
-- Star and fork the repository first. Slop uses this to track participation.
-- Accepted: reproduced real bugs, security, verification, settlement, vault and
-  scoring correctness, and measured improvements inside approved MVP scope.
-- Not accepted: UI, style, or copy changes, except a fix to a broken user flow
-  with before and after video.
-- Prove model-backed behavior with real LLM calls. Configure `.env` from
-  `.env.example` and Worker `.dev.vars`; never commit values.
-- Test the affected workflow in the agent clients that use it (Claude Code,
-  Codex/ChatGPT, Hermes Agent, OpenClaw, Muse, Grok bot, elizaOS, Cursor).
-  Install other clients and drive them with computer use when needed. Record
-  each client, version, provider, model, and result.
-
-## Issues: owners and maintainers only
-
-Only project owners and maintainers open issues. This rule applies to this
-repository and to every target project where contributors work through Slop.
-An issue is a maintainer decision about what work the project wants.
-Contributors do not open issues, and an issue opened by a contributor earns no
-Slop score, review credit, reward or listing.
-
-Contributors work from existing open issues and approved PRD requirements.
-To report a defect, open a pull request that fixes it and proves the defect
-with evidence, or comment on an existing related issue. Report security
-vulnerabilities only through the project's private vulnerability reporting.
-Never report them in a public issue.
-
-An agent that works for a contributor must not open, draft for submission, or
-submit an issue by any path: UI, API, CLI, script, browser automation,
-prefilled issue URL or another agent. Owners and maintainers may use tools to
-prepare and file issues. They remain responsible for each issue they file.
-
-Every issue states the affected requirement, the evidence and the expected
-result. An issue that proposes anything new links the existing PRD requirement
-or the proposed PRD addition and its human discussion. An issue is never
-feature approval. Missing requirements must be added to the PRD and approved
-before implementation.
-
-This rule applies to issues opened on or after 2026-10-19T00:00:00Z. Issues
-opened before that date keep their state and credit. A decision under this
-rule needs objective evidence and carries the appeal path in the eligibility
-policy.
+- Scope: work only inside the approved MVP. Cite the PRD section and the
+  acceptance result. Existing code, an open issue, a model suggestion, or a
+  PRD entry marked Future does not approve implementation. A new requirement
+  needs human discussion and an approved PRD update first. Unresolved PRD
+  choices are decision gates, not authority for an agent to choose economic,
+  security, or product policy. Do not start later PRD phases before
+  maintainers record MVP completion in the PRD
+  ([MVP scope and phase gate](CONTRIBUTING.md#mvp-scope-and-phase-gate)).
+- Issues: only project owners and maintainers open issues, here and in every
+  target project. An agent that works for a contributor never opens, drafts
+  for submission, or submits an issue by any path. It fixes and proves a
+  defect in a pull request
+  ([Issues: owners and maintainers only](CONTRIBUTING.md#issues-owners-and-maintainers-only)).
+- Bounty: this repository has a $1,000 monthly contributor pool. UI, style,
+  and copy changes are not accepted, except a fix to a broken user flow with
+  before and after video
+  ([Slop bounty: what is accepted](CONTRIBUTING.md#slop-bounty-what-is-accepted)).
+- Real LLM calls: prove model-backed behavior with real provider calls, never
+  with mocked or recorded output
+  ([Test with real LLM calls](CONTRIBUTING.md#test-with-real-llm-calls)).
+- Agent clients: test the affected workflow in the agent clients that use it.
+  Record each client, version, provider, model, and result
+  ([Test in more than one agent client](CONTRIBUTING.md#test-in-more-than-one-agent-client)).
+- Stars and forks: an agent stars and forks the repository only when it can
+  use computer use or browser use (PRD section 4). Stars and forks are never
+  scored or paid.
 
 ## Source of truth
 
@@ -201,9 +156,9 @@ second skill copy. `scripts/prepare-site.mjs` builds raw Markdown endpoints
 and downloadable `.skill` archives from the generated output and publishes the
 cycle index.
 
-Generated files under `public/brand/`, `public/downloads/`,
-`public/projects/`, `public/protocol/`, and `public/data/cycles/` are build
-outputs. Never edit them by hand.
+Generated files under `public/downloads/`, `public/projects/`,
+`public/protocol/`, and `public/data/cycles/` are build outputs. Never edit
+them by hand.
 
 Operational guides under `backend/`, `cycles/`, `disclosures/`, `evaluations/`,
 `funding/`, `protocol/`, and `workers/` define subsystem contracts. Keep them focused and
@@ -212,17 +167,22 @@ current.
 ## Repository map
 
 ```text
+docs/           canonical PRD, runbooks, and security records
 skills/         general Slop skill and canonical generic project-skill templates
 evaluations/    reviewed awards for otherwise-unscored useful work
-cycles/         append-only reward lifecycle records
+cycles/         historical cycle format notes; monthly allocations live in D1
 funding/        project vault funding guide; legacy records stay in git history
 disclosures/    payouts sent outside the verified settlement flow
-protocol/       public attribution and privacy contracts
-backend/        project registry API and private trace storage boundary
+protocol/       public attribution, privacy, scoring, and Slopbot contracts
+data/           committed points journal, profile seed, and snapshots
+contracts/      EVM and Solana escrow and referral contracts
+migrations/     append-only D1 migrations
+backend/        API handlers for registry, accounts, payments, and traces
+functions/      Cloudflare Pages Functions entry points
 workers/        narrowly scoped Cloudflare services
 src/            React product and strict browser/domain contracts
 scripts/        ingestion, packaging, rewards, settlement, and evidence
-tests/e2e/      real-browser end-to-end, accessibility, and Pages coverage
+tests/          end-to-end, integration, and fixture coverage
 ```
 
 ## Add a project
@@ -264,10 +224,10 @@ follow the target repository’s rules, test the result, prepare evidence, and
 emit the required attribution. It must not claim platform authority over an
 issue or create placeholder submissions.
 
-The current reviewer skill is separate and advisory. It measures its own run,
-checks correctness, tests, security, evidence, duplication, abuse signals,
-scope, and usefulness, and places the machine review before the signed
-attribution footer.
+The current reviewer skill is separate and advisory. It checks correctness,
+tests, security, evidence, duplication, abuse signals, scope, and usefulness.
+It places its recommendation before a footer that discloses the actual
+provider, exact model, and client.
 
 Slopbot is required and always free, and runs only on registered repositories.
 It scores PRs by perceived size and value, credits useful reviews, and applies
@@ -299,7 +259,7 @@ not actual model qualification (owner decision, 25 October 2026).
 
 The public checksum detects corruption only. The trust root of a project
 skill is the pair (template revision on `main`, D1 revision digest) (PRD
-SKL-04). GitHub is the independent trust root for the template revision. The
+section 4). GitHub is the independent trust root for the template revision. The
 project registry API publishes the digest of the approved D1 revision; the
 installer refuses bytes that do not match the rendering of that pair. The D1
 digest binds the maintainer-authored fields to an approved revision; disclose
@@ -387,10 +347,13 @@ Generated points projections are build outputs; do not edit them by hand.
 
 ## Rewards, funding, and settlement
 
-Closed cycles live only at `cycles/<project>/<YYYY-MM>/` and bind exact source
-snapshot bytes and scoring-rule version. The trusted first-of-month automation
-runs from `main`, is idempotent, refuses partial cycles, and records
-zero-award months.
+Monthly allocations are private D1 records. The trusted `monthly-rewards.yml`
+workflow freezes the complete ledger of the closed UTC month and writes each
+funded project's proposal to D1 once; a repeat run never adds or replaces
+rows. The owner changes amounts privately, and the owner or the automatic
+cutoff freezes the final allocation (`backend/payments/README.md`).
+`cycles/` keeps only the format notes of historical cycles; do not add cycle
+files.
 
 Monthly allocations use integer base units of the project asset and largest
 remainder. Never use floats for money, assume six decimals, or let rollover
@@ -412,14 +375,13 @@ Private reports are automatic; bounty awards and payouts remain discretionary.
 Slopbot triages disputes first, and a moderator decides escalated disputes.
 Preserve already funded obligations.
 
-Where payment code still applies older review rules, such as a 14-day review
-window or a public reason for a changed amount, that is implementation to
-migrate. Do not infer that this policy change has altered contracts or
-authorized live transactions.
+Historical cycle records keep the 14-day review window and the public reasons
+they were made under; new months use neither. This policy text never alters
+contracts or authorizes live transactions.
 
-One funding mode exists: the project vault contract (PRD FND-01, owner
+One funding mode exists: the project vault contract (PRD section 6, owner
 decision of 18 October 2026). Squads v4, Sablier, legacy direct and committed
-instruments and the PAY-09 monthly-pool settlement rail are removed. Their
+instruments and the monthly-pool settlement rail are removed. Their
 historical records stay in git history at their original revisions; they are
 not an active funding route, balance or payment path. Each project has one
 network (Base, Robinhood Chain, Ethereum or Solana) and one asset. Anyone may
@@ -430,17 +392,54 @@ reconciles the exact vault, obligation, recipient, principal and fee. Reject
 replay, wrong mint or token, wrong owner, partial, duplicate, failed, or
 overpaid state. Delta Star publishes external-prize shares only and never
 enters the platform payment lifecycle. Never call vault funds “guaranteed.”
+Keep project deployment bindings in the D1 project revision, never in a second
+project inventory. No project activates escrow merely because the new code is
+present. The scoped vault contract, identity attestation, and executor
+services may execute isolated test-chain transactions under the PRD rules.
+This supersedes the legacy unsigned-only model for the vault protocol only.
+Testnet qualification never uses production credentials or moves mainnet
+funds.
 
-Supported assets are the network stablecoin or any standard ERC-20 on Base,
-Robinhood Chain (chain id 4663) and Ethereum, or any classic SPL token on
-Solana, with any decimals (PRD TOK-01, TOK-03). Fee-on-transfer, rebasing and
-Token-2022 tokens are unsupported. Circle USDC is the Ethereum stablecoin;
-verify its address from Circle's primary source before activation.
+New ordinary public-work awards deduct 2% before display or payment.
+Private security bounties use the PRD section 8 split instead: 75% to the
+researcher and 25% to slop.cash. Do not add the ordinary 2% fee to a private
+security bounty. For a project-token reward (PRD section 6, owner decision of
+14 October 2026), the 2% is deducted in that token and paid in that token to
+the network fee wallet at payout. No contract converts it. A scheduled backend
+job converts fees already in the fee wallet to USDC (PRD section 6) inside
+that wallet (TOK-07, MVP-07c). Robinhood Chain retains the received asset and
+shows "not converted"; USDG stays USDG and project tokens stay unchanged.
+Other networks without a verified USDC route keep the fee token pending.
+Conversion never blocks or touches a contributor payment. The approved keeper and
+fee-converter EVM replacement changes only fee fields, with the same nonce and
+transaction content, bounded steps of about 25%, at most three times the
+original fees, and the existing per-network limits (PRD section 11). Source
+approval does not activate this replacement behavior. Unused-fund withdrawals
+deduct the same 2%, `ceil(gross / 50)`, enforced in the contracts, and reach
+only the owner's refund destination; funded obligations cannot be withdrawn.
+Historical v1 records retain their original fee and authority rules.
 
-Public pages never read chain or GitHub state live per page view (PRD ARC-01).
-They serve cached D1 data and snapshots that background jobs refresh. Vault
-totals come from finalized on-chain counters cached in D1 with their observed
-time. A failed refresh shows the last value as stale, never zero.
+Approved assets are the network stablecoin or standard ERC-20 on Base,
+Robinhood Chain (chain id 4663) and Ethereum, or classic SPL and the bounded
+metadata-only Token-2022 subset on Solana (PRD section 6, owner decision of
+26 October 2026, #905). Token-2022 mints may have only MetadataPointer and
+TokenMetadata, with disabled mint/freeze authorities; token accounts may have
+only ImmutableOwner, or no extensions. Reject every other extension, including
+unknown extensions. Fee-on-transfer, rebasing and transfer-hook behavior
+remain unsupported. Qualify the correct token program throughout escrow,
+owner setup and fee handling, and resolve and inspect every account in a
+versioned route under the existing native limits before releasing support.
+Existing classic SPL vaults, funded obligations, fees and roles remain intact.
+This is approved implementation scope, not deployed acceptance. Program
+upgrades and token funding each need their own exact reviewed execution plan
+and owner approval. Circle USDC is the Ethereum stablecoin; verify its address
+from Circle's primary source before activation.
+
+Public pages never read chain or GitHub state live per page view (PRD
+section 9). They serve cached D1 data and snapshots that background jobs
+refresh. Vault totals come from finalized on-chain counters cached in D1 with
+their observed time. A failed refresh shows the last value as stale, never
+zero.
 
 ## Project authority and IP
 
@@ -460,8 +459,7 @@ Promote changes through a reviewed
 PR from `development` to `main`. Only `main` deploys to `slop.cash`.
 Staging has a separate Pages project, D1 database, private R2 bucket, identity
 Worker, and secrets. Staging login and writes never use production storage.
-Both branches require the full CI and trusted policy checks. The temporary
-`develop` compatibility branch has no deployment authority.
+Both branches require the full CI and trusted policy checks.
 
 Production deploys through the checked-in GitHub Actions workflow only. Never
 deploy from a package script, local working tree, PR, feature branch, fork head,
@@ -542,10 +540,11 @@ bun run verify
 ## Definition of done
 
 Every PR must show a useful result and its PRD references. New features
-remain blocked by the scope and phase gate above. For documentation-only
-changes, validate links, instructions, scope consistency, and policy mirrors;
-explain why application acceptance does not apply to the prose itself. Keep
-required repository checks. Do not fabricate UI or deployment evidence.
+remain blocked by the scope and phase gate in CONTRIBUTING.md. For
+documentation-only changes, validate links, instructions, scope consistency,
+and policy mirrors; explain why application acceptance does not apply to the
+prose itself. Keep required repository checks. Do not fabricate UI or
+deployment evidence.
 
 Rebase onto current `origin/development`, install the lockfile, run `bun run
 verify`, and run real-browser E2E against the exact head. UI changes require
@@ -563,33 +562,3 @@ only when genuinely inapplicable. Captured evidence is not committed.
 A local test is not proof of merge. A merge is not proof of deployment. A
 deployment is not proof of provider, device, identity, wallet, or settlement
 availability. Report each boundary precisely.
-
-## Escrow payout migration
-
-The canonical PRD defines escrow requirements and delivery. The historical
-`docs/payouts-mvp.md` and `docs/base-solana-payout-plan.md` records provide context.
-The scoped contract, identity attestation, and
-executor services may execute isolated test-chain transactions under those rules.
-This supersedes the legacy unsigned-only model for that protocol only. Never
-use production credentials or move mainnet funds during testnet qualification.
-New ordinary public-work awards deduct 2% before display or payment.
-Private security bounties use SEC-05 instead: 75% to the researcher and 25% to
-slop.cash. Do not add the ordinary 2% fee to a private security bounty.
-For a project-token reward (PRD TOK-06, owner decision of 14 October 2026),
-the 2% is deducted in that token and paid in that token to the network fee
-wallet at payout. No contract converts it. A scheduled backend job converts
-fees already in the fee wallet to USDC (PRD section 6) inside that wallet
-(TOK-07, MVP-07c). Robinhood Chain retains the received asset and shows
-"not converted"; USDG stays USDG and project tokens stay unchanged. Other
-networks without a verified USDC route keep the fee token pending.
-It never blocks or touches a contributor payment. The approved keeper and
-fee-converter EVM replacement changes only fee fields, with the same nonce
-and transaction content, bounded steps of about 25%, at most three times
-the original fees, and the existing per-network limits (PRD section 11).
-Source approval does not activate this replacement behavior.
-Unused-fund withdrawals deduct the same 2%, `ceil(gross / 50)`, enforced in the
-contracts, and reach only the owner's refund destination; funded
-obligations cannot be withdrawn.
-Historical v1 records retain their original fee and authority rules. No project
-activates escrow merely because the new code is present. Keep project deployment
-bindings in the D1 project revision, never in a second project inventory.

@@ -24,15 +24,7 @@ type Run = {
     reason: string;
   };
   objects: EvidenceObject[];
-  policy: {
-    version: string;
-    externalControls: {
-      attestedByGithubId: string;
-      attestedAt: string;
-      validUntil: string;
-      evidenceReference: string;
-    };
-  };
+  policy: { version: string };
 };
 type Overview = { runs: Run[]; retentionBoundary: string };
 export default function VettingEvidencePage() {
@@ -124,13 +116,6 @@ export default function VettingEvidencePage() {
                   ? "Case open. Evidence remains available until 90 days after closure."
                   : `Access expires: ${run.expiresAt}.`}{" "}
                 Policy: {run.policy.version}.
-              </p>
-              <p>
-                External controls were attested by GitHub actor{" "}
-                {run.policy.externalControls.attestedByGithubId} at{" "}
-                {run.policy.externalControls.attestedAt}; attestation expires{" "}
-                {run.policy.externalControls.validUntil}. Evidence:{" "}
-                {run.policy.externalControls.evidenceReference}.
               </p>
               {run.objects.map((object) => (
                 <EvidenceItem key={object.sha256} run={run} object={object} />
