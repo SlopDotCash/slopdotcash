@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { evmBindingTypedData } from "../contracts/evm/adapter";
 import { readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import type { AccountPayment, PaymentsAccount } from "./lib/payments/contracts";
@@ -10,17 +11,14 @@ import {
   verifyPreparedSolanaBinding,
   verifySignedSolanaBinding,
 } from "./lib/payout-consent";
+import { apiRequest } from "./lib/project-api";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { sameWalletAddress } from "./lib/wallets";
 
 async function request(path: string, body: unknown) {
-  const response = await fetch(`/api/v1/payments/wallets/${path}`, {
-    method: "POST",
-    credentials: "same-origin",
-    redirect: "error",
-    cache: "no-store",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(45_000),
+  const response = await apiRequest(`payments/wallets/${path}`, {
+    body,
+    timeoutMs: 45_000,
   });
   if (!response.ok)
     throw new Error(
@@ -82,11 +80,7 @@ export function PayoutConsent({
     setNotice("");
     try {
       const wallet = await provider.connect();
-      const same = (a: string, b: string) =>
-        network.family === "evm"
-          ? a.toLowerCase() === b.toLowerCase()
-          : a === b;
-      if (!same(wallet.address, claim.address))
+      if (!sameWalletAddress(network.family, wallet.address, claim.address))
         throw new Error(
           "Connect your confirmed payout address. To change it, use Account wallets first.",
         );
@@ -123,7 +117,7 @@ export function PayoutConsent({
         if (
           !Array.isArray(accounts) ||
           typeof accounts[0] !== "string" ||
-          !same(accounts[0], claim.address)
+          !sameWalletAddress(network.family, accounts[0], claim.address)
         )
           throw new Error(
             "The wallet account changed. Connect and review again.",
@@ -200,9 +194,7 @@ export function PayoutConsent({
       setOpen(false);
     } catch (e) {
       setError(
-        e instanceof Error
-          ? e.message
-          : "Payout consent failed. Your award stays reserved.",
+        errorMessage(e, "Payout consent failed. Your award stays reserved."),
       );
     } finally {
       setBusy(false);

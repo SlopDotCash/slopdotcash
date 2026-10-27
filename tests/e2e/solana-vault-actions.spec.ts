@@ -27,12 +27,12 @@ import {
 import { verifySolanaVaultCreation } from "../../contracts/solana/owner-creation";
 import { buildInitializeVaultInstructions } from "../../contracts/solana/owner-instructions";
 import { message } from "../../contracts/solana/transactions";
+import { formatBaseUnits } from "../../src/lib/base-units.mjs";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
 } from "../../src/lib/escrow-policy.mjs";
-import { formatAssetAmount } from "../../src/lib/project-schema.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
 import { CONTRIBUTION } from "../project-application-manifest";
@@ -289,7 +289,7 @@ test.beforeAll(async () => {
       ...original.reward,
       chain: "solana",
       currency: "TEST",
-      monthlyCapDisplay: `${formatAssetAmount(original.reward.monthlyCapMinor, 6)} TEST`,
+      monthlyCapDisplay: `${formatBaseUnits(original.reward.monthlyCapMinor, 6)} TEST`,
       feeBasisPoints: 200,
       paymentMode: "disabled",
       committedMinor: "0",
@@ -1401,7 +1401,24 @@ async function ownerSetupWorkflow(
       duplicateTx.serialize(),
       { skipPreflight: true, maxRetries: 0 },
     );
-    await connection.confirmTransaction(failedCreation, "finalized");
+    // web3.js may either return a failed signature notification or throw its
+    // error from the HTTP status race. This case expects failure: require the
+    // exact finalized receipt before testing its rejection by the verifier.
+    await expect
+      .poll(
+        async () => {
+          const receipt = await connection.getTransaction(failedCreation, {
+            commitment: "finalized",
+            maxSupportedTransactionVersion: 0,
+          });
+          return (
+            receipt?.transaction.signatures[0] === failedCreation &&
+            receipt.meta?.err != null
+          );
+        },
+        { timeout: 60_000 },
+      )
+      .toBe(true);
     await expect(
       verifySolanaVaultCreation(
         config,

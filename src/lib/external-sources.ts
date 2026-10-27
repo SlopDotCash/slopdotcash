@@ -14,6 +14,7 @@
  * cannot earn the same work twice.
  */
 
+import { isExactUtc } from "./record-validation.mjs";
 import { sha256Hex } from "./sha256";
 
 export const EXTERNAL_SOURCE_PLATFORMS = [
@@ -36,15 +37,13 @@ export interface ExternalSourceEvidence {
 export const EXTERNAL_SOURCE_NUMBER = 0;
 
 /** The one accepted URL shape per platform, quoted in rejection messages. */
-export const EXTERNAL_SOURCE_CANONICAL_FORMS: Record<
-  ExternalSourcePlatform,
-  string
-> = {
-  x: "https://x.com/<handle>/status/<id>",
-  discord: "https://discord.com/channels/<guild>/<channel>/<message>",
-  youtube: "https://www.youtube.com/watch?v=<video id>",
-  web: "https://<host>/<path> on a host that is not GitHub, X, Discord, YouTube or a mirror of them",
-};
+const EXTERNAL_SOURCE_CANONICAL_FORMS: Record<ExternalSourcePlatform, string> =
+  {
+    x: "https://x.com/<handle>/status/<id>",
+    discord: "https://discord.com/channels/<guild>/<channel>/<message>",
+    youtube: "https://www.youtube.com/watch?v=<video id>",
+    web: "https://<host>/<path> on a host that is not GitHub, X, Discord, YouTube or a mirror of them",
+  };
 
 /**
  * Hosts, with every subdomain, that the `web` kind refuses. GitHub-hosted
@@ -87,7 +86,7 @@ const RESERVED_HOST_SUFFIXES = [
   "piped.video",
 ] as const;
 
-export function isReservedExternalHost(host: string): boolean {
+function isReservedExternalHost(host: string): boolean {
   const lower = host.toLowerCase();
   return RESERVED_HOST_SUFFIXES.some(
     (suffix) => lower === suffix || lower.endsWith(`.${suffix}`),
@@ -316,13 +315,7 @@ export function assertExternalSourceEvidence(
   ) {
     throw new TypeError(`${field}.contentSha256 must be a lowercase sha256`);
   }
-  if (
-    typeof candidate.capturedAt !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(
-      candidate.capturedAt,
-    ) ||
-    new Date(candidate.capturedAt).toISOString() !== candidate.capturedAt
-  ) {
+  if (!isExactUtc(candidate.capturedAt)) {
     throw new TypeError(`${field}.capturedAt is not a UTC timestamp`);
   }
   return {

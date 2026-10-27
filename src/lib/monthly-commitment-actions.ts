@@ -3,6 +3,7 @@
  * `setMonthlyCommitment(cap, enabled)` and Solana `set_monthly_commitment`.
  * The owner's wallet signs; Slop holds no key and never broadcasts.
  */
+
 import {
   buildSetMonthlyCommitmentCalldata,
   EVM_ESCROW_EVENT_TOPICS,
@@ -25,7 +26,9 @@ import {
   walletVaultConfig,
 } from "./evm-vault-actions";
 import { isAssetDecimals } from "./payments/contracts";
+import { apiRequest } from "./project-api";
 import type { ProjectDefinition } from "./projects.mjs";
+import { CANONICAL_UINT } from "./record-validation.mjs";
 import { sendSolanaWalletTransaction } from "./solana-vault-actions";
 
 export interface MonthlySetting {
@@ -82,7 +85,7 @@ export function vaultMonthlyCap(
     throw new Error(
       "The vault token's decimals differ from the project's monthly amount. Record the matching asset in a project revision first.",
     );
-  if (!/^(0|[1-9][0-9]*)$/.test(project.reward.monthlyCapMinor))
+  if (!CANONICAL_UINT.test(project.reward.monthlyCapMinor))
     throw new Error("The project's monthly amount is invalid.");
   return BigInt(project.reward.monthlyCapMinor);
 }
@@ -243,7 +246,7 @@ export function verifySolanaMonthlyPlan(
     transaction.lastValidBlockHeight < 0 ||
     typeof transaction.transaction !== "string" ||
     typeof transaction.networkFeeLamports !== "string" ||
-    !/^(0|[1-9][0-9]*)$/.test(transaction.networkFeeLamports)
+    !CANONICAL_UINT.test(transaction.networkFeeLamports)
   )
     throw new Error(
       "The prepared transaction differs from the reviewed setting.",
@@ -273,17 +276,11 @@ async function solanaRequest(
   deployment: EscrowDeployment,
   body: Record<string, unknown>,
 ) {
-  const response = await fetch(
-    `/api/v1/payments/projects/${encodeURIComponent(projectId)}/solana-monthly-commitment`,
+  const response = await apiRequest(
+    `payments/projects/${encodeURIComponent(projectId)}/solana-monthly-commitment`,
     {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        network: deployment.network,
-        vault: deployment.vault,
-        ...body,
-      }),
-      signal: AbortSignal.timeout(90000),
+      body: { network: deployment.network, vault: deployment.vault, ...body },
+      timeoutMs: 90_000,
     },
   );
   const value = (await readBoundedJson(

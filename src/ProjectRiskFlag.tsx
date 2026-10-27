@@ -4,28 +4,33 @@
  * distinct members' flags pause the project at once, and a clean fresh scan
  * reinstates it. The member sees only their own flag.
  */
+
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import type { FlagCategory } from "../backend/vetting/flags";
+import { errorMessage } from "./lib/errors";
 import {
   currentProjectSession,
   ProjectApiError,
   projectApiRequest,
 } from "./lib/project-api";
+import type { RestrictionState } from "./lib/project-contracts";
+import { useAction } from "./lib/use-action";
 import { loginHref } from "./Points";
 import { formatDateTime } from "./Presentation";
 
-const CATEGORIES = [
-  ["wallet-drainer", "Wallet drainer or key theft"],
-  ["credential-theft", "Credential or password theft"],
-  ["secret-exfiltration", "Sends secrets or data elsewhere"],
-  ["unsafe-execution", "Unsafe install or build-time execution"],
-  ["prompt-injection", "Instructions that try to redirect an agent"],
-  ["other", "Other malicious behavior"],
-] as const;
-type Category = (typeof CATEGORIES)[number][0];
+/** A label for every category the flag API accepts, in picker order. */
+const CATEGORY_LABELS: Record<FlagCategory, string> = {
+  "wallet-drainer": "Wallet drainer or key theft",
+  "credential-theft": "Credential or password theft",
+  "secret-exfiltration": "Sends secrets or data elsewhere",
+  "unsafe-execution": "Unsafe install or build-time execution",
+  "prompt-injection": "Instructions that try to redirect an agent",
+  other: "Other malicious behavior",
+};
 
 type OwnFlag = {
   id: string;
-  category: Category;
+  category: FlagCategory;
   evidence: string;
   evidenceUrl: string | null;
   createdAt: string;
@@ -33,7 +38,7 @@ type OwnFlag = {
 };
 type FlagStatus = {
   flag: OwnFlag | null;
-  restriction: "clear" | "quarantined" | "banned";
+  restriction: RestrictionState;
   pausedByFlags: boolean;
   paused?: boolean;
 };
@@ -46,18 +51,17 @@ type State =
 const UNAVAILABLE =
   "Flag status is unavailable. Nothing was filed. Please retry.";
 
-function categoryLabel(category: Category): string {
-  return CATEGORIES.find(([value]) => value === category)?.[1] ?? category;
+function categoryLabel(category: FlagCategory): string {
+  return CATEGORY_LABELS[category] ?? category;
 }
 
 export function ProjectRiskFlag({ projectId }: { projectId: string }) {
   const path = `project-flags/${encodeURIComponent(projectId)}`;
   const [state, setState] = useState<State>({ status: "loading" });
-  const [category, setCategory] = useState<Category>("credential-theft");
+  const [category, setCategory] = useState<FlagCategory>("credential-theft");
   const [evidence, setEvidence] = useState("");
   const [evidenceUrl, setEvidenceUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, run } = useAction();
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -94,24 +98,20 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
     request: Promise<FlagStatus>,
     done: (value: FlagStatus) => string,
   ) => {
-    setBusy(true);
-    setError(null);
     setNotice(null);
-    request.then(
-      (value) => {
-        setBusy(false);
-        setState({ status: "ready", value });
-        setNotice(done(value));
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        if (caught instanceof ProjectApiError && caught.status === 401)
+    void run(
+      async () => {
+        try {
+          const value = await request;
+          setState({ status: "ready", value });
+          setNotice(done(value));
+        } catch (caught) {
+          if (!(caught instanceof ProjectApiError) || caught.status !== 401)
+            throw caught;
           setState({ status: "signed-out" });
-        else
-          setError(
-            caught instanceof Error ? caught.message : "The request failed.",
-          );
+        }
       },
+      (caught) => errorMessage(caught, "The request failed."),
     );
   };
 
@@ -191,10 +191,12 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
           <label>
             Risk
             <select
-              onChange={(event) => setCategory(event.target.value as Category)}
+              onChange={(event) =>
+                setCategory(event.target.value as FlagCategory)
+              }
               value={category}
             >
-              {CATEGORIES.map(([value, label]) => (
+              {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
                 </option>

@@ -8,11 +8,11 @@ import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 const MAX_REGISTRY_BYTES = 4 * 1024 * 1024;
 
 /** The registry source; the browser-test fixture build points at a file. */
-export const PROJECT_REGISTRY_URL: string =
+const PROJECT_REGISTRY_URL: string =
   import.meta.env.VITE_SLOP_PROJECT_REGISTRY_URL || "/api/v1/projects";
 
 /** The last good registry that the build published (PRD section 9). */
-export const PUBLISHED_PROJECT_REGISTRY_URL = "/data/project-registry.json";
+const PUBLISHED_PROJECT_REGISTRY_URL = "/data/project-registry.json";
 
 /** Pages show the published registry with this label when the live read fails. */
 export interface StaleProjectRegistry {

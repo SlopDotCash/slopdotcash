@@ -26,7 +26,7 @@ const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   "x-ai": "xai",
 };
 
-export interface ModelIdentityKey {
+interface ModelIdentityKey {
   provider: string;
   model: string;
   key: string;

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import type { EscrowDeployment } from "./lib/escrow-policy.mjs";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, type PayoutPolicy } from "./lib/payments/contracts";
+import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { sendSolanaWalletTransaction } from "./lib/solana-vault-actions";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
@@ -14,6 +16,7 @@ import {
   type VaultSetupInput,
   type VaultSetupReview,
 } from "./lib/vault-setup";
+import { sameWalletAddress } from "./lib/wallets";
 import { loginHref } from "./Points";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
@@ -30,16 +33,7 @@ type WalletClaim = {
   authorized: boolean;
 };
 async function request(path: string, body?: unknown) {
-  const response = await fetch(`/api/v1/${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    credentials: "same-origin",
-    cache: "no-store",
-    redirect: "error",
-    headers:
-      body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(45_000),
-  });
+  const response = await apiRequest(path, { body, timeoutMs: 45_000 });
   const result = (await readBoundedJson(
     response,
     1_048_576,
@@ -121,7 +115,7 @@ export function OwnerVaultSetup({
     ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]?.family ===
     "solana";
   const sameWallet = (a: string, b: string) =>
-    solana ? a === b : a.toLowerCase() === b.toLowerCase();
+    sameWalletAddress(solana ? "solana" : "evm", a, b);
   const wallets = usePayoutWallets().filter((w) =>
     solana ? w.family === "solana" && w.solanaFunding : w.family === "evm",
   );
@@ -158,10 +152,7 @@ export function OwnerVaultSetup({
         setClaims((account as unknown as { wallets: WalletClaim[] }).wallets);
       })
       .catch((e: unknown) => {
-        if (active)
-          setError(
-            e instanceof Error ? e.message : "Vault setup could not load.",
-          );
+        if (active) setError(errorMessage(e, "Vault setup could not load."));
       });
     return () => {
       active = false;
@@ -177,7 +168,7 @@ export function OwnerVaultSetup({
       setFailedCreation(
         (e as { code?: string })?.code === "vault_creation_failed",
       );
-      setError(e instanceof Error ? e.message : "The wallet request failed.");
+      setError(errorMessage(e, "The wallet request failed."));
     } finally {
       setBusy(false);
     }
@@ -527,9 +518,9 @@ export function OwnerVaultSetup({
             <dt>Network</dt>
             <dd>{networkLabel(active.input.network)}</dd>
             <dt>Owner wallet</dt>
-            <dd className="break-all">{active.review.owner}</dd>
+            <dd>{active.review.owner}</dd>
             <dt>Reward token</dt>
-            <dd className="break-all">{active.review.asset}</dd>
+            <dd>{active.review.asset}</dd>
             {!bounty ? (
               <>
                 <dt>Monthly cap</dt>

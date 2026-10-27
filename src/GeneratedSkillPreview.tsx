@@ -2,6 +2,7 @@ import { CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import contributorTemplate from "../skills/project-contributor-template/SKILL.md?raw";
 import reviewerTemplate from "../skills/project-reviewer-template/SKILL.md?raw";
+import { errorMessage } from "./lib/errors";
 import {
   renderProjectSkill,
   usesGeneratedSkills,
@@ -97,7 +98,7 @@ export function GeneratedSkillPreview({
     return (
       <p className="form-error" role="alert">
         <CircleAlert aria-hidden="true" />{" "}
-        {caught instanceof Error ? caught.message : "Could not render skills."}
+        {errorMessage(caught, "Could not render skills.")}
       </p>
     );
   }

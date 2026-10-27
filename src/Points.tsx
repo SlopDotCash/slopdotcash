@@ -24,10 +24,12 @@ import { CONTACT_MAILTO } from "./lib/contact";
 import { contributorStandings } from "./lib/contributor-standings";
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
+import { errorMessage } from "./lib/errors";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
 import type { ScoreEvent } from "./lib/leaderboard";
+import type { ActorRef } from "./lib/leaderboard-types";
 import {
   assemblePoints,
   POINTS_NOTICE,
@@ -39,6 +41,7 @@ import {
 import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
+import { useAction } from "./lib/use-action";
 import { useAllDirectTransfers } from "./lib/use-direct-transfers";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
@@ -78,7 +81,7 @@ function AdminAccountLink({ onNavigate }: { onNavigate: () => void }) {
 }
 
 interface Membership {
-  actor: { id: string; login: string };
+  actor: ActorRef;
   joinedAt: string;
   public: boolean;
   welcome: number;
@@ -88,21 +91,21 @@ type State =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; journal: PointsJournal; members: PointsMember[] };
-const Context = createContext<{
+type PointsContext = {
   state: State;
   me: Membership | null;
   session: "loading" | "ready" | "error";
   refresh: () => void;
   requestPoints: () => void;
   setMe: (m: Membership | null) => void;
-}>({
-  state: { status: "loading" },
-  me: null,
-  session: "loading",
-  refresh: () => {},
-  requestPoints: () => {},
-  setMe: () => {},
-});
+};
+const Context = createContext<PointsContext | null>(null);
+/** The points state of the enclosing PointsProvider; there is no default. */
+function usePoints(): PointsContext {
+  const value = useContext(Context);
+  if (!value) throw new Error("PointsProvider is missing");
+  return value;
+}
 /** A refused points request with the server's stable error code, if any. */
 class PointsRequestError extends Error {
   constructor(
@@ -148,7 +151,7 @@ async function loadPoints(signal: AbortSignal) {
   return assemblePoints(index, parts);
 }
 /** Same-origin path from `next`; anything else falls back to the profile. */
-export function returnPath(search = window.location.search): string | null {
+function returnPath(search = window.location.search): string | null {
   const next = new URLSearchParams(search).get("next");
   if (!next) return null;
   if (next === "earnings") return "/earnings";
@@ -179,10 +182,10 @@ function member(value: unknown): Membership {
 }
 export function PointsProvider({
   children,
-  enabled = true,
+  enabled,
 }: {
   children: ReactNode;
-  enabled?: boolean;
+  enabled: boolean;
 }) {
   const [state, setState] = useState<State>({ status: "loading" });
   const [me, setMe] = useState<Membership | null>(null);
@@ -206,11 +209,11 @@ export function PointsProvider({
           members: pointMembers(value, new Date().toISOString().slice(0, 7)),
         });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!controller.signal.aborted)
           setState({
             status: "error",
-            message: "Points could not load. Retry.",
+            message: `Points could not load: ${errorMessage(error)}`,
           });
       });
     return () => controller.abort();
@@ -259,22 +262,11 @@ export function PointsProvider({
 const currentPath = () =>
   `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
-/** The signed-in GitHub login, for pages that only need to know who is here. */
-export function useSignedInLogin(): {
-  login: string | null;
-  session: "loading" | "ready" | "error";
-} {
-  const { me, session } = useContext(Context);
-  return { login: me?.actor.login ?? null, session };
-}
-
-export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
-  const { state, me, session, setMe, requestPoints, refresh } =
-    useContext(Context);
+export function PointsNav() {
+  const { state, me, session, setMe, requestPoints, refresh } = usePoints();
   const [open, setOpen] = useState(false);
   const [failedImage, setFailedImage] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const panelId = useId();
@@ -321,27 +313,21 @@ export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
       window.removeEventListener("hashchange", update);
     };
   }, []);
-  const navigate = () => {
-    setOpen(false);
-    onNavigate?.();
-  };
-  async function signout() {
-    setBusy(true);
-    setError("");
-    try {
-      await requestJson("/api/v1/points/signout", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      });
-      clearAllDrafts();
-      setMe(null);
-      setOpen(false);
-    } catch {
-      setError("Could not sign out. Please retry.");
-    } finally {
-      setBusy(false);
-    }
+  const navigate = () => setOpen(false);
+  function signout() {
+    void run(
+      async () => {
+        await requestJson("/api/v1/points/signout", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        clearAllDrafts();
+        setMe(null);
+        setOpen(false);
+      },
+      () => "Could not sign out. Please retry.",
+    );
   }
   if (!me && window.location.pathname === "/login") return null;
   if (!me && session === "loading")
@@ -373,10 +359,7 @@ export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => {
-          if (!open) {
-            requestPoints();
-            onNavigate?.();
-          }
+          if (!open) requestPoints();
           setOpen(!open);
         }}
       >
@@ -438,7 +421,7 @@ export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
             Account settings
           </a>
           <AdminAccountLink onNavigate={navigate} />
-          <button type="button" onClick={() => void signout()} disabled={busy}>
+          <button type="button" onClick={signout} disabled={busy}>
             {busy ? "Signing out…" : "Sign out"}
           </button>
           {error ? <p role="alert">{error}</p> : null}
@@ -449,7 +432,7 @@ export function PointsNav({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 function Notice() {
-  const { state, refresh } = useContext(Context);
+  const { state, refresh } = usePoints();
   if (state.status === "loading") return <p role="status">Loading points…</p>;
   if (state.status === "error")
     return (
@@ -464,7 +447,7 @@ function Notice() {
 }
 /** Current membership identity, shared with the profile's history and wallet lookup. */
 export function useProfileMembership(login: string, enabled = true) {
-  const { me, session } = useContext(Context);
+  const { me, session } = usePoints();
   const normalizedLogin = login.toLowerCase();
   const [lookup, setLookup] = useState<{
     login: string;
@@ -516,7 +499,6 @@ export function useProfileMembership(login: string, enabled = true) {
 export function ProfilePoints({
   work,
   actorId,
-  summary,
   login,
   cycles,
   showIdentity = false,
@@ -530,14 +512,13 @@ export function ProfilePoints({
   work?: readonly ScoreEvent[];
   cycles?: CycleIndex;
   showIdentity?: boolean;
-  summary?: ReactNode;
   actorId?: string;
   /** The caller found no score record, so no points record means no contributor. */
   notFoundWhenUnrecorded?: boolean;
   profileCensus?: ReturnType<typeof useProfiles>;
   profileMembership?: ReturnType<typeof useProfileMembership>;
 }) {
-  const { state } = useContext(Context);
+  const { state } = usePoints();
   const localCensus = useProfiles(!profileCensus);
   const census = profileCensus ?? localCensus;
   const censusMatches =
@@ -636,28 +617,25 @@ export function ProfilePoints({
           </>
         }
         summary={
-          <>
-            {summary}
-            <div>
-              <strong>
-                {state.status === "ready" &&
-                (m ||
-                  identity ||
-                  recorded ||
-                  // A known actor with no Points record and no membership has none.
-                  (actorId && joinStatus === "absent"))
-                  ? (
-                      (m?.total ?? 0) +
-                      (identity?.welcome ?? 0) +
-                      (identity?.socialPoints ?? 0)
-                    ).toLocaleString()
-                  : state.status === "loading"
-                    ? "Loading…"
-                    : "Unavailable"}
-              </strong>
-              <span>total points</span>
-            </div>
-          </>
+          <div>
+            <strong>
+              {state.status === "ready" &&
+              (m ||
+                identity ||
+                recorded ||
+                // A known actor with no Points record and no membership has none.
+                (actorId && joinStatus === "absent"))
+                ? (
+                    (m?.total ?? 0) +
+                    (identity?.welcome ?? 0) +
+                    (identity?.socialPoints ?? 0)
+                  ).toLocaleString()
+                : state.status === "loading"
+                  ? "Loading…"
+                  : "Unavailable"}
+            </strong>
+            <span>total points</span>
+          </div>
         }
       >
         {children}
@@ -666,7 +644,7 @@ export function ProfilePoints({
   );
 }
 function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
-  const { me, setMe, session } = useContext(Context);
+  const { me, setMe, session } = usePoints();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [authorization, setAuthorization] = useState<string | null>(null);
@@ -750,9 +728,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
         setMessage(
           e instanceof TypeError
             ? "Could not reach Slop. Check your connection and try again."
-            : e instanceof Error
-              ? e.message
-              : "Sign-in unavailable",
+            : errorMessage(e, "Sign-in unavailable"),
         );
     } finally {
       if (active.current === c) {
@@ -881,7 +857,7 @@ function JoinPoints({ showHeading = true }: { showHeading?: boolean }) {
   );
 }
 export function LoginPage() {
-  const { me } = useContext(Context);
+  const { me } = usePoints();
   useEffect(() => {
     if (me)
       window.location.replace(
@@ -901,7 +877,7 @@ export function LoginPage() {
 }
 export function AccountPage() {
   const accountSession = useProjectSession();
-  const { me, session } = useContext(Context);
+  const { me, session } = usePoints();
   const [closedNotice, setClosedNotice] = useState("");
   useEffect(() => {
     if (me) setClosedNotice("");
@@ -969,43 +945,38 @@ function AccountClosure({
   login: string;
   onClosed: (notice: string) => void;
 }) {
-  const { setMe } = useContext(Context);
+  const { setMe } = usePoints();
   const [confirmation, setConfirmation] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   const inputId = useId();
   const matches = confirmation.trim().toLowerCase() === login.toLowerCase();
   return (
     <form
       className="account-closure"
       aria-labelledby={`${inputId}-heading`}
-      onSubmit={async (event) => {
+      onSubmit={(event) => {
         event.preventDefault();
         if (!matches || busy) return;
-        setBusy(true);
-        setError("");
-        try {
-          await requestJson("/api/v1/points/account/close", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ login: confirmation.trim() }),
-          });
-          onClosed(
-            "Your account is closed and every session is signed out. Sign in with GitHub to reopen it and claim any unpaid award.",
-          );
-          setMe(null);
-        } catch (caught) {
-          setError(
+        void run(
+          async () => {
+            await requestJson("/api/v1/points/account/close", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ login: confirmation.trim() }),
+            });
+            onClosed(
+              "Your account is closed and every session is signed out. Sign in with GitHub to reopen it and claim any unpaid award.",
+            );
+            setMe(null);
+          },
+          (caught) =>
             caught instanceof PointsRequestError &&
-              caught.code === "confirmation_mismatch"
+            caught.code === "confirmation_mismatch"
               ? "The username does not match this account."
               : caught instanceof PointsRequestError && caught.status === 401
                 ? "Your session ended. Sign in again to close your account."
                 : "Could not confirm whether your account closed. Reload this page to check your sign-in state before trying again.",
-          );
-        } finally {
-          setBusy(false);
-        }
+        );
       }}
     >
       <h3 id={`${inputId}-heading`}>Close your account</h3>
@@ -1060,10 +1031,7 @@ function AccountSessions() {
         }
       },
       (caught) => {
-        if (active)
-          setError(
-            caught instanceof Error ? caught.message : "Sessions unavailable",
-          );
+        if (active) setError(errorMessage(caught, "Sessions unavailable"));
       },
     );
     return () => {
@@ -1082,7 +1050,7 @@ function AccountSessions() {
           {sessions.map((session) => (
             <li key={session.id}>
               {session.current ? "This session" : "Other session"} · expires{" "}
-              {new Date(session.expiresAt).toLocaleString()}{" "}
+              {formatDateTime(session.expiresAt)}{" "}
               <button
                 type="button"
                 onClick={async () => {
@@ -1097,11 +1065,7 @@ function AccountSessions() {
                       window.location.assign("/login");
                     } else setAttempt((value) => value + 1);
                   } catch (caught) {
-                    setError(
-                      caught instanceof Error
-                        ? caught.message
-                        : "Could not revoke session",
-                    );
+                    setError(errorMessage(caught, "Could not revoke session"));
                   }
                 }}
               >
@@ -1277,7 +1241,7 @@ export function ContributorStandings({
     }
     window.history.replaceState(window.history.state, "", url);
   }, [sort, period, query, project, page, projectId]);
-  const { state } = useContext(Context);
+  const { state } = usePoints();
   const members = useMemo(() => {
     if (state.status !== "ready") return [];
     return pointMembers(
@@ -1555,7 +1519,7 @@ function XAccountLink({ account }: { account: XAccount }) {
     </a>
   );
 }
-export function PublicXLink({ actorId }: { actorId: string }) {
+function PublicXLink({ actorId }: { actorId: string }) {
   const [account, setAccount] = useState<XAccount | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -1582,7 +1546,7 @@ export function PublicXLink({ actorId }: { actorId: string }) {
   ) : null;
 }
 function SocialConnections() {
-  const { me, setMe } = useContext(Context);
+  const { me, setMe } = usePoints();
   const [data, setData] = useState<{
     configured: boolean;
     account: (XAccount & { public: number }) | null;
@@ -1732,7 +1696,7 @@ function SocialConnections() {
   );
 }
 type Person = {
-  actor: { id: string; login: string };
+  actor: ActorRef;
   welcome: number;
   socialPoints: number;
   x: XAccount | null;
@@ -1778,7 +1742,7 @@ const PEOPLE_PAGE_SIZE = 24;
  * People without score stay discoverable without receiving a rank.
  */
 function People() {
-  const { state, me } = useContext(Context);
+  const { state, me } = usePoints();
   const census = useProfiles();
   const [members, setMembers] = useState<MemberState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);

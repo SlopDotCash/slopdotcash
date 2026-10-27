@@ -1,9 +1,12 @@
 import { type FormEvent, useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import { formatBaseUnits } from "./lib/payments/contracts";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
+import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { useAction } from "./lib/use-action";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
 import OwnerReserveRelease from "./OwnerReserveRelease";
 import { loginHref } from "./Points";
@@ -17,11 +20,9 @@ function previousMonth() {
 }
 /** Base units as a plain decimal an owner can edit, without grouping separators. */
 function editableUnits(base: string, decimals: number | null) {
-  if (decimals === null || decimals === 0) return base;
-  const digits = base.padStart(decimals + 1, "0");
-  const whole = digits.slice(0, -decimals);
-  const fraction = digits.slice(-decimals).replace(/0+$/, "");
-  return fraction ? `${whole}.${fraction}` : whole;
+  return decimals === null
+    ? base
+    : formatBaseUnits(base, decimals, { grouping: false });
 }
 function baseUnitsOf(value: string, decimals: number | null) {
   const trimmed = value.trim();
@@ -56,22 +57,18 @@ export default function OwnerAwards({
     } catch (reason) {
       return {
         pending: [],
-        error:
-          reason instanceof Error
-            ? reason.message
-            : "Saved commitments are unavailable.",
+        error: errorMessage(reason, "Saved commitments are unavailable."),
       };
     }
   });
   const [period, setPeriod] = useState(previousMonth);
   const [view, setView] = useState<MonthlyOwnerView | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const { busy, error, run: act } = useAction();
   const [notice, setNotice] = useState("");
   const [signedOut, setSignedOut] = useState(false);
-  const base = `/api/v1/payments/projects/${encodeURIComponent(project.id)}`;
+  const base = `payments/projects/${encodeURIComponent(project.id)}`;
   const decimals = view?.asset?.assetDecimals ?? null;
   const symbol = view?.asset?.symbol ?? null;
   const amount = (value: string) =>
@@ -91,14 +88,10 @@ export default function OwnerAwards({
     setView(body);
     setDrafts({});
   }
-  async function call(
-    path: string,
-    init: RequestInit | undefined,
-    label: string,
-  ) {
-    const response = await fetch(`${base}${path}`, {
-      ...init,
-      signal: AbortSignal.timeout(120000),
+  async function call(path: string, request: unknown, label: string) {
+    const response = await apiRequest(`${base}${path}`, {
+      body: request,
+      timeoutMs: 120_000,
     });
     const body = (await readBoundedJson(
       response,
@@ -113,30 +106,12 @@ export default function OwnerAwards({
       throw new Error(body.message ?? "Awards are unavailable. Retry.");
     return body;
   }
-  const post = (path: string, body: unknown, label: string) =>
-    call(
-      path,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      },
-      label,
-    );
-  async function run(action: () => Promise<void>) {
-    setBusy(true);
-    setError("");
+  function run(action: () => Promise<void>) {
     setNotice("");
     setSignedOut(false);
-    try {
-      await action();
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Awards are unavailable.",
-      );
-    } finally {
-      setBusy(false);
-    }
+    return act(action, (reason) =>
+      errorMessage(reason, "Awards are unavailable."),
+    );
   }
   function load(event: FormEvent) {
     event.preventDefault();
@@ -156,7 +131,7 @@ export default function OwnerAwards({
       if (!view?.proposal) return;
       const draft = drafts[githubUserId];
       if (draft === undefined) return;
-      const body = await post(
+      const body = await call(
         `/monthly/${view.period}/allocations`,
         {
           githubUserId,
@@ -173,7 +148,7 @@ export default function OwnerAwards({
   const finalize = () =>
     run(async () => {
       if (!view?.proposal) return;
-      const body = await post(
+      const body = await call(
         `/monthly/${view.period}/finalize`,
         { expectedSequence: view.proposal.allocationSequence },
         "Monthly finalization",
@@ -186,7 +161,7 @@ export default function OwnerAwards({
   const toggleAutomatic = () =>
     run(async () => {
       if (!view) return;
-      const body = await post(
+      const body = await call(
         "/monthly-settings",
         { automatic: !view.automatic },
         "Monthly payment setting",
@@ -201,10 +176,6 @@ export default function OwnerAwards({
     view?.automatic === true &&
     view.cutoffAt !== null &&
     Date.now() >= Date.parse(view.cutoffAt);
-  const total = view?.proposal?.allocations.reduce(
-    (sum, row) => sum + BigInt(row.grossBase),
-    0n,
-  );
   const reservable =
     view?.run && view.deployment?.network === view.run.network
       ? view.deployment.network
@@ -286,9 +257,14 @@ export default function OwnerAwards({
                 evidence, never the changes.
               </p>
               <p>
-                Allocated {amount(String(total ?? 0n))} of{" "}
-                {amount(view.proposal.capBase)}. Unallocated funds stay in the
-                vault and never raise a later month.
+                Allocated{" "}
+                {amount(
+                  view.proposal.allocations
+                    .reduce((sum, row) => sum + BigInt(row.grossBase), 0n)
+                    .toString(),
+                )}{" "}
+                of {amount(view.proposal.capBase)}. Unallocated funds stay in
+                the vault and never raise a later month.
               </p>
               {view.proposal.allocations.length === 0 ? (
                 <p>No one has an allocation this month.</p>

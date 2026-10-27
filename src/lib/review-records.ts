@@ -48,7 +48,7 @@ export interface ReviewRecord {
   summary: string;
 }
 
-export interface ReviewRecordContext {
+interface ReviewRecordContext {
   artifactUrl: string;
   headSha: string;
 }

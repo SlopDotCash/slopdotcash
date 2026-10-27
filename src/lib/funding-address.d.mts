@@ -16,8 +16,6 @@ export interface FundingAddressRoute {
   readonly replacedAt: string | null;
 }
 
-export declare const MAX_FUNDING_ROUTES: 32;
-
 export declare function assertFundingAddresses(
   value: unknown,
   field?: string,
