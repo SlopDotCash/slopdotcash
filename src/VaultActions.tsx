@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -26,7 +27,7 @@ import {
   sendSolanaVaultAction,
 } from "./lib/solana-vault-actions";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
-import { isWalletAddress } from "./lib/wallets";
+import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
 
 type Step = "approve" | "reset" | "send";
 type Pending = {
@@ -68,8 +69,6 @@ function readPending(key: string, solana: boolean): Pending | null {
     );
   return value;
 }
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : "The wallet request failed.";
 
 /** Wallet-confirmed funding actions; no keys or signing authority enter Slop. */
 export function VaultActions({
@@ -87,15 +86,18 @@ export function VaultActions({
   canDeposit?: boolean;
   onFinalized: () => void;
 }) {
-  const solana = ESCROW_NETWORKS[deployment.network].family === "solana";
-  const sameWallet = (a: string, b: string) =>
-    solana ? a === b : a.toLowerCase() === b.toLowerCase();
+  const family = ESCROW_NETWORKS[deployment.network].family;
+  const solana = family === "solana";
+  const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
   const key = `slop:vault-action:v1:${deployment.network}:${deployment.vault}:${deployment.asset}`;
   const [saved] = useState(() => {
     try {
       return { pending: readPending(key, solana), error: "" };
     } catch (error) {
-      return { pending: null, error: message(error) };
+      return {
+        pending: null,
+        error: errorMessage(error, "The wallet request failed."),
+      };
     }
   });
   const [pending, setPending] = useState<Pending | null>(saved.pending);
@@ -129,7 +131,7 @@ export function VaultActions({
     try {
       await action();
     } catch (caught) {
-      setError(message(caught));
+      setError(errorMessage(caught, "The wallet request failed."));
     } finally {
       setBusy(false);
     }
@@ -313,11 +315,11 @@ export function VaultActions({
         onFinalized();
       }
     });
-  const formatted = (value: string) =>
+  const formatted = (value: string, decimals: number) =>
     formatAssetAmount(value, {
       network: deployment.network,
       assetAddress: deployment.asset,
-      assetDecimals: review?.decimals ?? pending?.decimals ?? 0,
+      assetDecimals: decimals,
     });
   const isOwner =
     wallet !== null && sameWallet(wallet.address, deployment.owner);
@@ -397,7 +399,7 @@ export function VaultActions({
               : "Token approval"}{" "}
             awaiting verification. Do not send it again.
           </p>
-          <p>{formatted(pending.gross)}</p>
+          <p>{formatted(pending.gross, pending.decimals)}</p>
           {link ? (
             <p>
               <a href={link} target="_blank" rel="noreferrer">
@@ -510,7 +512,7 @@ export function VaultActions({
                 <dd>
                   {review.freeBalance === null
                     ? "Unavailable"
-                    : formatted(review.freeBalance)}
+                    : formatted(review.freeBalance, review.decimals)}
                 </dd>
                 {review.solanaPlan && (
                   <>
@@ -522,15 +524,15 @@ export function VaultActions({
                   </>
                 )}
                 <dt>Amount</dt>
-                <dd>{formatted(review.gross)}</dd>
+                <dd>{formatted(review.gross, review.decimals)}</dd>
                 <dt>Fee</dt>
-                <dd>{formatted(review.fee)}</dd>
+                <dd>{formatted(review.fee, review.decimals)}</dd>
                 <dt>
                   {operation === "deposit"
                     ? "Added to free funds"
                     : "Returned to owner"}
                 </dt>
-                <dd>{formatted(review.net)}</dd>
+                <dd>{formatted(review.net, review.decimals)}</dd>
               </dl>
               {operation === "deposit" ? (
                 <p>

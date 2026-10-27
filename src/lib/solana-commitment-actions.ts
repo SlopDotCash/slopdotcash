@@ -7,6 +7,8 @@ import { readBoundedJson } from "./browser-json";
 import type { VaultConnection } from "./evm-vault-actions";
 import type { OwnerCommitmentPlan } from "./owner-commitment-actions";
 import { isAssetDecimals } from "./payments/contracts";
+import { apiRequest } from "./project-api";
+import { CANONICAL_UINT } from "./record-validation.mjs";
 import { sendSolanaWalletTransaction } from "./solana-vault-actions";
 
 export type SolanaCommitmentPlan = Awaited<
@@ -38,7 +40,7 @@ export function verifySolanaCommitmentPlan(
     typeof transaction.freeBalance !== "string" ||
     !/^(0|[1-9][0-9]{0,19})$/.test(transaction.freeBalance) ||
     typeof transaction.networkFeeLamports !== "string" ||
-    !/^(0|[1-9][0-9]*)$/.test(transaction.networkFeeLamports)
+    !CANONICAL_UINT.test(transaction.networkFeeLamports)
   )
     throw new Error(
       "The prepared transaction differs from the reviewed award.",
@@ -70,17 +72,15 @@ async function request(
   plan: OwnerCommitmentPlan,
   body: Record<string, unknown>,
 ) {
-  const response = await fetch(
-    `/api/v1/payments/projects/${encodeURIComponent(plan.projectId)}/monthly/${encodeURIComponent(plan.cycleId)}/solana-commitment`,
+  const response = await apiRequest(
+    `payments/projects/${encodeURIComponent(plan.projectId)}/monthly/${encodeURIComponent(plan.cycleId)}/solana-commitment`,
     {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      signal: AbortSignal.timeout(120000),
-      body: JSON.stringify({
+      body: {
         network: plan.deployment.network,
         vault: plan.deployment.vault,
         ...body,
-      }),
+      },
+      timeoutMs: 120_000,
     },
   );
   const value = (await readBoundedJson(

@@ -1,6 +1,8 @@
 /** Types for the one reward asset a project pays in. */
 
-export type RewardAssetNetwork = "base" | "ethereum" | "robinhood" | "solana";
+import type { EscrowChain } from "./escrow-policy.mjs";
+
+export type RewardAssetNetwork = EscrowChain;
 export type RewardAssetKind = "stablecoin" | "token";
 
 export interface RewardAssetNetworkDefinition {
@@ -36,12 +38,10 @@ export interface RewardAssetChoice {
 export declare const REWARD_ASSET_NETWORKS: Readonly<
   Record<RewardAssetNetwork, RewardAssetNetworkDefinition>
 >;
+export declare const NETWORK_NAMES: Readonly<
+  Record<RewardAssetNetwork, string>
+>;
 export declare const REWARD_ASSET_NETWORK_IDS: readonly RewardAssetNetwork[];
-export declare const MAX_REWARD_ASSET_DECIMALS: number;
-export declare function canonicalRewardAssetAddress(
-  network: string,
-  value: unknown,
-): string | null;
 export declare function rewardAssetChoice(
   network: string,
   kind: string,

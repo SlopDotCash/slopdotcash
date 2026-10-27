@@ -21,11 +21,11 @@ import {
   captureUpgrade,
   deployUpgradeableFactory,
 } from "../../contracts/evm/integration/upgrade";
+import { formatBaseUnits } from "../../src/lib/base-units.mjs";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
 } from "../../src/lib/escrow-policy.mjs";
-import { formatAssetAmount } from "../../src/lib/project-schema.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import {
   applicationManifest,
@@ -216,7 +216,7 @@ test.beforeAll(async () => {
       ...original.reward,
       chain: "base",
       currency: "TEST",
-      monthlyCapDisplay: `${formatAssetAmount(original.reward.monthlyCapMinor, 6)} TEST`,
+      monthlyCapDisplay: `${formatBaseUnits(original.reward.monthlyCapMinor, 6)} TEST`,
       feeBasisPoints: 200,
       paymentMode: "disabled",
       committedMinor: "0",
@@ -873,7 +873,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
     ...project,
     rewardAsset: { ...project.rewardAsset, address: otherToken.toLowerCase() },
   };
-  const cap = formatAssetAmount(project.reward.monthlyCapMinor, 6);
+  const cap = formatBaseUnits(project.reward.monthlyCapMinor, 6);
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   const monthly = page.getByRole("region", {
     name: "Automatic monthly payment · base-sepolia",

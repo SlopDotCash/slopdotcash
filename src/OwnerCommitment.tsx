@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { MonthlyCommitmentInput } from "../backend/payments/monthly";
 import { decodeBase58Bytes } from "./lib/base58";
+import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import {
@@ -135,11 +136,7 @@ export default function OwnerCommitment({
     try {
       await action();
     } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "The commitment could not be verified.",
-      );
+      setError(errorMessage(reason, "The commitment could not be verified."));
     } finally {
       setBusy(false);
     }

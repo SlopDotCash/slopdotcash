@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { readBoundedJson } from "./lib/browser-json";
+import { errorMessage } from "./lib/errors";
 import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
 import {
@@ -10,6 +11,7 @@ import {
   sendReferralClaim,
 } from "./lib/referral-claims";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { formatDateTime } from "./Presentation";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
 interface Pending {
@@ -119,9 +121,7 @@ export function ReferralClaims() {
         if (!controller.signal.aborted) {
           setLoadFailed(true);
           setError(
-            e instanceof Error
-              ? e.message
-              : "Additional payout records could not load. Retry.",
+            errorMessage(e, "Additional payout records could not load. Retry."),
           );
         }
       });
@@ -160,9 +160,7 @@ export function ReferralClaims() {
       await reviewReferralClaim(data, wallet);
       setReview({ data, wallet });
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "The claim could not be reviewed.",
-      );
+      setError(errorMessage(e, "The claim could not be reviewed."));
     } finally {
       setBusy(false);
     }
@@ -201,9 +199,7 @@ export function ReferralClaims() {
         setError(
           requested
             ? "The send result is unknown. Check wallet activity before another attempt."
-            : e instanceof Error
-              ? e.message
-              : "The claim could not be sent.",
+            : errorMessage(e, "The claim could not be sent."),
         );
     } finally {
       setBusy(false);
@@ -248,12 +244,9 @@ export function ReferralClaims() {
       {data.program && <p>Network: {networkLabel(data.program.network)}.</p>}
       {data.observedAt && (
         <p>
-          Updated {new Date(data.observedAt).toLocaleString()}.{" "}
+          Updated {formatDateTime(data.observedAt)}.{" "}
           {data.finalizedAt && (
-            <>
-              Chain evidence through{" "}
-              {new Date(data.finalizedAt).toLocaleString()}.
-            </>
+            <>Chain evidence through {formatDateTime(data.finalizedAt)}.</>
           )}
         </p>
       )}
@@ -276,9 +269,8 @@ export function ReferralClaims() {
       )}
       {data.pendingUntil && (
         <p>
-          The next root’s wait ends{" "}
-          {new Date(data.pendingUntil).toLocaleString()}. A background check
-          must verify it before claims open.
+          The next root’s wait ends {formatDateTime(data.pendingUntil)}. A
+          background check must verify it before claims open.
         </p>
       )}
       {data.wallet ? (

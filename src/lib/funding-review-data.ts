@@ -1,6 +1,8 @@
 /** Public preparation data. These artifacts confer no approval or payment authority. */
+
 import { deriveAllocationFundingBasis } from "./allocation-funding";
 import type { CycleWalletProof } from "./cycle-index";
+import type { ActorRef } from "./leaderboard-types";
 import { findProject } from "./projects.mjs";
 import {
   isWalletAddress,
@@ -9,7 +11,7 @@ import {
 } from "./wallets";
 
 export interface FundingPreparationContributor {
-  actor: { id: string; login: string };
+  actor: ActorRef;
   scoreThirds: string;
   weight: string;
   eventCount: number;
@@ -46,13 +48,11 @@ export interface FundingPreparation {
   };
   contributors: FundingPreparationContributor[];
 }
-export interface FundingReviewContributor
-  extends FundingPreparationContributor {
+interface FundingReviewContributor extends FundingPreparationContributor {
   simulatedMinor: string | null;
   externalSharePartsPerMillion: string | null;
 }
-export interface FundingReview
-  extends Omit<FundingPreparation, "contributors"> {
+interface FundingReview extends Omit<FundingPreparation, "contributors"> {
   status: "preparation";
   paymentAuthorized: false;
   proposalPublished: false;
@@ -91,7 +91,7 @@ function date(value: unknown): asserts value is string {
   )
     throw new TypeError("Invalid preparation timestamp");
 }
-function wallet(value: unknown, actor: { id: string; login: string }): void {
+function wallet(value: unknown, actor: ActorRef): void {
   if (value === null) return;
   if (!value || typeof value !== "object")
     throw new TypeError("Invalid wallet proof");
@@ -252,7 +252,7 @@ export function assertFundingPreparation(value: unknown): FundingPreparation {
   return value as FundingPreparation;
 }
 /** Same canonical actor tie break as project-view, using integer arithmetic only. */
-export function allocateFundingReview(
+function allocateFundingReview(
   total: bigint,
   rows: FundingPreparationContributor[],
 ): Map<string, string> {

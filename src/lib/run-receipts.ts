@@ -1,5 +1,7 @@
 import {
   exactKeys,
+  isCanonicalUint,
+  isExactUtc,
   isRecord,
   nonNegativeInteger,
 } from "./record-validation.mjs";
@@ -21,7 +23,7 @@ import {
 } from "./projects.mjs";
 import type { RepositoryId } from "./repositories.mjs";
 
-export const RUN_RECEIPT_SCHEMA_VERSION = "2" as const;
+const RUN_RECEIPT_SCHEMA_VERSION = "2" as const;
 export type RunReceiptSchemaVersion = "1" | "2";
 
 const RUN_ID_PATTERN = /^run_[0-9A-HJKMNP-TV-Z]{26}$/u;
@@ -30,7 +32,7 @@ const FULL_SKILL_REVISION_PATTERN =
   /^[a-z0-9_.-]+\/[a-z0-9_.-]+@[0-9a-f]{40}:[^\s`]+$/iu;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
 
-export type UsageConfidence = "bounded" | "exact" | "unavailable";
+type UsageConfidence = "bounded" | "exact" | "unavailable";
 
 export interface ProjectRunUsage {
   source: "ccusage-session-v20" | "none";
@@ -77,7 +79,7 @@ export interface ProjectRunReceipt {
   deviceSignature: string;
 }
 
-export interface ProjectReceiptPolicyBinding {
+interface ProjectReceiptPolicyBinding {
   id: ProjectId;
   terms: {
     revision: string;
@@ -169,7 +171,7 @@ export function assertRunReceiptPolicyJoin(
   return receipt;
 }
 
-export interface RunReceiptMarker {
+interface RunReceiptMarker {
   provider: string;
   model: string;
   client: ProjectRunReceipt["client"];
@@ -320,12 +322,7 @@ export function assertProjectRunReceipt(value: unknown): ProjectRunReceipt {
 }
 
 function isoTimestamp(value: unknown, path: string): string {
-  if (
-    typeof value !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) ||
-    !Number.isFinite(Date.parse(value)) ||
-    new Date(value).toISOString() !== value
-  ) {
+  if (!isExactUtc(value)) {
     throw new TypeError(`${path} must be a canonical UTC ISO timestamp`);
   }
   return value;
@@ -383,7 +380,7 @@ function base64url(
 }
 
 function minorUnits(value: unknown, path: string): string {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+  if (!isCanonicalUint(value)) {
     throw new TypeError(`${path} must be canonical integer minor units`);
   }
   BigInt(value);

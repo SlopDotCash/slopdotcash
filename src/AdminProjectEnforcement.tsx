@@ -9,13 +9,14 @@
 
 import { CircleAlert } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
+import { errorMessage } from "./lib/errors";
 import {
   type AdminProject,
   type EnforcementAction,
   type EnforcementPreview,
   projectApiRequest,
 } from "./lib/project-api";
-import { errorMessage, formatTime } from "./Presentation";
+import { formatDateTime } from "./Presentation";
 
 const ACTION_LABELS: Record<EnforcementAction, string> = {
   quarantine: "Quarantine",
@@ -172,7 +173,7 @@ export function ProjectEnforcementPanel({
         {enforcement.since ? (
           <div>
             <dt>Restricted since</dt>
-            <dd>{formatTime(enforcement.since)} UTC</dd>
+            <dd>{formatDateTime(enforcement.since)}</dd>
           </div>
         ) : null}
         {enforcement.bannedMaintainers.length > 0 ? (
@@ -225,7 +226,7 @@ export function ProjectEnforcementPanel({
                   ? `@${record.actor.githubLogin}`
                   : "the signed security vetting service"}{" "}
                 ({record.actorRole}, {record.decisionSource}) on{" "}
-                {formatTime(record.createdAt)} UTC. Revision{" "}
+                {formatDateTime(record.createdAt)}. Revision{" "}
                 {record.beforeRevision}
                 {record.afterRevision === null
                   ? ""
