@@ -109,6 +109,23 @@ export interface DirectTransfer {
   transactionId: string;
   blockTime: string;
 }
+/** Public projection of an ordinary, finalized vault payment. */
+export interface PublicVaultPayment extends PaymentAsset {
+  id: string;
+  projectId: string;
+  chain: PaymentChain;
+  contributionMonth: string | null;
+  netBase: string;
+  transactionId: string;
+  /** When finalized evidence was indexed, not the payment's block time. */
+  indexedAt: string;
+}
+export interface PublicVaultPaymentPage {
+  payments: PublicVaultPayment[];
+  through: number;
+  next: number | null;
+  total: number;
+}
 export { isBaseUnits, MAX_BASE_UNITS } from "../escrow-policy.mjs";
 export type PayoutPolicy = "ordinary" | "security-bounty";
 /** The 2% payout fee is deducted from the gross award, in base units of the award asset.
