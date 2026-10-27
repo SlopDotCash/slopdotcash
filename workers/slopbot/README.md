@@ -584,6 +584,19 @@ private source evidence and its digest. The model receives an explicit rule to
 leave media-dependent outcomes unresolved without actual viewing evidence;
 omitting the bytes is not a claim that the media was reviewed.
 
+When Slopbot release is enabled, the protected main release runs
+`scripts/qualify-value-models.ts` before publication. It passes synthetic
+unviewed media through both real assessment entrypoints with local SQLite
+accounting, requires unresolved outcomes, and logs only provider, served model,
+request count and result. Each path allows at most two requests to the reviewed
+Surplus endpoint, with 2,048 output tokens per request and a $1 budget. A missing
+or excessive provider cost receipt stops qualification. No production database,
+trace, source upload or assessment publication is involved. The environment
+secret is available only to this main-only step; no prompts, responses or keys
+are written to artifacts. `bun --no-env-file scripts/qualify-value-models.ts
+--dry-run` checks preparation without provider calls and cannot qualify the
+model behavior.
+
 For a rename with no patch and zero added or deleted lines, the collector
 checks the old path at the submitted merge base and the new path at the head.
 For the accepted range, it checks the first parent and merge commit instead.
