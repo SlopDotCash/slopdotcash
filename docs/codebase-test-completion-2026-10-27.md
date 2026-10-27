@@ -1376,3 +1376,17 @@ The new `scripts/e2e-runner.test.ts` case keeps an actual fixture server and ind
 Both final-delta helper fragments are removed; all new real workflow declarations remain. The coherent final run against the rebased source passed **395 tests with 3,209 assertions across 23 affected/dependent files**, with **one intentional native-sandbox skip and zero failures**. This includes the complete edited script/backend/worker set, the actual connection-close process regression and the real history route. Final typecheck and changed-file Biome check exited successfully; Biome reported existing non-blocking style suggestions, not errors. No new browser run or live-provider qualification is claimed.
 
 Independent final diff review confirmed every R/U/I/F/C/EWT disposition. The cleanup totals **1,186 net non-report lines removed across 28 paths**, with **22 source declarations removed**, two whole helper-test files deleted and no new test file. The only application-source edit remains removal of the unused external CVSS helper export; its implementation and native contract files are unchanged. This result supersedes the earlier pre-implementation and first-run failure statuses above.
+
+## Post-integration new-file audit — main09313803
+
+The completed1445 cleanup is present in main09313803 through promotion1447. Comparing every newly added non-contract test file from the parallel integration against the same strict criterion found two new helper-only groups and isolated assertions. This is a separately recorded source delta, not a reason to relabel the earlier tests as passing or complete. The following changes are recorded before implementation.
+
+| New file | Inspected outcome | Action |
+| --- | --- | --- |
+| `backend/points/publication.test.ts` | Five declarations/six cases exercise real HTTP, migrated SQL, rollback, identity isolation and retained records | Keep every case |
+| `tests/e2e/project-save.spec.ts` | Held save request, edits while pending, reload recovery, second save against new revision and accessibility | Keep |
+| `workers/identity/loopback.test.ts` | First two declarations only call origin helpers with literals; third reaches OAuth handler, PKCE and real D1 state | Delete first two and exclusive origin-helper imports; retain third |
+| `workers/slopbot/value-patch-replay.test.ts` | All ten declarations/25 expanded cases construct in-memory Git response Maps and call replay/tree helpers directly | Delete the complete412-line unit file; keep production replay/tree implementations |
+| `scripts/solana-token-2022-browser-review.test.ts` | Actual migrated D1, project/payment handlers, loopback RPC, client reconstruction and Ed25519 signing | Keep the workflow; remove redundant family/length assertions and the fake-wallet callback flag/shape checks |
+
+The native contract test-program files are within the explicit smart-contract exemption and remain unchanged. The real OAuth, publication, project-save and Solana integration outcomes are retained; this follow-up adds no test case or application behavior.
