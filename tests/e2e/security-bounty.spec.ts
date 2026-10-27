@@ -46,6 +46,9 @@ test.beforeEach(({ diagnostics }) => {
 async function openPrivateDelivery(page: Page) {
   const options = page.locator(".security-intake-card > details");
   await expect(options).toBeVisible();
+  await expect(
+    options.getByText("Loading private reporting status…", { exact: true }),
+  ).toHaveCount(0);
   if ((await options.getAttribute("open")) === null)
     await options.locator("summary").click();
 }
@@ -3305,7 +3308,13 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
         ).status,
       ).toBe(404);
       await page.goto("/security", { waitUntil: "networkidle" });
-      const choice = page.getByRole("button").filter({ hasText: noProgram.id });
+      const reportCard = page.locator(
+        `[aria-labelledby="submission-${submission.id}"]`,
+      );
+      const choice = reportCard.getByRole("button", {
+        name: "Open case",
+        exact: true,
+      });
       await expect(choice).toHaveCount(1);
       await choice.focus();
       await page.keyboard.press("Enter");
@@ -3322,13 +3331,23 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
         { method: "PUT" },
       );
       await page.reload();
+      const reports = page.getByRole("region", {
+        name: "Private reports",
+        exact: true,
+      });
+      const decisions = page.getByRole("region", {
+        name: "Decisions and payments",
+        exact: true,
+      });
+      for (const section of [reports, decisions]) {
+        await expect(
+          section.getByText("Some maintainer access could not be checked.", {
+            exact: false,
+          }),
+        ).toBeVisible();
+      }
       await expect(
-        page.getByText("Some maintainer access could not be checked.", {
-          exact: false,
-        }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("button").filter({ hasText: noProgram.id }),
+        reportCard.getByRole("button", { name: "Open case", exact: true }),
       ).toHaveCount(1);
       await page.screenshot({
         path: test.info().outputPath("report-only-partial-access.png"),
@@ -3336,11 +3355,14 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       });
       await expectAccessible(page);
       await installSlopbot(noProgram.repository);
-      await page.getByRole("button", { name: "Retry access check" }).focus();
-      await page.keyboard.press("Enter");
-      await expect(
-        page.getByRole("button", { name: "Retry access check" }),
-      ).toHaveCount(0);
+      for (const section of [reports, decisions]) {
+        const retry = section.getByRole("button", {
+          name: "Retry access check",
+        });
+        await retry.focus();
+        await page.keyboard.press("Enter");
+        await expect(retry).toHaveCount(0);
+      }
       const revoked = await request.fetch(
         `${GITHUB_FIXTURE}/__fixture/slopbot/${noProgram.repository}/permission/e2e-security/read`,
         { method: "PUT" },
@@ -3425,6 +3447,9 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       history.pushState({}, "", path);
       window.dispatchEvent(new PopStateEvent("popstate"));
     }, `/projects/${otherProgram.id}/security`);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(
+      otherProgram.id,
+    );
     await openPrivateDelivery(page);
     await expect(
       page.getByRole("link", { name: /Or report directly on GitHub/u }),
@@ -3436,9 +3461,11 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
   });
 
   let firstCase = "";
+  let firstSubmission = "";
   let secondCase = "";
   await test.step("a private report reaches a verified receipt", async () => {
     const submission = await authorized();
+    firstSubmission = submission.id;
     const before = await advisoryCount();
     const sent = await intakeApi(
       "POST",
@@ -3585,18 +3612,9 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
     const page = await context.newPage();
     await signIn(page, TOKENS.security);
     await page.goto("/security", { waitUntil: "networkidle" });
-    const ghsa = (
-      (
-        await api(
-          request,
-          "GET",
-          `security-cases/${firstCase}`,
-          TOKENS.security,
-        )
-      ).body.case as { advisory: { ghsa: string } }
-    ).advisory.ghsa;
     await page
-      .getByRole("button", { name: new RegExp(`^${program.id} ${ghsa} `) })
+      .locator(`[aria-labelledby="submission-${firstSubmission}"]`)
+      .getByRole("button", { name: "Open case", exact: true })
       .click();
     const detail = page.locator(`[aria-labelledby="case-${firstCase}"]`);
     await expect(detail).toContainText("AI summary");
