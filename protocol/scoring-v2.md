@@ -1,4 +1,127 @@
-# Slop Score v2
+# Slop Points
+
+Points are the single public measure of contribution. Monthly and lifetime
+Points are views of the same history, not separate currencies. Only
+accepted-work Points for the project and payment period determine reward
+shares. Points do not prove payment; verified payments have their own record.
+
+## Current point bands
+
+| Accepted work | Points | Useful review | Points |
+| --- | ---: | --- | ---: |
+| Micro | 10 | Triage | 10 |
+| Small | 30 | Standard | 30 |
+| Medium | 90 | Deep | 90 |
+| Large | 240 | Specialist | 240 |
+| XL | 450 | | |
+| Exceptional | 750 | | |
+
+These are the existing credit amounts expressed in Points, not additional
+awards. One stored credit-third represents 10 Points. Legacy `score` fields,
+integer thirds and `slop-score` records remain compatibility formats; they do
+not introduce a second public metric. Review allocation and shared-author
+rules below determine each person's share; a band is not a guaranteed award
+for every participant.
+
+The canonical [PRD section 7](../docs/slop-product-requirements.md#7-points-discovery-and-clear-pages)
+governs the current rules. Historical awards, funded terms and source IDs stay
+intact. The historical publication hold below remains in force.
+
+## Current producer: slop-value-v1
+
+PRD section 7 makes Slopbot's size and value assessment the normal Points
+source for accepted work (SCR-06; MVP-09, MVP-05a).
+`src/lib/scoring-policy.ts` holds the versioned policy. The normal generation
+command and release workflow select it without an opt-in flag. The merge time of a pull request, or
+the closure time of closed unmerged work, selects its policy. Work accepted
+before the effective instant keeps the historical Score v2 and SCR-05 rules below, its
+coverage row reads `legacy-policy`, and its awards are not reinterpreted.
+Work accepted from that instant:
+
+- takes its implementation score from the current exact-head value
+  assessment. A valid maintainer `slop-score` record is the correction
+  exception and takes precedence for the implementation score;
+- keeps the one-third minimum while its assessment is missing, incomplete,
+  stale or unresolved. This is an unassessed state, not an assessed tier;
+- keeps the same one-third minimum when Slopbot assesses the accepted merge at
+  zero. The maintainer's merge is the acceptance; an assessment can size it
+  but cannot erase it. A joint work unit assessed at zero also keeps one third;
+- earns review credit only from assessed, non-duplicate review value. A useful
+  approval or comment qualifies; a request for changes is not required.
+
+Review credit is one explicit allocation per pull request. Qualifying reviews
+exclude implementation actors, bots, reviews after merge or closure, and
+duplicate findings. A review submitted at or after its author's account ban
+publishes `review-credit-account-banned` and takes no reviewer slot or share.
+Reviews before that ban remain eligible under their original policy.
+Each pull request's allocation window has the scoring window's length and
+ends at its merge or closure. Every run that scores the pull request uses the
+same allocation window, so it selects the same reviewers and divides the same
+pool. A qualifying review submitted before the allocation window publishes
+`review-credit-outside-window`. It takes no reviewer slot and no share. Its
+band does not replace a later review by the same person. The award keeps the
+submission time, so a later merge does not move that review into the current
+window. A credited review inside the allocation window but before the current
+scoring window keeps its slot and share. It publishes
+`review-credit-outside-window` and keeps its earlier Points; the reviewer's
+later reviews take no second share. The remaining reviews are grouped by
+immutable reviewer node ID. Reviewers are ordered by their first qualifying
+review's submission time in the allocation window, then review node ID. The
+first five share the pull request's review pool, weighted by each reviewer's
+highest assessed band in the allocation window (triage 1, standard 3, deep 9, specialist 24 thirds). The pool
+is the sum of those five highest bands, capped at the pull request's own
+assessed size in thirds, and never less than one third. Each useful review
+thus earns its band until the reviews would outweigh the work, and a small
+review never earns a large fixed pool. Shares are integer thirds by largest
+remainder; equal remainders go to the earlier reviewer, and the shares always
+sum to the pool. Each credited reviewer has one ledger record, sourced from
+that reviewer's highest band in the allocation window. Their other reviews
+publish `already-awarded-reviewer`; later reviewers publish
+`review-credit-reviewer-limit`; a zero rounded share publishes
+`review-credit-zero-share`. A joint work unit whose accepted members span the
+effective instant is not applied, so legacy work is never scored twice; its
+new member keeps the one-third minimum.
+
+The owner selected the capped pool on 24 October 2026. The 25 October decision
+extends the new size and review bands to unpaid work from 1 September through
+31 October 2026. `VALUE_SCORING_APPROVED_HISTORY_FROM` records that approved
+scope at `2026-09-01T00:00:00.000Z`. Preserve original Points and frozen terms for approved
+or funded awards, including scheduled and paid awards. Keep source IDs, source
+dates and all separate eligibility and penalty dates. Historical assessment uses
+subscriptions only: the ChatGPT subscription, or the Claude subscription for the
+SlopDotCash/slopdotcash slice (owner decision, 26 October 2026). Paid API
+assessment still starts on 1 November.
+
+Historical publication is on hold until the complete subscription assessment
+journal and exact Points changes are reconciled. Normal generation keeps
+`VALUE_SCORING_POLICY_EFFECTIVE_AT` at `2026-11-01T00:00:00.000Z`, so an absent
+or partial historical feed cannot reduce existing Points during another
+release. The standard importer and explicit September candidate verification
+remain available. Remove the hold through a reviewed source change after
+coverage, duplicate credit and funded-history checks pass. This hold does not
+change the approved historical scope or the November API start.
+
+When the hosted value feed does not answer (a transport failure, a timeout,
+HTTP 408, 429 or 5xx), generation writes nothing and exits
+with status 75. The release retries once, then keeps the last published
+snapshot, and the site labels a snapshot older than eight hours as possibly
+outdated (PRD section 9). The next release retries. There is no
+fallback to the legacy producer, and an outage does not stop the rest of the
+release. Any other feed failure, such as a redirect or an invalid or changed
+page, stops the release. Accepted-source identity, the earliest-merge commit rule and
+separate payment authority are unchanged. A score is never a payment approval.
+
+<a id="slop-score-v2"></a>
+
+## Historical policy and compatibility details
+
+The following sections retain the earlier Score v2 terminology, units and
+policy transitions for interpreting existing records. Their numeric “Points”
+column uses the old display scale; use the current point bands above for the
+public Points measure. These sections do not authorize a separate score,
+recalculate a funded award, or override the current producer and canonical
+PRD. Shared attribution and retained-history rules continue where the current
+policy has not superseded them.
 
 Score v2 applies to accepted work from 2026-08-01 00:00:00 UTC. It replaces
 account-level caps and diminishing merge credit with reviewed logical work
@@ -254,87 +377,3 @@ Use one public Points measure. Keep approved awards and verified payments
 separate from Points. Apply shared-commit attribution once per logical work
 unit. Grouping must reconcile contributors and preserve source credit. Do not
 let split PRs, a promotion, or a repeated cherry-pick multiply one outcome.
-
-## Current producer: slop-value-v1
-
-PRD section 7 makes Slopbot's size and value assessment the normal Points
-source for accepted work (SCR-06; MVP-09, MVP-05a).
-`src/lib/scoring-policy.ts` holds the versioned policy. The normal generation
-command and release workflow select it without an opt-in flag. The merge time of a pull request, or
-the closure time of closed unmerged work, selects its policy. Work accepted
-before the effective instant keeps the Score v2 and SCR-05 rules above, its
-coverage row reads `legacy-policy`, and its awards are not reinterpreted.
-Work accepted from that instant:
-
-- takes its implementation score from the current exact-head value
-  assessment. A valid maintainer `slop-score` record is the correction
-  exception and takes precedence for the implementation score;
-- keeps the one-third minimum while its assessment is missing, incomplete,
-  stale or unresolved. This is an unassessed state, not an assessed tier;
-- keeps the same one-third minimum when Slopbot assesses the accepted merge at
-  zero. The maintainer's merge is the acceptance; an assessment can size it
-  but cannot erase it. A joint work unit assessed at zero also keeps one third;
-- earns review credit only from assessed, non-duplicate review value. A useful
-  approval or comment qualifies; a request for changes is not required.
-
-Review credit is one explicit allocation per pull request. Qualifying reviews
-exclude implementation actors, bots, reviews after merge or closure, and
-duplicate findings. A review submitted at or after its author's account ban
-publishes `review-credit-account-banned` and takes no reviewer slot or share.
-Reviews before that ban remain eligible under their original policy.
-Each pull request's allocation window has the scoring window's length and
-ends at its merge or closure. Every run that scores the pull request uses the
-same allocation window, so it selects the same reviewers and divides the same
-pool. A qualifying review submitted before the allocation window publishes
-`review-credit-outside-window`. It takes no reviewer slot and no share. Its
-band does not replace a later review by the same person. The award keeps the
-submission time, so a later merge does not move that review into the current
-window. A credited review inside the allocation window but before the current
-scoring window keeps its slot and share. It publishes
-`review-credit-outside-window` and keeps its earlier Points; the reviewer's
-later reviews take no second share. The remaining reviews are grouped by
-immutable reviewer node ID. Reviewers are ordered by their first qualifying
-review's submission time in the allocation window, then review node ID. The
-first five share the pull request's review pool, weighted by each reviewer's
-highest assessed band in the allocation window (triage 1, standard 3, deep 9, specialist 24 thirds). The pool
-is the sum of those five highest bands, capped at the pull request's own
-assessed size in thirds, and never less than one third. Each useful review
-thus earns its band until the reviews would outweigh the work, and a small
-review never earns a large fixed pool. Shares are integer thirds by largest
-remainder; equal remainders go to the earlier reviewer, and the shares always
-sum to the pool. Each credited reviewer has one ledger record, sourced from
-that reviewer's highest band in the allocation window. Their other reviews
-publish `already-awarded-reviewer`; later reviewers publish
-`review-credit-reviewer-limit`; a zero rounded share publishes
-`review-credit-zero-share`. A joint work unit whose accepted members span the
-effective instant is not applied, so legacy work is never scored twice; its
-new member keeps the one-third minimum.
-
-The owner selected the capped pool on 24 October 2026. The 25 October decision
-extends the new size and review bands to unpaid work from 1 September through
-31 October 2026. `VALUE_SCORING_APPROVED_HISTORY_FROM` records that approved
-scope at `2026-09-01T00:00:00.000Z`. Preserve original Points and frozen terms for approved
-or funded awards, including scheduled and paid awards. Keep source IDs, source
-dates and all separate eligibility and penalty dates. Historical assessment uses
-subscriptions only: the ChatGPT subscription, or the Claude subscription for the
-SlopDotCash/slopdotcash slice (owner decision, 26 October 2026). Paid API
-assessment still starts on 1 November.
-
-Historical publication is on hold until the complete subscription assessment
-journal and exact Points changes are reconciled. Normal generation keeps
-`VALUE_SCORING_POLICY_EFFECTIVE_AT` at `2026-11-01T00:00:00.000Z`, so an absent
-or partial historical feed cannot reduce existing Points during another
-release. The standard importer and explicit September candidate verification
-remain available. Remove the hold through a reviewed source change after
-coverage, duplicate credit and funded-history checks pass. This hold does not
-change the approved historical scope or the November API start.
-
-When the hosted value feed does not answer (a transport failure, a timeout,
-HTTP 408, 429 or 5xx), generation writes nothing and exits
-with status 75. The release retries once, then keeps the last published
-snapshot, and the site labels a snapshot older than eight hours as possibly
-outdated (PRD section 9). The next release retries. There is no
-fallback to the legacy producer, and an outage does not stop the rest of the
-release. Any other feed failure, such as a redirect or an invalid or changed
-page, stops the release. Accepted-source identity, the earliest-merge commit rule and
-separate payment authority are unchanged. A score is never a payment approval.
