@@ -2823,4 +2823,29 @@ The new `backend/security/report-intake.test.ts` contains 28 expanded real HTTP/
 9. Leave the current homepage and all signing/deployment activation settings unchanged.
 10. Keep source-bound evidence and final validation results separate from prior baselines and live production claims.
 
-Implementation and final validation results for FA01–FA04 will be appended after they actually complete.
+### Completed implementation and verification
+
+All four selected findings are implemented in [PR #1554](https://github.com/SlopDotCash/slopdotcash/pull/1554). The application acceptance checkpoint is `c3935d56a571755c299bad53a1c075c4b54d2a2c`; this report completion is documentation only.
+
+| Finding | Implemented result | Verified outcome |
+| --- | --- | --- |
+| FA01 | Private report editors and selected cases survive unrelated notification loading/errors. The authenticated recipient travels with the notification response and keys the private subtree. An initial notification outage bootstraps private access from the independent authenticated session. Account changes and sign-out clear old drafts, selection URLs and notification pagination. | Desktop and 320px mobile exercise initial 503, pending paging, later 503/retry, selected case retention, old-cursor account changes `42 → 43 → 42`, and 401. Corrections survive same-account refresh, return to the saved original after switching back, and never enter local/session storage. |
+| FA02 | An unavailable authority check withholds that foreign candidate while preserving owned receipts. The submissions list visibly states partial access and provides inline retry; an empty partial list retains the notice. | Real HTTP/migrated-SQL regressions retain owned records and withhold inaccessible records. Browser recovery removes the notice after the recheck without discarding the editor. Database failures remain explicit 500 responses. |
+| FA03 | One request-scoped case/roles result supplies each candidate's authorization and displayed permissions. The same helper removes the duplicate case read in direct decoration. | Fresh direct reads and actions refuse revoked authority; no result is cached across requests. Both independent backend reviews found no authority relaxation or foreign-row disclosure. |
+| FA04 | Screening uses explicit provider-start/release signals. The response is required before releasing the provider, followed by background draining and persisted-state checks. | The former 16-second sleep is gone. The focused case completed in 8–12 ms in local runs; the complete 30-case intake file passed 264 assertions in 1.13 seconds. This is a test orchestration improvement, not a claim about real provider latency. |
+
+The final rebase includes the 12 paths changed between `dfc224d2` and `4bc2925e`. A separate read-only review covered staging deployment/hash continuity, service binding order, credential and network isolation, the four-network local release fixture, and the admission browser assertion updates. No additional material finding was identified. Their 13 HTTP/release tests passed 91 assertions, and the native staging release workflow exercised all four generated bindings with zero outbound calls. The final tracked inventory is **1,158 paths, including 764 source/script/contract paths**.
+
+The additional exported-symbol scan inspected 696 JavaScript/TypeScript modules and 2,137 exported declarations. Its sole single-occurrence candidate, `ControlPublisher`, is a live Cloudflare RPC entry point named by `tests/fixtures/value-merge-sdk-pages.toml` and launched by the sandbox workflow. It is retained. Textual occurrence count alone is not dead-code evidence. The actual application no-unused-locals/no-unused-parameters compiler check passed.
+
+Final application verification at `c3935d56`:
+
+- **`bun run verify` passed**: 822 tests, one existing disposable-sandbox-only skip, zero failures, 7,013 assertions, all integration drivers, dependency audit and production build. The skip is not counted as acceptance; native isolation has its separate workflow evidence.
+- Typecheck, repository formatting, unused-code check and AGENTS/CLAUDE byte equality passed. Existing lint warnings remain warnings; this change introduced no new rule suppression or failure allowance.
+- **Six canonical browser cases passed**, with zero failures, skips or flakes: desktop/mobile private lifecycle, historical notification pagination, and delivery/read/acknowledgment distinctions. The lifecycle includes keyboard retry, WCAG AA, 200% text, and no horizontal overflow at either viewport.
+- The standalone production build also passed both new private lifecycle cases. An attempted standalone run of the older registry-dependent specs lacked the frozen registry; it is not used as acceptance. Those specs passed through the canonical prepared-fixture runner. The earlier baseline failing browser run demonstrates the lost editor before the fix.
+- The retained video run uses canonical fixture `6c99c2bc598979b83f347f868175a1f833d25f3f`. SHA-256 comparison covers **564 application, backend, worker and browser-test source paths**. Only the expected frozen registry and its generated historical promotion projection differ. Every other compared source byte matches the reviewed application head.
+
+[The attached evidence archive](https://github.com/SlopDotCash/slopdotcash/releases/tag/pr-evidence-1554-c3935d56) contains synthetic before/after screenshots, desktop/mobile videos, 200% text captures, browser diagnostics, the six-case results and source comparisons. No real private report content or signing material is included.
+
+The earlier private reporting, vetting and response presentation cleanup remains intact: shared inline copy icons with feedback, normalized controls and panels, compact details, and retained privacy/payment information. This final integration fix does not change the homepage, funding behavior, payout authority, automatic screening policy or activation settings. Main delivery is tracked by PR #1554 and its reviewed integration-to-main promotion; the test-evidence release above is not a production deployment claim.
