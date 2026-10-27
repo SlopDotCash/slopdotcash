@@ -169,26 +169,31 @@ try {
         },
       );
     const foreign = await request({}, "https://slop.cash");
+    // Finish native response bodies before assertions can dispose the runtime.
+    const foreignBody = await foreign.json();
     assert.equal(foreign.status, 403);
     assert.equal(
       foreign.headers.get("x-fixture-transport-origin"),
       "https://staging.slop.cash",
     );
-    assert.deepEqual(await foreign.json(), { error: "origin_forbidden" });
+    assert.deepEqual(foreignBody, { error: "origin_forbidden" });
     const anonymous = await request({}, "https://staging.slop.cash", false);
+    const anonymousBody = await anonymous.text();
     assert.equal(
       anonymous.status,
       401,
-      `anonymous request from ${anonymous.headers.get("x-fixture-transport-origin")}: ${await anonymous.text()}`,
+      `anonymous request from ${anonymous.headers.get("x-fixture-transport-origin")}: ${anonymousBody}`,
     );
-    assert.equal((await request({ amount: "1" })).status, 400);
-    assert.equal(
-      (await request({ manifestSha256: "0".repeat(64) })).status,
-      409,
-    );
+    const injectedAmount = await request({ amount: "1" });
+    await injectedAmount.text();
+    assert.equal(injectedAmount.status, 400);
+    const staleRevision = await request({ manifestSha256: "0".repeat(64) });
+    await staleRevision.text();
+    assert.equal(staleRevision.status, 409);
     const held = await request();
+    const heldBody = await held.json();
     assert.equal(held.status, 200);
-    assert.deepEqual(await held.json(), {
+    assert.deepEqual(heldBody, {
       status: "held",
       reason: "allocation-unavailable",
     });
