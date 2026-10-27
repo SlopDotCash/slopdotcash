@@ -420,7 +420,9 @@ jobs:
         if: matrix.lane == 'registry-1'
         env:
           SLOP_E2E_PRIVATE_INTAKE: "1"
-        run: node scripts/run-e2e.mjs --grep '@private-intake'
+        # This fixture seeds D1 through a second local Wrangler process.
+        # Keep its browser projects sequentially to avoid competing SQLite writers.
+        run: node scripts/run-e2e.mjs --grep '@private-intake' --workers=1
       - name: Upload browser diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
