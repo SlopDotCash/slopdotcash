@@ -6,6 +6,7 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { isCreditEligibleCommitAuthor } from "../../src/lib/commit-credit";
 import type { TargetRepository } from "../../src/lib/repositories.mjs";
+import { binarySourceLimitations } from "./value-binary";
 import { matchesHistoricalIntegrationBranch } from "./value-branch-policy";
 import {
   findRepository,
@@ -106,6 +107,8 @@ export async function prepareWorkUnitEvidence(
     ids.add(pull.node_id);
     projects.add(repository.projectId);
     for (const limitation of evidence.limitations)
+      limitations.add(`${pull.node_id}: ${limitation}`);
+    for (const limitation of await binarySourceLimitations(evidence))
       limitations.add(`${pull.node_id}: ${limitation}`);
     sourceDigests.push({
       pullRequestNodeId: pull.node_id,
