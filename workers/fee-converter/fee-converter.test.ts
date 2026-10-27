@@ -1873,7 +1873,11 @@ describe("Solana vault fee claims", () => {
   }
 
   /** A Solana RPC that knows one project with accrued fees in USDC. */
-  function solanaChain() {
+  function solanaChain(
+    asset = SOLANA_USDC,
+    tokenProgram = TOKEN_PROGRAM,
+    mintBytes?: Uint8Array,
+  ) {
     const budgets = {
       perTransaction: "5000000",
       perDay: "20000000",
@@ -1897,6 +1901,7 @@ describe("Solana vault fee claims", () => {
       nativeQuoteOut: null as string | null,
       nativeFee: 5000,
       rent: 1488440,
+      rentSizes: [] as number[],
       walletDebit: 1493440,
       finalizedAccrued: 10_000_000n,
       confirmedAccrued: 10_000_000n,
@@ -1949,6 +1954,7 @@ describe("Solana vault fee claims", () => {
         case "getFeeForMessage":
           return reply({ context: { slot: 100 }, value: state.nativeFee });
         case "getMinimumBalanceForRentExemption":
+          state.rentSizes.push(params[0] as number);
           return reply(state.rent);
         case "getBlocks":
           return reply([100]);
@@ -1962,6 +1968,17 @@ describe("Solana vault fee claims", () => {
               : state.sent.map((raw) => solanaBase58(unb64(raw).slice(1, 65))),
           });
         case "getAccountInfo":
+          if (params[0] === asset) {
+            const mint = mintBytes?.slice() ?? new Uint8Array(82);
+            mint[44] = 6;
+            mint[45] = 1;
+            return reply({
+              value: {
+                owner: tokenProgram,
+                data: [b64(mint), "base64"],
+              },
+            });
+          }
           return reply({
             value: {
               owner: PROGRAM,
@@ -2031,7 +2048,7 @@ describe("Solana vault fee claims", () => {
             const post = [...pre];
             post[0] -= 1493440;
             const ataIndex = parsed.staticKeys.indexOf(
-              ata(SOLANA_USDC, wallet),
+              ata(asset, wallet, tokenProgram),
             );
             post[ataIndex] = 1488440;
             return reply({
@@ -2051,7 +2068,7 @@ describe("Solana vault fee claims", () => {
             sha256(new TextEncoder().encode("event:FeesClaimed")).slice(0, 8),
           );
           event.set(decodeBase58Bytes(PROJECT), 8);
-          event.set(decodeBase58Bytes(ata(SOLANA_USDC, wallet)), 40);
+          event.set(decodeBase58Bytes(ata(asset, wallet, tokenProgram)), 40);
           new DataView(event.buffer).setBigUint64(
             72,
             state.confirmedAccrued,
@@ -2060,7 +2077,7 @@ describe("Solana vault fee claims", () => {
           const credit = state.receipt ?? state.confirmedAccrued;
           const balance = (owner: string, amount: bigint) => ({
             owner,
-            mint: SOLANA_USDC,
+            mint: asset,
             uiTokenAmount: { amount: amount.toString() },
           });
           return reply({
@@ -2231,6 +2248,37 @@ describe("Solana vault fee claims", () => {
       ed25519.verify(signature, raw.slice(parsed.messageOffset), publicKey),
     ).toBe(true);
     expect(txId).toBe(solanaBase58(signature));
+  });
+
+  test("Synthetic token claims use the Token-2022 ATA and reserve ImmutableOwner rent without changing the fee amount", async () => {
+    const testMint = "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh";
+    const program = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+    const mint = new Uint8Array(
+      await Bun.file(
+        new URL(
+          "../../contracts/solana/integration/fixtures/token-2022-mint.bin",
+          import.meta.url,
+        ),
+      ).arrayBuffer(),
+    );
+    const { state, client } = solanaChain(testMint, program, mint);
+    const send = await client(true).vaultFees!.claim(
+      vault({ asset: testMint }),
+      async (record) => {
+        expect(record.amount).toBe(state.finalizedAccrued);
+        expect(record.nativeGasId).toBeTruthy();
+      },
+      undefined,
+      undefined,
+      10_000_000n,
+    );
+    expect(send.txId).toBe(solanaBase58(unb64(state.sent[0]).slice(1, 65)));
+    const parsed = parseTransaction(unb64(state.sent[0]));
+    expect(parsed.staticKeys).toContain(ata(testMint, wallet, program));
+    expect(parsed.staticKeys).not.toContain(ata(testMint, wallet));
+    expect(parsed.staticKeys).toContain(program);
+    expect(parsed.staticKeys).not.toContain(TOKEN_PROGRAM);
+    expect(state.rentSizes).toEqual([170]);
   });
 
   test("an unfinalized earlier claim or project transaction blocks a new claim", async () => {

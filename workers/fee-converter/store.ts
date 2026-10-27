@@ -18,6 +18,7 @@ import type {
   SendReplacement,
 } from "./core";
 import { parseTransaction as parseSolanaTransaction } from "./solana";
+import { verifySolanaAccountProof } from "./solana-accounts";
 
 type D1Value = string | number | null;
 interface D1Statement {
@@ -90,15 +91,31 @@ export class D1ConversionStore implements ConversionStore {
     if (!id) return;
     const reserved = await this.db
       .prepare(
-        "SELECT intent_hash,fee_wallet,network FROM fee_native_gas WHERE id=?",
+        "SELECT intent_hash,fee_wallet,network,solana_account_proof FROM fee_native_gas WHERE id=?",
       )
       .bind(id)
-      .first<{ intent_hash: string; fee_wallet: string; network: string }>();
+      .first<{
+        intent_hash: string;
+        fee_wallet: string;
+        network: string;
+        solana_account_proof: string | null;
+      }>();
     if (!reserved || !rawTx)
       throw new Error("Native reservation lacks its signed intent");
     if (reserved.network === "solana") {
       const raw = Uint8Array.from(atob(rawTx), (c) => c.charCodeAt(0));
       const parsed = parseSolanaTransaction(raw);
+      if (!parsed.legacy || reserved.solana_account_proof) {
+        if (!reserved.solana_account_proof)
+          throw new Error(
+            "Versioned Solana signing lacks retained account evidence",
+          );
+        verifySolanaAccountProof(
+          raw,
+          parsed,
+          JSON.parse(reserved.solana_account_proof),
+        );
+      }
       const message = raw.slice(parsed.messageOffset);
       const signature = raw.slice(
         parsed.messageOffset - 64,
