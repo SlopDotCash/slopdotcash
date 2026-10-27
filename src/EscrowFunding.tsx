@@ -3,11 +3,11 @@ import {
   Clock,
   Hourglass,
   LoaderCircle,
-  Percent,
   RotateCcw,
   ShieldCheck,
 } from "lucide-react";
 import { lazy, useCallback, useEffect, useState } from "react";
+import "./owner-review.css";
 import { Link } from "./Link";
 import { readBoundedJson } from "./lib/browser-json";
 import type { VaultConnection } from "./lib/evm-vault-actions";
@@ -366,7 +366,7 @@ function VaultTotalsView({
     return (
       <div className="vault-totals">
         {refreshError}
-        <p className="setup-badge setup-badge--pending" role="status">
+        <p className="vault-fee" role="status">
           {totals.status === "loading" ? (
             <>
               <LoaderCircle aria-hidden="true" size={14} />
@@ -420,12 +420,10 @@ export function EscrowFunding({
         </h2>
         {project.escrow ? (
           <ul className="vault-fees" aria-label="Fees">
-            <li className="setup-badge setup-badge--pending">
-              <Percent aria-hidden="true" size={14} />
+            <li className="vault-fee">
               Award fee {project.escrow.feeBasisPoints / 100}%
             </li>
-            <li className="setup-badge setup-badge--pending">
-              <Percent aria-hidden="true" size={14} />
+            <li className="vault-fee">
               Withdrawal fee {project.escrow.withdrawalFeeBasisPoints / 100}%
             </li>
           </ul>

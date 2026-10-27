@@ -1,3 +1,4 @@
+import "./owner-review.css";
 import { CalendarDays } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
@@ -345,59 +346,65 @@ export default function OwnerAwards({
                   {networkLabel(view.deployment.network)}
                 </NetworkName>
               ) : null}
-              <div className="owner-award-finalization">
-                <p>
-                  Automatic finalization{" "}
-                  <StatusBadge tone={view.automatic ? "success" : "neutral"}>
-                    {view.automatic ? "On" : "Off"}
-                  </StatusBadge>
-                  <span>
-                    {view.run ? (
-                      "This month is finalized."
-                    ) : view.automatic ? (
-                      cutoffPassed ? (
-                        "Cutoff passed · allocations are fixed while finalization completes."
-                      ) : view.cutoffAt ? (
-                        <>
-                          Finalizes{" "}
-                          <time dateTime={view.cutoffAt}>
-                            {formatDateTime(view.cutoffAt)}
-                          </time>
-                          . You can finalize earlier.
-                        </>
+              <section
+                className="owner-monthly-settings"
+                aria-label="Monthly payment settings"
+              >
+                <div className="owner-award-finalization">
+                  <h3>Allocation finalization</h3>
+                  <p>
+                    Automatic finalization{" "}
+                    <StatusBadge tone={view.automatic ? "success" : "neutral"}>
+                      {view.automatic ? "On" : "Off"}
+                    </StatusBadge>
+                    <span>
+                      {view.run ? (
+                        "This month is finalized."
+                      ) : view.automatic ? (
+                        cutoffPassed ? (
+                          "Cutoff passed · allocations are fixed while finalization completes."
+                        ) : view.cutoffAt ? (
+                          <>
+                            Finalizes{" "}
+                            <time dateTime={view.cutoffAt}>
+                              {formatDateTime(view.cutoffAt)}
+                            </time>
+                            . You can finalize earlier.
+                          </>
+                        ) : (
+                          "Finalize this month manually."
+                        )
                       ) : (
-                        "Finalize this month manually."
-                      )
-                    ) : (
-                      "Finalize each month manually."
-                    )}
-                  </span>
-                </p>
-                <button
-                  className="button secondary-button"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void toggleAutomatic()}
-                >
-                  {view.automatic
-                    ? "Turn off automatic finalization"
-                    : "Turn on automatic finalization"}
-                </button>
-              </div>
-              {authorizationDeployment && (
-                <p className="owner-award-authorization">
-                  Vault authorization{" "}
-                  <a
-                    href={`#vault-monthly-${authorizationDeployment.network}-${authorizationDeployment.vault}`}
+                        "Finalize each month manually."
+                      )}
+                    </span>
+                  </p>
+                  <button
+                    className="button secondary-button"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void toggleAutomatic()}
                   >
-                    Review current setting and cap
-                  </a>
-                  <span>
-                    Owner wallet review required; separate from allocation
-                    finalization.
-                  </span>
-                </p>
-              )}
+                    {view.automatic
+                      ? "Turn off automatic finalization"
+                      : "Turn on automatic finalization"}
+                  </button>
+                </div>
+                {authorizationDeployment && (
+                  <p className="owner-award-authorization">
+                    <strong>Vault payment authorization</strong>{" "}
+                    <a
+                      href={`#vault-monthly-${authorizationDeployment.network}-${authorizationDeployment.vault}`}
+                    >
+                      Review current setting and cap
+                    </a>
+                    <span>
+                      Owner wallet review required; separate from allocation
+                      finalization.
+                    </span>
+                  </p>
+                )}
+              </section>
               {project.reward.paymentMode !== "enabled" && (
                 <p role="status">Payments are disabled for this project.</p>
               )}
@@ -441,21 +448,21 @@ export default function OwnerAwards({
                                 </dl>
                               </details>
                             </div>
-                            <dl className="owner-award-breakdown">
-                              <dt>Saved gross</dt>
-                              <dd>{amount(row.grossBase)}</dd>
-                              <dt>Contributor receives</dt>
-                              <dd>
-                                {amount(
-                                  (BigInt(row.grossBase) - fee).toString(),
-                                )}
-                              </dd>
-                              <dt>Fee</dt>
-                              <dd>{amount(fee.toString())}</dd>
-                            </dl>
+                            <AwardAmounts
+                              gross={amount(row.grossBase)}
+                              net={amount(
+                                (BigInt(row.grossBase) - fee).toString(),
+                              )}
+                              fee={amount(fee.toString())}
+                              saved
+                            />
                             <div className="owner-award-edit">
                               <label htmlFor={id}>
-                                <span aria-hidden="true">Gross award</span>
+                                <span aria-hidden="true">
+                                  {drafts[row.githubUserId] === undefined
+                                    ? "Edit gross"
+                                    : "Unsaved gross"}
+                                </span>
                                 <span className="visually-hidden">
                                   Award for {row.login}
                                   {decimals === null ? " (base units)" : ""}
@@ -529,22 +536,26 @@ export default function OwnerAwards({
                         <li key={award.githubUserId}>
                           <h4>{award.login}</h4>
                           <dl>
-                            <dt>Award</dt>
-                            <dd>{amount(award.grossBase)}</dd>
-                            <dt>Contributor receives</dt>
-                            <dd>{amount(award.netBase)}</dd>
-                            <dt>Fee</dt>
-                            <dd>{amount(award.feeBase)}</dd>
-                            <dt>Status</dt>
-                            <dd>
-                              <StatusBadge
-                                tone={
-                                  award.state === "paid" ? "success" : "warning"
-                                }
-                              >
-                                {STATE_TEXT[award.state]}
-                              </StatusBadge>
-                            </dd>
+                            <AwardAmounts
+                              gross={amount(award.grossBase)}
+                              net={amount(award.netBase)}
+                              fee={amount(award.feeBase)}
+                              fragment
+                            />
+                            <div className="owner-award-state">
+                              <dt>Status</dt>
+                              <dd>
+                                <StatusBadge
+                                  tone={
+                                    award.state === "paid"
+                                      ? "success"
+                                      : "warning"
+                                  }
+                                >
+                                  {STATE_TEXT[award.state]}
+                                </StatusBadge>
+                              </dd>
+                            </div>
                           </dl>
                           {reservable &&
                             award.state === "awaiting-reservation" && (
@@ -595,5 +606,41 @@ export default function OwnerAwards({
         </>
       )}
     </section>
+  );
+}
+
+function AwardAmounts({
+  gross,
+  net,
+  fee,
+  saved = false,
+  fragment = false,
+}: {
+  gross: string;
+  net: string;
+  fee: string;
+  saved?: boolean;
+  fragment?: boolean;
+}) {
+  const fields = (
+    <>
+      <div>
+        <dt>{saved ? "Saved gross" : "Award"}</dt>
+        <dd>{gross}</dd>
+      </div>
+      <div>
+        <dt>Contributor receives</dt>
+        <dd>{net}</dd>
+      </div>
+      <div>
+        <dt>Fee</dt>
+        <dd>{fee}</dd>
+      </div>
+    </>
+  );
+  return fragment ? (
+    fields
+  ) : (
+    <dl className="owner-award-breakdown">{fields}</dl>
   );
 }

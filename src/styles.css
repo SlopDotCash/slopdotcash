@@ -2373,31 +2373,7 @@ small {
 }
 
 .payout-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--brand-color-raised);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.payout-pill[data-tone="success"] {
-  background: color-mix(in srgb, var(--green) 18%, transparent);
-  color: var(--green);
-}
-
-.payout-pill[data-tone="warning"] {
-  background: color-mix(in srgb, var(--warning) 18%, transparent);
-  color: var(--warning);
-}
-
-.payout-pill[data-tone="danger"] {
-  background: color-mix(in srgb, var(--danger) 18%, transparent);
-  color: var(--danger);
+  justify-self: start;
 }
 
 .payout-tx {

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "./Link";
+import "./owner-review.css";
 import { errorMessage } from "./lib/errors";
 import { checkProjectSetup } from "./lib/project-api";
 import type { ProjectSetupStatus } from "./lib/project-contracts";
@@ -137,7 +138,7 @@ export function ProjectSetupStatusPanel({
   return (
     <section
       aria-labelledby={`setup-${projectId}`}
-      className="owner-section project-setup-status"
+      className={`owner-section project-setup-status${setup?.state === "ready" ? " is-ready" : ""}`}
     >
       <h2 id={`setup-${projectId}`}>
         Setup status

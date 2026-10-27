@@ -28,8 +28,16 @@ import {
   useState,
 } from "react";
 import { Link } from "./Link";
+import {
+  GRANT_ERRORS,
+  githubSubmissionStatus,
+  reportNeedsAction,
+  type Submission,
+  submissionStatus,
+} from "./PrivateReportSummary";
 import { ProjectSecuritySettings } from "./ProjectSecuritySettings";
 import "./operations-design.css";
+import "./private-report-design.css";
 import { decimalBaseUnits, formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
 import {
@@ -241,7 +249,7 @@ function IntakeHandoff({
       aria-labelledby="security-report"
       className="admin-card security-intake-card"
     >
-      <h2 id="security-report">Report a vulnerability privately</h2>
+      <h2 id="security-report">Private report</h2>
       <p className="operations-caution">
         <LockKeyhole aria-hidden="true" />
         Never post exploit details publicly.
@@ -261,8 +269,15 @@ function IntakeHandoff({
           remains separate; never post a public report.
         </p>
       )}
-      <details className="security-reference">
-        <summary>Private GitHub delivery status</summary>
+      <details
+        className="security-reference"
+        open={state.status !== "checked" || state.value.storedIntake !== true}
+      >
+        <summary>
+          {state.status === "checked" && state.value.storedIntake === true
+            ? "Optional private GitHub delivery"
+            : "Private reporting options"}
+        </summary>
         {state.status === "checking" ? (
           <p aria-live="polite" className="admin-status">
             Loading private reporting status…
@@ -336,55 +351,12 @@ function IntakeHandoff({
         )}
         <p>
           Already reported on GitHub?{" "}
-          <Link href="/inbox">Verify it in your Inbox</Link>.
+          <Link href="/security#security-link">Verify the private report</Link>.
         </p>
       </details>
     </section>
   );
 }
-
-/** A Slop private submission; never contains report content. */
-type Submission = {
-  id: string;
-  projectId: string;
-  repository: string;
-  origin: "slop" | "direct";
-  state:
-    | "draft"
-    | "submitting"
-    | "uncertain"
-    | "submitted"
-    | "receipt-verified"
-    | "failed"
-    | "abandoned";
-  revision: number;
-  attempt: number;
-  advisory: { ghsa: string; url: string } | null;
-  githubCreatedAt: string | null;
-  failureCode: string | null;
-  caseId: string | null;
-  retryAllowed: boolean;
-  reconcileAfter: string | null;
-  intake?: {
-    state:
-      | "queued"
-      | "running"
-      | "legitimate"
-      | "needs-information"
-      | "spam"
-      | "unavailable";
-    receivedAt: string;
-    routingState?: "pending" | "routed";
-    revision: number;
-    reason: string | null;
-    reviewedAt: string | null;
-    canReview: boolean;
-    canForward: boolean;
-    canRetryScreening: boolean;
-    canAuthorize?: boolean;
-    canRevise?: boolean;
-  } | null;
-};
 
 function reportBody(draft: ReportDraft): Record<string, unknown> {
   const cweIds = draft.cwe
@@ -403,38 +375,11 @@ function reportBody(draft: ReportDraft): Record<string, unknown> {
   };
 }
 
-const FAILURE_LABELS: Record<string, string> = {
-  "pvr-disabled":
-    "GitHub private vulnerability reporting is off for this repository. Nothing was published.",
-  "app-not-installed":
-    "The Slop private intake app is not installed on this repository. Report directly on GitHub instead.",
-  forbidden: "GitHub refused the report for your account.",
-  invalid: "GitHub rejected the report fields. Fix them and send again.",
-  "author-mismatch":
-    "GitHub lists a different author for this advisory, so Slop cannot link it to you.",
-  "not-found": "GitHub has no advisory with that ID that your account can see.",
-  "grant-expired": "Your GitHub authorization expired. Authorize again.",
-  "already-recorded": "This advisory already has a verified private case.",
-  "not-private-report":
-    "This advisory is not a live private report you filed. Link it for a maintainer to verify instead.",
-  unverifiable:
-    "GitHub has this report, but Slop could not confirm it within 24 hours. Link the advisory for a maintainer to verify instead.",
-};
-
 /** Failures whose labels point the reporter to the maintainer-verified link. */
 const LINK_FALLBACK_FAILURES: readonly string[] = [
   "not-private-report",
   "unverifiable",
 ];
-
-const GRANT_ERRORS: Record<string, string> = {
-  grant_identity_mismatch:
-    "GitHub authorized a different account than the one signed in to Slop. Nothing was sent.",
-  grant_state_mismatch: "The GitHub authorization did not match. Try again.",
-  grant_exchange_failed:
-    "GitHub did not complete the authorization. Try again.",
-  grant_flow_missing: "The GitHub authorization expired. Try again.",
-};
 
 /** The report text must survive the GitHub authorization redirect. */
 const DRAFT_STORAGE_ERROR =
@@ -499,7 +444,8 @@ function ReportFields({
           value={draft.description}
         />
         <small className="field-hint">
-          Include safe reproduction steps. Never induce an actual loss.
+          Include the affected revision, impact and safe reproduction steps. Do
+          not include credentials or cause a real loss of funds.
         </small>
       </label>
       <details
@@ -608,10 +554,6 @@ function AutomaticReportForm({
       <button className="button primary-button" disabled={busy} type="submit">
         {busy ? "Submitting…" : "Submit private report"}
       </button>
-      <p className="field-hint">
-        Include the affected revision, impact, and safe reproduction steps. Do
-        not include credentials or cause a real loss of funds.
-      </p>
     </form>
   );
 }
@@ -1316,59 +1258,6 @@ const RECEIVED_AT_SOURCE_LABELS: Record<
   unknown: "",
 };
 
-const SCREENING_LABELS: Record<
-  NonNullable<Submission["intake"]>["state"],
-  string
-> = {
-  queued: "Received privately by Slop. Waiting for automated screening.",
-  running: "Received privately by Slop. Automated screening is in progress.",
-  legitimate: "Screening complete. Ready for the project owner's review.",
-  "needs-information":
-    "More evidence is needed before this report can be forwarded.",
-  spam: "Screening held this report as spam or unsupported. The owner can review it.",
-  unavailable:
-    "Your report is saved. Automated screening is temporarily unavailable.",
-};
-
-function submissionStatus(submission: Submission): string {
-  if (submission.intake && submission.state === "draft") {
-    if (
-      submission.intake.canForward &&
-      submission.intake.routingState === "pending"
-    )
-      return "Report cleared for review. The owner notification is pending.";
-    if (submission.intake.canForward && submission.intake.reviewedAt)
-      return "A maintainer cleared this report for owner review. No award has been approved by this routing decision.";
-    return SCREENING_LABELS[submission.intake.state];
-  }
-  switch (submission.state) {
-    case "draft":
-      return submission.retryAllowed
-        ? "GitHub has no copy. You can send again."
-        : submission.origin === "direct"
-          ? "Ready to verify with GitHub."
-          : "Not sent yet.";
-    case "submitting":
-      return "Sending to GitHub privately…";
-    case "uncertain":
-      return submission.reconcileAfter &&
-        Date.parse(submission.reconcileAfter) > Date.now()
-        ? `Not confirmed by GitHub yet. Check again after ${formatUtc(submission.reconcileAfter)}.`
-        : "Not confirmed by GitHub. Check again.";
-    case "submitted":
-      return "Received by GitHub. Confirming…";
-    case "receipt-verified":
-      return `Received by GitHub at ${formatUtc(submission.githubCreatedAt)}${RECEIVED_AT_SOURCE_LABELS["github-verified"]}.`;
-    case "failed":
-      return (
-        FAILURE_LABELS[submission.failureCode ?? ""] ??
-        "GitHub did not accept the report."
-      );
-    case "abandoned":
-      return "Expired after 24 hours without a send.";
-  }
-}
-
 type PrivateReport = {
   summary: string;
   description: string;
@@ -1548,9 +1437,11 @@ function SubmissionCard({
   focused,
   onUpdated,
   onOpenCase,
+  caseRecord,
 }: {
   session: Extract<ProjectSessionState, { status: "signed-in" }>;
   submission: Submission;
+  caseRecord?: SecurityCase;
   focused: boolean;
   onUpdated: (submission: Submission) => void;
   onOpenCase: (caseId: string) => void;
@@ -1606,153 +1497,196 @@ function SubmissionCard({
         !TERMINAL_FAILURES.includes(submission.failureCode ?? "") &&
         submission.advisory === null));
   const expectedRevision = submission.revision;
+  const [expanded, setExpanded] = useState(
+    focused || reportNeedsAction(submission),
+  );
+  useEffect(() => {
+    if (focused) setExpanded(true);
+  }, [focused]);
   return (
     <article
       aria-labelledby={`submission-${submission.id}`}
       className={`admin-card security-case${focused ? " is-focused" : ""}`}
     >
-      <h3 id={`submission-${submission.id}`}>
-        Private report · {submission.projectId}
-      </h3>
-      <p aria-live="polite" className="admin-status" role="status">
-        {submissionStatus(submission)}
-      </p>
-      {submission.intake ? (
-        <>
-          <p className="field-hint">
-            Received {formatUtc(submission.intake.receivedAt)}. Screening is
-            advisory; the owner decides awards.
+      <header className="private-report-heading">
+        <h3 id={`submission-${submission.id}`}>
+          Private report · {submission.projectId}
+        </h3>
+        {submission.caseId ? (
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => onOpenCase(submission.caseId as string)}
+          >
+            Open case
+          </button>
+        ) : null}
+      </header>
+      {caseRecord ? (
+        <div className="private-report-next">
+          <p className="security-next-step">
+            <ArrowRight aria-hidden="true" />
+            <span>
+              <strong>Next step:</strong> {caseRecord.nextStep}
+            </span>
           </p>
-          {submission.intake.reason ? <p>{submission.intake.reason}</p> : null}
-          <PrivateReportDetail
-            submission={submission}
-            onUpdated={onUpdated}
-            expanded={focused}
-          />
-          {submission.intake.canRetryScreening ? (
-            <button
-              className="text-button"
-              disabled={busy}
-              type="button"
-              onClick={() =>
-                run("screen", { expectedRevision: submission.intake?.revision })
-              }
-            >
-              <RotateCcw aria-hidden="true" />{" "}
-              {submission.intake.canForward
-                ? "Retry owner notification"
-                : "Retry screening"}
-            </button>
-          ) : null}
-          {submission.intake.canForward &&
-          (submission.intake.canAuthorize ?? !submission.intake.canReview) &&
-          submission.state === "draft" ? (
-            <details className="security-reference">
-              <summary>Also send privately to GitHub</summary>
-              <p>
-                Optional: authorize GitHub to submit the saved report as you.
-                Your original Slop receipt and review status are retained.
-              </p>
-              <button
-                className="button secondary-button"
-                disabled={busy}
-                type="button"
-                onClick={authorize}
-              >
-                Authorize private GitHub delivery
-              </button>
+          <p className="inbox-meta">
+            Award: {awardText(caseRecord)}
+            {caseRecord.nextStepDueAt
+              ? ` · Due ${formatUtc(caseRecord.nextStepDueAt)}`
+              : ""}
+          </p>
+        </div>
+      ) : null}
+      {submission.intake && submission.state !== "draft" ? (
+        <p className="field-hint">{githubSubmissionStatus(submission)}</p>
+      ) : null}
+      <details
+        open={expanded}
+        onToggle={(event) => setExpanded(event.currentTarget.open)}
+      >
+        <summary className="private-report-summary">
+          <span className="admin-status">{submissionStatus(submission)}</span>
+        </summary>
+        {submission.intake ? (
+          <>
+            <p className="field-hint">
+              Slop receipt · {formatUtc(submission.intake.receivedAt)}
+            </p>
+            {submission.intake.reason ? (
+              <p>{submission.intake.reason}</p>
+            ) : null}
+            <PrivateReportDetail
+              submission={submission}
+              onUpdated={onUpdated}
+              expanded={focused}
+            />
+            {submission.intake.canRetryScreening ? (
               <button
                 className="text-button"
                 disabled={busy}
                 type="button"
-                onClick={() => run("send", { expectedRevision })}
+                onClick={() =>
+                  run("screen", {
+                    expectedRevision: submission.intake?.revision,
+                  })
+                }
               >
-                Send saved report to GitHub
+                <RotateCcw aria-hidden="true" />{" "}
+                {submission.intake.canForward
+                  ? "Retry owner notification"
+                  : "Retry screening"}
               </button>
-            </details>
-          ) : null}
-        </>
-      ) : null}
-      {submission.advisory ? (
-        <p>
-          <ExternalLinkAnchor href={submission.advisory.url}>
-            {submission.advisory.ghsa}
-          </ExternalLinkAnchor>
-        </p>
-      ) : null}
-      {submission.caseId ? (
-        <button
-          className="text-button"
-          onClick={() => onOpenCase(submission.caseId as string)}
-          type="button"
-        >
-          Open the private case
-        </button>
-      ) : null}
-      {canSend ? (
-        <form
-          className="security-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            saveDraft(submission.id, draft);
-            run("send", { expectedRevision, report: reportBody(draft) });
-          }}
-        >
-          <IntakeConsent login={session.session.githubLogin} />
-          <ReportFields
-            draft={draft}
-            onChange={(next) => {
-              setDraft(next);
-              saveDraft(submission.id, next);
+            ) : null}
+            {submission.intake.canForward &&
+            (submission.intake.canAuthorize ?? !submission.intake.canReview) &&
+            (submission.state === "draft" ||
+              (submission.state === "failed" &&
+                !TERMINAL_FAILURES.includes(submission.failureCode ?? "") &&
+                submission.advisory === null)) ? (
+              <details className="security-reference">
+                <summary>
+                  {submission.state === "failed"
+                    ? "Retry private GitHub delivery"
+                    : "Also send privately to GitHub"}
+                </summary>
+                <p>
+                  Optional: authorize GitHub to submit the saved report as you.
+                  Your original Slop receipt and review status are retained.
+                </p>
+                <button
+                  className="button secondary-button"
+                  disabled={busy}
+                  type="button"
+                  onClick={authorize}
+                >
+                  Authorize private GitHub delivery
+                </button>
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  type="button"
+                  onClick={() => run("send", { expectedRevision })}
+                >
+                  Send saved report to GitHub
+                </button>
+              </details>
+            ) : null}
+          </>
+        ) : null}
+        {submission.advisory ? (
+          <p>
+            <ExternalLinkAnchor href={submission.advisory.url}>
+              {submission.advisory.ghsa}
+            </ExternalLinkAnchor>
+          </p>
+        ) : null}
+        {canSend ? (
+          <form
+            className="security-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveDraft(submission.id, draft);
+              run("send", { expectedRevision, report: reportBody(draft) });
             }}
-          />
+          >
+            <IntakeConsent login={session.session.githubLogin} />
+            <ReportFields
+              draft={draft}
+              onChange={(next) => {
+                setDraft(next);
+                saveDraft(submission.id, next);
+              }}
+            />
+            <button
+              className="button primary-button"
+              disabled={busy}
+              type="submit"
+            >
+              {submission.state === "failed"
+                ? "Fix and resend"
+                : "Submit privately"}
+            </button>
+            <IntakeReferenceNote />
+          </form>
+        ) : null}
+        {submission.origin === "direct" && submission.state === "draft" ? (
           <button
             className="button primary-button"
             disabled={busy}
-            type="submit"
-          >
-            {submission.state === "failed"
-              ? "Fix and resend"
-              : "Submit privately"}
-          </button>
-          <IntakeReferenceNote />
-        </form>
-      ) : null}
-      {submission.origin === "direct" && submission.state === "draft" ? (
-        <button
-          className="button primary-button"
-          disabled={busy}
-          onClick={() => run("verify", { expectedRevision })}
-          type="button"
-        >
-          Verify with GitHub
-        </button>
-      ) : null}
-      {submission.state === "uncertain" || submission.state === "submitted" ? (
-        <button
-          className="button primary-button"
-          disabled={busy}
-          onClick={() => run("reconcile", { expectedRevision })}
-          type="button"
-        >
-          <RotateCcw aria-hidden="true" /> Check again
-        </button>
-      ) : null}
-      {needsGrant ? (
-        <div className="form-error" role="alert">
-          <CircleAlert aria-hidden="true" /> Authorize GitHub for this report
-          first.
-          <button
-            className="text-button"
-            disabled={busy}
-            onClick={authorize}
+            onClick={() => run("verify", { expectedRevision })}
             type="button"
           >
-            Authorize GitHub to submit as you
+            Verify with GitHub
           </button>
-        </div>
-      ) : null}
-      <FormError message={error} />
+        ) : null}
+        {submission.state === "uncertain" ||
+        submission.state === "submitted" ? (
+          <button
+            className="button primary-button"
+            disabled={busy}
+            onClick={() => run("reconcile", { expectedRevision })}
+            type="button"
+          >
+            <RotateCcw aria-hidden="true" /> Check again
+          </button>
+        ) : null}
+        {needsGrant ? (
+          <div className="form-error" role="alert">
+            <CircleAlert aria-hidden="true" /> Authorize GitHub for this report
+            first.
+            <button
+              className="text-button"
+              disabled={busy}
+              onClick={authorize}
+              type="button"
+            >
+              Authorize GitHub to submit as you
+            </button>
+          </div>
+        ) : null}
+        <FormError message={error} />
+      </details>
     </article>
   );
 }
@@ -1768,20 +1702,29 @@ function SubmissionsPanel({
   onAvailability,
   onLinkFallback,
   onOpenCase,
+  onKnownCases,
+  cases,
 }: {
   session: Extract<ProjectSessionState, { status: "signed-in" }>;
+  cases: SecurityCase[];
   focusId: string | null;
   grantError: string | null;
   onAvailability: (available: boolean) => void;
   /** Whether a report failed in a way GitHub cannot verify automatically. */
   onLinkFallback: (needed: boolean) => void;
   onOpenCase: (caseId: string) => void;
+  onKnownCases: (ids: string[]) => void;
 }) {
   const [submissions, setSubmissions] = useState<Submission[] | null>(null);
   const [authorityUnavailable, setAuthorityUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (submissions === null) return;
+    onKnownCases(
+      submissions
+        .filter((entry) => entry.state !== "abandoned" || entry.id === focusId)
+        .flatMap((entry) => (entry.caseId ? [entry.caseId] : [])),
+    );
     onLinkFallback(
       submissions.some(
         (entry) =>
@@ -1789,7 +1732,7 @@ function SubmissionsPanel({
           LINK_FALLBACK_FAILURES.includes(entry.failureCode ?? ""),
       ),
     );
-  }, [submissions, onLinkFallback]);
+  }, [submissions, onLinkFallback, onKnownCases, focusId]);
   const load = useCallback(() => {
     setError(null);
     projectApiRequest<{
@@ -1827,8 +1770,11 @@ function SubmissionsPanel({
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
   if (shown.length === 0 && !grantError && !authorityUnavailable) return null;
-  const pending = shown.filter((entry) => entry.state !== "receipt-verified");
-  const verified = shown.filter((entry) => entry.state === "receipt-verified");
+  const ordered = [...shown].sort(
+    (a, b) =>
+      Number(b.id === focusId) - Number(a.id === focusId) ||
+      Number(reportNeedsAction(b)) - Number(reportNeedsAction(a)),
+  );
   const renderSubmission = (submission: Submission) => (
     <SubmissionCard
       session={session}
@@ -1843,6 +1789,7 @@ function SubmissionsPanel({
         )
       }
       submission={submission}
+      caseRecord={cases.find((record) => record.id === submission.caseId)}
     />
   );
   return (
@@ -1873,16 +1820,11 @@ function SubmissionsPanel({
           {GRANT_ERRORS[grantError] ?? GRANT_ERRORS.grant_exchange_failed}
         </p>
       ) : null}
-      {pending.map(renderSubmission)}
-      {verified.length > 0 ? (
-        <details
-          className="security-reference"
-          open={verified.some((entry) => entry.id === focusId)}
-        >
-          <summary>Verified report receipts ({verified.length})</summary>
-          {verified.map(renderSubmission)}
-        </details>
-      ) : null}
+      <p className="field-hint">
+        Screening assists review; owners decide awards. GitHub delivery is
+        optional.
+      </p>
+      {ordered.map(renderSubmission)}
     </section>
   );
 }
@@ -1991,6 +1933,7 @@ type FieldSpec =
       hint?: string;
       optional?: boolean;
       initial?: string;
+      when?: { field: string; values: string[] };
     }
   | {
       name: string;
@@ -2140,9 +2083,9 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
           },
           {
             name: "duplicateOf",
-            label: "Original case ID (duplicates only)",
+            label: "Original case ID",
             kind: "text",
-            optional: true,
+            when: { field: "outcome", values: ["duplicate"] },
             initial: proposal?.duplicateCaseIds[0] ?? "",
           },
           {
@@ -2434,10 +2377,12 @@ function ActionForm({
   action,
   record,
   onDone,
+  headingId,
 }: {
   action: string;
   record: SecurityCase;
   onDone: (updated: SecurityCase | null, note: string) => void;
+  headingId?: string;
 }) {
   const spec = actionSpec(action, record);
   const [values, setValues] = useState(() => (spec ? initialValues(spec) : {}));
@@ -2490,11 +2435,12 @@ function ActionForm({
   const formId = `${record.id}-${action}`;
   return (
     <form
-      aria-labelledby={`${formId}-title`}
+      aria-labelledby={headingId ?? `${formId}-title`}
       className="security-form security-action"
+      data-case-action={action}
       onSubmit={submit}
     >
-      <h4 id={`${formId}-title`}>{spec.title}</h4>
+      {headingId ? null : <h4 id={`${formId}-title`}>{spec.title}</h4>}
       {spec.fields.filter(shown).map((field) => {
         const set = (value: string | boolean) =>
           setValues((current) => ({ ...current, [field.name]: value }));
@@ -2841,23 +2787,40 @@ function CaseActions({
   if (!active) return null;
   return (
     <section className="security-actions" aria-label="Case actions">
-      <label className="form-field" htmlFor={`case-action-${record.id}`}>
-        Action
-        <select
-          id={`case-action-${record.id}`}
-          value={active}
-          onChange={(event) => setSelected(event.target.value)}
-        >
-          {actions.map((action) => (
-            <option key={action} value={action}>
-              {actionSpec(action, record)?.title}
-            </option>
-          ))}
-        </select>
-      </label>
+      {actions.length > 1 ? (
+        <>
+          <span
+            id={`case-action-title-${record.id}`}
+            className="visually-hidden"
+          >
+            {actionSpec(active, record)?.title}
+          </span>
+          <label className="form-field" htmlFor={`case-action-${record.id}`}>
+            <span className="visually-hidden">Action</span>
+            <select
+              id={`case-action-${record.id}`}
+              value={active}
+              onChange={(event) => setSelected(event.target.value)}
+            >
+              {actions.map((action) => (
+                <option key={action} value={action}>
+                  {actionSpec(action, record)?.title}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      ) : null}
       {actions.map((action) => (
         <div hidden={action !== active} key={`${action}-${record.revision}`}>
-          <ActionForm action={action} record={record} onDone={onDone} />
+          <ActionForm
+            action={action}
+            record={record}
+            onDone={onDone}
+            headingId={
+              actions.length > 1 ? `case-action-title-${record.id}` : undefined
+            }
+          />
         </div>
       ))}
     </section>
@@ -2944,7 +2907,7 @@ function CaseDetail({
               : SUBMISSION_LABELS[record.submissionState]}
           </StatusBadge>
           {record.receivedAt
-            ? ` ${formatUtc(record.receivedAt)}${RECEIVED_AT_SOURCE_LABELS[record.receivedAtSource ?? "unknown"]}`
+            ? ` ${formatUtc(record.receivedAt)}${record.receivedAtSource === "maintainer-attested" ? RECEIVED_AT_SOURCE_LABELS["maintainer-attested"] : ""}`
             : ""}
           {record.advisory ? (
             <>
@@ -3147,7 +3110,7 @@ function CheckReceipt({
 }
 
 /** The signed-in private case inbox. */
-export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
+export function SecurityInbox() {
   const session = useProjectSession();
   const [list, reload] = useSecurityData<CaseList>(
     session.status === "signed-in" ? "security-cases" : null,
@@ -3157,6 +3120,9 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
     return id && /^sc_[A-Za-z0-9_-]{8,72}$/u.test(id) ? id : null;
   });
   const [note, setNote] = useState<string | null>(null);
+  const [knownSubmissionCases, setKnownSubmissionCases] = useState<string[]>(
+    [],
+  );
   // `null` until the submission list answers; false while intake is off.
   const [automatic, setAutomatic] = useState<boolean | null>(null);
   // The maintainer-verified link appears only after automatic verification
@@ -3179,6 +3145,13 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
   const openCase = useCallback(
     (caseId: string) => {
       setSelected(caseId);
+      const query = new URLSearchParams(window.location.search);
+      query.set("case", caseId);
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `/security?${query}`,
+      );
       reload();
     },
     [reload],
@@ -3240,6 +3213,8 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
           onAvailability={setAutomatic}
           onLinkFallback={setLinkFallback}
           onOpenCase={openCase}
+          onKnownCases={setKnownSubmissionCases}
+          cases={list.value.cases}
         />
         <section aria-labelledby="security-cases" className="admin-section">
           <h2 id="security-cases">Decisions and payments</h2>
@@ -3259,21 +3234,23 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
             </p>
           ) : (
             <ul className="security-case-list">
-              {list.value.cases.map((record) => (
-                <li key={record.id}>
-                  <button
-                    aria-pressed={selected === record.id}
-                    className="security-case-choice"
-                    onClick={() => setSelected(record.id)}
-                    type="button"
-                  >
-                    <span>{record.projectId}</span>
-                    <strong title={record.id}>{caseTitle(record)}</strong>
-                    <span>{record.nextStep}</span>
-                    <span>Award: {awardText(record)}</span>
-                  </button>
-                </li>
-              ))}
+              {list.value.cases
+                .filter((record) => !knownSubmissionCases.includes(record.id))
+                .map((record) => (
+                  <li key={record.id}>
+                    <button
+                      aria-pressed={selected === record.id}
+                      className="security-case-choice"
+                      onClick={() => setSelected(record.id)}
+                      type="button"
+                    >
+                      <span>{record.projectId}</span>
+                      <strong title={record.id}>{caseTitle(record)}</strong>
+                      <span>{record.nextStep}</span>
+                      <span>Award: {awardText(record)}</span>
+                    </button>
+                  </li>
+                ))}
             </ul>
           )}
           {selected ? (
@@ -3282,7 +3259,11 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
         </section>
         <details
           className="security-reference"
-          open={linkFallback || directUnavailable}
+          open={
+            linkFallback ||
+            directUnavailable ||
+            window.location.hash === "#security-link"
+          }
         >
           <summary>Link or import a GitHub report</summary>
           {automatic ? (
@@ -3342,15 +3323,6 @@ export function SecurityInbox({ embedded = false }: { embedded?: boolean }) {
       </>
     );
   }
-  if (embedded)
-    return (
-      <section
-        className="security-page operations-page"
-        aria-label="Private security reports"
-      >
-        {body}
-      </section>
-    );
   return (
     <main className="shell route-main admin-page security-page operations-page">
       <RoutePageHeader icon={<LockKeyhole />} title="Security cases" />

@@ -24,7 +24,9 @@ import {
   useVaultTotals,
   vaultSnapshotStale,
 } from "./EscrowFunding";
+import { FundingStatus } from "./FundingStatus";
 import { Link, useHashScroll } from "./Link";
+import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import {
   type PromotionCycle,
@@ -74,12 +76,9 @@ import {
   monthlyPoolPointsOnly,
   NotFound,
   ProjectNav,
-  paymentStateLabel,
   RoutePageHeader,
   reviewBudgetLabel,
-  StatusBadge,
   stale,
-  vaultStateLabel,
 } from "./Presentation";
 import { ProjectRiskFlag } from "./ProjectRiskFlag";
 
@@ -712,7 +711,7 @@ function SecurityBounties() {
   );
   return (
     <section
-      className="section shell home-security-section"
+      className={`section shell home-security-section${programs.length === 0 ? " home-security-section--empty" : ""}`}
       aria-labelledby="home-security-title"
     >
       <div className="home-section-heading">
@@ -753,11 +752,10 @@ function SecurityBounties() {
                   payout fee.
                 </p>
                 <p className="field-hint">
-                  Safe proof of potential loss of funds. Awards require owner
-                  approval.
                   {terms.funding.state === "pledged"
-                    ? " Pledged; payment requires approval and verified funding."
-                    : ""}
+                    ? "Pledged; payment requires owner approval and verified funding."
+                    : "Awards require owner approval."}{" "}
+                  Use safe proof of potential loss of funds.
                 </p>
                 <Link
                   className="button primary-button"
@@ -1445,10 +1443,7 @@ function ProjectFundingPage({
       <ProjectNav project={project} current="funding" />
       <section className="funding-records">
         {!project.escrow ? (
-          <div className="route-funding-status">
-            <StatusBadge>Payments: {paymentStateLabel(project)}</StatusBadge>
-            <StatusBadge>Project vault: {vaultStateLabel(project)}</StatusBadge>
-          </div>
+          <FundingStatus project={project} className="route-funding-status" />
         ) : null}
         {project.reward.kind === "external-prize-share" ? (
           <p>The organizer pays this prize.</p>

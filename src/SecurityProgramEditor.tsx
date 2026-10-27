@@ -1,5 +1,6 @@
 import { useState } from "react";
 import "./operations-design.css";
+import "./owner-review.css";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
@@ -9,8 +10,10 @@ import { parseAssetAmount } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   assertSecurityBountyTerms,
+  formatSecurityAmount,
   SECURITY_SPLIT,
   type SecurityBountyTerms,
+  securityBountySplit,
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
 
@@ -50,16 +53,18 @@ export function SecurityProgramEditor({
   revision,
   actor,
   onPublished,
+  embedded = false,
 }: {
   project: ProjectDefinition;
   revision: number;
   actor: GithubActor;
   onPublished: (result: RevisionResult) => void;
+  embedded?: boolean;
 }) {
   const existing = project.securityBounty;
   // Session metadata (such as admin) is not part of a public contact record.
   const owner = { githubId: actor.githubId, githubLogin: actor.githubLogin };
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(embedded);
   const [status, setStatus] = useState<SecurityBountyTerms["status"]>(
     existing?.status ?? "paused",
   );
@@ -103,6 +108,24 @@ export function SecurityProgramEditor({
     safeHarbor: existing?.safeHarbor ?? "",
   });
   const { busy, error, run } = useAction();
+  const preview = (() => {
+    try {
+      const precision = {
+        decimals: existing?.amount.decimals ?? 6,
+        currency: existing?.amount.currency ?? "USDC",
+      } as const;
+      const split = securityBountySplit(
+        parseAssetAmount(amount, precision.decimals),
+      );
+      return {
+        gross: formatSecurityAmount(split.grossMinor, precision),
+        researcher: formatSecurityAmount(split.researcherMinor, precision),
+        slop: formatSecurityAmount(split.slopMinor, precision),
+      };
+    } catch {
+      return null;
+    }
+  })();
   function publish() {
     void run(
       async () => {
@@ -207,19 +230,21 @@ export function SecurityProgramEditor({
             · <Link href="/security">Open private cases</Link>
           </p>
         )}
-        <button
-          type="button"
-          className="button secondary-button"
-          onClick={() => setExpanded(!expanded)}
-          aria-expanded={expanded}
-          aria-controls="owner-security-form"
-        >
-          {expanded
-            ? "Hide bounty settings"
-            : existing
-              ? "Edit bounty settings"
-              : "Set bounty terms"}
-        </button>
+        {!embedded && (
+          <button
+            type="button"
+            className="button secondary-button"
+            onClick={() => setExpanded(!expanded)}
+            aria-expanded={expanded}
+            aria-controls="owner-security-form"
+          >
+            {expanded
+              ? "Hide bounty settings"
+              : existing
+                ? "Edit bounty settings"
+                : "Set bounty terms"}
+          </button>
+        )}
         {expanded && (
           <form
             id="owner-security-form"
@@ -282,7 +307,26 @@ export function SecurityProgramEditor({
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
               />
-              <p>A guide, not a guaranteed payment.</p>
+              {preview && (
+                <dl
+                  className="owner-amount-split"
+                  aria-label="Award split preview"
+                >
+                  <div>
+                    <dt>Gross award</dt>
+                    <dd>{preview.gross}</dd>
+                  </div>
+                  <div>
+                    <dt>Researcher · 75%</dt>
+                    <dd>{preview.researcher}</dd>
+                  </div>
+                  <div>
+                    <dt>Slop · 25%</dt>
+                    <dd>{preview.slop}</dd>
+                  </div>
+                </dl>
+              )}
+              <p>A discretionary award, not a guaranteed payment.</p>
               <label htmlFor="bounty-network">Bounty network</label>
               <select
                 id="bounty-network"

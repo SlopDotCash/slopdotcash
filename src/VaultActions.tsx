@@ -30,6 +30,10 @@ import {
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
+import {
+  PendingTransaction,
+  UnsentTransactionRecovery,
+} from "./OwnerPresentation";
 import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
 
 type Step = "approve" | "reset" | "send";
@@ -385,7 +389,7 @@ export function VaultActions({
         onConnect={(provider) => void connect(provider)}
       />
       {pending ? (
-        <div>
+        <PendingTransaction>
           <p>
             {pending.step === "send"
               ? pending.operation === "deposit"
@@ -420,27 +424,20 @@ export function VaultActions({
             Check transaction
           </button>
           {!pending.hash ? (
-            <details>
-              <summary>Wallet confirms nothing was sent</summary>
-              <p>If it was sent, enter its hash instead.</p>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() =>
-                  void run(async () => {
-                    remember(null);
-                    setReview(null);
-                    setNotice(
-                      "Local request cleared. Review again before sending.",
-                    );
-                  })
-                }
-              >
-                I checked my wallet; this request was not sent
-              </button>
-            </details>
+            <UnsentTransactionRecovery
+              disabled={busy}
+              onClear={() =>
+                void run(async () => {
+                  remember(null);
+                  setReview(null);
+                  setNotice(
+                    "Local request cleared. Review again before sending.",
+                  );
+                })
+              }
+            />
           ) : null}
-        </div>
+        </PendingTransaction>
       ) : wallet && !storageError ? (
         <>
           <fieldset className="admin-fieldset" disabled={busy}>

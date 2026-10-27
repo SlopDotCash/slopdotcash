@@ -144,10 +144,12 @@ test("selected admin project folds scan and flag detail but preserves reasoned q
   ).toBeVisible();
   await card.getByText(/^Revision 1 · Incomplete/u).click();
   await expect(
-    card.getByRole("list", { name: "Scanned surfaces" }),
-  ).toContainText("18 items");
-  await expect(card.getByRole("list", { name: "Scan checks" })).toContainText(
-    "incomplete",
+    card
+      .getByRole("table", { name: "Scanned surfaces" })
+      .getByRole("row", { name: /Source Complete 18/ }),
+  ).toBeVisible();
+  await expect(card.getByRole("table", { name: "Scan checks" })).toContainText(
+    "Incomplete",
   );
   const queue = card
     .getByText("Queue scan of revision 1", { exact: true })
@@ -361,6 +363,12 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   await expect(
     page.getByRole("textbox", { name: "Second object verified content" }),
   ).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit IDs", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByLabel("Assessment ID", { exact: true })).toBeFocused();
+  await expect(page.getByLabel("Run ID", { exact: true })).toHaveValue(
+    "run-layout",
+  );
   inventoryDenied = false;
   await page.getByRole("button", { name: "retry inventory" }).click();
   await expect(

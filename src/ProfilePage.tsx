@@ -1,4 +1,3 @@
-import { ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
 import { browserDeployment } from "./lib/browser-deployment";
@@ -12,14 +11,10 @@ import type { DataState } from "./lib/use-snapshot";
 import { ProfilePoints, useProfileMembership } from "./Points";
 import {
   ContributorIdentity,
-  cycleContributorStateLabel,
-  cycleLifecycleLabel,
   DataNotice,
   ExternalLinkAnchor,
   formatCycleMonth,
-  formatMicroUsdc,
   formatPointsFromThirds,
-  StatusBadge,
 } from "./Presentation";
 import { useProfiles } from "./Profiles";
 
@@ -42,7 +37,6 @@ export function ProfilePage({
 }) {
   const profiles = useProfiles();
   const membership = useProfileMembership(login);
-  const [allCycles, setAllCycles] = useState(false);
   const actor = currentProfileActor(state, login, profiles.state, membership);
   const currentWallet = useCurrentWallet(actor, login);
   if (state.status !== "ready")
@@ -233,77 +227,6 @@ export function ProfilePage({
             ))}
           </ul>
         </details>
-      ) : null}
-      {history.length > 0 ? (
-        <section className="section profile-section">
-          <div className="profile-section-heading">
-            <h2>Past cycles</h2>
-          </div>
-          <div className="profile-projects">
-            {(allCycles ? history : history.slice(0, 3)).map(
-              ({ contributor, cycle }) => (
-                <Link
-                  href={`/cycles/${cycle.projectId}/${cycle.cycleId}`}
-                  key={`${cycle.projectId}:${cycle.cycleId}`}
-                >
-                  <span>
-                    <strong>
-                      {findProject(cycle.projectId)?.name ?? cycle.projectId}
-                    </strong>
-                    <small>{formatCycleMonth(cycle.cycleId)}</small>
-                  </span>
-                  <span>
-                    <strong>
-                      {formatPointsFromThirds(
-                        contributor.scoreThirds ?? contributor.score * 3,
-                      )}{" "}
-                      points
-                    </strong>
-                    <small>
-                      <StatusBadge
-                        className={`payout-state payout-state-${contributor.state}`}
-                        tone={
-                          contributor.state === "paid" ? "success" : "warning"
-                        }
-                      >
-                        {contributor.state === "paid"
-                          ? "Paid"
-                          : cycleLifecycleLabel(cycle)}
-                      </StatusBadge>
-                    </small>
-                  </span>
-                  <span>
-                    <strong>
-                      {formatMicroUsdc(
-                        contributor.state === "paid"
-                          ? contributor.paidMinor
-                          : contributor.approvedMinor !== "0"
-                            ? contributor.approvedMinor
-                            : contributor.suggestedMinor,
-                      )}
-                    </strong>
-                    <small>
-                      {cycleContributorStateLabel(contributor.state)}
-                    </small>
-                  </span>
-                  <ChevronRight aria-hidden="true" />
-                </Link>
-              ),
-            )}
-          </div>
-          {history.length > 3 ? (
-            <button
-              className="button secondary-button button-small"
-              type="button"
-              aria-expanded={allCycles}
-              onClick={() => setAllCycles(!allCycles)}
-            >
-              {allCycles
-                ? "Show recent cycles"
-                : `Show all ${history.length} cycles`}
-            </button>
-          ) : null}
-        </section>
       ) : null}
     </main>
   );

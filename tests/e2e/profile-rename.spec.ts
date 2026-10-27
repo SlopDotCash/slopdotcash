@@ -98,18 +98,20 @@ test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
   const { current } = await profileRecords(page);
   await page.goto(`/contributors/${current.login}`);
   await expect(page.locator("main.profile-page")).toBeVisible();
-  const history = page.locator(".profile-section", {
-    has: page.getByRole("heading", { name: "Past cycles", exact: true }),
+  const history = page.getByRole("region", {
+    name: "Awards and payments",
+    exact: true,
   });
-  const pastCycle = history.getByRole("link");
+  const pastCycle = history.getByRole("link", { name: /July 2026/u });
+  const pastRecord = pastCycle.locator("xpath=ancestor::li");
   // The points shards finish before each navigation, so none is canceled.
   const pointsLoading = page
     .getByRole("region", { name: "Slop Points" })
     .getByText("Loading points…");
   await expect(pastCycle).toHaveAttribute("href", "/cycles/eliza/2026-07");
   await expect(pointsLoading).toHaveCount(0);
-  await expect(pastCycle).toContainText("210 points");
-  await expect(pastCycle).toContainText("$1");
+  await expect(pastRecord).toContainText("210 points");
+  await expect(pastRecord).toContainText("$1");
   // Historical accepted work stays on its archived project record. The
   // separate aggregate score no longer appears beside canonical Points.
   await expect(
@@ -136,9 +138,9 @@ test("a different actor reusing an old login does not inherit its history", asyn
     waitUntil: "networkidle",
   });
   await expect(page.locator("main.profile-page")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Past cycles" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+  ).toHaveCount(0);
   await expect(
     page.getByTitle("Closed cycles and ledger events outside those cycles"),
   ).toHaveCount(0);
@@ -155,9 +157,9 @@ test("an inactive new owner does not inherit archived records or wallet lookups"
   await page.goto(`/contributors/${archived.login}`, {
     waitUntil: "networkidle",
   });
-  await expect(page.getByRole("heading", { name: "Past cycles" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+  ).toHaveCount(0);
   await expect(page.getByRole("heading", { name: current.login })).toHaveCount(
     0,
   );
@@ -188,7 +190,7 @@ test("a directory-verified historical contributor keeps archived links", async (
   const { archived } = await profileRecords(page, { directoryOnly: true });
   await page.goto(`/contributors/${archived.login}`);
   await expect(
-    page.getByRole("heading", { name: "Past cycles", exact: true }),
+    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
   ).toBeVisible();
   await expect(
     page.getByTitle("Closed cycles and ledger events outside those cycles"),
@@ -204,9 +206,9 @@ test("historical names alone do not identify a current contributor or wallet", a
   await page.goto(`/contributors/${archived.login}`, {
     waitUntil: "networkidle",
   });
-  await expect(page.getByRole("heading", { name: "Past cycles" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+  ).toHaveCount(0);
   await expect(page.getByText(/Past wallet/)).toHaveCount(0);
   expect(walletRequests).toEqual([]);
   await expect(page.getByRole("status")).toContainText(
@@ -231,9 +233,9 @@ test("a new owner listed without activity uses only its own identity and wallet"
   await expect(
     page.getByRole("heading", { name: archived.login, exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Past cycles" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+  ).toHaveCount(0);
   await expect(page.getByText(/Past wallet/)).toHaveCount(0);
   expect(walletRequests).toEqual(["/api/v1/wallet-claims/actors/2/current"]);
 });
@@ -251,9 +253,9 @@ test("conflicting current names withhold history and wallet lookups", async ({
   await expect(page.getByRole("status")).toContainText(
     "This contributor could not be verified.",
   );
-  await expect(page.getByRole("heading", { name: "Past cycles" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+  ).toHaveCount(0);
   await expect(page.getByText(/Past wallet/)).toHaveCount(0);
   expect(walletRequests).toEqual([]);
 });
@@ -278,9 +280,9 @@ test("a stale activity login cannot override a directory rename", async ({
   await expect(page.getByRole("status")).toContainText(
     "This contributor could not be verified.",
   );
-  await expect(page.getByRole("heading", { name: "Past cycles" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+  ).toHaveCount(0);
   await expect(
     page.getByTitle("Closed cycles and ledger events outside those cycles"),
   ).toHaveCount(0);
@@ -316,7 +318,7 @@ test("an unavailable identity directory hides historical records until retry suc
     .getByRole("button", { name: "Retry profile", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Past cycles", exact: true }),
+    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
   ).toBeVisible();
   await expect
     .poll(() => walletRequests)
@@ -401,18 +403,14 @@ test("profile payment totals stay unavailable until direct transfers recover", a
       waitUntil: "networkidle",
     });
     const profile = page.getByRole("region", { name: "Contributor profile" });
-    const paid = profile
-      .getByText("direct and archived payments · USDC", { exact: true })
-      .locator("..")
-      .locator("strong");
     const payouts = profile.getByRole("region", {
-      name: "Payouts",
+      name: "Awards and payments",
       exact: true,
     });
-    const payoutTotal = payouts.locator(".profile-card-heading > span");
+    const paid = payouts.locator(".profile-payments-summary strong");
     const settlement = payouts
-      .getByRole("link")
-      .filter({ hasText: "Verified settlement" });
+      .getByRole("listitem")
+      .filter({ hasText: "Archived cycle" });
     await expect(settlement).toContainText("$1");
     expect(failures).toEqual([`503 ${paymentPath}`]);
     await page.screenshot({
@@ -420,9 +418,8 @@ test("profile payment totals stay unavailable until direct transfers recover", a
       fullPage: true,
     });
     await expect(paid).toHaveText("Unavailable");
-    await expect(payoutTotal).toHaveText("Unavailable");
     await expect(
-      profile.getByText("Payment records unavailable."),
+      profile.getByText("Direct payment records unavailable."),
     ).toBeVisible();
     const retry = profile.getByRole("button", {
       name: "Retry payment records",
@@ -430,13 +427,11 @@ test("profile payment totals stay unavailable until direct transfers recover", a
     await retry.focus();
     await page.keyboard.press("Enter");
     await expect(paid).toHaveText("Loading…");
-    await expect(payoutTotal).toHaveText("Loading…");
     await expect(settlement).toContainText("$1");
     releaseRetry();
     await expect(paid).toHaveText("$3");
-    await expect(payoutTotal).toHaveText("$3 USDC");
     await expect(
-      payouts.getByRole("link").filter({ hasText: "Direct transfer" }),
+      payouts.getByRole("listitem").filter({ hasText: "Direct transfer" }),
     ).toContainText("$2");
     await expect(retry).toHaveCount(0);
     await expectAccessible(page);
@@ -452,7 +447,6 @@ test("profile payment totals stay unavailable until direct transfers recover", a
     // A complete empty direct-transfer result leaves the verified settlement total.
     await page.reload({ waitUntil: "networkidle" });
     await expect(paid).toHaveText("$1");
-    await expect(payoutTotal).toHaveText("$1 USDC");
     await expect(settlement).toContainText("$1");
     expect(requests).toBe(3);
     expect(failures).toEqual([`503 ${paymentPath}`]);
@@ -497,7 +491,7 @@ for (const staleMembership of [false, true]) {
       ).toBeVisible();
       if (staleMembership) {
         await expect(
-          page.getByRole("heading", { name: "Past cycles" }),
+          page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
         ).toHaveCount(0);
         await expect(page.getByText(/Past wallet/)).toHaveCount(0);
         await expect(page.getByRole("status")).toContainText(
@@ -516,7 +510,7 @@ for (const staleMembership of [false, true]) {
           .locator("strong"),
       ).toHaveText("5");
       await expect(
-        page.getByRole("heading", { name: "Past cycles" }),
+        page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
       ).toHaveCount(0);
       await expect(page.getByText(/Past wallet/)).toHaveCount(0);
       expect(walletRequests).toEqual([
@@ -692,7 +686,7 @@ for (const scenario of [
           page.getByRole("heading", { name: "alice2", exact: true }),
         ).toBeVisible();
         await expect(
-          page.getByRole("heading", { name: "Past cycles", exact: true }),
+          page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
         ).toBeVisible();
         await expect(
           page.getByTitle(
@@ -710,7 +704,7 @@ for (const scenario of [
         ]);
       } else {
         await expect(
-          page.getByRole("heading", { name: "Past cycles" }),
+          page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
         ).toHaveCount(0);
         await expect(page.getByText(/Past wallet/)).toHaveCount(0);
         await expect(
@@ -797,7 +791,7 @@ test(
         page.getByText("Checking contributor…", { exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("heading", { name: "Past cycles", exact: true }),
+        page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
       ).toBeVisible({ timeout: 17_500 });
     } finally {
       await page.screenshot({
@@ -879,39 +873,31 @@ test("profile history previews retain every payment and cycle behind keyboard co
   await page.goto(`${site}/contributors/${current.login}`, {
     waitUntil: "networkidle",
   });
-  const payouts = page.getByRole("region", { name: "Payouts", exact: true });
-  const history = page.locator(".profile-section", {
-    has: page.getByRole("heading", { name: "Past cycles", exact: true }),
+  const history = page.getByRole("region", {
+    name: "Awards and payments",
+    exact: true,
   });
-  await expect(payouts.locator(".profile-card-heading > span")).toHaveText(
-    "$14 USDC",
-  );
-  await expect(payouts.locator("li")).toHaveCount(3);
-  await expect(history.locator(".profile-projects > a")).toHaveCount(3);
+  const total = history.locator(".profile-payments-summary strong");
+  await expect(total).toHaveText("$14");
+  await expect(history.getByRole("listitem")).toHaveCount(5);
   await page.screenshot({
     path: info.outputPath("profile-history-preview.png"),
     fullPage: true,
   });
-  await payouts
-    .getByRole("button", { name: "Show all 9 payouts", exact: true })
+  await history
+    .getByRole("button", { name: "Show all 9 records", exact: true })
     .focus();
   await page.keyboard.press("Enter");
-  await expect(payouts.locator("li")).toHaveCount(9);
+  await expect(history.getByRole("listitem")).toHaveCount(9);
   await expect(
-    payouts.getByRole("link").filter({ hasText: "Verified settlement" }),
+    history.getByRole("listitem").filter({ hasText: "Archived cycle" }),
   ).toHaveCount(4);
   await expect(
-    payouts.getByRole("link").filter({ hasText: "Direct transfer" }),
+    history.getByRole("listitem").filter({ hasText: "Direct transfer" }),
   ).toHaveCount(5);
-  await history
-    .getByRole("button", { name: "Show all 4 cycles", exact: true })
-    .focus();
-  await page.keyboard.press("Space");
-  await expect(history.locator(".profile-projects > a")).toHaveCount(4);
-  await expect(history.getByRole("link").last()).toHaveAttribute(
-    "href",
-    "/cycles/eliza/2026-07",
-  );
+  await expect(
+    history.getByRole("link", { name: /July 2026/u }),
+  ).toHaveAttribute("href", "/cycles/eliza/2026-07");
   await expectAccessible(page);
   expect(
     await page.evaluate(
@@ -922,15 +908,10 @@ test("profile history previews retain every payment and cycle behind keyboard co
     path: info.outputPath("profile-history-expanded.png"),
     fullPage: true,
   });
-  await payouts
-    .getByRole("button", { name: "Show recent payouts", exact: true })
-    .click();
   await history
-    .getByRole("button", { name: "Show recent cycles", exact: true })
-    .click();
-  await expect(payouts.locator("li")).toHaveCount(3);
-  await expect(history.locator(".profile-projects > a")).toHaveCount(3);
-  await expect(payouts.locator(".profile-card-heading > span")).toHaveText(
-    "$14 USDC",
-  );
+    .getByRole("button", { name: "Show recent records", exact: true })
+    .focus();
+  await page.keyboard.press("Space");
+  await expect(history.getByRole("listitem")).toHaveCount(5);
+  await expect(total).toHaveText("$14");
 });

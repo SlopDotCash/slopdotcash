@@ -848,7 +848,9 @@ test("makes the public project draft boundary unmistakable", async ({
   await expect(changes).toContainText(
     PROJECTS.find((project) => project.id === "eliza")?.headline ?? "",
   );
-  await expect(changes).toContainText("Publishes now: Short description.");
+  await expect(changes).toContainText(
+    "Presentation and cleared contribution changes publish now.",
+  );
   await expect(
     page.getByRole("button", { name: "Publish changes" }),
   ).toHaveCount(0);
@@ -1036,7 +1038,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     path: test.info().outputPath("criteria-review-200-percent-text.png"),
   });
   await expect(page.getByRole("region", { name: "Changes" })).toContainText(
-    "Needs a new security scan: Contribution rules.",
+    "Contribution changes need a new security scan.",
   );
   await page.getByRole("button", { name: "Publish changes" }).click();
   await expect(page.getByText("Published revision 3.")).toBeVisible();
@@ -1067,9 +1069,9 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await page.getByLabel("Acceptance criteria").fill(scope);
   const exemptChanges = page.getByRole("region", { name: "Changes" });
   await expect(exemptChanges).toContainText(
-    "Publishes now: Contribution rules.",
+    "Presentation and cleared contribution changes publish now.",
   );
-  await expect(exemptChanges).not.toContainText("Needs a new security scan");
+  await expect(exemptChanges).not.toContainText("need a new security scan");
   // A normal successful admission has the same routine-edit permission,
   // without relabelling it as the older existing-project exemption.
   Object.assign(setup.checks.scan, {
@@ -1083,9 +1085,9 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await page.getByLabel("Acceptance criteria").fill(scope);
   const admittedChanges = page.getByRole("region", { name: "Changes" });
   await expect(admittedChanges).toContainText(
-    "Publishes now: Contribution rules.",
+    "Presentation and cleared contribution changes publish now.",
   );
-  await expect(admittedChanges).not.toContainText("Needs a new security scan");
+  await expect(admittedChanges).not.toContainText("need a new security scan");
   await page.screenshot({
     path: test.info().outputPath("admitted-owner-edit.png"),
     fullPage: true,
@@ -1251,17 +1253,14 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
     page.locator(".inbox-item", { hasText: subject });
   const sent = item("delivery-1");
   await expect(sent.locator(".inbox-state")).toHaveText("Read");
-  await expect(
-    sent.getByText("Email: sent", { exact: true }),
-  ).not.toBeVisible();
-  await sent.getByText("Email delivery", { exact: true }).click();
+
   await expect(sent.getByText("Email: sent", { exact: true })).toBeVisible();
   await expect(sent.getByText("Email: delivered", { exact: true })).toHaveCount(
     0,
   );
   const delivered = item("delivery-2");
   await expect(delivered.locator(".inbox-state")).toHaveText("Unread");
-  await delivered.getByText("Email delivery", { exact: true }).click();
+
   await expect(
     delivered.getByText("Email: delivered", { exact: true }),
   ).toBeVisible();
@@ -1272,10 +1271,7 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
     item("delivery-4").getByText("Email: uncertain", { exact: true }),
   ).toBeVisible();
   const queued = item("delivery-5");
-  await expect(
-    queued.getByText("Email: queued", { exact: true }),
-  ).not.toBeVisible();
-  await queued.getByText("Email delivery", { exact: true }).click();
+
   await expect(
     queued.getByText("Email: queued", { exact: true }),
   ).toBeVisible();
@@ -1283,7 +1279,7 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   // Reading a private notice or accepting its email does not acknowledge it.
   const security = item("case-0001");
   await expect(security.locator(".inbox-state")).toHaveText("Read");
-  await security.getByText("Email delivery", { exact: true }).click();
+
   await expect(
     security.getByText("Email: sent", { exact: true }),
   ).toBeVisible();

@@ -8,16 +8,9 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { loginHref } from "./lib/browser-deployment";
+import "./private-report-design.css";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { clearAllDrafts } from "./lib/intake-drafts";
@@ -30,20 +23,21 @@ import {
   notificationTitle,
   parseNotificationsResponse,
 } from "./lib/notifications";
-import { currentProjectSession } from "./lib/project-api";
+import { currentProjectSession, projectApiRequest } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 import {
   AccountNav,
   formatDateTime,
   RoutePageHeader,
-  StatusBadge,
+  SignInPanel,
 } from "./Presentation";
-
-const SecurityInbox = lazy(() =>
-  import("./SecurityBounty").then((module) => ({
-    default: module.SecurityInbox,
-  })),
-);
+import {
+  GRANT_ERRORS,
+  githubSubmissionStatus,
+  privateReportHref,
+  type Submission,
+  submissionStatus,
+} from "./PrivateReportSummary";
 
 type InboxState =
   | { status: "loading" }
@@ -112,6 +106,16 @@ async function acknowledgeSecurity(
 }
 
 export default function InboxPage() {
+  const [reports, setReports] = useState<Submission[]>([]);
+  const [reportsError, setReportsError] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState(() => {
+    const id = new URLSearchParams(window.location.search).get("submission");
+    return id && /^ss_[A-Za-z0-9_-]{8,72}$/u.test(id) ? id : null;
+  });
+  const [grantError, setGrantError] = useState(() => {
+    const code = new URLSearchParams(window.location.search).get("intake");
+    return code && /^grant_[a-z_]{3,40}$/u.test(code) ? code : null;
+  });
   const [cursor, setCursor] = useState<string | null>(null);
   const [previousPages, setPreviousPages] = useState<(string | null)[]>([]);
   const [state, setState] = useState<InboxState>({ status: "loading" });
@@ -120,11 +124,19 @@ export default function InboxPage() {
   const generation = useRef(0);
   const [recipient, setRecipient] = useState<string | null>(null);
   const previousRecipient = useRef<string | null>(null);
+  const reportsGeneration = useRef(0);
+  const [reportOwner, setReportOwner] = useState<string | null>(null);
   const acceptRecipient = useCallback((id: string | null) => {
     const changed =
       previousRecipient.current !== null && previousRecipient.current !== id;
     if (id === null || changed) {
       clearAllDrafts();
+      reportsGeneration.current++;
+      setReports([]);
+      setReportsError(null);
+      setReportOwner(null);
+      setFocusId(null);
+      setGrantError(null);
       const url = new URL(window.location.href);
       for (const key of ["case", "submission", "intake"])
         url.searchParams.delete(key);
@@ -151,6 +163,35 @@ export default function InboxPage() {
     },
     [cursor, acceptRecipient],
   );
+  const loadReports = useCallback(() => {
+    const current = ++reportsGeneration.current;
+    if (recipient === null) return;
+    setReportsError(null);
+    void projectApiRequest<{ submissions: Submission[] }>(
+      "GET",
+      "security-submissions",
+    )
+      .then(async (body) => {
+        const session = await currentProjectSession();
+        if (current !== reportsGeneration.current) return;
+        if (session?.githubId !== recipient) {
+          acceptRecipient(session?.githubId ?? null);
+          return;
+        }
+        setReportOwner(recipient);
+        setReports(body.submissions);
+      })
+      .catch(() => {
+        if (current === reportsGeneration.current)
+          setReportsError("Private report status could not load.");
+      });
+    return () => {
+      reportsGeneration.current++;
+    };
+  }, [recipient, acceptRecipient]);
+  useEffect(loadReports, [loadReports]);
+  const visibleReports =
+    reportOwner === recipient && recipient !== null ? reports : [];
   const load = useCallback(() => {
     const current = ++generation.current;
     const controller = new AbortController();
@@ -162,8 +203,7 @@ export default function InboxPage() {
       async () => {
         if (generation.current !== current) return;
         setState({ status: "error", message: UNAVAILABLE });
-        // Notification failure does not prove the previous account is still
-        // signed in. Revalidate before retaining its private editor.
+        // Revalidate the account before retaining private metadata during an outage.
         try {
           const session = await currentProjectSession();
           if (generation.current !== current) return;
@@ -211,11 +251,10 @@ export default function InboxPage() {
         <p role="status">Loading your inbox…</p>
       ) : null}
       {state.status === "signed-out" ? (
-        <div className="sign-in-panel">
-          <a className="button primary-button" href={loginHref("/inbox")}>
-            Sign in with GitHub
-          </a>
-        </div>
+        <SignInPanel
+          state={{ status: "signed-out" }}
+          next={`/inbox${window.location.search}`}
+        />
       ) : null}
       {state.status === "error" ? (
         <div role="alert">
@@ -229,16 +268,43 @@ export default function InboxPage() {
           </button>
         </div>
       ) : null}
-      {/* Preserve editors during refresh; a new authenticated recipient gets a fresh private panel. */}
-      {recipient !== null ? (
-        <Suspense fallback={<p role="status">Loading private reports…</p>}>
-          <SecurityInbox embedded key={recipient} />
-        </Suspense>
+      {grantError ? (
+        <p role="alert" className="form-error">
+          {GRANT_ERRORS[grantError] ?? GRANT_ERRORS.grant_exchange_failed}{" "}
+          <a
+            href={`/security?${new URLSearchParams({ ...(focusId ? { submission: focusId } : {}), intake: grantError })}`}
+          >
+            Open private report
+          </a>
+        </p>
+      ) : null}
+      {reportsError && recipient !== null ? (
+        <div className="form-error" role="alert">
+          {reportsError}{" "}
+          <button className="text-button" type="button" onClick={loadReports}>
+            Retry report status
+          </button>
+        </div>
+      ) : null}
+      {state.status === "error" &&
+      focusId &&
+      visibleReports.find((report) => report.id === focusId) ? (
+        <ol className="inbox-list" aria-label="Private report receipt">
+          <PrivateReportItem
+            submission={
+              visibleReports.find(
+                (report) => report.id === focusId,
+              ) as Submission
+            }
+          />
+        </ol>
       ) : null}
       {state.status === "ready" ? (
         <InboxList
           busy={busy}
           response={state.value}
+          reports={visibleReports}
+          focusId={focusId}
           onMark={(keys, done) => void act(() => markRead(keys), done)}
           onAcknowledge={(notification) =>
             void act(
@@ -297,7 +363,11 @@ function InboxList({
   busy,
   onMark,
   onAcknowledge,
+  reports,
+  focusId,
 }: {
+  reports: Submission[];
+  focusId: string | null;
   response: NotificationsResponse;
   busy: boolean;
   onMark(eventKeys: string[], done: string): void;
@@ -307,7 +377,17 @@ function InboxList({
     .filter((n) => n.readAt === null)
     .map((n) => n.eventKey)
     .slice(0, MAX_NOTIFICATION_MARK);
-  if (response.notifications.length === 0)
+  const focused = visibleReports.find((report) => report.id === focusId);
+  const forNotice = (notice: Notification) =>
+    notice.kind === "security_report_received"
+      ? reports.find((report) => report.caseId === notice.subject)
+      : undefined;
+  const ordered = [...response.notifications].sort(
+    (a, b) =>
+      Number(forNotice(b)?.id === focusId) -
+      Number(forNotice(a)?.id === focusId),
+  );
+  if (response.notifications.length === 0 && !focused)
     return <p className="inbox-empty">You have no notifications.</p>;
   return (
     <>
@@ -327,11 +407,18 @@ function InboxList({
         ) : null}
       </div>
       <ol className="inbox-list" aria-label="Notifications">
-        {response.notifications.map((n) => (
+        {focused &&
+        !response.notifications.some(
+          (notice) => forNotice(notice)?.id === focusId,
+        ) ? (
+          <PrivateReportItem submission={focused} />
+        ) : null}
+        {ordered.map((n) => (
           <InboxItem
             busy={busy}
             key={n.eventKey}
             notification={n}
+            submission={forNotice(n)}
             onMark={onMark}
             onAcknowledge={onAcknowledge}
           />
@@ -346,14 +433,18 @@ function InboxItem({
   busy,
   onMark,
   onAcknowledge,
+  submission,
 }: {
+  submission?: Submission;
   notification: Notification;
   busy: boolean;
   onMark(eventKeys: string[], done: string): void;
   onAcknowledge(notification: Notification): void;
 }) {
   const unread = n.readAt === null;
-  const title = notificationTitle(n);
+  const title = submission
+    ? `Private report · ${submission.projectId}`
+    : notificationTitle(n);
   const Icon =
     n.kind.startsWith("security_") || n.kind.startsWith("slopbot_")
       ? ShieldCheck
@@ -369,50 +460,50 @@ function InboxItem({
             ? FolderGit2
             : Bell;
   return (
-    <li className={unread ? "inbox-item inbox-unread" : "inbox-item"}>
+    <li
+      className={unread ? "inbox-item inbox-unread" : "inbox-item"}
+      aria-labelledby={submission ? `submission-${submission.id}` : undefined}
+    >
       <div className="inbox-item-heading">
         <span className="inbox-kind-icon">
           <Icon size={20} aria-hidden="true" />
         </span>
         <a
           className="inbox-title"
-          href={n.actionPath}
-          aria-label={`${title}: ${notificationAction(n)}`}
+          id={submission ? `submission-${submission.id}` : undefined}
+          href={submission ? privateReportHref(submission) : n.actionPath}
+          aria-label={`${title}: ${submission ? "Open case" : notificationAction(n)}`}
         >
           {title}
         </a>
-        <StatusBadge className="inbox-state" tone={unread ? "info" : "neutral"}>
-          {unread ? "Unread" : "Read"}
-        </StatusBadge>
       </div>
-      {n.detail && n.detail !== title ? (
+      {submission ? (
+        <PrivateReportStatus submission={submission} />
+      ) : n.detail && n.detail !== title ? (
         <p className="inbox-detail">{n.detail}</p>
       ) : null}
       <p className="inbox-meta">
         <time dateTime={n.sourceAt}>{formatDateTime(n.sourceAt)}</time>
-      </p>
-      {n.emailDelivery === "failed" || n.emailDelivery === "uncertain" ? (
-        <StatusBadge
-          className="inbox-delivery"
-          tone={n.emailDelivery === "failed" ? "danger" : "warning"}
-        >
-          {emailDeliveryLabel(n.emailDelivery)}
-        </StatusBadge>
-      ) : n.emailDelivery ? (
-        <details className="inbox-delivery inbox-meta">
-          <summary>Email delivery</summary>
-          <StatusBadge
-            tone={n.emailDelivery === "delivered" ? "success" : "neutral"}
+        <span className="inbox-state">{unread ? "Unread" : "Read"}</span>
+        {n.emailDelivery ? (
+          <span
+            className={`inbox-delivery${n.emailDelivery === "failed" || n.emailDelivery === "uncertain" ? " form-error" : ""}`}
           >
             {emailDeliveryLabel(n.emailDelivery)}
-          </StatusBadge>
-        </details>
-      ) : null}
+          </span>
+        ) : null}
+        {n.kind === "security_case" && n.acknowledgedAt ? (
+          <span>Acknowledged</span>
+        ) : null}
+      </p>
       <div className="inbox-actions">
+        {submission ? (
+          <a className="text-button" href={privateReportHref(submission)}>
+            Open case
+          </a>
+        ) : null}
         {n.kind === "security_case" && n.acknowledgedAt !== undefined ? (
-          n.acknowledgedAt ? (
-            <p>Acknowledged</p>
-          ) : (
+          n.acknowledgedAt ? null : (
             <button
               className="button secondary-button button-small"
               type="button"
@@ -436,6 +527,50 @@ function InboxItem({
           </button>
         ) : null}
       </div>
+    </li>
+  );
+}
+
+function PrivateReportStatus({ submission }: { submission: Submission }) {
+  return (
+    <div className="private-report-status">
+      {submission.intake ? (
+        <p className="inbox-meta">
+          Slop receipt ·{" "}
+          <time dateTime={submission.intake.receivedAt}>
+            {formatDateTime(submission.intake.receivedAt)}
+          </time>
+        </p>
+      ) : null}
+      <p className="inbox-detail">{submissionStatus(submission)}</p>
+      {submission.intake ? (
+        <span className="inbox-meta">
+          {submission.state === "draft"
+            ? "GitHub delivery optional · not sent"
+            : githubSubmissionStatus(submission)}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function PrivateReportItem({ submission }: { submission: Submission }) {
+  return (
+    <li className="inbox-item" aria-labelledby={`submission-${submission.id}`}>
+      <div className="inbox-item-heading">
+        <ShieldCheck size={20} aria-hidden="true" />
+        <a
+          id={`submission-${submission.id}`}
+          className="inbox-title"
+          href={privateReportHref(submission)}
+        >
+          Private report · {submission.projectId}
+        </a>
+      </div>
+      <PrivateReportStatus submission={submission} />
+      <a className="text-button" href={privateReportHref(submission)}>
+        Open case
+      </a>
     </li>
   );
 }
