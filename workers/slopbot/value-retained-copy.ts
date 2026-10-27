@@ -7,6 +7,7 @@ import type { FileChange, ValueEvidence } from "./value-evidence";
 import { retainedManifestIdentity } from "./value-manifest-identity";
 import {
   hasCompleteValuePatch,
+  valueAdditionCount,
   valueDeletionCount,
   valuePatch,
 } from "./value-patch";
@@ -47,7 +48,7 @@ function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
         file.filename,
         file.previous_filename ?? null,
         file.status,
-        file.additions,
+        valueAdditionCount(file),
         valueDeletionCount(file),
         valuePatch(file),
       ])
@@ -167,7 +168,7 @@ export function retainedEditIdentity(file: FileChange): string | null {
     !hasCompleteValuePatch(file) ||
     file.previous_filename !== undefined ||
     !["added", "modified", "removed"].includes(file.status) ||
-    file.additions + valueDeletionCount(file) === 0
+    valueAdditionCount(file) + valueDeletionCount(file) === 0
   )
     return null;
   return JSON.stringify([

@@ -1,5 +1,25 @@
 import type { EvidenceClient, FileChange } from "./value-evidence";
 
+function addedLines(file: FileChange): string[] | null {
+  if (
+    file.status !== "added" ||
+    file.previous_filename !== undefined ||
+    file.additions !== 0 ||
+    file.deletions !== 0 ||
+    file.patch !== undefined ||
+    !file.addedComparison
+  )
+    return null;
+  const text = file.addedComparison.after.text;
+  const lines = text === "" ? [] : text.split("\n");
+  if (text.endsWith("\n")) lines.pop();
+  return lines;
+}
+
+export function valueAdditionCount(file: FileChange): number {
+  return addedLines(file)?.length ?? file.additions;
+}
+
 /** Derived deletion evidence does not overwrite GitHub's reported counts or patch. */
 function removedLines(file: FileChange): string[] | null {
   if (
@@ -18,6 +38,17 @@ export function valueDeletionCount(file: FileChange): number {
   return removedLines(file)?.length ?? file.deletions;
 }
 export function valuePatch(file: FileChange): string | undefined {
+  const additions = addedLines(file);
+  if (additions !== null) {
+    if (additions.length === 0) return "";
+    return (
+      `@@ -0,0 +1${additions.length === 1 ? "" : `,${additions.length}`} @@\n` +
+      additions.map((line) => `+${line}`).join("\n") +
+      (file.addedComparison?.after.text.endsWith("\n")
+        ? ""
+        : "\n\\ No newline at end of file")
+    );
+  }
   const lines = removedLines(file);
   if (lines === null) return file.patch;
   if (lines.length === 0) return "";
@@ -35,7 +66,8 @@ export function hasCompleteValuePatch(file: FileChange): boolean {
   const lines = patch?.split("\n") ?? [];
   return (
     patch !== undefined &&
-    lines.filter((line) => line.startsWith("+")).length === file.additions &&
+    lines.filter((line) => line.startsWith("+")).length ===
+      valueAdditionCount(file) &&
     lines.filter((line) => line.startsWith("-")).length ===
       valueDeletionCount(file)
   );

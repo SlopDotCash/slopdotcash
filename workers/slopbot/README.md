@@ -1359,6 +1359,15 @@ a deletion-only comparison. Commit totals must still reconcile. Existing blob
 and tree limits apply; exceeding them leaves an explicit evidence gap. This
 proof supplies review material, not a value tier or payment approval.
 
+The same boundary applies when GitHub omits an added text file's patch and
+reports zero additions. `addedComparison` retains the complete text and blob
+hash, bound to the base and accepted commits. Complete verified trees must
+prove the path absent in the base and present as a regular file at the accepted
+commit. The original `patch` and `additions` stay unchanged; matching and commit
+reconciliation use the derived added lines. A missing or truncated tree,
+non-regular file, corrupt blob, binary content or unreconciled commit total
+keeps the source held. Existing blob and tree limits remain in force.
+
 ### Escalated appeal notices
 
 Escalation writes one moderator Inbox notice in the same D1 transaction as

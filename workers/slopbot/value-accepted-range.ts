@@ -2,6 +2,7 @@ import { valueBlobReader } from "./value-blob";
 import type { EvidenceClient, FileChange } from "./value-evidence";
 import {
   hasCompleteValuePatch,
+  valueAdditionCount,
   valueDeletionCount,
   valuePatch,
 } from "./value-patch";
@@ -62,7 +63,7 @@ export async function collectAcceptedValueRange(
     )
       return null;
     overlappingDependency ||=
-      accepted.additions !== submitted.additions ||
+      valueAdditionCount(accepted) !== valueAdditionCount(submitted) ||
       valueDeletionCount(accepted) !== valueDeletionCount(submitted) ||
       valuePatch(accepted) !== valuePatch(submitted);
   }
