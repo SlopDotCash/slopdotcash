@@ -1,6 +1,7 @@
 /** NOT-01 complete preference -> source notification -> private Worker delivery path. */
 import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
+import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   type ActivityMailDependencies,
@@ -411,4 +412,98 @@ test("scheduled drains finish activity delivery and report a failed security que
   } finally {
     h.sqlite.close();
   }
+});
+
+test("project notices recheck the current steward before activity mail", async () => {
+  const h = setup();
+  const current = await h.call("GET");
+  expect(
+    (
+      await h.call("POST", {
+        enabled: true,
+        destinationVersion: current.body.destinationVersion,
+      })
+    ).status,
+  ).toBe(200);
+  // A self-service project listed by account 303, with account 101 as its
+  // GitHub steward.
+  const at = h.now().toISOString();
+  const manifest = (steward: string) => {
+    const value = applicationManifest(
+      "steward-change",
+      "example/steward-change",
+    );
+    value.steward = {
+      ...(value.steward as Record<string, unknown>),
+      kind: "user",
+      github: {
+        actorId: steward,
+        nodeId: `U_${steward}`,
+        login: `user${steward}`,
+        type: "User",
+        profileUrl: `https://github.com/user${steward}`,
+      },
+    };
+    return JSON.stringify(value);
+  };
+  h.sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES ('steward-change',1,?,?,'Fixture','303','lister',?)",
+    )
+    .run(manifest("101"), "a".repeat(64), at);
+  h.sqlite
+    .query(
+      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES ('steward-change','paused',1,?,?,?,?)",
+    )
+    .run(manifest("101"), "a".repeat(64), at, at);
+  const notice = (key: string, kind: string, path: string) =>
+    h.sqlite
+      .query(
+        "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES (?,'101',?,'steward-change',?,?,?)",
+      )
+      .run(key, kind, path, at, at);
+  // While account 101 is the steward, its payout exception is mailed.
+  notice(
+    "payout-exception:steward-change:1",
+    "payout_exception",
+    "/projects/steward-change",
+  );
+  await dispatchActivityMail(h.mail);
+  expect(h.sent).toHaveLength(1);
+  // An underfunded payout exception (as notifyMonthlyUnderfunded writes it)
+  // and a project revision notice are queued for steward 101.
+  notice(
+    "monthly-underfunded:steward-change:2026-11",
+    "payout_exception",
+    "/projects/steward-change/funding",
+  );
+  notice(
+    "project-revision:steward-change:2",
+    "project_revision",
+    "/projects/steward-change",
+  );
+  // Before the send, revision 2 makes account 202 the steward.
+  h.sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES ('steward-change',2,?,?,'Steward change','303','lister',?)",
+    )
+    .run(manifest("202"), "b".repeat(64), at);
+  h.sqlite
+    .query(
+      "UPDATE projects SET revision=2, manifest=?, manifest_sha256=? WHERE id='steward-change'",
+    )
+    .run(manifest("202"), "b".repeat(64));
+  await dispatchActivityMail(h.mail);
+  expect(h.sent).toHaveLength(1);
+  const states = Object.fromEntries(
+    (h.rows() as unknown as { event_key: string; state: string }[]).map(
+      (row) => [row.event_key, row.state],
+    ),
+  );
+  expect(states).toEqual({
+    "payout-exception:steward-change:1": "provider-accepted",
+    "monthly-underfunded:steward-change:2026-11": "suppressed",
+    "project-revision:steward-change:2": "suppressed",
+  });
+  h.sqlite.close();
 });
