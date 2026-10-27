@@ -2770,11 +2770,21 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       path: test.info().outputPath("slop-report-before.png"),
       fullPage: true,
     });
-    const created = page.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        new URL(response.url()).pathname === "/api/v1/security-submissions",
-    );
+    const attempts: unknown[] = [];
+    let interrupted = false;
+    await page.route("**/api/v1/security-submissions", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      attempts.push(route.request().postDataJSON());
+      if (!interrupted) {
+        interrupted = true;
+        // Persist the real report, then lose only its response.
+        await route.fetch();
+        await route.abort("failed");
+      } else await route.continue();
+    });
     await page
       .getByRole("button", { name: "Review report", exact: true })
       .click();
@@ -2784,10 +2794,25 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await expect(page.locator(".report-preview")).toHaveText(description);
     await page
       .getByRole("button", { name: "Submit private report", exact: true })
-      .focus();
-    await page.keyboard.press("Enter");
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Retry same report" }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit report" })).toHaveCount(
+      0,
+    );
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.reload({ waitUntil: "networkidle" });
+    const created = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/v1/security-submissions",
+    );
+    await page.getByRole("button", { name: "Retry same report" }).click();
     const response = await created;
-    expect(response.status()).toBe(201);
+    expect(response.status()).toBe(200);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toEqual(attempts[0]);
     const payload = response.request().postDataJSON();
     await expect(page).toHaveURL(
       /\/inbox\?view=reports&submission=ss_[A-Za-z0-9_-]+$/u,
