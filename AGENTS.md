@@ -198,10 +198,11 @@ future executable changes. Later projects require one successful admission scan 
 repository. Routine commits, dependencies, Markdown, skill and presentation
 changes keep that admission; do not claim the later content was scanned. Keep successful bounded admission-scan evidence permanently, including original evidence used by a reused result (owner decision, 27 October 2026). Other scanner cases keep their existing retention rules.
 Keep the original complete assessment and retained evidence. Another repository
-cannot inherit it. Record the existing-project exemption explicitly, never as a
-passed scan; explicit security investigations, flags, pauses, confirmed-malicious
-bans and fresh-scan reinstatement requirements still apply (owner decision,
-27 October 2026, PRD section 8).
+cannot inherit a nonexempt admission. Explicit security investigations control
+nonexempt admission (owner decision, 27 October 2026, PRD section 8). Record the
+existing-project exemption explicitly, never as a passed scan; its project-ID
+scope is unchanged. Flags, pauses, confirmed-malicious bans and fresh-scan
+reinstatement requirements still apply.
 Funding is optional and has a separate readiness state. Owners publish immutable
 revisions; admins handle restrictions and disputes, not routine approval.
 Two distinct contributor flags pause the project. A clean fresh scan reinstates
