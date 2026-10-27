@@ -7,10 +7,10 @@ results separately on the release issue.
 
 ## Ownership and first response
 
-Before launch, the owner must record a primary responder, a backup responder,
-their private contact routes, acknowledgement and escalation targets, and a
-successful test alert. These assignments and targets are **not yet recorded**.
-The moderator identities in the PRD are not an on-call assignment.
+Owner assignment, 26 October 2026: **lalalune is the primary responder** and
+**drew-dot-com is the backup responder**. Private contact routes and a
+successful test alert still need to be verified. Acknowledgement and escalation
+targets are not set; the owner is reviewing whether those deadlines are needed.
 
 The responder should:
 
@@ -44,7 +44,7 @@ transaction approval; this document grants neither.
 | Referral poster or root is compromised                           | Stop new posting, then use the owner-approved contract incident sequence: pause the distributor, rotate the poster, void the affected root, unpause only after verification. The Worker key cannot perform these owner actions. Retain uncertain posting attempts. Keep the program off until its independent watcher and activation requirements are satisfied.                                                                                                                                                    | [Referral accrual](../workers/referral-accrual/README.md); [distributor review](security/referral-distributor-ai-review-2026-10-25.md)                                                          |
 | Scanner is producing invalid results or leaking evidence         | Disable `VETTING_CONTROLLER_SCHEDULE` and `VETTING_CONTROLLER_RELEASE` to block later scheduled dispatch and scan admission. Inspect already-running Actions separately; changing a variable does not cancel them. Preserve assessments, signed publication state and private evidence. Do not mark a failed or incomplete scan clean or silently reinstate a project.                                                                                                                                              | [Scanner](../workers/vetting/README.md); [controller workflow](../.github/workflows/vetting-controller.yml)                                                                                     |
 | Backup or retention fails, or deletion cannot be justified       | Keep raw deletion disabled with `EVIDENCE_RETENTION_MODE = "off"` through the reviewed release. Preserve the active cycle, source bytes, private page receipts and failure queue. A missing daily completion receipt is a failed backup. Restore to an isolated destination and verify bytes before any production recovery.                                                                                                                                                                                        | [Backup and recovery](../workers/vetting-backup/README.md)                                                                                                                                      |
-| Automatic Slopbot closure is incorrect                           | Keep or release `SLOPBOT_CLOSURE_ENABLED = "false"`. This controls automatic closure, not all review or assessment work. Preserve the verdict, consent and action evidence; use the existing appeal and maintainer reopening path. Do not reverse a ban or funded award as a workaround.                                                                                                                                                                                                                            | [Slopbot](../workers/slopbot/README.md)                                                                                                                |
+| Automatic Slopbot closure is incorrect                           | Keep or release `SLOPBOT_CLOSURE_ENABLED = "false"`. This controls automatic closure, not all review or assessment work. Preserve the verdict, consent and action evidence; use the existing appeal and maintainer reopening path. Do not reverse a ban or funded award as a workaround.                                                                                                                                                                                                                            | [Slopbot](../workers/slopbot/README.md)                                                                                                                                                         |
 | Private-report submission is unavailable or unsafe               | Release `SLOP_PRIVATE_INTAKE_MODE = "off"` to close the automatic submission routes. Preserve drafts and uncertain submissions. Reconcile the original report reference against authorized GitHub advisory evidence before a resend; do not create a replacement report solely because the response was lost.                                                                                                                                                                                                       | [Private intake](../backend/security/README.md)                                                                                                                                                 |
 
 Already signed transactions may still finalize after containment. Funded awards
@@ -75,8 +75,8 @@ does not authorize other cancellations.
 
 ## Remaining operational acceptance
 
-This runbook does not supply the missing primary/backup assignments, alert
-delivery receipt, response targets, production D1 restore drill, or real scanner
-evidence recovery. Track those separately from source completion. The live
+This runbook records the primary/backup assignment but does not supply an alert
+delivery receipt, response-target decision, production D1 restore drill, or real
+scanner evidence recovery. Track those separately from source completion. The live
 network qualification and service activation gates remain in the PRD and
 [mainnet runbook](../contracts/DEPLOY-MAINNET.md).
