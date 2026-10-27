@@ -147,16 +147,18 @@ export function PayoutAmount({
       {symbol ? (
         <span className="payout-unit">{symbol}</span>
       ) : (
-        <span className="payout-unit" title={`Token ${address}`}>
+        <span className="payout-unit payout-token">
           <Coins aria-hidden="true" size={16} />
-          <span className="visually-hidden">token {address}</span>
+          <span>
+            Token <code>{address}</code>
+          </span>
         </span>
       )}
     </span>
   );
 }
 
-/** The net amount of a payout, with its gross award and fee in the tooltip. */
+/** The net amount of a payout, with its gross award and fee visible on every input device. */
 export function NetAmount({
   payout,
 }: {
@@ -171,17 +173,22 @@ export function NetAmount({
   >;
 }) {
   return (
-    <PayoutAmount
-      base={payout.netBase}
-      decimals={payout.assetDecimals}
-      symbol={knownAssetSymbol(
-        payout.network,
-        payout.assetAddress,
-        payout.assetDecimals,
-      )}
-      address={payout.assetAddress}
-      title={`Gross ${formatAssetAmount(payout.grossBase, payout)} · fee ${formatAssetAmount(payout.feeBase, payout)}`}
-    />
+    <span className="payout-amount">
+      <PayoutAmount
+        base={payout.netBase}
+        decimals={payout.assetDecimals}
+        symbol={knownAssetSymbol(
+          payout.network,
+          payout.assetAddress,
+          payout.assetDecimals,
+        )}
+        address={payout.assetAddress}
+      />
+      <small>
+        Gross {formatAssetAmount(payout.grossBase, payout)} · fee{" "}
+        {formatAssetAmount(payout.feeBase, payout)}
+      </small>
+    </span>
   );
 }
 

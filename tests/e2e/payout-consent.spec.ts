@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { privateKeyToAccount } from "viem/accounts";
 import { verifyEvmBindingSignature } from "../../backend/payments/possession";
 import { evmBindingTypedData } from "../../contracts/evm/adapter";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 const recipient = privateKeyToAccount(`0x${"0".repeat(63)}1`);
@@ -134,19 +135,35 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
   page,
 }, info) => {
   const authorized = await setup(page);
+  await expect(
+    page.getByText("Gross 1 USDC · fee 0.02 USDC", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Authorize payout wallet" }).click();
   const review = page.getByRole("dialog", {
     name: "Authorize payout",
   });
-  await expect(review.getByTitle(vault)).toBeVisible();
-  await expect(review.getByTitle(recipient.address)).toBeVisible();
+  await expect(review.getByText(vault, { exact: true })).toBeVisible();
+  await expect(
+    review.getByText(recipient.address, { exact: true }),
+  ).toBeVisible();
   await expect(review).toContainText("Base");
   await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
+  const restoreText = await enlargeText(review);
+  await expect(review.getByText(vault, { exact: true })).toBeVisible();
+  await expect(
+    review.getByText(recipient.address, { exact: true }),
+  ).toBeVisible();
+  expect(
+    await review.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("payout-consent-review.png"),
     fullPage: true,
   });
+  await restoreText();
   await expect(
     review.getByRole("heading", { name: "Authorize payout" }),
   ).toBeFocused();

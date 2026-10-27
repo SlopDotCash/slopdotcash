@@ -16,7 +16,7 @@ import {
 } from "./lib/payout-consent";
 import { apiRequest } from "./lib/project-api";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
-import { sameWalletAddress, shortAddress } from "./lib/wallets";
+import { sameWalletAddress } from "./lib/wallets";
 
 async function request(path: string, body: unknown) {
   const response = await apiRequest(`payments/wallets/${path}`, {
@@ -252,9 +252,7 @@ export function PayoutConsent({
                 Vault
               </dt>
               <dd>
-                <code className="wallet-address" title={payment.vault}>
-                  {shortAddress(payment.vault)}
-                </code>
+                <code className="wallet-address">{payment.vault}</code>
               </dd>
             </dl>
             <ArrowDown className="consent-arrow" aria-hidden="true" size={18} />
@@ -264,9 +262,7 @@ export function PayoutConsent({
                 Your wallet
               </dt>
               <dd>
-                <code className="wallet-address" title={claim.address}>
-                  {shortAddress(claim.address)}
-                </code>
+                <code className="wallet-address">{claim.address}</code>
               </dd>
             </dl>
           </div>
