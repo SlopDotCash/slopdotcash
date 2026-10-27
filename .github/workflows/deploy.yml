@@ -884,7 +884,8 @@ jobs:
           fi
 
           # Prepare every enabled attester from the checked registry. This reads
-          # secret names only; disabled networks are neither created nor updated.
+          # secret names only. A disabled network with retained vaults updates
+          # its existing attester to stop execution; it never creates one.
           attester_dir="$RUNNER_TEMP/slop-payment-attester"
           bun workers/payment-executor/release-mainnets.mjs prepare "$attester_dir"
 
