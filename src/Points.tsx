@@ -1223,6 +1223,7 @@ export function PointsPage() {
           <legend>View</legend>
           <button
             type="button"
+            className="button secondary-button"
             aria-pressed={!peopleView}
             onClick={() => setPeopleView(false)}
           >
@@ -1230,6 +1231,7 @@ export function PointsPage() {
           </button>
           <button
             type="button"
+            className="button secondary-button"
             aria-pressed={peopleView}
             onClick={() => setPeopleView(true)}
           >
