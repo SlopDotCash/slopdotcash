@@ -10,6 +10,7 @@ import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
 import {
   appendPointAwards,
   applyPointsSnapshot,
+  latestPoints,
   type PointsJournal,
   pointKey,
   pointRevisionId,
@@ -22,7 +23,7 @@ import {
 } from "../tests/penalty-score-fixture";
 import { MIGRATIONS, sqliteD1 } from "../tests/sqlite-d1";
 import { sha256Hex } from "../workers/identity/crypto";
-import { pointsSql } from "./generate-points";
+import { applyRetainedHistoryBatch, pointsSql } from "./generate-points";
 
 afterEach(() => setSystemTime());
 
@@ -193,6 +194,98 @@ test("journal debit corrections preserve the checkpoint, other months, projects 
     expect(
       api.db.query("SELECT COUNT(*) AS n FROM points_revisions").get(),
     ).toEqual({ n: journal.revisions.length });
+  } finally {
+    api.close();
+  }
+});
+
+test("evaluated awards retired by the registry move keep their Points after the project returns", async () => {
+  const history = checkpoint();
+  const prefix = { ...history, revisions: history.revisions.slice(0, 3) };
+  // The fixture registry lists eliza, as production does again since 19 October.
+  const award = (sourceId: string, review: number, amount: number) => ({
+    key: pointKey(
+      "eliza",
+      PENALIZED_AUTHOR.id,
+      "evaluated-contribution",
+      sourceId,
+    ),
+    actor: { id: PENALIZED_AUTHOR.id, login: PENALIZED_AUTHOR.login },
+    projectId: "eliza",
+    category: "evaluated-contribution" as const,
+    amount,
+    occurredAt: "2026-08-21T06:52:26.000Z",
+    sourceId,
+    sourceUrl: `https://github.com/elizaOS/eliza/pull/23364#pullrequestreview-${review}`,
+    workUnitId: `wu_eliza_${sourceId.toLowerCase()}`,
+    provisional: false,
+  });
+  const retired = award("PRR_retired", 4990521102, 240);
+  const current = award("PRR_current", 5990521102, 80);
+  const amountOf = (journal: PointsJournal, key: string) =>
+    latestPoints(journal).get(key)?.award.amount;
+  // The retained batch recorded this award before the move retired its manifest.
+  const beforeMove = appendPointAwards(
+    prefix,
+    [retired],
+    "a".repeat(64),
+    "slop-score-v2",
+    "2026-09-26T16:43:16.991Z",
+  );
+  // A later manifest, then a run in which no file supplies either award.
+  const run = applyRetainedHistoryBatch(
+    appendPointAwards(
+      beforeMove,
+      [current],
+      "b".repeat(64),
+      "slop-score-v2",
+      "2026-10-26T00:00:00.000Z",
+    ),
+    [],
+    "c".repeat(64),
+    "2026-10-27T00:00:00.000Z",
+  );
+  expect(amountOf(run, retired.key)).toBe(240);
+  expect(amountOf(run, current.key)).toBe(0);
+  // Production already recorded the zero on 20 October: one successor restores it.
+  const zeroed = appendPointAwards(
+    beforeMove,
+    [{ ...retired, amount: 0 }],
+    "d".repeat(64),
+    "slop-score-v2",
+    "2026-10-20T05:30:25.870Z",
+  );
+  const restored = applyRetainedHistoryBatch(
+    zeroed,
+    [],
+    "e".repeat(64),
+    "2026-10-27T00:00:00.000Z",
+  );
+  expect(restored.revisions.slice(0, zeroed.revisions.length)).toEqual(
+    zeroed.revisions,
+  );
+  expect(restored.revisions.length).toBe(zeroed.revisions.length + 1);
+  expect(restored.revisions.at(-1)).toMatchObject({
+    previous: zeroed.revisions.at(-1)?.id,
+    award: retired,
+  });
+  expect(
+    applyRetainedHistoryBatch(
+      restored,
+      [],
+      "e".repeat(64),
+      "2026-10-27T00:00:00.000Z",
+    ).revisions,
+  ).toEqual(restored.revisions);
+  // The restored successor imports onto the published zero without a branch.
+  const api = startPointsApi();
+  try {
+    api.apply(zeroed);
+    api.apply(restored);
+    const response = await api.read("/journal");
+    const page = await response.json();
+    expect(page.total).toBe(restored.revisions.length);
+    expect(page.revisions.at(-1).award.amount).toBe(240);
   } finally {
     api.close();
   }

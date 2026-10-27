@@ -241,8 +241,37 @@ export function retainedHistoryCorrections(
 }
 
 /**
+ * The D1 registry move (#857, merged at this instant) removed every
+ * pre-registry evaluator manifest from evaluations/. It retired those files;
+ * it did not revoke their awards. A project registered again under its old
+ * id has no manifest to supply them, so the removal correction above would
+ * zero each one. Production did so for all eleven eliza and delta-star awards
+ * on 20 October 2026, the first run after both returned to the registry.
+ */
+export const PRE_REGISTRY_EVALUATIONS_RETIRED_AT = "2026-10-19T01:22:36.000Z";
+
+/**
+ * Each evaluated award as it stood when its manifest was retired. The batch
+ * carries these as current retained awards: a missing manifest cannot zero
+ * them, and an award already zeroed after retirement gets one successor with
+ * its retained amount. An award first recorded later comes from a current
+ * manifest and follows the ordinary removal correction.
+ */
+export function retiredEvaluatorAwards(journal: PointsJournal): PointAward[] {
+  const retired = new Map<string, PointAward>();
+  for (const revision of journal.revisions)
+    if (
+      revision.award.category === "evaluated-contribution" &&
+      revision.recordedAt < PRE_REGISTRY_EVALUATIONS_RETIRED_AT
+    )
+      retired.set(revision.award.key, revision.award);
+  return [...retired.values()];
+}
+
+/**
  * Applies the retained history batch in full: the supplied awards, the
- * removal corrections they imply, and explicit source provenance.
+ * retired evaluator awards that no current file supplies, the removal
+ * corrections they imply, and explicit source provenance.
  * generatePoints applies snapshots before this batch, and a snapshot
  * ledger can contain the identical retained award (the leaderboard
  * generator injects the retained events into its snapshots). In that
@@ -263,16 +292,23 @@ export function applyRetainedHistoryBatch(
   sourceDigest: string,
   recordedAt: string,
 ): PointsJournal {
+  const supplied = new Set(awards.map((award) => award.key));
+  const retained = [
+    ...awards,
+    ...retiredEvaluatorAwards(journal).filter(
+      (award) => !supplied.has(award.key),
+    ),
+  ];
   let result = appendPointAwards(
     journal,
-    [...awards, ...retainedHistoryCorrections(journal, awards)],
+    [...retained, ...retainedHistoryCorrections(journal, retained)],
     sourceDigest,
     "slop-score-v2",
     recordedAt,
   );
   const coverageDigests = new Set(result.coverage.map((c) => c.digest));
   const latest = latestPoints(result);
-  const confirmations = [...awards]
+  const confirmations = [...retained]
     .sort((a, b) => a.key.localeCompare(b.key))
     .filter((award) => {
       const revision = latest.get(award.key);
