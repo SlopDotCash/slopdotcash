@@ -921,9 +921,9 @@ export function AccountPage() {
           <InboxEmail />
         </DetailsSection>
       ) : null}
-      {accountSession.status === "signed-in" ? <AccountAppeals /> : null}
       <section id="security" className="points-panel">
         <h2>{me ? "Security" : "Recovery"}</h2>
+        {accountSession.status === "signed-in" ? <AccountAppeals /> : null}
         {me ? <AccountSessions /> : null}
         <div id="recovery">
           {closedNotice ? <p role="status">{closedNotice}</p> : null}
