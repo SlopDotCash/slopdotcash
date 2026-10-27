@@ -120,6 +120,7 @@ export async function hydrateValueMergeSource(
     const mergeResolutions = await collectVerifiedMergeResolutions(
       input,
       directory,
+      recipe.profile,
     );
     return {
       ...source,
