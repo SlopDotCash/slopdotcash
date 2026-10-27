@@ -32,8 +32,6 @@ import {
 import {
   inspectMintAccount,
   inspectTokenAccount,
-  TOKEN_2022_PROGRAM,
-  CLASSIC_TOKEN_PROGRAM as TOKEN_PROGRAM,
 } from "../../contracts/solana/token";
 import {
   ata,
@@ -43,6 +41,7 @@ import {
   message as legacyMessage,
 } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { readBoundedJson } from "../../src/lib/browser-json";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import type { Limits, NetworkConfig } from "./config";
 import type {
@@ -58,10 +57,19 @@ import type {
 } from "./core";
 import type { NativeGasJournal } from "./native-gas";
 import {
+  associatedAccountCreations,
   resolveSolanaAccounts,
   type SolanaAccountProof,
   verifySolanaAccountProof,
 } from "./solana-accounts";
+import {
+  assertSolanaRouteSimulation,
+  reviewSolanaRouteAccounts,
+} from "./solana-route-accounts";
+import {
+  finalizedRouteCredit,
+  type RouteReceipt,
+} from "./solana-route-receipt";
 
 export const JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111";
@@ -289,6 +297,20 @@ interface JupiterQuote {
   routePlan?: { swapInfo?: { label?: string } }[];
 }
 
+function signedMinimumOutput(quote: JupiterQuote): bigint {
+  // The API can round its display threshold up by one base unit. /swap
+  // encodes quoted output and slippage, not that threshold. Retain only
+  // the conservative floor we can bind to those signed instruction fields.
+  const minimum =
+    (BigInt(quote.outAmount) * BigInt(10000 - quote.slippageBps)) / 10000n;
+  const advertised = BigInt(quote.otherAmountThreshold);
+  if (advertised < minimum || advertised > minimum + 1n)
+    throw new Error(
+      "Jupiter threshold differs from its signed slippage bounds",
+    );
+  return minimum;
+}
+
 function nativeInteger(value: unknown): bigint {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
     throw new Error(
@@ -373,7 +395,9 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     });
-    const body = (await response.json()) as {
+    const body = (await (method === "getMultipleAccounts"
+      ? readBoundedJson(response, 8 * 1024 * 1024, "Solana route accounts")
+      : response.json())) as {
       result?: T;
       error?: { message?: string };
     };
@@ -415,47 +439,10 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     return body as T;
   }
 
-  /** Only the signer's canonical ATA can receive a native rent deposit. */
-  function rentAccounts(
+  const rentAccounts = (
     parsed: ParsedTransaction,
     resolved = parsed.staticKeys,
-  ) {
-    if (
-      parsed.signatureCount !== 1 ||
-      parsed.requiredSignatures !== 1 ||
-      parsed.readonlySigned !== 0 ||
-      resolved[0] !== wallet
-    )
-      throw new Error("Native fee payer must be the sole reviewed signer");
-    const accounts = new Map<
-      number,
-      { index: number; mint: string; tokenProgram: string; size: number }
-    >();
-    for (const ix of parsed.instructions) {
-      if (ix.program !== ASSOCIATED_TOKEN) continue;
-      const keys = ix.accounts.map((i) => resolved[i]);
-      if (
-        keys.length < 6 ||
-        keys.length > 7 ||
-        keys[0] !== wallet ||
-        keys[2] !== wallet ||
-        keys[4] !== "11111111111111111111111111111111" ||
-        (keys[5] !== TOKEN_PROGRAM && keys[5] !== TOKEN_2022_PROGRAM) ||
-        (keys.length === 7 &&
-          keys[6] !== "SysvarRent111111111111111111111111111111111") ||
-        !(ix.data.length === 0 || (ix.data.length === 1 && ix.data[0] <= 1)) ||
-        keys[1] !== ata(keys[3], wallet, keys[5])
-      )
-        throw new Error("Unbounded or unsupported associated-account creation");
-      accounts.set(ix.accounts[1], {
-        index: ix.accounts[1],
-        mint: keys[3],
-        tokenProgram: keys[5],
-        size: keys[5] === TOKEN_2022_PROGRAM ? 170 : 165,
-      });
-    }
-    return [...accounts.values()];
-  }
+  ) => associatedAccountCreations(parsed, resolved, wallet);
 
   async function admittedMint(mint: string) {
     const result = await rpc<{ value: unknown }>("getAccountInfo", [
@@ -469,6 +456,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     raw: Uint8Array,
     valueMicro: bigint,
     assertLease?: () => Promise<void>,
+    reviewedProof?: SolanaAccountProof,
   ) {
     const journal = options.nativeGas;
     if (!journal || !config.nativeBudget)
@@ -476,7 +464,13 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         "Solana signing needs native limits and the durable budget journal",
       );
     const parsed = parseTransaction(raw);
-    const accountProof = await resolveSolanaAccounts(raw, parsed, rpc);
+    const accountProof =
+      reviewedProof ?? (await resolveSolanaAccounts(raw, parsed, rpc));
+    verifySolanaAccountProof(raw, parsed, accountProof);
+    if (parsed.programs.includes(JUPITER_PROGRAM) && !accountProof.route)
+      throw new Error(
+        "Jupiter signing lacks a complete retained account review",
+      );
     const accounts = rentAccounts(parsed, accountProof.keys);
     const message = raw.slice(parsed.messageOffset);
     const fee = await rpc<{ context: { slot: number }; value: number | null }>(
@@ -761,7 +755,8 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         slippageBps: String(slippageBps),
         swapMode: "ExactIn",
         restrictIntermediateTokens: "true",
-        asLegacyTransaction: "true",
+        asLegacyTransaction: "false",
+        instructionVersion: "V2",
       })}`,
     );
     if (
@@ -769,6 +764,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       quote.outputMint !== usdc ||
       quote.inAmount !== amount.toString() ||
       quote.swapMode !== "ExactIn" ||
+      quote.slippageBps !== slippageBps ||
       quote.platformFee !== null ||
       !/^\d+$/u.test(quote.outAmount) ||
       !/^\d+$/u.test(quote.otherAmountThreshold)
@@ -1143,7 +1139,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         route: "jupiter",
         amountIn: amount,
         amountOut,
-        minAmountOut: BigInt(quote.otherAmountThreshold),
+        minAmountOut: signedMinimumOutput(quote),
         priceImpactBps: decimalBps(quote.priceImpactPct),
         gasCostMicro: limits.solanaFeeMicro,
         summary: {
@@ -1166,14 +1162,14 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     ): Promise<PreparedSend> {
       if (!seed)
         throw new Error("Signing is disabled without a fee-wallet key");
-      await admittedMint(token);
-      await admittedMint(usdc);
+      const inputMint = await admittedMint(token);
+      const outputMint = await admittedMint(usdc);
       const fresh = await fetchQuote(
         token,
         quote.amountIn,
         Math.max(1, Math.floor(limits.maxSlippageBps / 2)),
       );
-      const minAmountOut = BigInt(fresh.otherAmountThreshold);
+      const minAmountOut = signedMinimumOutput(fresh);
       if (minAmountOut < quote.minAmountOut)
         throw new Error("price moved below the recorded minimum");
       const swap = await jupiter<{
@@ -1185,7 +1181,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           quoteResponse: fresh,
           userPublicKey: wallet,
           wrapAndUnwrapSol: false,
-          asLegacyTransaction: true,
+          asLegacyTransaction: false,
           dynamicComputeUnitLimit: true,
           prioritizationFeeLamports: {
             priorityLevelWithMaxLamports: {
@@ -1230,18 +1226,66 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       )
         throw new Error("Jupiter returned an invalid block height");
 
-      if (
-        (await simulatedCredit(solanaBase64(raw), ata(usdc, wallet), "swap")) <
-        minAmountOut
-      )
-        throw new Error(
-          "swap simulation returned less than the signed minimum",
-        );
-
+      const accountProof = await resolveSolanaAccounts(raw, parsed, rpc);
+      const expected = {
+        program: JUPITER_PROGRAM,
+        wallet,
+        inputMint: token,
+        inputProgram: inputMint.tokenProgram,
+        outputMint: usdc,
+        outputProgram: outputMint.tokenProgram,
+        amountIn: quote.amountIn,
+        quotedOut: BigInt(fresh.outAmount),
+        minimumOut: minAmountOut,
+        slippageBps: fresh.slippageBps,
+      };
+      const review = await reviewSolanaRouteAccounts(
+        rpc,
+        raw,
+        parsed,
+        accountProof,
+        expected,
+      );
+      const simulation = await rpc<{
+        context: { slot: number };
+        value: { err: unknown; accounts: unknown[] | null };
+      }>("simulateTransaction", [
+        solanaBase64(raw),
+        {
+          encoding: "base64",
+          sigVerify: false,
+          replaceRecentBlockhash: false,
+          commitment: "confirmed",
+          accounts: {
+            encoding: "base64",
+            addresses: [review.source.state.address, review.destinationAddress],
+          },
+        },
+      ]);
+      if (simulation.value.err !== null || !simulation.value.accounts)
+        throw new Error("Jupiter route simulation is unavailable or failed");
+      assertSolanaRouteSimulation(
+        review,
+        simulation.context.slot,
+        simulation.value.accounts,
+      );
+      const reviewedProof: SolanaAccountProof = {
+        ...accountProof,
+        route: {
+          expectation: {
+            ...expected,
+            amountIn: expected.amountIn.toString(),
+            quotedOut: expected.quotedOut.toString(),
+            minimumOut: expected.minimumOut.toString(),
+          },
+          accounts: review.observations,
+        },
+      };
       const nativeGasId = await reserveNative(
         raw,
         quote.amountOut,
         assertLease,
+        reviewedProof,
       );
       const message = raw.slice(parsed.messageOffset);
       const signature = ed25519.sign(message, seed);
@@ -1281,6 +1325,37 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
             kind: "failed",
             reason: `${row.kind === "claim" ? "claim" : "swap"} transaction failed on chain`,
           };
+        if (row.kind !== "claim") {
+          const retained = (await options.nativeGas?.rows())?.find(
+            (entry) => entry.tx_id === row.txId,
+          );
+          const proof: SolanaAccountProof | undefined =
+            retained?.solana_account_proof
+              ? JSON.parse(retained.solana_account_proof)
+              : undefined;
+          if (proof?.route) {
+            const receipt = await rpc<RouteReceipt | null>("getTransaction", [
+              row.txId,
+              {
+                commitment: "finalized",
+                encoding: "base64",
+                maxSupportedTransactionVersion: 0,
+              },
+            ]);
+            if (!receipt) return { kind: "pending" };
+            return {
+              kind: "finalized",
+              amountOut: finalizedRouteCredit(row, proof, receipt),
+            };
+          }
+          if (
+            row.rawTx &&
+            !parseTransaction(solanaBase64Bytes(row.rawTx)).legacy
+          )
+            throw new Error(
+              "Versioned swap receipt lacks its retained route review",
+            );
+        }
         const transaction = await rpc<TransactionReceipt | null>(
           "getTransaction",
           [
@@ -1310,11 +1385,11 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       const height = await rpc<number>("getBlockHeight", [
         { commitment: "finalized" },
       ]);
-      // A finalized height past the blockhash window proves the bytes can
-      // no longer land. For a claim, an absent history entry still cannot
-      // prove that it did not already land; retain the receipt requirement.
+      // Expiry prevents future inclusion, but one provider's missing history
+      // does not prove that the bytes never landed. Journaled sends wait for
+      // the independent retained-history proof checked above.
       if (row.expiresAt !== null && height > row.expiresAt)
-        return row.kind === "claim"
+        return row.kind === "claim" || row.nativeGasId
           ? { kind: "pending" }
           : { kind: "failed", reason: "blockhash expired before inclusion" };
       if (

@@ -4,17 +4,17 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import anchor from "@coral-xyz/anchor";
 import {
+  createAssociatedTokenAccountIdempotentInstruction,
   getAccount,
   getAssociatedTokenAddressSync,
-  createAssociatedTokenAccountIdempotentInstruction,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import {
   PublicKey,
   SystemProgram,
-  Transaction,
   sendAndConfirmTransaction,
+  Transaction,
 } from "@solana/web3.js";
 import { readVaultTotals, solanaAwardId } from "../.local/adapter.mjs";
 import {
