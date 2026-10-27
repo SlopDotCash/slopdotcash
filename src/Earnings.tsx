@@ -720,6 +720,7 @@ export function EarningsPage({
                         key={`${award.projectId}/${award.period}`}
                         chain={award.chain}
                         network={award.network}
+                        projectId={award.projectId}
                         amount={<NetAmount payout={award} />}
                         note={formatCycleMonth(award.period)}
                         status={AWARD_STATUS[award.state]}
@@ -732,6 +733,7 @@ export function EarningsPage({
                         key={payment.id}
                         chain={payment.chain}
                         network={payment.network}
+                        projectId={payment.projectId}
                         amount={<NetAmount payout={payment} />}
                         status={PAYMENT_STATUS[payment.deliveryState]}
                         statusTitle={
@@ -773,6 +775,7 @@ export function EarningsPage({
                           key={`${t.network}:${t.transactionId}`}
                           chain={t.chain}
                           network={t.network}
+                          projectId={t.projectId}
                           amount={
                             <PayoutAmount
                               base={t.amountMicro}

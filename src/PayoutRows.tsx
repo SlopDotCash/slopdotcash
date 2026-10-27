@@ -74,6 +74,7 @@ export const AWARD_STATUS: Record<AccountMonthlyAward["state"], PayoutStatus> =
 export function PayoutRow({
   chain,
   network,
+  projectId,
   amount,
   note,
   status,
@@ -84,6 +85,7 @@ export function PayoutRow({
 }: {
   chain: PaymentChain;
   network: string;
+  projectId: string;
   amount: ReactNode;
   /** Muted context beside the amount, such as the award month. */
   note?: string;
@@ -102,7 +104,10 @@ export function PayoutRow({
       </span>
       <span className="payout-main">
         {amount}
-        {note ? <small>{note}</small> : null}
+        <small>
+          <a href={`/projects/${encodeURIComponent(projectId)}`}>{projectId}</a>
+          {note ? ` · ${note}` : ""}
+        </small>
       </span>
       <span className="payout-pill" data-tone={status.tone} title={statusTitle}>
         <status.icon aria-hidden="true" size={14} />
