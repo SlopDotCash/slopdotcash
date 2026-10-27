@@ -81,9 +81,11 @@ try {
       body: JSON.stringify({ schemaVersion: "1", projects: [] }),
     }),
   );
-  await page.exposeFunction("localWalletSign", (message) =>
-    signer.signMessage({ message: { raw: message } }),
-  );
+  const signedMessages = [];
+  await page.exposeFunction("localWalletSign", (message) => {
+    signedMessages.push(message);
+    return signer.signMessage({ message: { raw: message } });
+  });
   await page.addInitScript((address) => {
     window.ethereum = {
       request: async ({ method, params }) => {
@@ -98,26 +100,21 @@ try {
   await page.getByRole("heading", { name: "Your payouts" }).waitFor();
   await page.getByRole("link", { name: "Manage payout wallets" }).click();
   await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Connect Base wallet" }).waitFor();
-  await page
-    .getByRole("button", { name: "Connect Robinhood Chain wallet" })
-    .waitFor();
-  // Empty networks use direct connection buttons; detailed headings appear
-  // only once a wallet or network history exists.
+  // One EVM connection confirms a distinct claim for each supported chain.
+  await page.getByRole("button", { name: "Connect EVM wallet" }).waitFor();
   await page.getByRole("button", { name: "Connect Solana wallet" }).waitFor();
-  await page.getByRole("button", { name: "Connect Ethereum wallet" }).waitFor();
   await page.screenshot({
     path: "evidence/payout-desktop-before.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Connect Base wallet" }).focus();
+  await page.getByRole("button", { name: "Connect EVM wallet" }).focus();
   await page.keyboard.press("Enter");
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Browser wallet Detected" })
     .click();
   await page
-    .getByText("Base wallet confirmed.", { exact: false })
+    .getByText("EVM wallet confirmed.", { exact: false })
     .waitFor({ timeout: 60000 });
   await page
     .getByRole("navigation", { name: "Account sections" })
@@ -142,40 +139,32 @@ try {
     paid.payments[0].state !== "paid"
   )
     throw new Error("Wrong payment result");
-  await page.getByRole("link", { name: "Manage payout wallets" }).click();
-  // The same signer registers a separate Robinhood Chain claim from the
-  // keyboard; the Base lineage and its paid receipt stay unchanged.
-  await page
-    .getByRole("button", { name: "Connect Robinhood Chain wallet" })
-    .focus();
-  await page.keyboard.press("Enter");
-  // The picker offers the same EVM wallet for Robinhood Chain; choose it from the keyboard.
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Browser wallet Detected" })
-    .focus();
-  await page.keyboard.press("Enter");
-  await page
-    .getByText("Robinhood Chain wallet confirmed.", { exact: false })
-    .waitFor({ timeout: 60000 });
   const both = await (
     await fetch("http://127.0.0.1:18548/api/v1/payments/me")
   ).json();
   const walletOn = (chain) => both.wallets.filter((w) => w.chain === chain);
+  const evmWallets = ["base", "robinhood", "ethereum"].map((chain) => {
+    const wallets = walletOn(chain);
+    if (
+      wallets.length !== 1 ||
+      !wallets[0].authorized ||
+      wallets[0].address.toLowerCase() !== signer.address.toLowerCase()
+    )
+      throw new Error(`Missing independently confirmed ${chain} wallet`);
+    return wallets[0];
+  });
   if (
-    walletOn("base").length !== 1 ||
-    walletOn("robinhood").length !== 1 ||
-    !walletOn("robinhood")[0].authorized ||
-    walletOn("robinhood")[0].claimId === walletOn("base")[0].claimId ||
+    signedMessages.length !== 3 ||
+    new Set(signedMessages).size !== 3 ||
+    new Set(evmWallets.map((wallet) => wallet.claimId)).size !== 3 ||
     both.payments[0].state !== "paid" ||
-    both.balances.some((b) => b.chain === "robinhood")
+    both.payments[0].netBase !== "98000000" ||
+    both.payments[0].feeBase !== "2000000" ||
+    both.balances.some((b) => b.chain !== "base")
   )
-    throw new Error("Robinhood Chain wallet registration changed Base state");
-  await page
-    .getByRole("navigation", { name: "Account sections" })
-    .getByRole("link", { name: "Payouts", exact: true })
-    .click();
-  await page.getByText("Paid", { exact: true }).waitFor();
+    throw new Error(
+      "EVM confirmation did not preserve chain claims and Base payment",
+    );
   await page.screenshot({
     path: "evidence/payout-desktop-paid.png",
     fullPage: true,
