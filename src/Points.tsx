@@ -1165,6 +1165,9 @@ function StandingsCoverage({
         {countFormat.format(counts.mergedPullRequests)} merged pull requests and{" "}
         {countFormat.format(counts.closedIssues)} closed issues across{" "}
         {countFormat.format(snapshot.repositories.length)} repositories.
+        {(counts.unavailableSources ?? 0) > 0
+          ? ` GitHub reported ${countFormat.format(counts.unavailableSources ?? 0)} unavailable sources. ${countFormat.format(counts.heldWorkUnits ?? 0)} joint assessments are held while required sources are unavailable.`
+          : null}
         {month === null
           ? ` Includes ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
           : null}

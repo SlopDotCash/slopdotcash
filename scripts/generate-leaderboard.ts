@@ -47,10 +47,10 @@ import {
   type PullRequestRecord,
   type PullRequestReview,
   pullRequestTextSources,
-  repositoryIdFromUrl,
   SCORE_WINDOW_DAYS,
   type ScoreEvent,
   selectUniqueVerifiedEvidence,
+  type UnavailableSource,
   VERIFICATION_WINDOW_DAYS,
   type VerifiedEvidenceArtifact,
 } from "../src/lib/leaderboard";
@@ -212,6 +212,15 @@ export class OpenSetChangedError extends Error {}
 /** A previously enumerated node is no longer addressable; never omit it in place. */
 export class SourceNodeUnavailableError extends Error {
   override readonly name = "SourceNodeUnavailableError";
+  constructor(
+    readonly sources: UnavailableSource[],
+    options?: ErrorOptions,
+  ) {
+    super(
+      "GitHub could not resolve an enumerated source node; a fresh complete census is required",
+      options,
+    );
+  }
 }
 
 /** Retries only a concurrent mutation of evidence-bound open work. */
@@ -294,6 +303,11 @@ export interface GenerateOptions {
   evaluatedContributions?: ScoreEvent[];
   retainedReviewEvents?: ScoreEvent[];
   retainedReviewAttributions?: ModelAttribution[];
+  /** Shared only across the one complete-census retry in runGenerator. */
+  sourceRecovery?: {
+    unavailableSources: UnavailableSource[];
+    allowJointHolds: boolean;
+  };
 }
 
 export function collectEvaluatedReviewArtifactKeys(
@@ -1305,10 +1319,10 @@ function sanitizeGraphqlError(value: unknown): string {
   return "Unknown GraphQL error";
 }
 
-function hasUnavailableRequestedNode(
+function unavailableRequestedSources(
   envelope: JsonRecord,
   variables: GraphqlVariables,
-): boolean {
+): UnavailableSource[] {
   const ids = variables.ids;
   const data = envelope.data;
   if (
@@ -1319,9 +1333,9 @@ function hasUnavailableRequestedNode(
     data === null ||
     Array.isArray(data)
   )
-    return false;
+    return [];
   const nodes = (data as JsonRecord).nodes;
-  return (
+  const qualifies =
     Array.isArray(nodes) &&
     nodes.length === ids.length &&
     Array.isArray(envelope.errors) &&
@@ -1341,8 +1355,25 @@ function hasUnavailableRequestedNode(
         path[1] < ids.length &&
         nodes[path[1]] === null
       );
-    })
+    });
+  if (!qualifies) return [];
+  const indices = (envelope.errors as JsonRecord[]).map(
+    (error) => (error.path as number[])[1],
   );
+  const missing = new Set(indices);
+  if (
+    (nodes as unknown[]).some((node, index) =>
+      node === null
+        ? !missing.has(index)
+        : typeof node !== "object" ||
+          node === null ||
+          (node as JsonRecord).id !== ids[index],
+    )
+  )
+    return [];
+  return [...new Set(indices.map((index) => ids[index] as string))]
+    .sort()
+    .map((nodeId) => ({ nodeId, reason: "NOT_FOUND" }));
 }
 
 function parseRateLimit(
@@ -1724,8 +1755,10 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         `${apiLabel} HTTP ${response.status}: ${sanitizeGraphqlError(envelope.message)}`,
       );
     }
-    const unavailableNode =
-      !restPath && hasUnavailableRequestedNode(envelope, activeVariables);
+    const unavailableSources = restPath
+      ? []
+      : unavailableRequestedSources(envelope, activeVariables);
+    const unavailableNode = unavailableSources.length > 0;
     if (
       Array.isArray(envelope.errors) &&
       envelope.errors.length > 0 &&
@@ -1760,14 +1793,11 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     // Even an unavailable-node response spent GitHub budget. Retain that cost
     // before discarding the entire attempt and recollecting its source census.
     if (unavailableNode)
-      throw new SourceNodeUnavailableError(
-        "GitHub could not resolve an enumerated source node; a fresh complete census is required",
-        {
-          cause: new Error(
-            (envelope.errors as unknown[]).map(sanitizeGraphqlError).join("; "),
-          ),
-        },
-      );
+      throw new SourceNodeUnavailableError(unavailableSources, {
+        cause: new Error(
+          (envelope.errors as unknown[]).map(sanitizeGraphqlError).join("; "),
+        ),
+      });
     return data;
   }
 
@@ -3742,6 +3772,39 @@ export async function generateLeaderboardFromGitHub(
   );
   const onProgress = options.onProgress ?? (() => undefined);
   const stats = { searchSliceCount: 0 };
+  const probeUnavailableSources = async (ids: readonly string[]) => {
+    const unavailable: string[] = [];
+    for (const batch of chunks([...ids], REVIEW_DETAIL_BATCH_SIZE)) {
+      try {
+        const data = await client.execute(
+          "query LeaderboardSourceAvailability($ids:[ID!]!){nodes(ids:$ids){__typename id} rateLimit{cost limit remaining resetAt}}",
+          { ids: batch },
+        );
+        const nodes = asArray(data.nodes, "source availability.nodes");
+        if (
+          nodes.length !== batch.length ||
+          nodes.some((node, index) => {
+            const value = asRecord(node, `source availability.nodes[${index}]`);
+            return (
+              value.__typename !== "PullRequest" || value.id !== batch[index]
+            );
+          })
+        )
+          throw new Error(
+            "Joint source availability did not match the requested identities",
+          );
+      } catch (error) {
+        if (
+          !(error instanceof SourceNodeUnavailableError) ||
+          !options.sourceRecovery?.allowJointHolds
+        )
+          throw error;
+        options.sourceRecovery.unavailableSources.push(...error.sources);
+        unavailable.push(...error.sources.map((source) => source.nodeId));
+      }
+    }
+    return unavailable;
+  };
   // Select the policy before any collection; it binds every accepted source.
   const scoringPolicy = assertValueScoringPolicy(
     options.scoringPolicy ?? valueScoringPolicy(),
@@ -3858,6 +3921,40 @@ export async function generateLeaderboardFromGitHub(
       openIssues: [],
       openPullRequests: [],
     });
+  }
+
+  // A stale GitHub connection can still enumerate a now-unavailable PR.
+  // Re-probe only the identities that failed in the discarded first attempt.
+  // Account for them explicitly rather than inventing hydration or credit.
+  if (options.sourceRecovery?.allowJointHolds) {
+    const priorUnavailable = new Set(
+      options.sourceRecovery.unavailableSources.map((source) => source.nodeId),
+    );
+    const listed = mergedPullRequestOutcomes
+      .filter((source) => priorUnavailable.has(source.id))
+      .map((source) => source.id);
+    const unavailable = new Set(
+      listed.length ? await probeUnavailableSources(listed) : [],
+    );
+    for (const nodeId of unavailable)
+      options.sourceRecovery.unavailableSources.push({
+        nodeId,
+        reason: "NOT_FOUND",
+        unavailableInMergedCensus: true,
+      });
+    for (const collection of collections) {
+      collection.mergedPullRequestReferences =
+        collection.mergedPullRequestReferences.filter(
+          (source) => !unavailable.has(source.id),
+        );
+      collection.mergedPullRequestOutcomes =
+        collection.mergedPullRequestOutcomes.filter(
+          (source) => !unavailable.has(source.id),
+        );
+    }
+    for (let index = mergedPullRequestOutcomes.length - 1; index >= 0; index--)
+      if (unavailable.has(mergedPullRequestOutcomes[index].id))
+        mergedPullRequestOutcomes.splice(index, 1);
   }
 
   const hydrationCandidates = collections.flatMap((collection) =>
@@ -4074,13 +4171,7 @@ export async function generateLeaderboardFromGitHub(
           );
   let valueRestRequests = 0;
   const github = GitHubClient.forToken(options.evidenceToken ?? "");
-  const valueInputs: Pick<
-    LeaderboardInput,
-    | "valueDecisions"
-    | "jointValueDecisions"
-    | "valueActors"
-    | "valueContextPullRequests"
-  > = await loadValueInputs(
+  const { heldWorkUnits, ...valueInputs } = await loadValueInputs(
     {
       get: <T>(path: string) => {
         valueRestRequests += 1;
@@ -4098,6 +4189,8 @@ export async function generateLeaderboardFromGitHub(
         source.mergedAt ?? ("closedAt" in source ? source.closedAt : null),
       ),
     ),
+    undefined,
+    probeUnavailableSources,
   );
   const censusIds = new Set(
     [...dedupedOutcomes, ...closedUnmergedPullRequests].map(
@@ -4115,7 +4208,7 @@ export async function generateLeaderboardFromGitHub(
         );
   }
   await ensureEstimatedBudget(client, 0, 0, 0, contexts.size);
-  valueInputs.valueContextPullRequests = [];
+  const valueContextPullRequests: MergedPullRequestReviewRecord[] = [];
   for (const state of ["merged", "closed"] as const) {
     const references: NodeReference[] = [...contexts]
       .filter(([, expected]) => expected === state)
@@ -4125,7 +4218,7 @@ export async function generateLeaderboardFromGitHub(
         outcome: null,
         openVersion: null,
       }));
-    valueInputs.valueContextPullRequests.push(
+    valueContextPullRequests.push(
       ...(await hydrateReviewedMergedPullRequests(
         client,
         references,
@@ -4174,6 +4267,15 @@ export async function generateLeaderboardFromGitHub(
   }
   const fetchedAt = new Date().toISOString();
   const rateLimit = client.getRateLimit();
+  const observedUnavailable = new Map<string, UnavailableSource>();
+  for (const source of options.sourceRecovery?.unavailableSources ?? [])
+    observedUnavailable.set(source.nodeId, {
+      ...observedUnavailable.get(source.nodeId),
+      ...source,
+    });
+  const unavailableSources = [...observedUnavailable.values()].sort((a, b) =>
+    a.nodeId.localeCompare(b.nodeId),
+  );
   const source: LeaderboardSourceMetadata = {
     provider: "github-graphql",
     fetchedAt,
@@ -4185,8 +4287,15 @@ export async function generateLeaderboardFromGitHub(
     })),
     requestCount: client.getRequestCount() + valueRestRequests,
     searchSliceCount: stats.searchSliceCount,
+    unavailableSources,
+    heldWorkUnits,
     rateLimit,
     counts: {
+      unavailableSources: unavailableSources.length,
+      unavailableMergedPullRequests: unavailableSources.filter(
+        (source) => source.unavailableInMergedCensus,
+      ).length,
+      heldWorkUnits: heldWorkUnits.length,
       mergedPullRequests: dedupedOutcomes.length,
       detailedMergedPullRequests: detailEligibleMergedPullRequests.length,
       closedIssues: closedIssueCount,
@@ -4210,6 +4319,7 @@ export async function generateLeaderboardFromGitHub(
   };
   const snapshot = createLeaderboardSnapshot({
     ...valueInputs,
+    valueContextPullRequests,
     valuePolicy: scoringPolicy,
     generatedAt: fetchedAt,
     windowFrom: windowFrom.toISOString(),
@@ -4281,6 +4391,10 @@ export async function runGenerator(
   const generationOptions = {
     ...options,
     evidenceToken: options.evidenceToken ?? token,
+    sourceRecovery: {
+      unavailableSources: [] as UnavailableSource[],
+      allowJointHolds: false,
+    },
   };
   let snapshot: LeaderboardSnapshot;
   try {
@@ -4294,6 +4408,11 @@ export async function runGenerator(
       !(error instanceof SourceNodeUnavailableError)
     )
       throw error;
+    if (error instanceof SourceNodeUnavailableError)
+      generationOptions.sourceRecovery.unavailableSources.push(
+        ...error.sources,
+      );
+    generationOptions.sourceRecovery.allowJointHolds = true;
     dependencies.onCensusRetry?.();
     // Recollect every source; never reuse a partially assembled first attempt.
     // The same client retains consumed cost, request counts, reserve and reset state.

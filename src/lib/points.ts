@@ -621,10 +621,65 @@ export function applyPointsSnapshot(
   // (re-derived work unit, possibly dropped as a repeat work unit), so it
   // neither rewrites nor zeroes one the retained batch owns.
   const batchOwned = retainedBatchOwnedKeys(journal);
+  const previousPoints = latestPoints(journal);
+  const heldSources = new Set(
+    (snapshot.source.heldWorkUnits ?? []).flatMap((unit) => unit.sourceNodeIds),
+  );
+  const previousOwnRecordSources = new Set(
+    [...previousPoints.values()]
+      .filter(
+        ({ award }) =>
+          award.category === "merged-pull-request" &&
+          award.key ===
+            pointKey(
+              award.projectId,
+              award.actor.id,
+              award.category,
+              award.sourceId,
+            ),
+      )
+      .map(({ award }) => award.sourceId),
+  );
+  const previousJointSources = new Set(
+    [...previousPoints.values()]
+      .filter(
+        ({ award }) =>
+          award.category === "merged-pull-request" &&
+          award.key !==
+            pointKey(
+              award.projectId,
+              award.actor.id,
+              award.category,
+              award.sourceId,
+            ),
+      )
+      .map(({ award }) => award.sourceId),
+  );
+  const previouslyAwardedJointSources = new Set(
+    (snapshot.source.heldWorkUnits ?? [])
+      .filter((unit) =>
+        unit.sourceNodeIds.some((id) => previousJointSources.has(id)),
+      )
+      .flatMap((unit) => unit.sourceNodeIds),
+  );
   const awards = snapshot.ledger
     .filter((e) => e.actor.kind === "User")
     .map(awardForScore)
-    .filter((a) => !batchOwned.has(a.key));
+    .filter((a) => !batchOwned.has(a.key))
+    // Unavailable source is not evidence against a recorded award. A newly
+    // verified merge can earn its minimum, but cannot add another award on
+    // top of a retained joint decision or prior per-source award, including
+    // when the fallback credits a different actor. Recorded zero awards also
+    // remain authoritative while the source is unavailable.
+    .filter(
+      (a) =>
+        a.category !== "merged-pull-request" ||
+        !a.provisional ||
+        !heldSources.has(a.sourceId) ||
+        (!previousPoints.has(a.key) &&
+          !previousOwnRecordSources.has(a.sourceId) &&
+          !previouslyAwardedJointSources.has(a.sourceId)),
+    );
   const decisions = new Map<string, PointDecision>();
   const parentDecisions = new Map<string, PointDecision>();
   for (const event of snapshot.ledger) {
@@ -669,7 +724,7 @@ export function applyPointsSnapshot(
   }
   // A complete newer census can correct a formerly accepted source. Never infer
   // deletion from missing pages or a shortened rolling window.
-  for (const previous of latestPoints(journal).values()) {
+  for (const previous of previousPoints.values()) {
     const a = previous.award;
     const omission =
       a.category === "substantive-review"
