@@ -35,6 +35,7 @@ import {
   stale,
 } from "./Presentation";
 import { CycleAllocation } from "./ProjectLeaderboard";
+import { VaultPaymentHistory } from "./VaultPaymentHistory";
 
 export function CyclePage({
   project,
@@ -517,6 +518,7 @@ export function CycleArchivePage({
         ) : null}
       </RoutePageHeader>
       <EvidenceNav current="cycles" />
+      <VaultPaymentHistory scope={{ all: true }} />
       {all.length > 0 ? (
         <div className="points-controls cycle-filters">
           {offered.map((key) => (
