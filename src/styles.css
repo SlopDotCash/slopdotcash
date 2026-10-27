@@ -221,10 +221,6 @@ textarea:focus-visible {
   border-block: 0;
 }
 
-.score-tier-table {
-  min-width: 0;
-}
-
 .score-tier-table caption {
   padding-bottom: 12px;
   color: var(--muted);
@@ -1455,6 +1451,21 @@ small {
   text-align: left;
 }
 
+/* Tables with few columns fit a phone. These rules must follow .plain-table. */
+.score-tier-table,
+.who-builds-table,
+.payment-history .plain-table {
+  min-width: 0;
+}
+
+.payment-history .plain-table :is(th, td) {
+  overflow-wrap: normal;
+}
+
+.payment-history .plain-table th[scope="row"] {
+  white-space: nowrap;
+}
+
 .plain-table th,
 .plain-table td {
   padding: 15px 10px;
@@ -2035,10 +2046,6 @@ small {
 .who-builds .money-summary span {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.who-builds-table {
-  min-width: 0;
 }
 
 .who-builds-table th[scope="row"] {
