@@ -453,8 +453,8 @@ def render_project_skill(role, template_files, manifest, binding):
 
 def require_project_open(project_id):
     # Contributors never install or work on a project that contributor flags,
-    # a security finding or a moderator paused, or whose current revision has
-    # no clean scan. The registry answers HTTP 410 for a restricted project.
+    # a security finding or a moderator paused, or whose skills or repository
+    # admission are unavailable. HTTP 410 means the project is restricted.
     url = f"{registry_origin}/api/v1/projects/{project_id}"
     try:
         record = decode_json(
@@ -478,7 +478,7 @@ def require_project_open(project_id):
         raise ValueError("project status response has the wrong identity")
     if record.get("skillsPublished") is not True:
         raise ValueError(
-            "this project's current revision has no clean security scan; do not install or work on it"
+            "this project's skills or repository admission are unavailable; do not install or work on it"
         )
     if project.get("status") != "active":
         raise ValueError("this project is paused; do not install or work on it")
