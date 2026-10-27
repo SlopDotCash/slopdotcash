@@ -9,8 +9,9 @@ results separately on the release issue.
 
 Owner assignment, 26 October 2026: **lalalune is the primary responder** and
 **drew-dot-com is the backup responder**. Private contact routes and a
-successful test alert still need to be verified. Acknowledgement and escalation
-targets are not set; the owner is reviewing whether those deadlines are needed.
+successful test alert still need to be verified. Owner decision, 26 October 2026:
+there are no automatic acknowledgement or escalation deadlines. Responders
+coordinate the response directly; this does not disable failure alerts.
 
 The responder should:
 
@@ -76,7 +77,6 @@ does not authorize other cancellations.
 ## Remaining operational acceptance
 
 This runbook records the primary/backup assignment but does not supply an alert
-delivery receipt, response-target decision, production D1 restore drill, or real
-scanner evidence recovery. Track those separately from source completion. The live
+delivery receipt, production D1 restore drill, or real scanner evidence recovery. Track those separately from source completion. The live
 network qualification and service activation gates remain in the PRD and
 [mainnet runbook](../contracts/DEPLOY-MAINNET.md).
