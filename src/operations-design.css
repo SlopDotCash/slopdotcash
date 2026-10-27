@@ -372,6 +372,10 @@
 }
 
 @media (max-width: 720px) {
+  .operations-page .security-award-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .operations-page .security-program-terms,
   .operations-page .evidence-lookup,
   .operations-page .evidence-inspection {

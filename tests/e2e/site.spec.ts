@@ -1064,32 +1064,34 @@ test("the inbox keeps read, acknowledged and email outcomes distinct and puts em
   await page.goto("/inbox", { waitUntil: "networkidle" });
   const item = (subject: string) =>
     page.locator(".inbox-item", { hasText: subject });
-  await expect(item("delivery-1").locator(".inbox-delivery")).toHaveText(
-    "Email: sent",
-  );
+  await expect(
+    item("delivery-1").getByText("Email: sent", { exact: true }),
+  ).toBeVisible();
   await expect(
     item("delivery-1").getByText("Read", { exact: true }),
   ).toBeVisible();
-  await expect(item("delivery-2").locator(".inbox-delivery")).toHaveText(
-    "Email: delivered",
-  );
+  await expect(
+    item("delivery-2").getByText("Email: delivered", { exact: true }),
+  ).toBeVisible();
   await expect(
     item("delivery-2").getByText("Unread", { exact: true }),
   ).toBeVisible();
-  await expect(item("delivery-3").locator(".inbox-delivery")).toHaveText(
-    "Email: failed",
-  );
-  await expect(item("delivery-4").locator(".inbox-delivery")).toHaveText(
-    "Email: uncertain",
-  );
-  await expect(item("delivery-5").locator(".inbox-delivery")).toHaveText(
-    "Email: queued",
-  );
-  await expect(item("delivery-6").locator(".inbox-delivery")).toHaveCount(0);
+  await expect(
+    item("delivery-3").getByText("Email: failed", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    item("delivery-4").getByText("Email: uncertain", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    item("delivery-5").getByText("Email: queued", { exact: true }),
+  ).toBeVisible();
+  await expect(item("delivery-6").getByText(/^Email:/u)).toHaveCount(0);
   // A private notice stays generic: the provider-accepted email does not
   // stand in for the explicit acknowledgment.
   const security = item("case-0001");
-  await expect(security.locator(".inbox-delivery")).toHaveText("Email: sent");
+  await expect(
+    security.getByText("Email: sent", { exact: true }),
+  ).toBeVisible();
   await expect(
     security.getByRole("button", { name: /^Acknowledge:/u }),
   ).toBeVisible();
@@ -1668,8 +1670,12 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(fundingUrl);
   await page.waitForLoadState("networkidle");
+  const poolReturnSnapshot = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
   await page.goBack({ waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/sponsors$/u);
+  expect(await (await poolReturnSnapshot).finished()).toBeNull();
   await expect(pools).toBeVisible();
   const home = page.getByRole("link", { name: "Slop home", exact: true });
   await home.focus();
@@ -1680,8 +1686,12 @@ test("opens the sponsors page directly and through keyboard navigation", async (
     timeout: 60_000,
   });
   await page.waitForLoadState("networkidle");
+  const homeReturnSnapshot = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
   await page.goBack({ waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/sponsors$/u);
+  expect(await (await homeReturnSnapshot).finished()).toBeNull();
 });
 
 test("lands direct and lazy cross-route hash links on their section", async ({
