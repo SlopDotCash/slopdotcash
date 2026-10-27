@@ -26,6 +26,8 @@ async function main() {
       "The protected branch's exact workflow checkout is required",
     );
   stage = "journal";
+  if (!env.GITHUB_TOKEN)
+    throw new Error("The workflow read-only GitHub credential is required");
   const production = branch === "refs/heads/main";
   const origin = production ? "https://slop.cash" : "https://staging.slop.cash";
   const wrangler = Bun.TOML.parse(

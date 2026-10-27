@@ -85,6 +85,8 @@ export function assertPinnedProfiles(
 
 export type ScanServiceConfig = {
   connection: QueueConnection;
+  /** Read-only GitHub credential, used only while acquiring public source. */
+  githubToken?: string;
   /** Surplus `claude-opus-5.5`: every scan (owner decision D16). */
   primary: ScannerProfile;
   /** Surplus `gpt-6.1-sol`: only ambiguous or high-risk results. */
@@ -284,6 +286,7 @@ async function scanOne(
         connection,
         assessmentId,
         config.workDirectory,
+        config.githubToken,
       )
     ).directory;
   } catch (error) {
@@ -469,6 +472,7 @@ export async function serviceConfigFrom(
   assertPinnedProfiles(primary, specialist);
   return {
     connection: { origin: file.origin, privateKey, publicKey },
+    githubToken: env.GITHUB_TOKEN,
     primary,
     specialist,
     policyVersion: file.policyVersion,
