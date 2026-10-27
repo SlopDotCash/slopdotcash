@@ -671,6 +671,23 @@ test("changing a confirmed EVM wallet opens the account picker and asks before r
   const writes = await payments(page, savedEvm(true));
   await providers(page, false, { connected: savedAddress });
   await page.goto("/account#wallets");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const reveal = page.getByLabel("Show full EVM wallet address", {
+    exact: true,
+  });
+  await reveal.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".compact-identifier[open] code")).toHaveText(
+    savedAddress,
+  );
+  await page
+    .getByRole("button", { name: "Copy EVM wallet address", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe(savedAddress);
+  expect(writes).toEqual([]);
+  expect(await walletCalls(page)).toEqual([]);
   await chooseMetaMask(page, "Change");
   const confirmation = page.getByRole("region", {
     name: "Register a different EVM address?",
@@ -992,7 +1009,7 @@ test("a rejected signature after a wallet change keeps the verified wallet activ
       fullPage: true,
     });
     const addressLines = await saved
-      .locator(".wallet-card-rows span[title]")
+      .locator(".wallet-card-rows .compact-identifier > summary")
       .evaluateAll((addresses) =>
         addresses.map((address) => {
           const range = document.createRange();

@@ -364,6 +364,14 @@ forms, for example a link with a title, can still give a hint from the label,
 so the GitHub merge record is the authority. No acknowledgement text or
 historical capture is rewritten.
 
+An abandoned promotion needs no new retention acknowledgement when every
+commit is an exact squash already accepted from the same author, before the
+promotion closed, and each complete original PR is supplied. Preparation keeps
+those original claims and adds no implementation claim for the closed
+promotion. Existing authenticated retention acknowledgements keep their bindings.
+Missing origins, changed authors or edits, and newly introduced commits retain
+the acknowledgement requirement and any source limitations.
+
 Historical resolution evidence must
 remain source-bound and pass the joint record's freshness and publication gates.
 Do not strip limitations or substitute a full first-parent merge diff to make
@@ -1350,6 +1358,15 @@ reconciliation use the separately verified text to derive deletion lines and
 a deletion-only comparison. Commit totals must still reconcile. Existing blob
 and tree limits apply; exceeding them leaves an explicit evidence gap. This
 proof supplies review material, not a value tier or payment approval.
+
+The same boundary applies when GitHub omits an added text file's patch and
+reports zero additions. `addedComparison` retains the complete text and blob
+hash, bound to the base and accepted commits. Complete verified trees must
+prove the path absent in the base and present as a regular file at the accepted
+commit. The original `patch` and `additions` stay unchanged; matching and commit
+reconciliation use the derived added lines. A missing or truncated tree,
+non-regular file, corrupt blob, binary content or unreconciled commit total
+keeps the source held. Existing blob and tree limits remain in force.
 
 ### Escalated appeal notices
 

@@ -58,6 +58,11 @@ function runSync(command, args) {
 }
 
 function runPhase(label, server, port, args, extraEnv = {}) {
+  // Each registry shard shares one local SQLite database between Pages and
+  // Slopbot. Concurrent test files can invalidate a reporting read's snapshot
+  // while another file writes. Keep those cases serial; separate shards still
+  // have independent databases, and preview keeps its requested parallelism.
+  const workers = label === "registry" ? "1" : process.env.SLOP_E2E_WORKERS;
   return runE2ePhase({
     label,
     command: playwright,
@@ -70,9 +75,7 @@ function runPhase(label, server, port, args, extraEnv = {}) {
       SLOP_E2E_FORCE_FRESH_SERVER: "1",
       SLOP_E2E_SERVER: server,
       SLOP_E2E_PORT: port,
-      ...(process.env.SLOP_E2E_WORKERS
-        ? { SLOP_E2E_WORKERS: process.env.SLOP_E2E_WORKERS }
-        : {}),
+      ...(workers ? { SLOP_E2E_WORKERS: workers } : {}),
     },
   });
 }

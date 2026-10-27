@@ -8,6 +8,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import "./owner-review.css";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
@@ -66,6 +67,7 @@ import {
   type RewardAssetNetwork,
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
+import { ChangeReview } from "./OwnerPresentation";
 import { ProjectNav, RoutePageHeader } from "./Presentation";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 
@@ -1989,20 +1991,6 @@ export default function ProjectProposalPage() {
   );
 }
 
-const CHANGE_LABELS: Record<string, string> = {
-  name: "Project name",
-  headline: "Short description",
-  description: "Goal",
-  links: "Links",
-  contribution: "Contribution rules",
-  slopbot: "Slopbot automatic closure",
-  reward: "Monthly funding",
-  rewardAsset: "Reward asset",
-  escrow: "Vault network",
-};
-
-const label = (field: string) => CHANGE_LABELS[field] ?? field;
-
 type UpdateDraft = {
   automaticClosure: string;
   headline: string;
@@ -2300,6 +2288,12 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       : formatMonthlyAmount(minor, digits, symbol);
   const diff = [
     {
+      field: "vault",
+      label: "Vault setup",
+      before: current.escrow ? "Enabled" : "Not enabled",
+      after: next.escrow ? "Enabled" : "Not enabled",
+    },
+    {
       field: "slopbot",
       label: "Slopbot automatic closure",
       before:
@@ -2440,6 +2434,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           }
           onSetup={setSetupStatus}
           projectId={project.id}
+          showProjectLink={false}
         />
       ) : null}
       <form
@@ -2532,7 +2527,10 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         !current.escrow &&
         !assetTouched ? (
           <div>
-            <p className="field-hint">Keeps this amount and asset.</p>
+            <p className="field-hint">
+              Keeps this amount and asset. Publish this change to begin vault
+              setup.
+            </p>
             <button
               className="button secondary-button"
               onClick={() => set("fundingMode")("monthly")}
@@ -2580,20 +2578,12 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
               {changes.presentation.length > 0 ||
               (scanCleared && changes.executable.length > 0) ? (
                 <li>
-                  Publishes now:{" "}
-                  {[
-                    ...changes.presentation,
-                    ...(scanCleared ? changes.executable : []),
-                  ]
-                    .map(label)
-                    .join(", ")}
-                  .
+                  Presentation and cleared contribution changes publish now.
                 </li>
               ) : null}
               {!scanCleared && changes.executable.length > 0 ? (
                 <li>
-                  Needs a new security scan:{" "}
-                  {changes.executable.map(label).join(", ")}.{" "}
+                  Contribution changes need a new security scan.{" "}
                   {current.status === "active"
                     ? "The project pauses and goes live again when the scan passes."
                     : "The project goes live when the scan passes."}
@@ -2601,26 +2591,18 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
               ) : null}
               {changes.financial.length > 0 ? (
                 <li>
-                  Applies from {nextCycle} (UTC):{" "}
-                  {changes.financial.map(label).join(", ")}. Funded awards keep
-                  their terms.
+                  Financial changes apply from {nextCycle} (UTC). Funded awards
+                  keep their terms.
                 </li>
               ) : null}
             </ul>
             {diff.map((change) => (
-              <div className="project-change" key={change.field}>
-                <h3>{change.label}</h3>
-                <dl>
-                  <div>
-                    <dt>Current</dt>
-                    <dd>{change.before || "Not set"}</dd>
-                  </div>
-                  <div>
-                    <dt>Proposed</dt>
-                    <dd>{change.after || "Not set"}</dd>
-                  </div>
-                </dl>
-              </div>
+              <ChangeReview
+                key={change.field}
+                label={change.label}
+                before={change.before || "Not set"}
+                after={change.after || "Not set"}
+              />
             ))}
           </section>
         ) : null}
@@ -2694,6 +2676,18 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           ) : submission.state === "published" ? (
             <p role="status">
               Published revision {submission.result.project.revision}.
+              {submission.result.project.manifest.escrow &&
+              submission.result.project.manifest.escrow.deployments.length ===
+                0 ? (
+                <>
+                  {" "}
+                  <a
+                    href={`/projects/${submission.result.project.manifest.slug}/funding`}
+                  >
+                    Set up vault
+                  </a>
+                </>
+              ) : null}
             </p>
           ) : null}
           <p className="proposal-note">

@@ -62,6 +62,7 @@ type Case = {
   award: { grossMinor: string; researcherMinor: string; slopMinor: string };
 };
 type Body = {
+  recipientGithubId?: string;
   error?: string;
   authorityUnavailable?: boolean;
   replayed?: boolean;
@@ -380,6 +381,34 @@ function fixture() {
 }
 
 describe("durable private report controls", () => {
+  test("a changed browser account cannot submit another reporter's prepared draft", async () => {
+    const t = fixture();
+    const response = await t.call(OTHER, "POST", "security-submissions", {
+      projectId: PROJECT,
+      origin: "slop",
+      idempotencyKey: "bound-reporter-draft-key",
+      expectedReporterGithubId: REPORTER.githubId,
+      report: REPORT,
+    });
+    expect(response.status).toBe(403);
+    expect(t.objects.size).toBe(0);
+    expect(t.screeningCalls()).toBe(0);
+    expect(
+      t.sqlite
+        .query("SELECT COUNT(*) AS count FROM security_submissions")
+        .get(),
+    ).toEqual({ count: 0 });
+    const accepted = await t.call(REPORTER, "POST", "security-submissions", {
+      projectId: PROJECT,
+      origin: "slop",
+      idempotencyKey: "bound-reporter-draft-key",
+      expectedReporterGithubId: REPORTER.githubId,
+      report: REPORT,
+    });
+    expect(accepted.status).toBe(201);
+    expect(t.objects.size).toBe(1);
+  });
+
   test.each(["send", "decision"] as const)(
     "a report revision cannot replace evidence after a concurrent %s commits",
     async (interruption) => {
@@ -451,9 +480,13 @@ describe("durable private report controls", () => {
     expect(retained.status).toBe(200);
     expect(retained.body.report).toEqual(REPORT);
     const listed = await t.call(REPORTER, "GET", "security-submissions");
+    expect(listed.body.recipientGithubId).toBe(REPORTER.githubId);
     expect(required(listed.body.submissions).map((row) => row.id)).toEqual([
       submission.id,
     ]);
+    const foreign = await t.call(OTHER, "GET", "security-submissions");
+    expect(foreign.body.recipientGithubId).toBe(OTHER.githubId);
+    expect(foreign.body.submissions).toEqual([]);
     expect(t.objects.size).toBe(1);
   });
 

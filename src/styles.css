@@ -2342,6 +2342,7 @@ small {
 
 .payout-amount {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -2353,10 +2354,26 @@ small {
 }
 
 .payout-value {
+  min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+.payout-exact {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.payout-exact:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 
 .payout-value strong {
@@ -2373,31 +2390,7 @@ small {
 }
 
 .payout-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--brand-color-raised);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.payout-pill[data-tone="success"] {
-  background: color-mix(in srgb, var(--green) 18%, transparent);
-  color: var(--green);
-}
-
-.payout-pill[data-tone="warning"] {
-  background: color-mix(in srgb, var(--warning) 18%, transparent);
-  color: var(--warning);
-}
-
-.payout-pill[data-tone="danger"] {
-  background: color-mix(in srgb, var(--danger) 18%, transparent);
-  color: var(--danger);
+  justify-self: start;
 }
 
 .payout-tx {

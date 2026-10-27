@@ -209,8 +209,9 @@ export function ProjectEnforcementPanel({
       {enforcement.decisionRequired ? (
         <p className="form-error" role="status">
           <CircleAlert aria-hidden="true" /> Moderator decision needed:
-          confirmed malicious result. Ban the project and its maintainer, or
-          reinstate after the owner's appeal and a fresh clean scan.
+          confirmed malicious result. Decide the project restriction and any
+          responsible accounts from the evidence. Reinstatement requires the
+          owner's appeal and a fresh clean scan.
         </p>
       ) : null}
       {enforcement.revisionPending ? (

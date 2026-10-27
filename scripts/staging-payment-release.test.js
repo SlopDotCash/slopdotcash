@@ -9,6 +9,7 @@ import {
   releaseStagingPayments,
   runStagingWrangler,
   STAGING_MONTHLY_RELEASES,
+  stagingBindingNoncePolicy,
   stagingReleasePlan,
 } from "../workers/payment-executor/release-staging.mjs";
 
@@ -94,6 +95,7 @@ test.each(Object.entries(STAGING_MONTHLY_RELEASES))(
       );
       expect(config.vars.SIGNER_STACK).toBe("test");
       expect(config.vars.SIGNER_ROLE).toBe("attester");
+      expect(config.vars.TEST_BINDING_NONCE_LIMIT).toBeUndefined();
       expect(config.vars.MONTHLY_PAYMENT_SCHEDULE).toBe(schedule);
       expect(config.d1_databases.map((d) => d.database_id)).toEqual([
         database.database_id,
@@ -386,3 +388,37 @@ test("the installed Node Wrangler supplies real staging secret metadata before p
     }
   });
 }, 60_000);
+
+// The normal release opts in explicitly; other staging releases keep their prior behavior.
+test("qualification nonce limit reaches only opted-in EVM staging attesters", () => {
+  const registry = Object.keys(STAGING_MONTHLY_RELEASES).map((network, index) =>
+    stagingPaymentProject(
+      network,
+      ["eliza", "slopdotcash", "thenetwork", "asi"][index],
+    ),
+  );
+  const ordinary = stagingReleasePlan({
+    registry,
+    registryDatabase: database,
+    monthlySchedule: schedule,
+  });
+  expect(
+    ordinary.every((p) => p.config.vars.TEST_BINDING_NONCE_LIMIT === undefined),
+  ).toBe(true);
+  const limited = stagingReleasePlan({
+    registry,
+    registryDatabase: database,
+    monthlySchedule: schedule,
+    singleNonceBindings: true,
+  });
+  for (const p of limited)
+    expect(p.config.vars.TEST_BINDING_NONCE_LIMIT).toBe(
+      p.network === "solana-devnet" ? undefined : "1",
+    );
+  expect(stagingBindingNoncePolicy(undefined)).toBe(false);
+  expect(stagingBindingNoncePolicy("")).toBe(false);
+  expect(stagingBindingNoncePolicy("1")).toBe(true);
+  expect(() => stagingBindingNoncePolicy("true")).toThrow(
+    "Unknown staging binding nonce policy",
+  );
+});

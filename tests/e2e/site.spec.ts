@@ -256,6 +256,7 @@ test("security reports recover a failed list and share one session across submis
         })
       : route.fulfill({
           json: {
+            recipientGithubId: "4242",
             automatic: true,
             submissions: [1, 2, 3].map((number) => ({
               id: `ss_example${number}`,
@@ -848,7 +849,9 @@ test("makes the public project draft boundary unmistakable", async ({
   await expect(changes).toContainText(
     PROJECTS.find((project) => project.id === "eliza")?.headline ?? "",
   );
-  await expect(changes).toContainText("Publishes now: Short description.");
+  await expect(changes).toContainText(
+    "Presentation and cleared contribution changes publish now.",
+  );
   await expect(
     page.getByRole("button", { name: "Publish changes" }),
   ).toHaveCount(0);
@@ -929,9 +932,15 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await page.route("**/api/v1/projects/eliza*", (route) => {
     if (route.request().method() === "PUT") {
       submission = route.request().postDataJSON();
+      Object.assign(project, submission?.manifest);
       return route.fulfill({
         json: {
-          project: { id: "eliza", revision: 3, status: "paused" },
+          project: {
+            id: "eliza",
+            revision: 3,
+            status: "paused",
+            manifest: { ...project, ...submission?.manifest },
+          },
           changes: {
             presentation: [],
             executable: ["contribution"],
@@ -1036,7 +1045,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     path: test.info().outputPath("criteria-review-200-percent-text.png"),
   });
   await expect(page.getByRole("region", { name: "Changes" })).toContainText(
-    "Needs a new security scan: Contribution rules.",
+    "Contribution changes need a new security scan.",
   );
   await page.getByRole("button", { name: "Publish changes" }).click();
   await expect(page.getByText("Published revision 3.")).toBeVisible();
@@ -1050,9 +1059,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     manifest: { contribution: { approvedScope: scope } },
   });
   await page.getByRole("button", { name: "Discard draft" }).click();
-  await expect(page.getByLabel("Acceptance criteria")).toHaveValue(
-    project.contribution?.approvedScope ?? "",
-  );
+  await expect(page.getByLabel("Acceptance criteria")).toHaveValue(scope);
   await expect(page.getByRole("region", { name: "Changes" })).toHaveCount(0);
   // PRD section 8: an exempt project publishes skill changes without a new
   // scan, so the change list must not say that it needs one.
@@ -1064,12 +1071,14 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByText("Exempt", { exact: true })).toBeVisible();
   await openOwnerSettings(page, "Contribution rules");
-  await page.getByLabel("Acceptance criteria").fill(scope);
+  await page
+    .getByLabel("Acceptance criteria")
+    .fill(`${scope} Keep the review evidence concise.`);
   const exemptChanges = page.getByRole("region", { name: "Changes" });
   await expect(exemptChanges).toContainText(
-    "Publishes now: Contribution rules.",
+    "Presentation and cleared contribution changes publish now.",
   );
-  await expect(exemptChanges).not.toContainText("Needs a new security scan");
+  await expect(exemptChanges).not.toContainText("need a new security scan");
   // A normal successful admission has the same routine-edit permission,
   // without relabelling it as the older existing-project exemption.
   Object.assign(setup.checks.scan, {
@@ -1080,12 +1089,14 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByText("Exempt", { exact: true })).toHaveCount(0);
   await openOwnerSettings(page, "Contribution rules");
-  await page.getByLabel("Acceptance criteria").fill(scope);
+  await page
+    .getByLabel("Acceptance criteria")
+    .fill(`${scope} Keep the review evidence concise.`);
   const admittedChanges = page.getByRole("region", { name: "Changes" });
   await expect(admittedChanges).toContainText(
-    "Publishes now: Contribution rules.",
+    "Presentation and cleared contribution changes publish now.",
   );
-  await expect(admittedChanges).not.toContainText("Needs a new security scan");
+  await expect(admittedChanges).not.toContainText("need a new security scan");
   await page.screenshot({
     path: test.info().outputPath("admitted-owner-edit.png"),
     fullPage: true,
@@ -1170,7 +1181,12 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   );
   await page.route("**/api/v1/security-submissions", (route) =>
     route.fulfill({
-      json: { automatic: false, storedIntake: false, submissions: [] },
+      json: {
+        recipientGithubId: "4242",
+        automatic: false,
+        storedIntake: false,
+        submissions: [],
+      },
     }),
   );
   const paymentReads: string[] = [];
@@ -1251,17 +1267,14 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
     page.locator(".inbox-item", { hasText: subject });
   const sent = item("delivery-1");
   await expect(sent.locator(".inbox-state")).toHaveText("Read");
-  await expect(
-    sent.getByText("Email: sent", { exact: true }),
-  ).not.toBeVisible();
-  await sent.getByText("Email delivery", { exact: true }).click();
+
   await expect(sent.getByText("Email: sent", { exact: true })).toBeVisible();
   await expect(sent.getByText("Email: delivered", { exact: true })).toHaveCount(
     0,
   );
   const delivered = item("delivery-2");
   await expect(delivered.locator(".inbox-state")).toHaveText("Unread");
-  await delivered.getByText("Email delivery", { exact: true }).click();
+
   await expect(
     delivered.getByText("Email: delivered", { exact: true }),
   ).toBeVisible();
@@ -1272,10 +1285,7 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
     item("delivery-4").getByText("Email: uncertain", { exact: true }),
   ).toBeVisible();
   const queued = item("delivery-5");
-  await expect(
-    queued.getByText("Email: queued", { exact: true }),
-  ).not.toBeVisible();
-  await queued.getByText("Email delivery", { exact: true }).click();
+
   await expect(
     queued.getByText("Email: queued", { exact: true }),
   ).toBeVisible();
@@ -1283,7 +1293,7 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   // Reading a private notice or accepting its email does not acknowledge it.
   const security = item("case-0001");
   await expect(security.locator(".inbox-state")).toHaveText("Read");
-  await security.getByText("Email delivery", { exact: true }).click();
+
   await expect(
     security.getByText("Email: sent", { exact: true }),
   ).toBeVisible();
@@ -1423,22 +1433,22 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await page
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("An updated description without a financial configuration change.");
-  await expect(changes).toContainText("headline");
-  await expect(changes).not.toContainText("rewardAsset");
+  await expect(changes).toContainText("Short description");
+  await expect(changes).not.toContainText("Reward asset");
   await page.getByRole("button", { name: "Close and keep draft" }).click();
   await page.getByRole("button", { name: "All projects", exact: true }).click();
   await page.getByRole("button", { name: "Open ASI", exact: true }).click();
   await page.getByRole("button", { name: "Edit project", exact: true }).click();
-  await expect(changes).not.toContainText("rewardAsset");
+  await expect(changes).not.toContainText("Reward asset");
   await page.screenshot({
     path: test.info().outputPath("admin-no-implicit-asset.png"),
     fullPage: true,
   });
   await page.getByRole("button", { name: "Use this reward asset" }).click();
-  await expect(changes).toContainText("rewardAsset");
+  await expect(changes).toContainText("Reward asset");
   await page.getByLabel("Discovery placement").selectOption("community");
   await expect(page.getByLabel("Project status")).toHaveValue("paused");
-  await expect(changes).toContainText("listingTier");
+  await expect(changes).toContainText("Discovery placement");
 });
 
 test("serves byte-consistent bootstrap and read-only site artifacts", {

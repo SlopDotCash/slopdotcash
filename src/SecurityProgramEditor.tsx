@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { SecurityOffer } from "./SecurityOffer";
 import "./operations-design.css";
+import "./owner-review.css";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
@@ -9,8 +11,10 @@ import { parseAssetAmount } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   assertSecurityBountyTerms,
+  formatSecurityAmount,
   SECURITY_SPLIT,
   type SecurityBountyTerms,
+  securityBountySplit,
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
 
@@ -50,16 +54,18 @@ export function SecurityProgramEditor({
   revision,
   actor,
   onPublished,
+  embedded = false,
 }: {
   project: ProjectDefinition;
   revision: number;
   actor: GithubActor;
   onPublished: (result: RevisionResult) => void;
+  embedded?: boolean;
 }) {
   const existing = project.securityBounty;
   // Session metadata (such as admin) is not part of a public contact record.
   const owner = { githubId: actor.githubId, githubLogin: actor.githubLogin };
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(embedded);
   const [status, setStatus] = useState<SecurityBountyTerms["status"]>(
     existing?.status ?? "paused",
   );
@@ -103,74 +109,93 @@ export function SecurityProgramEditor({
     safeHarbor: existing?.safeHarbor ?? "",
   });
   const { busy, error, run } = useAction();
+  const [reviewing, setReviewing] = useState(false);
+  const preview = (() => {
+    try {
+      const precision = {
+        decimals: existing?.amount.decimals ?? 6,
+        currency: existing?.amount.currency ?? "USDC",
+      } as const;
+      const split = securityBountySplit(
+        parseAssetAmount(amount, precision.decimals),
+      );
+      return {
+        gross: formatSecurityAmount(split.grossMinor, precision),
+        researcher: formatSecurityAmount(split.researcherMinor, precision),
+        slop: formatSecurityAmount(split.slopMinor, precision),
+      };
+    } catch {
+      return null;
+    }
+  })();
+  function proposedProgram(): SecurityBountyTerms {
+    const { fundingPolicy: _fundingPolicy, ...previous } = existing ?? {};
+    return {
+      ...previous,
+      ...(fundAfterApproval
+        ? { fundingPolicy: "after-approval" as const }
+        : {}),
+      version: "1",
+      status,
+      rewardMode: existing?.rewardMode ?? "separate",
+      eligibility: "critical-loss-of-funds",
+      amount: {
+        currency: existing?.amount.currency ?? "USDC",
+        decimals: existing?.amount.decimals ?? 6,
+        network,
+        grossMinor: parseAssetAmount(amount, existing?.amount.decimals ?? 6),
+      },
+      split: { ...SECURITY_SPLIT },
+      sponsor: existing?.sponsor ?? {
+        name: project.name,
+        githubId: actor.githubId,
+      },
+      // The API replaces this with its finalized vault evidence.
+      funding: existing?.funding ?? { state: "pledged" },
+      capacity: {
+        awards: fundAfterApproval && awards === "" ? null : Number(awards),
+        closesAt: existing?.capacity.closesAt ?? null,
+        exhaustionRule: text.exhaustionRule.trim(),
+      },
+      scope: {
+        sourceRevisions: [
+          {
+            repository:
+              existing?.scope.sourceRevisions[0]?.repository ??
+              project.repositories[0].id,
+            commit: commit.trim(),
+          },
+          ...(existing?.scope.sourceRevisions.slice(1) ?? []),
+        ],
+        deployments: existing?.scope.deployments ?? [],
+        includedAssets: lines(text.includedAssets),
+        excludedDependencies: lines(text.excludedDependencies),
+        testingPermission: text.testingPermission.trim(),
+        severityRubric: text.severityRubric.trim(),
+        lossDefinition: text.lossDefinition.trim(),
+      },
+      intake: existing?.intake ?? {
+        kind: "github-private-vulnerability-reporting",
+        repository: project.repositories[0].id,
+      },
+      responseTargets: response,
+      approvers: existing?.approvers ?? {
+        technical: [owner],
+        financial: [owner],
+        dispute: [owner],
+      },
+      dispute: {
+        authority: existing?.dispute.authority ?? "advisory",
+        process: text.dispute.trim(),
+      },
+      disclosure: text.disclosure.trim(),
+      safeHarbor: text.safeHarbor.trim(),
+    };
+  }
   function publish() {
     void run(
       async () => {
-        const { fundingPolicy: _fundingPolicy, ...previous } = existing ?? {};
-        const program: SecurityBountyTerms = {
-          ...previous,
-          ...(fundAfterApproval
-            ? { fundingPolicy: "after-approval" as const }
-            : {}),
-          version: "1",
-          status,
-          rewardMode: existing?.rewardMode ?? "separate",
-          eligibility: "critical-loss-of-funds",
-          amount: {
-            currency: existing?.amount.currency ?? "USDC",
-            decimals: existing?.amount.decimals ?? 6,
-            network,
-            grossMinor: parseAssetAmount(
-              amount,
-              existing?.amount.decimals ?? 6,
-            ),
-          },
-          split: { ...SECURITY_SPLIT },
-          sponsor: existing?.sponsor ?? {
-            name: project.name,
-            githubId: actor.githubId,
-          },
-          // The API replaces this with its finalized vault evidence.
-          funding: existing?.funding ?? { state: "pledged" },
-          capacity: {
-            awards: fundAfterApproval && awards === "" ? null : Number(awards),
-            closesAt: existing?.capacity.closesAt ?? null,
-            exhaustionRule: text.exhaustionRule.trim(),
-          },
-          scope: {
-            sourceRevisions: [
-              {
-                repository:
-                  existing?.scope.sourceRevisions[0]?.repository ??
-                  project.repositories[0].id,
-                commit: commit.trim(),
-              },
-              ...(existing?.scope.sourceRevisions.slice(1) ?? []),
-            ],
-            deployments: existing?.scope.deployments ?? [],
-            includedAssets: lines(text.includedAssets),
-            excludedDependencies: lines(text.excludedDependencies),
-            testingPermission: text.testingPermission.trim(),
-            severityRubric: text.severityRubric.trim(),
-            lossDefinition: text.lossDefinition.trim(),
-          },
-          intake: existing?.intake ?? {
-            kind: "github-private-vulnerability-reporting",
-            repository: project.repositories[0].id,
-          },
-          responseTargets: response,
-          approvers: existing?.approvers ?? {
-            technical: [owner],
-            financial: [owner],
-            dispute: [owner],
-          },
-          dispute: {
-            authority: existing?.dispute.authority ?? "advisory",
-            process: text.dispute.trim(),
-          },
-          disclosure: text.disclosure.trim(),
-          safeHarbor: text.safeHarbor.trim(),
-        };
+        const program = proposedProgram();
         // Open status is authorized only by the API's current finalized balance.
         assertSecurityBountyTerms(
           { ...program, status: status === "open" ? "paused" : status },
@@ -184,8 +209,12 @@ export function SecurityProgramEditor({
           null,
         );
         onPublished(result);
+        setReviewing(false);
       },
-      (cause) => errorMessage(cause, "Cannot publish the bounty terms. Retry."),
+      (cause) => {
+        setReviewing(false);
+        return errorMessage(cause, "Cannot publish the bounty terms. Retry.");
+      },
     );
   }
   return (
@@ -207,19 +236,21 @@ export function SecurityProgramEditor({
             · <Link href="/security">Open private cases</Link>
           </p>
         )}
-        <button
-          type="button"
-          className="button secondary-button"
-          onClick={() => setExpanded(!expanded)}
-          aria-expanded={expanded}
-          aria-controls="owner-security-form"
-        >
-          {expanded
-            ? "Hide bounty settings"
-            : existing
-              ? "Edit bounty settings"
-              : "Set bounty terms"}
-        </button>
+        {!embedded && (
+          <button
+            type="button"
+            className="button secondary-button"
+            onClick={() => setExpanded(!expanded)}
+            aria-expanded={expanded}
+            aria-controls="owner-security-form"
+          >
+            {expanded
+              ? "Hide bounty settings"
+              : existing
+                ? "Edit bounty settings"
+                : "Set bounty terms"}
+          </button>
+        )}
         {expanded && (
           <form
             id="owner-security-form"
@@ -233,207 +264,290 @@ export function SecurityProgramEditor({
             }}
             onSubmit={(event) => {
               event.preventDefault();
-              publish();
+              if (reviewing) publish();
+              else
+                void run(async () => {
+                  const candidate = proposedProgram();
+                  assertSecurityBountyTerms(
+                    {
+                      ...candidate,
+                      status:
+                        candidate.status === "open"
+                          ? "paused"
+                          : candidate.status,
+                    },
+                    {
+                      repositories: project.repositories,
+                      reward: { ...project.reward },
+                    },
+                  );
+                  setReviewing(true);
+                });
             }}
           >
-            <fieldset disabled={busy}>
-              <legend>Program</legend>
-              <label htmlFor="bounty-status">Status</label>
-              <select
-                id="bounty-status"
-                value={status}
-                onChange={(event) =>
-                  setStatus(event.target.value as SecurityBountyTerms["status"])
-                }
-              >
-                {existing?.status === "draft" && (
-                  <option value="draft">Draft</option>
-                )}
-                {existing?.status === "pending-approval" && (
-                  <option value="pending-approval">Pending</option>
-                )}
-                <option value="paused">Paused</option>
-                <option value="open">Open</option>
-                <option value="closed">Closed</option>
-              </select>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={fundAfterApproval}
-                  onChange={(event) =>
-                    setFundAfterApproval(event.target.checked)
-                  }
-                />
-                Fund approved awards after review
-              </label>
-              <p>
-                {fundAfterApproval
-                  ? "The offer may open before a deposit. It is a discretionary pledge; funds must be verified before an approved award can be reserved or paid."
-                  : "Opening requires available funds in the bounty vault."}{" "}
-                Closing stops new paid reports only.
-              </p>
-              <label htmlFor="bounty-amount">
-                Published gross award ({existing?.amount.currency ?? "USDC"})
-              </label>
-              <input
-                id="bounty-amount"
-                inputMode="decimal"
-                required
-                value={amount}
-                onChange={(event) => setAmount(event.target.value)}
-              />
-              <p>A guide, not a guaranteed payment.</p>
-              <label htmlFor="bounty-network">Bounty network</label>
-              <select
-                id="bounty-network"
-                value={network ?? ""}
-                disabled={Boolean(existing?.settlement)}
-                onChange={(event) =>
-                  setNetwork((event.target.value || null) as typeof network)
-                }
-              >
-                {existing?.amount.currency === "USD" ? (
-                  <option value="">External USD</option>
-                ) : (
-                  <>
-                    <option value="base">Base</option>
-                    <option value="ethereum">Ethereum</option>
-                    <option value="robinhood">Robinhood</option>
-                    <option value="solana">Solana</option>
-                  </>
-                )}
-              </select>
-              <label htmlFor="bounty-awards">Planned awards</label>
-              <input
-                id="bounty-awards"
-                type="number"
-                min="1"
-                max="1000"
-                required={!fundAfterApproval}
-                value={awards}
-                onChange={(event) => setAwards(event.target.value)}
-              />
-              {fundAfterApproval && (
-                <p>
-                  Leave blank to review each first qualifying finding
-                  separately.
-                </p>
-              )}
-              <label htmlFor="bounty-commit">
-                Source commit (
-                {existing?.scope.sourceRevisions[0]?.repository ??
-                  project.repositories[0].id}
-                )
-              </label>
-              <input
-                id="bounty-commit"
-                required
-                minLength={40}
-                maxLength={40}
-                pattern="[0-9a-f]{40}"
-                value={commit}
-                onChange={(event) => setCommit(event.target.value)}
-              />
-            </fieldset>
-            {(
-              [
-                [
-                  "Scope and testing",
-                  [
-                    "includedAssets",
-                    "excludedDependencies",
-                    "testingPermission",
-                  ],
-                ],
-                [
-                  "Award criteria",
-                  ["severityRubric", "lossDefinition", "exhaustionRule"],
-                ],
-                ["Researcher terms", ["dispute", "disclosure", "safeHarbor"]],
-              ] as [string, TextField[]][]
-            ).map(([title, keys]) => (
-              <details className="proposal-advanced" key={title}>
-                <summary>{title}</summary>
-                <fieldset disabled={busy}>
-                  <legend>{title}</legend>
-                  {TEXT_FIELDS.filter(([key]) => keys.includes(key)).map(
-                    ([key, label, help]) => (
-                      <div className="form-field" key={key}>
-                        <label htmlFor={`bounty-${key}`}>{label}</label>
-                        {help ? <p id={`bounty-${key}-help`}>{help}</p> : null}
-                        <textarea
-                          id={`bounty-${key}`}
-                          aria-describedby={
-                            help ? `bounty-${key}-help` : undefined
-                          }
-                          rows={3}
-                          required={key !== "excludedDependencies"}
-                          minLength={
-                            key === "excludedDependencies"
-                              ? undefined
-                              : key === "includedAssets"
-                                ? 2
-                                : 12
-                          }
-                          maxLength={
-                            key === "safeHarbor"
-                              ? 4000
-                              : key === "includedAssets" ||
-                                  key === "excludedDependencies"
-                                ? 10000
-                                : key === "exhaustionRule"
-                                  ? 1000
-                                  : 2000
-                          }
-                          value={text[key]}
-                          onChange={(event) =>
-                            setText({ ...text, [key]: event.target.value })
-                          }
-                        />
-                      </div>
-                    ),
-                  )}
-                </fieldset>
-              </details>
-            ))}
-            <details className="proposal-advanced">
-              <summary>Response targets and contacts</summary>
+            <div hidden={reviewing}>
               <fieldset disabled={busy}>
-                <legend>Response targets</legend>
-                {(
-                  [
-                    ["acknowledgeHours", "Acknowledge within (hours)", 336],
-                    ["triageBusinessDays", "Triage within (business days)", 60],
-                    ["updateIntervalDays", "Send an update every (days)", 60],
-                  ] as const
-                ).map(([key, label, max]) => (
-                  <div className="form-field" key={key}>
-                    <label htmlFor={`bounty-${key}`}>{label}</label>
-                    <input
-                      id={`bounty-${key}`}
-                      type="number"
-                      min="1"
-                      max={max}
-                      required
-                      value={response[key]}
-                      onChange={(event) =>
-                        setResponse({
-                          ...response,
-                          [key]: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </div>
-                ))}
+                <legend>Offer</legend>
+                <label htmlFor="bounty-status">Status</label>
+                <select
+                  id="bounty-status"
+                  value={status}
+                  onChange={(event) =>
+                    setStatus(
+                      event.target.value as SecurityBountyTerms["status"],
+                    )
+                  }
+                >
+                  {existing?.status === "draft" && (
+                    <option value="draft">Draft</option>
+                  )}
+                  {existing?.status === "pending-approval" && (
+                    <option value="pending-approval">Pending</option>
+                  )}
+                  <option value="paused">Paused</option>
+                  <option value="open">Open</option>
+                  <option value="closed">Closed</option>
+                </select>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={fundAfterApproval}
+                    onChange={(event) =>
+                      setFundAfterApproval(event.target.checked)
+                    }
+                  />
+                  Fund approved awards after review
+                </label>
+                <p>
+                  {fundAfterApproval
+                    ? "The offer may open before a deposit. It is a discretionary pledge; funds must be verified before an approved award can be reserved or paid."
+                    : "Opening requires available funds in the bounty vault."}{" "}
+                  Closing stops new paid reports only.
+                </p>
+                <label htmlFor="bounty-amount">
+                  Published gross award ({existing?.amount.currency ?? "USDC"})
+                </label>
+                <input
+                  id="bounty-amount"
+                  inputMode="decimal"
+                  required
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                />
+                {preview && (
+                  <dl
+                    className="owner-amount-split"
+                    aria-label="Award split preview"
+                  >
+                    <div>
+                      <dt>Gross award</dt>
+                      <dd>{preview.gross}</dd>
+                    </div>
+                    <div>
+                      <dt>Researcher · 75%</dt>
+                      <dd>{preview.researcher}</dd>
+                    </div>
+                    <div>
+                      <dt>Slop · 25%</dt>
+                      <dd>{preview.slop}</dd>
+                    </div>
+                  </dl>
+                )}
+                <p>A discretionary award, not a guaranteed payment.</p>
+                <label htmlFor="bounty-network">Bounty network</label>
+                <select
+                  id="bounty-network"
+                  value={network ?? ""}
+                  disabled={Boolean(existing?.settlement)}
+                  onChange={(event) =>
+                    setNetwork((event.target.value || null) as typeof network)
+                  }
+                >
+                  {existing?.amount.currency === "USD" ? (
+                    <option value="">External USD</option>
+                  ) : (
+                    <>
+                      <option value="base">Base</option>
+                      <option value="ethereum">Ethereum</option>
+                      <option value="robinhood">Robinhood</option>
+                      <option value="solana">Solana</option>
+                    </>
+                  )}
+                </select>
+                <label htmlFor="bounty-awards">Planned awards</label>
+                <input
+                  id="bounty-awards"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  required={!fundAfterApproval}
+                  value={awards}
+                  onChange={(event) => setAwards(event.target.value)}
+                />
+                {fundAfterApproval && (
+                  <p>
+                    Leave blank to review each first qualifying finding
+                    separately.
+                  </p>
+                )}
+                <label htmlFor="bounty-commit">
+                  Source commit (
+                  {existing?.scope.sourceRevisions[0]?.repository ??
+                    project.repositories[0].id}
+                  )
+                </label>
+                <input
+                  id="bounty-commit"
+                  required
+                  minLength={40}
+                  maxLength={40}
+                  pattern="[0-9a-f]{40}"
+                  value={commit}
+                  onChange={(event) => setCommit(event.target.value)}
+                />
               </fieldset>
-              <p>
-                Project contacts:{" "}
-                {(existing?.approvers.technical ?? [actor])
-                  .map((person) => `@${person.githubLogin}`)
-                  .join(", ")}
-                .
-              </p>
-            </details>
+              {(
+                [
+                  [
+                    "Scope and testing",
+                    [
+                      "includedAssets",
+                      "excludedDependencies",
+                      "testingPermission",
+                    ],
+                  ],
+                  [
+                    "Award criteria",
+                    ["severityRubric", "lossDefinition", "exhaustionRule"],
+                  ],
+                  ["Researcher terms", ["dispute", "disclosure", "safeHarbor"]],
+                ] as [string, TextField[]][]
+              ).map(([title, keys]) => (
+                <details className="proposal-advanced" key={title}>
+                  <summary>{title}</summary>
+                  <fieldset disabled={busy}>
+                    <legend>{title}</legend>
+                    {TEXT_FIELDS.filter(([key]) => keys.includes(key)).map(
+                      ([key, label, help]) => (
+                        <div className="form-field" key={key}>
+                          <label htmlFor={`bounty-${key}`}>{label}</label>
+                          {help ? (
+                            <p id={`bounty-${key}-help`}>{help}</p>
+                          ) : null}
+                          <textarea
+                            id={`bounty-${key}`}
+                            aria-describedby={
+                              help ? `bounty-${key}-help` : undefined
+                            }
+                            rows={3}
+                            required={key !== "excludedDependencies"}
+                            minLength={
+                              key === "excludedDependencies"
+                                ? undefined
+                                : key === "includedAssets"
+                                  ? 2
+                                  : 12
+                            }
+                            maxLength={
+                              key === "safeHarbor"
+                                ? 4000
+                                : key === "includedAssets" ||
+                                    key === "excludedDependencies"
+                                  ? 10000
+                                  : key === "exhaustionRule"
+                                    ? 1000
+                                    : 2000
+                            }
+                            value={text[key]}
+                            onChange={(event) =>
+                              setText({ ...text, [key]: event.target.value })
+                            }
+                          />
+                        </div>
+                      ),
+                    )}
+                  </fieldset>
+                </details>
+              ))}
+              <details className="proposal-advanced">
+                <summary>Response targets and contacts</summary>
+                <fieldset disabled={busy}>
+                  <legend>Response targets</legend>
+                  {(
+                    [
+                      ["acknowledgeHours", "Acknowledge within (hours)", 336],
+                      [
+                        "triageBusinessDays",
+                        "Triage within (business days)",
+                        60,
+                      ],
+                      ["updateIntervalDays", "Send an update every (days)", 60],
+                    ] as const
+                  ).map(([key, label, max]) => (
+                    <div className="form-field" key={key}>
+                      <label htmlFor={`bounty-${key}`}>{label}</label>
+                      <input
+                        id={`bounty-${key}`}
+                        type="number"
+                        min="1"
+                        max={max}
+                        required
+                        value={response[key]}
+                        onChange={(event) =>
+                          setResponse({
+                            ...response,
+                            [key]: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                  ))}
+                </fieldset>
+                <p>
+                  Project contacts:{" "}
+                  {(existing?.approvers.technical ?? [actor])
+                    .map((person) => `@${person.githubLogin}`)
+                    .join(", ")}
+                  .
+                </p>
+              </details>
+            </div>
+            {reviewing ? (
+              <section aria-label="Review bounty terms">
+                <h3>Review before publishing</h3>
+                <p>
+                  Proposed status: {status}. Changes apply to future reports
+                  only.
+                </p>
+                <SecurityOffer
+                  project={{
+                    securityBounty: { ...proposedProgram(), status: "open" },
+                  }}
+                />
+                <dl className="admin-facts">
+                  <div>
+                    <dt>Covered revision</dt>
+                    <dd>{commit}</dd>
+                  </div>
+                  <div>
+                    <dt>Covered assets</dt>
+                    <dd>{text.includedAssets}</dd>
+                  </div>
+                  <div>
+                    <dt>Safe testing</dt>
+                    <dd>{text.testingPermission}</dd>
+                  </div>
+                </dl>
+                <button
+                  className="button secondary-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setReviewing(false)}
+                >
+                  Edit bounty terms
+                </button>
+              </section>
+            ) : null}
             {error && (
               <p className="form-error" role="alert">
                 {error}
@@ -444,7 +558,11 @@ export function SecurityProgramEditor({
               disabled={busy}
               type="submit"
             >
-              {busy ? "Publishing…" : "Publish bounty terms"}
+              {busy
+                ? "Publishing…"
+                : reviewing
+                  ? "Publish bounty terms"
+                  : "Review bounty terms"}
             </button>
           </form>
         )}

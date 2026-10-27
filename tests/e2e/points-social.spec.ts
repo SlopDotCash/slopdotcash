@@ -140,7 +140,10 @@ test("social membership preserves past points and discloses public connections w
   await expect(
     accountPanel.getByText("@social-member", { exact: true }),
   ).toBeVisible();
-  await expect(accountPanel.getByText("15 pts", { exact: true })).toBeVisible();
+  await expect(accountButton).toContainText("15 pts");
+  await expect(accountPanel.getByText("15 pts", { exact: true })).toHaveCount(
+    0,
+  );
   await expect(
     accountPanel.getByRole("link", { name: "View profile" }),
   ).toHaveAttribute("href", "/contributors/social-member");

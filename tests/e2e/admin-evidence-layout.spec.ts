@@ -144,10 +144,12 @@ test("selected admin project folds scan and flag detail but preserves reasoned q
   ).toBeVisible();
   await card.getByText(/^Revision 1 · Incomplete/u).click();
   await expect(
-    card.getByRole("list", { name: "Scanned surfaces" }),
-  ).toContainText("18 items");
-  await expect(card.getByRole("list", { name: "Scan checks" })).toContainText(
-    "incomplete",
+    card
+      .getByRole("table", { name: "Scanned surfaces" })
+      .getByRole("row", { name: /Source Complete 18/ }),
+  ).toBeVisible();
+  await expect(card.getByRole("table", { name: "Scan checks" })).toContainText(
+    "Incomplete",
   );
   const queue = card
     .getByText("Queue scan of revision 1", { exact: true })
@@ -169,6 +171,52 @@ test("selected admin project folds scan and flag detail but preserves reasoned q
   await page.screenshot({
     path: info.outputPath("admin-expanded-200.png"),
     fullPage: true,
+  });
+  const coverage = card.locator(".assessment-coverage");
+  const coverageCells = await coverage.locator("th, td").evaluateAll((cells) =>
+    cells.map((cell) => {
+      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      const lines = new Set<number>();
+      while (walker.nextNode()) {
+        if (!walker.currentNode.textContent?.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(walker.currentNode);
+        for (const rect of range.getClientRects()) lines.add(rect.top);
+      }
+      return { text: cell.textContent, lines: lines.size };
+    }),
+  );
+  for (const cell of coverageCells)
+    expect(cell.lines, `${cell.text} must remain readable`).toBe(1);
+  await coverage.scrollIntoViewIfNeeded();
+  await page.evaluate(() => scrollBy(0, -120));
+  await coverage.screenshot({ path: info.outputPath("scan-coverage-200.png") });
+  for (const name of ["Scanned surfaces table", "Scan checks table"]) {
+    const table = card.getByRole("region", { name, exact: true });
+    await table.focus();
+    await expect(table).toBeFocused();
+    const hasOverflow = await table.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    );
+    if (hasOverflow) {
+      await page.keyboard.press("ArrowRight");
+      await expect
+        .poll(() => table.evaluate((element) => element.scrollLeft))
+        .toBeGreaterThan(0);
+      await table.evaluate((element) => {
+        element.scrollLeft = element.scrollWidth;
+      });
+      await table.screenshot({
+        path: info.outputPath(`${name}-right-200.png`),
+      });
+      await table.evaluate((element) => {
+        element.scrollLeft = 0;
+      });
+    }
+  }
+  await info.attach("coverage-cell-reflow", {
+    body: JSON.stringify(coverageCells),
+    contentType: "application/json",
   });
   await restore();
   await card.getByRole("button", { name: "Queue scan of revision 1" }).focus();
@@ -361,6 +409,12 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   await expect(
     page.getByRole("textbox", { name: "Second object verified content" }),
   ).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit IDs", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByLabel("Assessment ID", { exact: true })).toBeFocused();
+  await expect(page.getByLabel("Run ID", { exact: true })).toHaveValue(
+    "run-layout",
+  );
   inventoryDenied = false;
   await page.getByRole("button", { name: "retry inventory" }).click();
   await expect(
