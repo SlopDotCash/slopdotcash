@@ -1,22 +1,16 @@
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
-import type { ScoreEvent } from "./lib/leaderboard";
 import { transactionUrl } from "./lib/payments/contracts";
-import { type PointsMember, pointKey } from "./lib/points";
+import type { PointsMember } from "./lib/points";
 import { dailyPoints } from "./lib/profile-activity";
 import {
   assertProfiles,
   type ProfileIndex,
   profileCounts,
-  profileIssueOutcomes,
 } from "./lib/profiles";
-import {
-  findIngestedProjectByRepositoryId,
-  findProject,
-} from "./lib/projects.mjs";
-import { TARGET_REPOSITORIES } from "./lib/repositories.mjs";
+import { findProject } from "./lib/projects.mjs";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
 import {
   type PublicResourceState,
@@ -27,7 +21,6 @@ import {
   ExternalLinkAnchor,
   formatCycleMonth,
   formatDate,
-  formatDateTime,
   formatMicroUsdc,
 } from "./Presentation";
 
@@ -57,9 +50,7 @@ function dollars(n: bigint) {
   return formatMicroUsdc(n.toString());
 }
 export function ProfileActivity({
-  work,
   awards,
-  pointsMissing,
   login,
   actorId,
   showIdentity,
@@ -70,17 +61,14 @@ export function ProfileActivity({
   children,
 }: {
   login: string;
-  work?: readonly ScoreEvent[];
   awards?: PointsMember["awards"];
-  /** Shown per record while the points journal is loading or unavailable. */
-  pointsMissing?: string;
   actorId?: string;
   showIdentity: boolean;
   cycles?: CycleIndex;
   census: ReturnType<typeof useProfiles>;
   summary?: ReactNode;
   badges?: ReactNode;
-  /** Sections shown between the record and the activity timeline. */
+  /** Sections shown between the record and the activity chart. */
   children?: ReactNode;
 }) {
   const { state, retry } = census;
@@ -155,6 +143,7 @@ export function ProfileActivity({
         />
       ) : null}
       {badges}
+      {awards ? <ActivityChart awards={awards} /> : null}
       <div className="profile-totals">
         {summary}
         <div>
@@ -196,14 +185,6 @@ export function ProfileActivity({
         direct={direct}
         total={paid === null ? paidMissing : `${dollars(paid)} USDC`}
       />
-      <ProfileTimeline
-        work={work}
-        awards={awards}
-        pointsMissing={pointsMissing}
-      />
-      {state.status === "ready" && id ? (
-        <IssueOutcomes key={id} index={state.index} actorId={id} />
-      ) : null}
     </section>
   );
 }
@@ -271,12 +252,11 @@ function ActivityChart({ awards }: { awards: PointsMember["awards"] }) {
   const days = dailyPoints(awards, new Date(), ACTIVITY_DAYS);
   const max = Math.max(...days.map((entry) => entry.points));
   if (max <= 0) return null;
-  const total = days.reduce((sum, entry) => sum + entry.points, 0);
   return (
-    <figure className="activity-chart">
-      <figcaption>
-        {total.toLocaleString()} points in the last {ACTIVITY_DAYS} days
-      </figcaption>
+    <figure
+      className="activity-chart"
+      aria-label={`Points per day, last ${ACTIVITY_DAYS} days`}
+    >
       <div className="activity-bars" aria-hidden="true">
         {days.map((entry) => (
           <span
@@ -339,299 +319,5 @@ function PayoutList({
         ))}
       </ul>
     </section>
-  );
-}
-
-function ProfileTimeline({
-  work = [],
-  awards = [],
-  pointsMissing,
-}: {
-  work?: readonly ScoreEvent[];
-  awards?: PointsMember["awards"];
-  pointsMissing?: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const unmatchedAwards = new Map(awards.map((award) => [award.key, award]));
-  const records = [
-    ...work.map((event) => {
-      const project = findIngestedProjectByRepositoryId(event.repository);
-      if (!project)
-        throw new TypeError(
-          `Score event ${event.id} has no registered project`,
-        );
-      const candidate = unmatchedAwards.get(
-        pointKey(
-          project.id,
-          event.actor.id,
-          event.category,
-          event.category === "evidence" ? event.id : event.source.id,
-        ),
-      );
-      const award =
-        candidate?.sourceUrl === event.source.url &&
-        candidate.occurredAt === new Date(event.occurredAt).toISOString()
-          ? candidate
-          : undefined;
-      if (award) unmatchedAwards.delete(award.key);
-      return {
-        key: `work:${event.id}`,
-        date: event.occurredAt,
-        href: event.evaluation?.decisionUrl ?? event.source.url,
-        title: event.source.title,
-        detail: `${project.name} · ${event.category.replaceAll("-", " ")}${event.evaluation ? ` · reviewed by ${event.evaluation.reviewer}` : ""}`,
-        amount: award
-          ? `+${award.amount.toLocaleString()} Points${award.provisional ? " · Provisional tier" : ""}`
-          : (pointsMissing ?? "Points pending"),
-      };
-    }),
-    ...[...unmatchedAwards.values()].map((award) => ({
-      key: `points:${award.key}`,
-      date: award.occurredAt,
-      href: award.sourceUrl,
-      title: award.category.replaceAll("-", " "),
-      detail: `${findProject(award.projectId)?.name ?? award.projectId}${award.provisional ? " · Provisional tier" : ""}`,
-      amount: `+${award.amount.toLocaleString()} Points`,
-    })),
-  ].sort(
-    (a, b) =>
-      (b.date ?? "").localeCompare(a.date ?? "") || a.key.localeCompare(b.key),
-  );
-  if (records.length === 0) return null;
-  const groups = new Map<string, typeof records>();
-  for (const record of expanded ? records : records.slice(0, 10)) {
-    const day = record.date?.slice(0, 10) ?? "";
-    const group = groups.get(day) ?? [];
-    group.push(record);
-    groups.set(day, group);
-  }
-  return (
-    <section className="profile-timeline" aria-label="Contribution activity">
-      <h2>Activity</h2>
-      {pointsMissing ? null : <ActivityChart awards={awards} />}
-      {records.length > 10 ? (
-        <button
-          type="button"
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded
-            ? "Show recent activity"
-            : `View all ${records.length} activity records`}
-        </button>
-      ) : null}
-      {[...groups].map(([day, rows]) => (
-        <section key={day}>
-          <h3>
-            {day ? (
-              <time dateTime={day}>{formatDate(day)}</time>
-            ) : (
-              "Date unavailable"
-            )}
-          </h3>
-          <ul className="points-history">
-            {rows.map((row) => (
-              <li key={row.key} data-activity-date={row.date ?? ""}>
-                <ExternalLinkAnchor href={row.href}>
-                  <strong>{row.title}</strong>
-                </ExternalLinkAnchor>
-                <small>
-                  {row.amount} · {row.detail}
-                </small>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
-    </section>
-  );
-}
-
-function IssueOutcomes({
-  index,
-  actorId,
-}: {
-  index: ProfileIndex;
-  actorId: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [repository, setRepository] = useState("");
-  const [period, setPeriod] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const issues =
-    index.issues?.items.filter((issue) => issue.authorId === actorId) ?? [];
-  const repositories = [
-    ...new Set(issues.map((issue) => issue.repository)),
-  ].sort();
-  const periods = [
-    ...new Set(
-      issues
-        .flatMap((issue) => [
-          issue.createdAt,
-          ...issue.events.map((event) => event.occurredAt),
-        ])
-        .map((date) => new Date(date).toISOString().slice(0, 7)),
-    ),
-  ]
-    .sort()
-    .reverse();
-  const counts = profileIssueOutcomes(
-    issues,
-    actorId,
-    repository || undefined,
-    period || undefined,
-  );
-  const denominator = counts.completed + counts.notPlanned;
-  const history = issues
-    .filter((issue) => !repository || issue.repository === repository)
-    .flatMap((issue) => [
-      {
-        issue,
-        id: `opened:${issue.id}`,
-        date: issue.createdAt,
-        label: "Opened",
-      },
-      ...issue.events.map((event) => ({
-        issue,
-        id: event.id,
-        date: event.occurredAt,
-        label:
-          event.kind === "closed"
-            ? event.reason === "COMPLETED"
-              ? "Completed"
-              : event.reason === "NOT_PLANNED"
-                ? "Not planned"
-                : event.reason === "DUPLICATE"
-                  ? "Closed as duplicate"
-                  : "Closed · reason unknown"
-            : event.kind === "reopened"
-              ? "Reopened"
-              : event.kind === "transferred"
-                ? "Transferred"
-                : event.relatedIssueId === issue.id
-                  ? event.kind === "duplicate"
-                    ? "Another issue marked as duplicate"
-                    : "Duplicate reference removed"
-                  : event.kind === "duplicate"
-                    ? "Marked as duplicate"
-                    : "Duplicate mark removed",
-      })),
-    ])
-    .filter(
-      (event) =>
-        !period || new Date(event.date).toISOString().slice(0, 7) === period,
-    )
-    .sort(
-      (left, right) =>
-        Date.parse(right.date) - Date.parse(left.date) ||
-        left.id.localeCompare(right.id),
-    );
-  return (
-    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>Issue outcomes</summary>
-      {open ? (
-        index.issues ? (
-          <>
-            <label>
-              Repository
-              <select
-                value={repository}
-                onChange={(event) => setRepository(event.target.value)}
-              >
-                <option value="">All repositories</option>
-                {repositories.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Period (UTC)
-              <select
-                value={period}
-                onChange={(event) => setPeriod(event.target.value)}
-              >
-                <option value="">Lifetime</option>
-                {periods.map((month) => (
-                  <option key={month} value={month}>
-                    {month}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p>
-              {denominator
-                ? `${counts.completed.toLocaleString()} completed : ${counts.notPlanned.toLocaleString()} not planned · ${(counts.completed / denominator).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })} completion rate`
-                : "Not enough data for a completion rate."}
-            </p>
-            <dl className="issue-outcome-counts">
-              {(
-                [
-                  ["Open", counts.open],
-                  ["Reopened", counts.reopened],
-                  ["Completed", counts.completed],
-                  ["Not planned", counts.notPlanned],
-                  ["Duplicate", counts.duplicate],
-                  ["Unknown close reason", counts.unknown],
-                  ["Source unavailable", counts.unavailable],
-                  ["History incomplete", counts.incomplete],
-                ] as const
-              ).map(([label, count]) => (
-                <div key={label}>
-                  <dt>{label}</dt>
-                  <dd>{count.toLocaleString()}</dd>
-                </div>
-              ))}
-            </dl>
-            <details
-              onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
-            >
-              <summary>
-                Issue history · {history.length.toLocaleString()} records
-              </summary>
-              {historyOpen ? (
-                <ul className="points-history">
-                  {history.map((record) => {
-                    const repository = TARGET_REPOSITORIES.find(
-                      (candidate) => candidate.id === record.issue.repository,
-                    );
-                    if (!repository)
-                      throw new TypeError("Issue repository is not registered");
-                    return (
-                      <li key={record.id}>
-                        <time dateTime={record.date}>
-                          {formatDateTime(record.date)}
-                        </time>
-                        {" · "}
-                        <a
-                          href={`https://github.com/${repository.owner}/${repository.name}/issues/${record.issue.number}`}
-                        >
-                          {record.issue.repository}#{record.issue.number}
-                        </a>
-                        {" · "}
-                        {record.label}
-                        {record.issue.unavailableSince
-                          ? " · Source now unavailable"
-                          : ""}
-                        {record.issue.historyIncompleteSince != null
-                          ? " · History incomplete"
-                          : ""}
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : null}
-            </details>
-            <p className="points-meta">
-              Covers tracked repositories since{" "}
-              {formatDate(index.issues.firstObservedAt)}.
-            </p>
-          </>
-        ) : (
-          <p>Issue history unavailable.</p>
-        )
-      ) : null}
-    </details>
   );
 }

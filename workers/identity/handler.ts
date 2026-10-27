@@ -5,6 +5,7 @@ import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   type DeploymentTier,
   deploymentOrigins,
+  isLocalDevelopmentOrigin,
 } from "../../src/lib/deployment";
 import {
   ASSERTION_TTL_SECONDS,
@@ -31,6 +32,8 @@ export type IdentityWorkerDependencies = {
   assertionSecret: string;
   githubClientId: string;
   publicOrigin?: string;
+  /** Local development only: accept a plain-HTTP local origin as the public origin. */
+  allowLoopback?: boolean;
   now: () => Date;
   randomToken: (bytes?: number) => string;
   resolveGithubIdentity: (
@@ -59,11 +62,29 @@ function json(status: number, body: Record<string, unknown>): Response {
   });
 }
 
+type OriginDependencies = {
+  tier?: DeploymentTier;
+  publicOrigin?: string;
+  allowLoopback?: boolean;
+};
+function publicOriginOf(deps: OriginDependencies): string {
+  return identityPublicOrigin(deps.publicOrigin, deps.tier, {
+    loopback: deps.allowLoopback,
+  });
+}
+/** The site the sign-in page links back to: the local dev server when the identity origin is local. */
+function siteOf(deps: OriginDependencies): string {
+  return deps.allowLoopback === true &&
+    isLocalDevelopmentOrigin(deps.publicOrigin)
+    ? deps.publicOrigin
+    : deploymentOrigins(deps.tier).site;
+}
+
 function html(
   status: number,
   title: string,
   message: string,
-  tier: DeploymentTier | undefined,
+  site: string,
 ): Response {
   const headers = securityHeaders("text/html; charset=utf-8");
   const signedIn = status === 200;
@@ -72,7 +93,6 @@ function html(
     "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   );
   // All content is fixed by this handler. No callback parameter or identity is rendered.
-  const site = deploymentOrigins(tier).site;
   return new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>${title} · slop.cash</title><style>
 *{box-sizing:border-box}body{margin:0;min-height:100svh;background:${brand.color.bg};color:${brand.color.ink};font:16px/1.5 system-ui,sans-serif;display:grid;grid-template-rows:auto 1fr}header{padding:24px 32px;border-bottom:1px solid ${brand.color.line};font-weight:800;letter-spacing:-.04em;font-size:24px}header span{color:${brand.color.accent}}main{width:min(100%,480px);margin:auto;padding:48px 28px;text-align:center}h1{font-size:clamp(28px,6vw,36px);line-height:1.15;letter-spacing:-.035em;margin:0 0 16px}p{margin:0 0 28px;color:${brand.color.muted};text-wrap:pretty}a{display:flex;align-items:center;justify-content:center;min-height:48px;padding:12px 20px;border-radius:${brand.radius.medium};background:${brand.color.accent};color:${brand.color.onAccent};font-weight:700;text-decoration:none}a:hover{background:${brand.color.accentHover}}a:focus-visible{outline:3px solid ${brand.color.ink};outline-offset:4px}.note{font-size:14px;margin:20px 0 0}.status{width:52px;height:52px;display:grid;place-items:center;border:1px solid ${brand.color.lineStrong};border-radius:50%;margin:0 auto 24px;color:${brand.color.accent};font-size:28px}
@@ -159,10 +179,7 @@ async function startFlow(
   });
   if (!created) fail(503, "flow_unavailable", "Could not create identity flow");
 
-  const authorizationUrl = new URL(
-    "/v1/oauth/authorize",
-    identityPublicOrigin(deps.publicOrigin, deps.tier),
-  );
+  const authorizationUrl = new URL("/v1/oauth/authorize", publicOriginOf(deps));
   authorizationUrl.searchParams.set("flow_id", flowId);
   authorizationUrl.searchParams.set("state", state);
   return json(201, {
@@ -206,7 +223,7 @@ async function authorizeBrowser(
   githubUrl.searchParams.set("client_id", deps.githubClientId);
   githubUrl.searchParams.set(
     "redirect_uri",
-    `${identityPublicOrigin(deps.publicOrigin, deps.tier)}/v1/oauth/callback`,
+    `${publicOriginOf(deps)}/v1/oauth/callback`,
   );
   githubUrl.searchParams.set("state", state);
   githubUrl.searchParams.set("code_challenge", await pkceChallenge(verifier));
@@ -240,7 +257,7 @@ async function oauthCallback(
       400,
       "Sign-in failed",
       "The sign-in response was invalid or expired.",
-      deps.tier,
+      siteOf(deps),
     );
   }
   const flow = await deps.persistence.claimCallback(
@@ -256,7 +273,7 @@ async function oauthCallback(
       410,
       "Sign-in expired",
       "Start sign-in again from Slop or your terminal.",
-      deps.tier,
+      siteOf(deps),
     );
   }
   let verifier = "";
@@ -274,7 +291,7 @@ async function oauthCallback(
         502,
         "Sign-in failed",
         "GitHub identity could not be verified.",
-        deps.tier,
+        siteOf(deps),
       );
     }
     if (flow.audience === POINTS_AUDIENCE && !identity.githubNodeId)
@@ -282,7 +299,7 @@ async function oauthCallback(
         502,
         "Sign-in failed",
         "GitHub account identity is incomplete.",
-        deps.tier,
+        siteOf(deps),
       );
     const completed = await deps.persistence.completeCallback(
       flow.id,
@@ -296,14 +313,14 @@ async function oauthCallback(
         409,
         "Sign-in failed",
         "The sign-in flow was already completed.",
-        deps.tier,
+        siteOf(deps),
       );
     }
     const response = html(
       200,
       "Signed in",
       "Your GitHub sign-in is complete. Return to your original tab or terminal.",
-      deps.tier,
+      siteOf(deps),
     );
     clearStateCookie(response.headers);
     return response;
@@ -431,7 +448,13 @@ async function handleIdentityRequestCore(
   deps: IdentityWorkerDependencies,
 ): Promise<Response> {
   const url = new URL(request.url);
-  if (url.protocol !== "https:") return json(400, { error: "https_required" });
+  // Plain HTTP is allowed only for the local development origin, and only
+  // when the dependencies enable it.
+  if (
+    url.protocol !== "https:" &&
+    !(deps.allowLoopback === true && url.origin === publicOriginOf(deps))
+  )
+    return json(400, { error: "https_required" });
   try {
     if (
       url.host === IDENTITY_INTERNAL_HOST &&
@@ -440,10 +463,7 @@ async function handleIdentityRequestCore(
     ) {
       return await consumeAssertion(request, deps);
     }
-    if (
-      url.host !==
-      new URL(identityPublicOrigin(deps.publicOrigin, deps.tier)).host
-    ) {
+    if (url.host !== new URL(publicOriginOf(deps)).host) {
       return json(404, { error: "not_found" });
     }
     if (request.method === "POST" && url.pathname === "/v1/oauth/start") {
@@ -489,20 +509,21 @@ async function handleIdentityRequestCore(
 // Public product origins only. CLI requests without Origin retain their protocol.
 function browserIdentityEndpoint(
   request: Request,
-  deps: { tier?: DeploymentTier; publicOrigin?: string },
+  deps: OriginDependencies,
 ): boolean {
   const url = new URL(request.url);
   return (
-    url.origin === identityPublicOrigin(deps.publicOrigin, deps.tier) &&
+    url.origin === publicOriginOf(deps) &&
     ["/v1/oauth/start", "/v1/oauth/poll"].includes(url.pathname)
   );
 }
-function browserOrigins(deps: {
-  tier?: DeploymentTier;
-  publicOrigin?: string;
-}): Set<string> {
-  return identityPublicOrigin(deps.publicOrigin, deps.tier) ===
-    deploymentOrigins(deps.tier).identity
+function browserOrigins(deps: OriginDependencies): Set<string> {
+  if (
+    deps.allowLoopback === true &&
+    isLocalDevelopmentOrigin(deps.publicOrigin)
+  )
+    return new Set([deps.publicOrigin]);
+  return publicOriginOf(deps) === deploymentOrigins(deps.tier).identity
     ? deploymentOrigins(deps.tier).browserOrigins
     : new Set(["https://staging.slop.cash", "https://slop-staging.pages.dev"]);
 }
@@ -510,7 +531,7 @@ function browserOrigins(deps: {
 export function identityBrowserResponse(
   request: Request,
   response: Response,
-  deps: { tier?: DeploymentTier; publicOrigin?: string } = {},
+  deps: OriginDependencies = {},
 ): Response {
   const origin = request.headers.get("origin");
   if (
