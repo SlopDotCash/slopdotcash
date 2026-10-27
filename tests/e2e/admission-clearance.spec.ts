@@ -141,6 +141,11 @@ test("admin distinguishes retained admission from the current revision and can r
     fullPage: true,
   });
   await card
+    .getByText("Queue scan of revision 4", { exact: true })
+    .locator("xpath=self::summary")
+    .focus();
+  await page.keyboard.press("Enter");
+  await card
     .getByLabel("Reason for the scan")
     .fill("Investigate a reported dependency");
   await card.getByRole("button", { name: "Queue scan of revision 4" }).focus();
@@ -173,9 +178,7 @@ test("admin distinguishes retained admission from the current revision and can r
     }),
   );
   await page.goto("/vetting-evidence?assessmentId=admission-1&runId=run-1");
-  await page
-    .getByRole("button", { name: "Inspect evidence inventory" })
-    .click();
+  // A signed-in evidence deep link loads its exact inventory automatically.
   await expect(
     page.getByText("Admission evidence is retained permanently.", {
       exact: false,

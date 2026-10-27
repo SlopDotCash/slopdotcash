@@ -644,3 +644,10 @@
   min-height: 44px;
   padding-block: 0.7rem;
 }
+
+/* Project cards already provide the funding directory grouping. */
+.route-sponsors .sponsor-pools {
+  padding: 0;
+  border: 0;
+  background: none;
+}
