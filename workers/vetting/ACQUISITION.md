@@ -16,8 +16,13 @@ they cannot choose host paths. Symbolic links are stored as bytes and never
 followed. Git submodules and LFS pointers produce explicit visibility gaps.
 A completed inventory remains quarantined and is not a scan disposition.
 
-Acquisition uses only the public GitHub Git Data API. It sends no repository
-credential, refuses redirects, and accepts no branch name or mutable archive
+Acquisition uses only the public GitHub Git Data API. The standalone command
+sends no repository credential. Scheduled queued acquisition uses the job's
+read-only `GITHUB_TOKEN` for GET requests to `https://api.github.com/repos/`
+only, so repositories are not limited to the anonymous hourly request quota.
+The token stays in the trusted acquisition process; it is never sent to the
+Slop API, raw content, model provider or sandbox, or included in saved inputs.
+Both paths refuse redirects and accept no branch name or mutable archive
 URL. The assigned commit must match the response. The command rebuilds each
 Git tree object and checks its SHA-1. Each downloaded file must match its Git
 blob SHA-1, declared size and SHA-256 inventory entry. A truncated tree, missing
