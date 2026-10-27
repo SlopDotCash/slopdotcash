@@ -468,7 +468,7 @@ jobs:
       needs.quality.result == 'success' &&
       github.ref == 'refs/heads/development' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    needs: quality
+    needs: [prepare, quality]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -497,6 +497,30 @@ jobs:
         with:
           name: slop-source-${{ github.sha }}
           path: dist
+      - name: Download checked staging registry snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: slop-registry-${{ github.sha }}
+          path: src/lib
+      - name: Verify downloaded staging registry snapshot
+        env:
+          REGISTRY_SHA256: ${{ needs.prepare.outputs.registry_sha256 }}
+          REVISIONS_SHA256: ${{ needs.prepare.outputs.revisions_sha256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFileSync } from "node:fs";
+          for (const [expected, file] of [
+            [process.env.REGISTRY_SHA256, "src/lib/project-registry.generated.mjs"],
+            [process.env.REVISIONS_SHA256, "src/lib/project-revisions.generated.json"],
+          ]) {
+            const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
+            if (!/^[a-f0-9]{64}$/.test(expected ?? "") || actual !== expected)
+              throw new Error(`The checked registry snapshot changed: ${file}`);
+          }
+          NODE
+          bun run projects:check
       - name: Require staging credentials
         env:
           HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
@@ -581,6 +605,9 @@ jobs:
             cp "$RUNNER_TEMP/slop-notify-staging-release/pages.toml" "$publish_dir/wrangler.toml"
           fi
           bun scripts/prepare-vetting-public-key.ts assemble staging "$RUNNER_TEMP/scanner-public-key.json" "$publish_dir/wrangler.toml"
+          # Publish registry-pinned test attesters before their named owner
+          # release bindings enter Pages. No production keys or mainnets.
+          bun workers/payment-executor/release-staging.mjs "$RUNNER_TEMP/slop-staging-payment-attesters" "$publish_dir/wrangler.jsonc"
           cp -R dist "$publish_dir/dist"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$publish_dir/node_modules"
           (
@@ -603,6 +630,15 @@ jobs:
           path: |
             ${{ runner.temp }}/slop-notify-staging-release/profile.json
             ${{ runner.temp }}/slop-notify-staging-release/release.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Retain staging attester publication evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slop-staging-payment-attesters-${{ github.run_id }}
+          path: ${{ runner.temp }}/slop-staging-payment-attesters/release.json
           if-no-files-found: ignore
           retention-days: 14
 
