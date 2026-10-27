@@ -10,7 +10,68 @@
  * cycles bind their own snapshot bytes, so a later debit never changes an
  * approved, scheduled or paid award.
  */
-import type { PublishedPenalty, ScoreEvent } from "./leaderboard-types";
+import type {
+  PenaltyHistoryRecord,
+  PublishedPenalty,
+  ScoreEvent,
+} from "./leaderboard-types";
+
+/** Retained history is explicit evidence, never an absence-based reversal. */
+export function assertPenaltyHistory(
+  value: unknown,
+  projectIds: readonly string[],
+  through?: string,
+): asserts value is PenaltyHistoryRecord[] {
+  if (!Array.isArray(value)) throw new Error("Invalid penalty history");
+  const seen = new Set<string>();
+  const iso = (at: unknown): at is string =>
+    typeof at === "string" &&
+    Number.isFinite(Date.parse(at)) &&
+    new Date(at).toISOString() === at;
+  for (const row of value as PenaltyHistoryRecord[]) {
+    if (
+      !row ||
+      typeof row !== "object" ||
+      Object.keys(row).sort().join() !==
+        [
+          "projectId",
+          "itemNodeId",
+          "authorGithubId",
+          "category",
+          "tableVersion",
+          "debitThirds",
+          "period",
+          "recordedAt",
+          "reversedAt",
+          "reversal",
+        ]
+          .sort()
+          .join() ||
+      !projectIds.includes(row.projectId) ||
+      !/^[A-Za-z0-9_=-]{1,100}$/u.test(row.itemNodeId) ||
+      !/^[1-9][0-9]*$/u.test(row.authorGithubId) ||
+      !/^[a-z_]{1,40}$/u.test(row.category) ||
+      !/^slopbot-penalties-v[1-9][0-9]*$/u.test(row.tableVersion) ||
+      !Number.isSafeInteger(row.debitThirds) ||
+      row.debitThirds < 1 ||
+      !Number.isSafeInteger(row.debitThirds * 10) ||
+      !iso(row.recordedAt) ||
+      row.period !== row.recordedAt.slice(0, 7) ||
+      (through !== undefined && row.recordedAt > through) ||
+      (row.reversedAt === null
+        ? row.reversal !== null
+        : !iso(row.reversedAt) ||
+          row.reversedAt < row.recordedAt ||
+          (through !== undefined && row.reversedAt > through) ||
+          !["appeal_upheld", "maintainer_reopen"].includes(row.reversal ?? ""))
+    )
+      throw new Error("Invalid penalty history record");
+    const key = `${row.projectId}\0${row.itemNodeId}`;
+    if (seen.has(key))
+      throw new Error("Penalty history repeats a pull request");
+    seen.add(key);
+  }
+}
 
 export interface PenaltyDeductions {
   /** Applied thirds per actor ID. */

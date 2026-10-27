@@ -462,3 +462,46 @@ for (const kind of [
     }
   });
 }
+
+test("penalty history paginates retained reversals without changing the active feed", async () => {
+  const f = fixture();
+  try {
+    for (let i = 0; i < 101; i++)
+      f.sqlite.run(
+        "INSERT INTO slopbot_penalties SELECT ?,repository_id,project_id,author_github_id,category,table_version,debit_thirds,period,moderator_review,review_key,recorded_at,?,? FROM slopbot_penalties WHERE item_node_id='PR_debit'",
+        [`PR_${String(i).padStart(3, "0")}`, at, "appeal_upheld"],
+      );
+    const active = await (
+      await f.get(`/v1/penalties?project=${projectId}`)
+    ).json();
+    expect(active.schemaVersion).toBe("slop-penalties:v1");
+    expect(
+      active.records.map((r: { item_node_id: string }) => r.item_node_id),
+    ).toEqual(["PR_debit"]);
+    expect(active.records[0]).not.toHaveProperty("reversed_at");
+    const first = await (
+      await f.get(`/v1/penalties?project=${projectId}&history=1`)
+    ).json();
+    const second = await (
+      await f.get(
+        `/v1/penalties?project=${projectId}&history=1&after=${first.nextAfter}`,
+      )
+    ).json();
+    expect(first.schemaVersion).toBe("slop-penalty-history:v1");
+    expect(first.records).toHaveLength(100);
+    expect(
+      second.records.map((r: { item_node_id: string }) => r.item_node_id),
+    ).toEqual(["PR_100", "PR_debit"]);
+    expect(second.nextAfter).toBeNull();
+    expect(first.records[0]).toMatchObject({
+      reversed_at: at,
+      reversal: "appeal_upheld",
+    });
+    expect(first.records[0]).not.toHaveProperty("review_key");
+    expect(
+      (await f.get(`/v1/penalties?project=${projectId}&history=yes`)).status,
+    ).toBe(400);
+  } finally {
+    f.close();
+  }
+});

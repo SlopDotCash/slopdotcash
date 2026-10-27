@@ -94,6 +94,15 @@ exact signed change from the previous amount. A new decision with the same
 amount records a zero change; replaying that decision creates no revision.
 Distinct assessed review findings retain their separate work-unit identities.
 
+Slopbot penalties use a separate journal identity bound to the original PR,
+actor, project and UTC month. Each revision stores the actual applied negative
+amount and the published face debit as evidence. The applied amount is capped
+by that month's deduplicated accepted-work Points; later changes append a
+correction to the same identity. Penalties do not affect payout recognition,
+historical participation, badges, project counts or first-contribution dates.
+Only an explicit identity-matched Slopbot reversal restores a debit. An absent
+row, missing history route or a PR leaving the rolling window does not.
+
 The permanent D1 points tables are logically separate from trace tables in the
 existing deployment database. This avoids a new credential or provisioning
 boundary; the points handler never constructs trace persistence or reads trace
