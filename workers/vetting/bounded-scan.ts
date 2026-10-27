@@ -30,7 +30,11 @@ import {
 } from "../../backend/vetting/scan-result";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import type { QueuedAssessment } from "./queue";
-import { SCAN_REVIEW_AREAS, type ScannerEvidence } from "./scanners";
+import {
+  SCAN_PROMPT_REVISION,
+  SCAN_REVIEW_AREAS,
+  type ScannerEvidence,
+} from "./scanners";
 
 export const INVENTORY_SCHEMA = "slop-scan-inventory-v2";
 /** The evidence bundle the model reads; never silently shortened. */
@@ -549,6 +553,90 @@ export function scanReview(evidence: ScannerEvidence): ScanReview {
 
 /** The queue assignment a scan answers, exactly as the signed queue sent it. */
 export type QueuedScan = QueuedAssessment & { repository: string };
+
+/** Records that acquisition was refused, without inventing a source or model review. */
+export function composeAcquisitionRefusal(input: {
+  queued: QueuedScan;
+  reason: string;
+  primaryModel: string;
+  policyVersion: string;
+  runId: string;
+  startedAt: string;
+  completedAt: string;
+}) {
+  const visibilityGaps = [
+    `Acquisition refused before inspection: ${input.reason}`,
+  ];
+  const inventory = new TextEncoder().encode(
+    JSON.stringify({
+      schemaVersion: INVENTORY_SCHEMA,
+      items: [],
+      artifacts: [],
+      visibilityGaps,
+    }),
+  );
+  const report = new TextEncoder().encode(
+    JSON.stringify({
+      schemaVersion: "slop-scan-acquisition-refusal-v1",
+      assessmentId: input.queued.assessmentId,
+      reason: input.reason,
+      acquiredFilesInspected: 0,
+      modelReviewStarted: false,
+      inventorySha256: sha256(inventory),
+    }),
+  );
+  const result: VettingScanResult = {
+    schemaVersion: VETTING_SCAN_SCHEMA,
+    assessmentId: input.queued.assessmentId,
+    projectId: input.queued.projectId,
+    revision: input.queued.revision,
+    manifestSha256: input.queued.manifestSha256,
+    disposition: "incomplete",
+    policyVersion: input.policyVersion,
+    assessed: {
+      repository: input.queued.repository,
+      commitSha: input.queued.commitSha,
+      templateSha256: input.queued.templateSha256,
+      inputManifestSha256: sha256(inventory),
+      dependencyLocks: [],
+    },
+    scan: {
+      runId: input.runId,
+      startedAt: input.startedAt,
+      completedAt: input.completedAt,
+      reportSha256: sha256(report),
+    },
+    coverage: Object.fromEntries(
+      SCAN_SURFACES.map((surface) => [
+        surface,
+        { state: "unsupported", items: 0 },
+      ]),
+    ) as VettingScanResult["coverage"],
+    checks: Object.fromEntries(
+      SCAN_THREATS.map((threat) => [threat, "not-run"]),
+    ) as VettingScanResult["checks"],
+    visibilityGaps,
+    execution: null,
+    reusedAssessmentId: null,
+    // This names the configured review but does not claim that it ran.
+    primaryReview: {
+      provider: "surplus",
+      model: input.primaryModel,
+      promptPolicyRevision: SCAN_PROMPT_REVISION,
+      inputManifestSha256: sha256(inventory),
+      runId: `not-started-${input.runId}`,
+      status: "not-started",
+      verdict: null,
+      risk: null,
+      findingCount: 0,
+    },
+    specialistReview: null,
+    artifacts: [],
+    findings: [],
+    confirmation: null,
+  };
+  return { result, report, inventory };
+}
 
 /**
  * Composes the signed-intake result and its private report. The disposition

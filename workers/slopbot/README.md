@@ -1271,6 +1271,24 @@ The bounded recovery handles at most 16 added or modified text-diff paths and
 bytes, altered patches, or larger sources retain the original limitation and
 need dedicated Git evidence. No original capture is rewritten.
 
+An equal-inventory squash whose hunks moved after an unrelated parent edit can
+instead carry `acceptedPatchReplay`. This proof does not change `acceptedRange`
+or mark a dependency as imported. It preserves the submitted and accepted
+patches, requires identical hunk content and extents, finds each old hunk
+uniquely in the original accepted parent, and reconstructs the complete accepted
+file bytes. Ambiguous, overlapping, reordered or contextless modified-file
+hunks refuse. Added files require verified absence in the accepted parent.
+
+The replay supports at most 16 added or modified regular text paths. Complete,
+hash-verified ancestor trees prove each path's presence, absence and mode without
+enumerating unrelated subtrees. It retains the 20,000-entry tree bound and uses
+one 48-request allowance across tree and blob reads, plus the existing 512 KiB
+file and 2 MiB aggregate blob limits. No encoding or newline normalization is
+allowed. The proof records submitted, parent and accepted blob identities;
+their contents may differ because the accepted parent contains unrelated work.
+Fresh collection recomputes the proof and changes the source digest. It does
+not prove authorship, useful value, review eligibility or permission to publish.
+
 ### Omitted deleted-file evidence
 
 GitHub can omit a deleted-file patch and report zero file deletions while its

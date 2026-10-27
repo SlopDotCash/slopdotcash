@@ -470,8 +470,15 @@ tree. It calls the container build command directly and does not run the later
 host IDL extraction. Use a successful run at the exact reviewed commit; a PR
 artifact does not prove the final main build or authorize an upgrade. Download
 and verify its checksum before the isolated qualification and the steps below.
-The validator job also compares its lifecycle-tested program byte for byte
-with that retained artifact and refuses a difference. Neither job uses a
+The validator job downloads the same-run retained artifact before testing,
+verifies its source commit, Solana tree, image, run, size and hash, and loads
+those exact bytes for every lifecycle stage. It builds the host IDL separately;
+an independently compiled host program is not substituted for the candidate.
+The producer exports its immutable artifact ID and build attempt. A failed-job
+rerun reuses that exact producer artifact and verifies its original attempt,
+even when the consumer's attempt counter has advanced.
+It also compares the program byte for byte after testing and refuses a
+difference. Neither job uses a
 production signing key, performs a public deployment or proves mainnet acceptance.
 
 ### 3. Record the current deployed program

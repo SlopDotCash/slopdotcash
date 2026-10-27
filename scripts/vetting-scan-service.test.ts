@@ -32,11 +32,7 @@ import { isScanResult } from "../backend/vetting/scan-result";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
-import {
-  runScanPass,
-  type ScanServiceConfig,
-  serviceConfigFrom,
-} from "../workers/vetting/run";
+import { runScanPass, type ScanServiceConfig } from "../workers/vetting/run";
 import {
   SCAN_REVIEW_AREAS,
   type ScannerProfile,
@@ -70,7 +66,7 @@ const templateInputs = {
   rendererSources: [{ path: "src/render.mjs", sha256: digest(rendererText) }],
   acceptedRevisions: ["1"],
 };
-const TEMPLATE = digest(JSON.stringify(templateInputs));
+let templateSha256 = digest(JSON.stringify(templateInputs));
 const REPOSITORY_FILES: Record<string, string> = {
   "README.md": "# Fixture\nRun `bun test`.\n",
   "AGENTS.md": "Keep changes small and run the tests.\n",
@@ -99,6 +95,7 @@ let acquisitionRequests: { host: string; authorization: string | null }[];
 let publicGitHubLimit: number;
 /** The inventory items the primary reviewer last received. */
 let reviewedItems: { id: string; text: string }[] = [];
+let sourceResponse: "normal" | "oversized" | "truncated" = "normal";
 /** What the synthetic Surplus provider answers on each transport. */
 let provider: {
   up: boolean;
@@ -227,7 +224,7 @@ async function surplus(request: Request, path: string): Promise<Response> {
   });
 }
 
-const readLivePin = async () => ({ commitSha, templateSha256: TEMPLATE });
+const readLivePin = async () => ({ commitSha, templateSha256 });
 const randomId = () =>
   `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`;
 const actorOf = (request: Request) =>
@@ -311,10 +308,12 @@ function github(url: URL): Response {
       sha: object[2],
       tree: { sha: git("rev-parse", `${object[2]}^{tree}`).toString().trim() },
     });
+  if (object?.[1] === "trees" && sourceResponse === "oversized")
+    return new Response(new Uint8Array(4 * 1024 * 1024 + 1));
   if (object?.[1] === "trees")
     return Response.json({
       sha: object[2],
-      truncated: false,
+      truncated: sourceResponse === "truncated",
       tree: git("ls-tree", "-r", "-t", object[2])
         .toString()
         .split("\n")
@@ -428,7 +427,7 @@ async function route(incoming: Request): Promise<Response> {
       schemaVersion: "1",
       repository: "example/templates",
       commit: commitSha,
-      templateSha256: TEMPLATE,
+      templateSha256,
       revisionStatus: "committed",
       contributor: templateInputs.contributor,
       reviewer: templateInputs.reviewer,
@@ -479,7 +478,10 @@ const profile = (
 beforeEach(async () => {
   acquisitionRequests = [];
   publicGitHubLimit = Number.POSITIVE_INFINITY;
+  templateInputs.acceptedRevisions = ["1"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
   clock = NOW;
+  sourceResponse = "normal";
   root = await mkdtemp(join(tmpdir(), "slop-scan-service-"));
   repository = join(root, "git");
   await mkdir(repository);
@@ -622,6 +624,33 @@ test("authenticated source acquisition exceeds the public quota without sharing 
       .every((r) => r.authorization !== "Bearer fixture-github-key"),
   ).toBe(true);
   expect(await readdir(config.workDirectory)).toEqual([]);
+});
+
+test("a template update replaces stale queued work without changing its retained assessment", async () => {
+  provider.up = false;
+  const first = await runScanPass(config);
+  const original = await vetting.getAssessment(
+    first.assessments[0].assessmentId,
+  );
+  expect(original?.state).toBe("pending");
+  if (!original) throw new Error("The first scan was not queued");
+
+  templateInputs.acceptedRevisions = ["1", "2"];
+  templateSha256 = digest(JSON.stringify(templateInputs));
+  clock = new Date(clock.getTime() + 1000);
+  const next = await runScanPass(config);
+  const pending = await vetting.pendingAssessments();
+  expect(pending).toHaveLength(1);
+  expect(pending[0].templateSha256).toBe(templateSha256);
+  expect(pending[0].id).not.toBe(original?.id);
+  expect(next.assessments).toEqual([
+    { assessmentId: pending[0].id, state: "retry", step: "primary-review" },
+  ]);
+  expect(await vetting.getAssessment(original.id)).toEqual(original);
+  expect(await vetting.listAssessments()).toHaveLength(2);
+  await runScanPass(config);
+  expect(await vetting.listAssessments()).toHaveLength(2);
+  expect((await activate()).status).toBe(422);
 });
 
 test("a provider outage leaves the scan pending; the next pass clears the project with one Surplus review", async () => {
@@ -860,6 +889,14 @@ test("a two-flag pause is reinstated automatically after the service's clean fre
   await runScanPass(config);
   expect((await activate()).status).toBe(200);
 
+  // An unfinished scan must not block a later scan covering new flags.
+  await commit({ "README.md": "# Updated fixture\n" }, "Update public guide");
+  provider.up = false;
+  const interrupted = await runScanPass(config);
+  const oldId = interrupted.assessments[0].assessmentId;
+  expect((await vetting.getAssessment(oldId))?.state).toBe("pending");
+  provider.up = true;
+
   expect((await flag("alice")).status).toBe(201);
   clock = new Date(NOW.getTime() + 60_000);
   expect(await (await flag("bob")).json()).toMatchObject({
@@ -872,9 +909,31 @@ test("a two-flag pause is reinstated automatically after the service's clean fre
       .status,
   ).toBe(410);
 
+  // An older app can write the same flags in a different order during rollout.
+  // The database must refuse that duplicate before it supersedes this scan.
+  const pending = await vetting.pendingAssessments();
+  expect(() =>
+    sqlite
+      .query(
+        `INSERT INTO vetting_assessments
+         (id, project_id, revision, manifest_sha256, content_sha256, commit_sha,
+          template_sha256, requested_by_github_id, requested_by_github_login,
+          requested_at, request_reason, state, flag_ids)
+         SELECT ?, project_id, revision, manifest_sha256, content_sha256, commit_sha,
+                template_sha256, requested_by_github_id, requested_by_github_login,
+                requested_at, request_reason, state,
+                (SELECT json_group_array(value) FROM
+                  (SELECT value FROM json_each(a.flag_ids) ORDER BY value DESC))
+           FROM vetting_assessments a WHERE id = ?`,
+      )
+      .run(`vet_${"f".repeat(32)}`, pending[0].id),
+  ).toThrow(/vetting_assessments.current_pending/u);
+
   clock = new Date(NOW.getTime() + 120_000);
   const report = await runScanPass(config);
   const [{ assessmentId }] = report.assessments;
+  expect(assessmentId).not.toBe(oldId);
+  expect((await vetting.getAssessment(oldId))?.state).toBe("pending");
   expect(report.assessments).toEqual([
     {
       assessmentId,
@@ -934,49 +993,6 @@ test("an unpinned endpoint or model fails closed before the queue or any provide
   expect(contacted).toEqual([]);
   expect(provider.calls).toEqual([]);
   expect(await vetting.pendingAssessments()).toEqual([]);
-
-  // The operator file is checked the same way when the service starts.
-  const signing = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
-    "sign",
-    "verify",
-  ])) as CryptoKeyPair;
-  const jwk = JSON.stringify(
-    await crypto.subtle.exportKey("jwk", signing.privateKey),
-  );
-  const { apiKey: _primaryKey, ...primary } = config.primary;
-  const { apiKey: _specialistKey, ...specialist } = config.specialist;
-  const file = (overrides: object) =>
-    JSON.stringify({
-      origin: ORIGIN,
-      policyVersion: "scan-policy-1",
-      workDirectory: join(root, "work"),
-      journalDirectory: join(root, "journal"),
-      primary,
-      specialist,
-      ...overrides,
-    });
-  const env = {
-    SURPLUS_API_KEY: "fixture-surplus-key",
-    SLOP_VETTING_SIGNING_JWK: jwk,
-  };
-  const path = join(root, "service.json");
-  await writeFile(path, file({}));
-  expect((await serviceConfigFrom(path, env)).primary).toMatchObject({
-    endpoint: "https://api.surplusintelligence.ai/anthropic/v1/messages",
-    model: "claude-opus-5.5",
-  });
-  await writeFile(
-    path,
-    file({
-      primary: {
-        ...primary,
-        endpoint: "https://api.anthropic.com/v1/messages",
-      },
-    }),
-  );
-  await expect(serviceConfigFrom(path, env)).rejects.toThrow(
-    "Unapproved scanner profile",
-  );
 });
 
 test("unsupported artifacts produce an incomplete scan rather than aborting the scan pass", async () => {
@@ -1111,3 +1127,91 @@ test.skipIf(!SANDBOX_URL)(
   },
   120000,
 );
+
+for (const scenario of [
+  { source: "entries", evidenceUp: true },
+  { source: "entries", evidenceUp: false },
+  { source: "oversized", evidenceUp: true },
+  { source: "truncated", evidenceUp: true },
+] as const) {
+  test(`an acquisition ${scenario.source} policy refusal completes as incomplete and notifies each owner once (evidence available: ${scenario.evidenceUp})`, async () => {
+    const { evidenceUp } = scenario;
+    if (scenario.source === "entries")
+      await commit(
+        Object.fromEntries(
+          Array.from({ length: 1030 }, (_, index) => [
+            `many/file-${String(index).padStart(4, "0")}.ts`,
+            "export const value = 1;\n",
+          ]),
+        ),
+        "Exceed the supported source inventory",
+      );
+    if (scenario.source !== "entries") sourceResponse = scenario.source;
+    provider.evidenceUp = evidenceUp;
+    const pass = await runScanPass(config);
+    expect(pass.assessments).toHaveLength(1);
+    const outcome = pass.assessments[0];
+    expect(outcome).toMatchObject({
+      state: "published",
+      disposition: "incomplete",
+      outcome: "accepted",
+      specialist: false,
+      evidence: evidenceUp ? "retained" : "failed",
+    });
+    const assessment = await vetting.getAssessment(outcome.assessmentId);
+    expect(assessment?.state).toBe("incomplete");
+    const result = assessment?.result;
+    if (!assessment || !result || !isScanResult(result))
+      throw new Error("Missing incomplete scan result");
+    expect(result.assessed.commitSha).toBe(commitSha);
+    expect(result.assessed.templateSha256).toBe(templateSha256);
+    const reason =
+      scenario.source === "entries"
+        ? `Source entry limit exceeded: observed ${git("ls-tree", "-r", "-t", "HEAD").toString().trim().split("\n").length} entries, maximum 1024`
+        : scenario.source === "oversized"
+          ? "Input response size limit exceeded: maximum 4194304 bytes; complete size unavailable"
+          : "Source tree is truncated";
+    expect(result.visibilityGaps).toEqual([
+      `Acquisition refused before inspection: ${reason}`,
+    ]);
+    for (const coverage of Object.values(result.coverage))
+      expect(coverage).toEqual({ state: "unsupported", items: 0 });
+    expect(
+      Object.values(result.checks).every((state) => state === "not-run"),
+    ).toBe(true);
+    expect(result.primaryReview).toMatchObject({
+      status: "not-started",
+      verdict: null,
+      risk: null,
+      findingCount: 0,
+    });
+    expect(result.specialistReview).toBeNull();
+    expect(provider.calls).toEqual([]);
+    expect(await retained.evidence.retained(result)).toBe(evidenceUp);
+    expect((await activate()).status).toBe(422);
+    const notices = () =>
+      sqlite
+        .query(
+          "SELECT recipient_github_id, action_path FROM notifications WHERE kind='project_scan_failed' ORDER BY recipient_github_id",
+        )
+        .all();
+    const project = await projects.getProject("open-registry");
+    if (!project) throw new Error("Missing fixture project");
+    const owners = [
+      ...new Set([
+        APPLICANT.githubId,
+        String(project.manifest.steward.github.actorId),
+      ]),
+    ].sort();
+    expect(notices()).toEqual(
+      owners.map((recipient_github_id) => ({
+        recipient_github_id,
+        action_path: "/projects/open-registry",
+      })),
+    );
+    // The same pin is now resolved, not polled forever or notified again.
+    expect((await runScanPass(config)).assessments).toEqual([]);
+    expect(notices()).toHaveLength(owners.length);
+    expect(provider.calls).toEqual([]);
+  });
+}

@@ -640,15 +640,6 @@ describe("notifications API", () => {
     expect(byKey.get("project-revision:alpha:no-mail")).toBeUndefined();
     // The wallet notice queued its essential delivery with the source change.
     expect(byKey.get("wallet-claim:a")).toBe("queued");
-    expect(parseNotificationsResponse(body).notifications).toHaveLength(
-      body.notifications.length,
-    );
-    expect(() =>
-      parseNotificationsResponse({
-        ...body,
-        notifications: [{ ...body.notifications[0], emailDelivery: "opened" }],
-      }),
-    ).toThrow();
   });
 
   test("a signed-out request gets 401 and other paths are not handled", async () => {

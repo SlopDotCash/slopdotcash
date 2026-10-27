@@ -317,9 +317,17 @@ Install the pinned toolchain and run the complete repository check:
 
 ```bash
 bun install --frozen-lockfile
+bun run leaderboard:generate
 bun run verify
+bun run format:check
 bun run test:e2e
 ```
+
+For local pull-request checks without live GitHub ingestion, replace only
+`leaderboard:generate` with the validated public-snapshot preparation in
+[Local review checks](README.md#local-review-checks). Stop if preparation
+fails; a leftover ledger is not valid evidence. The release workflow always
+collects fresh GitHub data.
 
 For UI changes, test the built site at desktop and mobile widths, keyboard-only
 navigation, 200% zoom, WCAG AA, copy feedback, downloads, raw Markdown routes,

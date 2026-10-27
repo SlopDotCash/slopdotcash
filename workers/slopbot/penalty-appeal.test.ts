@@ -7,12 +7,22 @@ import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { handleNotificationsApi } from "../../backend/notifications/handler";
-import { fetchProjectPenalties } from "../../scripts/value-ingestion";
 import {
+  fetchProjectPenalties,
+  fetchProjectPenaltyHistory,
+  fetchProjectPenaltyState,
+} from "../../scripts/value-ingestion";
+import {
+  assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
   type LeaderboardSnapshot,
 } from "../../src/lib/leaderboard";
 import { parseNotificationsResponse } from "../../src/lib/notifications";
+import {
+  applyPointsSnapshot,
+  emptyPointsJournal,
+  pointMembers,
+} from "../../src/lib/points";
 import { createProjectView } from "../../src/lib/project-view";
 import { findProject } from "../../src/lib/projects.mjs";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
@@ -496,10 +506,16 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
     init: Parameters<typeof fetch>[1],
   ) => {
     const u = new URL(url instanceof Request ? url.url : String(url));
-    if (u.origin === new URL(server.url).origin) return realFetch(url, init);
+    // Every case stops its ephemeral server. A pooled connection can otherwise
+    // reach a reused port after teardown, corrupting the next case's response.
+    const headers = new Headers(init?.headers);
+    headers.set("connection", "close");
+    const localInit = { ...init, headers };
+    if (u.origin === new URL(server.url).origin)
+      return realFetch(url, localInit);
     if (u.hostname !== "api.github.com")
       throw new Error(`unexpected network request to ${u.hostname}`);
-    return realFetch(new URL(u.pathname + u.search, server.url), init);
+    return realFetch(new URL(u.pathname + u.search, server.url), localInit);
   }) as typeof fetch;
   globalThis.fetch = stub;
   const sent: Job[] = [];
@@ -1257,10 +1273,26 @@ test("a retry after an uncertain reopen completes the recorded appeal decision",
 test("a recorded debit reaches the published score once and an upheld appeal restores it", async () => {
   setSystemTime(new Date(GENERATED_AT));
   await closedItem(async (run) => {
-    const publish = async () =>
-      createLeaderboardSnapshot(
-        penaltyScoreInput(await fetchProjectPenalties("asi", run.feed)),
+    let journal = emptyPointsJournal(GENERATED_AT);
+    const publish = async () => {
+      const snapshot = createLeaderboardSnapshot({
+        ...penaltyScoreInput(await fetchProjectPenalties("asi", run.feed)),
+        penaltyHistory: await fetchProjectPenaltyHistory("asi", run.feed),
+      });
+      journal = applyPointsSnapshot(
+        journal,
+        snapshot,
+        createHash("sha256").update(JSON.stringify(snapshot)).digest("hex"),
+        GENERATED_AT,
       );
+      return snapshot;
+    };
+    const member = () =>
+      pointMembers(journal, "2026-11").find(
+        (row) => row.actor.id === PENALIZED_AUTHOR.id,
+      );
+    const adjustments = () =>
+      journal.revisions.filter((r) => r.award.category === "slopbot-penalty");
     const standing = (snapshot: LeaderboardSnapshot) => {
       const leader = snapshot.leaders.find(
         (entry) => entry.actor.id === PENALIZED_AUTHOR.id,
@@ -1286,6 +1318,14 @@ test("a recorded debit reaches the published score once and an upheld appeal res
       november: 1,
       novemberPenalty: 0,
     });
+    expect(member()).toMatchObject({
+      total: 40,
+      monthly: 10,
+      firstContributionAt: "2026-10-29T12:00:00.000Z",
+      projects: 1,
+    });
+    const original = structuredClone(journal.revisions);
+    const originalBadges = [...member()!.badges];
 
     setSystemTime(new Date(CLOSED_AT));
     expect(await run.review()).toBe("closed (spam)");
@@ -1315,10 +1355,26 @@ test("a recorded debit reaches the published score once and an upheld appeal res
       novemberPenalty: 1,
     };
     expect(standing(debited)).toEqual(penalized);
+    expect(member()).toMatchObject({
+      total: 30,
+      monthly: 0,
+      firstContributionAt: "2026-10-29T12:00:00.000Z",
+      projects: 1,
+    });
+    expect(journal.revisions.slice(0, original.length)).toEqual(original);
+    expect(member()!.badges).toEqual(originalBadges);
+    expect(adjustments()).toMatchObject([
+      {
+        award: { amount: -10 },
+        decision: { delta: -10 },
+        penalty: { debit: 30, reversedAt: null },
+      },
+    ]);
 
     // A replayed review and a second publication apply the debit once.
     await run.review();
     expect(standing(await publish())).toEqual(penalized);
+    expect(adjustments()).toHaveLength(1);
 
     run.model("none", 0.95);
     expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
@@ -1338,6 +1394,137 @@ test("a recorded debit reaches the published score once and an upheld appeal res
       november: 1,
       novemberPenalty: 0,
     });
+    expect(member()).toMatchObject({ total: 40, monthly: 10 });
+    expect(adjustments()).toMatchObject([
+      { award: { amount: -10 } },
+      {
+        award: { amount: 0 },
+        decision: { delta: 10 },
+        penalty: { reversal: "appeal_upheld" },
+      },
+    ]);
+    await publish();
+    expect(adjustments()).toHaveLength(2);
+  });
+});
+
+// PRD section 7: a debit is recorded once and reduces only that UTC month.
+test("penalty collection preserves active debits during the history route rollout", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    await run.review();
+    const legacy = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      url.searchParams.delete("history");
+      return run.feed(url);
+    }) as typeof fetch;
+    const state = await fetchProjectPenaltyState("asi", legacy);
+    expect(state.history).toBeNull();
+    expect(state.penalties).toMatchObject([
+      { itemNodeId: "PR_local", debitThirds: 3 },
+    ]);
+    expect(
+      (await fetchProjectPenaltyState("asi", run.feed)).history,
+    ).toMatchObject([{ itemNodeId: "PR_local", reversedAt: null }]);
+  });
+});
+
+test("an old Points debit survives missing snapshots and reverses only on retained evidence", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    await run.review();
+    setSystemTime(new Date(GENERATED_AT));
+    const first = createLeaderboardSnapshot({
+      ...penaltyScoreInput(await fetchProjectPenalties("asi", run.feed)),
+      penaltyHistory: await fetchProjectPenaltyHistory("asi", run.feed),
+    });
+    const zeroInput = penaltyScoreInput(
+      await fetchProjectPenalties("asi", run.feed),
+    );
+    zeroInput.mergedPullRequests = zeroInput.mergedPullRequests.filter(
+      (r) => r.id !== "PR_november",
+    );
+    zeroInput.mergedPullRequestOutcomes =
+      zeroInput.mergedPullRequestOutcomes.filter((r) => r.id !== "PR_november");
+    zeroInput.detailEligibleMergedPullRequestIds =
+      zeroInput.detailEligibleMergedPullRequestIds.filter(
+        (id) => id !== "PR_november",
+      );
+    zeroInput.source.counts.mergedPullRequests = 2;
+    zeroInput.source.counts.detailedMergedPullRequests = 2;
+    const zero = createLeaderboardSnapshot(zeroInput);
+    let journal = applyPointsSnapshot(
+      emptyPointsJournal(GENERATED_AT),
+      zero,
+      "0".repeat(64),
+      GENERATED_AT,
+    );
+    expect(journal.revisions.filter((r) => r.penalty)).toMatchObject([
+      { award: { amount: 0 }, decision: { delta: 0 } },
+    ]);
+    const zeroCount = journal.revisions.length;
+    journal = applyPointsSnapshot(journal, zero, "0".repeat(64), GENERATED_AT);
+    expect(journal.revisions).toHaveLength(zeroCount);
+    journal = applyPointsSnapshot(journal, first, "a".repeat(64), GENERATED_AT);
+    const member = () =>
+      pointMembers(journal, "2026-11").find(
+        (row) => row.actor.id === PENALIZED_AUTHOR.id,
+      );
+    expect(member()).toMatchObject({ total: 30, monthly: 0 });
+    const original = structuredClone(journal.revisions);
+    const later = "2026-12-20T00:00:00.000Z";
+    setSystemTime(new Date(later));
+    const input = penaltyScoreInput([], later);
+    input.mergedPullRequests = [];
+    input.mergedPullRequestOutcomes = [];
+    input.closedUnmergedPullRequests = [];
+    input.detailEligibleMergedPullRequestIds = [];
+    input.source.counts.mergedPullRequests = 0;
+    input.source.counts.detailedMergedPullRequests = 0;
+    // A paused project's repositories leave GitHub collection, but its
+    // retained reversal history must still reach the Points journal.
+    const empty = createLeaderboardSnapshot(input);
+    const absent: LeaderboardSnapshot = {
+      ...empty,
+      repository: null,
+      repositories: [],
+      source: { ...empty.source, repositoryId: null, repositories: [] },
+    };
+    assertLeaderboardSnapshot(absent);
+    // Neither an old-format snapshot nor a complete empty active feed is a reversal.
+    journal = applyPointsSnapshot(journal, absent, "b".repeat(64), later);
+    journal = applyPointsSnapshot(
+      journal,
+      { ...absent, penaltyHistory: [] },
+      "c".repeat(64),
+      later,
+    );
+    expect(journal.revisions).toEqual(original);
+    expect(member()).toMatchObject({ total: 30, monthly: 0 });
+
+    expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+    const history = await fetchProjectPenaltyHistory("asi", run.feed);
+    expect(await fetchProjectPenalties("asi", run.feed)).toEqual([]);
+    expect(history).toMatchObject([
+      {
+        itemNodeId: "PR_local",
+        reversedAt: later,
+        reversal: "maintainer_reopen",
+      },
+    ]);
+    expect(history[0]).not.toHaveProperty("review_key");
+    const restored = { ...absent, penaltyHistory: history };
+    assertLeaderboardSnapshot(restored);
+    journal = applyPointsSnapshot(journal, restored, "e".repeat(64), later);
+    expect(member()).toMatchObject({ total: 40, monthly: 10 });
+    expect(journal.revisions.slice(0, original.length)).toEqual(original);
+    expect(journal.revisions.at(-1)).toMatchObject({
+      award: { amount: 0, occurredAt: CLOSED_AT },
+      decision: { delta: 10, effectiveAt: later },
+    });
+    const count = journal.revisions.length;
+    journal = applyPointsSnapshot(journal, restored, "f".repeat(64), later);
+    expect(journal.revisions).toHaveLength(count);
   });
 });
 

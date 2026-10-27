@@ -141,3 +141,67 @@ test("an occupied fixture port rejects startup and lets the caller release and r
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("registry fixture writes survive idle-socket closure without replay", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "slop-fixture-idle-"));
+  const result = join(directory, "result.json");
+  const fixture = pathToFileURL(
+    join(process.cwd(), "tests/github-api-fixture.mjs"),
+  ).href;
+  const client = `
+    import assert from "node:assert/strict";
+    import { writeFileSync } from "node:fs";
+    import { setTimeout } from "node:timers/promises";
+    const origin = process.argv[1];
+    for (let index = 0; index < 64; index++) {
+      const login = "fixture-writer-" + index;
+      const response = await fetch(origin + "/__fixture/github-users/900000002?login=" + login + "&createdAt=2020-01-01T00:00:00Z&merged=2", { method: "PUT" });
+      assert.equal(response.status, 204);
+      await response.text();
+      await setTimeout(1);
+      const read = await fetch(origin + "/user/900000002");
+      assert.equal(read.status, 200);
+      assert.equal((await read.json()).login, login);
+      await setTimeout(1);
+    }
+    writeFileSync(${JSON.stringify(result)}, "64 writes read back without retry");
+  `;
+  const script = `
+    import assert from "node:assert/strict";
+    import { spawn } from "node:child_process";
+    import { startGitHubApiFixture } from ${JSON.stringify(fixture)};
+    const server = await startGitHubApiFixture(0);
+    // Reproduce a server retiring idle sockets while the independent test
+    // client starts its next request. Never interrupt an active request.
+    const closeIdle = setInterval(() => server.closeIdleConnections(), 1);
+    try {
+      const child = spawn(process.execPath, ["--input-type=module", "-e", ${JSON.stringify(client)}, "http://127.0.0.1:" + server.address().port], { stdio: "inherit" });
+      const status = await new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", resolve);
+      });
+      assert.equal(status, 0);
+    } finally {
+      clearInterval(closeIdle);
+      server.closeAllConnections();
+      await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  `;
+  try {
+    expect(
+      await runE2ePhase({
+        label: "fixture-idle-socket-regression",
+        command: "node",
+        args: ["--input-type=module", "-e", script],
+        cwd: directory,
+        env: process.env,
+        timeoutMs: 10_000,
+      }),
+    ).toBe(0);
+    expect(readFileSync(result, "utf8")).toBe(
+      "64 writes read back without retry",
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

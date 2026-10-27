@@ -1,4 +1,7 @@
-import { isHistoricalRepositoryId } from "./projects.mjs";
+import {
+  findHistoricalRepository,
+  isHistoricalRepositoryId,
+} from "./projects.mjs";
 import { TARGET_REPOSITORIES } from "./repositories.mjs";
 export interface ProfileRecord {
   id: string;
@@ -269,88 +272,6 @@ export function issueHistoryReconciles(
   return state === issue.state && reason === issue.reason;
 }
 
-/** Diagnostic outcomes only; these counts never change score or money. */
-export function profileIssueOutcomes(
-  issues: readonly ProfileIssue[],
-  actorId: string,
-  repository?: string,
-  period?: string,
-) {
-  if (period !== undefined && !/^\d{4}-(0[1-9]|1[0-2])$/.test(period))
-    throw Error("Invalid UTC outcome period");
-  const end =
-    period === undefined
-      ? Infinity
-      : Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 1);
-  const counts = {
-    open: 0,
-    reopened: 0,
-    completed: 0,
-    notPlanned: 0,
-    duplicate: 0,
-    unknown: 0,
-    transferred: 0,
-    unavailable: 0,
-    incomplete: 0,
-    corrected: 0,
-  };
-  for (const issue of issues) {
-    if (
-      issue.authorId !== actorId ||
-      (repository !== undefined && issue.repository !== repository) ||
-      Date.parse(issue.createdAt) >= end
-    )
-      continue;
-    const history = issue.events
-      .filter((event) => Date.parse(event.occurredAt) < end)
-      .reverse();
-    const transition = history.find(
-      (event) => event.kind === "closed" || event.kind === "reopened",
-    );
-    // A monthly result uses the last transition as of month end and only
-    // counts issues whose creation/transition occurred in that UTC month.
-    const occurredAt = transition?.occurredAt ?? issue.createdAt;
-    if (
-      period !== undefined &&
-      new Date(occurredAt).toISOString().slice(0, 7) !== period
-    )
-      continue;
-    if (
-      issue.unavailableSince !== null &&
-      Date.parse(issue.unavailableSince) < end
-    ) {
-      counts.unavailable++;
-      continue;
-    }
-    if (issue.correctedAt !== null) counts.corrected++;
-    if (history.some((event) => event.kind === "transferred"))
-      counts.transferred++;
-    // The visible events cannot say how or when the issue reached its state.
-    if (issue.historyIncompleteSince != null) {
-      counts.incomplete++;
-      continue;
-    }
-    if (transition?.kind !== "closed") {
-      if (transition?.kind === "reopened") counts.reopened++;
-      else counts.open++;
-      continue;
-    }
-    // GitHub also places these events on the canonical issue. That issue
-    // must not become a duplicate because another issue points to it.
-    const duplicate = history.find(
-      (event) =>
-        (event.kind === "duplicate" || event.kind === "unmarked-duplicate") &&
-        event.relatedIssueId !== null &&
-        event.relatedIssueId !== issue.id,
-    );
-    if (transition.reason === "DUPLICATE" || duplicate?.kind === "duplicate")
-      counts.duplicate++;
-    else if (transition.reason === "COMPLETED") counts.completed++;
-    else if (transition.reason === "NOT_PLANNED") counts.notPlanned++;
-    else counts.unknown++;
-  }
-  return counts;
-}
 export function profileCounts(p: ProfileRecord) {
   return p.repositories.reduce(
     (a, r) => ({
@@ -360,4 +281,40 @@ export function profileCounts(p: ProfileRecord) {
     }),
     { merged: 0, open: 0, closed: 0 },
   );
+}
+
+/** Canonical repository behind a census repository name, if it resolves. */
+export function profileCanonicalRepository(repository: string): string | null {
+  return (
+    findHistoricalRepository(repository)?.repositoryId.toLowerCase() ?? null
+  );
+}
+
+/** Canonical identities behind the currently collected repositories. */
+export function collectedProfileRepositories(
+  collected: readonly string[],
+): ReadonlySet<string> {
+  return new Set(
+    collected
+      .map(profileCanonicalRepository)
+      .filter((project): project is string => project !== null),
+  );
+}
+
+/**
+ * True when a previous census row survives into the next census. A renamed
+ * repository is collected under its current name, but a previous census
+ * names it by the name it had then; both names resolve to the same canonical
+ * repository, so the old row is replaced by the fresh full collection instead
+ * of added to it. Rows for retired projects, and rows the registry does not
+ * know, are still carried, preserving the archived-issue-history rule.
+ */
+export function isCarriedProfileRepository(
+  repository: string,
+  collected: ReadonlySet<string>,
+  collectedRepositories: ReadonlySet<string>,
+): boolean {
+  if (collected.has(repository)) return false;
+  const project = profileCanonicalRepository(repository);
+  return project === null || !collectedRepositories.has(project);
 }
