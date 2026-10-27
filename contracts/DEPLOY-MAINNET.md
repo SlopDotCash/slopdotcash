@@ -182,7 +182,13 @@ so no vault upgrade was needed and no deployment record needs a history entry.
 
 These steps deploy replacement UUPS EVM factories and vault implementations,
 and deploy or upgrade the Solana program with owner-controlled upgrades.
-The approved launch order is Base, Solana, Ethereum, then Robinhood.
+The approved live qualification order is Base, Solana, then Robinhood.
+The owner waived the separate Ethereum first-vault live qualification on
+27 October 2026 (PRD section 11). Record that launch gate as waived, not as
+a completed live test. Successful Base and Robinhood qualification supplies
+the shared EVM coverage. Existing Ethereum asset, authority, finality and
+explicit activation controls remain; this waiver authorizes no new funding
+or transaction.
 
 A human or an owner-authorized agent may execute the reviewed plan within
 the owner's authorized financial scope (PRD section 11, 25 October 2026). An
