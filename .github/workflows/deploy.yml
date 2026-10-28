@@ -119,11 +119,12 @@ jobs:
         # snapshots it so build-time ingestion collects the active
         # repositories. Pull-request validation also needs this public,
         # read-only inventory to validate awards for registered projects.
+        # Pair the PR registry with its production public-ledger snapshot.
         # No repository or deployment credential is passed to this read.
         # Before an environment first serves the API, the sync keeps the
         # committed snapshot and says so.
         env:
-          SLOP_API_ORIGIN: ${{ env.VITE_SLOP_ENVIRONMENT == 'staging' && 'https://staging.slop.cash' || 'https://slop.cash' }}
+          SLOP_API_ORIGIN: ${{ github.event_name == 'pull_request' && 'https://slop.cash' || env.VITE_SLOP_ENVIRONMENT == 'staging' && 'https://staging.slop.cash' || 'https://slop.cash' }}
         run: bun run projects:sync
 
       - name: Validate project registry and every skill
