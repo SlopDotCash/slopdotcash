@@ -2637,7 +2637,7 @@ test("private bounty obligations continue through role loss, approver replacemen
   });
 });
 
-test("home advertises only open security terms with the 75/25 split @registry", async ({
+test("home links to a consolidated security bounty with full award terms @registry", async ({
   page,
   request,
 }) => {
@@ -2683,28 +2683,19 @@ test("home advertises only open security terms with the 75/25 split @registry", 
     exact: true,
   });
   await expect(section.locator(".security-bounty-card")).toHaveCount(1);
-  await expect(section).toContainText("7,500 USDC");
-  await expect(section).toContainText("7,500 USDC to the researcher");
+  await expect(section).toContainText("10,000 USDC security bounty");
   await expect(section).toContainText(
-    "10,000 USDC total award · 2,500 USDC to Slop",
+    "Find a critical security vulnerability in the Security test program",
   );
-  await expect(section).toContainText(
-    "Pledged — funded after approval. Payment requires verified funding.",
-  );
-  const link = section.getByRole("link", {
-    name: "Report privately",
-    exact: true,
-  });
-  await expect(link).toHaveAttribute("href", `/projects/${id}/security`);
+  await expect(section).not.toContainText("7,500 USDC");
+  await expect(
+    page.getByRole("link", { name: "Your private reports", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.locator("#community-projects")).toHaveCount(0);
+  const link = section.getByRole("link", { name: "View bounty", exact: true });
+  await expect(link).toHaveAttribute("href", `/projects/${id}`);
   await link.focus();
   await expect(link).toBeFocused();
-  await section.getByText("Use your agent", { exact: true }).click();
-  await expect(
-    section.getByRole("status", { name: "Agent prompt" }),
-  ).toContainText(`github.com/${repository}`);
-  await expect(
-    section.getByRole("status", { name: "Agent prompt" }),
-  ).toContainText("/SKILL.md");
   await expectAccessible(page);
   await page.evaluate(() => window.scrollTo({ top: 0 }));
   await page.screenshot({
@@ -2722,6 +2713,36 @@ test("home advertises only open security terms with the 75/25 split @registry", 
     ).toBe(true);
     await expectAccessible(page);
   }
+  await link.click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Security test program security bounty",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Agent setup" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Points only · no cash rewards", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Payment history" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("No activity collected yet.", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Report malicious code in this project", { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Community" })).toHaveCount(
+    0,
+  );
+  await page.getByText("Full award terms", { exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "Published bounty offer" }),
+  ).toContainText("7,500 USDC");
+  await expectAccessible(page);
+  await page.goto("/");
   await page.unroute("**/api/v1/projects");
   await page.route("**/api/v1/projects", (route) =>
     route.fulfill({

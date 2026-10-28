@@ -77,7 +77,7 @@ export default defineConfig({
   // The legacy file URL is also supported for existing sessions.
   server: {
     proxy: {
-      "^/(?:api/v1/projects|api/v1/payments/[^?]+/direct-transfers|data/project-registry\\.json)(?:\\?.*)?$":
+      "^/(?:api/v1/projects|api/v1/payments/[^?]+/direct-transfers|\\.well-known/slop/projects\\.json|data/project-registry\\.json)(?:\\?.*)?$":
         {
           target: localReadOrigin,
           changeOrigin: true,

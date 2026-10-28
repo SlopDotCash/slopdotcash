@@ -2397,7 +2397,7 @@ test("repository lookup failures explain the next action and preserve the draft 
   await context.close();
 });
 
-test("two contributors flag through the form, pause the project and notify moderators @registry", async ({
+test("two contributors flag through the agent API, pause the project and notify moderators @registry", async ({
   browser,
 }) => {
   const readPrivate = (page: Page, path: string) =>
@@ -2438,15 +2438,19 @@ test("two contributors flag through the form, pause the project and notify moder
   expect(await listedProject(owner, project.id)).toMatchObject({
     status: "paused",
   });
-  const fileFlag = (token: string) =>
+  const fileFlag = (
+    token: string,
+    category = "other",
+    evidence = "Synthetic fixture: a refused flag must not be recorded.",
+  ) =>
     owner.request.post(`/api/v1/project-flags/${project.id}`, {
       headers: {
         origin: new URL(owner.url()).origin,
         cookie: `__Host-slop_points=${token}`,
       },
       data: {
-        category: "other",
-        evidence: "Synthetic fixture: a refused flag must not be recorded.",
+        category,
+        evidence,
       },
     });
   // The project's own owner and a new GitHub account cannot flag.
@@ -2469,17 +2473,12 @@ test("two contributors flag through the form, pause the project and notify moder
   const firstEvidence =
     "Synthetic fixture: install.js requests credentials before starting.";
   await first.goto(`/projects/${project.id}`, { waitUntil: "networkidle" });
-  await first
-    .getByText("Report malicious code in this project", { exact: true })
-    .click();
-  await first.getByRole("textbox", { name: /^Evidence/u }).fill(firstEvidence);
-  await first.getByRole("button", { name: "Flag this project" }).click();
-  await expect(
-    first.getByRole("status").filter({ hasText: "Flag recorded" }),
-  ).toBeVisible();
-  await expect(first.locator(".project-risk-flag")).toContainText(
-    "It counts until",
-  );
+  await expect(first.locator(".project-risk-flag")).toHaveCount(0);
+  expect(
+    (
+      await fileFlag(APPLICANT_TOKEN, "credential-theft", firstEvidence)
+    ).status(),
+  ).toBe(200);
   const ownPath = `/api/v1/project-flags/${project.id}`;
   expect(await readPrivate(first, ownPath)).toMatchObject({
     restriction: "clear",
@@ -2498,19 +2497,16 @@ test("two contributors flag through the form, pause the project and notify moder
     flag: null,
   });
   await second.goto(`/projects/${project.id}`, { waitUntil: "networkidle" });
-  await second
-    .getByText("Report malicious code in this project", { exact: true })
-    .click();
-  await second
-    .getByRole("combobox", { name: /^Risk/u })
-    .selectOption("unsafe-execution");
-  await second
-    .getByRole("textbox", { name: /^Evidence/u })
-    .fill("Synthetic fixture: setup.sh runs an unverified downloaded script.");
-  await second.getByRole("button", { name: "Flag this project" }).click();
-  await expect(
-    second.getByRole("status").filter({ hasText: "Flag recorded" }),
-  ).toContainText("now paused");
+  expect(
+    (
+      await fileFlag(
+        SECURITY_ACCOUNT.token,
+        "unsafe-execution",
+        "Synthetic fixture: setup.sh runs an unverified downloaded script.",
+      )
+    ).status(),
+  ).toBe(200);
+  await second.reload({ waitUntil: "networkidle" });
   await expect(second.locator("main")).not.toContainText(firstEvidence);
   await expect(second.locator("#start")).toContainText(
     "Do not install this project's skill or start work.",
@@ -2535,16 +2531,14 @@ test("two contributors flag through the form, pause the project and notify moder
   });
 
   await second.reload({ waitUntil: "networkidle" });
-  await second
-    .getByText("Report malicious code in this project", { exact: true })
-    .click({ timeout: 10000 });
-  await expect(
-    second.getByRole("button", { name: "Withdraw my flag" }),
-  ).toBeVisible();
-  await second.getByRole("button", { name: "Withdraw my flag" }).click();
-  await expect(
-    second.getByRole("status").filter({ hasText: "Flag withdrawn" }),
-  ).toBeVisible();
+  const withdrawn = await second.request.post(`${ownPath}/withdraw`, {
+    headers: {
+      origin: new URL(second.url()).origin,
+      cookie: `__Host-slop_points=${SECURITY_ACCOUNT.token}`,
+    },
+    data: {},
+  });
+  expect(withdrawn.status()).toBe(200);
   expect(await readPrivate(second, ownPath)).toMatchObject({
     flag: null,
     restriction: "quarantined",
