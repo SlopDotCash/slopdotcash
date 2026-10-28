@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { surplusSecurityAnalyzer } from "../backend/security/analysis";
 import { priceUsage } from "../workers/slopbot/contracts";
@@ -7,6 +8,11 @@ const ENDPOINT = "https://api.surplusintelligence.ai/anthropic/v1/messages";
 const MAXIMUM_MICRO_USD = 1_000_000;
 const OUTPUT_TOKENS = 1024;
 class DryRunComplete extends Error {}
+class ScreeningDecisionError extends Error {
+  constructor(readonly decision: "needs-information" | "spam") {
+    super(`Synthetic screening returned ${decision}`);
+  }
+}
 
 function requireThat(value: unknown): asserts value {
   if (!value) throw new Error("Private-screening qualification failed");
@@ -19,6 +25,13 @@ export async function qualifySecurityScreening(
   dryRun = false,
   fetcher: typeof fetch = fetch,
 ) {
+  const source = await readFile(
+    new URL(
+      "../tests/fixtures/security-screening/DemoVault.sol",
+      import.meta.url,
+    ),
+    "utf8",
+  );
   let requests = 0;
   let servedModel: string | null = null;
   const transport = (async (input, init) => {
@@ -66,16 +79,20 @@ export async function qualifySecurityScreening(
     const result = await analyzer.screen(
       {
         report: {
-          summary: "Synthetic local vault lacks withdrawal authorization",
+          summary: "Included DemoVault.sol lets Bob withdraw Alice's deposit",
           description:
-            "Public synthetic qualification only; no live target or funds. " +
-            "In a local demonstrator vault, withdraw(account, amount) checks " +
-            "balances[account] and transfers to msg.sender but never checks " +
-            "that msg.sender equals account. Deposit 100 test units as Alice, " +
-            "then call withdraw(Alice, 100) as Bob: Alice's balance becomes " +
-            "zero and Bob receives the units. A control that requires " +
-            "msg.sender == account rejects Bob. This is a concrete " +
-            "authorization bypass reproduced using synthetic balances only.",
+            "Public synthetic qualification only; no deployed target or real funds. " +
+            "The complete affected Solidity component is included below. " +
+            "The local EVM test deploys DemoVault, gives Alice 100 wei and Bob 0, " +
+            "then Alice calls deposit with value 100. Bob calls withdraw(Alice, 100). " +
+            "The call succeeds: balances[Alice] is 0, Bob's balance is 100, and " +
+            "the vault balance is 0. The test asserts all three outcomes. " +
+            "withdraw selects the debited account from caller input but transfers " +
+            "its funds to msg.sender without checking that caller owns that account. " +
+            "A second local EVM test adds require(msg.sender == account) before " +
+            "the same body. Bob's call then reverts, Alice's deposit remains 100, " +
+            "and Bob receives nothing. Both tests pass with Solidity 0.8.28.\n\n" +
+            source,
           severity: null,
           cvss: null,
           cweIds: ["CWE-862"],
@@ -86,7 +103,9 @@ export async function qualifySecurityScreening(
       },
       120_000,
     );
-    requireThat(result.decision === "legitimate" && requests === 1);
+    if (result.decision !== "legitimate")
+      throw new ScreeningDecisionError(result.decision);
+    requireThat(requests === 1);
   } catch (error) {
     if (!(dryRun && error instanceof DryRunComplete)) throw error;
   }
@@ -122,9 +141,14 @@ if (
   } else {
     await qualifySecurityScreening(process.env.SURPLUS_API_KEY, dryRun)
       .then((result) => process.stdout.write(`${JSON.stringify(result)}\n`))
-      .catch(() => {
+      .catch((error) => {
+        // The validated enum is safe to report; provider text remains private.
+        const detail =
+          error instanceof ScreeningDecisionError
+            ? ` returned ${error.decision}`
+            : " failed";
         process.stderr.write(
-          "Private-screening qualification failed; no publication is permitted.\n",
+          `Private-screening qualification${detail}; no publication is permitted.\n`,
         );
         process.exitCode = 1;
       });
