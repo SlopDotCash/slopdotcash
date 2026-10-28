@@ -8,6 +8,7 @@ const ORIGIN = "https://slop.cash";
 const SLOPBOT = "https://slopbot.slop.cash/health";
 const NOW = new Date("2026-10-28T17:00:00.000Z");
 const BASE_VAULT = "0x6c1297c3b96a00347cb501f572cb5811c2a8ed36";
+const SOLANA_VAULT = "6NhxSaed6SF3uCAgzQViCZixETGpvxuFzo5eRGiaGM7";
 
 function registry() {
   return {
@@ -228,5 +229,62 @@ test("a request that exceeds the bound times out as a failure, without retry", a
   expect(calls).toBe(1);
   expect(results.filter((r) => !r.ok)).toEqual([
     { ok: false, check: "site home", detail: "timed out after 20 ms" },
+  ]);
+});
+
+test("an inactive network's old snapshot passes, but it must still exist", async () => {
+  const solana = (observedAt: string | undefined) => ({
+    projectId: "eliza",
+    snapshots:
+      observedAt === undefined
+        ? []
+        : [
+            {
+              projectId: "eliza",
+              network: "solana-mainnet",
+              chain: "solana",
+              vault: SOLANA_VAULT,
+              observedAt,
+            },
+          ],
+    staleAfterMs: 1_800_000,
+    servedAt: NOW.toISOString(),
+  });
+  const withEliza = registry();
+  withEliza.projects.push({
+    schemaVersion: "1",
+    id: "eliza",
+    listingTier: "featured",
+    status: "active",
+    escrow: {
+      deployments: [
+        {
+          network: "solana-mainnet",
+          factory: "",
+          vault: SOLANA_VAULT,
+          asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        },
+      ],
+    },
+  });
+  const route = (observedAt: string | undefined) => ({
+    [`${ORIGIN}/api/v1/projects`]: { body: withEliza },
+    [`${ORIGIN}/api/v1/payments/projects/eliza/vault`]: {
+      body: solana(observedAt),
+    },
+  });
+  const old = await run(route("2026-10-28T13:34:34.541Z"));
+  expect(old.failed).toEqual([]);
+  expect(
+    old.results.find((r) => r.check.includes("solana-mainnet"))?.detail,
+  ).toBe(
+    "network not activated, no refresh expected; last observed 2026-10-28T13:34:34.541Z",
+  );
+  const missing = await run(route(undefined));
+  expect(missing.failed.map((r) => [r.check, r.detail])).toEqual([
+    [
+      `vault eliza solana-mainnet ${SOLANA_VAULT}`,
+      "no cached snapshot for this vault",
+    ],
   ]);
 });
