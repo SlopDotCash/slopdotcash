@@ -124,7 +124,7 @@ export type SecurityApiDependencies = {
    * the viewer's cases share one project read instead of one per case; a
    * project's manifest does not change inside one request.
    */
-  reportingProjects?: Map<string, ReportingProject>;
+  reportingProjects?: Map<string, Promise<ReportingProject>>;
 };
 
 type ReportingProject = {
@@ -331,19 +331,21 @@ async function currentReportingProject(
 ): Promise<ReportingProject> {
   const memo = deps.reportingProjects?.get(projectId);
   if (memo !== undefined) return memo;
-  const row = await deps.db
-    .prepare("SELECT manifest, revision FROM projects WHERE id = ?")
-    .bind(projectId)
-    .first<{ manifest: string; revision: number }>();
-  const project: ReportingProject =
-    row === null
+  // Store the in-flight read too: concurrent cases must not each issue it.
+  const pending = (async (): Promise<ReportingProject> => {
+    const row = await deps.db
+      .prepare("SELECT manifest, revision FROM projects WHERE id = ?")
+      .bind(projectId)
+      .first<{ manifest: string; revision: number }>();
+    return row === null
       ? null
       : {
           manifest: JSON.parse(row.manifest) as ProjectDefinition,
           revision: row.revision,
         };
-  deps.reportingProjects?.set(projectId, project);
-  return project;
+  })();
+  deps.reportingProjects?.set(projectId, pending);
+  return pending;
 }
 
 /**

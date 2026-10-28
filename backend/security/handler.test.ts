@@ -762,8 +762,13 @@ describe("automatic private intake", () => {
       raw.set(wrapped, statement);
       return wrapped;
     };
+    let projectReads = 0;
     const slow: SecurityD1Database = {
-      prepare: (sql) => slowStatement(env.db.prepare(sql)),
+      prepare: (sql) => {
+        if (sql === "SELECT manifest, revision FROM projects WHERE id = ?")
+          projectReads++;
+        return slowStatement(env.db.prepare(sql));
+      },
       batch: (statements) =>
         env.db.batch(statements.map((entry) => raw.get(entry) ?? entry)),
     };
@@ -780,6 +785,7 @@ describe("automatic private intake", () => {
       },
     );
     const elapsed = performance.now() - started;
+    expect(projectReads).toBe(1);
     expect(response?.status).toBe(200);
     const body = (await response?.json()) as Reply;
     expect(body.cases?.map((entry) => entry.id)).toEqual([...ids].reverse());
