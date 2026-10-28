@@ -26,17 +26,18 @@ import {
 } from "./EscrowFunding";
 import { FundingStatus } from "./FundingStatus";
 import { Link, useHashScroll } from "./Link";
-import { SecurityOffer } from "./SecurityOffer";
+import { formatSecurityAmount } from "./lib/security-bounty.mjs";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
-import {
-  type PromotionCycle,
-  projectPromotionEligible,
-} from "./lib/allocation-funding";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { copyText } from "./lib/copy-text";
-import { communityProjects, homeProjects } from "./lib/home-projects";
+import { GithubIcon } from "./lib/github-icon";
+import {
+  communityProjects,
+  hasBountyOverview,
+  homeProjects,
+} from "./lib/home-projects";
 import { networkLabel } from "./lib/network-names";
 import { formatAssetAmount } from "./lib/payments/contracts";
 import type { ProjectView } from "./lib/project-view";
@@ -45,7 +46,6 @@ import {
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
-import { REWARD_ASSET_NETWORKS } from "./lib/reward-asset.mjs";
 import { pageTitle, SITE_ORIGIN, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCycleIndex } from "./lib/use-cycle-index";
@@ -61,7 +61,6 @@ import {
 } from "./Points";
 import {
   cycleLifecycleLabel,
-  DataNotice,
   EmptyState,
   ExternalLinkAnchor,
   formatCycleMonth,
@@ -77,7 +76,6 @@ import {
   reviewBudgetLabel,
   stale,
 } from "./Presentation";
-import { ProjectRiskFlag } from "./ProjectRiskFlag";
 
 /**
  * Renders the GitHub-native Slop network across discovery, project,
@@ -369,7 +367,7 @@ function routeHead(route: Route): { title: string; path: string | null } {
     if (route.kind === "security-program") {
       return {
         title: pageTitle(`${project.name} security bounty`),
-        path: `${base}/security`,
+        path: hasBountyOverview(project) ? base : `${base}/security`,
       };
     }
     if (route.kind === "manage-project") {
@@ -378,7 +376,14 @@ function routeHead(route: Route): { title: string; path: string | null } {
         path: `${base}/manage`,
       };
     }
-    return { title: pageTitle(project.name), path: base };
+    return {
+      title: pageTitle(
+        hasBountyOverview(project)
+          ? `${project.name} security bounty`
+          : project.name,
+      ),
+      path: base,
+    };
   }
   const path = window.location.pathname.replace(/(.)\/$/u, "$1");
   const title = STATIC_PAGE_TITLES.get(path);
@@ -520,8 +525,21 @@ function HeroHeading() {
 function monthlyPoolCapLabel(project: ProjectDefinition): string {
   const reward = project.reward;
   const minor = BigInt(reward.monthlyCapMinor);
-  if (project.rewardAsset?.kind === "token" || minor % 1_000_000n !== 0n)
-    return reward.monthlyCapDisplay;
+  if (project.rewardAsset?.kind === "token")
+    return reward.monthlyCapDisplay
+      .replace(/^[\d,]+(?=\s)/u, (digits) =>
+        new Intl.NumberFormat("en-US", {
+          notation: "compact",
+          maximumFractionDigits: 2,
+        })
+          .format(BigInt(digits.replaceAll(",", "")))
+          .toLowerCase(),
+      )
+      .replace(
+        /\s+(\$?\S+)$/u,
+        (_, symbol: string) => ` $${symbol.replace(/^\$/u, "")}`,
+      );
+  if (minor % 1_000_000n !== 0n) return reward.monthlyCapDisplay;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
@@ -688,7 +706,7 @@ function GlobalLeaderboard({
         compact
         retryScore={retry}
         scoreState={state}
-        showDataNotice
+        showDataNotice={false}
         title="Top sloperators"
       />
     </section>
@@ -716,9 +734,6 @@ function SecurityBounties() {
         <h2 className="home-section-title" id="home-security-title">
           Security bounties
         </h2>
-        <Link className="text-button" href="/inbox">
-          Your private reports <ArrowRight aria-hidden="true" />
-        </Link>
       </div>
       {programs.length === 0 ? (
         <p className="project-tier-note">
@@ -735,21 +750,40 @@ function SecurityBounties() {
               <article className="security-bounty-card" key={project.id}>
                 <div className="project-card-heading">
                   <ShieldCheck aria-hidden="true" />
-                  <h3>{project.name}</h3>
+                  <h3>
+                    <Link
+                      href={
+                        hasBountyOverview(project)
+                          ? `/projects/${project.slug}`
+                          : `/projects/${project.slug}/security`
+                      }
+                    >
+                      {project.name}
+                    </Link>
+                  </h3>
                 </div>
-                <SecurityOffer project={project} />
+                <p className="security-offer-net">
+                  <strong>
+                    {formatSecurityAmount(
+                      terms.amount.grossMinor,
+                      terms.amount,
+                    )}{" "}
+                    security bounty
+                  </strong>
+                </p>
+                <p>
+                  Find a critical security vulnerability in the {project.name}
+                </p>
                 <Link
                   className="button primary-button"
-                  href={`/projects/${project.slug}/security`}
+                  href={
+                    hasBountyOverview(project)
+                      ? `/projects/${project.slug}`
+                      : `/projects/${project.slug}/security`
+                  }
                 >
-                  Report privately <ArrowRight aria-hidden="true" />
+                  View bounty <ArrowRight aria-hidden="true" />
                 </Link>
-                <details className="security-agent-setup">
-                  <summary>Use your agent</summary>
-                  <AgentPromptBox
-                    prompt={`Read ${window.location.origin}/SKILL.md and follow its private security reporting workflow for github.com/${terms.intake.repository}. Start at ${window.location.origin}/projects/${project.slug}/security and submit findings through Slop.`}
-                  />
-                </details>
               </article>
             );
           })}
@@ -769,19 +803,7 @@ function HomePage() {
       <section className="hero shell">
         <HeroHeading />
         <InstallPanel />
-        <nav
-          className="report-form-actions"
-          aria-label="Choose how to participate"
-        >
-          <a className="button secondary-button" href="#projects">
-            Contribute to a project
-          </a>
-          <a className="button secondary-button" href="#security-bounties">
-            Report a vulnerability
-          </a>
-        </nav>
       </section>
-      <SecurityBounties />
 
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
@@ -811,6 +833,7 @@ function HomePage() {
           </>
         )}
       </section>
+      <SecurityBounties />
       <GlobalLeaderboard retry={retryScores} state={scores} />
     </main>
   );
@@ -979,14 +1002,10 @@ function AgentPromptBox({
 
 function ProjectParticipation({
   project,
-  cycles,
-  displayCycleId,
   view,
   outdated = false,
 }: {
   project: ProjectDefinition;
-  cycles: readonly PromotionCycle[] | null;
-  displayCycleId: string | null;
   view?: ProjectView;
   outdated?: boolean;
 }) {
@@ -1038,26 +1057,14 @@ function ProjectParticipation({
       </section>
     );
   }
-  if (projectPromotionEligible(project, cycles, displayCycleId))
-    return (
-      <ProjectInstallPanel
-        key={project.id}
-        project={project}
-        view={view}
-        outdated={outdated}
-      />
-    );
+  // Clearance gates contribution; missing score or funding history does not.
   return (
-    <section className="section" id="start">
-      <h2>Agent setup</h2>
-      <p>
-        {cycles === null
-          ? "Loading funding history…"
-          : displayCycleId === null
-            ? "No contribution data yet."
-            : "Agent setup is paused after two unfunded cycles. Accepted work still earns Points."}
-      </p>
-    </section>
+    <ProjectInstallPanel
+      key={project.id}
+      project={project}
+      view={view}
+      outdated={outdated}
+    />
   );
 }
 
@@ -1493,9 +1500,20 @@ function ProjectPage({
     <main className="route-project">
       <section className="project-hero">
         <div className="shell">
-          <DataNotice state={state} retry={retry} />
           <RoutePageHeader
             title={project.name}
+            titleAction={
+              <a
+                className="project-github-link"
+                href={project.links.repository}
+                aria-label={`View ${project.name} on GitHub`}
+                title="View on GitHub"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <GithubIcon aria-hidden="true" size={22} />
+              </a>
+            }
             icon={<FolderGit2 />}
             eyebrow={<Link href="/">Projects</Link>}
             lead={project.description}
@@ -1516,27 +1534,22 @@ function ProjectPage({
                 </p>
                 <ProjectFunding project={project} />
               </div>
-              <div className="project-resource-links">
-                <ExternalLinkAnchor href={project.links.repository}>
-                  View in GitHub <ExternalLink aria-hidden="true" size={14} />
-                </ExternalLinkAnchor>
-                <Link href={`/projects/${project.slug}/security`}>
-                  {project.securityBounty
-                    ? "Security bounty"
-                    : "Report a security issue"}
-                </Link>
-              </div>
-              {project.rewardAsset ? (
-                <details className="asset-details">
-                  <summary>
-                    {project.rewardAsset.symbol} on{" "}
-                    {REWARD_ASSET_NETWORKS[project.rewardAsset.network].name} ·
-                    Asset details
-                  </summary>
+              {project.rewardAsset?.kind === "token" ? (
+                <div className="project-token-address">
                   <p>
-                    Token contract: <code>{project.rewardAsset.address}</code>
+                    Token address:{" "}
+                    {project.rewardAsset.network === "solana" &&
+                    project.rewardAsset.address.endsWith("pump") ? (
+                      <ExternalLinkAnchor
+                        href={`https://pump.fun/coin/${project.rewardAsset.address}`}
+                      >
+                        <code>{project.rewardAsset.address}</code>
+                      </ExternalLinkAnchor>
+                    ) : (
+                      <code>{project.rewardAsset.address}</code>
+                    )}
                   </p>
-                </details>
+                </div>
               ) : null}
             </div>
             {externalPrize ? (
@@ -1563,18 +1576,14 @@ function ProjectPage({
           {project.reward.reviewBudget ? (
             <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
           ) : null}
-          {project.status === "paused" || state.status === "ready" ? (
-            <ProjectParticipation
-              project={project}
-              displayCycleId={view?.cycle.id ?? null}
-              cycles={state.status === "ready" ? state.cycleIndex.cycles : null}
-              view={view}
-              outdated={
-                state.status === "ready" &&
-                (state.refreshError !== undefined || stale(state.snapshot))
-              }
-            />
-          ) : null}
+          <ProjectParticipation
+            project={project}
+            view={view}
+            outdated={
+              state.status === "ready" &&
+              (state.refreshError !== undefined || stale(state.snapshot))
+            }
+          />
         </div>
       </section>
       <div className="shell">
@@ -1604,7 +1613,6 @@ function ProjectPage({
             />
           </div>
         ) : null}
-        <ProjectRiskFlag key={`flag:${project.id}`} projectId={project.id} />
       </div>
     </main>
   );
@@ -1695,15 +1703,15 @@ function AppContent({ route }: { route: Route }) {
   else if (route.kind === "project") {
     const project = findProject(route.projectId);
     content = project ? (
-      <ProjectPage project={project} retry={retry} state={state} />
+      hasBountyOverview(project) ? (
+        <SecurityProgramPage key={project.id} project={project} />
+      ) : (
+        <ProjectPage project={project} retry={retry} state={state} />
+      )
     ) : (
       <main className="shell route-main">
         <h1>Project not found</h1>
         <p>This project isn&apos;t listed.</p>
-        <ProjectRiskFlag
-          key={`flag:${route.projectId}`}
-          projectId={route.projectId}
-        />
         <p>
           <Link href="/">See open projects</Link>
         </p>
@@ -1725,6 +1733,12 @@ function AppContent({ route }: { route: Route }) {
       />
     ));
   else content = <NotFound />;
+  const routedProject =
+    "projectId" in route ? findProject(route.projectId) : undefined;
+  const bountyPage =
+    (route.kind === "project" || route.kind === "security-program") &&
+    routedProject != null &&
+    hasBountyOverview(routedProject);
   return (
     <>
       <Header />
@@ -1754,7 +1768,7 @@ function AppContent({ route }: { route: Route }) {
           {content}
         </Suspense>
       </div>
-      <Footer marketing={route.kind === "home"} />
+      {bountyPage ? null : <Footer marketing={route.kind === "home"} />}
     </>
   );
 }

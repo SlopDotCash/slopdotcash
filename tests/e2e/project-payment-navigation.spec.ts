@@ -397,65 +397,29 @@ test("a late previous payment request cannot overwrite a retried project", async
   }
 });
 
-test("a flag draft does not follow browser history to another project", async ({
+test("public project navigation does not load an agent-only flag form", async ({
   page,
 }) => {
   await fixtures(page);
-  await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({
-      json: {
-        session: { githubId: "4242", githubLogin: "member", admin: false },
-      },
-    }),
-  );
   await page.route("**/api/v1/payments/projects/*/direct-transfers", (route) =>
     route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
   );
-  const pending = gate();
-  let hold = false;
-  let held = false;
-  await page.route("**/api/v1/project-flags/*", async (route) => {
-    if (
-      hold &&
-      new URL(route.request().url()).pathname.endsWith(`/${nextProject}`)
-    ) {
-      held = true;
-      await pending.ready;
-    }
-    await route.fulfill({
-      json: { flag: null, restriction: "clear", pausedByFlags: false },
-    });
+  const flagReads: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/project-flags/"))
+      flagReads.push(request.url());
   });
-  try {
-    await page.goto(`${site}/projects/${nextProject}`);
-    await page
-      .getByRole("main")
-      .getByRole("link", { name: "Projects", exact: true })
-      .click();
-    await page
-      .locator(`a.project-card[href="/projects/${firstProject}"]`)
-      .click();
-    await page
-      .getByText("Report malicious code in this project", { exact: true })
-      .click();
-    await page
-      .getByRole("textbox", { name: /^Evidence/u })
-      .fill("Evidence for the first project only");
-    hold = true;
-    await page.evaluate(() => window.history.go(-2));
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Slop");
-    await expect.poll(() => held).toBe(true);
-    await expect(page.getByRole("textbox", { name: /^Evidence/u })).toHaveCount(
-      0,
-    );
-    pending.release();
-    await page
-      .getByText("Report malicious code in this project", { exact: true })
-      .click();
-    await expect(page.getByRole("textbox", { name: /^Evidence/u })).toHaveValue(
-      "",
-    );
-  } finally {
-    pending.release();
-  }
+  await page.goto(`${site}/projects/${nextProject}`);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Slop");
+  await expect(page.locator(".project-risk-flag")).toHaveCount(0);
+  await page
+    .getByRole("main")
+    .getByRole("link", { name: "Projects", exact: true })
+    .click();
+  await page
+    .locator(`a.project-card[href="/projects/${firstProject}"]`)
+    .click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Eliza");
+  await expect(page.locator(".project-risk-flag")).toHaveCount(0);
+  expect(flagReads).toEqual([]);
 });
