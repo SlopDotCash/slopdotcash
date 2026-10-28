@@ -2601,6 +2601,18 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
             >
               Use this draft
             </button>
+            <button
+              type="button"
+              className="button secondary-button"
+              onClick={() => {
+                setDraft(null);
+                setDraftRevision(null);
+                setAttempted(false);
+                setSubmission({ state: "idle" });
+              }}
+            >
+              Discard draft
+            </button>
           </div>
         ) : null}
         {changed ? (

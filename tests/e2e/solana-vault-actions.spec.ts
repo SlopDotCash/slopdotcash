@@ -412,6 +412,10 @@ function installLocalSolanaWallet() {
   );
 }
 
+test.beforeEach(async ({ diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
+});
+
 test("Solana wallet deposits, recovers after reload, and owner withdraws with verified fee", async ({
   diagnostics,
   page,
@@ -458,7 +462,14 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
-      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
   );
   await page.route("**/api/v1/projects/eliza", (route) =>
     route.fulfill({ json: { project, revision: 1 } }),
@@ -1346,11 +1357,10 @@ async function ownerSetupWorkflow(
       .click();
     await expect(setup).toHaveCount(0);
     if (!bounty) {
-      const monthlyTarget = page
-        .locator("dl > div")
-        .filter({ has: page.locator("dt", { hasText: /^Monthly target$/u }) })
-        .locator("dd");
-      await expect(monthlyTarget).toHaveText("2,000 TEST");
+      const monthlyTarget = page.locator(".project-reward-status");
+      await expect(monthlyTarget).toHaveText(
+        /2k\s*\$TEST monthly target, split between contributors/u,
+      );
       await expect(monthlyTarget).toBeVisible();
       await expect(
         page
