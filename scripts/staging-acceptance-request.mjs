@@ -15,20 +15,29 @@ export async function stagingAcceptanceRequest(url, init = {}, options = {}) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
+    const signal = AbortSignal.timeout(
+      Math.max(1, Math.min(remaining, attemptTimeoutMs)),
+    );
+    let response;
     try {
-      const response = await fetch(url, {
+      response = await fetch(url, {
         ...init,
         redirect: "manual",
-        signal: AbortSignal.timeout(
-          Math.max(1, Math.min(remaining, attemptTimeoutMs)),
-        ),
+        signal,
       });
-      if (![429, 500, 502, 503, 504].includes(response.status)) return response;
+      if (![429, 500, 502, 503, 504].includes(response.status)) {
+        // Fetch resolves at the headers. Finish successful probe bodies inside
+        // the retry bound, keeping the original response for caller assertions.
+        if (response.ok) await response.clone().arrayBuffer();
+        return response;
+      }
       await response.body?.cancel();
       lastFailure = new Error(`Staging acceptance HTTP ${response.status}`);
     } catch (error) {
+      await response?.body?.cancel().catch(() => {});
       const code = error?.cause?.code ?? error?.code;
       if (
+        !(signal.aborted && signal.reason?.name === "TimeoutError") &&
         error?.name !== "TimeoutError" &&
         ![
           "ECONNRESET",
