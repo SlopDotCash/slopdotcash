@@ -189,24 +189,25 @@ export async function acquireQueuedAssessment(
     );
   if (manifest.repositories.length !== 1)
     throw refusal(new AcquisitionRefusal("Unsupported repository inventory"));
+  // A recorded rename keeps the original path as the id and publishes the
+  // current path as githubUrl. GitHub redirects the former name, and
+  // acquisition follows no redirects, so read and fetch the current name.
+  const currentPath = new URL(
+    manifest.repositories[0].githubUrl,
+  ).pathname.replace(/^\/|\/$/gu, "");
   const repositoryIdentity = json(
-    await bytes(
-      fetcher,
-      `https://api.github.com/repos/${manifest.repositories[0].id}`,
-      {
-        accept: "application/vnd.github+json",
-        "x-github-api-version": "2022-11-28",
-        "user-agent": "slop-vetting-acquisition",
-      },
-    ),
+    await bytes(fetcher, `https://api.github.com/repos/${currentPath}`, {
+      accept: "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "slop-vetting-acquisition",
+    }),
   );
   if (
     !Number.isSafeInteger(repositoryIdentity.id) ||
     String(repositoryIdentity.id) !== manifest.authority.repositoryId ||
     repositoryIdentity.node_id !== manifest.authority.repositoryNodeId ||
     typeof repositoryIdentity.full_name !== "string" ||
-    repositoryIdentity.full_name.toLowerCase() !==
-      manifest.repositories[0].id.toLowerCase() ||
+    repositoryIdentity.full_name.toLowerCase() !== currentPath.toLowerCase() ||
     repositoryIdentity.private !== false
   )
     throw refusal(
@@ -266,7 +267,7 @@ export async function acquireQueuedAssessment(
   if (sha256(JSON.stringify(templateInputs)) !== assessment.templateSha256)
     throw new Error("Template input digest mismatch");
   const acquired = await acquireRepository({
-    repository: manifest.repositories[0].id,
+    repository: currentPath,
     commitSha: assessment.commitSha,
     directory,
     fetch: fetcher,
