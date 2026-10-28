@@ -125,8 +125,9 @@ upload, read and backup step handles at most one 8 MiB part, and the signed
 parts. Storage is not the binding limit, though: registration, finalization,
 intake and every clearance check reread and hash an object's whole bytes
 inside one Worker request, so the practical ceiling per object is that
-request's CPU time (a few GiB at measured SHA-256 throughput). Past it a clean
-result stays pending rather than clearing. Oversize parts are refused, and
+request's CPU budget; the maximum depends on the runtime and evidence
+layout. If verification cannot finish, a clean result stays pending rather
+than clearing. Oversize parts are refused, and
 evidence is never shortened or silently omitted to obtain clearance.
 
 Objects registered since migration 0107 are content-addressed. Their bytes
