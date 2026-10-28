@@ -13,6 +13,7 @@ import {
 import { reconcileSecurityMail } from "../../workers/notify/security";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
 import type { SecurityD1Database } from "../security/handler";
+import { ProjectFlagStore } from "../vetting/flags";
 import { handleEmailPreferences } from "./email";
 import { notifyProjectEnforcement, notifyVettingBanAudience } from "./events";
 import type { NotificationsDependencies } from "./handler";
@@ -774,6 +775,140 @@ test("a reinstatement review mails only a current moderator", async () => {
         )
         .get(),
     ).toEqual({ kind: "reinstatement_review" });
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("a contributor-flag pause mails only current staff or a current owner", async () => {
+  const h = setup();
+  try {
+    // 101 is a moderator, 102 an administrator, and 103 the project steward
+    // who is also a moderator. All three consented to verified mail.
+    for (const id of ["101", "102", "103"]) {
+      h.mail.config.recipients[id] = {
+        ...h.mail.config.recipients["101"],
+        email: `member${id}@example.com`,
+      };
+      const current = await h.call("GET", undefined, id);
+      expect(
+        (
+          await h.call(
+            "POST",
+            {
+              enabled: true,
+              destinationVersion: current.body.destinationVersion,
+            },
+            id,
+          )
+        ).status,
+      ).toBe(200);
+    }
+    const at = h.now().toISOString();
+    const manifest = applicationManifest(
+      "flagged-project",
+      "example/flagged-project",
+      { status: "active" },
+    );
+    manifest.steward = {
+      ...(manifest.steward as Record<string, unknown>),
+      kind: "user",
+      github: {
+        actorId: "103",
+        nodeId: "U_103",
+        login: "steward",
+        type: "User",
+        profileUrl: "https://github.com/steward",
+      },
+    };
+    const body = JSON.stringify(manifest);
+    h.sqlite
+      .query(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES ('flagged-project',1,?,?,'Fixture','303','lister',?)",
+      )
+      .run(body, "a".repeat(64), at);
+    h.sqlite
+      .query(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES ('flagged-project','active',1,?,?,?,?)",
+      )
+      .run(body, "a".repeat(64), at, at);
+    const project = await new CloudflareProjectPersistence(
+      h.db as never,
+    ).getProject("flagged-project");
+    if (!project) throw new Error("Missing fixture project");
+    // The second distinct flag pauses the project and notifies the
+    // configured administrators and moderators (the Pages writer's staff).
+    const flags = new ProjectFlagStore(h.db as never);
+    for (const index of [1, 2])
+      expect(
+        await flags.file({
+          flagId: `flg_mail_fixture_${index}`,
+          pauseRecordId: `enf_flags_mail_fixture_${index}`,
+          project,
+          repositoryGithubId: "123456789",
+          repositoryKeys: ["example/flagged-project"],
+          reporter: {
+            githubId: String(8000000 + index),
+            githubLogin: `flagger-${index}`,
+          },
+          category: "other",
+          evidence: "Synthetic evidence of risky install behavior.",
+          evidenceUrl: null,
+          moderatorGithubIds: ["101", "102", "103"],
+          at,
+        }),
+      ).not.toBe("conflict");
+    // The staff writer wins the shared event key, so the steward's notice
+    // has the admin link.
+    expect(
+      h.sqlite
+        .query(
+          "SELECT recipient_github_id,kind,action_path FROM notifications WHERE event_key='project-enforcement:enf_flags_mail_fixture_2' ORDER BY recipient_github_id",
+        )
+        .all(),
+    ).toEqual([
+      {
+        recipient_github_id: "101",
+        kind: "project_quarantined",
+        action_path: "/admin",
+      },
+      {
+        recipient_github_id: "102",
+        kind: "project_quarantined",
+        action_path: "/admin",
+      },
+      {
+        recipient_github_id: "103",
+        kind: "project_quarantined",
+        action_path: "/admin",
+      },
+      {
+        recipient_github_id: "303",
+        kind: "project_quarantined",
+        action_path: "/projects/flagged-project",
+      },
+    ]);
+    expect(h.rows()).toHaveLength(3);
+    // Before the send, 101 and 103 stop being moderators. 103 still
+    // stewards the project.
+    h.mail.adminGithubIds = new Set(["102"]);
+    h.mail.moderatorGithubIds = new Set();
+    await dispatchActivityMail(h.mail);
+    expect(h.sent).toHaveLength(2);
+    expect(
+      Object.fromEntries(
+        (
+          h.rows() as unknown as {
+            recipient_github_id: string;
+            state: string;
+          }[]
+        ).map((row) => [row.recipient_github_id, row.state]),
+      ),
+    ).toEqual({
+      "101": "suppressed",
+      "102": "provider-accepted",
+      "103": "provider-accepted",
+    });
   } finally {
     h.sqlite.close();
   }
