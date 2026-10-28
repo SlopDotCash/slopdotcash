@@ -1190,7 +1190,13 @@ Migration `0052_slopbot_value_processing.sql` separates operational claims from
 immutable request history. A ten-minute lease has a unique token. Only the
 current unexpired owner may finish a request. A disappeared worker can be
 reclaimed after expiry; its old token cannot report success. An explicit retry
-time retains budget, authority and evidence blocks. Published/current outcomes,
+time retains budget, authority and evidence blocks. Migration
+`0103_slopbot_value_retry_attempts.sql` counts those attempts and grows the
+retry delay with them: one hour doubled once per recorded attempt, capped at
+one day. A block that persists therefore stops costing an hourly run without
+becoming a terminal outcome. The transient `retry` outcome — a thrown failure,
+source-lease contention or a provider outage — keeps the plain one-hour
+cadence, so recovery from a temporary cause is not delayed (PRD section 5). Published/current outcomes,
 open-context dispositions and `historical` outcomes complete the request. A PR
 closed before the API start is `historical` (migration
 `0097_slopbot_value_historical.sql`): the subscription intake owns it.

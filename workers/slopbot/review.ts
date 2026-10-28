@@ -318,6 +318,18 @@ type RelatedOpenItem = {
   contentDigest: string;
 };
 
+/** GitHub did not return the complete current comparison. The item and pull
+ * request facts that were read before the comparison stay available.
+ */
+class IncompleteComparisonError extends Error {
+  constructor(
+    readonly issue: Issue,
+    readonly pull: Pull | null,
+  ) {
+    super("Pull request comparison is incomplete");
+  }
+}
+
 // Surplus may never see private content, and v2 supports public repositories only.
 async function publicRepository(
   github: GitHubClient,
@@ -391,8 +403,7 @@ async function loadContext(
           targetRef: repo.default_branch,
         }
       : await pullDiff(github, job.owner, job.repo, repo.id, pull);
-  const { truncated } = comparison;
-  if (truncated) throw new Error("Pull request comparison is incomplete");
+  if (comparison.truncated) throw new IncompleteComparisonError(issue, pull);
   const itemText = reviewedItemText(issue, pull, comparison);
   const revision =
     pull?.head.sha ?? (await sha256Hex(`${issue.title}\n${issue.body ?? ""}`));
@@ -1820,23 +1831,31 @@ async function isMaintainer(
   return exemption === "exempt";
 }
 
-/** The newest Slopbot finding on the item, or null when there is none. */
+/** The newest Slopbot finding on the item, or null when there is none. A
+ * confirmed close is a finding even when its run failed after GitHub closed
+ * the item: the retry skips a closed item and never completes that review.
+ */
 async function latestFinding(
   db: store.D1Database,
   itemNodeId: string,
 ): Promise<Category | null> {
   const row = await db
     .prepare(
-      `SELECT verdict FROM slopbot_reviews
-       WHERE item_node_id = ? AND status = 'completed' AND verdict IS NOT NULL
-         AND action IN ('close', 'label', 'hold')
-       ORDER BY completed_at DESC, review_key DESC LIMIT 1`,
+      `SELECT category FROM (
+         SELECT json_extract(verdict, '$.category') AS category,
+           completed_at AS at, review_key FROM slopbot_reviews
+         WHERE item_node_id = ?1 AND status = 'completed' AND verdict IS NOT NULL
+           AND action IN ('close', 'label', 'hold')
+         UNION ALL
+         SELECT json_extract(detail, '$.category'), created_at, review_key
+         FROM slopbot_actions WHERE item_node_id = ?1 AND action = 'close')
+       ORDER BY at DESC, review_key DESC LIMIT 1`,
     )
     .bind(itemNodeId)
-    .first<{ verdict: string }>();
-  if (row === null) return null;
-  const category = (JSON.parse(row.verdict) as Verdict).category;
-  return category === "none" ? null : category;
+    .first<{ category: Category | null }>();
+  if (row === null || row.category === null || row.category === "none")
+    return null;
+  return row.category;
 }
 
 /** Whether the current close of this item is Slopbot's. GET issue supplies
@@ -2432,8 +2451,38 @@ export async function escalateDueAppeal(
   const appeal = await appealByKey(db, job.appealKey);
   if (appeal === null || appeal.resolved_at !== null)
     return "appeal already resolved";
+  if (appeal.escalated_at === null && Date.parse(appeal.due_at) > Date.now())
+    return "appeal not due";
+  // Establish the session before publishing the escalation, as every
+  // sibling appeal path does: escalation is one-time (the due dispatcher
+  // selects only unescalated appeals), so consuming it before this gate
+  // would lose the publication permanently when the gate fails gracefully,
+  // e.g. a suspended installation. A transient failure leaves the appeal
+  // unescalated, so the dispatcher queues it again after a day. A
+  // permanent refusal — the repository left the registry, or the item is
+  // gone — never clears, so record the escalation (and its moderator
+  // notices, which are database-only) and skip only the publication,
+  // rather than re-queueing the appeal daily forever.
+  const session = await appealSession(env, job);
+  if (typeof session === "string") {
+    if (
+      appeal.escalated_at === null &&
+      (session === "repository is not registered in the Slop registry" ||
+        session === "ignored")
+    ) {
+      await escalateAppeal(
+        db,
+        job.appealKey,
+        `the appeal is unresolved ${APPEAL_RESOLUTION_DAYS} days after it opened`,
+        moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+      );
+      return `appeal escalated; ${session}`;
+    }
+    return appeal.escalated_at === null
+      ? session
+      : `appeal escalated; ${session}`;
+  }
   if (appeal.escalated_at === null) {
-    if (Date.parse(appeal.due_at) > Date.now()) return "appeal not due";
     await escalateAppeal(
       db,
       job.appealKey,
@@ -2443,8 +2492,6 @@ export async function escalateDueAppeal(
   }
   const current = await appealByKey(db, job.appealKey);
   if (current === null) throw new Error("Appeal is missing");
-  const session = await appealSession(env, job);
-  if (typeof session === "string") return `appeal escalated; ${session}`;
   await publishAppealState(env, job, session, current, "escalation");
   return `appeal escalated: ${current.escalation}`;
 }
@@ -2557,11 +2604,24 @@ export async function applyMaintainerHold(
     return supersede("security review only");
   if (!(await store.installationActive(db, job.installationId)))
     return supersede("installation removed or suspended");
-  const context = await loadContext(
-    env,
-    { ...job, kind: "review" },
-    registration,
-  );
+  let context: Context | null;
+  try {
+    context = await loadContext(env, { ...job, kind: "review" }, registration);
+  } catch (error) {
+    // The held revision had a complete comparison. A later push can add a
+    // file without a patch, and then the comparison never becomes complete.
+    // The item facts still end the hold; an unchanged item is retried.
+    if (
+      error instanceof IncompleteComparisonError &&
+      (error.issue.node_id !== hold.item_node_id ||
+        error.issue.state !== "open" ||
+        error.pull?.draft ||
+        error.pull?.merged ||
+        error.pull?.head.sha !== hold.revision)
+    )
+      return supersede("item changed after the review");
+    throw error;
+  }
   if (context === null || context.issue.node_id !== hold.item_node_id)
     return supersede("item not readable");
   const { github, repo, issue, pull, revision } = context;

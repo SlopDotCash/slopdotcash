@@ -18,6 +18,7 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import { dispatchSecurityMail } from "../../workers/notify/security";
 import { slopbotRepositoryAccess } from "../projects/repository-access";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
+import { type AdvisoryReader, parsePrivateReport } from "./advisories";
 import type { SecurityAnalysisInput, SecurityAnalyzer } from "./analysis";
 import {
   handleSecurityApi,
@@ -196,14 +197,14 @@ function setup(
       now,
     );
   };
-  let beforeBatch: (() => void) | null = null;
+  let beforeBatch: (() => void | Promise<void>) | null = null;
   const securityDb = db as unknown as SecurityD1Database;
   const wrapped: SecurityD1Database = {
     prepare: (sql) => securityDb.prepare(sql),
     batch: async (statements) => {
       const hook = beforeBatch;
       beforeBatch = null;
-      hook?.();
+      await hook?.();
       return securityDb.batch(statements);
     },
   };
@@ -257,6 +258,31 @@ function setup(
         body,
         customMetadata: value.metadata,
       };
+    },
+  };
+  // The App-token reader behind imports and receipt checks, over the same
+  // in-memory GitHub. GitHub's REST author is a User; the fake omits `type`.
+  const asPrivateReport = (advisory: (typeof github.advisories)[number]) =>
+    parsePrivateReport({
+      ...advisory.advisory,
+      author: { ...advisory.advisory.author, type: "User" },
+    });
+  const advisories: AdvisoryReader = {
+    privateReports: async (repository) => ({
+      state: "ok",
+      reports: github.advisories
+        .filter((entry) => entry.repository === repository.toLowerCase())
+        .map(asPrivateReport)
+        .filter((report) => report !== null),
+    }),
+    privateReport: async (repository, ghsa) => {
+      const found = github.advisories.find(
+        (entry) =>
+          entry.repository === repository.toLowerCase() &&
+          entry.advisory.ghsa_id === ghsa,
+      );
+      const report = found ? asPrivateReport(found) : null;
+      return report ? { state: "found", report } : { state: "unavailable" };
     },
   };
   const responses: string[] = [];
@@ -338,6 +364,7 @@ function setup(
         reportingRead,
         intake,
         analyzer,
+        advisories,
         repositoryAccess,
         moderatorGithubIds: new Set([ADMIN.githubId]),
       },
@@ -535,7 +562,7 @@ function setup(
     advance: (ms: number) => {
       now = new Date(now.getTime() + ms);
     },
-    setBeforeBatch: (hook: () => void) => {
+    setBeforeBatch: (hook: () => void | Promise<void>) => {
       beforeBatch = hook;
     },
   };
@@ -2165,6 +2192,98 @@ describe("optional GitHub forwarding of a saved report", () => {
       (viewed.body.case as { advisory: { ghsa: string } }).advisory.ghsa,
     ).toBeTruthy();
   });
+  test("an import before the forward settles leaves GitHub's copy to the saved report's case", async () => {
+    const t = setup({ durable: true });
+    const accepted = await t.create(REPORTER, { report: REPORT });
+    expect(accepted.status).toBe(201);
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const [original] = t.cases();
+    const authorization = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+    // GitHub stores the forward, but its answer is lost.
+    t.github.faults.create = "timeout-after-create";
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.body.submission?.state).toBe("uncertain");
+    expect(t.github.advisories).toHaveLength(1);
+    // A report the same researcher filed directly on GitHub is new.
+    t.github.seed(
+      REPO,
+      { id: Number(REPORTER.githubId), login: REPORTER.githubLogin },
+      {
+        summary: "Router accepts an expired signature",
+        description: "A second, unrelated report filed directly on GitHub.",
+      },
+    );
+    const imported = await t.call(MAINTAINER, "POST", "security-cases", {
+      mode: "import",
+      projectId: PROJECT,
+    });
+    expect(imported.body).toEqual({ state: "ok", received: 1 });
+    expect(t.cases()).toHaveLength(2);
+    // The researcher's reconcile links the forward to the saved report's case.
+    t.advance(RECONCILE_QUIET_MS + 1000);
+    const reconciled = await t.reconcile(
+      submission.id,
+      sent.body.submission?.revision as number,
+    );
+    expect(reconciled.body.submission?.state).toBe("receipt-verified");
+    expect(t.row(submission.id).case_id).toBe(original.id);
+    const again = await t.call(MAINTAINER, "POST", "security-cases", {
+      mode: "import",
+      projectId: PROJECT,
+    });
+    expect(again.body).toEqual({ state: "ok", received: 0 });
+    expect(t.cases()).toHaveLength(2);
+  });
+  test("an import leaves GitHub's copy of a full-length saved report to its case", async () => {
+    const t = setup({ durable: true });
+    // The longest description Slop accepts puts the reference line past the
+    // part of the text the import reader keeps for analysis.
+    const accepted = await t.create(REPORTER, {
+      report: {
+        ...REPORT,
+        description: REPORT.description.padEnd(65_000, "."),
+      },
+    });
+    expect(accepted.status).toBe(201);
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const authorization = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+    t.github.faults.create = "timeout-after-create";
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.body.submission?.state).toBe("uncertain");
+    expect(t.github.advisories).toHaveLength(1);
+    const imported = await t.call(MAINTAINER, "POST", "security-cases", {
+      mode: "import",
+      projectId: PROJECT,
+    });
+    expect(imported.body).toEqual({ state: "ok", received: 0 });
+    expect(t.cases()).toHaveLength(1);
+  });
   test("a human hold prevents forwarding even after earlier GitHub authorization", async () => {
     const t = setup({ durable: true });
     const accepted = await t.create(REPORTER, { report: REPORT });
@@ -2199,5 +2318,190 @@ describe("optional GitHub forwarding of a saved report", () => {
     expect(sent.status).toBe(409);
     expect(sent.body.error).toBe("screening_required");
     expect(t.github.counts.posts).toBe(0);
+  });
+  test("a forward that never returned becomes uncertain in the reporter's list and report and reconciles to the saved case", async () => {
+    for (const view of ["list", "report"] as const) {
+      const t = setup({ durable: true });
+      const accepted = await t.create(REPORTER, { report: REPORT });
+      const submission = accepted.body.submission as NonNullable<
+        Body["submission"]
+      >;
+      const original = t.cases()[0];
+      const authorization = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/authorize`,
+        {},
+      );
+      await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+      // GitHub stored the report, then D1 refused the receipt write once.
+      const failAfterCreate = (): void =>
+        t.setBeforeBatch(() => {
+          if (
+            t.github.advisories.length === 0 ||
+            t.row(submission.id).state !== "submitting"
+          )
+            return failAfterCreate();
+          throw new Error("D1 unavailable");
+        });
+      failAfterCreate();
+      const sent = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/send`,
+        { expectedRevision: submission.revision },
+      );
+      expect(sent.status).toBe(500);
+      expect(t.row(submission.id).state).toBe("submitting");
+      t.advance(61_000);
+      // The page offers "Check again" only for an uncertain or submitted row.
+      const shown =
+        view === "list"
+          ? (
+              (await t.call(REPORTER, "GET", "security-submissions")).body
+                .submissions as NonNullable<Body["submission"]>[]
+            ).find((entry) => entry.id === submission.id)
+          : (
+              await t.call(
+                REPORTER,
+                "GET",
+                `security-submissions/${submission.id}`,
+              )
+            ).body.submission;
+      expect({ view, state: shown?.state }).toEqual({
+        view,
+        state: "uncertain",
+      });
+      const reconciled = await t.reconcile(
+        submission.id,
+        shown?.revision as number,
+      );
+      expect(reconciled.status).toBe(200);
+      expect(reconciled.body.submission?.state).toBe("receipt-verified");
+      expect(t.github.counts.posts).toBe(1);
+      expect(t.cases()).toEqual([original]);
+      const viewed = await t.call(
+        REPORTER,
+        "GET",
+        `security-cases/${original.id}`,
+      );
+      expect(
+        (viewed.body.case as { advisory: { ghsa: string } }).advisory.ghsa,
+      ).toBe(t.github.advisories[0].advisory.ghsa_id);
+    }
+  });
+  test("a list read that settles a forward still in flight leaves its GitHub copy for reconcile to adopt", async () => {
+    const t = setup({ durable: true });
+    const accepted = await t.create(REPORTER, { report: REPORT });
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const original = t.cases()[0];
+    const authorization = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+    // GitHub stored the report; the receipt write waits past the timeout
+    // while the reporter loads the list.
+    let listed: string | undefined;
+    const listMidForward = (): void =>
+      t.setBeforeBatch(async () => {
+        if (
+          t.github.advisories.length === 0 ||
+          t.row(submission.id).state !== "submitting"
+        )
+          return listMidForward();
+        t.advance(61_000);
+        listed = (
+          (await t.call(REPORTER, "GET", "security-submissions")).body
+            .submissions as NonNullable<Body["submission"]>[]
+        ).find((entry) => entry.id === submission.id)?.state;
+      });
+    listMidForward();
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(listed).toBe("uncertain");
+    expect(sent.status).toBe(202);
+    expect(sent.body.submission?.state).toBe("uncertain");
+    expect(t.row(submission.id).advisory_ghsa).toBeNull();
+    const reconciled = await t.reconcile(
+      submission.id,
+      sent.body.submission?.revision as number,
+    );
+    expect(reconciled.status).toBe(200);
+    expect(reconciled.body.submission?.state).toBe("receipt-verified");
+    expect(t.row(submission.id).advisory_ghsa).toBe(
+      t.github.advisories[0].advisory.ghsa_id,
+    );
+    expect(t.github.counts.posts).toBe(1);
+    expect(t.cases()).toEqual([original]);
+  });
+  test("a report whose settle fails is listed as stored next to the reporter's other reports", async () => {
+    const t = setup({ durable: true });
+    const accepted = await t.create(REPORTER, { report: REPORT });
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const authorization = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+    // GitHub stored the report, then D1 refused the receipt write once.
+    const failAfterCreate = (): void =>
+      t.setBeforeBatch(() => {
+        if (
+          t.github.advisories.length === 0 ||
+          t.row(submission.id).state !== "submitting"
+        )
+          return failAfterCreate();
+        throw new Error("D1 unavailable");
+      });
+    failAfterCreate();
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.status).toBe(500);
+    const other = (
+      await t.create(REPORTER, {
+        report: { ...REPORT, summary: `Second report ${SENTINEL}` },
+      })
+    ).body.submission as NonNullable<Body["submission"]>;
+    t.advance(61_000);
+    const states = async () => {
+      const listed = await t.call(REPORTER, "GET", "security-submissions");
+      return {
+        status: listed.status,
+        states: Object.fromEntries(
+          (
+            (listed.body.submissions ?? []) as NonNullable<Body["submission"]>[]
+          ).map((entry) => [entry.id, entry.state]),
+        ),
+      };
+    };
+    // D1 refuses the one settle write this list makes.
+    t.setBeforeBatch(() => {
+      throw new Error("D1 unavailable");
+    });
+    expect(await states()).toEqual({
+      status: 200,
+      states: { [submission.id]: "submitting", [other.id]: "draft" },
+    });
+    expect(await states()).toEqual({
+      status: 200,
+      states: { [submission.id]: "uncertain", [other.id]: "draft" },
+    });
   });
 });

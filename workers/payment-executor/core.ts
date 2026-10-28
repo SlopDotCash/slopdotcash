@@ -967,6 +967,14 @@ async function signAndSubmit(
   return { transactionId: attempt.transactionId };
 }
 
+/** The node knows this exact signed transaction, pending or mined. */
+export async function observedEvmTransaction(
+  config: Pick<Deployment, "rpcUrl">,
+  transactionId: string,
+) {
+  return !!(await rpc(config, "eth_getTransactionByHash", [transactionId]));
+}
+
 /** An uncertain send is accepted only when the node already knows its exact hash. */
 async function broadcast(
   config: Deployment,
@@ -988,10 +996,8 @@ async function broadcast(
     if (sent !== signed.transactionId)
       throw new Error("Transaction hash mismatch");
   } catch (error) {
-    const known = await rpc(config, "eth_getTransactionByHash", [
-      signed.transactionId,
-    ]);
-    if (!known) throw error;
+    if (!(await observedEvmTransaction(config, signed.transactionId)))
+      throw error;
   }
 }
 

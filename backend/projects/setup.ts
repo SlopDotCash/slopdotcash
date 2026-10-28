@@ -111,7 +111,9 @@ export async function readRepositoryAccess(
       state: "read",
       access: await reader(
         {
-          path: manifest.repositories[0].id,
+          // GitHub answers a former name with a redirect, which Slopbot does
+          // not follow, so a recorded rename or transfer reads the current one.
+          path: currentRepositoryPath(manifest.repositories[0]),
           githubId: manifest.authority.repositoryId,
         },
         actor,

@@ -1334,11 +1334,19 @@ export function ContributorStandings({
       project: projectId ? "" : project,
       page: page ? String(page + 1) : "",
     })) {
+      // Award links own calendar-month periods on the shared project URL.
+      if (
+        compact &&
+        projectId &&
+        key === "period" &&
+        /^\d{4}-\d{2}$/u.test(url.searchParams.get(key) ?? "")
+      )
+        continue;
       if (value) url.searchParams.set(key, value);
       else url.searchParams.delete(key);
     }
     window.history.replaceState(window.history.state, "", url);
-  }, [sort, period, query, project, page, projectId]);
+  }, [sort, period, query, project, page, projectId, compact]);
   const { state } = usePoints();
   const members = useMemo(() => {
     if (state.status !== "ready") return [];
