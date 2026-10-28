@@ -181,6 +181,14 @@ the pinned deployment, allocation root and attestation before admission. Legacy
 EVM commits the full entry list. EVM V2 reserves the whole remaining gross first,
 then examines at most 16 proven leaves per call under the existing gas limit.
 A finalized cursor bounds repeated work when another keeper committed a prefix.
+If another sender completes a commitment, admission or leaf after this signer
+journaled its own transaction for that step, the executor sends the same bytes
+again until the signer's mined nonce passes them. They cannot commit the step
+twice, and an unsent signed nonce would hold every later send of the signer.
+The finalized cursor passes such a leaf only after that nonce is mined, also
+when other senders already committed every leaf. Until every such nonce of the
+month is mined, the response reports `complete: false`, so the scheduler does not
+retire the month.
 The economic snapshot stays fixed; source changes before admission append a new
 immutable execution authorization. The original V1 authorization remains
 available when an older transaction is pending. The executor reconciles that

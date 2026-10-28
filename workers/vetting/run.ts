@@ -224,7 +224,6 @@ async function acquiredInputs(directory: string) {
   ) as {
     schema: string;
     manifestText: string;
-    repositoryIdentity: { fullName: string };
     inputs: { path: string; sha256: string }[];
   };
   if (queued.schema !== "slop-queued-inputs-v1")
@@ -236,7 +235,12 @@ async function acquiredInputs(directory: string) {
       bytes: await readAcquiredObject(directory, input.sha256),
     });
   return {
-    repository: queued.repositoryIdentity.fullName,
+    // The result names the registered repository id, as the intake and an
+    // acquisition refusal do. A recorded rename is acquired under its current
+    // GitHub name, which differs from that id.
+    repository: (
+      JSON.parse(queued.manifestText) as { repositories: { id: string }[] }
+    ).repositories[0].id,
     files: [...source.files, ...templates],
     acquisitionGaps: source.acquisitionGaps.filter(
       (gap) => !COVERED_BY_BOUNDED_SCAN.has(gap),

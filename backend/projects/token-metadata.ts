@@ -48,10 +48,10 @@ async function rpc(
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     signal: AbortSignal.timeout(10_000),
   });
+  // An HTTP failure, such as a rate limit, says nothing about the token, so
+  // it is not a TokenMetadataError: the owner gets a retry, not a refusal.
   if (!response.ok)
-    throw new TokenMetadataError(
-      `The network RPC returned HTTP ${response.status}`,
-    );
+    throw new Error(`The network RPC returned HTTP ${response.status}`);
   let body: { result?: unknown; error?: unknown };
   try {
     body = (await readBoundedJson(response, MAX_RPC_BYTES, "network RPC")) as {

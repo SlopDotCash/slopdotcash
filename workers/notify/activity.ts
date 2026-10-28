@@ -70,6 +70,7 @@ const PROJECT_OWNER_KINDS = new Set([
  * the project's current GitHub steward, and an owner notice only a current
  * owner. A vetting ban also reaches its current affected contributors and
  * staff; the shared event key can retain an owner link for a staff recipient.
+ * A contributor-flag pause reaches current staff and owners.
  */
 async function stillProjectRecipient(
   db: SecurityD1Database,
@@ -113,8 +114,13 @@ async function stillProjectRecipient(
     return (
       notice.owner === 1 || notice.affected_contributor === 1 || currentStaff
     );
-  if (PROJECT_OWNER_KINDS.has(notice.kind) && notice.action_path !== "/admin")
-    return notice.owner === 1;
+  // A staff copy links to `/admin`, as the contributor-flag pause notice to
+  // the configured administrators and moderators does. It mails only current
+  // staff, or a recipient who still owns the project.
+  if (PROJECT_OWNER_KINDS.has(notice.kind))
+    return (
+      notice.owner === 1 || (notice.action_path === "/admin" && currentStaff)
+    );
   return true;
 }
 

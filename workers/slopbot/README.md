@@ -1353,7 +1353,8 @@ range can supply claims. The assessor must compare retained content and separate
 maintainer repairs; source hunks removed during integration do not become awards.
 
 This path requires joint work-unit assessment. The legacy single-PR route rejects
-it. Discovery, pagination, tree, text and ancestry bounds produce an unresolved
+it, so the scheduled consumer uses the joint route for such a source even when
+no other PR references it. Discovery, pagination, tree, text and ancestry bounds produce an unresolved
 gap rather than inferred absence or zero value. Hints without a verified integration
 do not grant credit. Publication re-collects source evidence and consumers compare
 the exact bindings. GitHub merge counts and source state remain unchanged.

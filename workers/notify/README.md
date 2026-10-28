@@ -225,7 +225,8 @@ preference. Before dispatch, the Worker checks both the saved preference and
 its destination version again. It also rechecks the recipient's role (PRD
 section 9): a payout exception mails only the project's current GitHub
 steward, and an owner notice only an account that still lists or stewards the
-project. A reinstatement review mails only a current moderator.
+project. A reinstatement review mails only a current moderator. A
+contributor-flag pause notice mails only current staff or a current owner.
 Confirmed-malicious ban notices also retain their existing affected
 contributor and staff audiences, rechecked against current contribution and
 retained payment records and the same configured admin and moderator IDs as

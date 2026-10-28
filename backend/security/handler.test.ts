@@ -1428,6 +1428,63 @@ describe("related-party awards", () => {
     expect(approved.body.case.awardState).toBe("approved");
   });
 
+  test("a refused related-party award leaves no chosen amount on the case", async () => {
+    const env = open();
+    const related = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    const later = await env.receive(OTHER, "2026-10-19T09:20:00.000Z");
+    await env.decide(related, "refused-cause", { relatedParty: true });
+    expect((await env.award(related, "800000")).body.case).toMatchObject({
+      awardState: "pending",
+      award: { grossMinor: "800000" },
+    });
+    const refused = await env.act(DISPUTE, related, {
+      action: "decide-related-party",
+      outcome: "refuse",
+      reason: "Refused after independent review.",
+    });
+    expect(refused.status).toBe(200);
+    // A refusal is no award, as the owner's own "none" decision records it.
+    expect(refused.body.case).toMatchObject({
+      awardState: "ineligible",
+      award: null,
+    });
+    const reporterView = await env.call(
+      REPORTER,
+      "GET",
+      `security-cases/${related}`,
+    );
+    expect(reporterView.body.case.award).toBeNull();
+    expect(
+      (
+        await env.act(REPORTER, related, {
+          action: "appeal",
+          reason: "The related-party refusal used the wrong facts.",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await env.act(DISPUTE_2, related, {
+          action: "decide-appeal",
+          outcome: "return",
+          reason: "Return for a new decision.",
+        })
+      ).status,
+    ).toBe(200);
+    // The new decision chooses no award yet, so nobody chose an amount.
+    const redecided = await env.decide(related, "refused-cause", {
+      relatedParty: true,
+    });
+    expect(redecided.body.case).toMatchObject({
+      awardState: "pending",
+      award: null,
+      nextStep: "Choose an award amount or no award.",
+    });
+    // The case holds neither an award nor a pending review, so a later
+    // report of the same root cause can still be confirmed.
+    expect((await env.decide(later, "refused-cause")).status).toBe(200);
+  });
+
   test("a co-maintainer who decides an award or an earlier technical decision cannot review the case as dispute", async () => {
     const env = open({
       ...OPEN_PROGRAM,

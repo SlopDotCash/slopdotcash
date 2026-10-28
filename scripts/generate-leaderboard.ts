@@ -2398,18 +2398,26 @@ function validateRecordState(
   expectedState: ExpectedRecordState,
 ): void {
   if (
-    (expectedState === "open" && parsed.state !== "OPEN") ||
     (expectedState === "merged" &&
       ("mergedAt" in parsed.record ? parsed.record.mergedAt === null : true)) ||
     (expectedState === "closed" &&
       ("closedAt" in parsed.record ? parsed.record.closedAt === null : true))
   ) {
-    const message = `GitHub node ${parsed.record.id} changed state during collection; expected ${expectedState}`;
-    if (expectedState === "open") {
-      throw new OpenSetChangedError(message);
-    }
-    throw new Error(message);
+    throw new Error(
+      `GitHub node ${parsed.record.id} changed state during collection; expected ${expectedState}`,
+    );
   }
+}
+
+/**
+ * GitHub reports that an open-queue record closed after the listing. It is no
+ * longer open work, and rehydrating its batch cannot make it open again.
+ */
+function leftOpenQueue(
+  parsed: ParsedIssue | ParsedPullRequest,
+  expectedState: ExpectedRecordState,
+): boolean {
+  return expectedState === "open" && parsed.state !== "OPEN";
 }
 
 function parsePullRequestOutcome(
@@ -2983,6 +2991,7 @@ async function hydratePullRequests(
       );
       const completed: PendingPullRequestRecord[] = [];
       for (const value of parsed) {
+        if (leftOpenQueue(value, expectedState)) continue;
         validateRecordState(value, expectedState);
         completed.push(await completePullRequestConnections(client, value));
       }
@@ -3065,6 +3074,7 @@ async function hydrateIssues(
       const parsed = parseDetailBatch(data, ids, "Issue", parseIssue);
       const completed: IssueRecord[] = [];
       for (const value of parsed) {
+        if (leftOpenQueue(value, expectedState)) continue;
         validateRecordState(value, expectedState);
         completed.push(await completeIssueConnections(client, value));
       }

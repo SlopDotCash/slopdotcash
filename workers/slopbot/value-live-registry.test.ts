@@ -449,3 +449,227 @@ test("scheduler preserves appeal progress when retry dispatch is unavailable", a
     sqlite.close();
   }
 });
+
+/** README "Work accepted through another integration": the single-PR evaluator
+ * refuses a closed PR accepted through an integration commit, so the consumer
+ * must use the joint route even when no other PR references it. Synthetic Git
+ * objects only; the spent allowance stops the route before any provider call.
+ */
+test("a lone indirectly accepted PR reaches joint assessment", async () => {
+  setSystemTime(new Date("2026-11-04T00:00:00.000Z"));
+  const { db, sqlite } = liveRegistration();
+  const [base, head, integration] = ["a", "b", "d"].map((c) => c.repeat(40));
+  const root = `/repos/${repository}`;
+  const sha1 = (...parts: (string | Uint8Array)[]) => {
+    const hash = createHash("sha1");
+    for (const part of parts) hash.update(part);
+    return hash.digest("hex");
+  };
+  const text = "export const fixed = true;\n";
+  const blob = sha1(`blob ${text.length}\0`, text);
+  const entry = Buffer.concat([
+    Buffer.from("100644 fix.ts\0"),
+    Buffer.from(blob, "hex"),
+  ]);
+  const tree = sha1(`tree ${entry.length}\0`, entry);
+  const contributor = { node_id: "U_contributor", login: "dev", type: "User" };
+  const file = {
+    filename: "fix.ts",
+    status: "added",
+    additions: 1,
+    deletions: 0,
+    patch: "@@ -0,0 +1 @@\n+export const fixed = true;",
+    blob_url: `https://github.com/${repository}/blob/${head}/fix.ts`,
+  };
+  const commit = (sha: string, parents: string[]) => ({
+    sha,
+    html_url: `https://github.com/${repository}/commit/${sha}`,
+    parents: parents.map((parent) => ({ sha: parent })),
+    stats: { additions: 1, deletions: 0, total: 1 },
+    files: [file],
+  });
+  const ancestors: Record<string, string[]> = {
+    [base]: [],
+    [head]: [base],
+    [integration]: [base, head],
+  };
+  const policy = "Fix reproduced defects with a failing test.";
+  const identity = {
+    id: job.repositoryId,
+    node_id: "R_example",
+    private: false,
+  };
+  const runs = `${root}/actions/runs?head_sha=${integration}&event=push&branch=main&per_page=100&page=1`;
+  const routes: Record<string, unknown> = {
+    [root]: identity,
+    [`${root}/pulls/1`]: {
+      node_id: "PR_indirect",
+      number: 1,
+      html_url: `https://github.com/${repository}/pull/1`,
+      title: "Fix the toolkit export",
+      body: null,
+      user: contributor,
+      merged_by: null,
+      state: "closed",
+      merged_at: null,
+      closed_at: "2026-11-03T12:00:00Z",
+      merge_commit_sha: null,
+      updated_at: "2026-11-03T12:00:00Z",
+      head: { sha: head },
+      base: { sha: base, ref: "main" },
+      changed_files: 1,
+      comments: 1,
+      review_comments: 0,
+      commits: 1,
+    },
+    [`${root}/pulls/1/files?per_page=100&page=1`]: [file],
+    [`${root}/pulls/1/commits?per_page=100&page=1`]: [
+      {
+        ...commit(head, [base]),
+        author: contributor,
+        committer: contributor,
+        commit: {
+          message: "Fix the toolkit export",
+          author: { date: "2026-11-02T10:00:00Z" },
+          committer: { date: "2026-11-02T10:00:00Z" },
+        },
+      },
+    ],
+    [`${root}/pulls/1/reviews?per_page=100&page=1`]: [],
+    [`${root}/pulls/1/comments?per_page=100&page=1`]: [],
+    [`${root}/issues/1/comments?per_page=100&page=1`]: [
+      {
+        node_id: "IC_merged",
+        html_url: `https://github.com/${repository}/pull/1#issuecomment-1`,
+        body: `Merged into main as ${integration}. Thank you.`,
+        user: { node_id: "U_maintainer", login: "owner", type: "User" },
+        created_at: "2026-11-03T12:00:00Z",
+        updated_at: "2026-11-03T12:00:00Z",
+      },
+    ],
+    [`${root}/commits/${head}?per_page=100&page=1`]: commit(head, [base]),
+    [`${root}/commits/${integration}?per_page=100&page=1`]: commit(
+      integration,
+      [base, head],
+    ),
+    [`${root}/branches/main`]: { name: "main", commit: { sha: integration } },
+    [runs]: {
+      total_count: 1,
+      workflow_runs: [
+        {
+          id: 5001,
+          html_url: `https://github.com/${repository}/actions/runs/5001`,
+          event: "push",
+          head_branch: "main",
+          head_sha: integration,
+          created_at: "2026-11-03T11:00:00Z",
+          repository: { node_id: "R_example" },
+        },
+      ],
+    },
+    [`${root}/git/trees/${tree}?recursive=1`]: {
+      sha: tree,
+      truncated: false,
+      tree: [{ path: "fix.ts", mode: "100644", type: "blob", sha: blob }],
+    },
+    [`${root}/contents/CONTRIBUTING.md?ref=${base}`]: {
+      type: "file",
+      encoding: "base64",
+      content: Buffer.from(policy).toString("base64"),
+      size: policy.length,
+      sha: sha1(`blob ${policy.length}\0`, policy),
+    },
+  };
+  for (const ref of [head, integration]) {
+    routes[`${root}/git/commits/${ref}`] = { sha: ref, tree: { sha: tree } };
+    routes[`${root}/contents/fix.ts?ref=${ref}`] = {
+      type: "file",
+      encoding: "base64",
+      content: Buffer.from(text).toString("base64"),
+      size: text.length,
+      sha: blob,
+    };
+  }
+  const requests: string[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.origin !== "https://api.github.com")
+      throw new Error("No provider call is authorized in this test");
+    const path = `${url.pathname}${url.search}`;
+    requests.push(path);
+    if (url.pathname === "/app/installations/1/access_tokens")
+      return Response.json({ token: "local-installation" });
+    if (url.pathname === "/installation/repositories")
+      return Response.json({ repositories: [identity] });
+    if (url.pathname === "/graphql")
+      return Response.json({
+        data: {
+          repository: {
+            pullRequest: {
+              id: "PR_indirect",
+              timelineItems: {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        },
+      });
+    const range = /\/compare\/([a-f0-9]{40})\.\.\.([a-f0-9]{40})$/u.exec(
+      url.pathname,
+    );
+    if (range) {
+      const [, from, to] = range;
+      const status =
+        from === to
+          ? "identical"
+          : ancestors[to].includes(from)
+            ? "ahead"
+            : "behind";
+      return Response.json({
+        status,
+        merge_base_commit: { sha: status === "behind" ? to : from },
+        files: [],
+      });
+    }
+    if (path in routes) return Response.json(routes[path]);
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+  // The capped allowance is spent, so admission refuses before a provider call.
+  sqlite.run(
+    `INSERT INTO slopbot_costs(review_key,installation_id,call_kind,route_step,provider,requested_model,outcome,input_tokens,cache_write_tokens,cache_read_tokens,output_tokens,price_version,cost_micro_usd,billed_micro_usdc,reconciliation,created_at) VALUES ('spent',1,'triage',1,'surplus','claude-opus-5.5','ok',0,0,0,0,'local',1000000,0,'reconciled',?)`,
+    [new Date().toISOString()],
+  );
+  try {
+    await recordDelivery(db, job.deliveryId, "pull_request");
+    await recordValueRequest(db, job);
+    const outcome = await consumeValueRequest(
+      {
+        SLOPBOT_DB: db,
+        SLOPBOT_APP_ID: "1",
+        SLOPBOT_APP_PRIVATE_KEY: privateKey,
+        SLOPBOT_APP_USER_ID: "2",
+        SURPLUS_API_KEY: "not-used-before-inference",
+        SLOPBOT_PRODUCER_REVISION: "a".repeat(40),
+        SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "1000000",
+        SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: "1000000",
+        SLOPBOT_VALUE_START_AT: "2026-11-01T00:00:00.000Z",
+      },
+      job,
+    );
+    // The integration is proved from GitHub, not from the comment text.
+    expect(requests).toContain(runs);
+    // Before the fix the single-PR evaluator threw: an hourly `retry` forever.
+    expect(outcome).toBe("budget");
+    expect(
+      sqlite
+        .query("SELECT state,outcome,attempts FROM slopbot_value_processing")
+        .get(),
+    ).toEqual({ state: "waiting", outcome: "budget", attempts: 1 });
+  } finally {
+    globalThis.fetch = original;
+    setSystemTime();
+    sqlite.close();
+  }
+});
