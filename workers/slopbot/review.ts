@@ -81,6 +81,7 @@ import {
   repositoryCapabilities,
   requireRegisteredRepository,
   requireScope,
+  reversalOnlyRegistration,
   reviewRegistration,
   scopeAllowed,
 } from "./registry";
@@ -780,12 +781,24 @@ async function closureState(
     "SELECT COUNT(*) AS n FROM slopbot_actions WHERE repository_id = ? AND action = 'close' AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')",
     job.repositoryId,
   );
+  // A reopen-rate breaker measures Slopbot closes that people reversed in
+  // the last 7 days: a maintainer reopen, or an upheld appeal (including an
+  // author's reopen that was upheld). Each reversed item counts once. An
+  // author's reopen or appeal alone is a dispute, not a reversal: counting it
+  // would let authors switch closure off for a repository.
   const reopens7 = await store.count(
     db,
-    `SELECT COUNT(*) AS n FROM slopbot_actions r WHERE r.repository_id = ? AND r.action = 'human_reopen'
-       AND r.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
-       AND EXISTS (SELECT 1 FROM slopbot_actions c WHERE c.repository_id = r.repository_id
-         AND c.item_node_id = r.item_node_id AND c.action = 'close' AND c.created_at <= r.created_at)`,
+    `SELECT COUNT(DISTINCT reversed.item_node_id) AS n FROM (
+       SELECT r.item_node_id, r.created_at AS at FROM slopbot_actions r
+       WHERE r.repository_id = ?1 AND r.action = 'human_reopen'
+       UNION ALL
+       SELECT a.item_node_id, a.resolved_at AS at FROM slopbot_appeals a
+       WHERE a.repository_id = ?1 AND a.resolution = 'upheld'
+     ) reversed
+     WHERE reversed.at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
+       AND EXISTS (SELECT 1 FROM slopbot_actions c WHERE c.repository_id = ?1
+         AND c.item_node_id = reversed.item_node_id AND c.action = 'close'
+         AND c.created_at <= reversed.at)`,
     job.repositoryId,
   );
   if (closes7 > 0 && reopens7 / closes7 > REOPEN_BREAKER_RATIO)
@@ -1561,24 +1574,31 @@ async function runReview(
       claim,
     );
   }
+  let closedAt: Date | null = null;
   if (close) {
     await store.assertReviewClaim(db, claim);
     await requireRegisteredRepository(db, job);
     const closed =
       job.itemKind === "pull_request"
-        ? await context.github.request<{ state: string }>(
+        ? await context.github.request<ClosedItem>(
             "PATCH",
             `/repos/${job.owner}/${job.repo}/pulls/${job.number}`,
             { state: "closed" },
           )
-        : await context.github.request<{ state: string }>(
+        : await context.github.request<ClosedItem>(
             "PATCH",
             `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
             { state: "closed", state_reason: "not_planned" },
           );
     // Only a transition GitHub confirms is a close, and only a confirmed close
-    // can create the SCR-01 penalty (BOT-06).
-    if (closed.status !== 200 || closed.data?.state !== "closed") {
+    // can create the SCR-01 penalty (BOT-06). GitHub's close time, not this
+    // worker's clock, decides the debit's UTC month.
+    closedAt = githubClosedAt(closed.data);
+    if (
+      closed.status !== 200 ||
+      closed.data?.state !== "closed" ||
+      closedAt === null
+    ) {
       close = false;
       await upsertComment(
         env,
@@ -1621,7 +1641,7 @@ async function runReview(
           authorId: issue.user.id,
           category,
           reviewKey,
-          closedAt: new Date(),
+          closedAt: closedAt as Date,
         })
       : null;
     if (await confirmedReopenFor(db, issue.node_id, context.revision)) {
@@ -1653,6 +1673,20 @@ async function runReview(
     action: close ? "close" : "label",
   });
   return close ? `closed (${category})` : `labeled (${category})`;
+}
+
+type ClosedItem = { state: string; closed_at?: string | null };
+
+/** GitHub's own close time from the confirmed close response, or null. */
+export function githubClosedAt(item: ClosedItem | null): Date | null {
+  const value = item?.closed_at;
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u.test(value)
+  )
+    return null;
+  const at = new Date(value);
+  return Number.isFinite(at.getTime()) ? at : null;
 }
 
 export function qualityFor(
@@ -1779,20 +1813,32 @@ type AppealSession = {
   issue: Issue;
   revision: string;
   registration: Context["registration"];
+  /** A retired project: no review, so no model call or GitHub write. Only
+   * the reversal of an existing penalty is permitted (owner decisions D7,
+   * D12).
+   */
+  reversalOnly: boolean;
 };
 
 /** Fresh registry, installation and GitHub state for an appeal action.
  * Appeals and maintainer reopen decisions are preserved on any registered
- * repository, including a paused one.
+ * repository, including a paused one. On a retired project they can still
+ * reverse an existing penalty, and do nothing else.
  */
 async function appealSession(
   env: ReviewEnv,
   job: AppealJob,
 ): Promise<AppealSession | string> {
   const db = env.SLOPBOT_DB;
-  const registration = await reviewRegistration(db, job);
-  if (registration === null)
+  const reviewable = await reviewRegistration(db, job);
+  const retired =
+    reviewable === null ? await reversalOnlyRegistration(db, job) : null;
+  if (reviewable === null && retired === null)
     return "repository is not registered in the Slop registry";
+  const registration = reviewable ?? {
+    scope: "security" as const,
+    projectId: (retired as { projectId: string }).projectId,
+  };
   if (!(await store.installationActive(db, job.installationId)))
     return "installation removed or suspended";
   const github = await GitHubClient.forInstallation(
@@ -1807,7 +1853,14 @@ async function appealSession(
   );
   if (issue === null) return "ignored";
   const { revision } = await itemRevision(github, job, issue);
-  return { github, repo, issue, revision, registration };
+  return {
+    github,
+    repo,
+    issue,
+    revision,
+    registration,
+    reversalOnly: reviewable === null,
+  };
 }
 
 async function isMaintainer(
@@ -1927,6 +1980,12 @@ async function reconcileConfirmedReopen(
 // Appeals and human reopens both stop Slopbot from re-closing this revision.
 // A maintainer reopen reverses the penalty once and resolves an open appeal.
 // An author's appeal opens Slopbot triage (owner decision D8).
+//
+// A maintainer reopen always wins (protocol/slopbot-v2.md, "Appeals"). The
+// decision binds the revision that was reopened, from the signed delivery:
+// an author push before the queue runs cannot drop it. Only the cleanup of
+// Slopbot's own close and finding labels requires that revision to still be
+// current, so a newer head's finding is never removed.
 export async function recordHumanSignal(
   env: ReviewEnv,
   job: Extract<Job, { kind: "appeal" | "human_reopen" }>,
@@ -1942,7 +2001,6 @@ export async function recordHumanSignal(
     if (!source) return "reopen source unavailable; no decision";
     if (
       source.itemNodeId !== issue.node_id ||
-      source.revision !== revision ||
       (issue.state !== "open" &&
         (issue.state !== "closed" ||
           (issue.closed_by &&
@@ -1954,17 +2012,28 @@ export async function recordHumanSignal(
   }
   if (job.kind === "appeal" && job.senderId !== issue.user.id)
     return "only the author can appeal";
+  // A retired project gets no review (D12): only an existing debit can still
+  // reverse there.
+  if (session.reversalOnly && (await activePenalty(db, issue.node_id)) === null)
+    return "project is retired; no review";
   let kind: "appeal" | "human_reopen" = job.kind;
   if (job.kind === "human_reopen" && job.senderId === issue.user.id) {
     // An author reopening their own item is an appeal, not a maintainer decision.
     kind = "appeal";
+    // The author's reopen appeals the revision it reopened; a newer head
+    // gets its own review.
+    if (source?.revision !== revision)
+      return "reopen source changed; no decision";
   } else if (
     job.kind === "human_reopen" &&
     !(await isMaintainer(session, job, job.senderId))
   ) {
     return "reopen by a non-maintainer recorded as no decision";
   }
-  const signalKey = `reopen:${issue.node_id}:${revision}`;
+  // The maintainer decision binds the reopened revision, even after a push.
+  const decided =
+    kind === "human_reopen" && source ? source.revision : revision;
+  const signalKey = `reopen:${issue.node_id}:${decided}`;
   await store.recordAction(
     db,
     signalKey,
@@ -1977,10 +2046,16 @@ export async function recordHumanSignal(
     // The signed event and current authority have both been checked. A hold
     // write that loses its response can reconcile this decision on its retry.
     await confirmReopen(db, job.deliveryId);
-    if (!(await reconcileConfirmedReopen(env, job, session)))
-      return "reopen source changed; no cleanup";
+    // Cleanup writes only while the reopened revision is current and the
+    // project still permits review; the decision itself never depends on it.
+    const cleaned =
+      !session.reversalOnly &&
+      (await reconcileConfirmedReopen(env, job, {
+        ...session,
+        revision: decided,
+      }));
     await reversePenalty(db, issue.node_id, "maintainer_reopen");
-    const appeal = await appealByKey(db, `appeal:${issue.node_id}:${revision}`);
+    const appeal = await appealByKey(db, `appeal:${issue.node_id}:${decided}`);
     if (appeal !== null) {
       await resolveAppeal(db, appeal.appeal_key, "upheld", "maintainer");
       const current = await appealByKey(db, appeal.appeal_key);
@@ -1990,7 +2065,28 @@ export async function recordHumanSignal(
       )
         await publishAppealState(env, job, session, current, "resolution");
     }
-    return kind;
+    if (session.reversalOnly)
+      return "human_reopen; project is retired, penalty reversal only";
+    return cleaned ? kind : "human_reopen; newer item state kept";
+  }
+  if (session.reversalOnly) {
+    // No triage on a retired project: a Slop moderator decides the appeal of
+    // its existing debit, and nothing is posted on GitHub.
+    const appeal = await openAppeal(db, {
+      appealKey: `appeal:${issue.node_id}:${revision}`,
+      job,
+      itemNodeId: issue.node_id,
+      appellantId: issue.user.id,
+    });
+    if (appeal.resolved_at !== null) return "appeal already resolved";
+    await escalateAppeal(
+      db,
+      appeal.appeal_key,
+      "the project is retired, so Slopbot does not triage",
+      moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+    );
+    const current = (await appealByKey(db, appeal.appeal_key)) ?? appeal;
+    return `appeal escalated: ${current.escalation}`;
   }
   const appealLabel = "slopbot: appeal";
   if (
@@ -2111,10 +2207,15 @@ async function draftResolution(
     )?.verdict ??
     null;
   if (deterministic !== null)
-    return {
-      draft: deterministic.category === finding ? "deny" : "uphold",
-      confidence: 1,
-    };
+    return deterministic.category === finding
+      ? { draft: "deny", confidence: 1 }
+      : {
+          draft: "uphold",
+          confidence: upholdConfidence(
+            { category: deterministic.category, confidence: 1 },
+            finding,
+          ),
+        };
   const statement = await appealStatement(
     session.github,
     job,
@@ -2141,13 +2242,22 @@ async function draftResolution(
     grounded(verdict, context, false).ok;
   return stands
     ? { draft: "deny", confidence: verdict.confidence }
-    : {
-        draft: "uphold",
-        confidence:
-          verdict.category === finding
-            ? 1 - verdict.confidence
-            : verdict.confidence,
-      };
+    : { draft: "uphold", confidence: upholdConfidence(verdict, finding) };
+}
+
+/** Confidence that the appealed finding should be reversed, the escalation
+ * input of D8 criterion 4. The independent review's confidence is in its own
+ * category, so it supports reversal only when that category is `none`. The
+ * same finding below the closure bar supports reversal by its complement. A
+ * different finding is no evidence for reversal at all: confidence 0, so a
+ * moderator decides.
+ */
+export function upholdConfidence(
+  verdict: Pick<Verdict, "category" | "confidence">,
+  finding: Category,
+): number {
+  if (verdict.category === finding) return 1 - verdict.confidence;
+  return verdict.category === "none" ? verdict.confidence : 0;
 }
 
 /** The appellant's newest `/slopbot appeal` text, without the command. */
@@ -2227,6 +2337,8 @@ async function publishAppealState(
   appeal: Appeal,
   stage: "draft" | "escalation" | "resolution",
 ) {
+  // A retired project gets no GitHub write; moderators see the Inbox notice.
+  if (session.reversalOnly) return;
   const db = env.SLOPBOT_DB;
   const key = `${appeal.appeal_key}:${stage}`;
   await publishAppealComment(
@@ -2411,7 +2523,10 @@ async function finishAppeal(
     return "a Slop moderator decides this appeal";
   }
   const { issue } = session;
-  if (current.resolution === "upheld") {
+  if (current.resolution === "upheld" && session.reversalOnly) {
+    // A retired project: reverse the debit, with no GitHub write.
+    await reversePenalty(db, issue.node_id, "appeal_upheld");
+  } else if (current.resolution === "upheld") {
     const closedBySlopbot = await store.count(
       db,
       "SELECT COUNT(*) AS n FROM slopbot_actions WHERE item_node_id = ? AND action = 'close'",

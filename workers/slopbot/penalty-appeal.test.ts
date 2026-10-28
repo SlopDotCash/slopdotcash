@@ -102,6 +102,10 @@ type Run = {
       | "kind",
   ) => void;
   consent: (value: boolean | null) => void;
+  /** Appends a retired revision (owner decision D12: no review). */
+  retire: () => void;
+  /** GitHub's reported close time; null omits it from the close response. */
+  closeTime: (value: string | null) => void;
   revokeOnConfirmation: () => void;
   repositoryConfig: (value: string | null, truncated?: boolean) => void;
   policyResponse: (status: number, body?: unknown) => void;
@@ -238,6 +242,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   const labels: string[] = [];
   let state = "open";
   let closedBy: number | null = null;
+  let closedAt: string | null = null;
+  // undefined: GitHub reports the current time; null: no close time.
+  let githubCloseTime: string | null | undefined;
   let closerEvidence = true;
   let merged = false;
   let pauseClose: (() => Promise<void>) | null = null;
@@ -446,6 +453,13 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         }
         state = next;
         closedBy = next === "closed" ? 999 : null;
+        // GitHub reports its own close time in the close response.
+        closedAt =
+          next === "closed"
+            ? githubCloseTime === undefined
+              ? new Date().toISOString()
+              : githubCloseTime
+            : null;
         if (next === "closed") {
           const options = closeOptions;
           closeOptions = {};
@@ -459,7 +473,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
             { status: 503 },
           );
         }
-        return Response.json({ state });
+        return Response.json({ state, closed_at: closedAt });
       }
       if (path.endsWith("/pulls/5") || (duplicate && path.endsWith("/pulls/4")))
         return Response.json({
@@ -918,6 +932,38 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         duplicateChange = change;
       },
       consent,
+      retire: () => {
+        const row = sqlite
+          .query("SELECT revision, manifest FROM projects WHERE id = ?")
+          .get(project.id) as { revision: number; manifest: string };
+        const text = JSON.stringify({
+          ...JSON.parse(row.manifest),
+          status: "paused",
+          listingTier: "retired",
+        });
+        const sha = createHash("sha256").update(text).digest("hex");
+        const at = new Date().toISOString();
+        sqlite.transaction(() => {
+          sqlite.run(
+            "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES (?,?,?,?,?,?)",
+            [
+              project.id,
+              row.revision + 1,
+              text,
+              sha,
+              "Synthetic retirement",
+              at,
+            ],
+          );
+          sqlite.run(
+            "UPDATE projects SET status = 'paused', revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?",
+            [row.revision + 1, text, sha, at, project.id],
+          );
+        })();
+      },
+      closeTime: (value) => {
+        githubCloseTime = value;
+      },
       revokeOnConfirmation: () => {
         revokeOnConfirmation = true;
       },
@@ -2566,8 +2612,10 @@ test("replaying an old reopen cannot remove a newer head finding", async () => {
     setSystemTime(new Date(Date.parse(CLOSED_AT) + 2000));
     expect(await run.review()).toBe("labeled (spam)");
     const before = run.writes.length;
+    // The replay keeps the one recorded decision for the old head and makes
+    // no write: the newer head's finding stays.
     expect(await run.deliver(reopened)).toBe(
-      "reopen source changed; no decision",
+      "human_reopen; newer item state kept",
     );
     expect(run.labels).toContain("slopbot: spam");
     expect(run.writes).toHaveLength(before);
@@ -2706,16 +2754,23 @@ test("the first delivery of an old-head reopen preserves a newer finding", async
     run.closureEnabled(false);
     expect(await run.review()).toBe("labeled (spam)");
     const before = run.writes.length;
+    // A maintainer reopen always wins: the decision for the reopened head is
+    // recorded, but the newer head's finding is not removed.
     expect(await run.deliver(reopened)).toBe(
-      "reopen source changed; no decision",
+      "human_reopen; newer item state kept",
     );
     expect(run.labels).toContain("slopbot: spam");
     expect(run.writes).toHaveLength(before);
     expect(
       run.sql(
-        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'human_reopen'",
+        "SELECT json_extract(reopen_source, '$.revision') AS revision FROM slopbot_deliveries WHERE reopen_confirmed_at IS NOT NULL",
       ),
-    ).toEqual([{ n: 0 }]);
+    ).toEqual([{ revision: "b".repeat(40) }]);
+    expect(
+      run.sql(
+        "SELECT review_key, COUNT(*) AS n FROM slopbot_actions WHERE action = 'human_reopen'",
+      ),
+    ).toEqual([{ review_key: `reopen:PR_local:${"b".repeat(40)}`, n: 1 }]);
   });
 });
 
@@ -2874,3 +2929,202 @@ for (const timing of [
     });
   });
 }
+
+// Slopbot gap regressions (goal: Slopbot as specified). Fixtures prove the
+// controls only, not model qualification or production behavior.
+
+test("a maintainer reopen reverses the debit even when the author pushes before it is processed", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    const reopened = await run.reopen();
+    // The author pushes a new head before the queue delivers the reopen.
+    run.head("d".repeat(40));
+    const before = run.writes.length;
+    expect(await run.deliver(reopened)).toBe(
+      "human_reopen; newer item state kept",
+    );
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "spam", reversal: "maintainer_reopen" },
+    ]);
+    // The decision binds the reopened head; no write touches the newer one.
+    expect(run.writes).toHaveLength(before);
+    expect(
+      run.sql(
+        "SELECT review_key FROM slopbot_actions WHERE action = 'human_reopen'",
+      ),
+    ).toEqual([{ review_key: `reopen:PR_local:${"b".repeat(40)}` }]);
+    // A replay reverses nothing a second time.
+    const reversed = run.sql("SELECT reversed_at FROM slopbot_penalties");
+    expect(await run.deliver(reopened)).toBe(
+      "human_reopen; newer item state kept",
+    );
+    expect(run.sql("SELECT reversed_at FROM slopbot_penalties")).toEqual(
+      reversed,
+    );
+  });
+});
+
+test("an author's own reopen after a push is still not a maintainer decision", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    const reopened = await run.reopen(AUTHOR);
+    run.head("d".repeat(40));
+    expect(await run.deliver(reopened)).toBe(
+      "reopen source changed; no decision",
+    );
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+  });
+});
+
+test("a retired project reverses an existing debit through a maintainer reopen, with no review or GitHub write", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.retire();
+    const writes = run.writes.length;
+    const calls = run.modelInputs.length;
+    // The webhook admits the reversal event for a retired project.
+    const reopened = await run.reopen();
+    expect(await run.deliver(reopened)).toBe(
+      "human_reopen; project is retired, penalty reversal only",
+    );
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: "maintainer_reopen" }]);
+    expect(run.writes).toHaveLength(writes);
+    expect(run.modelInputs).toHaveLength(calls);
+    // The active feed drops the reversed debit; history retains the reason.
+    const history = (await (
+      await run.feed(
+        "https://slopbot.example/v1/penalties?project=asi&after=&history=1",
+      )
+    ).json()) as { records: { reversal: string | null }[] };
+    expect(history.records).toMatchObject([{ reversal: "maintainer_reopen" }]);
+  });
+});
+
+test("a retired project sends an appeal of an existing debit to a moderator, whose uphold reverses it without GitHub writes", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.retire();
+    const writes = run.writes.length;
+    const calls = run.modelInputs.length;
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: the project is retired, so Slopbot does not triage",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "uphold", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal upheld by the moderator");
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: "appeal_upheld" }]);
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: null,
+        escalated: 1,
+        resolution: "upheld",
+        resolved_by: "moderator",
+      },
+    ]);
+    expect(run.writes).toHaveLength(writes);
+    expect(run.modelInputs).toHaveLength(calls);
+  });
+});
+
+test("a retired project without a debit stays unreviewed", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.closureEnabled(false);
+    expect(await run.review()).toBe("labeled (spam)");
+    run.retire();
+    const writes = run.writes.length;
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "project is retired; no review",
+    );
+    expect(run.sql(APPEAL)).toEqual([]);
+    expect(run.writes).toHaveLength(writes);
+  });
+});
+
+test("GitHub's close time, not Slopbot's clock, decides the debit month", async () => {
+  // Slopbot records the close just after midnight UTC on 1 December; GitHub
+  // closed the item in November.
+  setSystemTime(new Date("2026-12-01T00:00:01.000Z"));
+  await closedItem(async (run) => {
+    run.closeTime("2026-11-30T23:59:59Z");
+    expect(await run.review()).toBe("closed (spam)");
+    expect(
+      run.sql("SELECT period, recorded_at FROM slopbot_penalties"),
+    ).toEqual([{ period: "2026-11", recorded_at: "2026-11-30T23:59:59.000Z" }]);
+  });
+});
+
+test("a close response without GitHub's close time records no debit", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.closeTime(null);
+    expect(await run.review()).toBe("labeled (spam)");
+    expect(run.comments.at(-1)).toContain("GitHub did not confirm the close");
+    expect(run.sql(PENALTY)).toEqual([]);
+  });
+});
+
+for (const reversal of ["upheld appeal", "author dispute"] as const) {
+  test(`the reopen-rate circuit breaker ${reversal === "upheld appeal" ? "counts" : "ignores"} an ${reversal}`, async () => {
+    setSystemTime(new Date(CLOSED_AT));
+    await closedItem(async (run) => {
+      const [{ id: repositoryId }] = run.sql(
+        "SELECT json_extract(manifest, '$.authority.repositoryId') AS id FROM projects",
+      ) as { id: string }[];
+      const earlier = new Date(Date.parse(CLOSED_AT) - day).toISOString();
+      const later = new Date(Date.parse(CLOSED_AT) - day / 2).toISOString();
+      // Five earlier Slopbot closes in this repository; one is reversed.
+      for (let i = 1; i <= 5; i++)
+        run.sql(
+          `INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at)
+           VALUES ('prior-${i}', ${repositoryId}, 'PR_prior_${i}', 'close', '{}', '${earlier}')`,
+        );
+      if (reversal === "upheld appeal")
+        run.sql(
+          `INSERT INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json,
+             opened_at, due_at, resolved_at, resolution, resolved_by)
+           VALUES ('appeal:PR_prior_1:x', ${repositoryId}, 'PR_prior_1', '42', '{}',
+             '${earlier}', '${new Date(Date.parse(earlier) + 7 * day).toISOString()}', '${later}', 'upheld', 'appellant')`,
+        );
+      else
+        run.sql(
+          `INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at)
+           VALUES ('reopen:PR_prior_1:x', ${repositoryId}, 'PR_prior_1', 'appeal', '42', '${later}')`,
+        );
+      if (reversal === "upheld appeal") {
+        expect(await run.review()).toBe("labeled (spam)");
+        expect(run.comments.join("\n")).toContain(
+          "reopen-rate circuit breaker",
+        );
+        expect(run.sql(PENALTY)).toEqual([]);
+      } else expect(await run.review()).toBe("closed (spam)");
+    });
+  });
+}
+
+test("an appeal draft never reuses a different finding's confidence as confidence to uphold", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // The independent review is sure the item is bad, just not spam.
+    run.model("gaming", 0.97);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: Slopbot confidence is below 0.9",
+    );
+    expect(
+      run.sql("SELECT draft, draft_confidence FROM slopbot_appeals"),
+    ).toEqual([{ draft: "uphold", draft_confidence: 0 }]);
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+  });
+});

@@ -201,7 +201,10 @@ for (const change of [
               ? "budget"
               : change === "deselected"
                 ? "retry"
-                : "authority",
+                : change === "identity"
+                  ? "authority"
+                  : // A paused, restricted or removed project parks it.
+                    "parked",
       );
       expect(
         sqlite
@@ -307,7 +310,7 @@ test("old and failing requests cannot starve new valuation requests", async () =
       });
     if (number === 300)
       return Response.json({ state: "open", merged_at: null, closed_at: null });
-    // A November PR whose source GitHub does not return stays retryable.
+    // A November PR that GitHub reports as absent from a readable repository.
     return new Response(null, { status: 404 });
   }) as typeof fetch;
   try {
@@ -359,7 +362,7 @@ test("old and failing requests cannot starve new valuation requests", async () =
     expect(reads.get(300)).toEqual([Date.parse("2026-11-01T03:05:00Z")]);
     expect(state(300)).toEqual([
       { state: "completed", outcome: "open", deliveries: 1 },
-      { state: "waiting", outcome: "authority", deliveries: 1 },
+      { state: "waiting", outcome: "parked", deliveries: 1 },
       { state: "waiting", outcome: "retry", deliveries: 1 },
     ]);
     // One read settles every waiting delivery for a PR closed before the start.
@@ -373,11 +376,14 @@ test("old and failing requests cannot starve new valuation requests", async () =
         },
       ]);
     }
-    // Unavailable November source is never treated as zero; it keeps retrying.
-    for (let number = 201; number <= 215; number++)
+    // A November PR that GitHub reports absent ends as a recorded `missing`
+    // outcome after one read, never a zero and never an hourly retry.
+    for (let number = 201; number <= 215; number++) {
+      expect(reads.get(number)?.length).toBe(1);
       expect(state(number)).toEqual([
-        { state: "waiting", outcome: "source-incomplete", deliveries: 1 },
+        { state: "completed", outcome: "missing", deliveries: 1 },
       ]);
+    }
   } finally {
     globalThis.fetch = original;
     setSystemTime();
