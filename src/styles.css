@@ -4230,3 +4230,9 @@ nav[aria-label="Project navigation"] {
 .manage-page .proposal-form details[open] > summary {
   margin-bottom: 1.25rem;
 }
+
+.project-image-field input[type="file"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}

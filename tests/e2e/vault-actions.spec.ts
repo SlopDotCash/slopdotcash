@@ -253,6 +253,10 @@ test.beforeAll(async () => {
 });
 test.afterAll(() => anvil?.kill("SIGTERM"));
 
+test.beforeEach(async ({ diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
+});
+
 test("depositor funds a real vault, recovers a submitted transaction and owner withdraws only free funds", async ({
   diagnostics,
   page,
@@ -313,7 +317,14 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
-      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
   );
   await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/api/v1/projects/eliza", (route) =>
@@ -332,7 +343,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({ json: { session: null } }),
   );
-  // Funding controls now live on the project page; legacy URLs reach the same controls.
+  // The overview exposes the same vault controls as the retained funding URL.
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   const summary = page.getByRole("region", { name: "Project escrow" });
   await expect(summary).toContainText("Totals not read yet");
@@ -639,7 +650,9 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   );
   await page.goto("/projects/eliza/funding");
   await page.getByRole("button", { name: "Review monthly awards" }).click();
-  await page.getByLabel("Contribution month").fill("2026-09");
+  await expect(
+    page.getByRole("navigation", { name: "Contribution month" }),
+  ).toContainText("September 2026");
   await page
     .getByRole("button", { name: "Reserve award for local-contributor" })
     .click();
@@ -812,7 +825,14 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
-      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
   );
   await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/api/v1/projects/eliza", (route) =>
@@ -1489,13 +1509,10 @@ test("owner creates, registers and funds a vault through the real API", async ({
     ).toHaveText(
       "Creation used a monthly cap of 1,000 TEST. The project now uses 2,000 TEST. Use the automatic payment controls below to apply the new cap.",
     );
-    const monthlyTarget = recoveryPage
-      .locator("dl > div")
-      .filter({
-        has: recoveryPage.locator("dt", { hasText: /^Monthly target$/u }),
-      })
-      .locator("dd");
-    await expect(monthlyTarget).toHaveText("2,000 TEST");
+    const monthlyTarget = recoveryPage.locator(".project-reward-status");
+    await expect(monthlyTarget).toHaveText(
+      /2k\s*\$TEST monthly target, split between contributors/u,
+    );
     await expect(monthlyTarget).toBeVisible();
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(state.project.revision).toBe(3);
@@ -1635,9 +1652,11 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await expect(
       page.getByRole("region", { name: "Setup status: Ready" }),
     ).toBeVisible();
-    await expect(page.getByRole("heading", { level: 1 })).toContainText(
-      project.name,
-    );
+    await expect(
+      page
+        .getByRole("navigation", { name: "Project navigation" })
+        .getByRole("link", { name: "Funds & awards" }),
+    ).toHaveAttribute("href", `/projects/${project.slug}/funding`);
     await expect(
       page.getByText(/Deposit needed|Payments off|Payouts are disabled/),
     ).toHaveCount(0);

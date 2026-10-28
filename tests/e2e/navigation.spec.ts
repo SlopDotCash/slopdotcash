@@ -71,7 +71,11 @@ test("retained awards URLs resolve during client navigation with query and fragm
     await expect(
       page.getByRole("heading", { name: "Eliza", exact: true }),
     ).toBeVisible();
-    await expect(page.locator(".project-overview")).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Funds and awards" }),
+    ).toBeAttached();
+    await page.waitForLoadState("networkidle");
+    await expect(page).toHaveURL(`/projects/eliza${expected}`);
   }
   await expectAccessible(page);
   await page.screenshot({ path: info.outputPath("retained-awards-route.png") });

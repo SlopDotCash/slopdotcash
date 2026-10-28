@@ -114,13 +114,9 @@ test("a cleared project lists only the published open-work candidates", async ({
     work.getByRole("link", { name: "All issues on GitHub" }),
   ).toHaveAttribute("href", "https://github.com/elizaOS/eliza/issues");
   await expectAccessible(page, { include: "#start" });
-  // Open-in links come after Copy; the work list remains keyboard reachable.
-  await page.getByRole("button", { name: "Copy agent prompt" }).focus();
-  for (let step = 0; step < 30; step++) {
-    await page.keyboard.press("Tab");
-    if (await links.first().evaluate((link) => link === document.activeElement))
-      break;
-  }
+  // Open-in agent links precede the work list in keyboard order.
+  await page.locator("#start .agent-open-in a").last().focus();
+  await page.keyboard.press("Tab");
   await expect(links.first()).toBeFocused();
   await page.screenshot({
     path: info.outputPath("project-open-work.png"),
@@ -190,6 +186,10 @@ test("history navigation never carries another project's clearance into agent se
   diagnostics,
 }, info) => {
   diagnostics.allowPreviewApiMisses();
+  // Leaving a route cancels its in-flight shared snapshot read.
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/(?:leaderboard\.json|cycles\/index\.json)\?[^ ]+$/u,
+  );
   let holdClearance = false;
   let releaseClearance = () => {};
   const pendingClearance = new Promise<void>((resolve) => {
@@ -205,20 +205,12 @@ test("history navigation never carries another project's clearance into agent se
   await expect(
     page.getByText("This project is not cleared for agents.", { exact: false }),
   ).toBeVisible();
-  const homeSnapshot = page
-    .waitForResponse((response) =>
-      new URL(response.url()).pathname.endsWith("/data/leaderboard.json"),
-    )
-    .then((response) => response.finished());
-  await page.getByRole("link", { name: "Slop home", exact: true }).click();
-  expect(await homeSnapshot).toBeNull();
-  const elizaSnapshot = page
-    .waitForResponse((response) =>
-      new URL(response.url()).pathname.endsWith("/data/leaderboard.json"),
-    )
-    .then((response) => response.finished());
+  await page
+    .getByRole("banner")
+    .getByRole("link", { name: "Slop home", exact: true })
+    .click();
   await page.locator('a.project-card[href="/projects/eliza"]').click();
-  expect(await elizaSnapshot).toBeNull();
+  await expect(page).toHaveURL(/\/projects\/eliza$/u);
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
   ).toContainText("elizaOS/eliza");

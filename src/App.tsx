@@ -1369,14 +1369,14 @@ function ProjectPaymentHistory({
 
 /** Funding controls share the project overview's reward summary. */
 function ProjectFundsAndAwards({
-  project: original,
+  project,
   state,
+  onRegistered,
 }: {
   project: ProjectDefinition;
   state: DataState;
+  onRegistered: (project: ProjectDefinition) => void;
 }) {
-  const [registered, setRegistered] = useState<ProjectDefinition | null>(null);
-  const project = registered ?? original;
   return (
     <section
       id="funding"
@@ -1387,7 +1387,7 @@ function ProjectFundsAndAwards({
         <p>The organizer pays this prize.</p>
       ) : project.escrow ? (
         <>
-          <EscrowFunding project={project} onRegistered={setRegistered} />
+          <EscrowFunding project={project} onRegistered={onRegistered} />
           <OwnerAwards
             key={project.id}
             project={project}
@@ -1503,7 +1503,7 @@ function ProjectBountyIntroduction({
 }
 
 function ProjectPage({
-  project,
+  project: original,
   state,
   retry,
 }: {
@@ -1511,6 +1511,8 @@ function ProjectPage({
   state: DataState;
   retry: () => void;
 }) {
+  const [registered, setRegistered] = useState<ProjectDefinition | null>(null);
+  const project = registered ?? original;
   const view =
     state.status === "ready"
       ? state.views.find((candidate) => candidate.project.id === project.id)
@@ -1536,12 +1538,13 @@ function ProjectPage({
       </section>
       <div className="shell">
         <ProjectFundsAndAwards
-          key={project.id}
+          key={`funding:${project.id}`}
           project={project}
           state={state}
+          onRegistered={setRegistered}
         />
         <ProjectPaymentHistory
-          key={project.id}
+          key={`history:${project.id}`}
           project={project}
           state={state}
         />
@@ -1653,7 +1656,12 @@ function AppContent({ route }: { route: Route }) {
           </div>
         </main>
       ) : (
-        <ProjectPage project={project} retry={retry} state={state} />
+        <ProjectPage
+          key={project.id}
+          project={project}
+          retry={retry}
+          state={state}
+        />
       )
     ) : (
       <main className="shell route-main">

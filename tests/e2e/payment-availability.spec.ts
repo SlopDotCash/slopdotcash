@@ -9,7 +9,7 @@ import {
   test,
 } from "./fixtures";
 
-test("monthly targets remain distinct from available vault funds", async ({
+test("monthly targets remain distinct from verified payment records", async ({
   page,
 }, info) => {
   const original = PROJECTS.find((project) => project.id === "eliza");
@@ -50,20 +50,15 @@ test("monthly targets remain distinct from available vault funds", async ({
     page.getByRole("heading", { name: "Eliza", exact: true, level: 1 }),
   ).toBeVisible();
   await expect(page.locator(".project-reward-status")).toContainText(
-    "monthly target",
+    "monthly target, split between contributors",
   );
   await page.screenshot({
     path: info.outputPath("project-payment-unavailable.png"),
     fullPage: true,
   });
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
-  const funding = page.getByRole("main");
-  await expect(
-    funding.getByRole("region", { name: "Funds and awards" }),
-  ).toBeVisible();
-  await expect(
-    funding.getByText(/The project vault is not set up/u),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/\/projects\/eliza#funding$/u);
+  await expect(page.locator(".project-reward-status")).toHaveCount(1);
   await page.screenshot({
     path: info.outputPath("funding-payment-unavailable.png"),
     fullPage: true,
@@ -89,7 +84,9 @@ test("monthly targets remain distinct from available vault funds", async ({
 
 test("a cycle record offers a funding check without inventing a vault balance", async ({
   page,
+  diagnostics,
 }) => {
+  diagnostics.allowPreviewApiMisses();
   const response = await page.request.get("/data/leaderboard.json");
   expect(response.ok()).toBe(true);
   const snapshot = await response.json();

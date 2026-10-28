@@ -191,6 +191,7 @@ for (const navigation of ["project links", "browser history"] as const) {
         await page.goto(`${site}/projects/${nextProject}`);
         await expect(page.getByText(nextAmount, { exact: true })).toBeVisible();
         await page
+          .getByRole("banner")
           .getByRole("link", { name: "Slop home", exact: true })
           .click();
         await page
@@ -214,6 +215,7 @@ for (const navigation of ["project links", "browser history"] as const) {
         await page.evaluate(() => window.history.go(-2));
       else {
         await page
+          .getByRole("banner")
           .getByRole("link", { name: "Slop home", exact: true })
           .click();
         await page
@@ -328,8 +330,8 @@ test("a late previous payment request cannot overwrite a retried project", async
     await page.goto(`${site}/projects/${nextProject}`);
     await expect(page.getByText(nextAmount, { exact: true })).toBeVisible();
     await page
-      .getByRole("main")
-      .getByRole("link", { name: "Projects", exact: true })
+      .getByRole("banner")
+      .getByRole("link", { name: "Slop home", exact: true })
       .click();
     await page
       .locator(`a.project-card[href="/projects/${firstProject}"]`)
@@ -410,7 +412,10 @@ test("public project navigation does not load an agent-only flag form", async ({
   await page.goto(`${site}/projects/${nextProject}`);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Slop");
   await expect(page.locator(".project-risk-flag")).toHaveCount(0);
-  await page.getByRole("link", { name: "Slop home", exact: true }).click();
+  await page
+    .getByRole("banner")
+    .getByRole("link", { name: "Slop home", exact: true })
+    .click();
   await page
     .locator(`a.project-card[href="/projects/${firstProject}"]`)
     .click();

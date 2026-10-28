@@ -178,20 +178,19 @@ export async function applyIdentityRateLimit(
   ) {
     return null;
   }
-  const policy =
-    url.pathname === "/v1/oauth/start"
+  const policy = ["/v1/oauth/start", "/v1/local/start"].includes(url.pathname)
+    ? {
+        binding: env.IDENTITY_START_LIMITER,
+        limit: 12,
+        scope: "oauth-start",
+      }
+    : ["/v1/oauth/poll", "/v1/local/poll"].includes(url.pathname)
       ? {
-          binding: env.IDENTITY_START_LIMITER,
-          limit: 12,
-          scope: "oauth-start",
+          binding: env.IDENTITY_POLL_LIMITER,
+          limit: 120,
+          scope: "oauth-poll",
         }
-      : url.pathname === "/v1/oauth/poll"
-        ? {
-            binding: env.IDENTITY_POLL_LIMITER,
-            limit: 120,
-            scope: "oauth-poll",
-          }
-        : null;
+      : null;
   if (policy === null) return null;
   try {
     const principal = rateLimitKey(request);
