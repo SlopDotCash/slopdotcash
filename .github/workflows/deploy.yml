@@ -117,9 +117,11 @@ jobs:
         # reads projects and generated skills from D1 at runtime, so a newly
         # approved project appears without this step. Every trusted run
         # snapshots it so build-time ingestion collects the active
-        # repositories. Before an environment first serves the API, the sync
-        # keeps the committed snapshot and says so.
-        if: github.event_name != 'pull_request'
+        # repositories. Pull-request validation also needs this public,
+        # read-only inventory to validate awards for registered projects.
+        # No repository or deployment credential is passed to this read.
+        # Before an environment first serves the API, the sync keeps the
+        # committed snapshot and says so.
         env:
           SLOP_API_ORIGIN: ${{ env.VITE_SLOP_ENVIRONMENT == 'staging' && 'https://staging.slop.cash' || 'https://slop.cash' }}
         run: bun run projects:sync
