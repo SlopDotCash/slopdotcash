@@ -397,15 +397,9 @@ export async function handlePaymentsApi(
       const [, kind, value] = vaultPaymentsRoute;
       if (kind === "actors" && !/^[1-9]\d{0,15}$/u.test(value))
         return json(400, { error: "invalid_actor" });
-      if (kind === "actors") {
-        const privateMember = await deps.db
-          .prepare(
-            "SELECT 1 private FROM points_members WHERE github_id=? AND (public!=1 OR closed_at IS NOT NULL)",
-          )
-          .bind(value)
-          .first();
-        if (privateMember) return json(404, { error: "not_found" });
-      }
+      // A private or closed membership is excluded by the projection itself,
+      // so its actor read is an ordinary empty page. A distinct refusal would
+      // reveal that the GitHub ID has a private Slop membership.
       const query = new URL(request.url).searchParams;
       const cursor = (key: string) => {
         const raw = query.get(key);
