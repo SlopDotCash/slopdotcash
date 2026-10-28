@@ -18,40 +18,46 @@ async function harness(identityService?: PointsDependencies["identity"]) {
     UPDATE points_sessions SET expires_at='2026-10-26T13:00:00.000Z';
   `);
   const identity = { actor: ME.actor, github: ME.github, login: ME.login };
+  const deps: PointsDependencies = {
+    db,
+    now: () => new Date(NOW),
+    rateLimitSecret: "fixture-publication-secret".repeat(3),
+    identity: identityService ?? {
+      fetch: async () =>
+        Response.json({
+          audience: "slop-points-web",
+          githubActorId: identity.github,
+          githubNodeId: identity.actor,
+          githubLogin: identity.login,
+        }),
+    },
+  };
+  const request = (path: string, body: string, token: string | null) =>
+    new Request(`https://slop.cash/api/v1/points/${path}`, {
+      method: "POST",
+      headers: {
+        ...(token ? { cookie: `__Host-slop_points=${token}` } : {}),
+        origin: "https://slop.cash",
+        "content-type": "application/json",
+      },
+      body,
+    });
   const call = (
     path: string,
     body?: unknown,
     token: string | null = tokens.me,
   ) =>
     handlePointsApi(
-      new Request(`https://slop.cash/api/v1/points/${path}`, {
-        method: body === undefined ? "GET" : "POST",
-        headers: {
-          ...(token ? { cookie: `__Host-slop_points=${token}` } : {}),
-          ...(body === undefined
-            ? {}
-            : {
-                origin: "https://slop.cash",
-                "content-type": "application/json",
-              }),
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      }),
-      {
-        db,
-        now: () => new Date(NOW),
-        rateLimitSecret: "fixture-publication-secret".repeat(3),
-        identity: identityService ?? {
-          fetch: async () =>
-            Response.json({
-              audience: "slop-points-web",
-              githubActorId: identity.github,
-              githubNodeId: identity.actor,
-              githubLogin: identity.login,
-            }),
-        },
-      },
+      body === undefined
+        ? new Request(`https://slop.cash/api/v1/points/${path}`, {
+            headers: token ? { cookie: `__Host-slop_points=${token}` } : {},
+          })
+        : request(path, JSON.stringify(body), token),
+      deps,
     );
+  /** The same POST with bytes the client chose, so the body can be malformed. */
+  const raw = (path: string, body: string) =>
+    handlePointsApi(request(path, body, tokens.me), deps);
   const snapshot = (except: string[] = []) =>
     Object.fromEntries(
       (
@@ -67,7 +73,7 @@ async function harness(identityService?: PointsDependencies["identity"]) {
           sqlite.query(`SELECT * FROM "${name}" ORDER BY rowid`).all(),
         ]),
     );
-  return { sqlite, identity, call, snapshot };
+  return { sqlite, identity, call, raw, snapshot };
 }
 
 test("an identity storage outage leaves publication untouched and does not expire the assertion", async () => {
@@ -328,6 +334,49 @@ test("legacy hide requests fail explicitly without changing either public record
         error: "public_visibility_required",
       });
     }
+    expect(snapshot(["identity_rate_limits"])).toEqual(before);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a malformed or non-object body is a client error, not a server outage", async () => {
+  let identityCalls = 0;
+  const { sqlite, raw, snapshot } = await harness({
+    async fetch(request) {
+      identityCalls += 1;
+      return handleIdentityRequest(request, {
+        persistence: new D1IdentityPersistence(sqliteD1().db),
+        stateEncryptionSecret: "unused-by-assertion-consumption",
+        assertionSecret: "unused-by-assertion-consumption",
+        githubClientId: "local-publication-fixture",
+        now: () => new Date(NOW),
+        randomToken: () => "unused-by-assertion-consumption",
+        resolveGithubIdentity: async () => null,
+      });
+    },
+  });
+  try {
+    const before = snapshot(["identity_rate_limits"]);
+    // `null` and truncated JSON both reach the handler; neither is a database
+    // or identity failure, so the reply must not be the 503 that asks a retry.
+    for (const body of ["null", "{", "[]", "5"]) {
+      for (const path of [
+        "join",
+        "sessions/revoke",
+        "account/close",
+        "visibility",
+      ]) {
+        const response = await raw(path, body);
+        expect({ path, body, status: response.status }).toEqual({
+          path,
+          body,
+          status: 400,
+        });
+      }
+    }
+    // The identity service is never asked, so no assertion is consumed.
+    expect(identityCalls).toBe(0);
     expect(snapshot(["identity_rate_limits"])).toEqual(before);
   } finally {
     sqlite.close();
