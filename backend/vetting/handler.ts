@@ -19,6 +19,15 @@ import type {
 } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
+  JOURNAL_SCHEMA,
+  PUBLICATION_OUTCOMES,
+  type PublicationIntent,
+  type PublicationOutcome,
+  type PublicationReceipt,
+  VETTING_DISPOSITIONS,
+  type VettingDisposition,
+} from "../../src/lib/vetting-contracts";
+import {
   type ApiError,
   apiErrorResponse,
   exactKeys,
@@ -1055,6 +1064,112 @@ async function serviceReuse(
   return json(200, { schemaVersion: "slop-vetting-reuse-v1", result: null });
 }
 
+/**
+ * The publication journal, served to the signed scanner controller so the
+ * protected job needs no database credential of its own. Only metadata moves:
+ * an assessment id, the result digest, the origin, the disposition and the
+ * receipt outcome. The service remains the only writer of these two tables.
+ * The reply is versioned like its sibling routes, and unknown fields are
+ * refused like theirs.
+ */
+async function serviceJournal(
+  request: Request,
+  deps: VettingApiDependencies,
+): Promise<Response> {
+  const { body } = await signedVettingRequest(request, deps, 4096);
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+  } catch {
+    fail(400, "invalid_request", "The journal request must be UTF-8 JSON");
+  }
+  if (!isRecord(value))
+    fail(400, "invalid_request", "The journal request must be an object");
+  const operation = value.operation;
+  const assessmentId = value.assessmentId;
+  if (
+    typeof assessmentId !== "string" ||
+    !/^[A-Za-z0-9._-]{1,128}$/u.test(assessmentId)
+  )
+    fail(400, "invalid_request", "The journal assessment id is invalid");
+  if (operation === "has") {
+    // A read of the intent table: the readiness probe uses an id that is not an
+    // assessment, so this branch deliberately has no existence check.
+    exactKeys(value, ["operation", "assessmentId"]);
+    return json(200, {
+      schemaVersion: JOURNAL_SCHEMA,
+      present: await deps.vetting.hasPublicationIntent(assessmentId),
+    });
+  }
+  if (operation !== "reserve" && operation !== "complete")
+    fail(400, "invalid_request", "The journal operation is not supported");
+  exactKeys(
+    value,
+    ["operation", "assessmentId", "resultSha256", "origin", "disposition"],
+    operation === "complete" ? ["outcome", "httpStatus"] : [],
+  );
+  const resultSha256 = value.resultSha256;
+  if (typeof resultSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(resultSha256))
+    fail(400, "invalid_request", "The journal result digest is invalid");
+  const origin = value.origin;
+  if (typeof origin !== "string" || origin.length === 0 || origin.length > 200)
+    fail(400, "invalid_request", "The journal origin is invalid");
+  const disposition = value.disposition;
+  if (
+    typeof disposition !== "string" ||
+    !(VETTING_DISPOSITIONS as readonly string[]).includes(disposition)
+  )
+    fail(400, "invalid_request", "The journal disposition is not supported");
+  const intent: PublicationIntent = {
+    assessmentId,
+    resultSha256,
+    origin,
+    disposition: disposition as VettingDisposition,
+  };
+  // Both writing operations name an assessment this service holds: the intent
+  // table references it, so a missing one is a caller error, not a conflict.
+  if ((await deps.vetting.getAssessment(assessmentId)) === null)
+    fail(404, "not_found", "Assessment not found");
+  if (operation === "reserve") {
+    if ((await deps.vetting.reservePublicationIntent(intent)) !== "reserved")
+      fail(
+        409,
+        "already_reserved",
+        "Publication already reserved; reconcile its outcome",
+      );
+    return json(200, { schemaVersion: JOURNAL_SCHEMA, reserved: true });
+  }
+  const receiptOutcome = value.outcome;
+  if (
+    typeof receiptOutcome !== "string" ||
+    !(PUBLICATION_OUTCOMES as readonly string[]).includes(receiptOutcome)
+  )
+    fail(400, "invalid_request", "The journal outcome is not supported");
+  const httpStatus = value.httpStatus;
+  if (
+    httpStatus !== null &&
+    (!Number.isSafeInteger(httpStatus) ||
+      (httpStatus as number) < 100 ||
+      (httpStatus as number) > 599)
+  )
+    fail(400, "invalid_request", "The journal HTTP status is invalid");
+  const receipt: PublicationReceipt = {
+    ...intent,
+    outcome: receiptOutcome as PublicationOutcome,
+    httpStatus: httpStatus as number | null,
+  };
+  const recorded = await deps.vetting.completePublicationReceipt(receipt);
+  if (recorded === "missing")
+    fail(
+      422,
+      "no_matching_intent",
+      "Publication receipt has no matching intent",
+    );
+  if (recorded === "duplicate")
+    fail(409, "already_recorded", "This publication already has its receipt");
+  return json(200, { schemaVersion: JOURNAL_SCHEMA, recorded: true });
+}
+
 /** Returns null when the path belongs to another API module. */
 export async function handleVettingApi(
   request: Request,
@@ -1123,6 +1238,8 @@ export async function handleVettingApi(
         return await serviceQueue(request, deps);
       case "POST vetting/results":
         return await serviceResult(request, deps);
+      case "POST vetting/journal":
+        return await serviceJournal(request, deps);
       case "POST vetting/reuse":
         return await serviceReuse(request, deps);
       case "POST vetting/refresh":
