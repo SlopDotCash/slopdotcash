@@ -25,6 +25,7 @@ import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { copyText } from "./lib/copy-text";
+import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
   communityProjects,
@@ -37,7 +38,7 @@ import {
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
-import { pageTitle, SITE_ORIGIN, STATIC_PAGE_TITLES } from "./lib/site-routes";
+import { pageTitle, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
@@ -386,38 +387,7 @@ function routeHead(route: Route): { title: string; path: string | null } {
 function useDocumentHead(route: Route) {
   useEffect(() => {
     const { title, path } = routeHead(route);
-    document.title = title;
-    const canonical = document.head.querySelector<HTMLLinkElement>(
-      'link[rel="canonical"]',
-    );
-    const ogUrl = document.head.querySelector<HTMLMetaElement>(
-      'meta[property="og:url"]',
-    );
-    // A missing page served by the app shell answers 200, so it must say
-    // noindex itself, as the static 404 page does.
-    let robots = document.head.querySelector<HTMLMetaElement>(
-      'meta[name="robots"]',
-    );
-    if (path === null) {
-      canonical?.remove();
-      if (!robots) {
-        robots = document.createElement("meta");
-        robots.name = "robots";
-        document.head.append(robots);
-      }
-      robots.content = "noindex";
-      return;
-    }
-    if (robots?.content === "noindex") robots.remove();
-    const href = `${SITE_ORIGIN}${path}`;
-    if (canonical) canonical.href = href;
-    else {
-      const link = document.createElement("link");
-      link.rel = "canonical";
-      link.href = href;
-      document.head.append(link);
-    }
-    ogUrl?.setAttribute("content", href);
+    setRouteHead(title, path);
   }, [route]);
 }
 

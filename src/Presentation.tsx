@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link } from "./Link";
 import { loginHref } from "./lib/browser-deployment";
 import type { CycleIndexEntry } from "./lib/cycle-index";
+import { useNotFoundHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import type { GitHubActor, LeaderboardSnapshot } from "./lib/leaderboard";
 import { POINTS_PER_THIRD } from "./lib/points";
@@ -325,6 +326,7 @@ export function NotFound({
   children?: ReactNode;
   as?: "main" | "section";
 }) {
+  useNotFoundHead();
   return (
     <Element
       className={

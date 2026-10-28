@@ -587,7 +587,7 @@ export function ProfilePoints({
     named.length === 0
   )
     return (
-      <NotFound as="section" title="Contributor not found">
+      <NotFound as="section" title="No Slop contributor with this login">
         <p>Slop has no public record for {login}.</p>
       </NotFound>
     );

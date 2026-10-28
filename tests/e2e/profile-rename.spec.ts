@@ -211,9 +211,9 @@ test("historical names alone do not identify a current contributor or wallet", a
   ).toHaveCount(0);
   await expect(page.getByText(/Past wallet/)).toHaveCount(0);
   expect(walletRequests).toEqual([]);
-  await expect(page.getByRole("status")).toContainText(
-    "This contributor could not be verified.",
-  );
+  await expect(
+    page.getByRole("heading", { name: "No Slop contributor with this login" }),
+  ).toBeVisible();
 });
 
 test("a new owner listed without activity uses only its own identity and wallet", async ({
@@ -250,9 +250,9 @@ test("conflicting current names withhold history and wallet lookups", async ({
   await page.goto(`/contributors/${archived.login}`, {
     waitUntil: "networkidle",
   });
-  await expect(page.getByRole("status")).toContainText(
-    "This contributor could not be verified.",
-  );
+  await expect(
+    page.getByRole("heading", { name: "No Slop contributor with this login" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
   ).toHaveCount(0);
@@ -277,9 +277,9 @@ test("a stale activity login cannot override a directory rename", async ({
   await page.goto(`/contributors/${current.login}`, {
     waitUntil: "networkidle",
   });
-  await expect(page.getByRole("status")).toContainText(
-    "This contributor could not be verified.",
-  );
+  await expect(
+    page.getByRole("heading", { name: "No Slop contributor with this login" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
   ).toHaveCount(0);
@@ -489,23 +489,25 @@ for (const staleMembership of [false, true]) {
       await page.goto(`${site}/contributors/${archived.login}`, {
         waitUntil: "networkidle",
       });
-      await expect(
-        page.getByRole("heading", { name: archived.login, exact: true }),
-      ).toBeVisible();
       if (staleMembership) {
         await expect(
           page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
         ).toHaveCount(0);
         await expect(page.getByText(/Past wallet/)).toHaveCount(0);
-        await expect(page.getByRole("status")).toContainText(
-          "could not be verified",
-        );
+        await expect(
+          page.getByRole("heading", {
+            name: "No Slop contributor with this login",
+          }),
+        ).toBeVisible();
         await expect(
           page.getByText("total points", { exact: true }),
         ).toHaveCount(0);
         expect(walletRequests).toEqual([]);
         return;
       }
+      await expect(
+        page.getByRole("heading", { name: archived.login, exact: true }),
+      ).toBeVisible();
       await expect(
         page
           .getByText("total points", { exact: true })
@@ -721,8 +723,8 @@ for (const scenario of [
         expect(walletRequests).toEqual([]);
         if (scenario === "delayed session") {
           await expect(
-            page.getByText("This contributor could not be verified.", {
-              exact: true,
+            page.getByRole("heading", {
+              name: "No Slop contributor with this login",
             }),
           ).toBeVisible();
           await expectAccessible(page);
