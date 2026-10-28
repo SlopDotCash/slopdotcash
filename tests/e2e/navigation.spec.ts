@@ -8,6 +8,8 @@ const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
 
+test.use({ video: "on" });
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
@@ -65,6 +67,11 @@ test("retained awards URLs resolve during client navigation with query and fragm
       history.pushState({}, "", path);
       dispatchEvent(new PopStateEvent("popstate"));
     }, `/projects/eliza/awards${suffix}`);
+    // The embedded standings load after the route. Wait for their effects
+    // before checking that they did not overwrite the retained URL.
+    await expect(
+      page.getByRole("region", { name: "Contributor standings", exact: true }),
+    ).toBeVisible();
     await expect(page).toHaveURL(`/projects/eliza${expected}`);
     await expect(
       page.getByRole("heading", { name: "Eliza", exact: true }),
@@ -72,6 +79,8 @@ test("retained awards URLs resolve during client navigation with query and fragm
     await expect(
       page.getByRole("region", { name: "Funds and awards" }),
     ).toBeAttached();
+    await page.waitForLoadState("networkidle");
+    await expect(page).toHaveURL(`/projects/eliza${expected}`);
   }
   await expectAccessible(page);
   await page.screenshot({ path: info.outputPath("retained-awards-route.png") });

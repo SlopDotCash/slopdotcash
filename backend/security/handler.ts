@@ -58,6 +58,7 @@ import {
   type SecurityAnalysisReport,
   type SecurityAnalyzer,
 } from "./analysis";
+import { markerLine } from "./github-advisories";
 import type { IntakeConfig } from "./intake-grant";
 import { prepareSecuritySettlement, securitySettlementView } from "./payments";
 import {
@@ -119,7 +120,21 @@ export type SecurityApiDependencies = {
    */
   intake?: IntakeConfig;
   repositoryAccess?: RepositoryAccessReader;
+  /**
+   * Per-request memo of `currentReportingProject`. A list read sets it so
+   * the viewer's cases share one project read instead of one per case; a
+   * project's manifest does not change inside one request.
+   */
+  reportingProjects?: Map<string, Promise<ReportingProject>>;
 };
+
+type ReportingProject = {
+  manifest: ProjectDefinition;
+  revision: number;
+} | null;
+
+/** Cases read concurrently by one list request; each needs several D1 reads. */
+const LIST_READ_CONCURRENCY = 8;
 
 export type Role =
   | "reporter"
@@ -312,16 +327,26 @@ function timestampField(
 }
 
 async function currentReportingProject(
-  deps: Pick<SecurityApiDependencies, "db">,
+  deps: Pick<SecurityApiDependencies, "db" | "reportingProjects">,
   projectId: string,
-): Promise<{ manifest: ProjectDefinition; revision: number } | null> {
-  const row = await deps.db
-    .prepare("SELECT manifest, revision FROM projects WHERE id = ?")
-    .bind(projectId)
-    .first<{ manifest: string; revision: number }>();
-  if (row === null) return null;
-  const manifest = JSON.parse(row.manifest) as ProjectDefinition;
-  return { manifest, revision: row.revision };
+): Promise<ReportingProject> {
+  const memo = deps.reportingProjects?.get(projectId);
+  if (memo !== undefined) return memo;
+  // Store the in-flight read too: concurrent cases must not each issue it.
+  const pending = (async (): Promise<ReportingProject> => {
+    const row = await deps.db
+      .prepare("SELECT manifest, revision FROM projects WHERE id = ?")
+      .bind(projectId)
+      .first<{ manifest: string; revision: number }>();
+    return row === null
+      ? null
+      : {
+          manifest: JSON.parse(row.manifest) as ProjectDefinition,
+          revision: row.revision,
+        };
+  })();
+  deps.reportingProjects?.set(projectId, pending);
+  return pending;
 }
 
 /**
@@ -1131,23 +1156,45 @@ async function listCases(
     .all<CaseRow>();
   const cases: Record<string, unknown>[] = [];
   const reads: D1Statement[] = [];
-  for (const row of result.results ?? []) {
-    let roles: Set<Role>;
-    try {
-      roles = await caseRoles(deps, row, actor);
-    } catch (error) {
-      if (!reportingAuthorityUnavailable(error)) throw error;
-      authorityUnavailable = true;
-      continue;
+  // Every case needs several reads. Done one case at a time, a viewer with
+  // dozens of cases waits longer than the browser's deadline, so the cases
+  // are read in bounded concurrent groups that keep the list order, and
+  // they share one project read per request.
+  const scoped: SecurityApiDependencies = {
+    ...deps,
+    reportingProjects: new Map(),
+  };
+  const rows = result.results ?? [];
+  for (let start = 0; start < rows.length; start += LIST_READ_CONCURRENCY) {
+    const group = await Promise.all(
+      rows.slice(start, start + LIST_READ_CONCURRENCY).map(async (row) => {
+        let roles: Set<Role>;
+        try {
+          roles = await caseRoles(scoped, row, actor);
+        } catch (error) {
+          if (!reportingAuthorityUnavailable(error)) throw error;
+          return "unavailable" as const;
+        }
+        if (roles.size === 0) return null;
+        return { row, roles, view: await caseView(scoped, row, roles, false) };
+      }),
+    );
+    for (const entry of group) {
+      if (entry === "unavailable") {
+        authorityUnavailable = true;
+        continue;
+      }
+      if (entry === null) continue;
+      const { row, roles, view } = entry;
+      if (roles.has("dispute")) {
+        const projectRoles =
+          currentRoles.get(row.project_id) ?? new Set<Role>();
+        projectRoles.add("dispute");
+        currentRoles.set(row.project_id, projectRoles);
+      }
+      cases.push(view);
+      reads.push(accessLog(deps, row.id, actor, roles, "read"));
     }
-    if (roles.size === 0) continue;
-    if (roles.has("dispute")) {
-      const projectRoles = currentRoles.get(row.project_id) ?? new Set<Role>();
-      projectRoles.add("dispute");
-      currentRoles.set(row.project_id, projectRoles);
-    }
-    cases.push(await caseView(deps, row, roles, false));
-    reads.push(accessLog(deps, row.id, actor, roles, "read"));
   }
   // The list discloses private case fields too. Persist its read audit before
   // returning any cases, just as the individual case route does.
@@ -1437,8 +1484,9 @@ function analysisDependencies(deps: SecurityApiDependencies) {
  * check: the case belongs to that GitHub account, and the receipt time and
  * the program terms in force then are frozen (PRD section 8). A pending link
  * from before automatic receipt by the same author becomes that case. A
- * report that already has a case is left as it is. Returns the newly
- * verified cases; each one gets a private analysis.
+ * report that already has a case is left as it is, and so is GitHub's copy
+ * of a report saved on Slop. Returns the newly verified cases; each one gets
+ * a private analysis.
  */
 async function recordPrivateReports(
   deps: SecurityApiDependencies,
@@ -1459,6 +1507,10 @@ async function recordPrivateReports(
       .bind(input.projectId, report.ghsa, input.projectId, report.ghsa)
       .first<{ id: string }>();
     if (recorded !== null) continue;
+    // A saved report has its case from receipt. Until its forward is linked
+    // (the send is in flight or GitHub's answer was lost), the reporter's
+    // reconcile, not an import, connects GitHub's copy to that case.
+    if (await forwardOfSavedReport(deps, input.projectId, report)) continue;
     const frozen = await termsAtReceipt(
       deps,
       input.projectId,
@@ -1569,6 +1621,26 @@ async function recordPrivateReports(
       packages: entry.report.packages,
     });
   return received.map((entry) => entry.caseId);
+}
+
+/**
+ * Whether `report` is GitHub's copy of a report saved on Slop: its author
+ * saved a report in this project whose reference line the whole description
+ * carries (the same line rule as receipt verification).
+ */
+async function forwardOfSavedReport(
+  deps: SecurityApiDependencies,
+  projectId: string,
+  report: GithubPrivateReport,
+): Promise<boolean> {
+  const saved = await deps.db
+    .prepare(
+      "SELECT s.marker FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = ? AND s.reporter_github_id = ? AND s.origin = 'slop'",
+    )
+    .bind(projectId, report.author.githubId)
+    .all<{ marker: string }>();
+  const lines = new Set(report.referenceLines);
+  return (saved.results ?? []).some((row) => lines.has(markerLine(row.marker)));
 }
 
 /**

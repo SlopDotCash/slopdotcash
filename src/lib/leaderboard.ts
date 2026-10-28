@@ -3823,6 +3823,18 @@ function createSnapshotWithReviewCutoff(
   ): ValueReviewCandidate | null => {
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
     if (requiresExplicitPrizeAcceptance(repositoryId)) return null;
+    // A missing, bot or post-merge review takes no share. The published
+    // qualification excludes them, so they are published as exclusions and
+    // never fail the snapshot, whether or not the assessment lists them.
+    const ineligible = (reason: ReviewExclusionReason) => {
+      excludeReview(pullRequest, review, reason);
+      return null;
+    };
+    if (!review.author) return ineligible("missing-reviewer");
+    if (isBotActor(review.author)) return ineligible("bot-reviewer");
+    if (!review.submittedAt) return ineligible("missing-submission-time");
+    if (parseIsoTime(review.submittedAt) >= parseIsoTime(closedAt))
+      return ineligible("post-merge");
     const joint = input.jointValueDecisions?.get(pullRequest.id);
     if (joint && spansValuePolicyStart(joint)) return null;
     const decision = joint ?? input.valueDecisions?.get(pullRequest.id);
@@ -3897,11 +3909,9 @@ function createSnapshotWithReviewCutoff(
       excludeReview(pullRequest, review, "review-credit-zero-share");
       return null;
     }
+    // An implementation actor of the assessed unit, or an author already
+    // credited on this pull request, reviews its own work.
     if (
-      !review.author ||
-      isBotActor(review.author) ||
-      !review.submittedAt ||
-      parseIsoTime(review.submittedAt) >= parseIsoTime(closedAt) ||
       implementationActorNodeIds.includes(review.author.id) ||
       ledger.some(
         (event) =>
@@ -3909,8 +3919,10 @@ function createSnapshotWithReviewCutoff(
           event.source.id === pullRequest.id &&
           event.actor.id === review.author?.id,
       )
-    )
-      throw new Error("Value review lost its eligible source identity");
+    ) {
+      excludeReview(pullRequest, review, "self-review");
+      return null;
+    }
     return {
       reviewId: review.id,
       actor: review.author,

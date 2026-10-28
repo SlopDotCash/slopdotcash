@@ -315,6 +315,44 @@ afterEach(() => {
 });
 
 describe("authenticated skill installer lifecycle", () => {
+  it("explains Windows symlink privilege refusal and reuses the verified version", () => {
+    const root = freshRoot("symlink-privilege");
+    const files = baseFiles("revision-a");
+    const artifact = writeArtifact(root, revisionA, files);
+    const authority = configureAuthority(root, {
+      developHead: revisionA,
+      revisions: { [revisionA]: { files } },
+    });
+    const injection = join(root, "python-injection");
+    mkdirSync(injection);
+    writeFileSync(
+      join(injection, "sitecustomize.py"),
+      "import os\ndef refuse(*args, **kwargs):\n    error = OSError('synthetic symlink refusal')\n    error.winerror = int(os.environ['TEST_WINERROR'])\n    raise error\nos.symlink = refuse\n",
+    );
+    const installRoot = join(root, "install");
+    const script = command(artifact, authority);
+    const refused = run(script, installRoot, {
+      PYTHONPATH: injection,
+      TEST_WINERROR: "1314",
+    });
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toContain("WinError 1314");
+    expect(refused.stderr).toContain("Developer Mode");
+    expect(existsSync(versionPath(installRoot, revisionA))).toBe(true);
+    const other = run(script, installRoot, {
+      PYTHONPATH: injection,
+      TEST_WINERROR: "5",
+    });
+    expect(other.status).not.toBe(0);
+    expect(other.stderr).toContain("synthetic symlink refusal");
+    expect(other.stderr).not.toContain("Developer Mode");
+    const recovered = run(script, installRoot);
+    expect(recovered.status, recovered.stderr).toBe(0);
+    expect(currentLink(installRoot)).toBe(
+      `.contribute-to-eliza-versions/${revisionA}`,
+    );
+  });
+
   it("falls back when python3 has no usable HTTPS trust store", () => {
     const root = freshRoot("python-ca-fallback");
     const files = baseFiles("revision-a");
@@ -1187,7 +1225,7 @@ time.sleep(60)
   const stallServerScript = `
     const http = require("node:http");
     const fs = require("node:fs");
-    const [responsesPath, pattern, stallMsRaw, stallCountRaw, logPath] =
+    const [responsesPath, pattern, stallMsRaw, stallCountRaw, logPath, failureMode] =
       process.argv.slice(1);
     const responses = JSON.parse(fs.readFileSync(responsesPath, "utf8"));
     const stallMs = Number(stallMsRaw);
@@ -1208,6 +1246,10 @@ time.sleep(60)
       };
       if (request.url.includes(pattern) && stalled < stallCount) {
         stalled += 1;
+        if (failureMode === "disconnect") {
+          request.socket.destroy();
+          return;
+        }
         setTimeout(respond, stallMs);
       } else {
         respond();
@@ -1224,6 +1266,7 @@ time.sleep(60)
     stallPattern: string;
     stallMs: number;
     stallCount: number;
+    failureMode?: "stall" | "disconnect";
   }): Promise<{ port: number; kill: () => void }> {
     const child = spawn(
       process.execPath,
@@ -1235,6 +1278,7 @@ time.sleep(60)
         String(options.stallMs),
         String(options.stallCount),
         options.requestLog,
+        options.failureMode ?? "stall",
       ],
       { stdio: ["ignore", "pipe", "inherit"] },
     );
@@ -1300,6 +1344,59 @@ time.sleep(60)
     );
   }
 
+  for (const wrapped of [false, true]) {
+    for (const failure of ["once", "always", "certificate"]) {
+      it(`classifies TLS ${failure} failures (${wrapped ? "wrapped" : "direct"}) without weakening verification`, () => {
+        const root = freshRoot("tls-classification");
+        const { artifactB, installRoot, updateAuthority } =
+          timeoutUpdateFixture(root);
+        const injection = join(root, "injection");
+        mkdirSync(injection);
+        const attempts = join(root, "attempts");
+        writeFileSync(
+          join(injection, "sitecustomize.py"),
+          `
+import os, ssl, urllib.request, urllib.error
+original = urllib.request.OpenerDirector.open
+count = 0
+def interrupted(self, request, *args, **kwargs):
+    global count
+    url = getattr(request, 'full_url', str(request))
+    if url.endswith('responses.json'):
+        count += 1
+        with open(os.environ['TLS_ATTEMPTS'], 'w') as f: f.write(str(count))
+        if os.environ['TLS_FAILURE'] != 'once' or count == 1:
+            error = ssl.SSLCertVerificationError('synthetic certificate refusal') if os.environ['TLS_FAILURE'] == 'certificate' else ssl.SSLEOFError('synthetic TLS EOF')
+            if os.environ['TLS_WRAPPED'] == 'yes': error = urllib.error.URLError(error)
+            raise error
+    return original(self, request, *args, **kwargs)
+urllib.request.OpenerDirector.open = interrupted
+`,
+        );
+        const result = run(command(artifactB, updateAuthority), installRoot, {
+          PYTHONPATH: injection,
+          TLS_ATTEMPTS: attempts,
+          TLS_FAILURE: failure,
+          TLS_WRAPPED: wrapped ? "yes" : "no",
+        });
+        expect(Number(readFileSync(attempts, "utf8"))).toBe(
+          failure === "once" ? 2 : failure === "always" ? 3 : 1,
+        );
+        if (failure === "once") {
+          expect(result.status, result.stderr).toBe(0);
+          expect(currentLink(installRoot)).toBe(
+            `.contribute-to-eliza-versions/${revisionB}`,
+          );
+        } else {
+          expect(result.status).not.toBe(0);
+          expect(currentLink(installRoot)).toBe(
+            `.contribute-to-eliza-versions/${revisionA}`,
+          );
+        }
+      });
+    }
+  }
+
   it("recovers a valid update from one slow source response within bounded attempts", async () => {
     const root = freshRoot("timeout-recover");
     const { artifactB, installRoot, updateAuthority } =
@@ -1363,6 +1460,81 @@ time.sleep(60)
         .split("\n")
         .filter((line) => line.includes("/contents/"));
       expect(sourceRequests).toHaveLength(3);
+      expect(currentLink(installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionA}`,
+      );
+    } finally {
+      server.kill();
+    }
+  });
+
+  it("recovers a verified update after a closed connection", async () => {
+    const root = freshRoot("disconnect-recover");
+    const { artifactB, installRoot, updateAuthority } =
+      timeoutUpdateFixture(root);
+    const requestLog = join(root, "requests.log");
+    writeFileSync(requestLog, "");
+    const server = await startStallServer({
+      responsesPath: join(
+        fileURLToPath(updateAuthority.apiOrigin),
+        "responses.json",
+      ),
+      requestLog,
+      stallPattern: "/git/commits/",
+      stallMs: 0,
+      stallCount: 1,
+      failureMode: "disconnect",
+    });
+    try {
+      const update = run(
+        loopbackCommand(artifactB, server.port, updateAuthority.rawOrigin),
+        installRoot,
+      );
+      expect(update.status, update.stderr).toBe(0);
+      expect(currentLink(installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionB}`,
+      );
+      expect(
+        readFileSync(requestLog, "utf8")
+          .split("\n")
+          .filter((line) => line.includes(`/git/commits/${revisionB}`)),
+      ).toHaveLength(2);
+    } finally {
+      server.kill();
+    }
+  });
+
+  it("keeps the verified version when closed connections exhaust retries", async () => {
+    const root = freshRoot("disconnect-exhaust");
+    const { artifactB, installRoot, updateAuthority } =
+      timeoutUpdateFixture(root);
+    const requestLog = join(root, "requests.log");
+    writeFileSync(requestLog, "");
+    const server = await startStallServer({
+      responsesPath: join(
+        fileURLToPath(updateAuthority.apiOrigin),
+        "responses.json",
+      ),
+      requestLog,
+      stallPattern: "/contents/",
+      stallMs: 0,
+      stallCount: 99,
+      failureMode: "disconnect",
+    });
+    try {
+      const update = run(
+        loopbackCommand(artifactB, server.port, updateAuthority.rawOrigin),
+        installRoot,
+      );
+      expect(update.status).not.toBe(0);
+      expect(update.stderr).toContain(
+        "authenticated download failed after 3 attempts",
+      );
+      expect(
+        readFileSync(requestLog, "utf8")
+          .split("\n")
+          .filter((line) => line.includes("/contents/")),
+      ).toHaveLength(3);
       expect(currentLink(installRoot)).toBe(
         `.contribute-to-eliza-versions/${revisionA}`,
       );

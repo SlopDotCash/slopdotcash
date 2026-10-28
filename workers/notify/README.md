@@ -157,8 +157,10 @@ upload/deploy does not apply cron triggers. The approved pilot release must
 also apply that trigger through the protected workflow and verify the actual
 trigger and a successful scheduled invocation. A secret and binding alone do
 not establish scheduling. It reads current case roles again before each send.
-Revoked roles are suppressed. A missing verified destination retries at one,
-two, four and eight minutes, then exhausts after five attempts. The per-event,
+Revoked roles are suppressed, and so is a recipient with no verified
+destination: nothing can be sent and the inbox shows no email state for the
+notice. A verified destination not yet in effect retries at one, two, four and
+eight minutes, then exhausts after five attempts. The per-event,
 recipient and template key prevents duplicate queue insertion; an atomic claim
 prevents concurrent dispatch. Each message has one recipient and a stable
 opaque per-attempt Message-ID, a generic subject and body, and the authenticated inbox
@@ -178,6 +180,8 @@ Private operator service routes (no public routes or `workers.dev` endpoint):
 - `POST https://notify.internal/v1/security-notifications/reconcile`, body with
   `deliveryId`, `attempt`, `destinationDigest`, `outcome` and `evidenceReference`, records independent provider
   evidence. Outcomes are `delivered`, `bounced`, `suppressed`, or `not-accepted`.
+  Provider `bounced` and `suppressed` evidence are failed deliveries and
+  escalate to the backup.
   Only the exact accepted or ambiguous attempt and destination can be reconciled.
   Each immutable provider evidence reference is accepted once; an old receipt
   cannot authorize another retry. `not-accepted`
@@ -221,7 +225,8 @@ preference. Before dispatch, the Worker checks both the saved preference and
 its destination version again. It also rechecks the recipient's role (PRD
 section 9): a payout exception mails only the project's current GitHub
 steward, and an owner notice only an account that still lists or stewards the
-project. Confirmed-malicious ban notices also retain their existing affected
+project. A reinstatement review mails only a current moderator.
+Confirmed-malicious ban notices also retain their existing affected
 contributor and staff audiences, rechecked against current contribution and
 retained payment records and the same configured admin and moderator IDs as
 the Pages writer. Queued mail is suppressed when the recipient no longer

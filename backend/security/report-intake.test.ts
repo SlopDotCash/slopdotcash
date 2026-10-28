@@ -699,6 +699,32 @@ describe("durable private report controls", () => {
     }
   });
 
+  test("an unreadable saved report records an unavailable owner analysis that can run again", async () => {
+    const t = fixture();
+    const submission = required((await t.create()).body.submission);
+    // The retained object is gone, as after a private storage fault.
+    t.objects.clear();
+    const attempts = () =>
+      t.sqlite
+        .query(
+          "SELECT state FROM security_case_analyses WHERE case_id=? ORDER BY attempt",
+        )
+        .all(submission.caseId);
+    const first = await t.caseAction(submission.caseId, { action: "analyze" });
+    expect(first.status).toBe(200);
+    expect(attempts()).toEqual([{ state: "unavailable" }]);
+    expect(
+      (first.body.case as unknown as { allowedActions: string[] })
+        .allowedActions,
+    ).toContain("analyze");
+    const again = await t.caseAction(submission.caseId, { action: "analyze" });
+    expect(again.status).toBe(200);
+    expect(attempts()).toEqual([
+      { state: "unavailable" },
+      { state: "unavailable" },
+    ]);
+  });
+
   test("replays an accepted request once and refuses changing its project or body", async () => {
     const t = fixture();
     const key = "stable-private-intake-key";

@@ -15,7 +15,11 @@ import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import type { AdmissionExemption } from "../src/lib/vetting-contracts";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
-import { vettingResult } from "../tests/vetting-fixtures";
+import {
+  signedVettingHeaders,
+  vettingKeyPair,
+  vettingResult,
+} from "../tests/vetting-fixtures";
 
 const ORIGIN = "https://slop.test";
 const AT = "2026-10-27T16:00:00.000Z";
@@ -182,6 +186,40 @@ function fixture() {
         assessment.id,
       );
   };
+  // One signed refresh after a release changed the skill template digest.
+  const refresh = async (templateSha256: string, id: string) => {
+    const keys = await vettingKeyPair();
+    const reply = await handleVettingApi(
+      new Request(`${ORIGIN}/api/v1/vetting/refresh`, {
+        method: "POST",
+        headers: await signedVettingHeaders(
+          keys.privateKey,
+          keys.raw,
+          "POST",
+          "/api/v1/vetting/refresh",
+          "{}",
+          new Date(AT),
+        ),
+        body: "{}",
+      }),
+      {
+        vetting,
+        projects,
+        resultPublicKeys: keys.publicKey,
+        livePin: async () => ({ commitSha: "f".repeat(40), templateSha256 }),
+        session: async () => null,
+        now: () => new Date(AT),
+        randomId: () => id,
+      },
+    );
+    if (!reply) throw new Error("Missing refresh response");
+    expect(reply.status).toBe(200);
+    const { queued } = (await reply.json()) as { queued: string[] };
+    expect(queued).toHaveLength(1);
+    const replacement = await vetting.getAssessment(queued[0]);
+    if (!replacement) throw new Error("Missing replacement scan");
+    return replacement;
+  };
   return {
     db,
     sqlite,
@@ -192,6 +230,7 @@ function fixture() {
     clearance,
     queue,
     finish,
+    refresh,
     publish,
     manifest: () => manifest,
     setPermission: (value: "admin" | "read") => (permission = value),
@@ -386,6 +425,71 @@ describe("owner-approved admission exemptions", () => {
     expect((await f.grant()).status).toBe(200);
     expect(await f.clearance()).toMatchObject({ state: "quarantined" });
   });
+  test("a template release recovers a covered pending scan without removing the exemption", async () => {
+    const f = fixture();
+    const queued = await f.queue();
+    const granted = await f.grant();
+    expect(granted.status).toBe(201);
+    const refresh = async (templateSha256: string, id: string) => {
+      const replacement = await f.refresh(templateSha256, id);
+      expect(replacement).toMatchObject({
+        state: "pending",
+        revision: queued.revision,
+        manifestSha256: queued.manifestSha256,
+        commitSha: queued.commitSha,
+        templateSha256,
+      });
+      expect(await f.clearance()).toMatchObject({
+        state: "cleared",
+        assessment: null,
+        exemption: { id: granted.body.exemption.id },
+      });
+      return replacement;
+    };
+    await refresh("e".repeat(64), "0123456789abcdef0123456789abcdef");
+    const latest = await refresh(
+      "d".repeat(64),
+      "fedcba9876543210fedcba9876543210",
+    );
+    expect((await f.vetting.getAssessment(queued.id))?.state).toBe("pending");
+    await f.finish(latest, "malicious");
+    expect(await f.clearance()).toMatchObject({ state: "banned" });
+  });
+  test("an incomplete covered retry stays exempt, but a later investigation's retry controls clearance", async () => {
+    const f = fixture();
+    await f.queue();
+    const granted = await f.grant();
+    expect(granted.status).toBe(201);
+    const retry = await f.refresh(
+      "e".repeat(64),
+      "0123456789abcdef0123456789abcdef",
+    );
+    await f.finish(retry, "incomplete");
+    expect(await f.clearance()).toMatchObject({
+      state: "cleared",
+      assessment: null,
+      exemption: { id: granted.body.exemption.id },
+    });
+    const later = await f.queue();
+    const recovered = await f.refresh(
+      "d".repeat(64),
+      "fedcba9876543210fedcba9876543210",
+    );
+    expect(recovered).toMatchObject({
+      state: "pending",
+      commitSha: later.commitSha,
+      templateSha256: "d".repeat(64),
+    });
+    expect(await f.clearance()).toMatchObject({
+      state: "queued",
+      assessment: { id: recovered.id },
+    });
+    await f.finish(recovered, "incomplete");
+    expect(await f.clearance()).toMatchObject({
+      state: "quarantined",
+      assessment: { id: recovered.id },
+    });
+  });
   test("an unreviewed malicious result blocks both an existing grant and a new one", async () => {
     const f = fixture();
     const queued = await f.queue();
@@ -485,4 +589,55 @@ describe("owner-approved admission exemptions", () => {
     ).toThrow("immutable");
     expect((await f.call("admin/vetting")).body.exemptions).toHaveLength(1);
   });
+});
+
+test("an explicit investigation cannot inherit exemption from its reason text", async () => {
+  const f = fixture();
+  const queued = await f.queue();
+  expect((await f.grant()).status).toBe(201);
+  const keys = await vettingKeyPair();
+  const response = await handleVettingApi(
+    new Request(`${ORIGIN}/api/v1/admin/vetting/assessments`, {
+      method: "POST",
+      headers: { origin: ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: PROJECT,
+        revision: queued.revision,
+        reason: "Automatic replacement of an unavailable queued template",
+      }),
+    }),
+    {
+      vetting: f.vetting,
+      projects: f.projects,
+      resultPublicKeys: keys.publicKey,
+      livePin: async () => ({
+        commitSha: queued.commitSha,
+        templateSha256: "e".repeat(64),
+      }),
+      session: async () => ({ ...ADMIN, admin: true }),
+      now: () => new Date(AT),
+      randomId: () => "0123456789abcdef0123456789abcdef",
+    },
+  );
+  expect(response?.status).toBe(201);
+  expect(await f.clearance()).toMatchObject({ state: "queued" });
+});
+
+test("a result write cannot change the automatic retry predecessor", async () => {
+  const f = fixture();
+  await f.queue();
+  await f.grant();
+  const retry = await f.refresh(
+    "e".repeat(64),
+    "0123456789abcdef0123456789abcdef",
+  );
+  expect(() =>
+    f.sqlite
+      .query(
+        "UPDATE vetting_assessments SET state = 'incomplete', replaces_assessment_id = NULL WHERE id = ?",
+      )
+      .run(retry.id),
+  ).toThrow("vetting replacement provenance is immutable");
+  await f.finish(retry, "incomplete");
+  expect(await f.clearance()).toMatchObject({ state: "cleared" });
 });

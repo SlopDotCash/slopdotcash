@@ -5,16 +5,19 @@
 // project with a recorded transfer must still match, and a later rename that
 // the manifest does not record must still be refused.
 import { expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import {
   handleProjectApi,
   type ProjectApiDependencies,
 } from "../backend/projects/handler";
+import { slopbotRepositoryAccess } from "../backend/projects/repository-access";
 import { repositoryControl } from "../backend/projects/setup";
 import { sha256Hex } from "../src/lib/sha256";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
+import { routeRepositoryAccess } from "../workers/slopbot/repository-access";
 
 const NOW = "2026-10-27T00:00:00.000Z";
 const OWNER = { githubId: "900000002", githubLogin: "owner" };
@@ -171,6 +174,84 @@ test("an owner of a repository with a recorded rename can publish a revision", a
   const result = await reviseHeadline(
     renamedProject("example/renamed-registry"),
   );
+  expect(result.status).toBe(200);
+  expect(result.revision).toBe(2);
+});
+
+/**
+ * The production Slopbot repository-access route (service binding client and
+ * Worker) against GitHub's App API. GitHub serves a renamed repository only
+ * under its current name: an authenticated read of a former name answers 301
+ * to `/repositories/:id/...`, and the Worker does not follow redirects.
+ */
+function slopbotAccess(
+  currentName: string,
+): ProjectApiDependencies["repositoryAccess"] {
+  const env = {
+    SLOPBOT_APP_ID: "1",
+    SLOPBOT_APP_PRIVATE_KEY: generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+    })
+      .privateKey.export({ format: "pem", type: "pkcs8" })
+      .toString(),
+  };
+  const current = repositoryFacts(currentName);
+  const repository = `/repos/${currentName}`;
+  const github = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const { pathname } = new URL(String(input));
+    if (pathname === `${repository}/installation`)
+      return Response.json({ id: 42, suspended_at: null });
+    if (
+      pathname === "/app/installations/42/access_tokens" &&
+      init?.method === "POST"
+    )
+      return Response.json(
+        { token: "installation-token-fixture" },
+        { status: 201 },
+      );
+    if (pathname === repository) return Response.json(current);
+    if (
+      pathname === `${repository}/collaborators/${OWNER.githubLogin}/permission`
+    )
+      return Response.json({
+        permission: "admin",
+        role_name: "admin",
+        user: { id: Number(OWNER.githubId) },
+      });
+    const former = /^\/repos\/example\/[^/]+(\/.*)?$/u.exec(pathname);
+    if (former !== null)
+      return Response.json(
+        {
+          message: "Moved Permanently",
+          url: `${API}/repositories/${current.id}${former[1] ?? ""}`,
+        },
+        {
+          status: 301,
+          headers: {
+            location: `${API}/repositories/${current.id}${former[1] ?? ""}`,
+          },
+        },
+      );
+    return Response.json({ message: "Not Found" }, { status: 404 });
+  }) as typeof fetch;
+  const slopbot = {
+    fetch: async (request: Request) =>
+      (await routeRepositoryAccess(request, env, github)) ??
+      new Response("not found", { status: 404 }),
+  };
+  return (target, actor) => slopbotRepositoryAccess(slopbot, target, actor);
+}
+
+test("Slopbot reads a repository with a recorded rename under its current name", async () => {
+  const deps = {
+    ...renamedProject("example/renamed-registry"),
+    repositoryAccess: slopbotAccess("example/renamed-registry"),
+  };
+  expect(await setupCheck(deps)).toEqual({
+    state: "verified",
+    message: "@owner has admin access to example/open-registry.",
+  });
+  const result = await reviseHeadline(deps);
   expect(result.status).toBe(200);
   expect(result.revision).toBe(2);
 });

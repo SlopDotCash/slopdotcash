@@ -2785,6 +2785,8 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
   const otherReporterToken = TOKENS[otherReporterRole];
   const suffix = projectSuffix();
   const id = `slop-report-${suffix}`;
+  // Researchers can report without maintainer setup permission.
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
   const repository = `e2e-security/${id}`;
   const summary = `Local vault authorization failure ${suffix}`;
   const description = `At the reviewed local revision, withdrawing without the owner check can transfer another account's deposit. Reproduce in an isolated test chain with a funded fixture account; no production funds are moved. Private marker ${suffix}.`;
@@ -3102,6 +3104,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
 test("Slop-first intake preserves private GitHub forwarding and reconciliation @registry @private-intake", async ({
   browser,
   request,
+  diagnostics,
 }) => {
   test.skip(
     process.env.SLOP_E2E_PRIVATE_INTAKE !== "1",
@@ -3130,6 +3133,12 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
     id: `report-only-${suffix}`,
     repository: `e2e-security/report-only-${suffix}`,
   };
+  // Private reporters do not need maintainer setup permission.
+  diagnostics.allowResponse(
+    403,
+    "GET",
+    `/api/v1/project-setup/${noProgram.id}`,
+  );
   const sentinel = `E2E-PRIVATE-SENTINEL-${suffix}`;
   const report = {
     summary: `Vault withdraw skips the owner check ${sentinel}`,
