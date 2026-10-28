@@ -9,6 +9,7 @@ import { assertProfiles } from "../../src/lib/profiles";
 import { findProject } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 async function profileRecords(
@@ -792,10 +793,14 @@ for (const failedSource of ["member", "me"] as const) {
       }),
     ).toHaveCount(0);
     await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+    const restoreText = await enlargeText(page.locator("main"));
+    await expectAccessible(page);
+    await restoreText();
     unavailable = false;
     await page
       .getByRole("button", { name: "Retry profile", exact: true })
-      .click();
+      .focus();
+    await page.keyboard.press("Enter");
     await expect(
       page.getByRole("heading", {
         name: "No Slop contributor with this login",
@@ -805,6 +810,7 @@ for (const failedSource of ["member", "me"] as const) {
       "content",
       "noindex",
     );
+    await expectAccessible(page);
   });
 }
 
