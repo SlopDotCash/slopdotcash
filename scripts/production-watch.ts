@@ -7,6 +7,7 @@
  * answer fails the run so the scheduled workflow reports it.
  */
 import { appendFileSync } from "node:fs";
+import { mainnetExecutionEnabled } from "../workers/payment-executor/mainnet-execution.mjs";
 
 export const SITE_ORIGIN = "https://slop.cash";
 export const SLOPBOT_HEALTH_URL = "https://slopbot.slop.cash/health";
@@ -80,6 +81,9 @@ function minutes(ms: number) {
 /**
  * Judge one registered vault against its project's public vault response.
  * A missing snapshot or observation time is a failure, never fresh or zero.
+ * Only a network whose payout execution is activated has a refresher, so
+ * only its snapshot must be younger than staleAfterMs; an inactive network
+ * keeps its last finalized read, which the site labels outdated.
  */
 export function evaluateVault(
   expected: RegisteredVault,
@@ -121,6 +125,12 @@ export function evaluateVault(
   if (!Number.isFinite(observed))
     return fail("snapshot has no observation time");
   const age = now.getTime() - observed;
+  if (!mainnetExecutionEnabled(expected.network))
+    return {
+      ok: true,
+      check,
+      detail: `network not activated, no refresh expected; last observed ${observedAt}`,
+    };
   const detail = `observed ${observedAt}, age ${minutes(age)} (limit ${minutes(staleAfterMs)})`;
   return age > staleAfterMs
     ? fail(`stale: ${detail}`)
