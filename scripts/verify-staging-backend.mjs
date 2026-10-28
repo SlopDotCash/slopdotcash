@@ -1,13 +1,8 @@
 /** Exercise the deployed staging API and a persisted OAuth flow without logging capabilities. */
+import { stagingAcceptanceRequest as request } from "./staging-acceptance-request.mjs";
+
 const site = "https://staging.slop.cash";
 const identity = "https://identity-staging.slop.cash";
-async function request(url, init = {}) {
-  return fetch(url, {
-    ...init,
-    redirect: "manual",
-    signal: AbortSignal.timeout(30000),
-  });
-}
 const post = (origin, path, body, browserOrigin = site) =>
   request(`${origin}${path}`, {
     method: "POST",
