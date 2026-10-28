@@ -4,7 +4,7 @@ import { readBoundedBytes, readBoundedJson } from "../../src/lib/browser-json";
 import type { GithubActor } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { D1QueryStatement } from "../d1";
-import { exactKeys, fail, PROJECT_ID, requireActor } from "../http";
+import { chunked, exactKeys, fail, PROJECT_ID, requireActor } from "../http";
 import { notifySecurityReportReceived } from "../notifications/events";
 import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
@@ -208,6 +208,58 @@ export async function storedIntakeViewForCase(
     submissionId: row.id,
     ...intakeView(stored, roles, row, deps.now()),
   };
+}
+
+/**
+ * The same intake view for many cases in a fixed number of statements. The
+ * list route shapes up to 500 cases, so a per-case read would dominate it.
+ */
+export async function storedIntakeViewsForCases(
+  deps: SecurityApiDependencies,
+  rolesByCase: ReadonlyMap<string, Set<Role>>,
+) {
+  const views = new Map<
+    string,
+    Awaited<ReturnType<typeof storedIntakeViewForCase>>
+  >();
+  const caseIds = [...rolesByCase.keys()];
+  for (const caseId of caseIds) views.set(caseId, null);
+  const stored = new Map<string, StoredIntake>();
+  for (const part of chunked(caseIds)) {
+    const rows = await deps.db
+      .prepare(
+        `SELECT * FROM security_submission_intake WHERE case_id IN (${part
+          .map(() => "?")
+          .join(",")})`,
+      )
+      .bind(...part)
+      .all<StoredIntake>();
+    for (const row of rows.results ?? []) stored.set(row.case_id, row);
+  }
+  const submissions = new Map<string, SubmissionRow>();
+  for (const part of chunked([
+    ...new Set([...stored.values()].map((row) => row.submission_id)),
+  ])) {
+    const rows = await deps.db
+      .prepare(
+        `SELECT ${COLUMNS} FROM security_submissions WHERE id IN (${part
+          .map(() => "?")
+          .join(",")})`,
+      )
+      .bind(...part)
+      .all<SubmissionRow>();
+    for (const row of rows.results ?? []) submissions.set(row.id, row);
+  }
+  const now = deps.now();
+  for (const [caseId, row] of stored) {
+    const submission = submissions.get(row.submission_id);
+    if (!submission) continue;
+    views.set(caseId, {
+      submissionId: submission.id,
+      ...intakeView(row, rolesByCase.get(caseId) ?? new Set(), submission, now),
+    });
+  }
+  return views;
 }
 
 async function reportVersion(
