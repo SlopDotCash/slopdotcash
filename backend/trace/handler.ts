@@ -974,6 +974,16 @@ async function uploadTraceCapability(
     );
   }
   await assertParticipationAllowedByGithubId(intent.githubId, deps);
+  // The renewed private-reporting observation gates optional trace
+  // collection here, so a client that skips the preflight cannot store bytes.
+  const intake = await deps.privateIntakeStatus();
+  if (
+    intake.status !== "verified" ||
+    !intake.enabled ||
+    !validIsoTimestamp(intake.verifiedAt)
+  ) {
+    return json(503, { error: "private_intake_unavailable" });
+  }
   const rawContentType = request.headers.get("content-type") ?? "";
   let contentType: TraceUploadIntent["contentType"];
   try {
