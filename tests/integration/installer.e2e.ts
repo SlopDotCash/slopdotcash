@@ -1306,6 +1306,59 @@ time.sleep(60)
     );
   }
 
+  for (const wrapped of [false, true]) {
+    for (const failure of ["once", "always", "certificate"]) {
+      it(`classifies TLS ${failure} failures (${wrapped ? "wrapped" : "direct"}) without weakening verification`, () => {
+        const root = freshRoot("tls-classification");
+        const { artifactB, installRoot, updateAuthority } =
+          timeoutUpdateFixture(root);
+        const injection = join(root, "injection");
+        mkdirSync(injection);
+        const attempts = join(root, "attempts");
+        writeFileSync(
+          join(injection, "sitecustomize.py"),
+          `
+import os, ssl, urllib.request, urllib.error
+original = urllib.request.OpenerDirector.open
+count = 0
+def interrupted(self, request, *args, **kwargs):
+    global count
+    url = getattr(request, 'full_url', str(request))
+    if url.endswith('responses.json'):
+        count += 1
+        with open(os.environ['TLS_ATTEMPTS'], 'w') as f: f.write(str(count))
+        if os.environ['TLS_FAILURE'] != 'once' or count == 1:
+            error = ssl.SSLCertVerificationError('synthetic certificate refusal') if os.environ['TLS_FAILURE'] == 'certificate' else ssl.SSLEOFError('synthetic TLS EOF')
+            if os.environ['TLS_WRAPPED'] == 'yes': error = urllib.error.URLError(error)
+            raise error
+    return original(self, request, *args, **kwargs)
+urllib.request.OpenerDirector.open = interrupted
+`,
+        );
+        const result = run(command(artifactB, updateAuthority), installRoot, {
+          PYTHONPATH: injection,
+          TLS_ATTEMPTS: attempts,
+          TLS_FAILURE: failure,
+          TLS_WRAPPED: wrapped ? "yes" : "no",
+        });
+        expect(Number(readFileSync(attempts, "utf8"))).toBe(
+          failure === "once" ? 2 : failure === "always" ? 3 : 1,
+        );
+        if (failure === "once") {
+          expect(result.status, result.stderr).toBe(0);
+          expect(currentLink(installRoot)).toBe(
+            `.contribute-to-eliza-versions/${revisionB}`,
+          );
+        } else {
+          expect(result.status).not.toBe(0);
+          expect(currentLink(installRoot)).toBe(
+            `.contribute-to-eliza-versions/${revisionA}`,
+          );
+        }
+      });
+    }
+  }
+
   it("recovers a valid update from one slow source response within bounded attempts", async () => {
     const root = freshRoot("timeout-recover");
     const { artifactB, installRoot, updateAuthority } =
