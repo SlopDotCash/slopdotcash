@@ -193,6 +193,7 @@ import shutil
 import socket
 import stat
 import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -650,9 +651,9 @@ def verify_local_version(path, key, canonical_files=None):
 def current_install():
     if not os.path.lexists(target_path):
         return None
-    if not os.path.islink(target_path):
+    if not is_directory_link(target_path):
         raise ValueError("existing skill target is not an installer-managed symlink")
-    link = os.readlink(target_path)
+    link = directory_link_target(target_path)
     parts = Path(link).parts
     if len(parts) != 2 or parts[0] != versions_name:
         raise ValueError("existing skill target points outside the managed version store")
@@ -748,13 +749,61 @@ def replace_symlink_atomically(source, destination):
         close_handle(handle)
 
 
+def create_directory_link(target, link):
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return
+    except OSError as error:
+        if getattr(error, "winerror", None) != 1314:
+            raise
+    # An unelevated Windows account can create a directory symbolic link only in
+    # Developer Mode. A junction needs no privilege, points at the same version
+    # directory, and still moves atomically with this path, so activation can
+    # succeed instead of failing the whole install.
+    absolute_target = os.path.abspath(os.path.join(os.path.dirname(link), target))
+    created = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", link, absolute_target],
+        capture_output=True,
+        text=True,
+    )
+    if created.returncode != 0:
+        detail = (created.stdout or created.stderr or "").strip()
+        raise ValueError(
+            "Windows refused to create the skill directory link (WinError 1314) "
+            "and the junction fallback also failed. Turn on Developer Mode in "
+            "Settings > System > For developers, or run this command in an "
+            f"elevated terminal, then run it again. The verified version is kept "
+            f"and reused. {detail}"
+        )
+
+
+def is_directory_link(path):
+    if os.path.islink(path):
+        return True
+    if os.name != "nt":
+        return False
+    try:
+        return getattr(os.lstat(path), "st_reparse_tag", None) == 0xA0000003
+    except OSError:
+        return False
+
+
+def directory_link_target(path):
+    raw = os.readlink(path)
+    # A junction reports its target as a \\?\C:\... path; the managed-store
+    # check below compares only the two trailing components.
+    if raw.startswith("\\\\?\\"):
+        return raw[4:]
+    return raw
+
+
 def activate(revision):
     relative_target = os.path.join(versions_name, revision)
     temporary_link = os.path.join(
         skills_root,
         f".{skill_name}-link-{secrets.token_hex(8)}",
     )
-    os.symlink(relative_target, temporary_link, target_is_directory=True)
+    create_directory_link(relative_target, temporary_link)
     try:
         replace_symlink_atomically(temporary_link, target_path)
     finally:
