@@ -98,7 +98,9 @@ export declare function isFullAwardSplit(
   split: { researcherBasisPoints: number; slopBasisPoints: number } | undefined,
 ): boolean;
 export declare const PLATFORM_SECURITY_REPOSITORY: "SlopDotCash/slopdotcash";
+export declare const PLATFORM_SECURITY_PROJECT_ID: "slopdotcash";
 export declare function isPlatformSecurityProgram(
+  projectId: string,
   repositories: readonly { id: string }[],
 ): boolean;
 export declare function securityBountySplit(
@@ -116,6 +118,7 @@ export declare function formatSecurityAmount(
 export declare function assertSecurityBountyTerms(
   value: unknown,
   context: {
+    projectId: string;
     repositories: readonly { id: string }[];
     reward: Record<string, unknown>;
   },

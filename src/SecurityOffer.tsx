@@ -38,9 +38,11 @@ export function SecurityOffer({
           : `${amount(split.grossMinor)} total award · ${amount(split.slopMinor)} to Slop. No additional payout fee.`}
       </p>
       <p className="security-offer-funding">
-        {terms.funding.state === "pledged"
-          ? "Pledged — funded after approval. Payment requires verified funding."
-          : "Funding verified at the recorded observation. Awards require owner approval."}
+        {fullAward
+          ? "Pledged — funded after approval. An approved award is not payable until a full-award payment path is approved and released."
+          : terms.funding.state === "pledged"
+            ? "Pledged — funded after approval. Payment requires verified funding."
+            : "Funding verified at the recorded observation. Awards require owner approval."}
       </p>
       {!compact ? <p>{terms.scope.lossDefinition}</p> : null}
       <p className="field-hint">

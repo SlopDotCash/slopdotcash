@@ -35,7 +35,7 @@ export const SECURITY_SPLIT = Object.freeze({
  * Owner decision, 28 October 2026: slop.cash sponsors the bounty on its own
  * contracts, so a Slop share would pay Slop from Slop. The first qualifying
  * reporter receives the whole published award. Only the platform's own
- * repository may publish it (see `assertSecurityBountyTerms`).
+ * project may publish it (see `assertSecurityBountyTerms`).
  */
 export const SECURITY_FULL_AWARD_SPLIT = Object.freeze({
   researcherBasisPoints: 10000,
@@ -57,12 +57,21 @@ export function isFullAwardSplit(split) {
  * import cycle through project-schema.mjs; a test pins the two together.
  */
 export const PLATFORM_SECURITY_REPOSITORY = "SlopDotCash/slopdotcash";
+/** The platform's own registered project id (`legacy-projects.json`). */
+export const PLATFORM_SECURITY_PROJECT_ID = "slopdotcash";
 
-/** The platform's own project: one of its repositories is the Slop source. */
-export function isPlatformSecurityProgram(repositories) {
-  return repositories.some(
-    (entry) =>
-      entry.id.toLowerCase() === PLATFORM_SECURITY_REPOSITORY.toLowerCase(),
+/**
+ * The platform's own project: its id is the registered Slop project and one of
+ * its repositories is the Slop source. Listing the Slop repository alone does
+ * not make another project the platform.
+ */
+export function isPlatformSecurityProgram(projectId, repositories) {
+  return (
+    projectId === PLATFORM_SECURITY_PROJECT_ID &&
+    repositories.some(
+      (entry) =>
+        entry.id.toLowerCase() === PLATFORM_SECURITY_REPOSITORY.toLowerCase(),
+    )
   );
 }
 const CURRENCIES = Object.freeze({
@@ -194,10 +203,14 @@ function validateApprovers(value) {
 
 /**
  * Validates `project.securityBounty` against the rest of the manifest. The
- * caller passes the project's repositories and reward so bounty-only mode
- * can refuse a monthly-pool promise.
+ * caller passes the project's id, repositories and reward so bounty-only mode
+ * can refuse a monthly-pool promise and only the platform project may publish
+ * the full-award split.
  */
-export function assertSecurityBountyTerms(value, { repositories, reward }) {
+export function assertSecurityBountyTerms(
+  value,
+  { projectId, repositories, reward },
+) {
   const terms = record(value, "");
   exactKeys(
     terms,
@@ -238,7 +251,7 @@ export function assertSecurityBountyTerms(value, { repositories, reward }) {
     fail("split", "must be the approved 75/25 researcher/Slop split");
   // Only slop.cash sponsoring its own contracts pays the whole award. The
   // separate bounty vault always takes 25%, so this program cannot bind it.
-  if (fullAward && !isPlatformSecurityProgram(repositories))
+  if (fullAward && !isPlatformSecurityProgram(projectId, repositories))
     fail("split", "pays the full award only on the Slop platform program");
   if (fullAward && terms.fundingPolicy !== "after-approval")
     fail("fundingPolicy", "must be after-approval for a full-award program");

@@ -28,8 +28,9 @@ export function FullAwardFundingNote() {
   return (
     <p className="vault-unconfigured" role="status">
       slop.cash funds approved awards after review. This program pays the whole
-      award to the researcher, so it uses no 75/25 bounty vault; payment needs a
-      separately approved full-award rail.
+      award to the researcher, so it uses no 75/25 bounty vault. An approved
+      award is not payable until a full-award payment path is approved and
+      released.
     </p>
   );
 }
