@@ -242,8 +242,18 @@ evaluations, disclosures, contribution quality, cycles, and protocol identity);
 audits dependencies; runs type and lint checks, smart-contract unit tests, and
 the database, API, CLI and Worker integration suites; and produces the static build.
 `bun run format:check` is a separate required check. Browser behavior is covered
-by `bun run test:e2e`; the separate escrow workflow checks the contract and
-payment lifecycles.
+by `bun run test:e2e`.
+
+CI selects browser coverage from the changed files: preview and Pages for UI,
+registry for API changes, and a short smoke pass for documentation and release
+promotion. Installer and isolated-sandbox checks run when their sources change.
+The fast type, lint, unit, integration and build gates remain in place.
+
+Contract PRs run the affected chain's build and contract checks. The full escrow
+workflow, including validator lifecycles and wallet-browser recovery, runs nightly
+and through Actions → **Escrow accounting and recovery** → **Run workflow**.
+A development-to-main promotion does not repeat the full development matrix.
+Use **slop.cash → Run workflow** to request all browser lanes explicitly.
 
 ## Trust and deployment
 
