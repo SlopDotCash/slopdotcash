@@ -40,15 +40,18 @@ function gate() {
 
 async function fixtures(page: Page) {
   await page.route(`${site}/**`, (route) =>
-    route.fulfill({
-      path: join(
-        process.cwd(),
-        "dist",
-        route.request().resourceType() === "document"
-          ? "index.html"
-          : new URL(route.request().url()).pathname,
-      ),
-    }),
+    // Money received falls back to the shared empty aggregate (fixtures.ts).
+    new URL(route.request().url()).pathname === "/api/v1/payments/received"
+      ? route.fallback()
+      : route.fulfill({
+          path: join(
+            process.cwd(),
+            "dist",
+            route.request().resourceType() === "document"
+              ? "index.html"
+              : new URL(route.request().url()).pathname,
+          ),
+        }),
   );
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshotFixture() }),
