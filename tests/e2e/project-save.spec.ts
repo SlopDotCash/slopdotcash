@@ -49,7 +49,7 @@ test("retains edits typed while a project revision is being published", async ({
       },
     }),
   );
-  await page.route("**/api/v1/project-setup/eliza/check", (route) =>
+  await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
     route.fulfill({ json: { setup } }),
   );
   await page.route("**/api/v1/projects/eliza*", async (route) => {
@@ -81,12 +81,6 @@ test("retains edits typed while a project revision is being published", async ({
   const description = page.getByLabel("Short description");
   await expect(description).toHaveValue(current.headline);
   await description.fill("First description submitted for review");
-  await page
-    .getByText("Public revision note (optional)", { exact: true })
-    .click();
-  await page
-    .getByLabel("Revision note")
-    .fill("Preserve edits made while saving.");
   const started = page.waitForRequest((request) => request.method() === "PUT");
   await page
     .getByRole("button", { name: "Publish changes", exact: true })

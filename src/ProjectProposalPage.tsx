@@ -2601,6 +2601,18 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
             >
               Use this draft
             </button>
+            <button
+              type="button"
+              className="button secondary-button"
+              onClick={() => {
+                setDraft(null);
+                setDraftRevision(null);
+                setAttempted(false);
+                setSubmission({ state: "idle" });
+              }}
+            >
+              Discard draft
+            </button>
           </div>
         ) : null}
         {changed ? (
@@ -2700,13 +2712,11 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
           </p>
         </div>
       </form>
-      {current.securityBounty ? (
-        <p id="security-settings">
-          <Link href={`/projects/${current.slug}/security#security-settings`}>
-            Manage security program and private bounty funds
-          </Link>
-        </p>
-      ) : null}
+      <p id="security-settings">
+        <Link href={`/projects/${current.slug}/security#security-settings`}>
+          Manage security program and private bounty funds
+        </Link>
+      </p>
       {!monthly ? (
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>

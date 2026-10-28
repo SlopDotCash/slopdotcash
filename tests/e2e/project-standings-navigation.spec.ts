@@ -164,7 +164,10 @@ test("history navigation keeps contributor standings scoped to the current proje
   await expect(eliza).toHaveCount(0);
   await standings.scrollIntoViewIfNeeded();
   const document = await page.evaluate(() => performance.timeOrigin);
-  await page.getByRole("link", { name: "Slop home", exact: true }).click();
+  await page
+    .getByRole("banner")
+    .getByRole("link", { name: "Slop home", exact: true })
+    .click();
   await page.locator('a.project-card[href="/projects/eliza"]').click();
   await standings
     .getByRole("button", { name: "Money received", exact: true })

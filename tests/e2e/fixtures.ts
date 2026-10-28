@@ -64,17 +64,8 @@ export const CANCELED = /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) /u;
 export async function openProjectSecuritySettings(page: Page) {
   const label = "Manage security program and private bounty funds";
   const link = page.getByRole("link", { name: label, exact: true });
-  if (!/\/projects\/[^/]+\/security(?:[?#]|$)/u.test(page.url())) {
-    // New programs also use the security route, before a saved program creates
-    // the management link. An existing link is loaded asynchronously.
-    const projectPath = /^\/projects\/[^/]+/u.exec(
-      new URL(page.url()).pathname,
-    )?.[0];
-    if (!projectPath) throw new Error("Expected a project route");
-    await page.goto(`${projectPath}/security#security-settings`, {
-      waitUntil: "networkidle",
-    });
-  } else if (await link.count()) {
+  if (new URL(page.url()).pathname.endsWith("/manage")) {
+    await expect(link).toBeVisible();
     await link.click();
   }
   await expect(page).toHaveURL(

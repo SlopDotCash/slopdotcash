@@ -167,33 +167,20 @@ and any published snapshot in `/data/` that is not generated locally from
 
 ### Local sign-in
 
-Sign-in works only on a product origin, so the plain dev server links to
-slop.cash. To sign in on localhost with real GitHub and return to localhost, run
-the identity Worker and the API on this machine:
+Local Vite development starts the local sign-in bridge and API automatically.
+`bun run dev` (or Vite directly) keeps sign-in and its return destination on the
+local origin. `bun run dev:local` is an alias for the same mode.
 
-1. In two terminals, run:
+Run `bun run dev`, open its local URL, and select "Log in". The existing
+Slop GitHub App verifies your identity, then returns you to the local page.
+No separate GitHub App or production secret is needed on your machine. A
+blocked popup uses the same tab and returns locally. The production identity
+service must include the local handoff endpoints before this flow is available.
 
-```bash
-bun run dev:backend
-bun run dev:local
-```
-
-2. Create the GitHub App once. Open `http://localhost:4466/__dev/setup` and
-   select the button. GitHub shows the App before it creates it. Check the name
-   and confirm. The credentials are saved in `.slop-dev/github-app.json`, which
-   Git ignores. To use an App you already made, give it the callback
-   `http://localhost:4466/v1/oauth/callback`, no webhook, and no permissions,
-   and put its client ID and secret in `.env` as `GITHUB_APP_CLIENT_ID` and
-   `GITHUB_APP_CLIENT_SECRET`.
-3. Open `http://localhost:4466`, not `127.0.0.1`, and select "Log in".
-
-If your browser cannot open the sign-in window (the Claude desktop preview pane
-cannot), sign-in runs in the same tab. GitHub sends you to the identity page.
-Select "Return to Slop" there, and the sign-in page finishes the sign-in.
-
-If you use another port, set `SLOP_DEV_ORIGIN` (for example
-`http://localhost:4467`) for the backend, and use the same port for the dev
-server.
+The backend follows Vite's actual port. Set `SLOP_DEV_ORIGIN` to choose the exact
+local origin, or `SLOP_DEV_BACKEND` to use an already managed local backend.
+Set `SLOP_DEV_BACKEND=off` for an explicitly read-only preview without local
+sign-in. Production builds never enable the local backend.
 
 The backend keeps its data in `.slop-dev/` (ignored by Git; delete it to start
 over). Only sign-in and the API run locally, on an empty database. Project and

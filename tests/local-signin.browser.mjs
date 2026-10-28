@@ -28,7 +28,7 @@ await writeFile(
   config,
   `import base from "./vite.config.ts";
 import { mergeConfig } from "vite";
-export default mergeConfig(base, { server: { fs: { allow: ${JSON.stringify([await realpath(workspace), await realpath(join(workspace, "node_modules"))])} } } });
+export default (env) => mergeConfig(base(env), { server: { fs: { allow: ${JSON.stringify([await realpath(workspace), await realpath(join(workspace, "node_modules"))])} } } });
 `,
 );
 const listener = createServer();

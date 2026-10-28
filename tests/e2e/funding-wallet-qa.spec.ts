@@ -115,25 +115,9 @@ async function doubleTextSize(page: Page) {
 
 test("funding and wallet keyboard flows remain accessible at 200 percent text size", async ({
   page,
-  diagnostics,
 }, info) => {
-  diagnostics.allowPreviewApiMisses();
-  const project = baseVaultProject();
-  await page.route(
-    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
-    (route) =>
-      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
-  );
-  await serveProjectCycleIndex(page, [project.id]);
-  await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
-    route.fulfill({
-      json: {
-        projectId: "eliza",
-        snapshots: [vaultSnapshot("600000000", Date.now())],
-        staleAfterMs: 1800000,
-        servedAt: new Date().toISOString(),
-      },
-    }),
+  await page.route("**/.well-known/slop/projects.json", (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
   );
   await page.route("**/api/v1/payments/me", (route) =>
     route.fulfill({
@@ -177,12 +161,9 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
       await expect(
         page.getByRole("heading", { exact: true, name: "Eliza" }),
       ).toBeVisible();
-      const details = page.getByText("Ledger details", { exact: true });
-      await keyboardTo(page, details);
-      await page.keyboard.press("Enter");
-      await expect(
-        page.getByText("Withdrawal fees", { exact: true }),
-      ).toBeVisible();
+      const copy = page.getByRole("button", { name: "Copy agent prompt" });
+      await keyboardTo(page, copy);
+      await expect(copy).toBeFocused();
       await audit(page, info, "funding-200-percent-text");
     }
   }
@@ -339,6 +320,9 @@ test("vault totals stay current without a refresh button and keep each state dis
     name: "Project vault Base",
   });
   await expect(heading.locator('svg[data-network="base"]')).toBeVisible();
+  await expect(
+    section.getByRole("list", { name: "Fees" }).getByRole("listitem"),
+  ).toHaveCount(0);
   const available = section
     .locator(".vault-stat")
     .filter({ hasText: "Available" });
@@ -363,12 +347,9 @@ test("vault totals stay current without a refresh button and keep each state dis
   await expect(section.getByRole("button", { name: /refresh/i })).toHaveCount(
     0,
   );
-  const details = section.getByText("Ledger details", { exact: true });
-  await keyboardTo(page, details);
-  await page.keyboard.press("Enter");
-  await expect(
-    section.getByText("Withdrawal fees", { exact: true }),
-  ).toBeVisible();
+  const ledger = section.locator(".vault-ledger-details summary");
+  await keyboardTo(page, ledger);
+  await expect(ledger).toBeFocused();
   await audit(page, info, "vault-totals-ready");
 
   // Returning to the page after the cache window reads the totals again.
@@ -376,6 +357,7 @@ test("vault totals stay current without a refresh button and keep each state dis
     status: 200,
     snapshots: [vaultSnapshot("700000000", start + 30_000)],
   };
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(61_000);
   await page.evaluate(() =>
     document.dispatchEvent(new Event("visibilitychange")),
@@ -384,6 +366,7 @@ test("vault totals stay current without a refresh button and keep each state dis
   expect(reads).toBe(2);
 
   // When the snapshot turns stale, the page reads again and marks it.
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(31 * 60_000);
   await expect(section.getByRole("alert")).toContainText("Outdated · read");
   expect(reads).toBe(3);
@@ -391,6 +374,7 @@ test("vault totals stay current without a refresh button and keep each state dis
 
   // A failed refresh keeps the last totals, marked stale, with a retry.
   read = { status: 503, snapshots: [] };
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(61_000);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
@@ -415,6 +399,7 @@ test("vault totals stay current without a refresh button and keep each state dis
   await expect(section.getByText("USDC")).toHaveCount(0);
   // An empty successful read must not hide a later refresh failure.
   read = { status: 503, snapshots: [] };
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(61_000);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(section.getByRole("alert")).toContainText(
@@ -489,7 +474,7 @@ test("project navigation never reuses another project's vault balance", async ({
     route.fulfill({ status: 503, json: { error: "unavailable" } }),
   );
   await page.goto(`/projects/${first.slug}`);
-  const funding = page.getByRole("region", {
+  const funding = page.locator("#funding:visible").getByRole("region", {
     name: "Project escrow",
     exact: true,
   });

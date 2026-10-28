@@ -758,19 +758,17 @@ function JoinPoints({
             referrerPolicy: "no-referrer",
           });
           if (!response.ok) {
-            // A local backend without a GitHub App sends the developer to setup.
-            if (
-              localBackendOrigin !== null &&
-              response.status === 503 &&
-              (
-                (await readBoundedJson(response, 16384, "sign-in").catch(
-                  () => null,
-                )) as { error?: unknown } | null
-              )?.error === "github_app_missing"
-            ) {
-              popup?.close();
-              window.location.assign(`${localBackendOrigin}/__dev/setup`);
-              throw new Error("Set up the local GitHub App to continue.");
+            if (localBackendOrigin !== null && response.status === 503) {
+              const failure = (await readBoundedJson(
+                response,
+                16384,
+                "sign-in",
+              ).catch(() => null)) as { message?: unknown } | null;
+              throw new Error(
+                typeof failure?.message === "string"
+                  ? failure.message
+                  : "Slop's local sign-in service is unavailable. Try again later.",
+              );
             }
             throw new Error(identityFailure(response.status));
           }

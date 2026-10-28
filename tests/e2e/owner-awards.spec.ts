@@ -1,40 +1,12 @@
 /** Browser coverage of private monthly allocations; the API rules are tested in backend/payments/monthly.test.ts. */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
-test.beforeEach(async ({ page }) => {
-  await page.route("**/.well-known/slop/projects.json", (route) =>
-    route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
-  );
-  const index = JSON.parse(
-    readFileSync(join(process.cwd(), "public/data/cycles/index.json"), "utf8"),
-  ) as CycleIndex;
-  const source = index.cycles.find(
-    (cycle) => cycle.projectId === "eliza" && cycle.cycleId === "2026-09",
-  );
-  if (!source) throw new Error("Missing monthly award fixture");
-  // The month selector uses published months. Supply the same November
-  // scenario as the private API fixtures, including consistent archive links.
-  const cycle = JSON.parse(
-    JSON.stringify(source).replace(/2026-(09|10)/gu, (_match, month) =>
-      month === "09" ? "2026-11" : "2026-12",
-    ),
-  );
-  const fixture = {
-    ...index,
-    generatedAt: "2026-12-02T12:00:00.000Z",
-    cycles: [cycle],
-  };
-  assertCycleIndex(fixture);
-  await page.route("**/data/cycles/index.json?**", (route) =>
-    route.fulfill({ json: fixture }),
-  );
+test.beforeEach(async ({ diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
 });
 
 /** Monthly awards are on the funding page of a project that has a vault policy. */
@@ -68,8 +40,8 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
 }, info) => {
   // The signed-out and the refused allocation reads below.
   diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at |401 GET )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/monthly\/2026-11$/u,
-    /^(?:console Failed to load resource: the server responded with a status of 403 \(Forbidden\) at |403 GET )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/monthly\/2026-11$/u,
+    /^(?:console Failed to load resource: the server responded with a status of 401 \(Unauthorized\) at |401 GET )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/monthly\/2026-09$/u,
+    /^(?:console Failed to load resource: the server responded with a status of 403 \(Forbidden\) at |403 GET )http:\/\/[^ ]+\/api\/v1\/payments\/projects\/eliza\/monthly\/2026-09$/u,
   );
   const project = projectWithVault();
   await page.route(
@@ -95,16 +67,16 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   let sequence = 0;
   let frozen = false;
   let automatic = true;
-  // Decision D1: the 2026-11 cutoff is 72 hours after the month ends.
-  let cutoffAt = "2026-12-04T00:00:00.000Z";
-  await page.clock.setFixedTime(new Date("2026-12-02T12:00:00.000Z"));
+  // Decision D1: the 2026-09 cutoff is 72 hours after the month ends.
+  let cutoffAt = "2026-10-04T00:00:00.000Z";
+  await page.clock.setFixedTime(new Date("2026-10-02T12:00:00.000Z"));
   const allocations = [
     { githubUserId: "1", login: "first-contributor", grossBase: "1234567890" },
     { githubUserId: "2", login: "second-contributor", grossBase: "2000000000" },
   ];
   const body = () => ({
     projectId: "eliza",
-    period: "2026-11",
+    period: "2026-09",
     manifestSha256: "a".repeat(64),
     automatic,
     cutoffAt,
@@ -130,7 +102,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     run: frozen
       ? {
           trigger: "owner",
-          frozenAt: "2026-12-02T00:00:00.000Z",
+          frozenAt: "2026-10-02T00:00:00.000Z",
           snapshotSha256: "c".repeat(64),
           totalGrossBase: "3234567890",
           network: "base-sepolia",
@@ -151,7 +123,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
       : null,
   });
   await page.route(
-    "**/api/v1/payments/projects/eliza/monthly/2026-11",
+    "**/api/v1/payments/projects/eliza/monthly/2026-09",
     (route) =>
       route.fulfill({
         status,
@@ -166,7 +138,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   );
   const changes: unknown[] = [];
   await page.route(
-    "**/api/v1/payments/projects/eliza/monthly/2026-11/allocations",
+    "**/api/v1/payments/projects/eliza/monthly/2026-09/allocations",
     (route) => {
       const change = route.request().postDataJSON();
       changes.push(change);
@@ -176,7 +148,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     },
   );
   await page.route(
-    "**/api/v1/payments/projects/eliza/monthly/2026-11/finalize",
+    "**/api/v1/payments/projects/eliza/monthly/2026-09/finalize",
     (route) => {
       expect(route.request().postDataJSON()).toEqual({
         expectedSequence: sequence,
@@ -205,7 +177,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   ).toBeVisible();
   await expect(
     page.getByRole("navigation", { name: "Contribution month" }),
-  ).toContainText("November 2026");
+  ).toContainText("September 2026");
   const load = page.getByRole("button", {
     name: "Refresh awards",
     exact: true,
@@ -269,17 +241,17 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     { githubUserId: "2", grossBase: "1500000000", expectedSequence: 0 },
   ]);
   // After the cutoff, with the automatic default on, allocations are fixed.
-  cutoffAt = "2026-12-01T00:00:00.000Z";
+  cutoffAt = "2026-10-01T00:00:00.000Z";
   await load.click();
   await expect(awards).toContainText("Cutoff passed");
   await expect(
     awards.getByLabel("Award for second-contributor"),
   ).toBeDisabled();
-  cutoffAt = "2026-12-04T00:00:00.000Z";
+  cutoffAt = "2026-10-04T00:00:00.000Z";
   await load.click();
   await expect(awards).toContainText("You can finalize earlier");
   // The cutoff is a calendar UTC instant, shown in UTC for every viewer.
-  await expect(awards).toContainText("Finalizes Dec 4, 2026, 00:00 UTC.");
+  await expect(awards).toContainText("Finalizes Oct 4, 2026, 00:00 UTC.");
   await expect(awards.getByLabel("Award for second-contributor")).toBeEnabled();
   await awards
     .getByRole("button", { name: "Turn off automatic finalization" })
@@ -338,7 +310,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await restoreAllocationText();
   await awards.getByRole("button", { name: "Finalize awards" }).click();
   await expect(awards).toContainText("Finalized by you");
-  await expect(awards).toContainText("Dec 2, 2026, 00:00 UTC");
+  await expect(awards).toContainText("Oct 2, 2026, 00:00 UTC");
   await expect(awards).toContainText("Underfunded");
   await expect(awards.getByLabel("Award for second-contributor")).toHaveCount(
     0,
@@ -356,7 +328,8 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
       () => document.documentElement.scrollWidth <= innerWidth + 1,
     ),
   ).toBe(true);
-  await load.focus();
+  await page.getByRole("button", { name: "Previous award month" }).focus();
+  await page.keyboard.press("Tab");
   await expect(load).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(awards).toContainText(
@@ -374,7 +347,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
   page,
 }, info) => {
   const project = projectWithVault();
-  await page.clock.setFixedTime(new Date("2026-12-02T12:00:00Z"));
+  await page.clock.setFixedTime(new Date("2026-10-02T12:00:00Z"));
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
@@ -399,12 +372,12 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
     owner: `0x${"2".repeat(40)}`,
   };
   await page.route(
-    "**/api/v1/payments/projects/eliza/monthly/2026-11",
+    "**/api/v1/payments/projects/eliza/monthly/2026-09",
     (route) =>
       route.fulfill({
         json: {
           projectId: "eliza",
-          period: "2026-11",
+          period: "2026-09",
           manifestSha256: "a".repeat(64),
           automatic: false,
           cutoffAt: null,
@@ -419,7 +392,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
     finalized = false;
   const requests: Record<string, unknown>[] = [];
   await page.route(
-    "**/api/v1/payments/projects/eliza/monthly/2026-11/reserve-release",
+    "**/api/v1/payments/projects/eliza/monthly/2026-09/reserve-release",
     (route) => {
       const body = route.request().postDataJSON();
       requests.push(body);
@@ -458,7 +431,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
   );
   await page.evaluate(() =>
     sessionStorage.setItem(
-      "slop:monthly-release:v1:eliza:2026-11:base-sepolia",
+      "slop:monthly-release:v1:eliza:2026-09:base-sepolia",
       JSON.stringify({ planId: "b".repeat(64), hash: `0x${"c".repeat(64)}` }),
     ),
   );
@@ -489,7 +462,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
   expect(
     await page.evaluate(() =>
       sessionStorage.getItem(
-        "slop:monthly-release:v1:eliza:2026-11:base-sepolia",
+        "slop:monthly-release:v1:eliza:2026-09:base-sepolia",
       ),
     ),
   ).toBeNull();
