@@ -87,6 +87,38 @@ const nodeFor = (pull: (typeof pulls)[number]) => ({
     },
   ]),
 });
+// Open work listed before detail hydration. One PR and one issue close
+// between the open listing and their detail reads.
+const openPull = (id: string, number: number) => ({
+  ...unaffected,
+  id,
+  number,
+  headRefOid: String(number % 10).repeat(40),
+  url: `${repository.githubUrl}/pull/${number}`,
+  mergedAt: null,
+  closedAt: null,
+});
+const stillOpenPull = openPull("PR_still_open", 81);
+const mergedAfterListing = openPull("PR_merged_after_listing", 82);
+const openIssueNode = (id: string, number: number, open: boolean) => ({
+  __typename: "Issue",
+  id,
+  state: open ? "OPEN" : "CLOSED",
+  number,
+  title: "Open work item",
+  url: `${repository.githubUrl}/issues/${number}`,
+  body: "Describe the defect.",
+  createdAt: unaffected.createdAt,
+  updatedAt: unaffected.updatedAt,
+  closedAt: open ? null : GENERATED_AT,
+  stateReason: open ? null : "COMPLETED",
+  author: { ...unaffected.author, __typename: "User" },
+  labels: connection([]),
+  assignees: connection([]),
+  comments: connection([]),
+  timelineItems: connection([]),
+  closedByPullRequestsReferences: connection([]),
+});
 const record = {
   schemaVersion: "slop-work-unit-record:v1",
   projectId: project.id,
@@ -131,7 +163,7 @@ type Comparison =
   | "invalid-range";
 
 async function fixture(
-  mode: "removed" | "persistent" | "joint" | "healthy",
+  mode: "removed" | "persistent" | "joint" | "healthy" | "open-closure",
   failure?: Failure,
   productionProjects?: readonly string[],
   comparison?: Comparison,
@@ -219,10 +251,31 @@ async function fixture(
           const field = query.includes("query LeaderboardOpenIssue")
             ? "issues"
             : "pullRequests";
+          const listed =
+            mode === "open-closure" &&
+            v.owner === repository.owner &&
+            v.name === repository.name;
           data.repository = {
             id: nodeId(v.owner, v.name),
-            [field]: connection([]),
+            [field]: connection(
+              !listed
+                ? []
+                : field === "issues"
+                  ? ["I_still_open", "I_closed_after_listing"].map((id) => ({
+                      id,
+                      updatedAt: unaffected.updatedAt,
+                    }))
+                  : [stillOpenPull, mergedAfterListing].map((pull) => ({
+                      id: pull.id,
+                      updatedAt: pull.updatedAt,
+                      headRefOid: pull.headRefOid,
+                    })),
+            ),
           };
+        } else if (query.includes("query LeaderboardIssueDetails")) {
+          data.nodes = v.ids.map((id: string, index: number) =>
+            openIssueNode(id, 90 + index, id === "I_still_open"),
+          );
         } else if (
           query.includes("query LeaderboardReviewedPullRequestReferences")
         ) {
@@ -280,7 +333,15 @@ async function fixture(
           query.includes("query LeaderboardMergedPullRequestReviews")
         ) {
           data.nodes = v.ids.map((id: string) =>
-            sourceNodeFor(required(pulls.find((p) => p.id === id))),
+            id === stillOpenPull.id
+              ? { ...nodeFor(stillOpenPull), state: "OPEN" }
+              : id === mergedAfterListing.id
+                ? {
+                    ...nodeFor(mergedAfterListing),
+                    mergedAt: GENERATED_AT,
+                    closedAt: GENERATED_AT,
+                  }
+                : sourceNodeFor(required(pulls.find((p) => p.id === id))),
           );
         } else
           throw new Error(
@@ -905,3 +966,26 @@ for (const comparison of [
     }
   });
 }
+
+test("open work that closes after the listing leaves the queue instead of stopping the release", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("open-closure");
+  try {
+    const snapshot = await f.generate();
+    expect(snapshot.workQueue.pullRequests.map((item) => item.id)).toEqual([
+      stillOpenPull.id,
+    ]);
+    expect(snapshot.workQueue.issues.map((item) => item.id)).toEqual([
+      "I_still_open",
+    ]);
+    expect(snapshot.source.counts).toMatchObject({
+      openPullRequests: 1,
+      openIssues: 1,
+      mergedPullRequests: 2,
+    });
+    expect(f.stats().attempts).toBe(1);
+    assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+  } finally {
+    await f.close();
+  }
+});
