@@ -135,7 +135,7 @@ jobs:
           print(json.dumps(manifest, indent=2))
           PY
           echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         id: program
         with:
           name: solana-verifiable-${{ github.event.pull_request.head.sha || github.sha }}
@@ -216,7 +216,7 @@ jobs:
           SLOP_E2E_VIDEO: '1'
           SLOP_E2E_LANE: preview
         run: bun run test:e2e tests/e2e/vault-actions.spec.ts --workers=1
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: payout-browser-${{ github.event.pull_request.head.sha || github.sha }}
@@ -287,7 +287,7 @@ jobs:
             "$RUNNER_TEMP/solana-verifiable/slop_escrow.so"
       - name: Retain safe validator failure evidence
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: solana-transaction-failures-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
@@ -320,7 +320,7 @@ jobs:
           SLOP_E2E_VIDEO: '1'
           SLOP_E2E_LANE: preview
         run: bun run test:e2e tests/e2e/solana-vault-actions.spec.ts --workers=1
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: solana-wallet-browser-${{ github.event.pull_request.head.sha || github.sha }}
