@@ -122,11 +122,15 @@ jobs:
         # validator in verify:contracts resolves each award's project and its
         # external-evaluation opt-in against this snapshot, so without it any
         # evaluations/ file fails on a pull request while passing on the
-        # trusted run. The snapshot is not bound or uploaded on pull requests.
+        # trusted run. Pull-request runs read the production registry because
+        # the "Load deployed public ledger for pull-request checks" step
+        # adapts the production ledger, whose repository ids must be
+        # registered; the staging registry names different ids for the same
+        # projects. The snapshot is not bound or uploaded on pull requests.
         # Before an environment first serves the API, the sync keeps the
         # committed snapshot and says so.
         env:
-          SLOP_API_ORIGIN: ${{ env.VITE_SLOP_ENVIRONMENT == 'staging' && 'https://staging.slop.cash' || 'https://slop.cash' }}
+          SLOP_API_ORIGIN: ${{ github.event_name == 'pull_request' && 'https://slop.cash' || (env.VITE_SLOP_ENVIRONMENT == 'staging' && 'https://staging.slop.cash' || 'https://slop.cash') }}
         run: bun run projects:sync
 
       - name: Validate project registry and every skill
