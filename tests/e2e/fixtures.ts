@@ -64,7 +64,10 @@ export const CANCELED = /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) /u;
 export async function openProjectSecuritySettings(page: Page) {
   const label = "Manage security program and private bounty funds";
   const link = page.getByRole("link", { name: label, exact: true });
-  if (await link.count()) await link.click();
+  if (new URL(page.url()).pathname.endsWith("/manage")) {
+    await expect(link).toBeVisible();
+    await link.click();
+  }
   await expect(page).toHaveURL(
     /\/projects\/[^/]+\/security(?:\?[^#]*)?#security-settings$/u,
   );

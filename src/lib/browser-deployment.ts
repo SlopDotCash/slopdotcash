@@ -8,7 +8,7 @@ export const browserDeployment = deploymentOrigins(
 );
 
 /**
- * The dev server's own origin while `bun run dev:local` proxies sign-in and
+ * The dev server's own origin while local Vite development proxies sign-in and
  * the API to a local backend. `import.meta.env.DEV` is false in every build,
  * so no deployed bundle ever sets it.
  */

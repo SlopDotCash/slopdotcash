@@ -38,6 +38,7 @@ import {
   ESCROW_NETWORKS,
   type EscrowChain,
   isEscrowChain,
+  isMaxNativeCostWei,
 } from "../../src/lib/escrow-policy.mjs";
 import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
 import type { PaymentDeployment } from "../payments/index";
@@ -116,6 +117,7 @@ type Deployment = Pick<
   | "feeRecipient"
   | "codeSha256"
   | "bindingDelaySeconds"
+  | "bindingConsentNonceLimit"
 > & {
   /** A registry network, or the local Anvil network of the integration harness. */
   network: string;
@@ -124,6 +126,8 @@ type Deployment = Pick<
   chainId: string;
   /** Reviewed executor gas ceiling in gas units, copied from the registry into the deployment record. */
   gasCeiling: string;
+  /** Optional per-operation native gas cost bound. Existing sends retain their original bound. */
+  maxNativeCostWei?: string;
   factory: string;
   factoryCodeSha256: string;
   registrar: string;
@@ -149,6 +153,46 @@ export interface Attempt {
   transactionId: Hex;
   /** Stable vault/actor budget for the optional one-nonce test qualification. */
   bindingNonceBudgetKey?: string;
+  /** Durable one-nonce admission for this exact signed EIP-712 consent. */
+  bindingConsentBudgetKey?: string;
+  /** Immutable bound admitted before this operation's first signature. */
+  maxNativeCostWei?: string;
+}
+/** The tighter current/original limit governs new sends; absent preserves prior policy. */
+export function assertEvmNativeCost(
+  config: { maxNativeCostWei?: string },
+  transaction: { gas: bigint; maxFeePerGas: bigint; value?: bigint },
+  attempt?: Pick<Attempt, "maxNativeCostWei">,
+) {
+  const limits = [config.maxNativeCostWei, attempt?.maxNativeCostWei].filter(
+    (value) => value !== undefined,
+  );
+  for (const limit of limits)
+    if (!isMaxNativeCostWei(limit))
+      throw new Error("Invalid EVM native cost limit");
+  const cost =
+    transaction.gas * transaction.maxFeePerGas + (transaction.value ?? 0n);
+  if (
+    transaction.gas < 0n ||
+    transaction.maxFeePerGas < 0n ||
+    (transaction.value ?? 0n) < 0n ||
+    limits.some((limit) => cost > BigInt(limit))
+  )
+    throw new Error("EVM transaction exceeds native cost limit");
+}
+function assertSignedNativeCost(
+  config: { maxNativeCostWei?: string },
+  raw: Hex,
+  attempt?: Pick<Attempt, "maxNativeCostWei">,
+) {
+  const signed = parseTransaction(raw);
+  if (signed.gas === undefined || signed.maxFeePerGas === undefined)
+    throw new Error("Signed EVM gas envelope unavailable");
+  assertEvmNativeCost(
+    config,
+    { gas: signed.gas, maxFeePerGas: signed.maxFeePerGas, value: signed.value },
+    attempt,
+  );
 }
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
@@ -295,6 +339,8 @@ function selectReviewedEvmDeployment(
   if (
     !isEscrowChain(selected.chain) ||
     chainFamily(selected.chain) !== "evm" ||
+    (selected.bindingConsentNonceLimit !== undefined &&
+      selected.bindingConsentNonceLimit !== 1) ||
     !(reviewedNetwork || localChain)
   )
     throw new Error("Test deployment required");
@@ -315,6 +361,11 @@ export async function preflightEvmDeployment(
   const selected = selectReviewedEvmDeployment(env, input);
   if (!/^[1-9][0-9]{0,9}$/.test(selected.gasCeiling ?? ""))
     throw new Error("Reviewed gas ceiling required");
+  if (
+    selected.maxNativeCostWei !== undefined &&
+    !isMaxNativeCostWei(selected.maxNativeCostWei)
+  )
+    throw new Error("Invalid EVM native cost limit");
   const rpcUrls = JSON.parse(env.PAYMENT_RPC_URLS) as Record<string, string>;
   const rpcUrl = rpcUrls[input.network];
   if (typeof rpcUrl !== "string")
@@ -492,7 +543,12 @@ async function retireRevertedAttempt(
       ...current,
       revert: proof,
     });
-    if (env.BINDING_NONCE_LIMIT === 1 && key.startsWith(STORED_BINDING))
+    if (
+      key.startsWith(STORED_BINDING) &&
+      (env.BINDING_NONCE_LIMIT === 1 ||
+        config.bindingConsentNonceLimit === 1 ||
+        current.bindingConsentBudgetKey)
+    )
       return false; // Keep the consumed nonce and its revert proof held.
     await store.put(key, null);
     return true;
@@ -566,6 +622,178 @@ async function reserveBindingNonceBudget(
   return key;
 }
 
+/** Identity of the wallet-signed payload, not the caller's operation label. */
+function bindingConsentIdentity(config: Deployment, data: Hex) {
+  const { args } = decodeFunctionData({ abi: storedBindingAbi, data });
+  const [actor, destination, version, claimDigest, expiresAt] = args;
+  if (actor === 0n) throw new Error("Binding consent actor unavailable");
+  const identity = [
+    config.network,
+    config.chainId,
+    config.vault.toLowerCase(),
+    actor.toString(),
+    destination.toLowerCase(),
+    version.toString(),
+    claimDigest.toLowerCase(),
+    expiresAt.toString(),
+  ];
+  const fingerprint = digest(JSON.stringify(identity));
+  return {
+    identity,
+    fingerprint,
+    key: `bind:consent-nonce:${fingerprint.slice(2)}`,
+  };
+}
+
+type BindingConsentBudget = {
+  schema: "binding-consent-nonce-v1";
+  identity: string[];
+  fingerprint: string;
+  nonce: number;
+  transactionId: string;
+  nativeCeilingWei: string;
+};
+
+/** Retained admission is authoritative even if a later deployment disables the opt-in. */
+export async function assertBindingConsentBudget(
+  store: JournalStore,
+  config: Deployment,
+  attempt: Attempt,
+  required = config.bindingConsentNonceLimit === 1,
+) {
+  if (!attempt.bindingConsentBudgetKey) {
+    if (required)
+      throw new Error("Legacy binding consent budget requires operator review");
+    return;
+  }
+  const tx = parseTransaction(attempt.rawTransaction);
+  if (!tx.data) throw new Error("Binding consent transaction unavailable");
+  const consent = bindingConsentIdentity(config, tx.data);
+  const budget = await store.get<BindingConsentBudget>(consent.key);
+  if (
+    attempt.bindingConsentBudgetKey !== consent.key ||
+    attempt.fingerprint !== consent.fingerprint ||
+    !budget ||
+    budget.schema !== "binding-consent-nonce-v1" ||
+    JSON.stringify(budget.identity) !== JSON.stringify(consent.identity) ||
+    budget.fingerprint !== consent.fingerprint ||
+    budget.nonce !== tx.nonce ||
+    budget.transactionId !== attempt.transactionId ||
+    transactionHash(attempt.rawTransaction) !== attempt.transactionId ||
+    tx.chainId !== Number(config.chainId) ||
+    !same(tx.to ?? "", config.vault) ||
+    (tx.value ?? 0n) !== 0n ||
+    tx.gas === undefined ||
+    tx.maxFeePerGas === undefined ||
+    !/^[1-9][0-9]*$/.test(budget.nativeCeilingWei) ||
+    tx.gas * tx.maxFeePerGas > BigInt(budget.nativeCeilingWei)
+  )
+    throw new Error("Binding consent budget differs from signed attempt");
+  return budget;
+}
+
+async function assertBindingConsentCandidate(
+  store: JournalStore,
+  config: Deployment,
+  attempt: Attempt,
+  candidate: {
+    nonce?: number;
+    gas?: bigint;
+    maxFeePerGas?: bigint;
+    value?: bigint;
+  },
+) {
+  if (!attempt.bindingConsentBudgetKey) return;
+  const budget = await assertBindingConsentBudget(store, config, attempt);
+  if (
+    !budget ||
+    candidate.nonce !== budget.nonce ||
+    candidate.gas === undefined ||
+    candidate.maxFeePerGas === undefined
+  )
+    throw new Error("Binding candidate differs from its retained nonce budget");
+  assertEvmNativeCost(
+    { maxNativeCostWei: budget.nativeCeilingWei },
+    {
+      gas: candidate.gas,
+      maxFeePerGas: candidate.maxFeePerGas,
+      value: candidate.value,
+    },
+  );
+}
+
+async function unusedBindingConsent(
+  store: JournalStore,
+  config: Deployment,
+  data: Hex,
+) {
+  const consent = bindingConsentIdentity(config, data);
+  // This lookup is unconditional: disabling the opt-in cannot reset an admission.
+  if ((await store.get(consent.key)) !== undefined)
+    throw new Error(
+      "Binding consent nonce already consumed; operator review required",
+    );
+  return consent;
+}
+
+async function reserveBindingConsentBudget(
+  store: JournalStore,
+  config: Deployment,
+  data: Hex,
+) {
+  const consent = await unusedBindingConsent(store, config, data);
+  if (config.bindingConsentNonceLimit !== 1) return undefined;
+  if (!store.list) throw new Error("Binding consent history unavailable");
+  const prior = await store.list<Attempt | null>({
+    prefix: STORED_BINDING,
+    limit: 1000,
+  });
+  if (!(prior instanceof Map) || prior.size >= 1000)
+    throw new Error("Binding consent history exceeds review bound");
+  const observed = await store.list<{ key: string; attempt: Attempt }>({
+    prefix: "binding-observed:",
+    limit: 1000 - prior.size,
+  });
+  if (!(observed instanceof Map) || observed.size >= 1000 - prior.size)
+    throw new Error("Binding consent history exceeds review bound");
+  for (const [key, attempt] of prior) {
+    if (
+      attempt === null &&
+      ![...prior.keys()].some((name) => name.startsWith(`${key}:reverted:`)) &&
+      ![...observed.values()].some(
+        (record) => record?.key === key && record.attempt,
+      )
+    )
+      throw new Error("Retired binding consent history unavailable");
+  }
+  const attempts = [
+    ...prior.values(),
+    ...[...observed.values()].map((record) => {
+      if (!record?.attempt)
+        throw new Error("Binding consent history malformed");
+      return record.attempt;
+    }),
+  ];
+  for (const attempt of attempts) {
+    if (attempt === null) continue;
+    if (!attempt || typeof attempt.vault !== "string")
+      throw new Error("Binding consent history malformed");
+    if (
+      attempt.network !== config.network ||
+      !same(attempt.vault, config.vault)
+    )
+      continue;
+    const tx = parseTransaction(attempt.rawTransaction);
+    if (!tx.data) throw new Error("Binding consent history malformed");
+    if (
+      bindingConsentIdentity(config, tx.data).identity[3] ===
+      consent.identity[3]
+    )
+      await assertBindingConsentBudget(store, config, attempt, true);
+  }
+  return consent;
+}
+
 async function signAndSubmit(
   env: PublicEvmExecutorEnvironment,
   config: Deployment,
@@ -583,6 +811,8 @@ async function signAndSubmit(
   beforeBroadcast?: (attempt: Attempt) => Promise<void>,
 ) {
   let attempt = await env.JOURNAL.get<Attempt>(key);
+  if (attempt && key.startsWith(STORED_BINDING))
+    await assertBindingConsentBudget(env.JOURNAL, config, attempt);
   if (
     attempt &&
     env.BINDING_NONCE_LIMIT === 1 &&
@@ -595,6 +825,10 @@ async function signAndSubmit(
     // Empty calldata means "reconcile the journaled transaction"; it never
     // signs a new one, even when the entry was retired meanwhile.
     if (!data) throw new Error("No journaled transaction to reconcile");
+    // Refuse a consumed consent before quotes/simulation, then recheck inside
+    // the atomic admission below so concurrent invocations cannot race it.
+    if (key.startsWith(STORED_BINDING))
+      await unusedBindingConsent(env.JOURNAL, config, data as Hex);
     const chainNonce = Number(
       BigInt(
         (await rpc(config, "eth_getTransactionCount", [
@@ -621,6 +855,7 @@ async function signAndSubmit(
       10n;
     if (gas > BigInt(config.gasCeiling))
       throw new Error("Gas exceeds narrow operation policy");
+    assertEvmNativeCost(config, { gas, maxFeePerGas: maxFee });
     const nonceKey = `nonce:${config.chainId}:${env.SIGNER.address.toLowerCase()}`;
     attempt = await env.JOURNAL.transaction(async (store) => {
       if (await store.get(`retired:${input.network}:${input.idempotencyKey}`))
@@ -631,8 +866,15 @@ async function signAndSubmit(
           throw new Error("Idempotency collision");
         if (env.BINDING_NONCE_LIMIT === 1 && key.startsWith(STORED_BINDING))
           await assertBindingNonceBudget(store, existing);
+        if (key.startsWith(STORED_BINDING))
+          await assertBindingConsentBudget(store, config, existing);
         return existing;
       }
+      const consent = key.startsWith(STORED_BINDING)
+        ? await reserveBindingConsentBudget(store, config, data as Hex)
+        : undefined;
+      if (consent && fingerprint !== consent.fingerprint)
+        throw new Error("Binding consent operation differs");
       const bindingNonceBudgetKey =
         env.BINDING_NONCE_LIMIT === 1 && key.startsWith(STORED_BINDING)
           ? await reserveBindingNonceBudget(store, config, input.githubUserId)
@@ -653,6 +895,7 @@ async function signAndSubmit(
         data: data as Hex,
         value: 0n,
       });
+      assertSignedNativeCost(config, rawTransaction);
       const next = {
         ...(input.obligationId
           ? { obligationId: input.obligationId }
@@ -663,7 +906,29 @@ async function signAndSubmit(
         rawTransaction,
         transactionId: transactionHash(rawTransaction),
         ...(bindingNonceBudgetKey ? { bindingNonceBudgetKey } : {}),
+        ...(consent ? { bindingConsentBudgetKey: consent.key } : {}),
+        ...(config.maxNativeCostWei === undefined
+          ? {}
+          : { maxNativeCostWei: config.maxNativeCostWei }),
       };
+      if (consent) {
+        const gasEnvelope = BigInt(config.gasCeiling) * 10_000_000_000n;
+        const nativeEnvelope =
+          next.maxNativeCostWei === undefined
+            ? gasEnvelope
+            : BigInt(next.maxNativeCostWei);
+        await store.put<BindingConsentBudget>(consent.key, {
+          schema: "binding-consent-nonce-v1",
+          identity: consent.identity,
+          fingerprint,
+          nonce,
+          transactionId: next.transactionId,
+          // Includes any permitted same-nonce fee/cancellation competitor.
+          nativeCeilingWei: String(
+            nativeEnvelope < gasEnvelope ? nativeEnvelope : gasEnvelope,
+          ),
+        });
+      }
       if (bindingNonceBudgetKey)
         await store.put(bindingNonceBudgetKey, {
           nonce,
@@ -698,7 +963,7 @@ async function signAndSubmit(
   await beforeBroadcast?.(attempt);
   if (env.FEE_BUMP)
     return replaceUnderpricedAttempt(env, env.FEE_BUMP, config, key, attempt);
-  await broadcast(config, attempt);
+  await broadcast(config, attempt, attempt, env.JOURNAL);
   return { transactionId: attempt.transactionId };
 }
 
@@ -706,7 +971,16 @@ async function signAndSubmit(
 async function broadcast(
   config: Deployment,
   signed: { rawTransaction: Hex; transactionId: Hex },
+  original: Attempt,
+  journal: JournalStore,
 ) {
+  assertSignedNativeCost(config, signed.rawTransaction, original);
+  await assertBindingConsentCandidate(
+    journal,
+    config,
+    original,
+    parseTransaction(signed.rawTransaction),
+  );
   try {
     const sent = await rpc(config, "eth_sendRawTransaction", [
       signed.rawTransaction,
@@ -796,6 +1070,7 @@ async function verifiedReplacements(
   record: FeeReplacements,
 ) {
   const original = parseTransaction(attempt.rawTransaction);
+  assertSignedNativeCost({}, attempt.rawTransaction, attempt);
   if (
     !attempt.rawTransaction.startsWith("0x02") ||
     typeof original.nonce !== "number" ||
@@ -817,6 +1092,8 @@ async function verifiedReplacements(
   };
   for (const item of record.replacements) {
     const signed = parseTransaction(item.rawTransaction);
+    // Historical envelopes use the bound recorded at admission, not a later config change.
+    assertSignedNativeCost({}, item.rawTransaction, attempt);
     const expected = nextReplacementFees(fees, latest);
     if (
       !item.rawTransaction.startsWith("0x02") ||
@@ -881,7 +1158,9 @@ async function replaceUnderpricedAttempt(
   } = await verifiedReplacements(env, config, attempt, record);
   // Report a wait after the latest verified bytes were offered again.
   const waiting = async (reason: string): Promise<never> => {
-    await broadcast(config, latest).catch(() => undefined);
+    await broadcast(config, latest, attempt, env.JOURNAL).catch(
+      () => undefined,
+    );
     throw new Error(reason);
   };
   let baseFee: bigint;
@@ -901,7 +1180,7 @@ async function replaceUnderpricedAttempt(
     baseFee <= latest.maxFeePerGas ||
     now.getTime() - Date.parse(latest.signedAt) < FEE_BUMP_POLICY.waitMs
   ) {
-    await broadcast(config, latest);
+    await broadcast(config, latest, attempt, env.JOURNAL);
     return { transactionId: latest.transactionId };
   }
   const fees = nextReplacementFees(originalFees, latest);
@@ -909,6 +1188,27 @@ async function replaceUnderpricedAttempt(
     return waiting(
       "Fee replacement cap reached; journaled attempts wait for a lower network fee",
     );
+  if (
+    (config.maxNativeCostWei !== undefined ||
+      attempt.maxNativeCostWei !== undefined) &&
+    fees.maxFeePerGas < baseFee
+  )
+    return waiting("Current base fee exceeds the permitted replacement fee");
+  try {
+    assertEvmNativeCost(
+      config,
+      { gas: original.gas as bigint, ...fees, value: original.value },
+      attempt,
+    );
+    await assertBindingConsentCandidate(env.JOURNAL, config, attempt, {
+      nonce: original.nonce,
+      gas: original.gas,
+      ...fees,
+      value: original.value,
+    });
+  } catch {
+    return waiting("Fee replacement exceeds the operation's native cost limit");
+  }
   if ((original.gas as bigint) > BigInt(config.gasCeiling))
     return waiting(
       "Registry gas ceiling is now below the journaled gas limit; no fee replacement is signed",
@@ -936,6 +1236,12 @@ async function replaceUnderpricedAttempt(
         JSON.stringify(await store.get(key)) !== JSON.stringify(attempt)
       )
         throw new Error("Journaled attempt changed before fee replacement");
+      await assertBindingConsentCandidate(store, config, attempt, {
+        nonce: original.nonce,
+        gas: original.gas,
+        ...fees,
+        value: original.value,
+      });
       const rawTransaction = await sign(
         {
           type: "eip1559",
@@ -949,6 +1255,7 @@ async function replaceUnderpricedAttempt(
         },
         attempt.transactionId,
       );
+      assertSignedNativeCost(config, rawTransaction, attempt);
       const next = {
         rawTransaction,
         transactionId: transactionHash(rawTransaction),
@@ -967,7 +1274,7 @@ async function replaceUnderpricedAttempt(
       `Fee replacement waits: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  await broadcast(config, replacement);
+  await broadcast(config, replacement, attempt, env.JOURNAL);
   return { transactionId: replacement.transactionId };
 }
 
@@ -1617,17 +1924,24 @@ export async function bindStoredDestination(
     current.claimDigest === input.claimDigest
   )
     return { state: "current" };
-  const operation = digest(
-    JSON.stringify([
-      deployment.chainId,
-      input.vault.toLowerCase(),
-      input.githubUserId,
-      input.claimId,
-      input.claimDigest,
-      input.destination.toLowerCase(),
-      current.version,
-    ]),
-  );
+  const scopedData =
+    deployment.bindingConsentNonceLimit === 1
+      ? await storedBindingCalldata(env, deployment, input, current.version)
+      : undefined;
+  if (scopedData === null) return { state: "waiting" };
+  const operation = scopedData
+    ? bindingConsentIdentity(deployment, scopedData as Hex).fingerprint
+    : digest(
+        JSON.stringify([
+          deployment.chainId,
+          input.vault.toLowerCase(),
+          input.githubUserId,
+          input.claimId,
+          input.claimDigest,
+          input.destination.toLowerCase(),
+          current.version,
+        ]),
+      );
   const key = `${STORED_BINDING}${operation.slice(2)}`;
   const journaled = { ...input, idempotencyKey: operation.slice(2) };
   const existing = await env.JOURNAL.get<Attempt | null>(key);
@@ -1660,12 +1974,9 @@ export async function bindStoredDestination(
   if ((await obligation(deployment, authorization)).paid)
     throw new Error("Award already paid");
   await authorizeBindingVersion(env, input, current, "none");
-  const data = await storedBindingCalldata(
-    env,
-    deployment,
-    input,
-    current.version,
-  );
+  const data =
+    scopedData ??
+    (await storedBindingCalldata(env, deployment, input, current.version));
   if (!data) return { state: "waiting" };
   // The signing transaction also adds the key to the pending list, so the
   // signed bytes are reconciled even after this contributor stops being a
@@ -1738,17 +2049,19 @@ async function storedBindingIntent(
   if (!candidate)
     throw new Error("Stored binding claim unavailable; signed attempt held");
   const input: BindingRequest = { ...candidate, idempotencyKey: null };
-  const fingerprint = digest(
-    JSON.stringify([
-      deployment.chainId,
-      input.vault.toLowerCase(),
-      input.githubUserId,
-      input.claimId,
-      input.claimDigest,
-      input.destination.toLowerCase(),
-      version.toString(),
-    ]),
-  );
+  const fingerprint = attempt.bindingConsentBudgetKey
+    ? bindingConsentIdentity(deployment, transaction.data).fingerprint
+    : digest(
+        JSON.stringify([
+          deployment.chainId,
+          input.vault.toLowerCase(),
+          input.githubUserId,
+          input.claimId,
+          input.claimDigest,
+          input.destination.toLowerCase(),
+          version.toString(),
+        ]),
+      );
   if (
     fingerprint !== attempt.fingerprint ||
     key !== `${STORED_BINDING}${fingerprint.slice(2)}` ||
@@ -1833,6 +2146,7 @@ async function cancelObsoleteStoredBinding(
     );
   // Canonical receipts win over current D1 state, including after a lost send.
   if ((await observe()).state !== "pending") return { settled: true };
+  await assertBindingConsentBudget(env.JOURNAL, deployment, attempt);
   await assertIdentitySigner(env, deployment);
   const {
     input,
@@ -1893,12 +2207,23 @@ async function cancelObsoleteStoredBinding(
       quote > bump(original.maxFeePerGas) ? quote : bump(original.maxFeePerGas);
     if (maxFee > 10_000_000_000n || priority > maxFee)
       throw new Error("Cancellation exceeds signer gas fee policy");
+    assertEvmNativeCost(
+      deployment,
+      { gas: 21_000n, maxFeePerGas: maxFee },
+      attempt,
+    );
+    await assertBindingConsentCandidate(env.JOURNAL, deployment, attempt, {
+      nonce,
+      gas: 21_000n,
+      maxFeePerGas: maxFee,
+    });
     if (
       (await rpc(deployment, "eth_getCode", [env.SIGNER.address, "latest"])) !==
       "0x"
     )
       throw new Error("Cancellation requires a plain signer account");
     cancellation = await env.JOURNAL.transaction(async (store) => {
+      await assertBindingConsentBudget(store, deployment, attempt);
       const retained = await store.get<BindingCancellation>(archiveKey);
       if (retained) return retained;
       if (
@@ -1909,6 +2234,11 @@ async function cancelObsoleteStoredBinding(
         ))
       )
         throw new Error("Binding changed before cancellation signing");
+      await assertBindingConsentCandidate(store, deployment, attempt, {
+        nonce,
+        gas: 21_000n,
+        maxFeePerGas: maxFee,
+      });
       const rawTransaction = await env.SIGNER.signTransaction({
         type: "eip1559",
         chainId: Number(deployment.chainId),
@@ -1920,6 +2250,7 @@ async function cancelObsoleteStoredBinding(
         value: 0n,
         data: "0x",
       });
+      assertSignedNativeCost(deployment, rawTransaction, attempt);
       const next = {
         original: attempt,
         reason,
@@ -1932,6 +2263,8 @@ async function cancelObsoleteStoredBinding(
     });
   }
   const signed = parseTransaction(cancellation.rawTransaction);
+  assertSignedNativeCost(deployment, cancellation.rawTransaction, attempt);
+  await assertBindingConsentCandidate(env.JOURNAL, deployment, attempt, signed);
   if (
     JSON.stringify(cancellation.original) !== JSON.stringify(attempt) ||
     !cancellation.rawTransaction.startsWith("0x02") ||
@@ -2031,6 +2364,7 @@ async function reconcileStoredBinding(
   }
   if (env.BINDING_NONCE_LIMIT === 1)
     await assertBindingNonceBudget(env.JOURNAL, attempt);
+  await assertBindingConsentBudget(env.JOURNAL, deployment, attempt);
   const cancellation = await cancelObsoleteStoredBinding(
     env,
     deployment,

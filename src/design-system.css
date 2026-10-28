@@ -9,6 +9,22 @@ body {
   color: var(--ink);
 }
 
+/* Short routes fill the viewport; long routes keep the footer in document flow. */
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+#root > .skip-target {
+  flex: 1;
+}
+
+#root > .site-header,
+#root > .site-footer {
+  flex-shrink: 0;
+}
+
 ::selection {
   background: var(--orange);
   color: var(--on-accent);
