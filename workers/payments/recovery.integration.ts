@@ -231,13 +231,27 @@ try {
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
-      const chain = new URL(request.url).pathname.split("/")[1];
-      assert.equal(
-        new URL(request.url).pathname,
-        `/${chain}/v1/attempt-status`,
-      );
+      const parts = new URL(request.url).pathname.split("/");
+      const chain = parts[1];
+      const route = `${parts[2]}/${parts[3]}`;
       assert.equal(request.method, "POST");
-      assert.deepEqual(await request.json(), {
+      assert(["v1/attempt-status", "v1/cancel-unsubmitted"].includes(route));
+      const body = (await request.json()) as {
+        idempotencyKey: string;
+        obligationId: string;
+        network: string;
+        vault: string;
+      };
+      if (body.idempotencyKey === "attempt-lease") {
+        assert.equal(body.obligationId, "obligation-lease");
+        return Response.json(
+          route === "v1/cancel-unsubmitted"
+            ? { retired: true, transactionId: null }
+            : { transactionId: null },
+        );
+      }
+      assert.equal(route, "v1/attempt-status");
+      assert.deepEqual(body, {
         idempotencyKey: `attempt-${chain}`,
         obligationId: `obligation-${chain}`,
         network: `${chain}-local`,
@@ -363,6 +377,108 @@ try {
       )
       .get()?.count,
     0,
+  );
+  // A dispatcher that already took the outbox lease and wrote its prepared
+  // attempt is mid-submit. Retirement of that attempt must not free the lease:
+  // the dispatcher's own completion batch matches on the lease token, and its
+  // attempt update does not accept the failed state retirement writes.
+  sql
+    .query(
+      "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "old-lease",
+      "303",
+      "fixture-lease",
+      "0x0000000000000000000000000000000000000002",
+      "d1_registry",
+      "9".repeat(64),
+      timestamp,
+      "8".repeat(64),
+      null,
+      timestamp,
+      "base",
+    );
+  sql
+    .query(
+      "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'reserved',?)",
+    )
+    .run(
+      "obligation-lease",
+      "fixture-lease",
+      "303",
+      "base-local",
+      "base",
+      "vault-lease",
+      "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      6,
+      "100000000",
+      "2000000",
+      "7".repeat(64),
+      timestamp,
+    );
+  sql
+    .query(
+      "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES(?,?,?,?,'prepared')",
+    )
+    .run("attempt-lease", "obligation-lease", "old-lease", timestamp);
+  // The worker compares the lease against the real clock, not the fixture one.
+  const leaseUntil = new Date(Date.now() + 60_000).toISOString();
+  sql
+    .query(
+      "INSERT INTO payment_outbox(obligation_id,state,lease_token,lease_until,updated_at) VALUES(?,'processing',?,?,?)",
+    )
+    .run("obligation-lease", "lease-holder", leaseUntil, timestamp);
+  sql
+    .query(
+      "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "successor-lease",
+      "303",
+      "fixture-lease",
+      "0x0000000000000000000000000000000000000003",
+      "d1_registry",
+      "6".repeat(64),
+      timestamp,
+      "5".repeat(64),
+      "old-lease",
+      timestamp,
+      "base",
+    );
+  sql
+    .query(
+      "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES(?,?,?,?,?,?)",
+    )
+    .run(
+      "challenge-lease",
+      "successor-lease",
+      "303",
+      "lease fixture",
+      expiresAt,
+      timestamp,
+    );
+  sql
+    .query(
+      "INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,?,?)",
+    )
+    .run("successor-lease", "303", timestamp, "challenge-lease", "signature");
+  await recoverUncertainAttempts(env);
+  assert.deepEqual(
+    sql
+      .query<
+        { attemptState: string; lease: string | null; outboxState: string },
+        []
+      >(
+        "SELECT a.state attemptState,b.lease_token lease,b.state outboxState FROM payment_attempts a JOIN payment_outbox b ON b.obligation_id=a.obligation_id WHERE a.id='attempt-lease'",
+      )
+      .get(),
+    {
+      attemptState: "failed",
+      lease: "lease-holder",
+      outboxState: "processing",
+    },
+    "Retiring an attempt must leave the dispatcher's live lease in place",
   );
   console.log(
     "Payment recovery integration passed: Base outage remains reported; held Solana attempt recovers durably; restored Base recovers once. Local journal evidence only, no chain submission or finality.",

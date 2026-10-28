@@ -169,9 +169,15 @@ export async function recoverUncertainAttempts(
             env.PAYMENTS_DB.prepare(
               "UPDATE payment_attempts SET state='failed' WHERE id=? AND transaction_id IS NULL AND state IN ('prepared','unknown')",
             ).bind(attempt.idempotencyKey),
+            // A dispatcher may be mid-submit under a live lease: keep it, so
+            // its own completion batch still matches the token.
             env.PAYMENTS_DB.prepare(
-              "UPDATE payment_outbox SET state='ready',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state!='paid'",
-            ).bind(new Date().toISOString(), attempt.obligationId),
+              "UPDATE payment_outbox SET state='ready',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state!='paid' AND NOT (state='processing' AND lease_until IS NOT NULL AND lease_until > ?)",
+            ).bind(
+              new Date().toISOString(),
+              attempt.obligationId,
+              new Date().toISOString(),
+            ),
           ]);
           continue;
         }
