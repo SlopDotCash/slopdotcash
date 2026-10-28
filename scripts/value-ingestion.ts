@@ -749,7 +749,12 @@ export async function loadParticipationBans(
   try {
     body = (await response.json()) as typeof body;
   } catch (error) {
-    if (error instanceof TypeError) throw new ValueFeedUnavailableError(error);
+    if (
+      error instanceof TypeError ||
+      (error instanceof DOMException &&
+        (error.name === "TimeoutError" || error.name === "AbortError"))
+    )
+      throw new ValueFeedUnavailableError(error);
     throw error;
   }
   if (
