@@ -23,7 +23,11 @@ import {
   publishValueAssessment,
 } from "./value-publication";
 import type { ValueAssessmentResult } from "./value-review";
-import { historicalSubscriptionSource } from "./value-settings";
+import {
+  historicalSubscriptionSource,
+  subscriptionCutoff,
+  type ValueSettingsEnv,
+} from "./value-settings";
 import {
   prepareWorkUnitEvidence,
   type WorkUnitSource,
@@ -45,7 +49,7 @@ const digests = (value: unknown): value is string[] =>
  * The existing publishers re-read GitHub and enforce journal predecessors.
  */
 export async function importSubscriptionAssessment(
-  env: ReviewEnv & { SLOPBOT_PRODUCER_REVISION?: string },
+  env: ReviewEnv & ValueSettingsEnv & { SLOPBOT_PRODUCER_REVISION?: string },
   input: unknown,
   bundle?: ReadableStream<Uint8Array>,
 ) {
@@ -148,7 +152,7 @@ export async function importSubscriptionAssessment(
       selection.number,
       repository,
     );
-    if (!historicalSubscriptionSource(collected.pull))
+    if (!historicalSubscriptionSource(collected.pull, subscriptionCutoff(env)))
       throw new Error(
         "Subscription intake covers only work accepted before the API start",
       );
