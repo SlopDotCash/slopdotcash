@@ -2700,13 +2700,11 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
           </p>
         </div>
       </form>
-      {current.securityBounty ? (
-        <p id="security-settings">
-          <Link href={`/projects/${current.slug}/security#security-settings`}>
-            Manage security program and private bounty funds
-          </Link>
-        </p>
-      ) : null}
+      <p id="security-settings">
+        <Link href={`/projects/${current.slug}/security#security-settings`}>
+          Manage security program and private bounty funds
+        </Link>
+      </p>
       {!monthly ? (
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>

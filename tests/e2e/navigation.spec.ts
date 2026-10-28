@@ -9,6 +9,9 @@ const { site } = deploymentOrigins(
 );
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/.well-known/slop/projects.json", (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
+  );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({ json: { session: null } }),
   );
