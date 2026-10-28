@@ -46,7 +46,9 @@ interface Row {
  * Collapses one outbox state into what the recipient may see. No address,
  * destination digest, provider reference or case detail leaves the outbox.
  * A suppressed row (opt-out, revoked role or no destination) sent nothing and
- * reports nothing, so it cannot reveal why a private notice was withheld.
+ * reports nothing, so it cannot reveal why a private notice was withheld. A
+ * row that exhausted its attempts without ever holding a destination asked
+ * no provider either, so the query reads it as suppressed.
  */
 function emailDelivery(state: string | null): EmailDelivery | null {
   switch (state) {
@@ -177,10 +179,12 @@ export async function handleNotificationsApi(
                       WHERE s.event_key = notifications.event_key AND s.recipient_github_id = notifications.recipient_github_id
                         AND s.template_version = 'security-inbox-v1') AS acknowledged_at,
                     COALESCE(
-                      (SELECT state FROM security_notification_outbox s
+                      (SELECT CASE WHEN s.state = 'exhausted' AND s.destination_digest IS NULL THEN 'suppressed' ELSE s.state END
+                        FROM security_notification_outbox s
                         WHERE s.event_key = notifications.event_key AND s.recipient_github_id = notifications.recipient_github_id
                           AND s.template_version IN ('security-inbox-v1','security-receipt-v1')),
-                      (SELECT state FROM activity_notification_outbox a
+                      (SELECT CASE WHEN a.state = 'exhausted' AND a.destination_digest IS NULL THEN 'suppressed' ELSE a.state END
+                        FROM activity_notification_outbox a
                         WHERE a.event_key = notifications.event_key AND a.recipient_github_id = notifications.recipient_github_id
                           AND a.template_version = 'activity-inbox-v1')) AS delivery_state
                FROM notifications WHERE recipient_github_id = ?

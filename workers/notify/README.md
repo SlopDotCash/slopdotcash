@@ -157,8 +157,10 @@ upload/deploy does not apply cron triggers. The approved pilot release must
 also apply that trigger through the protected workflow and verify the actual
 trigger and a successful scheduled invocation. A secret and binding alone do
 not establish scheduling. It reads current case roles again before each send.
-Revoked roles are suppressed. A missing verified destination retries at one,
-two, four and eight minutes, then exhausts after five attempts. The per-event,
+Revoked roles are suppressed, and so is a recipient with no verified
+destination: nothing can be sent and the inbox shows no email state for the
+notice. A verified destination not yet in effect retries at one, two, four and
+eight minutes, then exhausts after five attempts. The per-event,
 recipient and template key prevents duplicate queue insertion; an atomic claim
 prevents concurrent dispatch. Each message has one recipient and a stable
 opaque per-attempt Message-ID, a generic subject and body, and the authenticated inbox
