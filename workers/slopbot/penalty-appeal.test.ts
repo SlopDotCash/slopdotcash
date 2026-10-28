@@ -138,6 +138,7 @@ type Run = {
   labels: string[];
   sql: (q: string) => unknown;
   suspendInstallation: (value: boolean) => void;
+  unregisterRepository: () => void;
   /** The worker's public HTTP routes, served in process. */
   feed: typeof fetch;
   job: (kind: string, extra: Record<string, unknown>) => Job;
@@ -929,6 +930,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           "UPDATE slopbot_installations SET suspended_at = ? WHERE installation_id = 1",
           [value ? new Date().toISOString() : null],
         ),
+      unregisterRepository: () =>
+        sqlite.run("DELETE FROM project_repositories"),
       ban: () =>
         seedParticipationBan(
           sqlite,
@@ -1741,6 +1744,37 @@ test("a due appeal is not consumed while the installation is suspended", async (
       { draft: "deny", escalated: 1, resolution: null, resolved_by: null },
     ]);
     expect(run.labels).toContain("slopbot: moderator");
+    expect(await run.tick()).toEqual([]);
+  });
+});
+
+test("a due appeal still escalates when the repository leaves the registry", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    const start = Date.now();
+    run.unregisterRepository();
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = await run.tick();
+    expect(due.map((j) => j.kind)).toEqual(["appeal_due"]);
+    // The refusal is permanent, so waiting cannot clear it: the escalation
+    // is recorded with its database-only moderator notices, and only the
+    // publication (which needs the session) is skipped — the appeal is not
+    // re-queued daily forever.
+    expect(await run.deliver(due[0])).toBe(
+      "appeal escalated; repository is not registered in the Slop registry",
+    );
+    expect(run.sql(APPEAL)).toEqual([
+      { draft: "deny", escalated: 1, resolution: null, resolved_by: null },
+    ]);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM notifications WHERE kind = 'slopbot_appeal_review'",
+      ),
+    ).toEqual([{ n: 1 }]);
+    expect(run.labels).not.toContain("slopbot: moderator");
     expect(await run.tick()).toEqual([]);
   });
 });
