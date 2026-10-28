@@ -8,10 +8,9 @@ import {
   SolanaFundingError,
   type SolanaFundingIntent,
 } from "../../contracts/solana/funding";
-import { readBoundedJson } from "../../src/lib/browser-json";
 import { parseVaultAmount } from "../../src/lib/payments/vault-amount";
 import { isWalletAddress } from "../../src/lib/wallets";
-import { json } from "../http";
+import { json, readJsonObject } from "../http";
 
 /** The caller controls access and resolves only its own registry scope. */
 export async function handleSolanaFunding(
@@ -25,11 +24,7 @@ export async function handleSolanaFunding(
     },
   ) => Promise<SolanaEscrowConfig>,
 ): Promise<Response> {
-  const body = (await readBoundedJson(
-    request,
-    4096,
-    "vault funding action",
-  )) as Record<string, unknown>;
+  const body = await readJsonObject(request, 4096, "vault funding action");
   if (
     !body ||
     (body.step !== "review" && body.step !== "check") ||
