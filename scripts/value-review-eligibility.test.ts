@@ -39,6 +39,8 @@ function build(input: {
   author: GitHubActor;
   submittedAt: string;
   assessedReview?: boolean;
+  implementationActor?: boolean;
+  wrongHead?: boolean;
 }) {
   const census = penaltyScoreInput([], GENERATED_AT);
   const pull = census.mergedPullRequests.find(
@@ -58,15 +60,19 @@ function build(input: {
     },
   ];
   census.detailEligibleMergedPullRequestIds = [];
+  if (input.implementationActor)
+    census.valueActors = new Map([[input.author.id, input.author]]);
   // Only the fields the review allocation reads; the journal record itself
   // is validated by readValueDecision before a snapshot is generated.
   const decision = {
     status: "assessed",
-    implementationActorNodeIds: [],
+    implementationActorNodeIds: input.implementationActor
+      ? [input.author.id]
+      : [],
     record: {
       pullRequestNodeId: pull.id,
       repository: "elizaOS/asi",
-      headSha: pull.headRefOid,
+      headSha: input.wrongHead ? "0".repeat(40) : pull.headRefOid,
       occurredAt: pull.mergedAt,
       assessment: { tier: "medium", reviews: [] },
     },
@@ -147,4 +153,30 @@ test("a qualifying human review keeps its credit", () => {
   );
   expect(reviews.map((event) => event.actor.login)).toEqual(["reviewer"]);
   expect(reviews[0]?.scoreThirds).toBeGreaterThan(0);
+});
+
+test("a missing eligible human assessment still refuses the snapshot", () => {
+  expect(() =>
+    build({ author: human, submittedAt: REVIEWED_AT, assessedReview: false }),
+  ).toThrow("Value decision omitted a collected formal review");
+});
+
+test("a mismatched assessment head still refuses the snapshot", () => {
+  expect(() =>
+    build({ author: human, submittedAt: REVIEWED_AT, wrongHead: true }),
+  ).toThrow();
+});
+
+test("an assessed implementation actor receives no review credit", () => {
+  const snapshot = build({
+    author: human,
+    submittedAt: REVIEWED_AT,
+    implementationActor: true,
+  });
+  expect(
+    (snapshot.reviewExclusions ?? []).map((entry) => entry.reason),
+  ).toEqual(["self-review"]);
+  expect(
+    snapshot.ledger.filter((event) => event.category === "substantive-review"),
+  ).toEqual([]);
 });
