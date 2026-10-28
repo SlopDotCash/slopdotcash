@@ -3128,3 +3128,24 @@ test("an appeal draft never reuses a different finding's confidence as confidenc
     expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
   });
 });
+
+test("a delayed old-head reopen never reverses a later head's close and debit", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    // The maintainer reopen covers head b; its delivery is delayed.
+    const reopened = await run.reopen();
+    // The author pushes head d, and Slopbot closes d with a debit.
+    run.head("d".repeat(40));
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 60_000));
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    const before = run.writes.length;
+    expect(await run.deliver(reopened)).toBe(
+      "human_reopen; newer item state kept",
+    );
+    // The old-head decision is recorded, but the later debit stands.
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    expect(run.writes).toHaveLength(before);
+    expect(run.currentState()).toBe("closed");
+  });
+});
