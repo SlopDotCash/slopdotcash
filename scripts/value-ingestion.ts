@@ -745,10 +745,13 @@ export async function loadParticipationBans(
     throw new ValueFeedUnavailableError(`HTTP ${response.status}`);
   if (response.status !== 200 || response.redirected)
     throw new Error("The account ban feed is unavailable");
-  const body = (await response.json()) as {
-    schemaVersion?: unknown;
-    bans?: unknown;
-  };
+  let body: { schemaVersion?: unknown; bans?: unknown };
+  try {
+    body = (await response.json()) as typeof body;
+  } catch (error) {
+    if (error instanceof TypeError) throw new ValueFeedUnavailableError(error);
+    throw error;
+  }
   if (
     body?.schemaVersion !== "slop-account-bans:v1" ||
     !Array.isArray(body.bans) ||
