@@ -275,6 +275,9 @@ export function useProjectSession(
 export function useProjectMaintainer(projectId: string) {
   const session = useProjectSession();
   const [verified, setVerified] = useState<string | null>(null);
+  // The identity whose maintainer check has answered, allowed or not, so a
+  // signed-in visitor sees "checking" rather than a refusal while it runs.
+  const [settled, setSettled] = useState<string | null>(null);
   const identity =
     session.status === "signed-in"
       ? `${projectId}:${session.session.githubId}`
@@ -282,16 +285,21 @@ export function useProjectMaintainer(projectId: string) {
   useEffect(() => {
     let active = true;
     setVerified(null);
+    setSettled(null);
     if (identity) {
       void projectApiRequest(
         "GET",
         `project-setup/${encodeURIComponent(projectId)}`,
       ).then(
         () => {
-          if (active) setVerified(identity);
+          if (!active) return;
+          setVerified(identity);
+          setSettled(identity);
         },
         () => {
-          if (active) setVerified(null);
+          if (!active) return;
+          setVerified(null);
+          setSettled(identity);
         },
       );
     }
@@ -301,7 +309,9 @@ export function useProjectMaintainer(projectId: string) {
   }, [projectId, identity]);
   return {
     allowed: identity !== null && verified === identity,
-    checking: session.status === "checking",
+    checking:
+      session.status === "checking" ||
+      (identity !== null && settled !== identity),
     session,
   };
 }

@@ -126,7 +126,19 @@ test("public vault payments retain the recorded work month and net asset amount 
       },
     ]);
     expect(JSON.stringify(result.body)).not.toContain("githubUserId");
-    expect((await f.read("actors/999/vault-payments")).status).toBe(404);
+    // A private or closed member reads exactly like a public member without
+    // payments, so the response cannot reveal the membership.
+    const hidden = await f.read("actors/999/vault-payments");
+    expect(hidden.status).toBe(200);
+    expect(hidden.body).toEqual({
+      payments: [],
+      through: result.body.through,
+      next: null,
+      total: 0,
+    });
+    expect((await f.read("actors/456/vault-payments")).body).toEqual(
+      hidden.body,
+    );
     expect((await f.read("actors/123/vault-payments")).body.payments).toEqual(
       result.body.payments,
     );

@@ -808,8 +808,16 @@ test("shows the suggested amount for a walletless cycle still under review", asy
 test("project settings require a signed-in maintainer", async ({ page }) => {
   for (const id of ["eliza", "asi"]) {
     await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
-    await expect(page.getByRole("status")).toContainText(
-      "Project settings are available only to signed-in maintainers.",
+    await expect(
+      page.getByText(
+        "Sign in with a maintainer account to change project settings.",
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Sign in with GitHub" }),
+    ).toHaveAttribute(
+      "href",
+      new RegExp(`next=${encodeURIComponent(`/projects/${id}/manage`)}$`),
     );
     await expect(page.getByLabel("Short description")).toHaveCount(0);
     await expect(
@@ -1936,6 +1944,10 @@ test("refuses retired and unknown paths and recovers to projects", async ({
     ).toBeVisible();
     await expect(page).toHaveTitle("Page not found · Slop");
     await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+      "content",
+      "noindex",
+    );
     await expect(page.locator(".receipt-record")).toHaveCount(0);
     await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
     await page
@@ -1946,5 +1958,19 @@ test("refuses retired and unknown paths and recovers to projects", async ({
       "href",
       "https://slop.cash/",
     );
+    await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
   }
+});
+
+test("an unknown project is a noindex page with no canonical", async ({
+  page,
+}) => {
+  await page.goto("/projects/no-such-project");
+  await expect(page.getByText("This project isn't listed.")).toBeVisible();
+  await expect(page).toHaveTitle("Page not found · Slop");
+  await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+    "content",
+    "noindex",
+  );
 });
