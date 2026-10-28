@@ -90,13 +90,10 @@ export async function inspectIsolatedArtifacts(input: {
       gap("Isolated output was not UTF-8");
       continue;
     }
-    if (
-      !inventory.add(
-        `execution:${evidence.runId}`,
-        JSON.stringify({ ...evidence, stdout, stderr }),
-      )
-    )
-      gap("Execution evidence exceeds the review inventory limit");
+    inventory.add(
+      `execution:${evidence.runId}`,
+      JSON.stringify({ ...evidence, stdout, stderr }),
+    );
   }
   inventory.finish(
     [...gaps].map(([reason, count]) => `${reason}: ${count} artifact records`),
