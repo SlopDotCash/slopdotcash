@@ -118,7 +118,6 @@ let acquisitionRequests: { host: string; authorization: string | null }[];
 let publicGitHubLimit: number;
 /** The inventory items the primary reviewer last received. */
 let reviewedItems: { id: string; text: string }[] = [];
-let sourceResponse: "normal" | "oversized" | "truncated" = "normal";
 /** What the synthetic Surplus provider answers on each transport. */
 let provider: {
   up: boolean;
@@ -129,13 +128,15 @@ let provider: {
   calls: { path: string; model: string; authorization: string | null }[];
 };
 
-const git = (...args: string[]) => {
+const gitWith = (input: string | undefined, ...args: string[]) => {
   const output = spawnSync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
     cwd: repository,
+    input,
   });
   if (output.status !== 0) throw new Error(output.stderr.toString());
   return output.stdout;
 };
+const git = (...args: string[]) => gitWith(undefined, ...args);
 
 /** Commits files to the fixture repository; the live pin follows it. */
 async function commit(
@@ -312,7 +313,7 @@ function projectApi(request: Request) {
   }) as Promise<Response>;
 }
 
-/** The GitHub REST reads of acquisition and flag eligibility. */
+/** The GitHub REST reads of repository identity and flag eligibility. */
 function github(url: URL): Response {
   const path = url.pathname;
   if (path === "/repos/example/open-registry")
@@ -322,40 +323,6 @@ function github(url: URL): Response {
       full_name: "example/open-registry",
       private: false,
     });
-  const object =
-    /^\/repos\/example\/open-registry\/git\/(commits|trees|blobs)\/([0-9a-f]{40})$/u.exec(
-      path,
-    );
-  if (object?.[1] === "commits")
-    return Response.json({
-      sha: object[2],
-      tree: { sha: git("rev-parse", `${object[2]}^{tree}`).toString().trim() },
-    });
-  if (object?.[1] === "trees" && sourceResponse === "oversized")
-    return new Response(new Uint8Array(4 * 1024 * 1024 + 1));
-  if (object?.[1] === "trees")
-    return Response.json({
-      sha: object[2],
-      truncated: sourceResponse === "truncated",
-      tree: git("ls-tree", "-r", "-t", object[2])
-        .toString()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => {
-          const [meta, entryPath] = line.split("\t");
-          const [mode, type, sha] = meta.split(" ");
-          return { path: entryPath, mode, type, sha };
-        }),
-    });
-  if (object?.[1] === "blobs") {
-    const bytes = git("cat-file", "blob", object[2]);
-    return Response.json({
-      sha: object[2],
-      encoding: "base64",
-      size: bytes.length,
-      content: bytes.toString("base64"),
-    });
-  }
   const user = /^\/user\/([0-9]+)$/u.exec(path)?.[1];
   const actor = Object.values(ACTORS).find((entry) => entry.githubId === user);
   if (actor)
@@ -504,7 +471,6 @@ beforeEach(async () => {
   templateInputs.acceptedRevisions = ["1"];
   templateSha256 = digest(JSON.stringify(templateInputs));
   clock = NOW;
-  sourceResponse = "normal";
   root = await mkdtemp(join(tmpdir(), "slop-scan-service-"));
   repository = join(root, "git");
   await mkdir(repository);
@@ -550,6 +516,8 @@ beforeEach(async () => {
       origin: ORIGIN,
       ...pair,
       now: () => clock,
+      // The fixture repository stands in for GitHub's Git transport.
+      testGitRemote: () => `file://${repository}`,
       fetch: ((input: string | URL | Request, init?: RequestInit) => {
         const url = new URL(String(input));
         return fetch(
@@ -621,7 +589,7 @@ async function requestInvestigation() {
   ).toBe("queued");
 }
 
-test("authenticated source acquisition exceeds the public quota without sharing its credential", async () => {
+test("source acquisition is one Git fetch; the GitHub credential reaches only the API identity read", async () => {
   await commit(
     Object.fromEntries(
       Array.from({ length: 65 }, (_, i) => [
@@ -629,31 +597,22 @@ test("authenticated source acquisition exceeds the public quota without sharing 
         `export const value${i} = ${i};\n`,
       ]),
     ),
-    "Public repository exceeds the anonymous request allowance",
+    "More files than the anonymous API allowance once needed",
   );
-  publicGitHubLimit = 60;
+  // The identity read is the only GitHub API request of an acquisition.
+  publicGitHubLimit = 1;
   provider.up = false;
-  const unauthenticated = await runScanPass(config);
-  expect(unauthenticated.assessments[0]).toMatchObject({
-    state: "retry",
-    step: "acquire",
-  });
-  acquisitionRequests = [];
   config.githubToken = "fixture-github-key";
-  const authenticated = await runScanPass(config);
-  expect(authenticated.assessments[0]).toMatchObject({
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({
     state: "retry",
     step: "primary-review",
   });
   const githubRequests = acquisitionRequests.filter(
     (r) => r.host === "api.github.com",
   );
-  expect(githubRequests.length).toBeGreaterThan(60);
-  expect(
-    githubRequests.every(
-      (r) => r.authorization === "Bearer fixture-github-key",
-    ),
-  ).toBe(true);
+  expect(githubRequests).toHaveLength(1);
+  expect(githubRequests[0].authorization).toBe("Bearer fixture-github-key");
   expect(
     acquisitionRequests
       .filter((r) => r.host !== "api.github.com")
@@ -661,6 +620,58 @@ test("authenticated source acquisition exceeds the public quota without sharing 
   ).toBe(true);
   expect(await readdir(config.workDirectory)).toEqual([]);
 });
+
+test("a repository beyond the former acquisition limits gets a complete batched review and clears", async () => {
+  await commit(
+    {
+      ...Object.fromEntries(
+        Array.from({ length: 1100 }, (_, index) => [
+          `many/file-${String(index).padStart(4, "0")}.ts`,
+          `export const value${index} = ${JSON.stringify("value ".repeat(170))};\n`,
+        ]),
+      ),
+      // Data above the former 8 MiB per-file limit: deterministic checks only.
+      "data/catalog.json": JSON.stringify({
+        rows: "d".repeat(9 * 1024 * 1024),
+      }),
+    },
+    "Exceed the former acquisition limits",
+  );
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({
+    state: "published",
+    disposition: "clean",
+    specialist: false,
+    evidence: "retained",
+  });
+  const primaryCalls = provider.calls.filter(
+    (call) => call.path === "/anthropic/v1/messages",
+  );
+  // Token-budgeted batches, then one repository-level synthesis that reads
+  // the pre-pass and every batch result.
+  expect(reviewedItems[0].id).toBe("prepass");
+  const batches = reviewedItems.length - 1;
+  expect(batches).toBeGreaterThan(1);
+  expect(primaryCalls).toHaveLength(batches + 1);
+  expect(provider.calls).toHaveLength(batches + 1);
+  expect(reviewedItems.slice(1).map((item) => item.id)).toEqual(
+    Array.from({ length: batches }, (_, index) => `batch-${index + 1}`),
+  );
+  const prepass = JSON.parse(reviewedItems[0].text);
+  expect(prepass.deterministicOnly.files).toContainEqual(
+    expect.objectContaining({ path: "data/catalog.json", class: "data" }),
+  );
+  const assessment = await vetting.getAssessment(
+    (pass.assessments[0] as { assessmentId: string }).assessmentId,
+  );
+  const result = assessment?.result;
+  if (!result || !isScanResult(result)) throw new Error("Missing scan result");
+  expect(result.visibilityGaps).toEqual([]);
+  expect(result.primaryReview.inputManifestSha256).toBe(
+    result.assessed.inputManifestSha256,
+  );
+  expect((await activate()).status).toBe(200);
+}, 120_000);
 
 test("a pending admission recovers from a replaced template without an admin request", async () => {
   provider.up = false;
@@ -946,16 +957,14 @@ async function retainedNativeFixture(
     }),
   );
   const extension = executionInventory(inspection);
-  expect(
-    extension.add(
-      "execution:00000000-0000-4000-8000-000000000001",
-      JSON.stringify({
-        ...JSON.parse(new TextDecoder().decode(executionReport)),
-        stdout: "",
-        stderr: "",
-      }),
-    ),
-  ).toBe(true);
+  extension.add(
+    "execution:00000000-0000-4000-8000-000000000001",
+    JSON.stringify({
+      ...JSON.parse(new TextDecoder().decode(executionReport)),
+      stdout: "",
+      stderr: "",
+    }),
+  );
   extension.finish([]);
   // The fixture represents an independently accepted clean analysis. The
   // scanner itself never changes quarantine merely because execution exited.
@@ -1956,25 +1965,28 @@ test.skipIf(!SANDBOX_URL)(
   120000,
 );
 
-for (const scenario of [
-  { source: "entries", evidenceUp: true },
-  { source: "entries", evidenceUp: false },
-  { source: "oversized", evidenceUp: true },
-  { source: "truncated", evidenceUp: true },
-] as const) {
-  test(`an acquisition ${scenario.source} policy refusal completes as incomplete and notifies each owner once (evidence available: ${scenario.evidenceUp})`, async () => {
-    const { evidenceUp } = scenario;
-    if (scenario.source === "entries")
-      await commit(
-        Object.fromEntries(
-          Array.from({ length: 1030 }, (_, index) => [
-            `many/file-${String(index).padStart(4, "0")}.ts`,
-            "export const value = 1;\n",
-          ]),
-        ),
-        "Exceed the supported source inventory",
-      );
-    if (scenario.source !== "entries") sourceResponse = scenario.source;
+for (const evidenceUp of [true, false]) {
+  test(`an acquisition policy refusal completes as incomplete and notifies each owner once (evidence available: ${evidenceUp})`, async () => {
+    // A tree path with a control character is outside the source policy.
+    const blob = gitWith("content\n", "hash-object", "-w", "--stdin")
+      .toString()
+      .trim();
+    const tree = gitWith(`100644 blob ${blob}\tbad\u0001name\n`, "mktree")
+      .toString()
+      .trim();
+    commitSha = git(
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit-tree",
+      tree,
+      "-m",
+      "Invalid source path",
+    )
+      .toString()
+      .trim();
+    git("update-ref", "refs/heads/main", commitSha);
     provider.evidenceUp = evidenceUp;
     const pass = await runScanPass(config);
     expect(pass.assessments).toHaveLength(1);
@@ -1993,14 +2005,8 @@ for (const scenario of [
       throw new Error("Missing incomplete scan result");
     expect(result.assessed.commitSha).toBe(commitSha);
     expect(result.assessed.templateSha256).toBe(templateSha256);
-    const reason =
-      scenario.source === "entries"
-        ? `Source entry limit exceeded: observed ${git("ls-tree", "-r", "-t", "HEAD").toString().trim().split("\n").length} entries, maximum 1024`
-        : scenario.source === "oversized"
-          ? "Input response size limit exceeded: maximum 4194304 bytes; complete size unavailable"
-          : "Source tree is truncated";
     expect(result.visibilityGaps).toEqual([
-      `Acquisition refused before inspection: ${reason}`,
+      "Acquisition refused before inspection: Invalid source tree path or digest",
     ]);
     for (const coverage of Object.values(result.coverage))
       expect(coverage).toEqual({ state: "unsupported", items: 0 });

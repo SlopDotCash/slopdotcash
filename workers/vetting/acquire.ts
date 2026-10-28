@@ -1,32 +1,50 @@
-/** Immutable public-source acquisition for VET-01; never checkout or execute input. */
+/**
+ * Immutable public-source acquisition for VET-01; never checkout or execute
+ * input. One shallow Git fetch of the exact commit replaces per-object API
+ * reads, so a repository of any size is acquired (owner decision, 28 October
+ * 2026: admission scans have no repository size limit).
+ */
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { readLimitedBody } from "../../backend/trace/validation";
-import { readRecord } from "../../src/lib/record-validation.mjs";
 
-const MAX_BYTES = 64 * 1024 * 1024;
-const MAX_FILES = 1024;
 const SHA = /^[0-9a-f]{40}$/u;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
+/** The only production source authority. */
+const GITHUB_GIT_ORIGIN = "https://github.com";
+/**
+ * Operational guard for one whole acquisition, not a size policy. Git fetch
+ * of a multi-gigabyte public repository completes well inside it; a stalled
+ * transfer fails as an outage and is retried, never refused.
+ */
+export const ACQUISITION_TIMEOUT_MS = 45 * 60 * 1000;
+const LFS_POINTER = "version https://git-lfs.github.com/spec/v1";
 const hash = (bytes: Uint8Array, algorithm = "sha256") =>
   createHash(algorithm).update(bytes).digest("hex");
-const object = (value: unknown) => readRecord(value, "GitHub object");
 
 /** The pinned input is outside the acquisition policy, so a retry of the
- * same pin cannot pass. Outages and changed bytes are not refusals. */
+ * same pin cannot pass. Outages and changed bytes are not refusals. Size is
+ * never a refusal reason for repository source. */
 export type AcquisitionRefusalReason =
   | "An exact repository and commit SHA are required"
-  | "Source entry limit exceeded"
   | "Invalid source tree path or digest"
   | "Unsupported source tree entry"
-  | "Source byte limit exceeded"
   | "Unsupported repository inventory"
   | "Immutable repository identity mismatch"
   | "Template acquisition size limit"
-  | "Input response size limit exceeded"
-  | "Source blob size limit exceeded"
-  | "Source tree is truncated";
+  | "Input response size limit exceeded";
 
 export class AcquisitionRefusal extends Error {
   override name = "AcquisitionRefusal";
@@ -49,7 +67,7 @@ export class AcquisitionRefusal extends Error {
   }
 }
 
-/** Distinguish the acquisition size policy from transient transport failures. */
+/** Distinguish a pinned-input size policy from transient transport failures. */
 export async function readAcquisitionBody(
   response: Response,
   maximum: number,
@@ -67,11 +85,284 @@ export async function readAcquisitionBody(
   }
 }
 
+/**
+ * The remote a fetch may use. Production is fixed to GitHub HTTPS. Tests may
+ * inject a local `file://` repository or a loopback HTTP smart server; neither
+ * is reachable from configuration or the environment.
+ */
+function remoteOf(
+  repository: string,
+  testRemote: string | undefined,
+): { url: string; protocol: "https" | "file" | "http" } {
+  if (testRemote === undefined)
+    return { url: `${GITHUB_GIT_ORIGIN}/${repository}.git`, protocol: "https" };
+  const url = new URL(testRemote);
+  if (url.protocol === "file:" && url.host === "")
+    return { url: url.href, protocol: "file" };
+  if (url.protocol === "http:" && url.hostname === "127.0.0.1")
+    return { url: url.href, protocol: "http" };
+  throw new Error("A test remote must be file:// or loopback HTTP");
+}
+
+/**
+ * Git with no user, system or repository configuration it did not set, no
+ * hooks, credentials, prompts, submodules, LFS filters, redirects or
+ * protocol other than the one the remote needs.
+ */
+function gitEnvironment(home: string, protocol: string) {
+  return {
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: home,
+    XDG_CONFIG_HOME: home,
+    LC_ALL: "C",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "/bin/false",
+    SSH_ASKPASS: "/bin/false",
+    GIT_ALLOW_PROTOCOL: protocol,
+    GIT_LFS_SKIP_SMUDGE: "1",
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_OPTIONAL_LOCKS: "0",
+  };
+}
+function gitOptions(protocol: string): string[] {
+  return [
+    "core.hooksPath=/dev/null",
+    "core.fsmonitor=false",
+    "core.askPass=/bin/false",
+    "credential.helper=",
+    "protocol.allow=never",
+    `protocol.${protocol}.allow=always`,
+    "http.followRedirects=false",
+    "submodule.recurse=false",
+    "fetch.recurseSubmodules=false",
+    "gc.auto=0",
+    "maintenance.auto=false",
+    "filter.lfs.process=",
+    "filter.lfs.smudge=",
+    "filter.lfs.required=false",
+  ].flatMap((option) => ["-c", option]);
+}
+
+type Git = (
+  args: string[],
+  input?: string,
+  onStdout?: (stream: NodeJS.ReadableStream) => Promise<void>,
+) => Promise<Buffer>;
+
+function gitRunner(
+  gitDirectory: string,
+  home: string,
+  protocol: string,
+  signal: AbortSignal,
+): Git {
+  const env = gitEnvironment(home, protocol);
+  const options = gitOptions(protocol);
+  return (args, input, onStdout) =>
+    new Promise<Buffer>((done, fail) => {
+      const child = spawn(
+        "git",
+        [...options, `--git-dir=${gitDirectory}`, ...args],
+        { env, stdio: ["pipe", "pipe", "pipe"], signal },
+      );
+      const chunks: Buffer[] = [];
+      let consumer: Promise<void> = Promise.resolve();
+      if (onStdout)
+        consumer = onStdout(child.stdout).then(
+          // Drain to end of stream, or "close" never fires.
+          () => {
+            child.stdout.resume();
+          },
+          (error) => {
+            child.kill("SIGKILL");
+            child.stdout.resume();
+            throw error;
+          },
+        );
+      else child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+      // Stderr can name URLs or upstream text; it is drained, never surfaced.
+      child.stderr.resume();
+      child.on("error", () => fail(new Error("Git is unavailable")));
+      child.on("close", (code) => {
+        consumer.then(
+          () =>
+            code === 0
+              ? done(Buffer.concat(chunks))
+              : fail(new Error(`Git ${args[0]} failed`)),
+          fail,
+        );
+      });
+      child.stdin.on("error", () => {});
+      child.stdin.end(input ?? "");
+    });
+}
+
+/** Sequential reads over a byte stream, for `git cat-file --batch` output. */
+class StreamReader {
+  private buffer: Buffer = Buffer.alloc(0);
+  private ended = false;
+  private readonly iterator: AsyncIterator<Buffer>;
+  constructor(stream: NodeJS.ReadableStream) {
+    this.iterator = (stream as AsyncIterable<Buffer>)[Symbol.asyncIterator]();
+  }
+  private async more(): Promise<boolean> {
+    if (this.ended) return false;
+    const next = await this.iterator.next();
+    if (next.done) {
+      this.ended = true;
+      return false;
+    }
+    this.buffer = this.buffer.length
+      ? Buffer.concat([this.buffer, next.value])
+      : next.value;
+    return true;
+  }
+  async line(): Promise<string> {
+    for (;;) {
+      const end = this.buffer.indexOf(10);
+      if (end !== -1) {
+        const line = this.buffer.subarray(0, end).toString("latin1");
+        this.buffer = this.buffer.subarray(end + 1);
+        return line;
+      }
+      if (this.buffer.length > 4096 || !(await this.more()))
+        throw new Error("Incomplete Git object stream");
+    }
+  }
+  /** Passes exactly `size` bytes to `sink` in order, without buffering them all. */
+  async exact(
+    size: number,
+    sink: (chunk: Buffer) => Promise<void>,
+  ): Promise<void> {
+    let remaining = size;
+    while (remaining > 0) {
+      if (this.buffer.length === 0 && !(await this.more()))
+        throw new Error("Incomplete Git object stream");
+      const take = Math.min(remaining, this.buffer.length);
+      const chunk = this.buffer.subarray(0, take);
+      this.buffer = this.buffer.subarray(take);
+      remaining -= take;
+      await sink(chunk);
+    }
+  }
+}
+
+type TreeEntry = { path: string; gitSha: string; type: string; mode: string };
+
+/** Parses `git ls-tree -r -t -z` and applies the source path policy. */
+function treeEntries(output: Buffer): TreeEntry[] {
+  const names = new Set<string>();
+  const entries: TreeEntry[] = [];
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let start = 0;
+  while (start < output.length) {
+    const end = output.indexOf(0, start);
+    if (end === -1) throw new Error("Incomplete commit tree");
+    const row = output.subarray(start, end);
+    start = end + 1;
+    const tab = row.indexOf(9);
+    if (tab === -1) throw new Error("Incomplete commit tree");
+    const [mode, type, gitSha, ...rest] = row
+      .subarray(0, tab)
+      .toString("latin1")
+      .split(" ");
+    let path: string;
+    try {
+      path = decoder.decode(row.subarray(tab + 1));
+    } catch {
+      throw new AcquisitionRefusal("Invalid source tree path or digest");
+    }
+    if (
+      rest.length > 0 ||
+      path.length > 1024 ||
+      path.startsWith("/") ||
+      path.includes("\\") ||
+      path.split("/").some((part) => !part || part === "." || part === "..") ||
+      [...path].some(
+        (character) =>
+          character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+      ) ||
+      names.has(path) ||
+      !SHA.test(String(gitSha))
+    )
+      throw new AcquisitionRefusal("Invalid source tree path or digest");
+    names.add(path);
+    if (
+      !(
+        (type === "tree" && mode === "040000") ||
+        (type === "commit" && mode === "160000") ||
+        (type === "blob" && ["100644", "100755", "120000"].includes(mode))
+      )
+    )
+      throw new AcquisitionRefusal("Unsupported source tree entry");
+    entries.push({ path, gitSha, type, mode });
+  }
+  return entries;
+}
+
+/**
+ * Rebuilds every Git tree object from the listed members and checks its
+ * SHA-1, so an omitted or altered member cannot keep the assigned tree SHA.
+ */
+function verifyTrees(treeSha: string, entries: TreeEntry[]) {
+  const children = new Map<string, TreeEntry[]>([["", []]]);
+  const shas = new Map<string, string>([["", treeSha]]);
+  for (const entry of entries)
+    if (entry.type === "tree") {
+      children.set(entry.path, []);
+      shas.set(entry.path, entry.gitSha);
+    }
+  for (const entry of entries) {
+    const separator = entry.path.lastIndexOf("/");
+    const parent = separator === -1 ? "" : entry.path.slice(0, separator);
+    const members = children.get(parent);
+    if (!members)
+      throw new Error("Source entry is disconnected from its Git tree");
+    members.push(entry);
+  }
+  for (const [directory, members] of children) {
+    const prefix = directory ? `${directory}/` : "";
+    const named = members.map((entry) => ({
+      entry,
+      name: Buffer.from(entry.path.slice(prefix.length)),
+    }));
+    named.sort((a, b) =>
+      Buffer.compare(
+        a.entry.type === "tree"
+          ? Buffer.concat([a.name, Buffer.from("/")])
+          : a.name,
+        b.entry.type === "tree"
+          ? Buffer.concat([b.name, Buffer.from("/")])
+          : b.name,
+      ),
+    );
+    const body = Buffer.concat(
+      named.flatMap(({ entry, name }) => [
+        Buffer.from(`${entry.mode.replace(/^0+/u, "")} `),
+        name,
+        Buffer.from([0]),
+        Buffer.from(entry.gitSha, "hex"),
+      ]),
+    );
+    const expected = shas.get(directory);
+    if (
+      hash(
+        Buffer.concat([Buffer.from(`tree ${body.length}\0`), body]),
+        "sha1",
+      ) !== expected
+    )
+      throw new Error("Tree bytes do not match the Git object");
+  }
+}
+
 export async function acquireRepository(input: {
   repository: string;
   commitSha: string;
   directory: string;
-  fetch?: typeof fetch;
+  /** Test-only local or loopback remote; production always uses GitHub. */
+  testRemote?: string;
+  timeoutMs?: number;
 }): Promise<{ directory: string; inventorySha256: string }> {
   if (
     !REPOSITORY.test(input.repository) ||
@@ -81,146 +372,110 @@ export async function acquireRepository(input: {
     throw new AcquisitionRefusal(
       "An exact repository and commit SHA are required",
     );
-  const fetcher = input.fetch ?? fetch;
-  let transferred = 0;
-  const deadline = AbortSignal.timeout(120_000);
-  const get = async (path: string, limit: number) => {
-    const response = await fetcher(
-      `https://api.github.com/repos/${input.repository}/git/${path}`,
-      {
-        method: "GET",
-        redirect: "error",
-        headers: {
-          accept: "application/vnd.github+json",
-          "x-github-api-version": "2022-11-28",
-          "user-agent": "slop-vetting-acquisition",
-        },
-        signal: AbortSignal.any([deadline, AbortSignal.timeout(15_000)]),
-      },
-    );
-    if (!response.ok || response.body === null)
-      throw new Error("Immutable source is unavailable");
-    // Each read stays within its own limit and the cumulative transfer cap.
-    const bytes = await readAcquisitionBody(
-      response,
-      Math.min(limit, MAX_BYTES * 2 - transferred),
-    );
-    transferred += bytes.byteLength;
-    return object(JSON.parse(new TextDecoder().decode(bytes)));
-  };
-  const commit = await get(`commits/${input.commitSha}`, 1024 * 1024);
-  if (
-    commit.sha !== input.commitSha ||
-    !SHA.test(String(object(commit.tree).sha))
-  )
-    throw new Error("Commit pin mismatch");
-  const treeSha = String(object(commit.tree).sha);
-  const tree = await get(`trees/${treeSha}?recursive=1`, 4 * 1024 * 1024);
-  if (
-    tree.sha !== treeSha ||
-    typeof tree.truncated !== "boolean" ||
-    !Array.isArray(tree.tree)
-  )
-    throw new Error("Incomplete commit tree");
-  if (tree.truncated) throw new AcquisitionRefusal("Source tree is truncated");
-  if (tree.tree.length > MAX_FILES)
-    throw new AcquisitionRefusal("Source entry limit exceeded", {
-      unit: "entries",
-      observed: tree.tree.length,
-      maximum: MAX_FILES,
-    });
-  const names = new Set<string>();
-  const entries = tree.tree.map((value) => {
-    const row = object(value);
-    if (
-      typeof row.path !== "string" ||
-      row.path.length > 1024 ||
-      row.path.startsWith("/") ||
-      row.path.includes("\\") ||
-      row.path
-        .split("/")
-        .some((part) => !part || part === "." || part === "..") ||
-      [...row.path].some(
-        (character) =>
-          character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
-      ) ||
-      names.has(row.path) ||
-      !SHA.test(String(row.sha))
-    )
-      throw new AcquisitionRefusal("Invalid source tree path or digest");
-    names.add(row.path);
-    if (
-      !(
-        (row.type === "tree" && row.mode === "040000") ||
-        (row.type === "commit" && row.mode === "160000") ||
-        (row.type === "blob" &&
-          ["100644", "100755", "120000"].includes(String(row.mode)))
-      )
-    )
-      throw new AcquisitionRefusal("Unsupported source tree entry");
-    return {
-      path: row.path,
-      gitSha: String(row.sha),
-      type: String(row.type),
-      mode: String(row.mode),
-    };
-  });
-  const directories = new Set(
-    entries.filter((entry) => entry.type === "tree").map((entry) => entry.path),
-  );
-  for (const entry of entries) {
-    const separator = entry.path.lastIndexOf("/");
-    if (separator !== -1 && !directories.has(entry.path.slice(0, separator)))
-      throw new Error("Source entry is disconnected from its Git tree");
-  }
-  // Rebuild Git tree objects so omitted or altered members cannot keep the assigned tree SHA.
-  for (const directory of [
-    { path: "", gitSha: treeSha },
-    ...entries.filter((entry) => entry.type === "tree"),
-  ]) {
-    const prefix = directory.path ? `${directory.path}/` : "";
-    const children = entries.filter(
-      (entry) =>
-        entry.path.startsWith(prefix) &&
-        !entry.path.slice(prefix.length).includes("/"),
-    );
-    children.sort((a, b) =>
-      Buffer.compare(
-        Buffer.from(
-          a.path.slice(prefix.length) + (a.type === "tree" ? "/" : ""),
-        ),
-        Buffer.from(
-          b.path.slice(prefix.length) + (b.type === "tree" ? "/" : ""),
-        ),
-      ),
-    );
-    const body = Buffer.concat(
-      children.map((entry) =>
-        Buffer.concat([
-          Buffer.from(
-            `${entry.mode.replace(/^0+/u, "")} ${entry.path.slice(prefix.length)}\0`,
-          ),
-          Buffer.from(entry.gitSha, "hex"),
-        ]),
-      ),
-    );
+  const remote = remoteOf(input.repository, input.testRemote);
+  const parent = resolve(input.directory);
+  const signal = AbortSignal.timeout(input.timeoutMs ?? ACQUISITION_TIMEOUT_MS);
+  // The Git object store is private scratch, removed whatever happens. Only
+  // inert SHA-256-named content and the inventory leave it.
+  const scratch = await mkdtemp(join(parent, "slop-git-"));
+  let directory: string | undefined;
+  try {
+    const gitDirectory = join(scratch, "objects.git");
+    const git = gitRunner(gitDirectory, scratch, remote.protocol, signal);
+    // A bare store with an empty template: no worktree, checkout or hooks.
+    await git(["init", "--bare", "--quiet", "--template="]);
+    await git([
+      "fetch",
+      "--quiet",
+      "--depth=1",
+      "--no-tags",
+      "--no-recurse-submodules",
+      "--no-write-fetch-head",
+      remote.url,
+      input.commitSha,
+    ]);
+    // `index-pack` names every received object by the hash of its bytes; the
+    // checks below also rehash what Slop keeps.
+    const commit = await git(["cat-file", "commit", input.commitSha]);
     if (
       hash(
-        Buffer.concat([Buffer.from(`tree ${body.length}\0`), body]),
+        Buffer.concat([Buffer.from(`commit ${commit.length}\0`), commit]),
         "sha1",
-      ) !== directory.gitSha
+      ) !== input.commitSha
     )
-      throw new Error("Tree bytes do not match the Git object");
-  }
-  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  // A unique private directory prevents a repository path from choosing a host path.
-  const directory = await mkdtemp(
-    join(resolve(input.directory), "slop-source-"),
-  );
-  try {
-    await mkdir(join(directory, "objects"), { mode: 0o700 });
-    let bytes = 0;
-    const stored = new Set<string>();
+      throw new Error("Commit pin mismatch");
+    const treeSha = /^tree ([0-9a-f]{40})\n/u.exec(
+      commit.subarray(0, 64).toString("latin1"),
+    )?.[1];
+    if (!treeSha) throw new Error("Commit pin mismatch");
+    const entries = treeEntries(
+      await git(["ls-tree", "-r", "-t", "-z", "--full-tree", treeSha]),
+    );
+    verifyTrees(treeSha, entries);
+    entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    // A unique private directory prevents a repository path from choosing a host path.
+    directory = await mkdtemp(join(parent, "slop-source-"));
+    const objects = join(directory, "objects");
+    await mkdir(objects, { mode: 0o700 });
+    const blobs = [
+      ...new Set(
+        entries.filter((entry) => entry.type === "blob").map((e) => e.gitSha),
+      ),
+    ];
+    const stored = new Map<string, { sha256: string; bytes: number }>();
+    const lfs = new Set<string>();
+    let incoming = 0;
+    await git(
+      ["cat-file", "--batch"],
+      blobs.map((sha) => `${sha}\n`).join(""),
+      async (stream) => {
+        const reader = new StreamReader(stream);
+        for (const gitSha of blobs) {
+          const header = (await reader.line()).split(" ");
+          if (
+            header.length !== 3 ||
+            header[0] !== gitSha ||
+            header[1] !== "blob" ||
+            !/^(?:0|[1-9][0-9]{0,15})$/u.test(header[2])
+          )
+            throw new Error("Invalid immutable blob");
+          const size = Number(header[2]);
+          if (!Number.isSafeInteger(size))
+            throw new Error("Invalid immutable blob");
+          const sha1 = createHash("sha1").update(`blob ${size}\0`);
+          const sha256 = createHash("sha256");
+          const temporary = join(objects, `.incoming-${incoming++}`);
+          const handle = await open(temporary, "wx", 0o600);
+          let head = Buffer.alloc(0);
+          try {
+            await reader.exact(size, async (chunk) => {
+              sha1.update(chunk);
+              sha256.update(chunk);
+              if (head.length < LFS_POINTER.length)
+                head = Buffer.concat([head, chunk]).subarray(0, 80);
+              await handle.write(chunk);
+            });
+          } finally {
+            await handle.close();
+          }
+          await reader.exact(1, async (chunk) => {
+            if (chunk[0] !== 10) throw new Error("Invalid immutable blob");
+          });
+          if (sha1.digest("hex") !== gitSha)
+            throw new Error("Blob bytes do not match the Git object");
+          const digest = sha256.digest("hex");
+          const target = join(objects, digest);
+          const existing = await stat(target).catch(() => null);
+          if (existing) await unlink(temporary);
+          else {
+            await chmod(temporary, 0o400);
+            await rename(temporary, target);
+          }
+          if (head.toString("latin1").startsWith(LFS_POINTER)) lfs.add(gitSha);
+          stored.set(gitSha, { sha256: digest, bytes: size });
+        }
+      },
+    );
     const records = [];
     const gaps = new Set([
       "execution-dependencies-and-release-assets-not-acquired",
@@ -239,61 +494,11 @@ export async function acquireRepository(input: {
         });
         continue;
       }
-      const blob = await get(`blobs/${entry.gitSha}`, 12 * 1024 * 1024);
-      if (
-        blob.sha !== entry.gitSha ||
-        blob.encoding !== "base64" ||
-        typeof blob.content !== "string" ||
-        !Number.isSafeInteger(blob.size) ||
-        (blob.size as number) < 0
-      )
-        throw new Error("Invalid immutable blob");
-      if ((blob.size as number) > 8 * 1024 * 1024)
-        throw new AcquisitionRefusal("Source blob size limit exceeded", {
-          unit: "bytes",
-          observed: blob.size as number,
-          maximum: 8 * 1024 * 1024,
-        });
-      const encoded = blob.content.replaceAll("\n", "");
-      const content = Buffer.from(encoded, "base64");
-      if (
-        content.toString("base64") !== encoded ||
-        content.length !== blob.size ||
-        hash(
-          Buffer.concat([Buffer.from(`blob ${content.length}\0`), content]),
-          "sha1",
-        ) !== entry.gitSha
-      )
-        throw new Error("Blob bytes do not match the Git object");
-      bytes += content.length;
-      if (bytes > MAX_BYTES)
-        throw new AcquisitionRefusal("Source byte limit exceeded", {
-          unit: "bytes",
-          observed: bytes,
-          maximum: MAX_BYTES,
-        });
-      const sha256 = hash(content);
-      if (!stored.has(sha256)) {
-        await writeFile(join(directory, "objects", sha256), content, {
-          mode: 0o400,
-          flag: "wx",
-        });
-        stored.add(sha256);
-      }
+      const object = stored.get(entry.gitSha);
+      if (!object) throw new Error("Invalid immutable blob");
       if (entry.mode === "120000") gaps.add("symbolic-link-not-followed");
-      if (
-        content
-          .subarray(0, 80)
-          .toString()
-          .startsWith("version https://git-lfs.github.com/spec/v1")
-      )
-        gaps.add("lfs-object-not-acquired");
-      records.push({
-        ...entry,
-        sha256,
-        bytes: content.length,
-        state: "quarantined",
-      });
+      if (lfs.has(entry.gitSha)) gaps.add("lfs-object-not-acquired");
+      records.push({ ...entry, ...object, state: "quarantined" });
     }
     const inventory = Buffer.from(
       JSON.stringify({
@@ -312,8 +517,10 @@ export async function acquireRepository(input: {
     });
     return { directory, inventorySha256: hash(inventory) };
   } catch (error) {
-    await rm(directory, { recursive: true, force: true });
+    if (directory) await rm(directory, { recursive: true, force: true });
     throw error;
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
   }
 }
 

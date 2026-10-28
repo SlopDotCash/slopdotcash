@@ -53,8 +53,8 @@ const templateInputs = {
 const templateSha256 = digest(JSON.stringify(templateInputs));
 let root: string;
 let commitSha: string;
-let treeSha: string;
-let blobSha: string;
+/** The local repository that stands in for GitHub's Git transport. */
+let repositoryPath: string;
 let vetting: CloudflareVettingPersistence;
 let projects: CloudflareProjectPersistence;
 let server: ReturnType<typeof Bun.serve>;
@@ -78,6 +78,7 @@ const sourcePath = fixture ? "fixture.py" : "README.txt";
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "slop-queue-workflow-"));
   const repository = join(root, "git");
+  repositoryPath = repository;
   await mkdir(repository);
   const git = (...args: string[]) => {
     const output = spawnSync(
@@ -102,8 +103,6 @@ beforeAll(async () => {
     "Harmless fixture",
   );
   commitSha = git("rev-parse", "HEAD");
-  treeSha = git("rev-parse", "HEAD^{tree}");
-  blobSha = git("rev-parse", `HEAD:${sourcePath}`);
   const { db, sqlite } = sqliteD1(
     (await readdir(new URL("../migrations", import.meta.url)))
       .filter((name) => name.endsWith(".sql"))
@@ -235,23 +234,6 @@ beforeAll(async () => {
       if (path.endsWith("/src/render.mjs")) return new Response(rendererText);
       if (path.endsWith(`/${sharedTemplatePath}`))
         return new Response(templateText);
-      if (path.endsWith(`/commits/${commitSha}`))
-        return Response.json({ sha: commitSha, tree: { sha: treeSha } });
-      if (path.endsWith(`/trees/${treeSha}`))
-        return Response.json({
-          sha: treeSha,
-          truncated: false,
-          tree: [
-            { path: sourcePath, mode: "100644", type: "blob", sha: blobSha },
-          ],
-        });
-      if (path.endsWith(`/blobs/${blobSha}`))
-        return Response.json({
-          sha: blobSha,
-          encoding: "base64",
-          size: Buffer.byteLength(source),
-          content: Buffer.from(source).toString("base64"),
-        });
       return new Response(null, { status: 404 });
     },
   });
@@ -259,6 +241,7 @@ beforeAll(async () => {
     origin: ORIGIN,
     ...pair,
     now: () => now,
+    testGitRemote: () => `file://${repositoryPath}`,
     fetch: ((request: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(request));
       expect(init?.method).toBe("GET");
@@ -440,8 +423,13 @@ test("a recorded repository rename acquires through the current GitHub name", as
   });
   const renamedSha256 = digest(renamedText);
   const requested: string[] = [];
+  const remotes: string[] = [];
   const renamed: QueueConnection = {
     ...connection,
+    testGitRemote: (path) => {
+      remotes.push(path);
+      return `file://${repositoryPath}`;
+    },
     fetch: (async (input, init) => {
       const path = new URL(String(input)).pathname;
       requested.push(path);
@@ -485,6 +473,8 @@ test("a recorded repository rename acquires through the current GitHub name", as
   expect(
     requested.some((path) => path.startsWith("/repos/example/fixture")),
   ).toBe(false);
+  // Source is fetched from the current name only.
+  expect(remotes).toEqual(["example/renamed"]);
   await rm(acquired.directory, { recursive: true, force: true });
   expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
 });
