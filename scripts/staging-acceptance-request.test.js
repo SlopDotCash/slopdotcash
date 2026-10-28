@@ -121,3 +121,89 @@ test("a stalled service is bounded across all attempts", async () => {
     },
   );
 });
+
+// Run both the origin and fetch in Node, as in the deployed release probe.
+async function nativeBodyProbe(failure) {
+  const code = `
+    import { createServer } from "node:http";
+    import { stagingAcceptanceRequest } from ${JSON.stringify(new URL("./staging-acceptance-request.mjs", import.meta.url).href)};
+    const failure = ${JSON.stringify(failure)};
+    const payload = failure === "invalid-json" ? "{invalid}" : JSON.stringify({ status: "pending" });
+    let calls = 0;
+    const server = createServer((_request, response) => {
+      calls++;
+      response.writeHead(202, {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+        "X-Probe": "retained",
+      });
+      if (failure === "persistent-disconnect" || (calls === 1 && failure !== "invalid-json")) {
+        response.write(payload.slice(0, 5));
+        if (failure !== "stall") setTimeout(() => response.destroy(), 20);
+      } else response.end(payload);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const origin = "http://127.0.0.1:" + server.address().port;
+    const started = Date.now();
+    try {
+      const result = await stagingAcceptanceRequest(origin, {}, {
+        retryDelayMs: 0, timeoutMs: 1000, attemptTimeoutMs: 200,
+      });
+      const body = await result.json();
+      console.log(JSON.stringify({
+        status: result.status, body, calls,
+        header: result.headers.get("x-probe"),
+        url: result.url, origin,
+      }));
+    } catch (error) {
+      console.log(JSON.stringify({
+        error: error.message, name: error.name, calls, elapsed: Date.now() - started,
+      }));
+    } finally {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  `;
+  const child = spawn("node", ["--input-type=module", "-e", code]);
+  let diagnostics = "";
+  let output = "";
+  child.stderr.on("data", (chunk) => {
+    diagnostics += chunk;
+  });
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  const exit = await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+  expect(exit, diagnostics).toBe(0);
+  return JSON.parse(output);
+}
+
+for (const failure of ["disconnect", "stall"]) {
+  test(`Node recovers when a successful response body has a ${failure}`, async () => {
+    const result = await nativeBodyProbe(failure);
+    expect(result).toEqual({
+      status: 202,
+      body: { status: "pending" },
+      calls: 2,
+      header: "retained",
+      url: `${result.origin}/`,
+      origin: result.origin,
+    });
+  });
+}
+
+test("Node refuses persistent response-body disconnects after three attempts", async () => {
+  const result = await nativeBodyProbe("persistent-disconnect");
+  expect(result.error).toContain("retry bound");
+  expect(result.calls).toBe(3);
+  expect(result.elapsed).toBeLessThan(2500);
+});
+
+test("Node does not retry a complete invalid JSON response", async () => {
+  const result = await nativeBodyProbe("invalid-json");
+  expect(result.name).toBe("SyntaxError");
+  expect(result.calls).toBe(1);
+});

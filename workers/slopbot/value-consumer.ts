@@ -201,7 +201,13 @@ export async function consumeValueRequest(
         ),
       ),
     );
-    if (sources.length > 1 || previousGroups.some(Boolean)) {
+    // The single-PR evaluator refuses indirect acceptance, so a lone source
+    // accepted through an integration commit also needs the joint route.
+    if (
+      sources.length > 1 ||
+      previousGroups.some(Boolean) ||
+      sources.some((source) => source.evidence.indirectAcceptance)
+    ) {
       const joint = await prepareWorkUnitEvidence(sources, repositories);
       if (joint.limitations.length) return await finish("source-incomplete");
       const legacy = new Map(

@@ -116,7 +116,13 @@ export function evaluateVault(
     (item) =>
       item?.network === expected.network &&
       typeof item.vault === "string" &&
-      item.vault.toLowerCase() === expected.vault.toLowerCase(),
+      // Case does not change an EVM hex address, so a checksummed spelling
+      // still matches. Base58 vaults (Solana) are case-sensitive: a vault
+      // that differs only by case is a different account, so it must not
+      // stand in for the registered vault.
+      (item.vault === expected.vault ||
+        (expected.vault.startsWith("0x") &&
+          item.vault.toLowerCase() === expected.vault.toLowerCase())),
   );
   if (!snapshot) return fail("no cached snapshot for this vault");
   const observedAt = snapshot.observedAt;

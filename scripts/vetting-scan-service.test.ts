@@ -119,6 +119,8 @@ let acquisitionRequests: { host: string; authorization: string | null }[];
 let publicGitHubLimit: number;
 /** The inventory items the primary reviewer last received. */
 let reviewedItems: { id: string; text: string }[] = [];
+/** The repository's current GitHub name; a recorded rename changes it. */
+let githubName = "example/open-registry";
 /** What the synthetic Surplus provider answers on each transport. */
 let provider: {
   up: boolean;
@@ -317,11 +319,13 @@ function projectApi(request: Request) {
 /** The GitHub REST reads of repository identity and flag eligibility. */
 function github(url: URL): Response {
   const path = url.pathname;
-  if (path === "/repos/example/open-registry")
+  // Only the current name answers: GitHub redirects a former name, and
+  // acquisition follows no redirects.
+  if (path === `/repos/${githubName}`)
     return Response.json({
       id: 123456789,
       node_id: "R_example",
-      full_name: "example/open-registry",
+      full_name: githubName,
       private: false,
     });
   const user = /^\/user\/([0-9]+)$/u.exec(path)?.[1];
@@ -472,6 +476,7 @@ beforeEach(async () => {
   templateInputs.acceptedRevisions = ["1"];
   templateSha256 = digest(JSON.stringify(templateInputs));
   clock = NOW;
+  githubName = "example/open-registry";
   root = await mkdtemp(join(tmpdir(), "slop-scan-service-"));
   repository = join(root, "git");
   await mkdir(repository);
@@ -891,6 +896,59 @@ test("a provider outage leaves the scan pending; the next pass clears the projec
   // The queue is empty and the journal keeps the one attempt.
   expect((await runScanPass(config)).assessments).toEqual([]);
   expect(await readdir(config.journalDirectory)).toEqual([assessmentId]);
+});
+
+test("a recorded repository rename clears its admission scan under the registered repository", async () => {
+  // The registry keeps the original path as the id and records the current
+  // path as the appended alias and githubUrl (`assertRepositoryTransition`).
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("Missing project");
+  const [registered] = project.manifest.repositories;
+  const manifest = {
+    ...project.manifest,
+    repositories: [
+      {
+        ...registered,
+        aliases: ["example/renamed-registry"],
+        displayName: "example/renamed-registry",
+        githubUrl: "https://github.com/example/renamed-registry",
+      },
+    ],
+  };
+  const manifestText = JSON.stringify(manifest);
+  expect(
+    await projects.appendProjectRevision(
+      {
+        projectId: project.id,
+        expectedRevision: project.revision,
+        manifest,
+        manifestText,
+        manifestSha256: digest(manifestText),
+        reason: "Record the GitHub repository rename",
+        actor: APPLICANT,
+        at: clock.toISOString(),
+      },
+      await projects.enforcementGeneration(),
+    ),
+  ).toBe("updated");
+  githubName = "example/renamed-registry";
+
+  const report = await runScanPass(config);
+  const [{ assessmentId }] = report.assessments;
+  expect(report.assessments).toEqual([
+    {
+      assessmentId,
+      state: "published",
+      disposition: "clean",
+      outcome: "accepted",
+      specialist: false,
+      evidence: "retained",
+    },
+  ]);
+  const assessment = await vetting.getAssessment(assessmentId);
+  expect(assessment?.state).toBe("clean");
+  expect(assessment?.result?.assessed.repository).toBe(registered.id);
+  expect((await activate()).status).toBe(200);
 });
 
 test("an ambiguous primary review runs the Surplus specialist once before publication", async () => {
