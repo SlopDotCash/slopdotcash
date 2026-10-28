@@ -1326,9 +1326,6 @@ export function ContributorStandings({
     return () => window.removeEventListener("popstate", restore);
   }, [readFilters]);
   useEffect(() => {
-    // The embedded project table shares its URL with funding and award links.
-    // Its local sorting must not consume their query parameters.
-    if (compact && projectId) return;
     const url = new URL(window.location.href);
     for (const [key, value] of Object.entries({
       sort: sort === "points" ? "" : sort,
@@ -1337,6 +1334,14 @@ export function ContributorStandings({
       project: projectId ? "" : project,
       page: page ? String(page + 1) : "",
     })) {
+      // Award links own calendar-month periods on the shared project URL.
+      if (
+        compact &&
+        projectId &&
+        key === "period" &&
+        /^\d{4}-\d{2}$/u.test(url.searchParams.get(key) ?? "")
+      )
+        continue;
       if (value) url.searchParams.set(key, value);
       else url.searchParams.delete(key);
     }
@@ -1494,9 +1499,7 @@ export function ContributorStandings({
         />
       ) : null}
       {(
-        sort === "points"
-          ? state.status === "ready"
-          : scores.status === "ready"
+        sort === "points" ? state.status === "ready" : scores.status === "ready"
       ) ? (
         <>
           <section
