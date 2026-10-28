@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import { type ProjectSessionState, projectApiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
-import { OwnerBountyVault } from "./OwnerBountyVault";
+import { isFullAwardSplit } from "./lib/security-bounty.mjs";
+import { FullAwardFundingNote, OwnerBountyVault } from "./OwnerBountyVault";
 import { SecurityProgramEditor } from "./SecurityProgramEditor";
 
 type Revision = { revision: number; project: ProjectDefinition };
@@ -181,7 +182,10 @@ function SecuritySettingsEditor({
         project={current.project}
         revision={current.revision}
       />
-      {current.project.securityBounty ? (
+      {current.project.securityBounty &&
+      isFullAwardSplit(current.project.securityBounty.split) ? (
+        <FullAwardFundingNote />
+      ) : current.project.securityBounty ? (
         <OwnerBountyVault
           key={current.project.id}
           onRegistered={update}

@@ -10,7 +10,6 @@ import {
   prepareSolanaMonthlyCommitment,
   readSolanaMonthlyCommitment,
 } from "../../contracts/solana/monthly-commitment";
-import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   type DeploymentTier,
   deploymentOrigins,
@@ -31,7 +30,12 @@ import {
 } from "../../src/lib/payments/contracts";
 import { isWalletAddress, isWalletChain } from "../../src/lib/wallets";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
-import { cookieValue, isSameOriginJsonWrite, json } from "../http";
+import {
+  cookieValue,
+  isSameOriginJsonWrite,
+  json,
+  readJsonObject,
+} from "../http";
 import { sessionGithubActor } from "../points/handler";
 import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
 import {
@@ -166,11 +170,11 @@ export async function handlePaymentsApi(
     if (monthlySettingRoute && request.method === "POST") {
       if (!deps.solanaFundingConfig)
         return json(503, { error: "funding_unavailable" });
-      const body = (await readBoundedJson(
+      const body = await readJsonObject(
         request,
         4096,
         "monthly commitment setting",
-      )) as Record<string, unknown>;
+      );
       if (
         !body ||
         (body.step !== "read" &&
@@ -425,11 +429,11 @@ export async function handlePaymentsApi(
     if (solanaCommitmentRoute && request.method === "POST") {
       if (!deps.solanaFundingConfig)
         return json(503, { error: "owner_commitment_unavailable" });
-      const body = (await readBoundedJson(
+      const body = await readJsonObject(
         request,
         4096,
         "Solana award commitment",
-      )) as Record<string, unknown>;
+      );
       if (
         !body ||
         (body.step !== "review" && body.step !== "check") ||
@@ -557,11 +561,11 @@ export async function handlePaymentsApi(
         Number.isSafeInteger(value) && (value as number) >= 0;
       try {
         if (monthlySettingsRoute && request.method === "POST") {
-          const body = (await readBoundedJson(
+          const body = await readJsonObject(
             request,
             1024,
             "Monthly payment setting",
-          )) as Record<string, unknown>;
+          );
           if (typeof body?.automatic !== "boolean")
             return json(400, { error: "invalid_monthly_setting" });
           return json(
@@ -579,11 +583,11 @@ export async function handlePaymentsApi(
             await deps.monthly.view(monthlyRoute[1], monthlyRoute[2], member),
           );
         if (monthlyRoute?.[3] && request.method === "POST") {
-          const body = (await readBoundedJson(
+          const body = await readJsonObject(
             request,
             4096,
             "Monthly award action",
-          )) as Record<string, unknown>;
+          );
           const [, projectId, period, action] = monthlyRoute;
           if (action === "reserve-release") {
             if (
@@ -661,11 +665,8 @@ export async function handlePaymentsApi(
       }
     }
     if (path === "/wallets/register" && request.method === "POST") {
-      const body = (await readBoundedJson(
-        request,
-        4096,
-        "wallet registration",
-      )) as Record<string, unknown>;
+      const body = await readJsonObject(request, 4096, "wallet registration");
+      if (!body) return json(400, { error: "invalid_wallet" });
       if (
         !isWalletChain(body.chain) ||
         typeof body.address !== "string" ||
@@ -684,11 +685,8 @@ export async function handlePaymentsApi(
         : json(200, { claimId: result.claimId });
     }
     if (path === "/wallets/challenge" && request.method === "POST") {
-      const body = (await readBoundedJson(
-        request,
-        4096,
-        "wallet challenge",
-      )) as Record<string, unknown>;
+      const body = await readJsonObject(request, 4096, "wallet challenge");
+      if (!body) return json(400, { error: "invalid_request" });
       if (typeof body.claimId !== "string")
         return json(400, { error: "invalid_request" });
       const wallet = await deps.db
@@ -727,11 +725,8 @@ export async function handlePaymentsApi(
       });
     }
     if (path === "/wallets/authorize" && request.method === "POST") {
-      const body = (await readBoundedJson(
-        request,
-        4096,
-        "wallet authorization",
-      )) as Record<string, unknown>;
+      const body = await readJsonObject(request, 4096, "wallet authorization");
+      if (!body) return json(400, { error: "invalid_request" });
       if (
         typeof body.claimId !== "string" ||
         typeof body.challengeId !== "string" ||
@@ -801,11 +796,8 @@ export async function handlePaymentsApi(
       ["/wallets/bind-challenge", "/wallets/bind-authorize"].includes(path) &&
       request.method === "POST"
     ) {
-      const body = (await readBoundedJson(
-        request,
-        4096,
-        "binding authorization",
-      )) as Record<string, unknown>;
+      const body = await readJsonObject(request, 4096, "binding authorization");
+      if (!body) return json(400, { error: "invalid_request" });
       const decimal = (value: unknown): value is string =>
         typeof value === "string" && /^(0|[1-9][0-9]{0,18})$/.test(value);
       const authorize = path === "/wallets/bind-authorize";
@@ -954,11 +946,8 @@ export async function handlePaymentsApi(
       ].includes(path) &&
       request.method === "POST"
     ) {
-      const body = (await readBoundedJson(
-        request,
-        4096,
-        "solana binding",
-      )) as Record<string, unknown>;
+      const body = await readJsonObject(request, 4096, "solana binding");
+      if (!body) return json(400, { error: "invalid_request" });
       const complete = path === "/wallets/solana-bind/complete";
       if (
         typeof body.obligationId !== "string" ||

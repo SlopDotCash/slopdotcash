@@ -68,6 +68,7 @@ import type { GithubActor } from "./lib/project-contracts";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import {
   formatSecurityAmount,
+  isFullAwardSplit,
   type SecurityBountyTerms,
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
@@ -136,7 +137,7 @@ function UnsignedPaymentRequest({ request }: { request: unknown }) {
 }
 
 function amounts(terms: SecurityBountyTerms) {
-  const split = securityBountySplit(terms.amount.grossMinor);
+  const split = securityBountySplit(terms.amount.grossMinor, terms.split);
   return {
     gross: formatSecurityAmount(split.grossMinor, terms.amount),
     researcher: formatSecurityAmount(split.researcherMinor, terms.amount),
@@ -645,11 +646,15 @@ export function SecurityProgramPage({
             <SecurityOffer project={project} />
             <section className="security-award-split" aria-label="Award split">
               <div>
-                <span>Researcher · 75%</span>
+                <span>
+                  Researcher · {isFullAwardSplit(terms.split) ? "100%" : "75%"}
+                </span>
                 <strong>{money.researcher}</strong>
               </div>
               <div>
-                <span>Slop · 25%</span>
+                <span>
+                  Slop · {isFullAwardSplit(terms.split) ? "0%" : "25%"}
+                </span>
                 <strong>{money.slop}</strong>
               </div>
             </section>
@@ -659,11 +664,13 @@ export function SecurityProgramPage({
                 {terms.amount.network ? ` on ${terms.amount.network}` : ""}
               </Fact>
               <Fact term="Funding">
-                {terms.funding.state === "pledged"
-                  ? terms.fundingPolicy === "after-approval"
-                    ? "Pledged. Funds are supplied after the owner approves a qualifying finding. Payment requires verified funding."
-                    : "Pledged, not verified."
-                  : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
+                {isFullAwardSplit(terms.split)
+                  ? "Pledged. Funds are supplied after the owner approves a qualifying finding. No full-award payment path is released yet: an approved award is not payable until one is approved and released, and verified funding alone does not make it payable."
+                  : terms.funding.state === "pledged"
+                    ? terms.fundingPolicy === "after-approval"
+                      ? "Pledged. Funds are supplied after the owner approves a qualifying finding. Payment requires verified funding."
+                      : "Pledged, not verified."
+                    : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
               </Fact>
               <Fact term="Capacity">
                 {terms.capacity.awards === null
@@ -792,6 +799,8 @@ export function SecurityProgramPage({
 
 type Terms = {
   fundingPolicy?: "after-approval";
+  /** Present only when slop.cash sponsors the whole award. */
+  split?: { researcherBasisPoints: 10000; slopBasisPoints: 0 };
   grossMinor: string;
   researcherMinor: string;
   slopMinor: string;
@@ -2576,7 +2585,9 @@ function ActionForm({
             String(values[field.name]),
             field.decimals,
           );
-          const exact = minor !== null && BigInt(minor) % 4n === 0n;
+          const fullAward = isFullAwardSplit(record.terms?.split);
+          const exact =
+            minor !== null && (fullAward || BigInt(minor) % 4n === 0n);
           return (
             <label key={field.name}>
               {field.label}
@@ -2592,7 +2603,9 @@ function ActionForm({
               {minor !== null && record.terms ? (
                 <small className="field-hint" role="status">
                   {exact
-                    ? `Researcher ${money(((BigInt(minor) * 3n) / 4n).toString(), record.terms)} · Slop ${money((BigInt(minor) / 4n).toString(), record.terms)}`
+                    ? fullAward
+                      ? `Researcher ${money(minor, record.terms)} · no Slop share`
+                      : `Researcher ${money(((BigInt(minor) * 3n) / 4n).toString(), record.terms)} · Slop ${money((BigInt(minor) / 4n).toString(), record.terms)}`
                     : "This amount cannot be split exactly 75/25."}
                 </small>
               ) : null}

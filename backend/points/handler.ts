@@ -1,5 +1,4 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   type DeploymentTier,
   deploymentOrigins,
@@ -13,6 +12,7 @@ import {
   cookieValue,
   isSameOriginJsonWrite,
   json as jsonResponse,
+  readJsonObject,
 } from "../http";
 import { consumeIdentityAssertion } from "../identity-assertion";
 import { handleX, type XConfiguration } from "./x";
@@ -149,11 +149,8 @@ export async function handlePointsApi(
       });
     }
     if (route === "/join" && request.method === "POST") {
-      const value = (await readBoundedJson(
-        request,
-        4096,
-        "points join",
-      )) as Record<string, unknown>;
+      const value = await readJsonObject(request, 4096, "points join");
+      if (!value) return json(400, { error: "invalid_request" });
       const keys = Object.keys(value).sort().join();
       if (
         (keys !== "assertion,public" &&
@@ -264,11 +261,8 @@ export async function handlePointsApi(
         return json(200, { sessions: JSON.parse(row?.sessions ?? "[]") });
       }
       if (route === "/sessions/revoke" && request.method === "POST") {
-        const body = (await readBoundedJson(
-          request as unknown as Response,
-          1024,
-          "session",
-        )) as { id?: unknown };
+        const body = await readJsonObject(request, 1024, "session");
+        if (!body) return json(400, { error: "invalid_request" });
         if (typeof body.id !== "string" || !/^[a-f0-9]{24}$/.test(body.id))
           return json(400, { error: "invalid_session" });
         await deps.db
@@ -284,11 +278,8 @@ export async function handlePointsApi(
         );
       }
       if (route === "/account/close" && request.method === "POST") {
-        const body = (await readBoundedJson(
-          request,
-          256,
-          "account closure",
-        )) as Record<string, unknown>;
+        const body = await readJsonObject(request, 256, "account closure");
+        if (!body) return json(400, { error: "invalid_request" });
         // The person confirms by typing their own GitHub login.
         if (
           Object.keys(body).join() !== "login" ||
@@ -355,11 +346,8 @@ export async function handlePointsApi(
         return json(200, { signedOut: true }, sessionCookie("", 0));
       }
       if (route === "/visibility" && request.method === "POST") {
-        const body = (await readBoundedJson(
-          request,
-          256,
-          "visibility",
-        )) as Record<string, unknown>;
+        const body = await readJsonObject(request, 256, "visibility");
+        if (!body) return json(400, { error: "invalid_request" });
         if (
           Object.keys(body).join() !== "public" ||
           typeof body.public !== "boolean"

@@ -22,6 +22,7 @@ function harness(rejectMail = false) {
     "0077_slopbot_alerts_only.sql",
     "0084_slopbot_attempt_accounting.sql",
     "0085_slopbot_provider_failure_notices.sql",
+    "0104_slopbot_value_inference_attempts.sql",
   ]);
   const mail: string[] = [];
   const notify = {

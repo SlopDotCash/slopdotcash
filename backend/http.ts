@@ -1,5 +1,7 @@
 /** Transport helpers shared by the API handlers behind the Pages entry. */
 
+import { readBoundedJson } from "../src/lib/browser-json";
+
 /** Expected request refusals; each API keeps its own log label. */
 export type ApiError = Error & { status?: number; code?: string };
 export function fail(status: number, code: string, message: string): never {
@@ -63,6 +65,38 @@ export function isSameOriginJsonWrite(
       request.headers.get("content-type")?.split(";")[0] ?? "",
     )
   );
+}
+
+/**
+ * A bounded JSON object body. A malformed, oversized or non-object body is a
+ * client error, so callers answer 400 instead of the 503 their catch-all
+ * returns for a failed database or identity operation.
+ */
+export async function readJsonObject(
+  request: Request,
+  maximum: number,
+  label: string,
+): Promise<Record<string, unknown> | null> {
+  let value: unknown;
+  try {
+    value = await readBoundedJson(request, maximum, label);
+  } catch {
+    return null;
+  }
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Splits values into `IN (...)` batches. D1 allows 100 bound parameters per
+ * statement, so callers keep a margin.
+ */
+export function chunked<T>(values: readonly T[], size = 90): T[][] {
+  const out: T[][] = [];
+  for (let index = 0; index < values.length; index += size)
+    out.push(values.slice(index, index + size));
+  return out;
 }
 
 export type ApiErrorOptions = {
