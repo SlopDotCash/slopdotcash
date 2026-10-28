@@ -2816,6 +2816,7 @@ export async function handleProjectApi(
       respond: json,
       publicMessage: (_status, error, caught) =>
         caught instanceof GithubLookupError ||
+        error.code === "reward_asset_unverified" ||
         error.code === "vault_setup_unavailable" ||
         error.code === "vault_network_unavailable",
     });
