@@ -2,6 +2,7 @@ import { Fragment, type ReactNode, useState } from "react";
 import { Link } from "./Link";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
+import { deploymentTier } from "./lib/deployment";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { transactionUrl } from "./lib/payments/contracts";
@@ -13,6 +14,7 @@ import {
   profileCounts,
 } from "./lib/profiles";
 import { findProject } from "./lib/projects.mjs";
+import { isUsdMicroAsset } from "./lib/received-totals";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
 import {
@@ -239,15 +241,34 @@ function ProfilePaymentHistory({
       .map((contributor) => ({ contributor, cycle })),
   );
   const direct = directState.status === "ready" ? directState.transfers : [];
+  // All-time money received: archived cycles, disclosed direct transfers and
+  // finalized USD-stablecoin vault payments. Other vault assets stay listed
+  // in their own units and never convert to dollars.
+  const vaultUsd =
+    vaultState.status === "ready"
+      ? vaultState.payments.reduce(
+          (sum, payment) =>
+            isUsdMicroAsset(
+              payment.network,
+              payment.assetAddress,
+              payment.assetDecimals,
+              deploymentTier(import.meta.env.VITE_SLOP_ENVIRONMENT) ===
+                "staging",
+            )
+              ? sum + BigInt(payment.netBase)
+              : sum,
+          0n,
+        )
+      : null;
   const total =
-    cycles && directState.status === "ready"
+    cycles && directState.status === "ready" && vaultUsd !== null
       ? history.reduce(
           (sum, { contributor }) =>
             sum +
             (contributor.state === "paid" ? BigInt(contributor.paidMinor) : 0n),
           direct.reduce(
             (sum, payment) => sum + BigInt(payment.amountMicro),
-            0n,
+            vaultUsd,
           ),
         )
       : null;
@@ -353,11 +374,13 @@ function ProfilePaymentHistory({
         <h2>Awards and payments</h2>
       </div>
       <p className="profile-payments-summary">
-        Direct and archived paid · USDC:{" "}
+        Money received (all time):{" "}
         <strong>
           {total !== null
             ? dollars(total)
-            : scope && directState.status === "loading"
+            : scope &&
+                directState.status !== "error" &&
+                vaultState.status !== "error"
               ? "Loading…"
               : "Unavailable"}
         </strong>

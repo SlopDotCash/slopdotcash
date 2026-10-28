@@ -17,6 +17,7 @@ function fixture() {
       actor = "123",
       privateBounty = false,
       corrupt = false,
+      pad = 0,
     } = {},
   ) {
     const id = `award-${n}`;
@@ -54,6 +55,7 @@ function fixture() {
       netMicro: corrupt ? "9700" : "9800",
       assetAddress: asset,
       assetDecimals: 6,
+      ...(pad ? { padding: "x".repeat(pad) } : {}),
     };
     sqlite
       .query(
@@ -186,3 +188,176 @@ test("unreconciled finalized evidence and database failures stay unavailable, no
     f.sqlite.close();
   }
 });
+
+test("received totals add every disclosed transfer and finalized USDC vault payment for all time, and keep other assets separate", async () => {
+  const f = fixture();
+  try {
+    const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+    f.payment(1); // 9,800 base units of a non-reference token
+    // A finalized Base USDC payment counts in dollars.
+    const id = "award-usdc";
+    const usdVault = `0x${"4".repeat(40)}`;
+    const digest = "e".repeat(64);
+    const transaction = `0x${digest}`;
+    f.sqlite
+      .query(`INSERT INTO payment_obligations
+      (id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,
+       gross_base,fee_base,source_digest,state,created_at,paid_transaction)
+      VALUES(?,'usd-project','123','base-mainnet','base',?,?,6,'1000000','20000',?,'paid',?,?)`)
+      .run(id, usdVault, usdc, digest, when, transaction);
+    f.sqlite
+      .query(
+        "INSERT INTO payment_events VALUES('base-mainnet',?,0,'finalized-block','paid',?,?,?)",
+      )
+      .run(
+        transaction,
+        id,
+        JSON.stringify({
+          kind: "paid",
+          transactionId: transaction,
+          eventIndex: 0,
+          obligationId: id,
+          projectId: "usd-project",
+          network: "base-mainnet",
+          chain: "base",
+          vault: usdVault,
+          githubUserId: "123",
+          sourceDigest: digest,
+          grossMicro: "1000000",
+          feeMicro: "20000",
+          netMicro: "980000",
+          assetAddress: usdc,
+          assetDecimals: 6,
+        }),
+        when,
+      );
+    for (const [n, actor, login, amount, time] of [
+      [1, "123", "first", "2500000", "2026-08-03T00:00:00.000Z"],
+      [2, "123", "first", "500000", "2026-09-03T00:00:00.000Z"],
+      [3, "456", "second", "7000000", "2026-09-04T00:00:00.000Z"],
+    ] as const)
+      f.sqlite
+        .query(
+          `INSERT INTO payment_direct_transfers VALUES('solana-mainnet',?,'project','2026-08',?,?,?,'solana','r',?,?,'b','p',?)`,
+        )
+        .run(`t${n}`, actor, `node${actor}`, login, amount, time, when);
+    f.sqlite
+      .query(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('n123','123','renamed',?,1)",
+      )
+      .run(when);
+    const result = await f.read("received");
+    expect(result.status).toBe(200);
+    expect(result.body.totals).toEqual({
+      usdMicro: "10980000",
+      directMicro: "10000000",
+      vaultUsdMicro: "980000",
+      directTransfers: 3,
+      vaultPayments: 2,
+      contributors: 2,
+    });
+    expect(result.body.contributors).toEqual([
+      {
+        githubUserId: "456",
+        login: "second",
+        usdMicro: "7000000",
+        directMicro: "7000000",
+        vaultUsdMicro: "0",
+        directTransfers: 1,
+        vaultPayments: 0,
+        projects: [{ projectId: "project", usdMicro: "7000000" }],
+        otherAssets: [],
+      },
+      {
+        githubUserId: "123",
+        login: "renamed",
+        usdMicro: "3980000",
+        directMicro: "3000000",
+        vaultUsdMicro: "980000",
+        directTransfers: 2,
+        vaultPayments: 2,
+        projects: [
+          { projectId: "project", usdMicro: "3000000" },
+          { projectId: "usd-project", usdMicro: "980000" },
+        ],
+        otherAssets: [
+          {
+            network: "base-mainnet",
+            assetAddress: asset,
+            assetDecimals: 6,
+            netBase: "9800",
+          },
+        ],
+      },
+    ]);
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("received totals fail closed on corrupt finalized evidence", async () => {
+  const f = fixture();
+  try {
+    f.payment(1, { corrupt: true });
+    expect((await f.read("received")).status).toBeGreaterThanOrEqual(500);
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("received totals read a large ledger in bounded pages under D1's value limit", async () => {
+  const f = fixture();
+  try {
+    const vaultCount = 1_200;
+    const directCount = 1_500;
+    // Evidence near production size: 1,200 rows would be about 2 MB in one value.
+    for (let n = 1; n <= vaultCount; n++) f.payment(n, { pad: 1_400 });
+    const insert = f.sqlite.query(
+      `INSERT INTO payment_direct_transfers VALUES('solana-mainnet',?,'project','2026-08',?,'node','login','solana','r','1000000','2026-09-01T00:00:00.000Z','b','p',?)`,
+    );
+    for (let n = 1; n <= directCount; n++)
+      insert.run(`t${n}`, String(1000 + (n % 50)), when);
+    let largest = 0;
+    const measured = new Proxy(f.database, {
+      get(target, key, receiver) {
+        if (key !== "prepare") return Reflect.get(target, key, receiver);
+        return (sql: string) => {
+          const statement = target.prepare(sql);
+          const wrap = (bound: typeof statement) =>
+            new Proxy(bound, {
+              get(inner, name, innerReceiver) {
+                if (name === "bind")
+                  return (...values: unknown[]) => wrap(inner.bind(...values));
+                if (name === "first")
+                  return async () => {
+                    const row = (await inner.first()) as Record<
+                      string,
+                      unknown
+                    > | null;
+                    for (const value of Object.values(row ?? {}))
+                      if (typeof value === "string")
+                        largest = Math.max(largest, value.length);
+                    return row;
+                  };
+                return Reflect.get(inner, name, innerReceiver);
+              },
+            });
+          return wrap(statement);
+        };
+      },
+    });
+    const response = await handlePaymentsApi(
+      new Request("https://slop.cash/api/v1/payments/received"),
+      { db: measured },
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.totals.vaultPayments).toBe(vaultCount);
+    expect(body.totals.directTransfers).toBe(directCount);
+    expect(body.totals.directMicro).toBe(String(directCount * 1_000_000));
+    expect(largest).toBeGreaterThan(0);
+    expect(largest).toBeLessThan(500_000);
+  } finally {
+    f.sqlite.close();
+  }
+}, 60_000);

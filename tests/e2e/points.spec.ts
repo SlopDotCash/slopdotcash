@@ -179,7 +179,7 @@ test(
   },
 );
 
-test("shows archived payments in their settlement month independently of points", async ({
+test("shows archived payments as all-time money received independently of points", async ({
   page,
 }) => {
   // Local public-record fixtures exercise the browser projection, not chain verification.
@@ -188,18 +188,35 @@ test("shows archived payments in their settlement month independently of points"
     deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
   ).site;
   await page.route(`${site}/**`, (route) =>
-    route.fulfill({
-      path: join(
-        process.cwd(),
-        "dist",
-        route.request().resourceType() === "document"
-          ? "index.html"
-          : new URL(route.request().url()).pathname,
-      ),
-    }),
+    // Money received falls back to the shared empty aggregate (fixtures.ts).
+    new URL(route.request().url()).pathname === "/api/v1/payments/received"
+      ? route.fallback()
+      : route.fulfill({
+          path: join(
+            process.cwd(),
+            "dist",
+            route.request().resourceType() === "document"
+              ? "index.html"
+              : new URL(route.request().url()).pathname,
+          ),
+        }),
   );
-  await page.route("**/api/v1/payments/projects/*/direct-transfers", (route) =>
-    route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+  await page.route("**/api/v1/payments/received", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        generatedAt: "2026-08-17T12:00:00.000Z",
+        contributors: [],
+        totals: {
+          usdMicro: "0",
+          directMicro: "0",
+          vaultUsdMicro: "0",
+          directTransfers: 0,
+          vaultPayments: 0,
+          contributors: 0,
+        },
+      },
+    }),
   );
   await page.route("**/api/v1/points/**", (route) =>
     route.fulfill({ json: null }),
@@ -218,30 +235,43 @@ test("shows archived payments in their settlement month independently of points"
   await page.route("**/data/cycles/index.json?**", (route) =>
     route.fulfill({ json: history }),
   );
-  // Search keeps this zero-payment actor visible after all points rows load.
-  await page.goto(`${site}/?sort=money&q=archive-only#leaderboard`);
-  const standings = page.getByRole("region", {
+  // The home table ranks all-time money received, so the archived payment
+  // appears whatever the current month is.
+  await page.goto(`${site}/#leaderboard`);
+  const home = page.getByRole("region", {
     name: "Top sloperators",
+    exact: true,
+  });
+  await home
+    .getByRole("button", { name: "Money received", exact: true })
+    .click();
+  const homeRecipient = home.getByRole("row").filter({
+    has: page.getByRole("link", { name: "archive-only", exact: true }),
+  });
+  await expect(homeRecipient.locator("td").nth(3)).toHaveText("$1");
+
+  // Search keeps this zero-points actor visible after all points rows load.
+  await page.goto(`${site}/points?sort=money&q=archive-only`);
+  const standings = page.getByRole("region", {
+    name: "Contributor standings",
     exact: true,
   });
   const recipient = standings.getByRole("row").filter({
     has: page.getByRole("link", { name: "archive-only", exact: true }),
   });
   await expect(recipient.locator("td").nth(3)).toHaveText("$1");
-  await page.goto(
-    `${site}/?sort=money&period=lifetime&q=archive-only#leaderboard`,
-  );
+  await page.goto(`${site}/points?sort=money&period=lifetime&q=archive-only`);
   await expect(recipient.locator("td").nth(3)).toHaveText("$1");
-  await page.clock.setFixedTime(new Date("2026-07-31T12:00:00.000Z"));
-  // Search keeps this zero-payment actor visible after all points rows load.
-  await page.goto(`${site}/?sort=money&q=archive-only#leaderboard`);
-  await expect(recipient).toHaveCount(0);
+  // The points period never narrows money received to one month.
+  await page.clock.setFixedTime(new Date("2026-09-30T12:00:00.000Z"));
+  await page.goto(`${site}/points?sort=money&q=archive-only`);
+  await expect(recipient.locator("td").nth(3)).toHaveText("$1");
 
   // A current identity must also win when only an older payment creates the row.
   history.cycles[0].contributors[0].actor.id =
     snapshotFixture().leaders[0].actor.id;
   await page.clock.setFixedTime(new Date("2026-08-17T12:00:00.000Z"));
-  await page.goto(`${site}/?sort=money&identity=renamed#leaderboard`);
+  await page.goto(`${site}/points?sort=money&identity=renamed`);
   const currentLink = standings.getByRole("link", {
     name: "finish-line",
     exact: true,

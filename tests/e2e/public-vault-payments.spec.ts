@@ -30,15 +30,18 @@ test("finalized project payments show net assets and source months on cycles and
   actor.id = "MDQ6VXNlcjE=";
   const now = new Date().toISOString();
   await page.route(`${site}/**`, (route) =>
-    route.fulfill({
-      path: join(
-        process.cwd(),
-        "dist",
-        route.request().resourceType() === "document"
-          ? "index.html"
-          : new URL(route.request().url()).pathname,
-      ),
-    }),
+    // Money received falls back to the shared empty aggregate (fixtures.ts).
+    new URL(route.request().url()).pathname === "/api/v1/payments/received"
+      ? route.fallback()
+      : route.fulfill({
+          path: join(
+            process.cwd(),
+            "dist",
+            route.request().resourceType() === "document"
+              ? "index.html"
+              : new URL(route.request().url()).pathname,
+          ),
+        }),
   );
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshot }),
