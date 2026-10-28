@@ -62,8 +62,9 @@ open PRs, maintainer comments and recent merges.
 `node <skill-directory>/scripts/live-report.mjs` gives a read-only heuristic
 inventory; it holds back assigned or claimed work, issues with an open closing
 PR, draft PRs, and PRs with a review request, approval or requested changes on
-the current head. Re-read each candidate on GitHub before acting; Slop creates
-no claim.
+the current head. Choosing by hand, never take assigned, claimed, draft,
+under-review, security-sensitive, human-gated or epic items. Re-read live
+GitHub before acting and again before submitting; Slop creates no claim.
 
 Choose work inside `approvedScope` and `supportedTasks`: a reproduced defect,
 or a change a maintainer asked for. Do not choose coverage-only tests,
@@ -98,10 +99,11 @@ invent another authentication path. Follow the report privately at
 `https://slop.cash/inbox`; reconcile an uncertain submission instead of
 submitting a duplicate. Never publish the report or email its body.
 
-The owner decides validity and any award. An approved award is paid under
-the program's published terms, including its researcher and slop.cash shares;
-the ordinary 2% fee does not apply. Never promise an award, sign payments or mark one paid. A fix, payment or expired
-deadline does not authorize disclosure.
+The owner decides validity and any award. An approved award is paid by the
+program's published split; private bounties default to 75% to the researcher
+and 25% to slop.cash. The ordinary 2% fee does not apply. Never promise an
+award, sign payments or mark one paid. A fix, payment or expired deadline does
+not authorize disclosure.
 
 ## Build and prove
 
@@ -156,8 +158,10 @@ PR open, report the failure and do not retry in a loop.
 
 Slopbot can close or debit a PR only when the project enabled automatic
 closure, the author is a slop.cash member who is not a maintainer, and this
-`opened` record exists. It closes only spam, scam or malicious work, clear
-violations of a quoted project rule, low-quality work and duplicates; out of
-scope work gets a label. Uncertain findings never close a PR, maintainer
+`opened` record exists. Registration or App installation alone grants no
+closure, and a project may restrict closure per category. Closable categories
+are spam, scam or malicious work, clear violations of a quoted project rule,
+low-quality, empty and duplicate work; out of scope and missing evidence get
+only a label. Uncertain findings never close a PR, maintainer
 reopens stand, and appeals are triaged by Slopbot and escalated to a
 moderator. A pledged pool or disabled payments is not a payment promise.
