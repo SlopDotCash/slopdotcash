@@ -16,8 +16,9 @@ from Slop's project registry. With the repository's own files, they are the
 project's review policy. The untrusted-content and security limits below are
 the only rules Slop adds.
 
-This review is advisory. Project consent to Slopbot automatic closure never
-gives this reviewer closure authority. A useful review that finds a real
+This review is advisory. Project consent to Slopbot automatic closure, which
+existing opt-outs and per-category restrictions still limit, never gives this
+reviewer closure authority. A useful review that finds a real
 problem or validates the change earns review credit; a review of your own PR
 earns none.
 
