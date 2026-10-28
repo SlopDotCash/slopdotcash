@@ -1188,54 +1188,64 @@ export class VettingEvidence {
       });
     }
     const at = this.deps.now();
-    await this.deps.db.batch([
-      this.deps.db
-        .prepare(
-          "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at,assembly_sha256) VALUES(?,?,?,?,?,?,?,?,?)",
-        )
-        .bind(
-          assessment,
-          runId,
-          input.traceSha256,
-          digest,
-          manifest,
-          JSON.stringify(policy),
-          at.toISOString(),
-          new Date(
-            at.getTime() + policy.postClosureRetentionSeconds * 1000,
-          ).toISOString(),
-          input.assemblySha256 ?? null,
-        ),
-      ...objects.map((o) =>
+    try {
+      await this.deps.db.batch([
         this.deps.db
           .prepare(
-            "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage) VALUES(?,?,?,?,?,?,?,?,?,'content')",
+            "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at,assembly_sha256) VALUES(?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             assessment,
             runId,
-            o.sha256,
-            o.sizeBytes,
-            o.kind,
-            o.label,
-            o.contentType,
-            `vetting/${assessment}/${runId}/${o.sha256}`,
-            o.chunks ? JSON.stringify(o.chunks) : null,
+            input.traceSha256,
+            digest,
+            manifest,
+            JSON.stringify(policy),
+            at.toISOString(),
+            new Date(
+              at.getTime() + policy.postClosureRetentionSeconds * 1000,
+            ).toISOString(),
+            input.assemblySha256 ?? null,
           ),
-      ),
-      this.deps.db
-        .prepare(
-          "INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,created_at) VALUES(?,?,?,?,?,?)",
-        )
-        .bind(
-          this.deps.randomId(),
-          `service:${keySha256}`,
-          "register",
-          assessment,
-          runId,
-          at.toISOString(),
+        ...objects.map((o) =>
+          this.deps.db
+            .prepare(
+              "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage) VALUES(?,?,?,?,?,?,?,?,?,'content')",
+            )
+            .bind(
+              assessment,
+              runId,
+              o.sha256,
+              o.sizeBytes,
+              o.kind,
+              o.label,
+              o.contentType,
+              `vetting/${assessment}/${runId}/${o.sha256}`,
+              o.chunks ? JSON.stringify(o.chunks) : null,
+            ),
         ),
-    ]);
+        this.deps.db
+          .prepare(
+            "INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,created_at) VALUES(?,?,?,?,?,?)",
+          )
+          .bind(
+            this.deps.randomId(),
+            `service:${keySha256}`,
+            "register",
+            assessment,
+            runId,
+            at.toISOString(),
+          ),
+      ]);
+    } catch (error) {
+      if (String(error).includes("evidence cleanup in progress"))
+        fail(
+          409,
+          "evidence_cleanup",
+          "Evidence cleanup is in progress; retry registration",
+        );
+      throw error;
+    }
     return json(201, {
       manifestSha256: digest,
       stored: await this.stored(objects),
