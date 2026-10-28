@@ -217,6 +217,24 @@ test("tracked source edits cannot borrow an earlier artifact's source identity",
   }
 });
 
+test("a linked output directory outside the program workspace is refused", async () => {
+  const f = await fixture();
+  try {
+    const deploy = join(f.repositoryRoot, "contracts/solana/target/deploy");
+    const outside = join(f.directory, "outside");
+    await mkdir(outside);
+    await rm(deploy, { recursive: true });
+    // A junction needs no Windows symlink privilege; POSIX ignores the type.
+    await symlink(outside, deploy, "junction");
+    await expect(prepareTestProgram(f.artifact, f.options)).rejects.toThrow(
+      "escapes the program workspace",
+    );
+    await expect(readFile(join(outside, "slop_escrow.so"))).rejects.toThrow();
+  } finally {
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});
+
 test.skipIf(process.platform === "win32")(
   "an artifact symlink cannot substitute program bytes",
   async () => {
