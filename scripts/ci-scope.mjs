@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
 const pr = event.pull_request;
@@ -30,13 +30,22 @@ const ui =
       changed(
         /^(src\/|public\/|tests\/e2e\/|scripts\/(run-e2e|prepare-e2e)|playwright\.config)/u,
       )));
+// scripts/run-e2e.mjs runs the @registry specs only in the registry phase,
+// with the fixture servers it starts there. A change to that runner, to shared
+// browser fixtures, or to a spec carrying the tag needs the registry lanes.
+const registryBrowser = files.some((file) =>
+  /^tests\/e2e\/.*\.spec\.ts$/u.test(file)
+    ? existsSync(file) && readFileSync(file, "utf8").includes("@registry")
+    : /^(tests\/e2e\/|scripts\/run-e2e|playwright\.config|tests\/(github-api|notify-worker|slopbot-worker)-fixture\.mjs$)/u.test(
+        file,
+      ),
+);
 const api =
   full ||
   (!promotion &&
     (workflow ||
-      changed(
-        /^(backend\/|functions\/|migrations\/|workers\/|tests\/e2e\/registry|tests\/e2e\/security-bounty)/u,
-      )));
+      registryBrowser ||
+      changed(/^(backend\/|functions\/|migrations\/|workers\/)/u)));
 const lane = (name, server, browsers, shard, grep = "") => ({
   lane: name,
   server,

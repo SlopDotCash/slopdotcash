@@ -74,3 +74,121 @@ for (const path of [
     }
   });
 }
+
+function git(cwd: string, ...args: string[]) {
+  return execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=CI scope test",
+      "-c",
+      "user.email=ci-scope@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "-c",
+      "core.autocrlf=false",
+      ...args,
+    ],
+    { cwd, encoding: "utf8" },
+  ).trim();
+}
+
+/** Returns the browser lanes for a contributor PR that changes `files`. */
+function browserLanes(files: Record<string, string>) {
+  const directory = mkdtempSync(join(tmpdir(), "slop-ci-scope-"));
+  const repository = join(directory, "repository");
+  try {
+    mkdirSync(repository);
+    git(repository, "init", "--quiet");
+    writeFileSync(join(repository, "README.md"), "base\n");
+    git(repository, "add", "-A");
+    git(repository, "commit", "--quiet", "-m", "base");
+    const base = git(repository, "rev-parse", "HEAD");
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(repository, path)), { recursive: true });
+      writeFileSync(join(repository, path), content);
+    }
+    git(repository, "add", "-A");
+    git(repository, "commit", "--quiet", "-m", "change");
+    const head = git(repository, "rev-parse", "HEAD");
+    const event = join(directory, "event.json");
+    const output = join(directory, "output");
+    writeFileSync(
+      event,
+      JSON.stringify({
+        pull_request: {
+          base: {
+            ref: "development",
+            sha: base,
+            repo: { full_name: "SlopDotCash/slopdotcash" },
+          },
+          head: {
+            ref: "fix/example",
+            sha: head,
+            repo: { full_name: "contributor/slopdotcash" },
+          },
+        },
+      }),
+    );
+    execFileSync("node", [selector], {
+      cwd: repository,
+      env: {
+        ...process.env,
+        GITHUB_EVENT_NAME: "pull_request",
+        GITHUB_EVENT_PATH: event,
+        GITHUB_OUTPUT: output,
+      },
+      stdio: "pipe",
+    });
+    const matrix = readFileSync(output, "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("browser_matrix="));
+    if (!matrix) throw new Error("The scope step wrote no browser matrix");
+    const { include } = JSON.parse(matrix.slice("browser_matrix=".length));
+    return (include as { lane: string }[]).map(({ lane }) => lane);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+const registryLanes = (lanes: string[]) =>
+  lanes.filter((lane) => lane.startsWith("registry-"));
+
+test("a changed registry-only browser test selects the registry lanes that run it", () => {
+  // scripts/run-e2e.mjs runs @registry tests only in the registry phase; the
+  // preview phase excludes them with --grep-invert.
+  const lanes = browserLanes({
+    "tests/e2e/evidence-download.spec.ts":
+      'test("large private evidence downloads with a single-use browser grant @registry", async () => {});\n',
+  });
+  expect(registryLanes(lanes)).toEqual(["registry-1", "registry-2"]);
+});
+
+test("a changed registry runner or fixture server selects the registry lanes", () => {
+  const files = [
+    "scripts/run-e2e.mjs",
+    "playwright.config.ts",
+    "tests/github-api-fixture.mjs",
+  ];
+  expect(
+    Object.fromEntries(
+      files.map((file) => [
+        file,
+        registryLanes(browserLanes({ [file]: "export {};\n" })),
+      ]),
+    ),
+  ).toEqual(
+    Object.fromEntries(
+      files.map((file) => [file, ["registry-1", "registry-2"]]),
+    ),
+  );
+});
+
+test("a changed preview-only browser test keeps the preview and Pages lanes only", () => {
+  expect(
+    browserLanes({
+      "tests/e2e/login.spec.ts":
+        'test("serves GitHub login on direct navigation", async () => {});\n',
+    }),
+  ).toEqual(["preview-1", "preview-2", "pages"]);
+});
