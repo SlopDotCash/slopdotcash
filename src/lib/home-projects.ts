@@ -4,7 +4,7 @@ import {
   projectPromotionEligible,
 } from "./allocation-funding";
 import history from "./project-promotion.generated.json" with { type: "json" };
-import { PROJECTS } from "./projects.mjs";
+import { PROJECTS, type ProjectDefinition } from "./projects.mjs";
 
 export function homeProjects(now = new Date()) {
   const cycleId = now.toISOString().slice(0, 7);
@@ -25,6 +25,18 @@ export function homeProjects(now = new Date()) {
 export function communityProjects() {
   return PROJECTS.filter(
     (project) =>
-      project.listingTier === "community" && project.status !== "paused",
+      project.listingTier === "community" &&
+      project.status !== "paused" &&
+      !hasBountyOverview(project),
+  );
+}
+
+/** A published bounty replaces the overview when no ordinary cash pool exists. */
+export function hasBountyOverview(project: ProjectDefinition): boolean {
+  return Boolean(
+    project.securityBounty &&
+      (project.securityBounty.rewardMode === "bounty-only" ||
+        (project.reward.kind === "monthly-pool" &&
+          project.reward.monthlyCapMinor === "0")),
   );
 }

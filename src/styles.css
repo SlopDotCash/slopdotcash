@@ -4151,3 +4151,22 @@ html:has(.security-page) {
     grid-column: 1 / -1;
   }
 }
+
+.project-token-address code {
+  overflow-wrap: anywhere;
+}
+
+.project-github-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  color: var(--muted);
+  border-radius: 8px;
+}
+
+.project-github-link:hover {
+  color: var(--ink);
+}

@@ -144,6 +144,7 @@ export function AccountNav({
 /** Page framing for inner routes; no global or homepage typography changes. */
 export function RoutePageHeader({
   title,
+  titleAction,
   icon,
   eyebrow,
   lead,
@@ -151,6 +152,7 @@ export function RoutePageHeader({
   children,
 }: {
   title: ReactNode;
+  titleAction?: ReactNode;
   icon?: ReactNode;
   eyebrow?: ReactNode;
   lead?: ReactNode;
@@ -168,6 +170,7 @@ export function RoutePageHeader({
             </span>
           ) : null}
           <h1>{title}</h1>
+          {titleAction}
         </div>
         {lead ? <p className="route-lead">{lead}</p> : null}
         {children}
