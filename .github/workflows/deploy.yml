@@ -466,8 +466,10 @@ jobs:
 
   staging:
     name: Deploy verified development to staging
+    # Evaluate after optional upstream jobs are skipped; still require both gates.
     if: >-
-      needs.quality.result == 'success' &&
+      always() && !cancelled() &&
+      needs.prepare.result == 'success' && needs.quality.result == 'success' &&
       github.ref == 'refs/heads/development' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: [prepare, quality]
@@ -647,8 +649,10 @@ jobs:
 
   deploy:
     name: Deploy trusted production bundle
+    # Evaluate after optional upstream jobs are skipped; still require both gates.
     if: >-
-      needs.quality.result == 'success' &&
+      always() && !cancelled() &&
+      needs.prepare.result == 'success' && needs.quality.result == 'success' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     needs: [prepare, quality]
