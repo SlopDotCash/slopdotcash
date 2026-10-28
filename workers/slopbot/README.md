@@ -983,6 +983,10 @@ condition from fresh GitHub commits before adding the empty array. False values,
 nonempty resolution records and unknown source fields are refused.
 The Worker collects the evidence from GitHub; callers do not
 upload diff bodies. Results use the existing subscription result format.
+Every source must have been merged, or closed without a merge, before
+`2026-11-01T00:00:00.000Z`, using the same timestamp as the API consumer's
+`historical` outcome. Later or open work belongs to the paid API route
+(PRD section 5), so the importer refuses it before publication.
 Single predecessors are a
 digest or null; grouped predecessors are digest arrays. A successor requires a
 reason. Unknown envelope fields, API receipt claims and caller-supplied producer

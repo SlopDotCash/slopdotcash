@@ -4,6 +4,18 @@
  */
 export const VALUE_API_START_AT = "2026-11-01T00:00:00.000Z";
 
+/** The subscription intake covers only work accepted before the API start.
+ * Its timestamp matches the API consumer: merge time, else close time. Later
+ * work belongs to the API route, so a subscription record cannot score it.
+ */
+export function historicalSubscriptionSource(pull: {
+  merged_at: string | null;
+  closed_at: string | null;
+}) {
+  const occurred = Date.parse(pull.merged_at ?? pull.closed_at ?? "");
+  return Number.isFinite(occurred) && occurred < Date.parse(VALUE_API_START_AT);
+}
+
 export type ValueSettingsEnv = {
   SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD?: string;
   SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD?: string;

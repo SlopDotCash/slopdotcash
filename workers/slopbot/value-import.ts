@@ -23,6 +23,7 @@ import {
   publishValueAssessment,
 } from "./value-publication";
 import type { ValueAssessmentResult } from "./value-review";
+import { historicalSubscriptionSource } from "./value-settings";
 import {
   prepareWorkUnitEvidence,
   type WorkUnitSource,
@@ -147,6 +148,10 @@ export async function importSubscriptionAssessment(
       selection.number,
       repository,
     );
+    if (!historicalSubscriptionSource(collected.pull))
+      throw new Error(
+        "Subscription intake covers only work accepted before the API start",
+      );
     const evidence = await collectValueContext(
       github,
       collected,
