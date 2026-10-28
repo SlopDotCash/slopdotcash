@@ -478,7 +478,7 @@ test("token amounts keep asset precision when publishing an unrelated project ed
 async function loadSnapshot(
   request: APIRequestContext,
 ): Promise<LeaderboardSnapshot> {
-  // The read-only snapshot may hit a reset before response headers. Retry
+  // The read-only snapshot may hit a reset during the read. Retry
   // that transport failure once; HTTP errors and invalid data still fail below.
   const response = await request.get("/data/leaderboard.json", {
     maxRetries: 1,
