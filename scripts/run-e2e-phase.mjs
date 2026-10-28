@@ -30,6 +30,7 @@ export function runE2ePhase({
     });
     let settled = false;
     let timedOut = false;
+    let cleaningUp = false;
     let cleanupTimer;
     let cleanupPoll;
     const finish = (status) => {
@@ -40,11 +41,10 @@ export function runE2ePhase({
       clearTimeout(cleanupPoll);
       resolvePhase(status);
     };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      process.stderr.write(
-        `[${label}] exceeded the ${timeoutMs}ms phase deadline\n`,
-      );
+    const stopProcessTree = (failureStatus) => {
+      if (cleaningUp || settled) return;
+      cleaningUp = true;
+      clearTimeout(timer);
       if (child.pid) {
         if (process.platform === "win32") {
           const result = spawnSync(
@@ -78,8 +78,15 @@ export function runE2ePhase({
         process.stderr.write(`[${label}] process cleanup did not finish\n`);
         child.stdout.destroy();
         child.stderr.destroy();
-        finish(1);
+        finish(failureStatus);
       }, 5000);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      process.stderr.write(
+        `[${label}] exceeded the ${timeoutMs}ms phase deadline\n`,
+      );
+      stopProcessTree(1);
     }, timeoutMs);
     prefixLines(child.stdout, label, process.stdout);
     prefixLines(child.stderr, label, process.stderr);
@@ -87,15 +94,22 @@ export function runE2ePhase({
       process.stderr.write(`[${label}] ${error.message}\n`);
       finish(1);
     });
+    child.on("exit", (status, signal) => {
+      // Exit precedes close: a failed launcher can leave a server holding its
+      // output pipes open. The POSIX group remains addressable after its
+      // leader exits, so stop it now and preserve the launcher's failure.
+      if (process.platform !== "win32" && (status !== 0 || signal))
+        stopProcessTree(timedOut ? 1 : (status ?? 1));
+    });
     child.on("close", (status, signal) => {
       if (signal) process.stderr.write(`[${label}] terminated by ${signal}\n`);
-      if (timedOut && process.platform !== "win32" && child.pid) {
+      if (cleaningUp && process.platform !== "win32" && child.pid) {
         const waitForGroupExit = () => {
           if (settled) return;
           try {
             process.kill(-child.pid, 0);
           } catch (error) {
-            if (error.code === "ESRCH") finish(1);
+            if (error.code === "ESRCH") finish(timedOut ? 1 : (status ?? 1));
             else
               process.stderr.write(
                 `[${label}] process cleanup could not verify exit: ${error.message}\n`,
