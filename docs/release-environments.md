@@ -123,6 +123,12 @@ all credentials and session identifiers out of evidence. Verify that a
 production browser origin cannot use the staging identity flow, and vice versa.
 Optional X connection requires a separate configured provider application.
 
+The staging backend acceptance probes retry transient connection failures and
+HTTP 429 or transient 5xx responses at most three times within a 30-second request budget.
+They use only synthetic OAuth flows, reads, and refused anonymous writes.
+Authentication, origin-isolation and response-content mismatches still fail
+immediately; the retries never accept a failed assertion.
+
 Revert a faulty source change through a reviewed pull request, then release the
 new verified revision. Do not copy production storage to make a failed staging
 check pass. Existing installed skill receipts
