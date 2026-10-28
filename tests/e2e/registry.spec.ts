@@ -629,6 +629,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
 }) => {
   const project = fixtureProjects().queued;
   // The two refused activations below.
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${project.id}`);
   const refused = diagnostics.allowResponse(
     422,
     "PUT",
@@ -641,8 +642,11 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   // The approved paused project already shows on the public site from D1.
   await admin.goto(`/projects/${project.id}`);
   await expect(admin.locator("h1")).toHaveText(project.name);
-  // The reward asset is the Base stablecoin the application chose.
-  await expect(admin.locator(".project-hero")).toContainText(
+  // Native stablecoins use the shared reward label without a token address.
+  await expect(admin.locator(".project-reward-status")).toContainText(
+    "$1,000 monthly target, split between contributors",
+  );
+  await expect(admin.locator(".project-hero")).not.toContainText(
     "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
   );
   // An unscanned revision serves no executable skill (PRD VET-01).

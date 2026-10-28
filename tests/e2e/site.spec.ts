@@ -999,7 +999,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     expectedRevision: 2,
     manifest: { contribution: { approvedScope: scope } },
   });
-  await page.getByRole("button", { name: "Discard draft" }).click();
+  await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(scope);
   await expect(page.getByRole("region", { name: "Changes" })).toHaveCount(0);
   // PRD section 8: an exempt project publishes skill changes without a new

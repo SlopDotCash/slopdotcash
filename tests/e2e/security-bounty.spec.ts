@@ -1135,7 +1135,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     await page.goto(`/projects/${a.id}/security`);
     await expect(page.locator("h1")).toHaveText(/ security bounty$/);
     await expect(page.locator(".route-page-header .route-lead")).toHaveText(
-      "Published award: 10,000 USDC gross per finding. Payer: Slop.",
+      "10,000 USDC security bounty",
     );
     const offer = page.getByRole("region", { name: "Published bounty offer" });
     await expect(offer).toContainText("7,500 USDC to the researcher");
@@ -1155,7 +1155,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     });
     await page.goto(`/projects/${b.id}/security`);
     await expect(page.locator(".route-page-header .route-lead")).toContainText(
-      "100,000 USDC gross per finding",
+      "100,000 USDC security bounty",
     );
     await expect(
       page.getByRole("region", { name: "Published bounty offer" }),
@@ -1173,9 +1173,12 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(
       page.getByText("Data could not load.", { exact: true }),
     ).toHaveCount(0);
-    await expect(
-      page.getByRole("link", { name: "Security bounty" }),
-    ).toHaveAttribute("href", `/projects/${a.id}/security`);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      `Project ${a.id}`,
+    );
+    await expect(page.locator(".project-reward-status")).toContainText(
+      "per critical vulnerability",
+    );
     await context.close();
   });
 
