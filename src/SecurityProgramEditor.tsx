@@ -5,6 +5,11 @@ import "./owner-review.css";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
+import {
+  PLATFORM_BOUNTY_DEPLOYMENTS,
+  PLATFORM_BOUNTY_SOURCE_COMMIT,
+  PLATFORM_BOUNTY_TEXT,
+} from "./lib/platform-security-bounty";
 import { publishProjectRevision, type RevisionResult } from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
 import { parseAssetAmount } from "./lib/project-schema.mjs";
@@ -12,6 +17,8 @@ import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   assertSecurityBountyTerms,
   formatSecurityAmount,
+  isPlatformSecurityProgram,
+  SECURITY_FULL_AWARD_SPLIT,
   SECURITY_SPLIT,
   type SecurityBountyTerms,
   securityBountySplit,
@@ -63,6 +70,13 @@ export function SecurityProgramEditor({
   embedded?: boolean;
 }) {
   const existing = project.securityBounty;
+  // slop.cash sponsors its own contract bounty, so the reporter receives the
+  // whole award (owner decision, 28 October 2026). A first program here is
+  // prefilled with the proposed terms; the owner reviews and publishes them.
+  const platform = isPlatformSecurityProgram(project.repositories);
+  const defaults = platform && !existing ? PLATFORM_BOUNTY_TEXT : null;
+  const programSplit = platform ? SECURITY_FULL_AWARD_SPLIT : SECURITY_SPLIT;
+  const fullAward = programSplit === SECURITY_FULL_AWARD_SPLIT;
   // Session metadata (such as admin) is not part of a public contact record.
   const owner = { githubId: actor.githubId, githubLogin: actor.githubLogin };
   const [expanded, setExpanded] = useState(embedded);
@@ -74,19 +88,22 @@ export function SecurityProgramEditor({
       ? formatBaseUnits(existing.amount.grossMinor, existing.amount.decimals, {
           grouping: false,
         })
-      : "",
+      : defaults
+        ? "10000"
+        : "",
   );
   const [network, setNetwork] = useState<
     SecurityBountyTerms["amount"]["network"]
   >(existing?.amount.network ?? "base");
   const [commit, setCommit] = useState(
-    existing?.scope.sourceRevisions[0]?.commit ?? "",
+    existing?.scope.sourceRevisions[0]?.commit ??
+      (defaults ? PLATFORM_BOUNTY_SOURCE_COMMIT : ""),
   );
   const [fundAfterApproval, setFundAfterApproval] = useState(
-    existing?.fundingPolicy === "after-approval",
+    existing?.fundingPolicy === "after-approval" || fullAward,
   );
   const [awards, setAwards] = useState(
-    existing?.capacity.awards === null
+    existing?.capacity.awards === null || defaults
       ? ""
       : String(existing?.capacity.awards ?? 1),
   );
@@ -98,15 +115,25 @@ export function SecurityProgramEditor({
     },
   );
   const [text, setText] = useState<Record<TextField, string>>({
-    includedAssets: existing?.scope.includedAssets.join("\n") ?? "",
-    excludedDependencies: existing?.scope.excludedDependencies.join("\n") ?? "",
-    testingPermission: existing?.scope.testingPermission ?? "",
-    severityRubric: existing?.scope.severityRubric ?? "",
-    lossDefinition: existing?.scope.lossDefinition ?? "",
-    exhaustionRule: existing?.capacity.exhaustionRule ?? "",
-    dispute: existing?.dispute.process ?? "",
-    disclosure: existing?.disclosure ?? "",
-    safeHarbor: existing?.safeHarbor ?? "",
+    includedAssets:
+      existing?.scope.includedAssets.join("\n") ??
+      defaults?.includedAssets.join("\n") ??
+      "",
+    excludedDependencies:
+      existing?.scope.excludedDependencies.join("\n") ??
+      defaults?.excludedDependencies.join("\n") ??
+      "",
+    testingPermission:
+      existing?.scope.testingPermission ?? defaults?.testingPermission ?? "",
+    severityRubric:
+      existing?.scope.severityRubric ?? defaults?.severityRubric ?? "",
+    lossDefinition:
+      existing?.scope.lossDefinition ?? defaults?.lossDefinition ?? "",
+    exhaustionRule:
+      existing?.capacity.exhaustionRule ?? defaults?.exhaustionRule ?? "",
+    dispute: existing?.dispute.process ?? defaults?.dispute ?? "",
+    disclosure: existing?.disclosure ?? defaults?.disclosure ?? "",
+    safeHarbor: existing?.safeHarbor ?? defaults?.safeHarbor ?? "",
   });
   const { busy, error, run } = useAction();
   const [reviewing, setReviewing] = useState(false);
@@ -118,6 +145,7 @@ export function SecurityProgramEditor({
       } as const;
       const split = securityBountySplit(
         parseAssetAmount(amount, precision.decimals),
+        programSplit,
       );
       return {
         gross: formatSecurityAmount(split.grossMinor, precision),
@@ -145,11 +173,12 @@ export function SecurityProgramEditor({
         network,
         grossMinor: parseAssetAmount(amount, existing?.amount.decimals ?? 6),
       },
-      split: { ...SECURITY_SPLIT },
-      sponsor: existing?.sponsor ?? {
-        name: project.name,
-        githubId: actor.githubId,
-      },
+      split: { ...programSplit },
+      sponsor:
+        existing?.sponsor ??
+        (platform
+          ? { name: "slop.cash", githubId: project.steward.github.actorId }
+          : { name: project.name, githubId: actor.githubId }),
       // The API replaces this with its finalized vault evidence.
       funding: existing?.funding ?? { state: "pledged" },
       capacity: {
@@ -167,7 +196,9 @@ export function SecurityProgramEditor({
           },
           ...(existing?.scope.sourceRevisions.slice(1) ?? []),
         ],
-        deployments: existing?.scope.deployments ?? [],
+        deployments:
+          existing?.scope.deployments ??
+          (defaults ? PLATFORM_BOUNTY_DEPLOYMENTS : []),
         includedAssets: lines(text.includedAssets),
         excludedDependencies: lines(text.excludedDependencies),
         testingPermission: text.testingPermission.trim(),
@@ -225,8 +256,10 @@ export function SecurityProgramEditor({
       <h2 id="owner-security-title">Security bounty</h2>
       <div className="owner-form">
         <p className="operations-muted">
-          You decide each award: 75% to the researcher, 25% to Slop. Changes
-          apply to future reports only.
+          {fullAward
+            ? "You decide each award. slop.cash sponsors this program, so the researcher receives the whole award and Slop takes no share."
+            : "You decide each award: 75% to the researcher, 25% to Slop."}{" "}
+          Changes apply to future reports only.
         </p>
         {existing && (
           <p>
@@ -312,6 +345,7 @@ export function SecurityProgramEditor({
                   <input
                     type="checkbox"
                     checked={fundAfterApproval}
+                    disabled={fullAward}
                     onChange={(event) =>
                       setFundAfterApproval(event.target.checked)
                     }
@@ -344,11 +378,11 @@ export function SecurityProgramEditor({
                       <dd>{preview.gross}</dd>
                     </div>
                     <div>
-                      <dt>Researcher · 75%</dt>
+                      <dt>Researcher · {fullAward ? "100%" : "75%"}</dt>
                       <dd>{preview.researcher}</dd>
                     </div>
                     <div>
-                      <dt>Slop · 25%</dt>
+                      <dt>Slop · {fullAward ? "0%" : "25%"}</dt>
                       <dd>{preview.slop}</dd>
                     </div>
                   </dl>
