@@ -10,7 +10,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ValueMergeInput } from "../workers/slopbot/value-merge-profile";
 import {
@@ -32,7 +39,14 @@ export async function createValueMergeBundle(
   const workspace = await realpath(
     resolve(dirname(fileURLToPath(import.meta.url)), ".."),
   );
-  if (parent === workspace || parent.startsWith(`${workspace}/`))
+  // Compare through `path.relative`: a `${workspace}/` prefix test is a POSIX
+  // separator literal and matches nothing on Windows, where the same parent
+  // path uses `\`, so the guard silently admitted evidence inside the checkout.
+  const insideWorkspace = (() => {
+    const rest = relative(workspace, parent);
+    return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest));
+  })();
+  if (insideWorkspace)
     throw new Error("Raw merge evidence must stay outside the workspace");
   const env = {
     PATH: process.env.PATH,
@@ -93,7 +107,10 @@ export async function createValueMergeBundle(
     const verified = verifyMergeObjectStore(inputs, check);
     if (JSON.stringify(verified) !== JSON.stringify(required))
       throw new Error("Constructed merge object closure changed");
-    const destination = join(parent, output.slice(output.lastIndexOf("/") + 1));
+    // `lastIndexOf("/")` finds no separator in a Windows output path, so the
+    // "name only, next to the requested parent" rule produced
+    // `<parent>\C:\...\proof.bundle` and `writeFile` failed with ENOENT.
+    const destination = join(parent, basename(output));
     await writeFile(destination, bytes, { flag: "wx", mode: 0o600 });
     return {
       path: destination,
