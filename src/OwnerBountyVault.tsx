@@ -43,8 +43,8 @@ export function ProjectBountyFunding({
         <h2>
           Project vault{" "}
           {chain && (
-            <NetworkName chain={chain}>
-              <span className="visually-hidden">{NETWORK_NAMES[chain]}</span>
+            <NetworkName chain={chain} iconOnly>
+              {NETWORK_NAMES[chain]}
             </NetworkName>
           )}
         </h2>

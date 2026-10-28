@@ -417,12 +417,8 @@ export function EscrowFunding({
       <header className="vault-header">
         <h2>
           Project vault{" "}
-          <NetworkName chain={chain}>
-            <span
-              className={chain === "solana" ? "visually-hidden" : undefined}
-            >
-              {NETWORK_NAMES[chain]}
-            </span>
+          <NetworkName chain={chain} iconOnly>
+            {NETWORK_NAMES[chain]}
           </NetworkName>
         </h2>
       </header>
