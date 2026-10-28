@@ -162,6 +162,19 @@ test("a failed registry fetch fails and checks no vault", async () => {
     { status: 503, body: "unavailable" },
     { body: "not json" },
     { body: { schemaVersion: "1", projects: [] } },
+    {
+      body: {
+        ...registry(),
+        projects: [
+          ...registry().projects,
+          {
+            schemaVersion: "1",
+            id: "thenetwork",
+            escrow: { deployments: [{ network: "robinhood-mainnet" }] },
+          },
+        ],
+      },
+    },
   ]) {
     const { failed, requested } = await run({
       [`${ORIGIN}/api/v1/projects`]: route,

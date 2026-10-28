@@ -48,10 +48,16 @@ export function registeredVaults(registry: unknown): RegisteredVault[] {
       network?: unknown;
       vault?: unknown;
     }[]) {
-      if (typeof deployment?.vault !== "string" || !deployment.vault) continue;
-      if (typeof deployment.network !== "string" || !deployment.network)
+      // The registry schema requires both on every deployment, so a deployment
+      // without them is a malformed registry, never a vault to skip.
+      if (
+        typeof deployment?.vault !== "string" ||
+        !deployment.vault ||
+        typeof deployment.network !== "string" ||
+        !deployment.network
+      )
         throw new TypeError(
-          `Registry project ${project.id} has a vault without a network`,
+          `Registry project ${project.id} has a deployment without a vault or network`,
         );
       vaults.push({
         projectId: project.id,
