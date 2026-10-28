@@ -29,8 +29,13 @@ to `"true"` after the explicit production qualification and activation review.
    SHA. PR content comes from an immutable comparison of the current
    GitHub-selected target branch and PR head, with the target repository ID
    verified. Stale PR-file metadata cannot add inherited changes. Missing
-   patches, unavailable comparisons and the 300-file comparison limit stop
-   review. Before action, recheck the target, head, merge base and content.
+   comparisons and invalid target identities retry without a verdict. Missing
+   binary or large-file patches, the text budget, and the 300-file comparison
+   limit produce a limited advisory review instead of exhausting queue retries.
+   The prompt identifies every returned file and which patches were included.
+   A patch that does not fit cannot hide later smaller patches. Limited reviews
+   publish the coverage gaps and never create a label, hold, closure or penalty.
+   Before publication, recheck the target, head, merge base and content.
    A due maintainer hold also compares the current item with its stored content
    digest; a changed finding is superseded without changing the hold deadline.
 3. `routing.ts` applies the published precedence: installation, private
@@ -76,7 +81,10 @@ to `"true"` after the explicit production qualification and activation review.
    - no unresolved limitations in either verdict;
    - an unchanged item just before acting.
 
-   Otherwise the bot only comments and labels.
+   Otherwise the bot only comments and labels. Eligible full reviews with no
+   finding also update the bot's single review comment, with the reviewed
+   revision, model route and limitations. This is not a maintainer approval.
+   Exempt authors, drafts and repository opt-outs retain their existing routing.
 
    The prompt asks for limitations that affect the finding, its rule or its
    evidence. It never claims that unrun tests passed. Missing tests still
@@ -935,6 +943,12 @@ claim token and a 20-minute expiry. This exceeds the documented
 A competing delivery retries when the lease expires; it is not acknowledged as
 completed and does not spend another model call. An expired running attempt can
 be claimed atomically as an unbilled retry. Completed reviews remain deduplicated.
+
+Provider failures after intake publish a bounded retry notice when the source
+and authorization still match. Errors are not echoed into public comments.
+The attempt remains failed and the queue retries it. A changed source also
+retries, so a moving target branch does not silently acknowledge an unfinished
+review. A failed notice write does not suppress the original retry.
 
 The current claim is checked before model work and GitHub mutations. Completion
 and failure updates require the same unexpired token, so an older attempt cannot

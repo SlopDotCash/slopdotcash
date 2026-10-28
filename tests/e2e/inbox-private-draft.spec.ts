@@ -181,10 +181,23 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   );
   await expect(receipt).toContainText("More evidence needed");
   actor = "43";
+  // The account change resets the cursor, which starts a second, first-page
+  // read. It must fail in "error" mode before the fixture recovers, or that
+  // read races the mode switch and the Retry control never appears.
+  const firstPageRetry = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/v1/notifications" &&
+      new URL(response.url()).search === "" &&
+      response.status() === 503,
+  );
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(receipt).toHaveCount(0);
   await expect(page).toHaveURL(/\/inbox\?view=notifications$/u);
   await expect(page.locator("textarea")).toHaveCount(0);
+  await firstPageRetry;
+  await expect(page.getByRole("alert")).toContainText(
+    "The inbox could not load",
+  );
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByText("You have no notifications.")).toBeVisible();

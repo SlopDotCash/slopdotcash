@@ -533,7 +533,9 @@ export default {
             outcome,
           }),
         );
-        message.ack();
+        if (outcome === "review source or authorization changed before action")
+          message.retry({ delaySeconds: 60 });
+        else message.ack();
       } catch (error) {
         console.error(
           JSON.stringify({
