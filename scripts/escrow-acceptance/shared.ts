@@ -207,7 +207,7 @@ export interface AssetEvidence {
   vault: string | null;
   deployment: Record<
     string,
-    string | null | import("../../contracts/evm/adapter").EvmUpgrade
+    string | 1 | null | import("../../contracts/evm/adapter").EvmUpgrade
   >;
   steps: Record<string, StepRecord>;
   checks: Record<string, unknown>;
