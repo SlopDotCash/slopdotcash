@@ -996,6 +996,12 @@ condition from fresh GitHub commits before adding the empty array. False values,
 nonempty resolution records and unknown source fields are refused.
 The Worker collects the evidence from GitHub; callers do not
 upload diff bodies. Results use the existing subscription result format.
+Every source must be closed and have been merged, or closed without a merge,
+before the API consumer's start: `SLOPBOT_VALUE_START_AT` when the value
+settings are valid, else `2026-11-01T00:00:00.000Z`. This is the same timestamp
+and cutoff as the consumer's `historical` outcome, so a delayed start never
+leaves work owned by neither route. Later or open work belongs to the paid API
+route (PRD section 5), so the importer refuses it before publication.
 Single predecessors are a
 digest or null; grouped predecessors are digest arrays. A successor requires a
 reason. Unknown envelope fields, API receipt claims and caller-supplied producer
