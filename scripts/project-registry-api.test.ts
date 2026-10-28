@@ -23,7 +23,10 @@ import {
 } from "../backend/projects/handler";
 import type { SkillTemplateIndex } from "../backend/projects/skill-publication";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
-import { TokenMetadataError } from "../backend/projects/token-metadata";
+import {
+  rpcTokenMetadataReader,
+  TokenMetadataError,
+} from "../backend/projects/token-metadata";
 import { readSecurityProgramFunds } from "../backend/security/program-funds";
 import { vettingScanRequester } from "../backend/vetting/handler";
 import {
@@ -1006,6 +1009,58 @@ describe("project registry API", () => {
       expect(response.status).toBe(422);
       expect((await response.json()).error).toBe(error);
     }
+    expect(await persistence.listProjects()).toEqual([]);
+  });
+
+  test("a rate-limited or unreachable token RPC asks the owner to retry, not to change the token", async () => {
+    // The real reader against a fixture RPC: only the network answer varies.
+    let answer: (method: string) => Promise<Response>;
+    deps.readTokenMetadata = rpcTokenMetadataReader(
+      (async (_url, init) =>
+        answer(JSON.parse(String(init?.body)).method)) as typeof fetch,
+      { robinhood: "https://rpc.fixture.invalid" },
+    );
+    const submit = () =>
+      create({
+        ...applicationManifest("open-registry", "example/open-registry"),
+        rewardAsset: {
+          network: "robinhood",
+          kind: "token",
+          address: TOKEN,
+          symbol: "OPEN",
+        },
+      });
+    const unavailable = [
+      async () => new Response("Too Many Requests", { status: 429 }),
+      async () => new Response("Bad Gateway", { status: 502 }),
+      async () => {
+        throw new TypeError("fetch failed");
+      },
+    ];
+    for (const failure of unavailable) {
+      answer = failure;
+      const response = await submit();
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: "reward_asset_unverified",
+        message:
+          "Robinhood Chain could not be reached to verify the reward token. Try again.",
+      });
+    }
+    // A chain that answers and has no contract at the address still refuses it.
+    answer = async (method) =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: 1,
+        result: method === "eth_chainId" ? "0x1237" : "0x",
+      });
+    const refused = await submit();
+    expect(refused.status).toBe(422);
+    expect(await refused.json()).toEqual({
+      error: "reward_asset_unverified",
+      message:
+        "The reward token could not be verified on Robinhood Chain: No contract exists at that token address",
+    });
     expect(await persistence.listProjects()).toEqual([]);
   });
 
