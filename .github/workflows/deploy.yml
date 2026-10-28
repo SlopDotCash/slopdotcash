@@ -117,26 +117,36 @@ jobs:
         # reads projects and generated skills from D1 at runtime, so a newly
         # approved project appears without this step. Every trusted run
         # snapshots it so build-time ingestion collects the active
-        # repositories. Pull-request runs snapshot the same public, read-only
-        # API too: the committed snapshot is empty, and the evaluated-award
-        # validator in verify:contracts resolves each award's project and its
-        # external-evaluation opt-in against this snapshot, so without it any
-        # evaluations/ file fails on a pull request while passing on the
-        # trusted run. Pull-request runs read the production registry because
-        # the "Load deployed public ledger for pull-request checks" step
-        # adapts the production ledger, whose repository ids must be
-        # registered; the staging registry names different ids for the same
-        # projects. The snapshot is not bound or uploaded on pull requests.
-        # Before an environment first serves the API, the sync keeps the
-        # committed snapshot and says so.
+        # repositories. Before an environment first serves the API, the sync
+        # keeps the committed snapshot and says so.
+        if: github.event_name != 'pull_request'
         env:
-          SLOP_API_ORIGIN: ${{ github.event_name == 'pull_request' && 'https://slop.cash' || (env.VITE_SLOP_ENVIRONMENT == 'staging' && 'https://staging.slop.cash' || 'https://slop.cash') }}
+          SLOP_API_ORIGIN: ${{ env.VITE_SLOP_ENVIRONMENT == 'staging' && 'https://staging.slop.cash' || 'https://slop.cash' }}
         run: bun run projects:sync
 
       - name: Validate project registry and every skill
+        # The evaluated-award validator in verify:contracts resolves each
+        # evaluations/ award's project and its external-evaluation opt-in
+        # against the registry snapshot. The committed snapshot is an empty
+        # placeholder and the trusted sync above does not run on pull
+        # requests, so a pull request that adds an award failed with
+        # "Unknown evaluator-award project" while the same tree passed after
+        # merge. Pull-request runs therefore validate the records against a
+        # temporary snapshot of the production registry (public GET only; the
+        # deployed-ledger step below adapts the production ledger, so the
+        # production registry is the matching one) and then restore the
+        # committed placeholder, which the ledger adapter, the captured
+        # profile seed and the build on pull requests are written for.
         run: |
           set -euo pipefail
-          bun run verify:contracts
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            SLOP_API_ORIGIN=https://slop.cash bun run projects:sync
+            bun run verify:contracts
+            git checkout -- src/lib/project-registry.generated.mjs src/lib/project-revisions.generated.json
+            git diff --quiet -- src/lib/project-registry.generated.mjs src/lib/project-revisions.generated.json
+          else
+            bun run verify:contracts
+          fi
 
       - name: Install the pinned merge collector for trusted Points ingestion
         if: github.event_name != 'pull_request'
