@@ -169,7 +169,7 @@ test("admin distinguishes retained admission from the current revision and can r
             manifestSha256: "c".repeat(64),
             expiresAt: null,
             permanentAdmissionEvidence: true,
-            policy: { version: "slop-scanner-evidence-2026-10-27" },
+            policy: { version: "slop-scanner-evidence-2026-10-28" },
             objects: [],
           },
         ],
