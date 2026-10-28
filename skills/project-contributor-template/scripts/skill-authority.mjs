@@ -1,5 +1,7 @@
 /** Immutable GitHub source and registry verification for installation. */
 export const SKILL_AUTHORITY_PYTHON = `
+import ssl
+
 repository = "SlopDotCash/slopdotcash"
 github_repository = "SlopDotCash/slopdotcash"
 provenance_name = "PROVENANCE.json"
@@ -160,16 +162,17 @@ def fetch_bytes_once(url, limit, expected_origin, authenticated=False):
         raise RetryableDownloadError(
             f"timed out after {request_timeout_seconds}s"
         ) from error
-    except ConnectionResetError as error:
+    except (ConnectionResetError, ssl.SSLEOFError) as error:
         # RemoteDisconnected also derives from ConnectionResetError when the
         # server closes the connection before sending response headers.
+        # Abrupt TLS EOF is retryable; certificate errors are not SSLEOFError.
         raise RetryableDownloadError(type(error).__name__) from error
     except urllib.error.URLError as error:
         if isinstance(error.reason, (TimeoutError, socket.timeout)):
             raise RetryableDownloadError(
                 f"timed out after {request_timeout_seconds}s"
             ) from error
-        if isinstance(error.reason, ConnectionResetError):
+        if isinstance(error.reason, (ConnectionResetError, ssl.SSLEOFError)):
             raise RetryableDownloadError(type(error.reason).__name__) from error
         raise ValueError(
             f"authenticated download failed ({type(error.reason).__name__}): {url}"
@@ -185,7 +188,7 @@ def fetch_bytes_once(url, limit, expected_origin, authenticated=False):
 
 def fetch_bytes(url, limit, expected_origin, authenticated=False):
     # Integrity, authority, and size violations above raise ValueError and are
-    # never retried; only timeouts, connection resets and HTTP 5xx repeat, bounded.
+    # never retried; only timeouts, resets, TLS EOF and HTTP 5xx repeat, bounded.
     last_reason = None
     for attempt in range(1, download_attempts + 1):
         try:
