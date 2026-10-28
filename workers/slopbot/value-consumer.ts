@@ -10,6 +10,7 @@ import {
   finishValueRequest,
   nextValueRetryAt,
   ownsValueRequest,
+  resumeParkedValueRequests,
   type ValueOutcome,
 } from "./value-processing";
 import {
@@ -57,13 +58,22 @@ export async function consumeValueRequest(
       // A blocked outcome backs off with this delivery's own attempt count
       // instead of retrying at a flat hour forever (#1411 B12); a transient
       // `retry` keeps the one-hour cadence.
-      terminal ? null : await nextValueRetryAt(db, claim.deliveryId, outcome),
+      // A parked request has no retry time until its project is active.
+      terminal || outcome === "parked"
+        ? null
+        : await nextValueRetryAt(db, claim.deliveryId, outcome),
     );
     return outcome;
   };
+  const finishBlocked = (reason: string | null) =>
+    reason === "attempts"
+      ? finish("attempts-exhausted", true)
+      : finish(reason === "budget" ? "budget" : "authority");
   try {
     const project = await registeredProject(db, job);
-    if (!project) return await finish("authority");
+    // A paused, retired or unregistered project parks the request without a
+    // retry time; resumeParkedValueRequests wakes it on reactivation.
+    if (!project) return await finish("parked");
     const repositories = collectTargetRepositories([project]);
     await assertValueInstallation(db, job.installationId);
     const settings = valueSettings(env);
@@ -94,11 +104,15 @@ export async function consumeValueRequest(
       { repositoryDatabaseId: identity.id, repositoryNodeId: identity.node_id },
     ];
     await assertValueInstallationRepositories(github, membership);
-    const pull = await github.get<{
+    const read = await github.request<{
       state: string;
       merged_at: string | null;
       closed_at: string | null;
-    }>(`/repos/${repository.id}/pulls/${job.number}`);
+    }>("GET", `/repos/${repository.id}/pulls/${job.number}`);
+    // The installation reads this public repository, so a 404 means GitHub
+    // has no such pull request (deleted, or never one). Record it and stop.
+    if (read.status === 404) return await finish("missing", true);
+    const pull = read.data;
     if (!pull) return await finish("source-incomplete");
     if (pull.state !== "closed") return await finish("open", true);
     const occurred = Date.parse(pull.merged_at ?? pull.closed_at ?? "");
@@ -233,10 +247,7 @@ export async function consumeValueRequest(
         maximumMicroUsd: maximum,
         approvedMonthlyMicroUsd: monthly,
       });
-      if (result.blocked)
-        return await finish(
-          result.blockReason === "budget" ? "budget" : "authority",
-        );
+      if (result.blocked) return await finishBlocked(result.blockReason);
       if (!result.verdict) return await finish("retry");
       if (!(await mayCall())) return await finish("authority");
       const legacyPredecessors = [
@@ -268,10 +279,7 @@ export async function consumeValueRequest(
       maximumMicroUsd: maximum,
       approvedMonthlyMicroUsd: monthly,
     });
-    if (result.blocked)
-      return await finish(
-        result.blockReason === "budget" ? "budget" : "authority",
-      );
+    if (result.blocked) return await finishBlocked(result.blockReason);
     if (!result.verdict) return await finish("retry");
     if (!(await mayCall())) return await finish("authority");
     await publishValueAssessment(
@@ -341,6 +349,9 @@ const RUN_MS = 4 * 60 * 1000;
  */
 export async function consumePendingValueRequests(env: ValueConsumerEnv) {
   const started = Date.now();
+  await resumeParkedValueRequests(env.SLOPBOT_DB, (repository) =>
+    registeredRepository(env.SLOPBOT_DB, repository),
+  );
   const outcomes: string[] = [];
   while (outcomes.length < RUN_REQUESTS && Date.now() - started < RUN_MS) {
     const job = await nextValueRequest(env.SLOPBOT_DB);
