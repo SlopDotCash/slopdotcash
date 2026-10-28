@@ -8,6 +8,14 @@ import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function stopDescendant(pid: number) {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
 test("a timed-out launcher stops its descendant server before returning failure", async () => {
   const directory = mkdtempSync(join(tmpdir(), "slop-phase-tree-"));
   const ready = join(directory, "ready");
@@ -89,6 +97,54 @@ test("a completed phase preserves successful and failed child exit codes", async
     ).toBe(status);
   }
 });
+
+for (const stdio of ["inherit", "ignore"]) {
+  test.skipIf(process.platform === "win32")(
+    `a failed launcher stops its descendant server with ${stdio} stdio`,
+    async () => {
+      const directory = mkdtempSync(join(tmpdir(), "slop-phase-failure-"));
+      const ready = join(directory, "ready");
+      const descendant = `require("node:fs").writeFileSync(${JSON.stringify(ready)}, String(process.pid)); setInterval(() => {}, 1000);`;
+      // A launcher can fail after starting a server. Inherited pipes must not
+      // keep the phase alive until its full deadline, and ignored pipes must
+      // not let the phase return while the server is still running.
+      let pid: number | undefined;
+      try {
+        const launcher = `const fs = require("node:fs"); require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: ${JSON.stringify(stdio)} }); const poll = setInterval(() => { if (fs.existsSync(${JSON.stringify(ready)})) { clearInterval(poll); process.exit(7); } }, 10);`;
+        const options = {
+          label: `failed-launcher-${stdio}`,
+          args: ["-e", launcher],
+          cwd: directory,
+          timeoutMs: 5000,
+        };
+        // Exercise the production Node runtime, including its POSIX process
+        // group signaling, rather than Bun's node:child_process emulation.
+        const runner = pathToFileURL(
+          join(process.cwd(), "scripts/run-e2e-phase.mjs"),
+        ).href;
+        const script = `import { runE2ePhase } from ${JSON.stringify(runner)}; process.exitCode = await runE2ePhase({ ...${JSON.stringify(options)}, command: process.execPath, env: process.env });`;
+        const child = Bun.spawn(["node", "--input-type=module", "-e", script], {
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        const deadline = Date.now() + 5000;
+        while (!existsSync(ready) && Date.now() < deadline) await pause(25);
+        expect(existsSync(ready)).toBe(true);
+        const serverPid = Number(readFileSync(ready, "utf8"));
+        pid = serverPid;
+        expect(await child.exited).toBe(7);
+        expect(() => process.kill(serverPid, 0)).toThrow(
+          expect.objectContaining({ code: "ESRCH" }),
+        );
+        pid = undefined;
+      } finally {
+        if (pid !== undefined) stopDescendant(pid);
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
+}
 
 test("an occupied fixture port rejects startup and lets the caller release and reuse it", async () => {
   const directory = mkdtempSync(join(tmpdir(), "slop-fixture-startup-"));

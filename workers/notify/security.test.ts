@@ -295,6 +295,77 @@ test("ambiguous transport never resends until independent non-acceptance evidenc
   h.sqlite.close();
 });
 
+test("provider suppression evidence is a failed delivery that reaches the backup", async () => {
+  const h = await setup();
+  await dispatchSecurityMail(h.deps);
+  const notice = h.rows().find((r) => r.recipient_github_id === owner.githubId);
+  if (!notice) throw new Error("Owner notice missing");
+  expect(
+    await reconcileSecurityMail(h.deps, {
+      deliveryId: notice.id,
+      attempt: notice.attempts,
+      destinationDigest: await destinationDigest(
+        h.deps.config.recipients[owner.githubId],
+      ),
+      outcome: "suppressed",
+      evidenceReference: "private-provider-suppression-receipt",
+    }),
+  ).toBe(true);
+  h.advance(300_000);
+  await dispatchSecurityMail(h.deps);
+  // The suppressed notice reached no inbox, so its backup is told at once.
+  // The accepted notice still waits for its one-hour acknowledgment target.
+  expect(
+    h
+      .rows()
+      .filter((r) => r.escalation_of)
+      .map((r) => [r.escalation_of, r.recipient_github_id]),
+  ).toEqual([[notice.id, backup.githubId]]);
+  // Past that target, both notices have reached a backup.
+  h.advance(2 * 3600_000);
+  await dispatchSecurityMail(h.deps);
+  expect(h.rows().filter((r) => r.escalation_of)).toHaveLength(2);
+  h.sqlite.close();
+});
+
+test("a notice withheld for a revoked role never escalates, even after the role returns", async () => {
+  const h = await setup();
+  const setApprovers = (revision: number, approvers: (typeof owner)[]) => {
+    const technical = JSON.stringify(approvers);
+    const sha = String(revision).repeat(64);
+    h.sqlite
+      .query(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT id,?,json_set(manifest, '$.securityBounty.approvers.technical', json(?)),?, 'test role change',? FROM projects WHERE id='bounty'",
+      )
+      .run(revision, technical, sha, at);
+    h.sqlite
+      .query(
+        "UPDATE projects SET revision=?, manifest_sha256=?, manifest = json_set(manifest, '$.securityBounty.approvers.technical', json(?)) WHERE id = 'bounty'",
+      )
+      .run(revision, sha, technical);
+  };
+  setApprovers(2, [owner]);
+  await dispatchSecurityMail(h.deps);
+  expect(h.rows().map((r) => r.state)).toEqual([
+    "provider-accepted",
+    "suppressed",
+  ]);
+  const notice = h.rows().find((r) => r.recipient_github_id === owner.githubId);
+  if (!notice) throw new Error("Owner notice missing");
+  setApprovers(3, [owner, backup]);
+  h.advance(2 * 3600_000);
+  await dispatchSecurityMail(h.deps);
+  // Only the overdue sent notice reaches a backup. The withheld one sent
+  // nothing, so it has no failed delivery or missed acknowledgment.
+  expect(
+    h
+      .rows()
+      .filter((r) => r.escalation_of)
+      .map((r) => [r.escalation_of, r.recipient_github_id]),
+  ).toEqual([[notice.id, backup.githubId]]);
+  h.sqlite.close();
+});
+
 test("role revocation suppresses queued mail; missing verified destinations exhaust bounded retries without losing the case", async () => {
   const h = await setup();
   h.sqlite

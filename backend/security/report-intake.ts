@@ -37,6 +37,7 @@ import {
   COLUMNS,
   loadSubmission,
   type SubmissionRow,
+  settle,
   submissionView,
 } from "./submissions";
 
@@ -807,7 +808,12 @@ export async function listStoredSubmissions(
   const rows = await Promise.all(
     own.map(async (row) => ({
       createdAt: row.created_at,
-      submission: await decorateSubmission(deps, row, actor),
+      submission: await decorateSubmission(
+        deps,
+        // A failed settle shows the row as stored; the next read retries it.
+        await settle(deps, row).catch(() => row),
+        actor,
+      ),
     })),
   );
   for (const candidate of candidates) {
@@ -877,7 +883,7 @@ export async function readStoredIntake(
     .bind(id, actor.githubId, deps.now().toISOString())
     .run();
   return json(200, {
-    submission: await decorateSubmission(deps, row, actor),
+    submission: await decorateSubmission(deps, await settle(deps, row), actor),
     report: await reportVersion(deps, stored),
   });
 }

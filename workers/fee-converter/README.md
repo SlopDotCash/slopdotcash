@@ -171,7 +171,9 @@ For each enabled network:
    is never sold.
 6. Read the fee-wallet balance of each candidate. Skip USDC and empty
    balances. A receipt run also skips a balance unchanged since the token's
-   latest record.
+   latest record. On Solana the balance is the fee wallet's canonical
+   associated token account, the only holding a reviewed route can debit.
+   A fee paid to another token account of the fee wallet stays there.
 7. Get a quote. If the quoted value is above the remaining per-run or per-day
    cap, scale the amount down (at most three requotes, aiming at 98% of the
    remaining cap).
@@ -540,9 +542,13 @@ failed, or a business row says failed. Historical approval and swap hashes
 are both reconciled, including older rows that hold both.
 
 Same-nonce replacements reserve their largest maximum once. Unknown sends
-carry that liability across UTC midnight. Canonical finalized success and
-revert receipts settle the exact execution cost plus Base data/operator fees;
-missing cost evidence keeps the reserve. An advanced finalized nonce does
+carry that liability across UTC midnight. A swap that closes as failed while
+its nonce is still unused, for example one dropped after its router deadline,
+keeps its reserve. The next send takes that nonce and joins the same group,
+so the nonce still reserves its largest maximum once until a receipt settles
+it. Canonical finalized success and revert receipts settle the exact
+execution cost plus Base data/operator fees; missing cost evidence keeps the
+reserve. An advanced finalized nonce does
 not identify the winning transaction or prove zero cost. If another send
 consumed it, the reserve remains until a reviewed path can prove that winner;
 no release path is implemented for that case. Actual costs are charged on the
