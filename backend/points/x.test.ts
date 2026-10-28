@@ -113,3 +113,55 @@ test("X connection and reconnect reserve identity without granting points", asyn
     sqlite.close();
   }
 });
+
+test("a malformed X request body is a client error, not a server outage", async () => {
+  const { db, sqlite } = sqliteD1(
+    readdirSync("migrations")
+      .filter((p) => p.endsWith(".sql"))
+      .sort(),
+  );
+  const token = "m".repeat(48);
+  const now = "2026-10-26T12:00:00.000Z";
+  sqlite
+    .prepare(
+      "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,1)",
+    )
+    .run("U_fixture", "1234", "fixture", now);
+  sqlite
+    .prepare(
+      "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)",
+    )
+    .run(await sha256Hex(token), "U_fixture", "2026-10-26T13:00:00.000Z");
+  const deps: PointsDependencies = {
+    db,
+    rateLimitSecret: "fixture-secret".repeat(4),
+    identity: { fetch: async () => new Response(null, { status: 500 }) },
+    now: () => new Date(now),
+    x: { clientId: "fixture-client", clientSecret: "fixture-secret" },
+    xFetch: async () => Response.json({}),
+  };
+  const raw = (path: string, body: string) =>
+    handlePointsApi(
+      new Request(`https://slop.cash/api/v1/points/x/${path}`, {
+        method: "POST",
+        headers: {
+          cookie: `__Host-slop_points=${token}`,
+          origin: "https://slop.cash",
+          "content-type": "application/json",
+        },
+        body,
+      }),
+      deps,
+    );
+  try {
+    for (const body of ["null", "{", "[]"])
+      for (const path of ["start", "visibility"])
+        expect({ path, body, status: (await raw(path, body)).status }).toEqual({
+          path,
+          body,
+          status: 400,
+        });
+  } finally {
+    sqlite.close();
+  }
+});

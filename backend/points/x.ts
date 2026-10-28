@@ -6,7 +6,7 @@ import {
   pkceChallenge,
   randomToken,
 } from "../../workers/identity/crypto";
-import { cookieValue, json as jsonResponse } from "../http";
+import { cookieValue, json as jsonResponse, readJsonObject } from "../http";
 import type { PointsDependencies } from "./handler";
 
 export interface XConfiguration {
@@ -264,11 +264,7 @@ export async function handleX(
   }
   if (route === "/start" && request.method === "POST") {
     if (!config) return json(503, { error: "x_not_configured" });
-    const body = (await readBoundedJson(
-      request,
-      256,
-      "X connection",
-    )) as Record<string, unknown>;
+    const body = await readJsonObject(request, 256, "X connection");
     if (
       !body ||
       Object.keys(body).join() !== "public" ||
@@ -330,11 +326,7 @@ export async function handleX(
     return json(200, { disconnected: true });
   }
   if (route === "/visibility" && request.method === "POST") {
-    const body = (await readBoundedJson(
-      request,
-      256,
-      "X visibility",
-    )) as Record<string, unknown>;
+    const body = await readJsonObject(request, 256, "X visibility");
     if (
       !body ||
       Object.keys(body).join() !== "public" ||
