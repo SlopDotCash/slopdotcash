@@ -88,6 +88,17 @@ export async function readJsonObject(
     : null;
 }
 
+/**
+ * Splits values into `IN (...)` batches. D1 allows 100 bound parameters per
+ * statement, so callers keep a margin.
+ */
+export function chunked<T>(values: readonly T[], size = 90): T[][] {
+  const out: T[][] = [];
+  for (let index = 0; index < values.length; index += size)
+    out.push(values.slice(index, index + size));
+  return out;
+}
+
 export type ApiErrorOptions = {
   /** Fixed log label; never request content, identifiers or secrets. */
   label: string;

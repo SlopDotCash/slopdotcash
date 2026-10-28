@@ -26,6 +26,7 @@ import type {
 import { GHSA, GITHUB_LOGIN } from "../github";
 import {
   apiErrorResponse,
+  chunked,
   exactKeys,
   fail,
   isSameOriginJsonWrite,
@@ -63,7 +64,11 @@ import {
 } from "./analysis";
 import { markerLine } from "./github-advisories";
 import type { IntakeConfig } from "./intake-grant";
-import { prepareSecuritySettlement, securitySettlementView } from "./payments";
+import {
+  prepareSecuritySettlement,
+  securitySettlementView,
+  securitySettlementViews,
+} from "./payments";
 import {
   OUTSTANDING_RESERVATIONS,
   readSecurityProgramFunds,
@@ -75,6 +80,7 @@ import {
 import {
   readStoredReportByCase,
   storedIntakeViewForCase,
+  storedIntakeViewsForCases,
 } from "./report-intake";
 import {
   cachedReportingReadiness,
@@ -136,8 +142,6 @@ type ReportingProject = {
   revision: number;
 } | null;
 
-/** Cases read concurrently by one list request; each needs several D1 reads. */
-const LIST_READ_CONCURRENCY = 8;
 
 export type Role =
   | "reporter"
@@ -533,8 +537,14 @@ export async function caseRoles(
   >,
   row: CaseRow,
   actor: Actor,
+  preloaded?: {
+    project: Awaited<ReturnType<typeof currentReportingProject>>;
+    triager: boolean;
+  },
 ): Promise<Set<Role>> {
-  const project = await currentReportingProject(deps, row.project_id);
+  const project = preloaded
+    ? preloaded.project
+    : await currentReportingProject(deps, row.project_id);
   const terms = project?.manifest.securityBounty;
   const roles = programRoles(
     terms,
@@ -544,7 +554,9 @@ export async function caseRoles(
   if (deps.moderatorGithubIds?.has(actor.githubId)) roles.add("dispute");
   const triager =
     row.reporter_github_id !== actor.githubId &&
-    (await activeTriager(deps, row.id, actor.githubId));
+    (preloaded
+      ? preloaded.triager
+      : await activeTriager(deps, row.id, actor.githubId));
   // A moderator reads only cases with an appeal or a related-party award
   // review.
   if (
@@ -860,27 +872,102 @@ function awardAmount(
     : securityBountySplit(gross, frozenSplit(frozenTerms(row)));
 }
 
+/** The per-case reads a list shares between every visible case. */
+type CaseContext = {
+  project: Awaited<ReturnType<typeof currentReportingProject>>;
+  settlement: Awaited<ReturnType<typeof securitySettlementView>>;
+  reservation: ReservationRow | null;
+  intake: Awaited<ReturnType<typeof storedIntakeViewForCase>>;
+  forwarded: { repository: string; advisory_ghsa: string } | null;
+};
+
+/**
+ * Builds every per-case read a list needs, in a fixed number of statements
+ * whatever the case count. The single-case routes keep loading one by one.
+ */
+async function caseContexts(
+  deps: SecurityApiDependencies,
+  rows: readonly CaseRow[],
+  projects: ReadonlyMap<string, CaseContext["project"]>,
+  rolesByCase: ReadonlyMap<string, Set<Role>>,
+): Promise<Map<string, CaseContext>> {
+  const contexts = new Map<string, CaseContext>();
+  for (const row of rows)
+    contexts.set(row.id, {
+      project: projects.get(row.project_id) ?? null,
+      settlement: null,
+      reservation: null,
+      intake: null,
+      forwarded: null,
+    });
+  const ids = rows.map((row) => row.id);
+  const [settlements, intakes] = await Promise.all([
+    securitySettlementViews(deps.db, ids),
+    storedIntakeViewsForCases(deps, rolesByCase),
+  ]);
+  for (const part of chunked(ids)) {
+    const placeholders = part.map(() => "?").join(",");
+    const [reservations, forwarded] = await Promise.all([
+      deps.db
+        .prepare(
+          `SELECT case_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at FROM security_award_reservations WHERE case_id IN (${placeholders})`,
+        )
+        .bind(...part)
+        .all<ReservationRow & { case_id: string }>(),
+      deps.db
+        .prepare(
+          `SELECT case_id, repository, advisory_ghsa FROM security_submissions WHERE case_id IN (${placeholders}) AND state = 'receipt-verified' AND advisory_ghsa IS NOT NULL`,
+        )
+        .bind(...part)
+        .all<{ case_id: string; repository: string; advisory_ghsa: string }>(),
+    ]);
+    for (const row of reservations.results ?? []) {
+      const context = contexts.get(row.case_id);
+      if (context) context.reservation = row;
+    }
+    for (const row of forwarded.results ?? []) {
+      const context = contexts.get(row.case_id);
+      if (context) context.forwarded = row;
+    }
+  }
+  for (const [caseId, context] of contexts) {
+    context.settlement = settlements.get(caseId) ?? null;
+    context.intake = intakes.get(caseId) ?? null;
+  }
+  return contexts;
+}
+
 /**
  * Shapes a case for the caller's strongest role. Finance receives only the
  * award and payment fields; a reporter sees the receipt, the owner's
  * response and the payout, never another report, the root cause key,
  * triagers, the AI analysis or evidence references (SEC-04, SEC-08).
+ *
+ * A list passes `preloaded` so one case costs no per-case reads; a single
+ * case read omits it and loads what it needs.
  */
 async function caseView(
   deps: SecurityApiDependencies,
   row: CaseRow,
   roles: Set<Role>,
   includeHistory: boolean,
+  preloaded?: CaseContext,
 ): Promise<Record<string, unknown>> {
   const terms = frozenTerms(row);
-  const settlement = await securitySettlementView(deps.db, row.id);
-  const current = await currentReportingProject(deps, row.project_id);
-  const reservation = await deps.db
-    .prepare(
-      "SELECT root_cause_key, policy_revision, gross_minor, currency, reserved_at FROM security_award_reservations WHERE case_id = ?",
-    )
-    .bind(row.id)
-    .first<ReservationRow>();
+  const settlement = preloaded
+    ? preloaded.settlement
+    : await securitySettlementView(deps.db, row.id);
+  const current = preloaded
+    ? preloaded.project
+    : await currentReportingProject(deps, row.project_id);
+  const reservation = preloaded
+    ? preloaded.reservation
+    : await deps.db
+        .prepare(
+          "SELECT root_cause_key, policy_revision, gross_minor, currency, reserved_at FROM security_award_reservations WHERE case_id = ?",
+        )
+        .bind(row.id)
+        .first<ReservationRow>();
   const railAvailable =
     (current?.manifest.securityBounty?.settlement?.deployments.length ?? 0) > 0;
   const step = nextStep(
@@ -946,14 +1033,16 @@ async function caseView(
     };
   }
   const forwarded =
-    row.advisory_ghsa === null
-      ? await deps.db
-          .prepare(
-            "SELECT repository,advisory_ghsa FROM security_submissions WHERE case_id=? AND state='receipt-verified' AND advisory_ghsa IS NOT NULL",
-          )
-          .bind(row.id)
-          .first<{ repository: string; advisory_ghsa: string }>()
-      : null;
+    row.advisory_ghsa !== null
+      ? null
+      : preloaded
+        ? preloaded.forwarded
+        : await deps.db
+            .prepare(
+              "SELECT repository,advisory_ghsa FROM security_submissions WHERE case_id=? AND state='receipt-verified' AND advisory_ghsa IS NOT NULL",
+            )
+            .bind(row.id)
+            .first<{ repository: string; advisory_ghsa: string }>();
   const shared = {
     ...base,
     advisory:
@@ -970,7 +1059,9 @@ async function caseView(
             ghsa: row.advisory_ghsa,
             url: advisoryUrl(row),
           },
-    intake: await storedIntakeViewForCase(deps, row.id, roles),
+    intake: preloaded
+      ? preloaded.intake
+      : await storedIntakeViewForCase(deps, row.id, roles),
     receiptState: row.receipt_state,
     remediationState: row.remediation_state,
     disclosureState: row.disclosure_state,
@@ -1168,47 +1259,56 @@ async function listCases(
     )
     .bind(actor.githubId, actor.githubId, ...projectIds)
     .all<CaseRow>();
+  const rows = result.results ?? [];
+  // Every per-case read of the list, in a fixed number of statements: one list
+  // request used to cost six D1 round trips per visible case.
+  const projects = new Map<string, CaseContext["project"]>();
+  for (const projectId of new Set(rows.map((row) => row.project_id)))
+    projects.set(projectId, await currentReportingProject(deps, projectId));
+  const triagerIds = new Set<string>();
+  for (const part of chunked(rows.map((row) => row.id))) {
+    const found = await deps.db
+      .prepare(
+        `SELECT case_id FROM security_case_members WHERE github_id = ? AND revoked_at IS NULL AND case_id IN (${part
+          .map(() => "?")
+          .join(",")})`,
+      )
+      .bind(actor.githubId, ...part)
+      .all<{ case_id: string }>();
+    for (const row of found.results ?? []) triagerIds.add(row.case_id);
+  }
+  const visible: { row: CaseRow; roles: Set<Role> }[] = [];
+  for (const row of rows) {
+    let roles: Set<Role>;
+    try {
+      roles = await caseRoles(deps, row, actor, {
+        project: projects.get(row.project_id) ?? null,
+        triager: triagerIds.has(row.id),
+      });
+    } catch (error) {
+      if (!reportingAuthorityUnavailable(error)) throw error;
+      authorityUnavailable = true;
+      continue;
+    }
+    if (roles.size === 0) continue;
+    if (roles.has("dispute")) {
+      const projectRoles = currentRoles.get(row.project_id) ?? new Set<Role>();
+      projectRoles.add("dispute");
+      currentRoles.set(row.project_id, projectRoles);
+    }
+    visible.push({ row, roles });
+  }
+  const contexts = await caseContexts(
+    deps,
+    visible.map(({ row }) => row),
+    projects,
+    new Map(visible.map(({ row, roles }) => [row.id, roles])),
+  );
   const cases: Record<string, unknown>[] = [];
   const reads: D1Statement[] = [];
-  // Every case needs several reads. Done one case at a time, a viewer with
-  // dozens of cases waits longer than the browser's deadline, so the cases
-  // are read in bounded concurrent groups that keep the list order, and
-  // they share one project read per request.
-  const scoped: SecurityApiDependencies = {
-    ...deps,
-    reportingProjects: new Map(),
-  };
-  const rows = result.results ?? [];
-  for (let start = 0; start < rows.length; start += LIST_READ_CONCURRENCY) {
-    const group = await Promise.all(
-      rows.slice(start, start + LIST_READ_CONCURRENCY).map(async (row) => {
-        let roles: Set<Role>;
-        try {
-          roles = await caseRoles(scoped, row, actor);
-        } catch (error) {
-          if (!reportingAuthorityUnavailable(error)) throw error;
-          return "unavailable" as const;
-        }
-        if (roles.size === 0) return null;
-        return { row, roles, view: await caseView(scoped, row, roles, false) };
-      }),
-    );
-    for (const entry of group) {
-      if (entry === "unavailable") {
-        authorityUnavailable = true;
-        continue;
-      }
-      if (entry === null) continue;
-      const { row, roles, view } = entry;
-      if (roles.has("dispute")) {
-        const projectRoles =
-          currentRoles.get(row.project_id) ?? new Set<Role>();
-        projectRoles.add("dispute");
-        currentRoles.set(row.project_id, projectRoles);
-      }
-      cases.push(view);
-      reads.push(accessLog(deps, row.id, actor, roles, "read"));
-    }
+  for (const { row, roles } of visible) {
+    cases.push(await caseView(deps, row, roles, false, contexts.get(row.id)));
+    reads.push(accessLog(deps, row.id, actor, roles, "read"));
   }
   // The list discloses private case fields too. Persist its read audit before
   // returning any cases, just as the individual case route does.
