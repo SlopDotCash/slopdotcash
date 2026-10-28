@@ -144,7 +144,8 @@ to `"true"` after the explicit production qualification and activation review.
    original revision and event time. Queue retries use that bound revision;
    a changed head or issue text cannot inherit the decision. An author push
    before the queue runs does not drop a maintainer decision: it is recorded
-   for the reopened revision and reverses the debit, and only the cleanup of
+   for the reopened revision and reverses a debit from that revision's close
+   or a close at or before the reopen, never a later head's close. Only the cleanup of
    Slopbot's close and labels requires that revision to still be current. Older jobs without
    that receipt make no decision. Confirm current GitHub maintainer authority
    and an open item before applying it. The existing same-revision protection
@@ -1224,7 +1225,10 @@ that GitHub answers with 404 in a repository the installation still reads is
 `missing`, a terminal recorded state. A paused, retired or unregistered project
 `parked`s its requests with no retry time, so they are never claimed hourly;
 each scheduled run first gives the parked requests of a now-active repository a
-retry time again. `attempts-exhausted` is terminal: migration
+retry time again. The sweep checks at most 20 repositories per run in rotation,
+never checked first, then least recently checked (migration
+`0106_slopbot_value_parked_checks.sql`), so every parked repository is
+rechecked within a bounded number of runs. `attempts-exhausted` is terminal: migration
 `0104_slopbot_value_inference_attempts.sql` records one immutable row per paid
 provider attempt for an inference key (installation, source digest, prompt,
 schema and route), and a key that has used three attempts that reserved budget

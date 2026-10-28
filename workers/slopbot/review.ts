@@ -2054,7 +2054,19 @@ export async function recordHumanSignal(
         ...session,
         revision: decided,
       }));
-    await reversePenalty(db, issue.node_id, "maintainer_reopen");
+    // Only a debit this reopen covers: its revision's close, or a close at or
+    // before the reopen. A later head's close after a push stays.
+    await reversePenalty(
+      db,
+      issue.node_id,
+      "maintainer_reopen",
+      source
+        ? {
+            revision: decided,
+            occurredAt: new Date(source.occurredAt).toISOString(),
+          }
+        : undefined,
+    );
     const appeal = await appealByKey(db, `appeal:${issue.node_id}:${decided}`);
     if (appeal !== null) {
       await resolveAppeal(db, appeal.appeal_key, "upheld", "maintainer");
