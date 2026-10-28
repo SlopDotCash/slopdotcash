@@ -25,7 +25,6 @@ async function main() {
     throw new Error(
       "The protected branch's exact workflow checkout is required",
     );
-  stage = "journal";
   if (!env.GITHUB_TOKEN)
     throw new Error("The workflow read-only GitHub credential is required");
   const production = branch === "refs/heads/main";
