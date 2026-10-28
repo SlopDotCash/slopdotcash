@@ -255,7 +255,7 @@ try {
       assert(record);
       return Response.json({
         transactionId: record.transaction_id,
-        ...(chain === "solana" ? { submitted: true } : {}),
+        submitted: true,
       });
     },
   });
