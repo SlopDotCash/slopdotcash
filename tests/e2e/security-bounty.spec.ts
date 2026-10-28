@@ -2692,14 +2692,12 @@ test("home links to a consolidated security bounty with full award terms @regist
     page.getByRole("link", { name: "Your private reports", exact: true }),
   ).toHaveCount(0);
   await expect(page.locator("#community-projects")).toHaveCount(0);
-  const link = section
-    .getByRole("link")
-    .filter({
-      has: page.getByRole("heading", {
-        name: "Security test program",
-        exact: true,
-      }),
-    });
+  const link = section.getByRole("link").filter({
+    has: page.getByRole("heading", {
+      name: "Security test program",
+      exact: true,
+    }),
+  });
   await expect(link).toHaveAttribute("href", `/projects/${id}`);
   await link.focus();
   await expect(link).toBeFocused();
