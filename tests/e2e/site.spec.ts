@@ -1962,6 +1962,49 @@ test("refuses retired and unknown paths and recovers to projects", async ({
   }
 });
 
+test("an unknown contributor and a missing cycle become noindex once their data resolves", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/contributors/no-such-slop-login-zz9", {
+    waitUntil: "networkidle",
+  });
+  await expect(
+    page.getByRole("heading", { name: "No Slop contributor with this login" }),
+  ).toBeVisible();
+  await expect(page.getByText("@no-such-slop-login-zz9")).toBeVisible();
+  // The typed login is not known from any record, so nothing links to GitHub.
+  await expect(page.locator('main a[href*="github.com"]')).toHaveCount(0);
+  await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+    "content",
+    "noindex",
+  );
+
+  await page.goto("/cycles/eliza/1999-01", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", { name: "No January 1999 cycle record" }),
+  ).toBeVisible();
+  await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+    "content",
+    "noindex",
+  );
+
+  // A recorded cycle keeps its canonical and is indexable.
+  const recorded = (await loadCycles(request)).cycles[0];
+  if (recorded) {
+    await page.goto(`/cycles/${recorded.projectId}/${recorded.cycleId}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+      "href",
+      `https://slop.cash/cycles/${recorded.projectId}/${recorded.cycleId}`,
+    );
+    await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+  }
+});
+
 test("an unknown project is a noindex page with no canonical", async ({
   page,
 }) => {
