@@ -3927,3 +3927,65 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
     }
   });
 });
+
+test("a registered Slop bounty vault keeps its split while the owner publishes terms @registry", async ({
+  page,
+  request,
+}) => {
+  const id = "slopdotcash";
+  const repository = "SlopDotCash/slopdotcash";
+  await installSlopbot(repository);
+  const permission = await fetch(
+    `${GITHUB_FIXTURE}/__fixture/slopbot/${repository}/permission/e2e-security/admin`,
+    { method: "PUT" },
+  );
+  expect(permission.status).toBe(204);
+  const terms = bountyTerms(repository, { rewardMode: "separate" });
+  const prior = await adminProject(request, id);
+  if (!prior)
+    await listProject(request, TOKENS.security, repository, id, {
+      securityBounty: terms,
+    });
+  const gross = prior ? "8000" : "9000";
+  await signIn(page, TOKENS.security);
+  await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
+  await openProjectSecuritySettings(page);
+  const fullAward = page.getByRole("checkbox", {
+    name: "slop.cash sponsors the whole award (researcher 100%, Slop 0%)",
+    exact: true,
+  });
+  await expect(fullAward).not.toBeChecked();
+  await expect(fullAward).toBeDisabled();
+  await expect(
+    page.getByLabel("Bounty network", { exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText("This program has a registered bounty vault", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("registered-vault-locked.png"),
+    fullPage: true,
+  });
+  await page.getByLabel("Published gross award (USDC)").fill(gross);
+  await page.getByRole("button", { name: "Review bounty terms" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Review before publishing" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Publish bounty terms" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Published revision" }),
+  ).toBeVisible();
+  const stored = await adminProject(request, id);
+  expect(stored.manifest.securityBounty).toMatchObject({
+    amount: { grossMinor: `${gross}000000` },
+    split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+    settlement: terms.settlement,
+  });
+  await page.screenshot({
+    path: test.info().outputPath("registered-vault-published.png"),
+    fullPage: true,
+  });
+});
