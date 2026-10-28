@@ -418,3 +418,98 @@ test("changed revision/template bytes and wrong signer leave queue pending and n
   ).rejects.toThrow();
   expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
 });
+
+test("a recorded repository rename acquires through the current GitHub name", async () => {
+  mode = "normal";
+  // The registry keeps the original path as the id and records the current
+  // path as the appended alias and githubUrl (`assertRepositoryTransition`).
+  const original = JSON.parse(
+    (await projects.getRevisionText("queue-fixture", 1))!.manifestText,
+  );
+  const [repository] = original.repositories;
+  const renamedText = JSON.stringify({
+    ...original,
+    repositories: [
+      {
+        ...repository,
+        aliases: ["example/renamed"],
+        displayName: "example/renamed",
+        githubUrl: "https://github.com/example/renamed",
+      },
+    ],
+  });
+  const renamedSha256 = digest(renamedText);
+  const requested: string[] = [];
+  const renamed: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      requested.push(path);
+      // GitHub answers the former name with a redirect, which acquisition refuses.
+      if (path.startsWith("/repos/example/fixture"))
+        throw new TypeError("fetch failed: unexpected redirect");
+      if (path === "/repos/example/renamed")
+        return Response.json({
+          id: 123456789,
+          node_id: "R_example",
+          full_name: "example/renamed",
+          private: false,
+        });
+      if (path.startsWith("/api/v1/project-revisions/"))
+        return Response.json({
+          projectId: "queue-fixture",
+          revision: 1,
+          manifestSha256: renamedSha256,
+          manifestText: renamedText,
+        });
+      const response = await connection.fetch!(input, init);
+      if (path === "/api/v1/vetting/requests") {
+        const queue = await response.json();
+        for (const assessment of queue.assessments)
+          if (assessment.assessmentId === assessmentId)
+            assessment.manifestSha256 = renamedSha256;
+        return Response.json(queue);
+      }
+      return response;
+    }) as typeof fetch,
+  };
+  const acquired = await acquireQueuedAssessment(renamed, assessmentId, root);
+  const bundle = JSON.parse(
+    await readFile(join(acquired.directory, "queued-inputs.json"), "utf8"),
+  );
+  expect(bundle.repositoryIdentity).toEqual({
+    id: "123456789",
+    nodeId: "R_example",
+    fullName: "example/renamed",
+  });
+  expect(
+    requested.some((path) => path.startsWith("/repos/example/fixture")),
+  ).toBe(false);
+  await rm(acquired.directory, { recursive: true, force: true });
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
+});
+
+test("an unrecorded repository rename is still refused", async () => {
+  mode = "normal";
+  const moved: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      if (new URL(String(input)).pathname === "/repos/example/fixture")
+        return Response.json({
+          id: 123456789,
+          node_id: "R_example",
+          full_name: "example/elsewhere",
+          private: false,
+        });
+      return connection.fetch!(input, init);
+    }) as typeof fetch,
+  };
+  const before = await readdir(root);
+  const failure = await acquireQueuedAssessment(
+    moved,
+    assessmentId,
+    root,
+  ).catch((error: unknown) => error);
+  expect((failure as Error).name).toBe("AcquisitionRefusal");
+  expect(await readdir(root)).toEqual(before);
+});
