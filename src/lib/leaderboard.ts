@@ -2776,8 +2776,13 @@ export function shareScoreThirds(
     throw new TypeError("score shares need positive integer inputs");
   }
   const base = Math.floor(total / actors);
+  // The floor keeps a share positive; it never increases the unit's total, so
+  // when the unit holds fewer thirds than actors the earliest actors take the
+  // remainder and the rest receive nothing.
   if (base === 0 && minimumPerActor === 1)
-    return Array.from({ length: actors }, () => 1);
+    return Array.from({ length: actors }, (_, index) =>
+      index < total ? 1 : 0,
+    );
   return Array.from(
     { length: actors },
     (_, index) => base + (index < total % actors ? 1 : 0),
