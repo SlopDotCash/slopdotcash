@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -300,4 +300,49 @@ test("a review larger than one pass resumes from its private cache without repea
   expect(
     evidence?.passes?.filter((pass) => pass.cached).length,
   ).toBeGreaterThan(0);
+});
+
+test("a cached review from another prompt revision is not reused", async () => {
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const directory = await mkdtemp(join(tmpdir(), "slop-review-prompt-cache-"));
+  directories.push(directory);
+  const cache = {
+    directory,
+    maxCallsPerPass: plan.batches.length + 1,
+  };
+  const first = provider(() => null);
+  const initial = await reviewInventory({
+    inspection,
+    profile,
+    fetch: first.fetcher,
+    concurrency: 1,
+    cache,
+  });
+  expect(initial.evidence?.review.status).toBe("completed");
+  expect(first.calls).toHaveLength(plan.batches.length + 1);
+
+  const files = (await readdir(directory)).filter((name) =>
+    name.endsWith(".json"),
+  );
+  expect(files).toHaveLength(plan.batches.length + 1);
+  for (const name of files) {
+    const path = join(directory, name);
+    const value = JSON.parse(await readFile(path, "utf8"));
+    value.review.promptPolicyRevision = "obsolete-prompt";
+    await writeFile(path, JSON.stringify(value));
+  }
+
+  const second = provider(() => null);
+  const refreshed = await reviewInventory({
+    inspection,
+    profile,
+    fetch: second.fetcher,
+    concurrency: 1,
+    cache,
+  });
+  expect(refreshed.evidence?.review.status).toBe("completed");
+  expect(second.calls).toHaveLength(plan.batches.length + 1);
+  expect(refreshed.evidence?.passes?.every((pass) => !pass.cached)).toBe(true);
 });
