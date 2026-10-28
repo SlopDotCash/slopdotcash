@@ -767,8 +767,11 @@ reconciliation; the local bootstrap workflow is not that evidence.
    `apply-production-stack.sh`.
 3. Put the attester key in the managed secret store of the attester Worker
    only, as `SIGNER_PRIVATE_KEY` (EVM) or `SOLANA_SIGNER_SEED` (Solana, 64 hex
-   digits). One key per network. Never reuse the registrar, owner, fee-wallet
-   or a test key. Do not create or store a relayer key: the project or a
+   digits). The key must match the network's reviewed identity-authority
+   address. The current reviewed EVM factories use the same identity address
+   on Base, Ethereum and Robinhood; each network still has its own attester
+   Worker and nonce journal. Never reuse the registrar, owner, fee-wallet or
+   a test key. Do not create or store a relayer key: the project or a
    permissionless executor holds it (PAY-04). The hosted signer refuses the
    relayer role on a production stack.
 4. Set `PAYMENT_RPC_URLS` on the attester Worker to a private endpoint for
