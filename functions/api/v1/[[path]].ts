@@ -163,6 +163,27 @@ function paymentRpcUrl(env: PagesEnv, network: string): string {
   return value;
 }
 
+/** Owner setup needs reviewed infrastructure and an RPC, not an active signer. */
+export function vaultSetupNetworks(env: PagesEnv): PaymentNetwork[] {
+  const networks = new Set<PaymentNetwork>(
+    env.PAYMENT_NETWORKS === undefined || env.PAYMENT_NETWORKS === "[]"
+      ? []
+      : parsePaymentNetworks(env.PAYMENT_NETWORKS),
+  );
+  for (const reviewed of [
+    ...REVIEWED_EVM_FACTORIES,
+    ...REVIEWED_SOLANA_PROGRAMS,
+  ]) {
+    try {
+      paymentRpcUrl(env, reviewed.network);
+      networks.add(reviewed.network);
+    } catch {
+      // No usable RPC means owner setup is unavailable for this network.
+    }
+  }
+  return [...networks];
+}
+
 /** Monthly reserve release services, one named binding per chain. */
 function monthlyReleaseService(env: PagesEnv, network: string) {
   const chain = ESCROW_NETWORKS[network as PaymentNetwork]?.chain;
@@ -264,7 +285,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       programs: REVIEWED_SOLANA_PROGRAMS,
       db,
       projects: () => projectPersistence.listProjects(),
-      networks: () => parsePaymentNetworks(env.PAYMENT_NETWORKS),
+      networks: () => vaultSetupNetworks(env),
       rpcUrl: (network) => paymentRpcUrl(env, network),
     }),
     securityProgramFunds: (projectId, program) =>

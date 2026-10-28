@@ -9,17 +9,17 @@ export type ReviewedSolanaProgram = Pick<
   Omit<SolanaProgramConfig, "rpcUrl" | "genesisHash" | "executedAtSlot">;
 
 /**
- * #901 finalized upgrade at slot 461493344, independently verified code and Config.
+ * Owner-approved Token-2022 upgrade at slot 462466131; code and Config verified.
  * This pin permits owner setup only on configured networks; it does not enable
  * wallet binding, attester signing, payments or a keeper.
  */
 export const REVIEWED_SOLANA_PROGRAMS: readonly ReviewedSolanaProgram[] = [
   {
     network: "solana-mainnet",
-    sourceCommit: "83827c042c7f28479f7d6a959d7ee5a64652fe85",
+    sourceCommit: "c9564479a65523756fd2998e04d192be3f88579a",
     programId: "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ",
     codeSha256:
-      "38c8d776e9d4d763f16c834d76aa0497ba1c3f2a3b8bbe17a60067268782005d",
+      "f250228d87493c024737de9dea4290ed0d28ed777eaddf17b874d493b77274a6",
     upgradeAuthority: "EmMRRFhjZmr2SN5RdhV98WPnUhgJxKMoE1itSwUsU8tr",
     identityAuthority: "Eq6tYrPnkhj3hLmSZUL9xUWjkZ3Y5j3naBAJyQyKMYzS",
     feeRecipient: "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY",
