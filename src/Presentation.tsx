@@ -6,7 +6,10 @@ import type { CycleIndexEntry } from "./lib/cycle-index";
 import { GithubIcon } from "./lib/github-icon";
 import type { GitHubActor, LeaderboardSnapshot } from "./lib/leaderboard";
 import { POINTS_PER_THIRD } from "./lib/points";
-import type { ProjectSessionState } from "./lib/project-api";
+import {
+  type ProjectSessionState,
+  useProjectMaintainer,
+} from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 
@@ -66,57 +69,46 @@ function SectionNav({
   label,
   current,
   links,
-  reload = false,
 }: {
   label: string;
   current: string;
-  reload?: boolean;
   links: readonly { id: string; label: string; href: string }[];
 }) {
   return (
     <nav aria-label={label} className="account-sections route-section-nav">
-      {links.map((link) =>
-        reload ? (
-          <a
-            key={link.id}
-            href={link.href}
-            aria-current={current === link.id ? "page" : undefined}
-          >
-            {link.label}
-          </a>
-        ) : (
-          <Link
-            key={link.id}
-            href={link.href}
-            ariaCurrent={current === link.id ? "page" : undefined}
-          >
-            {link.label}
-          </Link>
-        ),
-      )}
+      {links.map((link) => (
+        <Link
+          key={link.id}
+          href={link.href}
+          ariaCurrent={current === link.id ? "page" : undefined}
+        >
+          {link.label}
+        </Link>
+      ))}
     </nav>
   );
 }
 
-/** Re-read the canonical registry between project pages after an owner revision. */
+/** Project sections use client navigation without reloading the document. */
 export function ProjectNav({
   project,
   current,
 }: {
-  project: Pick<ProjectDefinition, "slug">;
+  project: Pick<ProjectDefinition, "id" | "slug">;
   current: "overview" | "funding" | "settings" | "security";
 }) {
   const base = `/projects/${project.slug}`;
+  const { allowed } = useProjectMaintainer(project.id);
   return (
     <SectionNav
       label="Project navigation"
       current={current}
-      reload
       links={[
         { id: "overview", label: "Overview", href: base },
         { id: "funding", label: "Funds & awards", href: `${base}/funding` },
-        { id: "settings", label: "Settings", href: `${base}/manage` },
-        { id: "security", label: "Security", href: `${base}/security` },
+        ...(allowed
+          ? [{ id: "settings", label: "Settings", href: `${base}/manage` }]
+          : []),
       ]}
     />
   );
@@ -633,37 +625,6 @@ export function PaymentLifecycle() {
           <span>The finalized payment matches the award.</span>
         </li>
       </ol>
-      <details className="payment-exceptions">
-        <summary>Payment states and exceptions</summary>
-        <dl>
-          <div>
-            <dt>Ready</dt>
-            <dd>The funded award can be sent.</dd>
-          </div>
-          <div>
-            <dt>Submitted</dt>
-            <dd>Sent; finality is not yet verified.</dd>
-          </div>
-          <div>
-            <dt>Underfunded</dt>
-            <dd>The allocation is not fully funded.</dd>
-          </div>
-          <div>
-            <dt>Awaiting wallet</dt>
-            <dd>The recipient needs a verified payout destination.</dd>
-          </div>
-          <div>
-            <dt>Held</dt>
-            <dd>Payment is paused while a hold is resolved.</dd>
-          </div>
-          <div>
-            <dt>Excluded</dt>
-            <dd>
-              Not included in this allocation. Funded awards remain payable.
-            </dd>
-          </div>
-        </dl>
-      </details>
     </div>
   );
 }
@@ -706,6 +667,19 @@ export function SignInPanel({
  * at commit eba9e730). A network without a reviewed mark shows its name only.
  */
 const NETWORK_MARKS: Readonly<Record<string, ReactNode>> = {
+  solana: (
+    <svg
+      className="network-mark"
+      data-network="solana"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path fill="#14f195" d="M5 3h18l-4 4H1z" />
+      <path fill="#8e7af0" d="M1 10h18l4 4H5z" />
+      <path fill="#9945ff" d="M5 17h18l-4 4H1z" />
+    </svg>
+  ),
   base: (
     <svg
       className="network-mark"

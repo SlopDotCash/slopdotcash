@@ -70,13 +70,6 @@
   margin-bottom: 0;
 }
 
-.guide-role-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-  margin: 0 0 1.5rem;
-}
-
 @media (max-width: 640px) {
   .payment-record {
     /* The amount and its action each need a full line at enlarged text sizes. */

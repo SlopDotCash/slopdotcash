@@ -2,10 +2,15 @@ import { useEffect, useState } from "react";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
 import type { VaultConnection } from "./lib/evm-vault-actions";
-import { ProjectApiError, projectApiRequest } from "./lib/project-api";
+import {
+  ProjectApiError,
+  projectApiRequest,
+  useProjectMaintainer,
+} from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { OwnerVaultSetup } from "./OwnerVaultSetup";
-import { formatDateTime } from "./Presentation";
+import { formatDateTime, NetworkName } from "./Presentation";
 import { VaultActions } from "./VaultActions";
 
 type PrivateFunds = {
@@ -16,12 +21,65 @@ type PrivateFunds = {
   snapshotAt: string;
 };
 
+/** Same public vault framing, backed only by the separate bounty vault. */
+export function ProjectBountyFunding({
+  project: initial,
+}: {
+  project: ProjectDefinition;
+}) {
+  const [project, setProject] = useState(initial);
+  const { allowed } = useProjectMaintainer(project.id);
+  const terms = project.securityBounty;
+  if (!terms) return null;
+  const chain = terms.settlement?.chain ?? terms.amount.network;
+  const deployments = terms.settlement?.deployments ?? [];
+  return (
+    <section
+      id="funding"
+      className="section project-funding"
+      aria-label="Project bounty vault"
+    >
+      <header className="vault-header">
+        <h2>
+          Project vault{" "}
+          {chain && (
+            <NetworkName chain={chain}>
+              <span className="visually-hidden">{NETWORK_NAMES[chain]}</span>
+            </NetworkName>
+          )}
+        </h2>
+      </header>
+      {allowed ? (
+        <OwnerBountyVault
+          project={project}
+          compact
+          onRegistered={({ project: updated }) => setProject(updated)}
+        />
+      ) : deployments.length === 0 ? (
+        <p className="vault-unconfigured" role="status">
+          The project vault is not set up.
+        </p>
+      ) : (
+        <div className="vault-totals">
+          {deployments.map((deployment) => (
+            <p key={`${deployment.network}:${deployment.vault}`}>
+              Vault <code>{deployment.vault}</code>
+            </p>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Owner-only funding view. Bounty balances never use the public payment API. */
 export function OwnerBountyVault({
   project,
   onRegistered,
+  compact = false,
 }: {
   project: ProjectDefinition;
+  compact?: boolean;
   onRegistered: (value: {
     project: ProjectDefinition;
     revision: number;
@@ -74,9 +132,9 @@ export function OwnerBountyVault({
   const deployments = project.securityBounty?.settlement?.deployments ?? [];
   return (
     <section className="owner-section" aria-label="Bounty funds">
-      <h2>Bounty funds</h2>
+      {compact ? null : <h2>Bounty funds</h2>}
       <div className="owner-form">
-        <p>Separate from contribution rewards.</p>
+        {compact ? null : <p>Separate from contribution rewards.</p>}
         {state.status === "loading" ? (
           <p role="status">Loading bounty funds…</p>
         ) : null}

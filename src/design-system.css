@@ -1511,25 +1511,6 @@ main h2 {
   grid-template-columns: 1fr;
   margin-top: 0.75rem;
 }
-.payment-exceptions {
-  margin-top: 1rem;
-}
-.payment-exceptions > summary {
-  cursor: pointer;
-  font-weight: 700;
-}
-.payment-exceptions dl {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem 1.5rem;
-}
-.payment-exceptions dt {
-  font-weight: 700;
-}
-.payment-exceptions dd {
-  margin: 0.25rem 0 0;
-  color: var(--muted);
-}
 .who-builds .model-outcomes-summary {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -1545,28 +1526,9 @@ main h2 {
   height: 40px;
 }
 @media (max-width: 680px) {
-  .payment-exceptions dl,
   .who-builds .model-outcomes-summary {
     grid-template-columns: 1fr;
   }
-}
-/* Private bounty discovery shares the project card rhythm. */
-.security-bounty-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1rem;
-  padding: 1.5rem;
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  background: var(--surface);
-}
-
-.security-bounty-card p {
-  margin: 0;
-}
-.security-bounty-card > .button {
-  margin-top: auto;
 }
 .security-bounty-split {
   font-size: 0.875rem;

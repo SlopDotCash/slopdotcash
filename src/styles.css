@@ -264,39 +264,52 @@ textarea:focus-visible {
   scroll-margin-top: 64px;
 }
 
-.faq details {
+.faq-answers {
+  display: grid;
+  gap: 0;
+}
+
+.faq-answer {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.85fr) minmax(0, 1.5fr);
+  column-gap: 40px;
+  padding: 28px 0;
   border-top: 1px solid var(--line);
-  padding: 16px 0;
 }
 
-.faq details:last-of-type {
-  border-bottom: 1px solid var(--line);
-}
-
-.faq summary {
-  cursor: pointer;
-  font-weight: 700;
+.faq-answer h3 {
+  grid-column: 1;
+  margin: 0;
+  font-size: 20px;
   line-height: 1.4;
+  letter-spacing: -0.02em;
 }
 
-.faq details p,
-.faq details li {
-  max-width: 70ch;
+.faq-answer p {
+  max-width: 65ch;
+  margin: 0;
   color: var(--muted);
   line-height: 1.65;
 }
 
-.faq details p {
-  margin: 12px 0 0;
+.faq-answer p + p {
+  margin-top: 12px;
 }
 
-.faq details ul {
-  display: block;
-  margin: 10px 0 0;
+.faq-answer a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-.faq details a {
-  border-bottom: 1px solid var(--ink);
+@media (max-width: 700px) {
+  .faq-answer {
+    display: block;
+    padding: 24px 0;
+  }
+
+  .faq-answer h3 {
+    margin-bottom: 12px;
+  }
 }
 
 .how-paths {
@@ -4169,4 +4182,53 @@ html:has(.security-page) {
 
 .project-github-link:hover {
   color: var(--ink);
+}
+
+.route-project .route-page-icon {
+  width: 56px;
+  height: 56px;
+  background: transparent;
+}
+
+.route-project .route-page-icon .project-avatar {
+  width: 100%;
+  height: 100%;
+}
+
+nav[aria-label="Project navigation"] {
+  padding-top: 1.25rem;
+}
+
+.home-security-section {
+  padding-top: 0;
+}
+
+.vault-unconfigured {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  color: #f5c66a;
+  background: #f5c66a0d;
+  border: 1px solid #f5c66a40;
+  border-radius: 12px;
+}
+.vault-unconfigured svg {
+  flex-shrink: 0;
+}
+.manage-page .proposal-form {
+  display: grid;
+  gap: 1.5rem;
+  max-width: 56rem;
+}
+.manage-page .proposal-form label {
+  display: grid;
+  gap: 0.625rem;
+  margin-bottom: 1.25rem;
+}
+.manage-page .proposal-form details {
+  padding: 1.25rem;
+}
+.manage-page .proposal-form details[open] > summary {
+  margin-bottom: 1.25rem;
 }

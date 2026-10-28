@@ -2682,8 +2682,8 @@ test("home links to a consolidated security bounty with full award terms @regist
     name: "Security bounties",
     exact: true,
   });
-  await expect(section.locator(".security-bounty-card")).toHaveCount(1);
-  await expect(section).toContainText("10,000 USDC security bounty");
+  await expect(section.locator(".project-card")).toHaveCount(1);
+  await expect(section).toContainText("$10k");
   await expect(section).toContainText(
     "Find a critical security vulnerability in the Security test program",
   );
@@ -2692,7 +2692,14 @@ test("home links to a consolidated security bounty with full award terms @regist
     page.getByRole("link", { name: "Your private reports", exact: true }),
   ).toHaveCount(0);
   await expect(page.locator("#community-projects")).toHaveCount(0);
-  const link = section.getByRole("link", { name: "View bounty", exact: true });
+  const link = section
+    .getByRole("link")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "Security test program",
+        exact: true,
+      }),
+    });
   await expect(link).toHaveAttribute("href", `/projects/${id}`);
   await link.focus();
   await expect(link).toBeFocused();
@@ -2750,7 +2757,7 @@ test("home links to a consolidated security bounty with full award terms @regist
     }),
   );
   await page.reload({ waitUntil: "networkidle" });
-  await expect(section.locator(".security-bounty-card")).toHaveCount(0);
+  await expect(section.locator(".project-card")).toHaveCount(0);
   await expect(section).toContainText("No paid security bounties are open.");
 });
 

@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { lazy, useCallback, useEffect, useState } from "react";
 import "./owner-review.css";
-import { Link } from "./Link";
 import { readBoundedJson } from "./lib/browser-json";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { networkLabel } from "./lib/network-names";
@@ -20,6 +19,7 @@ import {
   VAULT_SNAPSHOT_STALE_MS,
   type VaultSnapshot,
 } from "./lib/payments/contracts";
+import { useProjectMaintainer } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { CANONICAL_UINT } from "./lib/record-validation.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
@@ -405,6 +405,7 @@ export function EscrowFunding({
   project: ProjectDefinition;
   onRegistered: (project: ProjectDefinition) => void;
 }) {
+  const { allowed } = useProjectMaintainer(project.id);
   const [registrationNotice, setRegistrationNotice] = useState("");
   const [connectedWallet, setConnectedWallet] =
     useState<VaultConnection | null>(null);
@@ -415,29 +416,35 @@ export function EscrowFunding({
     <section className="section project-funding" aria-label="Project escrow">
       <header className="vault-header">
         <h2>
-          Project vault ·{" "}
-          <NetworkName chain={chain}>{NETWORK_NAMES[chain]}</NetworkName>
+          Project vault{" "}
+          <NetworkName chain={chain}>
+            <span
+              className={chain === "solana" ? "visually-hidden" : undefined}
+            >
+              {NETWORK_NAMES[chain]}
+            </span>
+          </NetworkName>
         </h2>
-        {project.escrow ? (
-          <ul className="vault-fees" aria-label="Fees">
-            <li className="vault-fee">
-              Award fee {project.escrow.feeBasisPoints / 100}%
-            </li>
-            <li className="vault-fee">
-              Withdrawal fee {project.escrow.withdrawalFeeBasisPoints / 100}%
-            </li>
-          </ul>
-        ) : null}
       </header>
       {totals.status === "none" ? (
-        <OwnerVaultSetup
-          project={project}
-          onRegistered={(updated, wallet, notice) => {
-            onRegistered(updated);
-            setConnectedWallet(wallet);
-            setRegistrationNotice(notice ?? "");
-          }}
-        />
+        allowed ? (
+          <OwnerVaultSetup
+            project={project}
+            onRegistered={(updated, wallet, notice) => {
+              onRegistered(updated);
+              setConnectedWallet(wallet);
+              setRegistrationNotice(notice ?? "");
+            }}
+          />
+        ) : (
+          <p className="vault-unconfigured" role="status">
+            <CircleAlert aria-hidden="true" />
+            <span>
+              The project vault is not set up. Payments disbursed by the project
+              maintainer are not guaranteed.
+            </span>
+          </p>
+        )
       ) : (
         <>
           {registrationNotice && <p role="status">{registrationNotice}</p>}
@@ -463,9 +470,6 @@ export function EscrowFunding({
             : null}
         </>
       )}
-      <Link className="button secondary-button" href="/earnings">
-        View your payouts
-      </Link>
     </section>
   );
 }
