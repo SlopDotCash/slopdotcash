@@ -323,7 +323,7 @@ diagnostic and never changes score, rank, share, or payment.
 
 Owner decision, 27 October 2026: all registered projects retain confidential
 reporting. Umia Protocol has a paid security bounty (and, from 28 October
-2026, so does Slop itself; see below). Its
+2026, so does Slop itself; see below). The Umia bounty's
 $10,000 gross award per accepted critical loss-of-funds finding splits $7,500
 to the first qualifying reporter and $2,500 to slop.cash. The maintainer reviews
 and awards each finding. The offer is pledged with funding after approval,
@@ -336,10 +336,12 @@ critical loss-of-funds finding (theft or permanent freezing of funds) in its own
 contracts deployed to mainnet from `contracts/evm/src` and
 `contracts/solana/programs`. Third-party contracts, off-chain or frontend-only
 issues, testnet-only deployments and known issues are out of scope. Slop is the
-sponsor, so the first qualifying reporter receives the full award with no Slop
-share (pending owner confirmation). Only the platform project may publish that
-full-award split. It binds no 75/25 bounty vault, and a full-award case never
-reserves or pays through one. Report it through the same private Slop intake;
+sponsor, so the first qualifying reporter of this Slop contract bounty receives
+the full award with no Slop share (owner decision confirmed 28 October 2026).
+Only the platform project (`slopdotcash`) may publish that full-award split. It
+binds no 75/25 bounty vault, and a full-award case never reserves or pays
+through one. No full-award payment path exists yet: an approved full-award case
+is not payable until one is approved and released. Report it through the same private Slop intake;
 never a public issue. See PRD section 8.
 
 The canonical skills direct researchers to the authenticated Slop interface.

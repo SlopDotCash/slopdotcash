@@ -5,7 +5,13 @@
  * owner reviews them and publishes an immutable D1 project revision; the
  * public pages read only that revision.
  */
-import type { SecurityBountyTerms } from "./security-bounty.mjs";
+import {
+  isFullAwardSplit,
+  SECURITY_FULL_AWARD_SPLIT,
+  SECURITY_SPLIT,
+  type SecurityBountySplitPolicy,
+  type SecurityBountyTerms,
+} from "./security-bounty.mjs";
 
 /** The merged `development` commit of the deployed bundled EVM upgrade
  * (contracts/DEPLOY-MAINNET.md). The owner confirms it before publishing. */
@@ -43,14 +49,14 @@ export const PLATFORM_BOUNTY_DEPLOYMENTS: SecurityBountyTerms["scope"]["deployme
       network: "solana-mainnet",
       address: "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ",
       codeIdentity:
-        "slop-escrow program (contracts/solana/programs/slop-escrow)",
+        "Slop Solana project vault program (contracts/solana/programs)",
     },
   ];
 
 export const PLATFORM_BOUNTY_TEXT = {
   includedAssets: [
-    "Slop EVM contracts in contracts/evm/src (ProjectEscrow vaults, factory, monthly reserve) as deployed on Slop mainnet deployments.",
-    "Slop Solana program in contracts/solana/programs/slop-escrow (project vaults, monthly reserve) as deployed on Solana mainnet.",
+    "Slop EVM contracts in contracts/evm/src (project vaults, vault factory, monthly reserve) as deployed on Slop mainnet deployments.",
+    "Slop Solana project vault program in contracts/solana/programs (project vaults, monthly reserve) as deployed on Solana mainnet.",
     "ReferralDistributor and any other contract in contracts/ once deployed to a Slop mainnet deployment from reviewed source.",
     "User, contributor, project-owner and bounty vault funds held by those deployments.",
   ],
@@ -68,7 +74,7 @@ export const PLATFORM_BOUNTY_TEXT = {
   lossDefinition:
     "Loss of funds means theft of user, contributor, project-owner or vault funds, or their permanent freezing (funds that can never again be paid out, withdrawn or released by their rightful party), caused by a vulnerability in in-scope Slop contract code. Show the loss safely with synthetic funds and state the attacker prerequisites. Actual loss is not required and must not be induced.",
   exhaustionRule:
-    "No fixed award count. Each distinct first qualifying critical finding is considered separately. slop.cash funds approved awards after owner approval, not upfront. The owner may grant the published award or no award; payment requires verified funding.",
+    "No fixed award count. Each distinct first qualifying critical finding is considered separately. slop.cash funds approved awards after owner approval, not upfront. The owner may grant the published award or no award. An approved award is not payable until a full-award payment path is approved and released; verified funding alone does not make it payable.",
   dispute:
     "Use the private Slop case appeal path with supporting evidence. Slopbot triages the dispute first; an authorized human moderator decides escalated disputes.",
   disclosure:
@@ -76,3 +82,36 @@ export const PLATFORM_BOUNTY_TEXT = {
   safeHarbor:
     "Follow the published safe-testing rules and report in good faith through Slop private reporting. These terms do not authorize access to third-party systems or harmful live testing and promise nothing on behalf of third parties.",
 } as const;
+
+/**
+ * The split the owner editor starts with. An existing program keeps its own
+ * split; a new platform program defaults to the full award. Only the platform
+ * project may choose the full award at all.
+ */
+export function initialSecuritySplit(
+  platform: boolean,
+  existing: Pick<SecurityBountyTerms, "split"> | undefined,
+): SecurityBountySplitPolicy {
+  if (existing)
+    return platform && isFullAwardSplit(existing.split)
+      ? SECURITY_FULL_AWARD_SPLIT
+      : SECURITY_SPLIT;
+  return platform ? SECURITY_FULL_AWARD_SPLIT : SECURITY_SPLIT;
+}
+
+/**
+ * Fields of the existing terms carried into the next revision, before the
+ * editor overwrites the fields it owns. The funding policy is always chosen
+ * again. A full-award program cannot bind the 75/25 bounty vault, so its
+ * settlement is dropped when the full award is selected.
+ */
+export function carriedSecurityTerms(
+  existing: SecurityBountyTerms | undefined,
+  fullAward: boolean,
+): Partial<Omit<SecurityBountyTerms, "fundingPolicy">> {
+  if (!existing) return {};
+  const { fundingPolicy: _fundingPolicy, settlement, ...previous } = existing;
+  return fullAward || settlement === undefined
+    ? previous
+    : { ...previous, settlement };
+}

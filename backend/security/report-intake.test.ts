@@ -716,6 +716,21 @@ describe("durable private report controls", () => {
     expect(
       t.sqlite.query("SELECT * FROM security_award_reservations").all(),
     ).toEqual([]);
+    // Even an approved full-award case has no payment path: the bounty vault
+    // pays 75/25, so preparation fails closed until a full-award rail exists.
+    t.sqlite.exec(
+      `UPDATE security_cases SET award_state='approved' WHERE id='${submission.caseId}'`,
+    );
+    const prepared = await t.caseAction(submission.caseId, {
+      action: "prepare-payment",
+      network: "base",
+      confirmation: true,
+    });
+    expect(prepared.status).toBe(409);
+    expect(prepared.body.error).toBe("rail_unavailable");
+    expect(
+      t.sqlite.query("SELECT * FROM security_award_reservations").all(),
+    ).toEqual([]);
   });
 
   test("saves a Slop receipt, screens and routes without GitHub, keeping the body private", async () => {

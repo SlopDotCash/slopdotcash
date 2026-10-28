@@ -41,9 +41,11 @@ are published there, no award is promised.
   or fee authority key or an intended owner action. Report those privately
   anyway; they carry no paid award.
 - **Award:** the full $10,000 goes to the first qualifying reporter of each
-  distinct finding; slop.cash is the sponsor and takes no share. Awards are
-  discretionary and decided by the maintainer. Funding is pledged and supplied
-  after approval; payment requires verified funding.
+  distinct finding; slop.cash is the sponsor and takes no share (owner decision
+  confirmed 28 October 2026). Awards are discretionary and decided by the
+  maintainer. Funding is pledged and supplied after approval. No full-award
+  payment path exists yet: an approved award is not payable until one is
+  approved and released, and verified funding alone does not make it payable.
 - **Rules:** test only on local chains, forks or isolated deployments with
   synthetic funds. Never exploit a mainnet deployment, move or freeze anyone's
   funds, or publish exploit details. Disclosure needs the maintainer's

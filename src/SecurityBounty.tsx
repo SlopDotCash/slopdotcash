@@ -664,11 +664,13 @@ export function SecurityProgramPage({
                 {terms.amount.network ? ` on ${terms.amount.network}` : ""}
               </Fact>
               <Fact term="Funding">
-                {terms.funding.state === "pledged"
-                  ? terms.fundingPolicy === "after-approval"
-                    ? "Pledged. Funds are supplied after the owner approves a qualifying finding. Payment requires verified funding."
-                    : "Pledged, not verified."
-                  : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
+                {isFullAwardSplit(terms.split)
+                  ? "Pledged. Funds are supplied after the owner approves a qualifying finding. No full-award payment path is released yet: an approved award is not payable until one is approved and released, and verified funding alone does not make it payable."
+                  : terms.funding.state === "pledged"
+                    ? terms.fundingPolicy === "after-approval"
+                      ? "Pledged. Funds are supplied after the owner approves a qualifying finding. Payment requires verified funding."
+                      : "Pledged, not verified."
+                    : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
               </Fact>
               <Fact term="Capacity">
                 {terms.capacity.awards === null
