@@ -122,3 +122,97 @@ test("provider retries of one source are bounded and recorded immutably", async 
     sqlite.close();
   }
 });
+
+/** README "Free reviews, budget blocks, spend": a provider spending denial
+ * stops the route, and the item waits and resumes. The denial is free, so it
+ * is not one of the paid attempts.
+ */
+test("a provider spending denial waits as a budget block and uses no paid attempt", async () => {
+  const { db, sqlite } = sqliteD1(MIGRATIONS);
+  let requests = 0;
+  let denied = true;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      requests++;
+      const input = (await request.json()) as { model: string };
+      if (denied)
+        return Response.json(
+          {
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              detail: {
+                window: "month",
+                limit_micro: 100,
+                spent_micro: 100,
+                resets_at: "2026-12-01T00:00:00.000Z",
+              },
+            },
+            usage: { buyer_cost_micro: 0 },
+          },
+          { status: 400 },
+        );
+      // After the reset: billable but invalid responses.
+      return Response.json(
+        {
+          id: `local-${requests}`,
+          type: "message",
+          role: "assistant",
+          model: input.model,
+          content: [{ type: "text", text: "invalid JSON" }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 10 },
+        },
+        { headers: { "x-si-buyer-cost-micro": "1000" } },
+      );
+    },
+  });
+  const env = {
+    SURPLUS_API_KEY: "local-only",
+    SURPLUS_BASE_URL: `http://127.0.0.1:${server.port}`,
+  };
+  const attempt = async () => {
+    const before = requests;
+    const result = await runValueInference(
+      env,
+      prompt,
+      output("c".repeat(64)),
+      async () => true,
+      {
+        db,
+        installationId: 1,
+        attemptId: `value:${crypto.randomUUID()}`,
+        maximumMicroUsd: null,
+        approvedMonthlyMicroUsd: null,
+      },
+    );
+    return { requests: requests - before, blockReason: result.blockReason };
+  };
+  try {
+    // More denials than the attempt limit: every retry still reaches the
+    // provider, so the request resumes when the provider budget resets.
+    const deniedAttempts = [];
+    for (let i = 0; i <= VALUE_INFERENCE_ATTEMPT_LIMIT; i++)
+      deniedAttempts.push(await attempt());
+    expect(deniedAttempts.map((a) => a.requests)).toEqual(
+      Array(VALUE_INFERENCE_ATTEMPT_LIMIT + 1).fill(1),
+    );
+    expect(deniedAttempts.map((a) => a.blockReason)).toEqual(
+      Array(VALUE_INFERENCE_ATTEMPT_LIMIT + 1).fill("budget"),
+    );
+    // After the reset, paid attempts are still bounded at the full limit.
+    denied = false;
+    for (let i = 0; i < VALUE_INFERENCE_ATTEMPT_LIMIT; i++) {
+      const paid = await attempt();
+      expect(paid.requests).toBeGreaterThan(0);
+      expect(paid.blockReason).not.toBe("attempts");
+    }
+    expect(await attempt()).toEqual({ requests: 0, blockReason: "attempts" });
+  } finally {
+    server.stop(true);
+    sqlite.close();
+  }
+});

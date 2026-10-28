@@ -99,9 +99,11 @@ present but invalid, review falls back to label-only with no closure.
 ## Free reviews, budget blocks, spend
 
 Provider budget blocks are durable in `budget-blocks.ts` and resume when the
-provider window opens. Free reviews still record provider cost rows with zero
-customer charge. Spend alerts live in `spend-alerts.ts`; failure alerts in
-`failure-alerts.ts`.
+provider window opens. A provider spending denial is not a paid value attempt:
+the request waits as `budget` and does not use one of the three attempts per
+inference key (`value-inference.ts`). Free reviews still record provider cost
+rows with zero customer charge. Spend alerts live in `spend-alerts.ts`; failure
+alerts in `failure-alerts.ts`.
 
 ## Value assessment
 
