@@ -17,6 +17,7 @@ function fixture() {
       actor = "123",
       privateBounty = false,
       corrupt = false,
+      pad = 0,
     } = {},
   ) {
     const id = `award-${n}`;
@@ -54,6 +55,7 @@ function fixture() {
       netMicro: corrupt ? "9700" : "9800",
       assetAddress: asset,
       assetDecimals: 6,
+      ...(pad ? { padding: "x".repeat(pad) } : {}),
     };
     sqlite
       .query(
@@ -302,3 +304,60 @@ test("received totals fail closed on corrupt finalized evidence", async () => {
     f.sqlite.close();
   }
 });
+
+test("received totals read a large ledger in bounded pages under D1's value limit", async () => {
+  const f = fixture();
+  try {
+    const vaultCount = 1_200;
+    const directCount = 1_500;
+    // Evidence near production size: 1,200 rows would be about 2 MB in one value.
+    for (let n = 1; n <= vaultCount; n++) f.payment(n, { pad: 1_400 });
+    const insert = f.sqlite.query(
+      `INSERT INTO payment_direct_transfers VALUES('solana-mainnet',?,'project','2026-08',?,'node','login','solana','r','1000000','2026-09-01T00:00:00.000Z','b','p',?)`,
+    );
+    for (let n = 1; n <= directCount; n++)
+      insert.run(`t${n}`, String(1000 + (n % 50)), when);
+    let largest = 0;
+    const measured = new Proxy(f.database, {
+      get(target, key, receiver) {
+        if (key !== "prepare") return Reflect.get(target, key, receiver);
+        return (sql: string) => {
+          const statement = target.prepare(sql);
+          const wrap = (bound: typeof statement) =>
+            new Proxy(bound, {
+              get(inner, name, innerReceiver) {
+                if (name === "bind")
+                  return (...values: unknown[]) => wrap(inner.bind(...values));
+                if (name === "first")
+                  return async () => {
+                    const row = (await inner.first()) as Record<
+                      string,
+                      unknown
+                    > | null;
+                    for (const value of Object.values(row ?? {}))
+                      if (typeof value === "string")
+                        largest = Math.max(largest, value.length);
+                    return row;
+                  };
+                return Reflect.get(inner, name, innerReceiver);
+              },
+            });
+          return wrap(statement);
+        };
+      },
+    });
+    const response = await handlePaymentsApi(
+      new Request("https://slop.cash/api/v1/payments/received"),
+      { db: measured },
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.totals.vaultPayments).toBe(vaultCount);
+    expect(body.totals.directTransfers).toBe(directCount);
+    expect(body.totals.directMicro).toBe(String(directCount * 1_000_000));
+    expect(largest).toBeGreaterThan(0);
+    expect(largest).toBeLessThan(500_000);
+  } finally {
+    f.sqlite.close();
+  }
+}, 60_000);
