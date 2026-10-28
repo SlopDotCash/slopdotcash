@@ -314,7 +314,16 @@ export async function dispatchSecurityMail(
       continue;
     }
     const destination = deps.config.recipients[row.recipient_github_id];
-    if (!destination || Date.parse(destination.verifiedAt) > now.getTime()) {
+    if (!destination) {
+      // No operator-verified destination exists for this recipient. Nothing
+      // can be sent and none will appear within the retry schedule, so the
+      // notice is suppressed: the inbox row stays and shows no email state.
+      await recordDelivery(deps, row, "suppressed");
+      continue;
+    }
+    if (Date.parse(destination.verifiedAt) > now.getTime()) {
+      // A verified record not yet in effect made no provider call; retry it
+      // on the bounded schedule.
       const state = await retryWithoutProviderCall(deps, row);
       if (state === "exhausted") await escalate(deps, row);
       continue;

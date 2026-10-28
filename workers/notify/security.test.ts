@@ -366,7 +366,7 @@ test("a notice withheld for a revoked role never escalates, even after the role 
   h.sqlite.close();
 });
 
-test("role revocation suppresses queued mail; missing verified destinations exhaust bounded retries without losing the case", async () => {
+test("role revocation and a missing verified destination both suppress queued mail without losing the case", async () => {
   const h = await setup();
   h.sqlite
     .query(
@@ -378,19 +378,39 @@ test("role revocation suppresses queued mail; missing verified destinations exha
       "UPDATE projects SET revision=2, manifest_sha256='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', manifest = json_set(manifest, '$.securityBounty.approvers.technical', json(?)) WHERE id = 'bounty'",
     )
     .run(JSON.stringify([owner]));
+  // No operator-verified destination exists for the owner. Nothing can be
+  // sent and nothing will appear within the retry schedule, so the notice is
+  // suppressed at once and the inbox shows no email state for it.
   delete h.deps.config.recipients[owner.githubId];
   for (let i = 0; i < 5; i++) {
     await dispatchSecurityMail(h.deps);
     h.advance(3600_000);
   }
-  expect(h.rows().map((r) => r.state)).toEqual(["exhausted", "suppressed"]);
-  expect(h.rows().map((r) => r.attempts)).toEqual([5, 1]);
+  expect(h.rows().map((r) => r.state)).toEqual(["suppressed", "suppressed"]);
+  expect(h.rows().map((r) => r.attempts)).toEqual([1, 1]);
   expect(h.sent).toHaveLength(0);
   expect(
     h.sqlite
       .query("SELECT submission_state FROM security_cases WHERE id = ?")
       .get(h.caseId),
   ).toEqual({ submission_state: "claimed" });
+  h.sqlite.close();
+});
+
+test("a verified destination not yet in effect retries on the bounded schedule and exhausts", async () => {
+  const h = await setup();
+  h.deps.config.recipients[owner.githubId].verifiedAt =
+    "2027-01-01T00:00:00.000Z";
+  for (let i = 0; i < 5; i++) {
+    await dispatchSecurityMail(h.deps);
+    h.advance(3600_000);
+  }
+  const owner_ = h.rows().find((r) => r.recipient_github_id === owner.githubId);
+  expect(owner_?.state).toBe("exhausted");
+  expect(owner_?.attempts).toBe(5);
+  expect(h.sent.some((m) => m.to === `${owner.githubLogin}@example.com`)).toBe(
+    false,
+  );
   h.sqlite.close();
 });
 
