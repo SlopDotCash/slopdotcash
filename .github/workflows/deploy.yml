@@ -808,11 +808,14 @@ jobs:
 
       - name: Qualify private report screening with the real provider
         if: steps.release-input.outputs.superseded != 'true'
-        timeout-minutes: 3
+        timeout-minutes: 4
         env:
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
-        # One bounded synthetic call; no private reports or delivery side effects.
-        # This protected main-only job fails before any publication on failure.
+        # Up to three bounded synthetic calls (1 USD each, 3 USD total) that
+        # retry only transient failures; no private reports or delivery side
+        # effects. A wrong classification fails at once, and every failure
+        # logs only its category. This protected main-only job fails before
+        # any publication on failure.
         run: bun --no-env-file scripts/qualify-security-screening.ts
 
       - name: Require reviewed Pages project
