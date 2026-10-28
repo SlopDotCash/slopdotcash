@@ -9,6 +9,7 @@ import { assertProfiles } from "../../src/lib/profiles";
 import { findProject } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 async function profileRecords(
@@ -211,9 +212,9 @@ test("historical names alone do not identify a current contributor or wallet", a
   ).toHaveCount(0);
   await expect(page.getByText(/Past wallet/)).toHaveCount(0);
   expect(walletRequests).toEqual([]);
-  await expect(page.getByRole("status")).toContainText(
-    "This contributor could not be verified.",
-  );
+  await expect(
+    page.getByText("Contributor records are unavailable.", { exact: true }),
+  ).toBeVisible();
 });
 
 test("a new owner listed without activity uses only its own identity and wallet", async ({
@@ -250,9 +251,9 @@ test("conflicting current names withhold history and wallet lookups", async ({
   await page.goto(`/contributors/${archived.login}`, {
     waitUntil: "networkidle",
   });
-  await expect(page.getByRole("status")).toContainText(
-    "This contributor could not be verified.",
-  );
+  await expect(
+    page.getByText("Contributor records are unavailable.", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
   ).toHaveCount(0);
@@ -277,9 +278,9 @@ test("a stale activity login cannot override a directory rename", async ({
   await page.goto(`/contributors/${current.login}`, {
     waitUntil: "networkidle",
   });
-  await expect(page.getByRole("status")).toContainText(
-    "This contributor could not be verified.",
-  );
+  await expect(
+    page.getByText("Contributor records are unavailable.", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
   ).toHaveCount(0);
@@ -489,23 +490,25 @@ for (const staleMembership of [false, true]) {
       await page.goto(`${site}/contributors/${archived.login}`, {
         waitUntil: "networkidle",
       });
-      await expect(
-        page.getByRole("heading", { name: archived.login, exact: true }),
-      ).toBeVisible();
       if (staleMembership) {
         await expect(
           page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
         ).toHaveCount(0);
         await expect(page.getByText(/Past wallet/)).toHaveCount(0);
-        await expect(page.getByRole("status")).toContainText(
-          "could not be verified",
-        );
+        await expect(
+          page.getByRole("heading", {
+            name: "No Slop contributor with this login",
+          }),
+        ).toBeVisible();
         await expect(
           page.getByText("total points", { exact: true }),
         ).toHaveCount(0);
         expect(walletRequests).toEqual([]);
         return;
       }
+      await expect(
+        page.getByRole("heading", { name: archived.login, exact: true }),
+      ).toBeVisible();
       await expect(
         page
           .getByText("total points", { exact: true })
@@ -721,8 +724,8 @@ for (const scenario of [
         expect(walletRequests).toEqual([]);
         if (scenario === "delayed session") {
           await expect(
-            page.getByText("This contributor could not be verified.", {
-              exact: true,
+            page.getByRole("heading", {
+              name: "No Slop contributor with this login",
             }),
           ).toBeVisible();
           await expectAccessible(page);
@@ -736,6 +739,78 @@ for (const scenario of [
       releaseMembership();
       releaseSession();
     }
+  });
+}
+
+test("a confirmed absent contributor is noindex without invented GitHub links", async ({
+  page,
+}) => {
+  const site = await serveProfileSite(page);
+  await profileRecords(page);
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.goto(`${site}/contributors/no-such-slop-login-zz9`, {
+    waitUntil: "networkidle",
+  });
+  await expect(
+    page.getByRole("heading", { name: "No Slop contributor with this login" }),
+  ).toBeVisible();
+  await expect(page.locator('main a[href*="github.com"]')).toHaveCount(0);
+  await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+    "content",
+    "noindex",
+  );
+});
+
+for (const failedSource of ["member", "me"] as const) {
+  test(`an unavailable ${failedSource} lookup does not invent an absent contributor`, async ({
+    diagnostics,
+    page,
+  }) => {
+    const site = await serveProfileSite(page);
+    await profileRecords(page);
+    let unavailable = true;
+    diagnostics.allow(
+      /^console Failed to load resource: the server responded with a status of 503 .* at https:\/\/[^ ]+\/api\/v1\/points\/(?:me|member)(?:\?[^ ]*)?$/u,
+    );
+    await page.route(`${site}/api/v1/points/**`, (route) =>
+      unavailable &&
+      new URL(route.request().url()).pathname.endsWith(`/${failedSource}`)
+        ? route.fulfill({ status: 503, json: { error: "unavailable" } })
+        : route.fulfill({ json: null }),
+    );
+    await page.goto(`${site}/contributors/no-such-slop-login-zz9`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByText("Contributor records are unavailable.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", {
+        name: "No Slop contributor with this login",
+      }),
+    ).toHaveCount(0);
+    await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+    const restoreText = await enlargeText(page.locator("main"));
+    await expectAccessible(page);
+    await restoreText();
+    unavailable = false;
+    await page
+      .getByRole("button", { name: "Retry profile", exact: true })
+      .focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("heading", {
+        name: "No Slop contributor with this login",
+      }),
+    ).toBeVisible();
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+      "content",
+      "noindex",
+    );
+    await expectAccessible(page);
   });
 }
 

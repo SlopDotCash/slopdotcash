@@ -15,6 +15,7 @@ import {
   ExternalLinkAnchor,
   formatCycleMonth,
   formatPointsFromThirds,
+  NotFound,
 } from "./Presentation";
 import { useProfiles } from "./Profiles";
 
@@ -39,52 +40,55 @@ export function ProfilePage({
   const membership = useProfileMembership(login);
   const actor = currentProfileActor(state, login, profiles.state, membership);
   const currentWallet = useCurrentWallet(actor, login);
+  // Until the ledger or profile data names this login, the page links to no
+  // GitHub profile: the path is only what the visitor typed.
   if (state.status !== "ready")
     return (
       <main className="shell route-main">
-        <ContributorIdentity
-          actor={{
-            login,
-            avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(login)}?size=160`,
-            url: `https://github.com/${encodeURIComponent(login)}`,
-          }}
-        />
+        <UnverifiedIdentity login={login} />
         <DataNotice state={state} retry={retry} />
       </main>
     );
-  if (!actor)
+  if (!actor) {
+    const checking =
+      profiles.state.status === "loading" ||
+      membership.joinStatus === "loading" ||
+      membership.sessionStatus === "loading";
+    const unavailable =
+      profiles.state.status === "error" ||
+      membership.joinStatus === "unavailable" ||
+      membership.sessionStatus === "error";
+    if (!checking && !unavailable) return <UnknownContributor login={login} />;
     return (
       <main className="shell route-main">
-        <ContributorIdentity
-          actor={{
-            login,
-            avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(login)}?size=160`,
-            url: `https://github.com/${encodeURIComponent(login)}`,
-          }}
-        />
-        <p className="data-notice" role="status">
-          {profiles.state.status === "loading" ||
-          membership.joinStatus === "loading" ||
-          membership.sessionStatus === "loading"
-            ? "Checking contributor…"
-            : profiles.state.status === "error"
-              ? "Contributor records are unavailable."
-              : "This contributor could not be verified."}
-        </p>
-        {profiles.state.status === "error" ? (
-          <button
-            className="button secondary-button button-small"
-            type="button"
-            onClick={profiles.retry}
-          >
-            Retry profile
-          </button>
-        ) : null}
+        <UnverifiedIdentity login={login} />
+        {checking ? (
+          <p className="data-notice" role="status">
+            Checking contributor…
+          </p>
+        ) : (
+          <>
+            <p className="data-notice" role="status">
+              Contributor records are unavailable.
+            </p>
+            <button
+              className="button secondary-button button-small"
+              type="button"
+              onClick={() => {
+                profiles.retry();
+                membership.retry();
+              }}
+            >
+              Retry profile
+            </button>
+          </>
+        )}
         <p>
           <Link href="/points">Find a contributor</Link>
         </p>
       </main>
     );
+  }
   const globalLeaders = createGlobalLeaders(
     state.snapshot,
     state.views,
@@ -233,6 +237,29 @@ export function ProfilePage({
 }
 
 /** Historical aliases do not prove who currently owns a profile URL. */
+/** The visitor's requested login, shown before any record confirms it. */
+function UnverifiedIdentity({ login }: { login: string }) {
+  return (
+    <section className="profile-hero">
+      <div className="profile-identity">
+        <h1>{login}</h1>
+      </div>
+    </section>
+  );
+}
+
+/** Every identity source has answered and none records this login. */
+function UnknownContributor({ login }: { login: string }) {
+  return (
+    <NotFound title="No Slop contributor with this login">
+      <p>
+        Slop has no contributor record for <strong>@{login}</strong>.{" "}
+        <Link href="/points">Find a contributor</Link>
+      </p>
+    </NotFound>
+  );
+}
+
 function currentProfileActor(
   state: DataState,
   login: string,

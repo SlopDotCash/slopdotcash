@@ -1652,7 +1652,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await page.reload({ waitUntil: "networkidle" });
   await expect(
     page.getByText(
-      "Project settings are available only to signed-in maintainers.",
+      "Project settings are available only to this project's maintainers.",
       { exact: true },
     ),
   ).toBeVisible();
