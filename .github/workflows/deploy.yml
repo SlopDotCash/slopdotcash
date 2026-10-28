@@ -210,7 +210,9 @@ jobs:
             --proto '=https' \
             --tlsv1.2 \
             --connect-timeout 10 \
-            --max-time 60 \
+            --compressed \
+            --retry 2 --retry-delay 2 --retry-max-time 600 \
+            --max-time 180 \
             --max-filesize 26214400 \
             --output "$ledger_file" \
             https://slop.cash/data/leaderboard.json

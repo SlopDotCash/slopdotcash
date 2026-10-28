@@ -28,7 +28,16 @@ test("Account waits for identity and keeps current sign-out without individual s
     }),
   );
   await page.route(`${site}/api/v1/project-session`, (route) =>
-    route.fulfill({ json: { session: null } }),
+    route.fulfill({
+      json: {
+        session: signedIn
+          ? { githubId: "900000098", githubLogin: "session-test", admin: false }
+          : null,
+      },
+    }),
+  );
+  await page.route(`${site}/api/v1/project-appeals`, (route) =>
+    route.fulfill({ json: { appeals: [] } }),
   );
   await page.route(`${site}/api/v1/points/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;

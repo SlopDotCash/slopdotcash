@@ -70,7 +70,7 @@ jobs:
           bun test ./scripts/vetting-scan-service.test.ts --test-name-pattern "native artifact runs only in the real disposable sandbox"
       - name: Retain safe fixed merge SDK results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: fixed-merge-sdk-${{ github.sha }}
           path: ${{ runner.temp }}/value-merge-sdk.json

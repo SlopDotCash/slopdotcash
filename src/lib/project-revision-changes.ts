@@ -20,6 +20,7 @@ const PRESENTATION_FIELDS = [
   "name",
   "eyebrow",
   "headline",
+  "image",
   "description",
   "links",
   "slopbot",

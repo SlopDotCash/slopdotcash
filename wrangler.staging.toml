@@ -34,7 +34,7 @@ binding = "PRIVATE_TRACES"
 bucket_name = "slop-staging-traces"
 
 # Scanner evidence is separate from permanent contributor traces.
-# Access also requires the approved evidence policy and scanner public keys.
+# Access requires the fixed-in-source evidence policy (EVIDENCE_POLICY in evidence.ts) and scanner public keys.
 [[r2_buckets]]
 binding = "VETTING_EVIDENCE"
 bucket_name = "slop-staging-vetting-evidence"

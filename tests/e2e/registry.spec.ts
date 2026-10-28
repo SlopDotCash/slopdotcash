@@ -557,10 +557,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await returningOwner
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("Useful accepted outcomes with a clearer project scope");
-  await openSettings(returningOwner, "Public revision note (optional)");
-  await returningOwner
-    .getByLabel("Revision note", { exact: true })
-    .fill("Clarify the project scope for contributors");
+
   await returningOwner.getByRole("button", { name: "Publish changes" }).click();
   await expect(
     returningOwner
@@ -582,10 +579,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await openSettings(returningOwner, "Contribution rules");
   await expect(consent).toBeChecked();
   await consent.uncheck();
-  await openSettings(returningOwner, "Public revision note (optional)");
-  await returningOwner
-    .getByLabel("Revision note", { exact: true })
-    .fill("Withdraw automatic closure permission");
+
   await returningOwner.getByRole("button", { name: "Publish changes" }).click();
   await expect(
     returningOwner
@@ -635,6 +629,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
 }) => {
   const project = fixtureProjects().queued;
   // The two refused activations below.
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${project.id}`);
   const refused = diagnostics.allowResponse(
     422,
     "PUT",
@@ -647,8 +642,11 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   // The approved paused project already shows on the public site from D1.
   await admin.goto(`/projects/${project.id}`);
   await expect(admin.locator("h1")).toHaveText(project.name);
-  // The reward asset is the Base stablecoin the application chose.
-  await expect(admin.locator(".project-hero")).toContainText(
+  // Native stablecoins use the shared reward label without a token address.
+  await expect(admin.locator(".project-reward-status")).toContainText(
+    "$1,000 monthly target, split between contributors",
+  );
+  await expect(admin.locator(".project-hero")).not.toContainText(
     "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
   );
   // An unscanned revision serves no executable skill (PRD VET-01).
@@ -1608,10 +1606,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await page
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("Accepted setup outcomes with a clear project scope");
-  await openSettings(page, "Public revision note (optional)");
-  await page
-    .getByLabel("Revision note", { exact: true })
-    .fill("Clarify the project scope for contributors");
+
   await page.getByRole("button", { name: "Publish changes" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Published revision 2" }),
@@ -1630,10 +1625,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     .selectOption("ethereum");
   await openSettings(page, "Monthly rewards");
   await page.getByLabel("Monthly amount (USDC)").fill("1200");
-  await openSettings(page, "Public revision note (optional)");
-  await page
-    .getByLabel("Revision note", { exact: true })
-    .fill("Use USDC on Ethereum from next month");
+
   await page.getByRole("button", { name: "Publish changes" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Published revision 3" }),
@@ -1654,25 +1646,31 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     fullPage: true,
   });
 
-  // Permission loss: Slopbot now reads only read access. The setup status
-  // names the next action, and the owner cannot publish another change.
+  // Lost repository access removes the form and the server also refuses writes.
   await setSlopbot(`${project.repository}/permission/e2e-owner/read`);
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${project.id}`);
   await page.reload({ waitUntil: "networkidle" });
-  const managed = page.locator(".project-setup-status");
-  await expect(managed.locator("h2")).toHaveText("Setup status: Action needed");
-  await expectSetupCheck(
-    managed,
-    "GitHub access",
-    "Not confirmed",
-    `@e2e-owner has read access to ${project.repository}. Write, maintain or admin access is required. Ask a maintainer with that access to finish setup.`,
+  await expect(
+    page.getByText(
+      "Project settings are available only to signed-in maintainers.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Short description", exact: true }),
+  ).toHaveCount(0);
+  const rejectedStatus = await page.evaluate(
+    async ({ id, manifest }) => {
+      const response = await fetch(`/api/v1/projects/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expectedRevision: 3, manifest }),
+      });
+      return response.status;
+    },
+    { id: project.id, manifest: switched },
   );
-  await page
-    .getByRole("textbox", { name: "Short description", exact: true })
-    .fill("A change from an account without write access");
-  await page.getByRole("button", { name: "Publish changes" }).click();
-  await expect(page.locator("form").getByRole("alert")).toContainText(
-    "Write, maintain or admin access is required",
-  );
+  expect(rejectedStatus).toBe(403);
   expect(diagnostics.count(refusedCreation)).toBe(1);
   expect(diagnostics.count(refusedPublish)).toBe(1);
   const history = await (
@@ -1731,10 +1729,6 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
   const network = page.getByRole("combobox", { name: "Network", exact: true });
   await network.selectOption("base");
   await page.getByLabel("Monthly amount (USDC)").fill("1000");
-  await openSettings(page, "Public revision note (optional)");
-  await page
-    .getByLabel("Revision note", { exact: true })
-    .fill("Use Base USDC from next month");
 
   // The public GitHub read is really limited. The shipped Slopbot Worker
   // still reads the installation, immutable identity and caller permission.
@@ -2397,7 +2391,7 @@ test("repository lookup failures explain the next action and preserve the draft 
   await context.close();
 });
 
-test("two contributors flag through the form, pause the project and notify moderators @registry", async ({
+test("two contributors flag through the agent API, pause the project and notify moderators @registry", async ({
   browser,
 }) => {
   const readPrivate = (page: Page, path: string) =>
@@ -2438,15 +2432,19 @@ test("two contributors flag through the form, pause the project and notify moder
   expect(await listedProject(owner, project.id)).toMatchObject({
     status: "paused",
   });
-  const fileFlag = (token: string) =>
+  const fileFlag = (
+    token: string,
+    category = "other",
+    evidence = "Synthetic fixture: a refused flag must not be recorded.",
+  ) =>
     owner.request.post(`/api/v1/project-flags/${project.id}`, {
       headers: {
         origin: new URL(owner.url()).origin,
         cookie: `__Host-slop_points=${token}`,
       },
       data: {
-        category: "other",
-        evidence: "Synthetic fixture: a refused flag must not be recorded.",
+        category,
+        evidence,
       },
     });
   // The project's own owner and a new GitHub account cannot flag.
@@ -2469,17 +2467,12 @@ test("two contributors flag through the form, pause the project and notify moder
   const firstEvidence =
     "Synthetic fixture: install.js requests credentials before starting.";
   await first.goto(`/projects/${project.id}`, { waitUntil: "networkidle" });
-  await first
-    .getByText("Report malicious code in this project", { exact: true })
-    .click();
-  await first.getByRole("textbox", { name: /^Evidence/u }).fill(firstEvidence);
-  await first.getByRole("button", { name: "Flag this project" }).click();
-  await expect(
-    first.getByRole("status").filter({ hasText: "Flag recorded" }),
-  ).toBeVisible();
-  await expect(first.locator(".project-risk-flag")).toContainText(
-    "It counts until",
-  );
+  await expect(first.locator(".project-risk-flag")).toHaveCount(0);
+  expect(
+    (
+      await fileFlag(APPLICANT_TOKEN, "credential-theft", firstEvidence)
+    ).status(),
+  ).toBe(201);
   const ownPath = `/api/v1/project-flags/${project.id}`;
   expect(await readPrivate(first, ownPath)).toMatchObject({
     restriction: "clear",
@@ -2498,23 +2491,20 @@ test("two contributors flag through the form, pause the project and notify moder
     flag: null,
   });
   await second.goto(`/projects/${project.id}`, { waitUntil: "networkidle" });
-  await second
-    .getByText("Report malicious code in this project", { exact: true })
-    .click();
-  await second
-    .getByRole("combobox", { name: /^Risk/u })
-    .selectOption("unsafe-execution");
-  await second
-    .getByRole("textbox", { name: /^Evidence/u })
-    .fill("Synthetic fixture: setup.sh runs an unverified downloaded script.");
-  await second.getByRole("button", { name: "Flag this project" }).click();
-  await expect(
-    second.getByRole("status").filter({ hasText: "Flag recorded" }),
-  ).toContainText("now paused");
+  expect(
+    (
+      await fileFlag(
+        SECURITY_ACCOUNT.token,
+        "unsafe-execution",
+        "Synthetic fixture: setup.sh runs an unverified downloaded script.",
+      )
+    ).status(),
+  ).toBe(201);
+  await second.reload({ waitUntil: "networkidle" });
   await expect(second.locator("main")).not.toContainText(firstEvidence);
-  await expect(second.locator("#start")).toContainText(
-    "Do not install this project's skill or start work.",
-  );
+  await expect(
+    second.getByRole("heading", { name: "Project not found", exact: true }),
+  ).toBeVisible();
   expect(await readPrivate(second, ownPath)).toMatchObject({
     restriction: "quarantined",
     pausedByFlags: true,
@@ -2529,16 +2519,14 @@ test("two contributors flag through the form, pause the project and notify moder
   });
 
   await second.reload({ waitUntil: "networkidle" });
-  await second
-    .getByText("Report malicious code in this project", { exact: true })
-    .click({ timeout: 10000 });
-  await expect(
-    second.getByRole("button", { name: "Withdraw my flag" }),
-  ).toBeVisible();
-  await second.getByRole("button", { name: "Withdraw my flag" }).click();
-  await expect(
-    second.getByRole("status").filter({ hasText: "Flag withdrawn" }),
-  ).toBeVisible();
+  const withdrawn = await second.request.post(`${ownPath}/withdraw`, {
+    headers: {
+      origin: new URL(second.url()).origin,
+      cookie: `__Host-slop_points=${SECURITY_ACCOUNT.token}`,
+    },
+    data: {},
+  });
+  expect(withdrawn.status()).toBe(200);
   expect(await readPrivate(second, ownPath)).toMatchObject({
     flag: null,
     restriction: "quarantined",

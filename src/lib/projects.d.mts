@@ -77,6 +77,7 @@ export interface ProjectDefinition {
   readonly name: string;
   readonly eyebrow: string;
   readonly headline: string;
+  readonly image?: string;
   readonly description: string;
   readonly listingTier: "featured" | "community" | "retired";
   readonly status: ProjectStatus;
