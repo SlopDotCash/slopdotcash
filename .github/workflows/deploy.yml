@@ -119,7 +119,8 @@ jobs:
         # snapshots it so build-time ingestion collects the active
         # repositories. Pull-request validation also needs this public,
         # read-only inventory to validate awards for registered projects.
-        # Pair the PR registry with its production public-ledger snapshot.
+        # Use the same public environment as the PR ledger. The PR adapter
+        # retains collected source records when new projects become active.
         # No repository or deployment credential is passed to this read.
         # Before an environment first serves the API, the sync keeps the
         # committed snapshot and says so.
