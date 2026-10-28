@@ -150,9 +150,11 @@ for (const stdio of ["inherit", "ignore"]) {
         );
         pid = serverPid;
         expect(await child.exited).toBe(7);
-        expect(await diagnostics).not.toContain(
-          "process cleanup did not finish",
-        );
+        const stderr = await diagnostics;
+        // The member-state check targets Linux; other platforms keep the
+        // bounded fallback and still prove cleanup through port reuse.
+        if (process.platform === "linux")
+          expect(stderr).not.toContain("process cleanup did not finish");
         await expectPortReusable(port);
         pid = undefined;
       } finally {
