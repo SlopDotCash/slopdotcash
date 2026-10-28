@@ -1157,6 +1157,10 @@ export async function runSolana(
   const mints = requireEnv("ESCROW_ACCEPTANCE_ASSETS")
     .split(",")
     .map((value) => new PublicKey(value.trim()));
+  // A resume must keep every recorded asset. Otherwise an omitted asset stays
+  // unfinished while the run reports passed.
+  if (mints.length < run.assets.length)
+    throw new Error("Asset list changed since the run started");
   const divisor = unitDivisor();
   if (network === "solana-localnet") {
     const note =
