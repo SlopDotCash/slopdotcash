@@ -74,7 +74,8 @@ GitHub sign-in; never enter, request, retain, or expose their credential.
 
 Private awards are human decisions. Where current paid terms apply, the
 researcher receives 75% of the approved gross amount and slop.cash receives
-25%, with no extra ordinary 2% fee. Confirm the published gross and net amount
+25%, with no extra ordinary 2% fee. On Slop's own contract bounty slop.cash is
+the sponsor, so the researcher receives the whole published award. Confirm the published gross and net amount
 and funding state; do not promise payment, reserve funds, sign transactions or
 mark a report paid. Keep report details and status out of public attribution,
 leaderboards, logs and unrelated messages.

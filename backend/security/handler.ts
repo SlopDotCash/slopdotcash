@@ -12,6 +12,9 @@ import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
+  isFullAwardSplit,
+  SECURITY_FULL_AWARD_SPLIT,
+  SECURITY_SPLIT,
   type SecurityBountyTerms,
   securityBountySplit,
 } from "../../src/lib/security-bounty.mjs";
@@ -225,7 +228,16 @@ export type FrozenTerms = {
   network: SecurityBountyTerms["amount"]["network"];
   capacityAwards: number | null;
   fundingPolicy?: "after-approval";
+  /** Present only for the platform's full-award program; older cases are 75/25. */
+  split?: typeof SECURITY_FULL_AWARD_SPLIT;
 };
+
+/** The split frozen at receipt. Cases without one keep the 75/25 split. */
+function frozenSplit(terms: FrozenTerms | null) {
+  return terms?.split && isFullAwardSplit(terms.split)
+    ? SECURITY_FULL_AWARD_SPLIT
+    : SECURITY_SPLIT;
+}
 
 const CASE_ID = /^sc_[A-Za-z0-9_-]{8,72}$/u;
 const GITHUB_ID = /^[1-9]\d{0,19}$/u;
@@ -837,13 +849,15 @@ async function programFunds(
   return readSecurityProgramFunds(deps, projectId, program, snapshotGuards);
 }
 
-/** The chosen award and its exact 75/25 split, once an amount exists. */
+/** The chosen award and its exact frozen split, once an amount exists. */
 function awardAmount(
   row: CaseRow,
   reservation: ReservationRow | null,
 ): ReturnType<typeof securityBountySplit> | null {
   const gross = reservation?.gross_minor ?? row.award_gross_minor;
-  return gross === null ? null : securityBountySplit(gross);
+  return gross === null
+    ? null
+    : securityBountySplit(gross, frozenSplit(frozenTerms(row)));
 }
 
 /**
@@ -1247,11 +1261,16 @@ export async function termsAtReceipt(
       Date.parse(program.capacity.closesAt) <= Date.parse(receivedAt))
   )
     return { revision: row.revision, terms: null };
-  const split = securityBountySplit(program.amount.grossMinor);
+  const fullAward = isFullAwardSplit(program.split);
+  const split = securityBountySplit(
+    program.amount.grossMinor,
+    fullAward ? SECURITY_FULL_AWARD_SPLIT : SECURITY_SPLIT,
+  );
   return {
     revision: row.revision,
     terms: {
       ...split,
+      ...(fullAward ? { split: SECURITY_FULL_AWARD_SPLIT } : {}),
       currency: program.amount.currency,
       decimals: program.amount.decimals,
       network: program.amount.network,
@@ -2498,6 +2517,12 @@ async function planChange(
           (d) => d.network === body.network,
         );
       const terms = frozenTerms(row);
+      if (isFullAwardSplit(terms?.split))
+        fail(
+          409,
+          "rail_unavailable",
+          "The bounty vault pays 75/25; a full-award program has no approved settlement rail",
+        );
       const reserved = await deps.db
         .prepare(
           "SELECT gross_minor FROM security_award_reservations WHERE case_id = ?",
@@ -2847,7 +2872,7 @@ async function planAward(
     );
   let split: ReturnType<typeof securityBountySplit>;
   try {
-    split = securityBountySplit(grossMinor);
+    split = securityBountySplit(grossMinor, frozenSplit(promised));
   } catch (error) {
     fail(
       400,
@@ -3085,9 +3110,15 @@ async function awardReservation(
   await assertRootCauseFree(deps, row.project_id, row.id, rootCauseKey);
   const firstReport = await firstQualifyingGuard(deps, row);
   const snapshotGuards = [programGuard, ...(firstReport ? [firstReport] : [])];
-  const funds = await programFunds(deps, row.project_id, snapshotGuards);
+  // Every bounty vault pays 75/25, so a full-award case never reserves
+  // against one, even if a later revision binds a vault. It stays a chosen,
+  // unfunded award until a full-award payment rail is approved.
+  const funds = isFullAwardSplit(terms.split)
+    ? null
+    : await programFunds(deps, row.project_id, snapshotGuards);
   if (
-    terms.fundingPolicy === "after-approval" &&
+    (terms.fundingPolicy === "after-approval" ||
+      isFullAwardSplit(terms.split)) &&
     (funds === null ||
       funds.currency !== terms.currency ||
       funds.decimals !== terms.decimals ||
