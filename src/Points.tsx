@@ -1499,7 +1499,9 @@ export function ContributorStandings({
         />
       ) : null}
       {(
-        sort === "points" ? state.status === "ready" : scores.status === "ready"
+        sort === "points"
+          ? state.status === "ready"
+          : scores.status === "ready"
       ) ? (
         <>
           <section
