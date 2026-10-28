@@ -76,7 +76,7 @@ const installer =
   full ||
   (!promotion &&
     changed(
-      /^(skills\/|scripts\/(.*install|prepare-site|prepare-publication|package-skill)|tests\/integration\/installer|package\.json|bun\.lock)/u,
+      /^(skills\/|src\/lib\/project-skill|scripts\/(skill-|.*install|prepare-site|prepare-publication|package-skill)|tests\/integration\/installer|package\.json|bun\.lock)/u,
     ));
 for (const [key, value] of Object.entries({
   browser_matrix: JSON.stringify({ include: lanes }),
