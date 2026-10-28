@@ -41,6 +41,8 @@ test("social membership preserves past points and discloses public connections w
   // Provider and membership responses below remain explicit doubles.
   await page.route(`${site}/**`, async (route) => {
     const pathname = new URL(route.request().url()).pathname;
+    // Money received falls back to the shared empty aggregate (fixtures.ts).
+    if (pathname === "/api/v1/payments/received") return route.fallback();
     await route.fulfill({
       path: join(
         process.cwd(),
