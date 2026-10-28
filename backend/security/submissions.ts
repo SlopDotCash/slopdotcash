@@ -322,14 +322,16 @@ async function transition(
  * resent), and an idle draft or failure is abandoned. A verified receipt
  * awaiting a current triager remains recoverable with fresh reporter consent.
  */
-async function settle(
+export async function settle(
   deps: SecurityApiDependencies,
   row: SubmissionRow,
 ): Promise<SubmissionRow> {
   const now = deps.now().getTime();
-  // A saved Slop report and its receipt do not expire with an optional GitHub draft.
+  // A saved Slop report and its receipt do not expire with an optional GitHub
+  // draft. Only an idle draft or failure can expire, so only it needs the read.
   if (
     (row.state === "draft" || row.state === "failed") &&
+    now - Date.parse(row.updated_at) > IDLE_MS &&
     (await storedIntake(deps, row.id))
   )
     return row;
