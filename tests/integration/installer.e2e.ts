@@ -315,6 +315,44 @@ afterEach(() => {
 });
 
 describe("authenticated skill installer lifecycle", () => {
+  it("explains Windows symlink privilege refusal and reuses the verified version", () => {
+    const root = freshRoot("symlink-privilege");
+    const files = baseFiles("revision-a");
+    const artifact = writeArtifact(root, revisionA, files);
+    const authority = configureAuthority(root, {
+      developHead: revisionA,
+      revisions: { [revisionA]: { files } },
+    });
+    const injection = join(root, "python-injection");
+    mkdirSync(injection);
+    writeFileSync(
+      join(injection, "sitecustomize.py"),
+      "import os\ndef refuse(*args, **kwargs):\n    error = OSError('synthetic symlink refusal')\n    error.winerror = int(os.environ['TEST_WINERROR'])\n    raise error\nos.symlink = refuse\n",
+    );
+    const installRoot = join(root, "install");
+    const script = command(artifact, authority);
+    const refused = run(script, installRoot, {
+      PYTHONPATH: injection,
+      TEST_WINERROR: "1314",
+    });
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toContain("WinError 1314");
+    expect(refused.stderr).toContain("Developer Mode");
+    expect(existsSync(versionPath(installRoot, revisionA))).toBe(true);
+    const other = run(script, installRoot, {
+      PYTHONPATH: injection,
+      TEST_WINERROR: "5",
+    });
+    expect(other.status).not.toBe(0);
+    expect(other.stderr).toContain("synthetic symlink refusal");
+    expect(other.stderr).not.toContain("Developer Mode");
+    const recovered = run(script, installRoot);
+    expect(recovered.status, recovered.stderr).toBe(0);
+    expect(currentLink(installRoot)).toBe(
+      `.contribute-to-eliza-versions/${revisionA}`,
+    );
+  });
+
   it("falls back when python3 has no usable HTTPS trust store", () => {
     const root = freshRoot("python-ca-fallback");
     const files = baseFiles("revision-a");
