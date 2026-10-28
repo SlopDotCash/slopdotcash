@@ -17,6 +17,7 @@ import {
 } from "react";
 import { EscrowFunding } from "./EscrowFunding";
 import { Link, useHashScroll } from "./Link";
+import { projectRewardSummaries } from "./lib/project-reward-summary";
 import { formatSecurityAmount } from "./lib/security-bounty.mjs";
 import { ProjectBountyFunding } from "./OwnerBountyVault";
 import "./public-records.css";
@@ -1431,6 +1432,51 @@ function ProjectHeader({ project }: { project: ProjectDefinition }) {
   );
 }
 
+/** Shared copy for every registry reward model; no project-specific descriptions. */
+function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
+  return (
+    <div className="project-overview">
+      <div className="project-state-summary">
+        {projectRewardSummaries(project).map((summary) => (
+          <p className="project-reward-status" key={summary.kind}>
+            {summary.kind === "monthly-pool" ? (
+              <>
+                {summary.amount}
+                {summary.token ? (
+                  <>
+                    {" "}
+                    <ExternalLinkAnchor href={summary.token.url}>
+                      ${summary.token.symbol}
+                    </ExternalLinkAnchor>
+                  </>
+                ) : null}
+                {" monthly target, split between contributors"}
+              </>
+            ) : summary.kind === "critical-loss-of-funds" ? (
+              <>
+                {summary.amount} per critical vulnerability that would result in
+                loss of funds
+                {summary.status === "open"
+                  ? null
+                  : ` · bounty ${summary.status}`}
+              </>
+            ) : summary.kind === "external-prize" ? (
+              <>
+                {summary.amount
+                  ? `${compactPrizeLabel(summary.amount)} external prize pool`
+                  : "External prize"}{" "}
+                · organizer decides awards
+              </>
+            ) : (
+              "Points only · no cash rewards"
+            )}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProjectBountyIntroduction({
   project,
 }: {
@@ -1444,17 +1490,7 @@ function ProjectBountyIntroduction({
     <section className="project-hero">
       <div className="shell">
         <ProjectHeader project={project} />
-        <div className="project-overview">
-          <p className="project-reward-status">
-            {compactPrizeLabel(
-              formatSecurityAmount(
-                terms.amount.grossMinor,
-                terms.amount,
-              ).replace(/^([\d,.]+) USDC$/u, "$$$1"),
-            )}{" "}
-            per critical vulnerability that would result in loss of funds
-          </p>
-        </div>
+        <ProjectRewardSummary project={project} />
         <div className="install-panel" id="start">
           <div className="install-heading">
             <h2>Copy this into your agent.</h2>
@@ -1479,66 +1515,12 @@ function ProjectPage({
     state.status === "ready"
       ? state.views.find((candidate) => candidate.project.id === project.id)
       : undefined;
-  const externalPrize = project.reward.kind === "external-prize-share";
-  const pointsOnly = monthlyPoolPointsOnly(project.reward);
   return (
     <main className="route-project">
       <section className="project-hero">
         <div className="shell">
           <ProjectHeader project={project} />
-          <div
-            className={`project-overview${externalPrize ? " project-overview--prize" : ""}`}
-          >
-            <div>
-              <div className="project-state-summary">
-                <p className="project-reward-status">
-                  {pointsOnly ? (
-                    "Points only · no cash rewards"
-                  ) : externalPrize ? (
-                    "External prize · organizer decides awards"
-                  ) : project.rewardAsset?.kind === "token" ? (
-                    <>
-                      {monthlyPoolCapLabel(project).replace(/\s+\$?\S+$/u, "")}{" "}
-                      <ExternalLinkAnchor
-                        href={
-                          project.rewardAsset.network === "solana"
-                            ? project.rewardAsset.address.endsWith("pump")
-                              ? `https://pump.fun/coin/${project.rewardAsset.address}`
-                              : `https://solscan.io/token/${project.rewardAsset.address}`
-                            : `https://${project.rewardAsset.network === "base" ? "basescan.org" : "etherscan.io"}/token/${project.rewardAsset.address}`
-                        }
-                      >
-                        ${project.rewardAsset.symbol.replace(/^\$/u, "")}
-                      </ExternalLinkAnchor>{" "}
-                      monthly target, split between contributors
-                    </>
-                  ) : (
-                    `${project.reward.monthlyCapDisplay} monthly target`
-                  )}
-                </p>
-              </div>
-            </div>
-            {externalPrize ? (
-              <aside className="reward-card">
-                <strong>
-                  <span className="reward-exact-amount">
-                    {
-                      project.reward.externalOpportunity
-                        ?.advertisedAmountDisplay
-                    }
-                  </span>
-                  {" + points"}
-                </strong>
-                <details>
-                  <summary>Prize allocation terms</summary>
-                  <p>{project.terms.externalPrize?.allocationAuthority}</p>
-                  <a href={`/projects/${project.id}/terms.json`}>
-                    Full prize terms
-                  </a>
-                </details>
-              </aside>
-            ) : null}
-          </div>
+          <ProjectRewardSummary project={project} />
           {project.reward.reviewBudget ? (
             <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
           ) : null}
