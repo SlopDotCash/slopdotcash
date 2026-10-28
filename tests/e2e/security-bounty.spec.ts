@@ -3104,6 +3104,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
 test("Slop-first intake preserves private GitHub forwarding and reconciliation @registry @private-intake", async ({
   browser,
   request,
+  diagnostics,
 }) => {
   test.skip(
     process.env.SLOP_E2E_PRIVATE_INTAKE !== "1",
@@ -3132,6 +3133,12 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
     id: `report-only-${suffix}`,
     repository: `e2e-security/report-only-${suffix}`,
   };
+  // Private reporters do not need maintainer setup permission.
+  diagnostics.allowResponse(
+    403,
+    "GET",
+    `/api/v1/project-setup/${noProgram.id}`,
+  );
   const sentinel = `E2E-PRIVATE-SENTINEL-${suffix}`;
   const report = {
     summary: `Vault withdraw skips the owner check ${sentinel}`,
