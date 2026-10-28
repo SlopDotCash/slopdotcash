@@ -9,7 +9,7 @@ import {
   test,
 } from "./fixtures";
 
-test("disabled payouts are visible from discovery through the project page", async ({
+test("monthly targets remain distinct from available vault funds", async ({
   page,
 }, info) => {
   const original = PROJECTS.find((project) => project.id === "eliza");
@@ -50,7 +50,7 @@ test("disabled payouts are visible from discovery through the project page", asy
     page.getByRole("heading", { name: "Eliza", exact: true, level: 1 }),
   ).toBeVisible();
   await expect(page.locator(".project-reward-status")).toContainText(
-    "payments not active",
+    "monthly target",
   );
   await page.screenshot({
     path: info.outputPath("project-payment-unavailable.png"),
@@ -59,10 +59,10 @@ test("disabled payouts are visible from discovery through the project page", asy
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   const funding = page.getByRole("main");
   await expect(
-    funding.getByText("Payments: Disabled", { exact: true }),
+    funding.getByRole("region", { name: "Funds and awards" }),
   ).toBeVisible();
   await expect(
-    funding.getByText("Vault: Not set up", { exact: true }),
+    funding.getByText(/The project vault is not set up/u),
   ).toBeVisible();
   await page.screenshot({
     path: info.outputPath("funding-payment-unavailable.png"),
@@ -112,5 +112,5 @@ test("a cycle record offers a funding check without inventing a vault balance", 
   const link = notice.getByRole("link", { name: "View project funding" });
   await expect(link).toHaveAttribute("href", "/projects/eliza/funding");
   await link.click();
-  await expect(page).toHaveURL(/\/projects\/eliza\/funding$/u);
+  await expect(page).toHaveURL(/\/projects\/eliza#funding$/u);
 });

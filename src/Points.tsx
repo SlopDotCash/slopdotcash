@@ -1328,6 +1328,9 @@ export function ContributorStandings({
     return () => window.removeEventListener("popstate", restore);
   }, [readFilters]);
   useEffect(() => {
+    // The embedded project table shares its URL with funding and award links.
+    // Its local sorting must not consume their query parameters.
+    if (compact && projectId) return;
     const url = new URL(window.location.href);
     for (const [key, value] of Object.entries({
       sort: sort === "points" ? "" : sort,
@@ -1340,7 +1343,7 @@ export function ContributorStandings({
       else url.searchParams.delete(key);
     }
     window.history.replaceState(window.history.state, "", url);
-  }, [sort, period, query, project, page, projectId]);
+  }, [sort, period, query, project, page, projectId, compact]);
   const { state } = usePoints();
   const members = useMemo(() => {
     if (state.status !== "ready") return [];

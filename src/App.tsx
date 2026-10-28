@@ -1635,13 +1635,9 @@ function AppContent({ route }: { route: Route }) {
   else if (route.kind === "vetting-evidence") content = <VettingEvidencePage />;
   else if (route.kind === "security-cases") content = <SecurityCasesPage />;
   else if (route.kind === "security-program")
-    content = withProject(route, (project) =>
-      project.securityBounty ? (
-        <SecurityProgramPage key={project.id} project={project} />
-      ) : (
-        <ProjectPage project={project} state={state} retry={retry} />
-      ),
-    );
+    content = withProject(route, (project) => (
+      <SecurityProgramPage key={project.id} project={project} />
+    ));
   else if (route.kind === "manage-project")
     content = withProject(route, (project) => (
       <ProjectUpdatePage key={project.id} project={project} />

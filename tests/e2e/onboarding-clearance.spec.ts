@@ -114,9 +114,13 @@ test("a cleared project lists only the published open-work candidates", async ({
     work.getByRole("link", { name: "All issues on GitHub" }),
   ).toHaveAttribute("href", "https://github.com/elizaOS/eliza/issues");
   await expectAccessible(page, { include: "#start" });
-  // Keyboard order goes from the prompt's copy control to the first item.
+  // Open-in links come after Copy; the work list remains keyboard reachable.
   await page.getByRole("button", { name: "Copy agent prompt" }).focus();
-  await page.keyboard.press("Tab");
+  for (let step = 0; step < 30; step++) {
+    await page.keyboard.press("Tab");
+    if (await links.first().evaluate((link) => link === document.activeElement))
+      break;
+  }
   await expect(links.first()).toBeFocused();
   await page.screenshot({
     path: info.outputPath("project-open-work.png"),
@@ -206,10 +210,7 @@ test("history navigation never carries another project's clearance into agent se
       new URL(response.url()).pathname.endsWith("/data/leaderboard.json"),
     )
     .then((response) => response.finished());
-  await page
-    .getByRole("main")
-    .getByRole("link", { name: "Projects", exact: true })
-    .click();
+  await page.getByRole("link", { name: "Slop home", exact: true }).click();
   expect(await homeSnapshot).toBeNull();
   const elizaSnapshot = page
     .waitForResponse((response) =>

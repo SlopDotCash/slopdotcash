@@ -115,7 +115,26 @@ async function doubleTextSize(page: Page) {
 
 test("funding and wallet keyboard flows remain accessible at 200 percent text size", async ({
   page,
+  diagnostics,
 }, info) => {
+  diagnostics.allowPreviewApiMisses();
+  const project = baseVaultProject();
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+  );
+  await serveProjectCycleIndex(page, [project.id]);
+  await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
+    route.fulfill({
+      json: {
+        projectId: "eliza",
+        snapshots: [vaultSnapshot("600000000", Date.now())],
+        staleAfterMs: 1800000,
+        servedAt: new Date().toISOString(),
+      },
+    }),
+  );
   await page.route("**/api/v1/payments/me", (route) =>
     route.fulfill({
       json: {
@@ -156,14 +175,14 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
       await audit(page, info, "wallet-200-percent-text");
     } else {
       await expect(
-        page.getByRole("heading", { exact: true, name: "Eliza funding" }),
+        page.getByRole("heading", { exact: true, name: "Eliza" }),
       ).toBeVisible();
-      const setup = page.getByRole("link", {
-        name: "Set up funding",
-        exact: true,
-      });
-      await expect(setup).toHaveAttribute("href", "/projects/eliza/manage");
-      await keyboardTo(page, setup);
+      const details = page.getByText("Ledger details", { exact: true });
+      await keyboardTo(page, details);
+      await page.keyboard.press("Enter");
+      await expect(
+        page.getByText("Withdrawal fees", { exact: true }),
+      ).toBeVisible();
       await audit(page, info, "funding-200-percent-text");
     }
   }
@@ -317,12 +336,9 @@ test("vault totals stay current without a refresh button and keep each state dis
   release();
   const heading = section.getByRole("heading", {
     level: 2,
-    name: "Project vault · Base",
+    name: "Project vault Base",
   });
   await expect(heading.locator('svg[data-network="base"]')).toBeVisible();
-  await expect(
-    section.getByRole("list", { name: "Fees" }).getByRole("listitem"),
-  ).toHaveText(["Award fee 2%", "Withdrawal fee 2%"]);
   const available = section
     .locator(".vault-stat")
     .filter({ hasText: "Available" });
@@ -347,11 +363,12 @@ test("vault totals stay current without a refresh button and keep each state dis
   await expect(section.getByRole("button", { name: /refresh/i })).toHaveCount(
     0,
   );
-  const payouts = section.getByRole("link", { name: "View your payouts" });
-  await expect(payouts).toHaveAttribute("href", "/earnings");
-  await expect(payouts).toHaveClass(/\bbutton\b/u);
-  await keyboardTo(page, payouts);
-  await expect(payouts).toBeFocused();
+  const details = section.getByText("Ledger details", { exact: true });
+  await keyboardTo(page, details);
+  await page.keyboard.press("Enter");
+  await expect(
+    section.getByText("Withdrawal fees", { exact: true }),
+  ).toBeVisible();
   await audit(page, info, "vault-totals-ready");
 
   // Returning to the page after the cache window reads the totals again.
@@ -473,7 +490,7 @@ test("project navigation never reuses another project's vault balance", async ({
   );
   await page.goto(`/projects/${first.slug}`);
   const funding = page.getByRole("region", {
-    name: "Project funding",
+    name: "Project escrow",
     exact: true,
   });
   await expect(funding).toContainText("123 USDC");
@@ -482,8 +499,8 @@ test("project navigation never reuses another project's vault balance", async ({
     history.pushState({}, "", `/projects/${slug}`);
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, second.slug);
-  await expect(funding.getByRole("alert")).toHaveText(
-    "Vault totals unavailable",
+  await expect(funding.getByRole("alert")).toContainText(
+    "Vault totals are unavailable.",
   );
   await expect(funding).not.toContainText("123 USDC");
 });

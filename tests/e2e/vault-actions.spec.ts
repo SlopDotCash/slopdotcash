@@ -332,16 +332,13 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({ json: { session: null } }),
   );
-  // The project page shows one funding line; actions live on the funding page.
+  // Funding controls now live on the project page; legacy URLs reach the same controls.
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
-  const summary = page.getByRole("region", { name: "Project funding" });
-  await expect(summary).toContainText("Vault totals not read yet");
-  await expect(
-    summary.getByRole("link", { name: "Fund this project", exact: true }),
-  ).toHaveAttribute("href", "/projects/eliza/funding");
+  const summary = page.getByRole("region", { name: "Project escrow" });
+  await expect(summary).toContainText("Totals not read yet");
   await expect(
     page.getByRole("region", { name: /^Fund or withdraw/u }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   await expect(
     page.getByText("Vault: Not set up", { exact: true }),
@@ -1638,11 +1635,9 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await expect(
       page.getByRole("region", { name: "Setup status: Ready" }),
     ).toBeVisible();
-    await expect(
-      page
-        .getByRole("navigation", { name: "Project navigation" })
-        .getByRole("link", { name: "Funds & awards" }),
-    ).toHaveAttribute("href", `/projects/${project.slug}/funding`);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(
+      project.name,
+    );
     await expect(
       page.getByText(/Deposit needed|Payments off|Payouts are disabled/),
     ).toHaveCount(0);

@@ -557,10 +557,6 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await returningOwner
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("Useful accepted outcomes with a clearer project scope");
-  await openSettings(returningOwner, "Public revision note (optional)");
-  await returningOwner
-    .getByLabel("Revision note", { exact: true })
-    .fill("Clarify the project scope for contributors");
   await returningOwner.getByRole("button", { name: "Publish changes" }).click();
   await expect(
     returningOwner
@@ -582,10 +578,6 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await openSettings(returningOwner, "Contribution rules");
   await expect(consent).toBeChecked();
   await consent.uncheck();
-  await openSettings(returningOwner, "Public revision note (optional)");
-  await returningOwner
-    .getByLabel("Revision note", { exact: true })
-    .fill("Withdraw automatic closure permission");
   await returningOwner.getByRole("button", { name: "Publish changes" }).click();
   await expect(
     returningOwner
@@ -1608,10 +1600,6 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await page
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("Accepted setup outcomes with a clear project scope");
-  await openSettings(page, "Public revision note (optional)");
-  await page
-    .getByLabel("Revision note", { exact: true })
-    .fill("Clarify the project scope for contributors");
   await page.getByRole("button", { name: "Publish changes" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Published revision 2" }),
@@ -1630,10 +1618,6 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     .selectOption("ethereum");
   await openSettings(page, "Monthly rewards");
   await page.getByLabel("Monthly amount (USDC)").fill("1200");
-  await openSettings(page, "Public revision note (optional)");
-  await page
-    .getByLabel("Revision note", { exact: true })
-    .fill("Use USDC on Ethereum from next month");
   await page.getByRole("button", { name: "Publish changes" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Published revision 3" }),
@@ -1731,10 +1715,6 @@ test("an owner publishes while public GitHub is rate limited and recovers only a
   const network = page.getByRole("combobox", { name: "Network", exact: true });
   await network.selectOption("base");
   await page.getByLabel("Monthly amount (USDC)").fill("1000");
-  await openSettings(page, "Public revision note (optional)");
-  await page
-    .getByLabel("Revision note", { exact: true })
-    .fill("Use Base USDC from next month");
 
   // The public GitHub read is really limited. The shipped Slopbot Worker
   // still reads the installation, immutable identity and caller permission.
