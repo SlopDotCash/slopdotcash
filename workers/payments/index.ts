@@ -436,8 +436,11 @@ export async function runMonthlyCommitments(
         throw new Error("Monthly executor returned no submission evidence");
       if (plan.evmReservation && typeof result.complete !== "boolean")
         throw new Error("Monthly executor returned no completion evidence");
+      // A legacy month stays open while the executor's re-sent journaled nonce is unmined.
       if (
-        plan.evmReservation ? result.complete : result.alreadyCommitted === true
+        plan.evmReservation
+          ? result.complete
+          : result.alreadyCommitted === true && result.complete !== false
       ) {
         await env.PAYMENTS_DB.prepare(
           "UPDATE monthly_payment_execution SET complete=1 WHERE project_id=? AND period=? AND network=?",

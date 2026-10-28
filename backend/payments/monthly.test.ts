@@ -2290,6 +2290,56 @@ test("monthly dispatcher sends a new EVM V2 reservation before an older month's 
   expect(sent).toEqual(["2026-12:true", "2026-11:false"]);
 });
 
+test("monthly dispatcher keeps a legacy EVM month open while its re-sent nonce is unmined", async () => {
+  // Another sender committed the month; the executor re-sent its own journaled commit bytes.
+  sqlite.exec("PRAGMA foreign_keys=OFF");
+  sqlite
+    .prepare("INSERT INTO monthly_payment_authorizations VALUES(?,?,?,?,?,?)")
+    .run(
+      project.id,
+      "2026-11",
+      "base-sepolia",
+      "d".repeat(64),
+      JSON.stringify({
+        plan: {
+          family: "evm",
+          request: {
+            projectId: project.id,
+            period: "2026-11",
+            network: "base-sepolia",
+          },
+          deployment,
+        },
+      }),
+      afterCutoff.toISOString(),
+    );
+  sqlite.exec("PRAGMA foreign_keys=ON");
+  let calls = 0;
+  const dispatcher = {
+    PAYMENTS_DB: db,
+    REGISTRY_DB: db,
+    PAYMENT_NETWORKS: '["base-sepolia"]',
+    PAYMENT_RPC_URLS: "{}",
+    MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
+    EVM_PAYMENT_EXECUTOR: {
+      async fetch(request: Request) {
+        expect(new URL(request.url).searchParams.get("admit")).toBe("true");
+        calls++;
+        return Response.json(
+          calls === 1
+            ? { transactionId: null, alreadyCommitted: true, complete: false }
+            : { transactionId: null, alreadyCommitted: true },
+        );
+      },
+    },
+  };
+  await runMonthlyCommitments(dispatcher, afterCutoff);
+  await runMonthlyCommitments(dispatcher, afterCutoff);
+  await runMonthlyCommitments(dispatcher, afterCutoff);
+  // The incomplete result is retried; the committed result then retires the month.
+  expect(calls).toBe(2);
+});
+
 test("Solana v3 retries preserve the first signed freeze time after a signer outage", async () => {
   sqlite.close();
   const seed = new Uint8Array(32).fill(7); // Public synthetic test key.
