@@ -156,7 +156,41 @@ export async function publicVaultPayments(
 }
 
 /** At most this many finalized records feed one aggregate; more fails closed. */
-const MAX_RECEIVED_RECORDS = 20_000;
+export const MAX_RECEIVED_RECORDS = 20_000;
+/** Vault rows carry their evidence (1.5 to 2.5 KB); 100 stay near 250 KB. */
+const VAULT_PAGE_SIZE = 100;
+const DIRECT_PAGE_SIZE = 500;
+
+/**
+ * Reads every row of one append-only table through bounded json pages under a
+ * frozen rowid boundary. More than MAX_RECEIVED_RECORDS rows fails closed.
+ */
+async function pagedRows<T>(
+  db: D1Database,
+  table: "payment_events" | "payment_direct_transfers",
+  page: (after: number, through: number) => { sql: string; values: number[] },
+): Promise<T[]> {
+  const bound = await db
+    .prepare(`SELECT COALESCE(MAX(rowid),0) value FROM ${table}`)
+    .first<{ value: number }>();
+  if (!bound) throw new Error("Received totals boundary unavailable");
+  const rows: T[] = [];
+  let after = 0;
+  for (;;) {
+    const { sql, values } = page(after, bound.value);
+    const result = await db
+      .prepare(sql)
+      .bind(...values)
+      .first<{ items: string; last: number | null }>();
+    if (!result) throw new Error("Received totals read incomplete");
+    const items = JSON.parse(result.items) as T[];
+    if (items.length === 0 || result.last === null) return rows;
+    rows.push(...items);
+    if (rows.length > MAX_RECEIVED_RECORDS)
+      throw new Error("Received totals exceed the aggregate bound");
+    after = result.last;
+  }
+}
 
 /** One contributor's all-time finalized receipts, in exact base units. */
 export interface ReceivedContributor {
@@ -200,34 +234,42 @@ export async function publicReceivedTotals(
   db: D1Database,
   includeTestnets: boolean,
 ): Promise<ReceivedTotals> {
-  const vault = await db
-    .prepare(`SELECT json_group_array(json(item)) items, COUNT(*) count FROM (
-      SELECT json_object('sequence',e.rowid,'projectId',o.project_id,
+  // Bounded pages keep every returned value far below D1's 2 MB value limit;
+  // a frozen rowid boundary keeps the pages one consistent read.
+  const vaultRows = await pagedRows<Row & { memberLogin: string | null }>(
+    db,
+    "payment_events",
+    (after, through) => ({
+      sql: `SELECT json_group_array(json(item)) items, MAX(sequence) last FROM (
+      SELECT e.rowid sequence, json_object('sequence',e.rowid,'projectId',o.project_id,
         'network',o.network,'chain',o.chain,'vault',o.vault,'githubUserId',o.github_user_id,
         'sourceDigest',o.source_digest,'grossBase',o.gross_base,'feeBase',o.fee_base,
         'assetAddress',o.asset_address,'assetDecimals',o.asset_decimals,
         'transactionId',e.transaction_id,'eventIndex',e.event_index,
         'obligationId',o.id,'evidence',e.evidence_json,
-        'contributionMonth',m.period,'indexedAt',e.observed_at) item
-      ${RECORDS} ORDER BY e.rowid LIMIT ?)`)
-    .bind(MAX_RECEIVED_RECORDS + 1)
-    .first<{ items: string; count: number }>();
-  const direct = await db
-    .prepare(`SELECT json_group_array(json_object('githubUserId',github_user_id,
-      'projectId',project_id,'login',github_login,'amountMicro',amount_micro)) items, COUNT(*) count
-      FROM (SELECT * FROM payment_direct_transfers ORDER BY block_time,transaction_id LIMIT ?)`)
-    .bind(MAX_RECEIVED_RECORDS + 1)
-    .first<{ items: string; count: number }>();
-  const logins = await db
-    .prepare(
-      "SELECT json_group_object(github_id,login) items FROM points_members WHERE public=1 AND closed_at IS NULL",
-    )
-    .first<{ items: string }>();
-  if (!vault || !direct || !logins)
-    throw new Error("Received totals read incomplete");
-  if (vault.count > MAX_RECEIVED_RECORDS || direct.count > MAX_RECEIVED_RECORDS)
-    throw new Error("Received totals exceed the aggregate bound");
-  const memberLogins = JSON.parse(logins.items) as Record<string, string>;
+        'contributionMonth',m.period,'indexedAt',e.observed_at,
+        'memberLogin',(SELECT login FROM points_members p WHERE p.github_id=o.github_user_id
+          AND p.public=1 AND p.closed_at IS NULL)) item
+      ${RECORDS} AND e.rowid>? AND e.rowid<=? ORDER BY e.rowid LIMIT ?)`,
+      values: [after, through, VAULT_PAGE_SIZE],
+    }),
+  );
+  const directRows = await pagedRows<{
+    githubUserId: string;
+    projectId: string;
+    login: string;
+    amountMicro: string;
+    memberLogin: string | null;
+  }>(db, "payment_direct_transfers", (after, through) => ({
+    sql: `SELECT json_group_array(json(item)) items, MAX(sequence) last FROM (
+      SELECT d.rowid sequence, json_object('githubUserId',d.github_user_id,
+        'projectId',d.project_id,'login',d.github_login,'amountMicro',d.amount_micro,
+        'memberLogin',(SELECT login FROM points_members p WHERE p.github_id=d.github_user_id
+          AND p.public=1 AND p.closed_at IS NULL)) item
+      FROM payment_direct_transfers d WHERE d.rowid>? AND d.rowid<=?
+      ORDER BY d.rowid LIMIT ?)`,
+    values: [after, through, DIRECT_PAGE_SIZE],
+  }));
   const people = new Map<
     string,
     {
@@ -244,7 +286,7 @@ export async function publicReceivedTotals(
     let value = people.get(githubUserId);
     if (!value) {
       value = {
-        login: memberLogins[githubUserId] ?? null,
+        login: null,
         direct: 0n,
         vaultUsd: 0n,
         directTransfers: 0,
@@ -256,12 +298,7 @@ export async function publicReceivedTotals(
     }
     return value;
   };
-  for (const row of JSON.parse(direct.items) as {
-    githubUserId: string;
-    projectId: string;
-    login: string;
-    amountMicro: string;
-  }[]) {
+  for (const row of directRows) {
     if (
       !/^[1-9]\d{0,15}$/u.test(row.githubUserId) ||
       !isBaseUnits(row.amountMicro)
@@ -269,7 +306,7 @@ export async function publicReceivedTotals(
       throw new Error("Invalid direct transfer record");
     const value = person(row.githubUserId);
     // A disclosed transfer names its recipient; a later sign-in login wins.
-    value.login = memberLogins[row.githubUserId] ?? row.login;
+    value.login = row.memberLogin ?? row.login;
     value.direct += BigInt(row.amountMicro);
     value.directTransfers++;
     value.projects.set(
@@ -277,9 +314,10 @@ export async function publicReceivedTotals(
       (value.projects.get(row.projectId) ?? 0n) + BigInt(row.amountMicro),
     );
   }
-  for (const row of JSON.parse(vault.items) as Row[]) {
+  for (const row of vaultRows) {
     const record = publicRecord(row);
     const value = person(row.githubUserId);
+    value.login ??= row.memberLogin;
     value.vaultPayments++;
     if (
       isUsdMicroAsset(
@@ -345,8 +383,8 @@ export async function publicReceivedTotals(
       usdMicro: (directMicro + vaultUsdMicro).toString(),
       directMicro: directMicro.toString(),
       vaultUsdMicro: vaultUsdMicro.toString(),
-      directTransfers: direct.count,
-      vaultPayments: vault.count,
+      directTransfers: directRows.length,
+      vaultPayments: vaultRows.length,
       contributors: contributors.length,
     },
   };

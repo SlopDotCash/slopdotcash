@@ -44,35 +44,54 @@ function lastGood(): ReceivedTotals | null {
   }
 }
 
-// Every standings table on a page shares one read.
-let shared: Promise<ReceivedTotals> | null = null;
+/** The server's edge cache lifetime; an older copy is read again on mount. */
+const FRESH_MS = 60_000;
+// Every standings table on a page shares one read and its last result.
+let cached: { received: ReceivedTotals; at: number } | null = null;
+let inflight: Promise<ReceivedTotals> | null = null;
 
-/**
- * All-time money received, from one edge-cached D1 aggregate. A failed read
- * keeps this browser's last good copy, labelled stale; without one it stays an
- * error, never an empty or zero total.
- */
-export function useReceivedTotals(): [ReceivedState, () => void] {
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<ReceivedState>({ status: "loading" });
-  useEffect(() => {
-    let active = true;
-    if (!shared) {
-      const read = loadReceived();
-      shared = read;
-      // A failed shared read is retried by the next mount or retry.
-      read.catch(() => {
-        if (shared === read) shared = null;
-      });
-    }
-    void attempt;
-    shared
+function refresh(): Promise<ReceivedTotals> {
+  if (!inflight) {
+    const read = loadReceived()
       .then((received) => {
+        cached = { received, at: Date.now() };
         try {
           window.localStorage.setItem(STORAGE_KEY, JSON.stringify(received));
         } catch {
           // error-policy:J3 the read still succeeded without a stored copy.
         }
+        return received;
+      })
+      .finally(() => {
+        if (inflight === read) inflight = null;
+      });
+    inflight = read;
+  }
+  return inflight;
+}
+
+/**
+ * All-time money received, from one edge-cached D1 aggregate. A copy older
+ * than the edge cache is shown while it is read again. A failed read keeps
+ * the last good copy, labelled stale; without one it stays an error, never an
+ * empty or zero total.
+ */
+export function useReceivedTotals(): [ReceivedState, () => void] {
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<ReceivedState>(() =>
+    cached
+      ? { status: "ready", received: cached.received }
+      : { status: "loading" },
+  );
+  useEffect(() => {
+    let active = true;
+    const current = cached;
+    if (current && attempt === 0 && Date.now() - current.at < FRESH_MS) {
+      setState({ status: "ready", received: current.received });
+      return;
+    }
+    refresh()
+      .then((received) => {
         if (active) setState({ status: "ready", received });
       })
       .catch((error: unknown) => {
@@ -81,7 +100,7 @@ export function useReceivedTotals(): [ReceivedState, () => void] {
           error instanceof Error
             ? error.message
             : "Payment records unavailable";
-        const previous = lastGood();
+        const previous = cached?.received ?? lastGood();
         // error-policy:J1 a failed read never becomes a zero total.
         setState(
           previous
@@ -93,9 +112,6 @@ export function useReceivedTotals(): [ReceivedState, () => void] {
       active = false;
     };
   }, [attempt]);
-  const retry = useCallback(() => {
-    shared = null;
-    setAttempt((value) => value + 1);
-  }, []);
+  const retry = useCallback(() => setAttempt((value) => value + 1), []);
   return [state, retry];
 }
