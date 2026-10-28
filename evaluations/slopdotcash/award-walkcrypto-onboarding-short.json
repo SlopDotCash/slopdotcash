@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_walkcrypto_onboarding_short",
+  "projectId": "slopdotcash",
+  "repository": "SlopDotCash/slopdotcash",
+  "actor": {
+    "id": "U_kgDOFDm-uw",
+    "login": "WalkCrypto",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/339328699?v=4",
+    "url": "https://github.com/WalkCrypto",
+    "kind": "User"
+  },
+  "occurredAt": "2026-10-05T23:07:01.000Z",
+  "points": 1,
+  "source": {
+    "id": "external-0e9c40ccdf7e5ab1ef71ed732989740874349e19c593ef7656b555a391924802",
+    "kind": "external",
+    "platform": "youtube",
+    "title": "SlopCash 왜 안함? (Korean short: why not try Slop)",
+    "url": "https://www.youtube.com/watch?v=ZQDk8B8ndXs",
+    "evidence": {
+      "archiveUrl": "https://web.archive.org/web/20261028133723/https://www.youtube.com/watch?v=ZQDk8B8ndXs",
+      "contentSha256": "8ae3097dade37276097d03844946d426b29bfeb9a3f6f8c0732355486728caf3",
+      "capturedAt": "2026-10-28T13:37:23.000Z"
+    }
+  },
+  "reason": "A 69-second Korean short that tells non-developers they can contribute to Slop projects by pointing Codex or Claude Code at a repository, that accepted work is paid in USDC and recorded as points, and that the author answers follow-up questions in their own channel. It is the only Korean-language onboarding video about Slop and it answers the recurring question of whether coding skill is required. The award covers that participation explanation only; the first half of the short describes the Umia auction and the team, which is not evaluated here, and view counts were not considered.",
+  "review": {
+    "reviewer": "drew-dot-com",
+    "reviewedAt": "2026-10-28T13:50:00.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/1"
+  }
+}
