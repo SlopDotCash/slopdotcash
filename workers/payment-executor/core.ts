@@ -1284,6 +1284,38 @@ async function replaceUnderpricedAttempt(
   return { transactionId: replacement.transactionId };
 }
 
+/**
+ * A monthly step that another sender completed can still have this signer's
+ * journaled transaction, which holds its nonce. Every later send of this signer
+ * waits behind that nonce. Until the signer's mined nonce passes it, send the
+ * same journaled bytes again. They cannot commit the step a second time.
+ * Returns true once no journaled nonce of this step remains unmined.
+ */
+async function sendJournaledUntilMined(
+  env: PublicEvmExecutorEnvironment,
+  config: Deployment,
+  key: string,
+  monthlyPeriod: string,
+) {
+  const attempt = await env.JOURNAL.get<Attempt | null>(key);
+  if (!attempt) return true;
+  const { nonce } = parseTransaction(attempt.rawTransaction);
+  if (typeof nonce !== "number")
+    throw new Error("Journaled transaction nonce unavailable");
+  const mined = await rpc(config, "eth_getTransactionCount", [
+    env.SIGNER.address,
+    "latest",
+  ]);
+  if (BigInt(mined as string) > BigInt(nonce)) return true;
+  await signAndSubmit(env, config, key, attempt.fingerprint, "", {
+    network: attempt.network,
+    vault: attempt.vault,
+    idempotencyKey: digest(key).slice(2),
+    monthlyPeriod,
+  });
+  return false;
+}
+
 /** Permissionless monthly commitment using the executor's gas key, not the attester key.
  * Signature, pinned deployment and existing on-chain root are checked on every retry.
  * A submitted transaction is not proof of finalized reservation or payment.
@@ -1356,12 +1388,24 @@ export async function submitEvmMonthly(
       1,
     )
   )[0];
+  const key = `monthly:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
   if (BigInt(`0x${currentRoot}`) !== 0n) {
+    // Another sender may have committed this month after this signer journaled its own commit.
+    const settled = await sendJournaledUntilMined(
+      env,
+      deployment,
+      key,
+      plan.request.period,
+    );
     if (`0x${currentRoot}` !== root)
       throw new Error("Another monthly root is already committed");
-    return { transactionId: null, alreadyCommitted: true };
+    // Not complete while this signer's journaled nonce is unmined.
+    return {
+      transactionId: null,
+      alreadyCommitted: true,
+      ...(settled ? {} : { complete: false }),
+    };
   }
-  const key = `monthly:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
   const fingerprint = digest(
     JSON.stringify([
       deployment.chainId,
@@ -1451,6 +1495,19 @@ async function submitEvmMonthlyReserve(
       );
     }
   }
+  const key = `monthly:v2:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
+  const legacyKey = `monthly:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
+  // Another sender may have admitted this month after this signer journaled its own commitment.
+  let rootSettled = true;
+  if (BigInt(state.root) !== 0n)
+    for (const journaled of [legacyKey, key])
+      rootSettled =
+        (await sendJournaledUntilMined(
+          env,
+          deployment,
+          journaled,
+          plan.request.period,
+        )) && rootSettled;
   if (BigInt(state.root) !== 0n && BigInt(state.allocationDigest) === 0n) {
     if (!legacy)
       throw new Error("The original legacy monthly authorization is required");
@@ -1480,9 +1537,12 @@ async function submitEvmMonthlyReserve(
         "Legacy monthly root differs from its original authorization",
       );
     }
-    return { transactionId: null, alreadyCommitted: true, complete: true };
+    return {
+      transactionId: null,
+      alreadyCommitted: true,
+      complete: rootSettled,
+    };
   }
-  const key = `monthly:v2:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
   const fingerprint = digest(
     JSON.stringify([deployment.chainId, target.vault.toLowerCase(), expected]),
   );
@@ -1508,7 +1568,6 @@ async function submitEvmMonthlyReserve(
     ) {
       throw new Error("Invalid monthly authority signature");
     }
-    const legacyKey = `monthly:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
     const legacyAttempt = await env.JOURNAL.get<Attempt>(legacyKey);
     if (
       legacyAttempt &&
@@ -1575,10 +1634,6 @@ async function submitEvmMonthlyReserve(
   }
   // The chain already authenticated this root. A later authority rotation, owner opt-out or expired
   // admission window cannot invalidate the funded reserve or require another authority signature.
-  if (state.remaining === 0n)
-    return { transactionId: null, alreadyCommitted: true, complete: true };
-  let transactionId: string | null = null;
-  const committedSources: string[] = [];
   const cursorKey = `${key}:${tree.hash}:finalized-cursor`;
   let cursor = (await env.JOURNAL.get<number>(cursorKey)) ?? 0;
   if (
@@ -1587,12 +1642,38 @@ async function submitEvmMonthlyReserve(
     cursor > plan.entries.length
   )
     throw new Error("Invalid monthly execution cursor");
+  if (state.remaining === 0n) {
+    // Other senders may have committed the last leaves after this signer journaled one of them.
+    let index = cursor;
+    for (; index < plan.entries.length && index < cursor + maxLeaves; ++index) {
+      const leafKey = `${key}:${tree.hash}:leaf:${index}`;
+      if (
+        !(await sendJournaledUntilMined(
+          env,
+          deployment,
+          leafKey,
+          plan.request.period,
+        ))
+      )
+        break;
+      await env.JOURNAL.put(cursorKey, index + 1);
+    }
+    // Complete only after every journaled nonce of this month is mined.
+    return {
+      transactionId: null,
+      alreadyCommitted: true,
+      complete: rootSettled && index === plan.entries.length,
+    };
+  }
+  let transactionId: string | null = null;
+  const committedSources: string[] = [];
   for (
     let index = cursor, examined = 0;
     index < plan.entries.length && examined < maxLeaves;
     ++index, ++examined
   ) {
     const entry = plan.entries[index];
+    const leafKey = `${key}:${tree.hash}:leaf:${index}`;
     const id = evmAwardId(config.chainId, deployment.vault, entry.sourceDigest);
     const award = await call(deployment, `0xe76af61d${id.slice(2)}`, 6);
     if (BigInt(`0x${award[0]}`) !== 0n) {
@@ -1604,13 +1685,20 @@ async function submitEvmMonthlyReserve(
         throw new Error(
           "Admitted monthly source conflicts with a funded award",
         );
-      if (cursor === index) {
+      // Another sender may have committed this leaf after this signer journaled its own leaf.
+      // The cursor passes it only after the signer's mined nonce passes those bytes.
+      const settled = await sendJournaledUntilMined(
+        env,
+        deployment,
+        leafKey,
+        plan.request.period,
+      );
+      if (settled && cursor === index) {
         cursor = index + 1;
         await env.JOURNAL.put(cursorKey, cursor);
       }
       continue;
     }
-    const leafKey = `${key}:${tree.hash}:leaf:${index}`;
     const data = buildCommitMonthlyLeafCalldata(
       plan.request.period,
       entry,
