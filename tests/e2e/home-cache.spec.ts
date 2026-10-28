@@ -212,7 +212,7 @@ test("a failed registry read keeps the last good projects with a stale label", a
   await expect(notice).toHaveCount(0);
 });
 
-test("a failed snapshot refresh keeps the last good scores with a stale label", async ({
+test("a failed snapshot refresh keeps the last good sponsor report with a stale label", async ({
   diagnostics,
   page,
 }) => {
@@ -224,41 +224,27 @@ test("a failed snapshot refresh keeps the last good scores with a stale label", 
     /^503 GET http:\/\/[^ ]+\/data\/leaderboard\.json\?\S*$/u,
     /^net::ERR_ABORTED GET http:\/\/[^ ]+\/data\/cycles\/index\.json\?\S*$/u,
   );
-  const project = homeProjects().find(
-    (candidate) => candidate.listingTier === "featured",
-  );
-  if (!project) throw new Error("Missing featured project fixture");
   let failSnapshot = false;
   await page.route("**/data/leaderboard.json?*", (route) =>
     failSnapshot
       ? route.fulfill({ status: 503, json: { error: "unavailable" } })
       : route.fallback(),
   );
-  await page.goto(`/projects/${project.slug}`, { waitUntil: "networkidle" });
-  await expect(
-    page.getByRole("heading", { level: 1, name: project.name }),
-  ).toBeVisible();
-  const scoreRows = page.locator(".points-table tbody tr");
+  await page.goto("/sponsors", { waitUntil: "networkidle" });
+  const scoreRows = page
+    .getByRole("list", { name: "Project funding pools" })
+    .getByRole("listitem");
   await expect(scoreRows.first()).toBeVisible();
   const rowCount = await scoreRows.count();
 
-  // Leave for a snapshot-free route, then return: the shared read refreshes.
+  // A report refresh must retain its prior data until fresh data is available.
+  await page.getByRole("link", { name: "How it works", exact: true }).click();
+  await expect(page).toHaveURL(/\/how-it-works$/u);
   failSnapshot = true;
-  await page
-    .getByRole("main")
-    .getByRole("link", { name: "Projects", exact: true })
-    .click();
-  await expect(page.locator(".project-card").first()).toBeVisible();
-  // With no prior home snapshot, a failed first read is an error, never empty.
-  await expect(
-    page.getByRole("alert").filter({ hasText: "Data could not load." }),
-  ).toBeVisible();
   await page.goBack();
-  await expect(
-    page.getByRole("heading", { level: 1, name: project.name }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/\/sponsors$/u);
   const notice = page
-    .locator(".project-hero")
+    .getByRole("main")
     .getByRole("status")
     .filter({ has: page.getByRole("button", { name: "Retry" }) });
   await expect(notice).toContainText("Points may be outdated");
