@@ -100,18 +100,33 @@ export function initialSecuritySplit(
 }
 
 /**
+ * Whether the owner editor may offer the full-award split. The project API
+ * keeps a registered bounty vault and its network unchanged (it refuses a
+ * settlement change with `security_vault_restricted`), and a full-award
+ * program cannot bind the 75/25 vault, so a program with a vault keeps 75/25.
+ */
+export function fullAwardSelectable(
+  platform: boolean,
+  existing: Pick<SecurityBountyTerms, "settlement"> | undefined,
+): boolean {
+  return platform && existing?.settlement === undefined;
+}
+
+/**
  * Fields of the existing terms carried into the next revision, before the
  * editor overwrites the fields it owns. The funding policy is always chosen
- * again. A full-award program cannot bind the 75/25 bounty vault, so its
- * settlement is dropped when the full award is selected.
+ * again. A registered bounty vault is always carried: the API never accepts
+ * its removal, so the full award is refused rather than dropping it.
  */
 export function carriedSecurityTerms(
   existing: SecurityBountyTerms | undefined,
   fullAward: boolean,
 ): Partial<Omit<SecurityBountyTerms, "fundingPolicy">> {
   if (!existing) return {};
-  const { fundingPolicy: _fundingPolicy, settlement, ...previous } = existing;
-  return fullAward || settlement === undefined
-    ? previous
-    : { ...previous, settlement };
+  const { fundingPolicy: _fundingPolicy, ...previous } = existing;
+  if (fullAward && previous.settlement !== undefined)
+    throw new TypeError(
+      "A program with a registered bounty vault keeps the 75/25 split",
+    );
+  return previous;
 }
