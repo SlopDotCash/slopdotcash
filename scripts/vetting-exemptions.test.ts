@@ -590,3 +590,54 @@ describe("owner-approved admission exemptions", () => {
     expect((await f.call("admin/vetting")).body.exemptions).toHaveLength(1);
   });
 });
+
+test("an explicit investigation cannot inherit exemption from its reason text", async () => {
+  const f = fixture();
+  const queued = await f.queue();
+  expect((await f.grant()).status).toBe(201);
+  const keys = await vettingKeyPair();
+  const response = await handleVettingApi(
+    new Request(`${ORIGIN}/api/v1/admin/vetting/assessments`, {
+      method: "POST",
+      headers: { origin: ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: PROJECT,
+        revision: queued.revision,
+        reason: "Automatic replacement of an unavailable queued template",
+      }),
+    }),
+    {
+      vetting: f.vetting,
+      projects: f.projects,
+      resultPublicKeys: keys.publicKey,
+      livePin: async () => ({
+        commitSha: queued.commitSha,
+        templateSha256: "e".repeat(64),
+      }),
+      session: async () => ({ ...ADMIN, admin: true }),
+      now: () => new Date(AT),
+      randomId: () => "0123456789abcdef0123456789abcdef",
+    },
+  );
+  expect(response?.status).toBe(201);
+  expect(await f.clearance()).toMatchObject({ state: "queued" });
+});
+
+test("a result write cannot change the automatic retry predecessor", async () => {
+  const f = fixture();
+  await f.queue();
+  await f.grant();
+  const retry = await f.refresh(
+    "e".repeat(64),
+    "0123456789abcdef0123456789abcdef",
+  );
+  expect(() =>
+    f.sqlite
+      .query(
+        "UPDATE vetting_assessments SET state = 'incomplete', replaces_assessment_id = NULL WHERE id = ?",
+      )
+      .run(retry.id),
+  ).toThrow("vetting replacement provenance is immutable");
+  await f.finish(retry, "incomplete");
+  expect(await f.clearance()).toMatchObject({ state: "cleared" });
+});
