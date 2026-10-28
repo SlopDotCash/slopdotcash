@@ -227,3 +227,14 @@ Console evidence checks keyboard access, accessibility, a 320 CSS-pixel mobile
 layout with 200% text enlargement, and 200% desktop zoom. A 390-pixel viewport at CSS zoom 2 has only 195 CSS
 pixels and exceeds the site's existing 320-pixel minimum; that case is not
 claimed to pass. Captures and raw input bytes stay outside Git.
+
+
+Shared-object cleanup and registration use a D1 deletion claim per digest.
+The claim is created atomically only when no other retained reference exists.
+A database trigger refuses new content references while the claim exists, so
+registration cannot observe reusable bytes that cleanup is about to delete.
+The API returns a retryable conflict and rolls back that registration.
+The single cleanup consumer keeps the claim across R2 failures and retries;
+there is no expiry that could let a delayed delete race a new registration.
+After deletion, its receipt and claim release commit together. A later run
+must upload the missing bytes instead of reusing the deleted copy.

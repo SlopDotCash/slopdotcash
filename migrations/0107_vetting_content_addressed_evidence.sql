@@ -7,3 +7,19 @@ ALTER TABLE vetting_evidence_objects
   ADD COLUMN storage TEXT NOT NULL DEFAULT 'run' CHECK(storage IN ('run','content'));
 CREATE INDEX vetting_evidence_objects_content
   ON vetting_evidence_objects(sha256) WHERE storage='content';
+
+-- The single retention consumer claims a digest before deleting R2 bytes.
+-- Registration is one D1 transaction: either its reference wins first, or
+-- this trigger refuses it until deletion and its receipt finish together.
+CREATE TABLE vetting_evidence_cleanup_claims (
+  sha256 TEXT PRIMARY KEY,
+  object_key TEXT NOT NULL UNIQUE
+) STRICT;
+CREATE TRIGGER vetting_evidence_registration_during_cleanup
+BEFORE INSERT ON vetting_evidence_objects
+WHEN NEW.storage='content' AND EXISTS (
+  SELECT 1 FROM vetting_evidence_cleanup_claims WHERE sha256=NEW.sha256
+)
+BEGIN
+  SELECT RAISE(ABORT, 'evidence cleanup in progress');
+END;
