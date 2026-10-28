@@ -1316,7 +1316,8 @@ for (const result of [
       else {
         const outcome = await run.review();
         expect(outcome).not.toStartWith("closed");
-        if (result === "none") expect(outcome).toBe("no action (none)");
+        if (result === "none")
+          expect(outcome).toBe("review published (no finding)");
       }
       expect(run.writes.some((path) => path.startsWith("PATCH "))).toBe(false);
       expect(run.currentState()).toBe("open");
