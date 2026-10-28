@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ValueEvidence } from "../workers/slopbot/value-evidence";
 import type { ValueMergeInput } from "../workers/slopbot/value-merge-profile";
 import { createValueMergeBundle } from "./create-value-merge-bundle";
@@ -191,6 +192,26 @@ test("the builder produces a self-contained operation proof and preserves an exi
       createValueMergeBundle([f.input], f.full, output),
     ).rejects.toThrow();
   } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("raw merge evidence inside the checkout is refused before any write", async () => {
+  const f = fixture();
+  const workspace = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  // A subdirectory, not the workspace root: the root itself was already caught by
+  // the `parent === workspace` half of the guard on every platform.
+  const evidence = join(
+    workspace,
+    "docs",
+    "merge-evidence-inside-checkout.bundle",
+  );
+  try {
+    await expect(
+      createValueMergeBundle([f.input], f.full, evidence),
+    ).rejects.toThrow("Raw merge evidence must stay outside the workspace");
+  } finally {
+    rmSync(evidence, { force: true });
     rmSync(f.root, { recursive: true, force: true });
   }
 });
