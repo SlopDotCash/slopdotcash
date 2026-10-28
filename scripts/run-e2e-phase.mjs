@@ -1,4 +1,36 @@
 import { spawn, spawnSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+
+/** A killed Linux process can remain in its group until its parent reaps it. */
+function hasRunningGroupMembers(group) {
+  try {
+    process.kill(-group, 0);
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    throw error;
+  }
+  if (process.platform !== "linux") return true;
+  // Container PID 1 may not reap orphaned descendants. Zombies cannot execute
+  // code or retain server sockets, so their continued PID existence does not
+  // mean the phase still has a running descendant.
+  for (const pid of readdirSync("/proc")) {
+    if (!/^\d+$/u.test(pid)) continue;
+    let stat;
+    try {
+      stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    } catch (error) {
+      if (error.code === "ENOENT" || error.code === "ESRCH") continue;
+      throw error;
+    }
+    // comm is parenthesized and may itself contain spaces or parentheses.
+    const [state, , processGroup] = stat
+      .slice(stat.lastIndexOf(")") + 2)
+      .split(" ");
+    if (Number(processGroup) === group && state !== "Z" && state !== "X")
+      return true;
+  }
+  return false;
+}
 
 function prefixLines(stream, label, output) {
   let pending = "";
@@ -71,7 +103,7 @@ export function runE2ePhase({
         }
       }
       // Sending SIGKILL is asynchronous. Wait for close (including inherited
-      // pipes) and for the POSIX process group to disappear before reporting
+      // pipes) and for the POSIX group to have no live members before reporting
       // cleanup complete. Closed pipes alone do not prove descendants exited.
       // Keep this wait bounded if a descendant escaped the process group.
       cleanupTimer = setTimeout(() => {
@@ -107,7 +139,10 @@ export function runE2ePhase({
         const waitForGroupExit = () => {
           if (settled) return;
           try {
-            process.kill(-child.pid, 0);
+            if (!hasRunningGroupMembers(child.pid)) {
+              finish(timedOut ? 1 : (status ?? 1));
+              return;
+            }
           } catch (error) {
             if (error.code === "ESRCH") finish(timedOut ? 1 : (status ?? 1));
             else
