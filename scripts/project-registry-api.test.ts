@@ -2064,9 +2064,7 @@ test("cached skill and public clearance cannot survive loss of retained evidence
       new Request(`${ORIGIN}/__slop-cache/projects-v1/g${generation}${path}`),
       response,
     );
-  await retained.bucket.delete(
-    `vetting/${id}/${historical.environment.runId}/${historical.traceSha256}`,
-  );
+  await retained.bucket.delete(`vetting/objects/${historical.traceSha256}`);
   const refused = await get(skillPath);
   expect(refused.status).toBe(503);
   expect(refused.headers.get("cache-control")).toBe("no-store");

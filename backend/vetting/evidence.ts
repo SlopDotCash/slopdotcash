@@ -29,8 +29,9 @@ import {
   chunkKey,
   chunkLayout,
   EVIDENCE_CHUNK_BYTES,
-  EVIDENCE_RUN_BYTES,
   type EvidenceChunk,
+  evidenceLocation,
+  evidenceObjectKey,
   verifiedPart,
   verifyParts,
 } from "./evidence-chunks";
@@ -42,9 +43,12 @@ import {
   type VettingScanResult,
 } from "./scan-result";
 
-// Whole objects stay within the run ceiling; each read/upload part stays bounded.
-const MAX_EVIDENCE_OBJECT_BYTES = EVIDENCE_RUN_BYTES;
 const HEX = /^[a-f0-9]{64}$/u;
+/**
+ * Largest report or inventory the intake parses whole inside one Worker
+ * request (128 MB memory). It bounds JSON documents only, never evidence.
+ */
+const MAX_PARSED_EVIDENCE_BYTES = 32 * 1024 * 1024;
 const ID = /^[a-zA-Z0-9_-]{1,100}$/u;
 const KINDS = new Set([
   "trace",
@@ -73,14 +77,17 @@ export const EVIDENCE_OPERATOR_GITHUB_IDS: readonly string[] = [
  * deployment configuration. Each run stores a copy of the terms it used.
  */
 export const EVIDENCE_POLICY = {
-  version: "slop-scanner-evidence-2026-10-27",
+  version: "slop-scanner-evidence-2026-10-28",
   policyAuthorityGithubId: EVIDENCE_POLICY_AUTHORITY_GITHUB_ID,
   operatorGithubIds: [...EVIDENCE_OPERATOR_GITHUB_IDS],
   postClosureRetentionSeconds: 90 * 86400,
   admissionEvidenceRetention: "permanent",
   readGrantDurationSeconds: 900,
-  maxObjectBytes: MAX_EVIDENCE_OBJECT_BYTES,
-  maxRunBytes: EVIDENCE_RUN_BYTES,
+  // Owner decision, 28 October 2026: no object or run size limit. Each
+  // request still carries at most one 8 MiB part, and the signed 1 MiB
+  // registration bounds a run's inventory to 1,024 objects.
+  objectStorage: "content-addressed",
+  maxPartBytes: EVIDENCE_CHUNK_BYTES,
   maxObjects: 1024,
   accessPolicyReference:
     "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6379712530",
@@ -139,6 +146,8 @@ type ObjectRow = {
   content_type: string;
   object_key: string;
   chunks: string | null;
+  /** "content" since migration 0107; earlier rows are run-scoped. */
+  storage?: string | null;
 };
 const headers = { ...JSON_HEADERS, "x-robots-tag": "noindex" };
 const json = (status: number, body: unknown) =>
@@ -294,8 +303,8 @@ export class VettingEvidence {
     if (!row) fail(404, "evidence_missing", "Evidence object is missing");
     return row;
   }
-  private readable(row: ObjectRow, run: Run) {
-    const { policy, bucket } = this.configuration();
+  private readable(run: Run) {
+    const { bucket } = this.configuration();
     if (
       run.expires_at !== null &&
       Date.parse(run.expires_at) <= this.deps.now().getTime()
@@ -304,12 +313,6 @@ export class VettingEvidence {
         410,
         "evidence_expired",
         "Evidence access expired; physical retention is governed separately",
-      );
-    if (row.size_bytes > policy.maxObjectBytes)
-      fail(
-        413,
-        "evidence_oversize",
-        "Complete evidence exceeds the current inspection limit",
       );
     return bucket;
   }
@@ -322,17 +325,22 @@ export class VettingEvidence {
     }
   }
   async bytes(row: ObjectRow, run: Run): Promise<Uint8Array> {
-    const bucket = this.readable(row, run);
+    const bucket = this.readable(run);
     if (row.size_bytes > EVIDENCE_CHUNK_BYTES)
       fail(
         413,
         "evidence_oversize",
         "Large evidence requires a streamed download",
       );
-    return verifiedPart(bucket, row.object_key, row.sha256, row.size_bytes);
+    return verifiedPart(
+      bucket,
+      evidenceLocation(row),
+      row.sha256,
+      row.size_bytes,
+    );
   }
   async verify(row: ObjectRow, run: Run, requireComplete = true) {
-    const bucket = this.readable(row, run),
+    const bucket = this.readable(run),
       chunks = this.layout(row);
     if (!chunks) {
       await this.bytes(row, run);
@@ -352,7 +360,54 @@ export class VettingEvidence {
         "evidence_pending",
         "Chunked evidence has not completed whole-file verification",
       );
-    await verifyParts(bucket, row.object_key, chunks, row.sha256);
+    await verifyParts(bucket, evidenceLocation(row), chunks, row.sha256);
+  }
+  /**
+   * The complete bytes of a JSON report or inventory that the intake must
+   * parse, assembled from verified parts when chunked. Only these structural
+   * documents are held whole, bounded by Worker memory; evidence size itself
+   * is unbounded and artifacts are verified part by part.
+   */
+  async document(row: ObjectRow, run: Run): Promise<Uint8Array> {
+    const chunks = this.layout(row);
+    if (!chunks) return this.bytes(row, run);
+    if (row.size_bytes > MAX_PARSED_EVIDENCE_BYTES)
+      fail(
+        413,
+        "evidence_oversize",
+        "A structural evidence document is too large to parse in one request",
+      );
+    if (
+      !(await this.deps.db
+        .prepare(
+          "SELECT completed_at FROM vetting_evidence_completions WHERE assessment_id=? AND run_id=? AND sha256=?",
+        )
+        .bind(row.assessment_id, row.run_id, row.sha256)
+        .first())
+    )
+      fail(
+        409,
+        "evidence_pending",
+        "Chunked evidence has not completed whole-file verification",
+      );
+    const bucket = this.readable(run);
+    const whole = new Uint8Array(row.size_bytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      whole.set(
+        await verifiedPart(
+          bucket,
+          chunkKey(evidenceLocation(row), chunk),
+          chunk.sha256,
+          chunk.sizeBytes,
+        ),
+        offset,
+      );
+      offset += chunk.sizeBytes;
+    }
+    if ((await sha256Hex(whole)) !== row.sha256)
+      fail(409, "evidence_corrupt", "Complete evidence digest changed");
+    return whole;
   }
   /** Verify retained closure without changing the canonical scan state or authority. */
   async assemblyClosure(assessment: string, runId: string) {
@@ -794,7 +849,7 @@ export class VettingEvidence {
           finalRow?.kind !== "manifest"
         )
           return false;
-        const bytes = await this.bytes(reportRow, run);
+        const bytes = await this.document(reportRow, run);
         let report: unknown;
         try {
           report = JSON.parse(
@@ -902,8 +957,11 @@ export class VettingEvidence {
         if (result.disposition === "clean") {
           if ([...requestedArtifacts].some((sha) => !coveredArtifacts.has(sha)))
             return false;
-          const sourceBytes = await this.bytes(sourceRow, run);
-          const finalBytes = await this.bytes(finalRow, run);
+          const sourceBytes = await this.document(sourceRow, run);
+          const finalBytes =
+            finalRow === sourceRow
+              ? sourceBytes
+              : await this.document(finalRow, run);
           try {
             const source: unknown = JSON.parse(
               new TextDecoder("utf-8", { fatal: true }).decode(sourceBytes),
@@ -1030,7 +1088,6 @@ export class VettingEvidence {
       .bind(assessment)
       .first();
     if (!exists) fail(404, "not_found", "Assessment not found");
-    let total = 0;
     const seen = new Set<string>();
     const objects = input.objects
       .map((value) => {
@@ -1062,12 +1119,6 @@ export class VettingEvidence {
           Number(value.sizeBytes) < 0
         )
           fail(400, "invalid_request", "Invalid or duplicate evidence object");
-        if (Number(value.sizeBytes) > policy.maxObjectBytes)
-          fail(
-            413,
-            "evidence_oversize",
-            "Complete object exceeds the configured limit; the run is not inspectable",
-          );
         let chunks: EvidenceChunk[] | undefined;
         if (
           Number(value.sizeBytes) > EVIDENCE_CHUNK_BYTES ||
@@ -1083,7 +1134,6 @@ export class VettingEvidence {
             );
           }
         }
-        total += Number(value.sizeBytes);
         seen.add(sha);
         return {
           sha256: sha,
@@ -1095,12 +1145,6 @@ export class VettingEvidence {
         };
       })
       .sort((a, b) => a.sha256.localeCompare(b.sha256));
-    if (total > policy.maxRunBytes)
-      fail(
-        413,
-        "evidence_oversize",
-        "Complete run exceeds the configured limit",
-      );
     if (
       !objects.some((o) => o.kind === "trace" && o.sha256 === input.traceSha256)
     )
@@ -1137,58 +1181,151 @@ export class VettingEvidence {
           "evidence_conflict",
           "Evidence run already binds different bytes",
         );
-      return json(200, { manifestSha256: digest, replayed: true });
+      return json(200, {
+        manifestSha256: digest,
+        replayed: true,
+        stored: await this.stored(objects),
+      });
     }
     const at = this.deps.now();
-    await this.deps.db.batch([
-      this.deps.db
-        .prepare(
-          "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at,assembly_sha256) VALUES(?,?,?,?,?,?,?,?,?)",
-        )
-        .bind(
-          assessment,
-          runId,
-          input.traceSha256,
-          digest,
-          manifest,
-          JSON.stringify(policy),
-          at.toISOString(),
-          new Date(
-            at.getTime() + policy.postClosureRetentionSeconds * 1000,
-          ).toISOString(),
-          input.assemblySha256 ?? null,
-        ),
-      ...objects.map((o) =>
+    try {
+      await this.deps.db.batch([
         this.deps.db
           .prepare(
-            "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks) VALUES(?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at,assembly_sha256) VALUES(?,?,?,?,?,?,?,?,?)",
           )
           .bind(
             assessment,
             runId,
-            o.sha256,
-            o.sizeBytes,
-            o.kind,
-            o.label,
-            o.contentType,
-            `vetting/${assessment}/${runId}/${o.sha256}`,
-            o.chunks ? JSON.stringify(o.chunks) : null,
+            input.traceSha256,
+            digest,
+            manifest,
+            JSON.stringify(policy),
+            at.toISOString(),
+            new Date(
+              at.getTime() + policy.postClosureRetentionSeconds * 1000,
+            ).toISOString(),
+            input.assemblySha256 ?? null,
           ),
-      ),
-      this.deps.db
-        .prepare(
-          "INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,created_at) VALUES(?,?,?,?,?,?)",
-        )
-        .bind(
-          this.deps.randomId(),
-          `service:${keySha256}`,
-          "register",
-          assessment,
-          runId,
-          at.toISOString(),
+        ...objects.map((o) =>
+          this.deps.db
+            .prepare(
+              "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage) VALUES(?,?,?,?,?,?,?,?,?,'content')",
+            )
+            .bind(
+              assessment,
+              runId,
+              o.sha256,
+              o.sizeBytes,
+              o.kind,
+              o.label,
+              o.contentType,
+              `vetting/${assessment}/${runId}/${o.sha256}`,
+              o.chunks ? JSON.stringify(o.chunks) : null,
+            ),
         ),
-    ]);
-    return json(201, { manifestSha256: digest });
+        this.deps.db
+          .prepare(
+            "INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,created_at) VALUES(?,?,?,?,?,?)",
+          )
+          .bind(
+            this.deps.randomId(),
+            `service:${keySha256}`,
+            "register",
+            assessment,
+            runId,
+            at.toISOString(),
+          ),
+      ]);
+    } catch (error) {
+      if (String(error).includes("evidence cleanup in progress"))
+        fail(
+          409,
+          "evidence_cleanup",
+          "Evidence cleanup is in progress; retry registration",
+        );
+      throw error;
+    }
+    return json(201, {
+      manifestSha256: digest,
+      stored: await this.stored(objects),
+    });
+  }
+  /**
+   * Digests whose content-addressed bytes (every part, for a chunked object)
+   * are already present and hash correctly, so the service may reference
+   * them instead of uploading again. A hint only:
+   * retention still rereads and hashes every byte, and a chunked object
+   * still needs this run's finalization.
+   */
+  private async stored(
+    objects: { sha256: string; sizeBytes: number; chunks?: EvidenceChunk[] }[],
+  ): Promise<string[]> {
+    const { bucket } = this.configuration();
+    // Reread and hash each part (one part buffered at a time), so a missing
+    // or corrupt copy is uploaded again instead of referenced.
+    const present = (key: string, sha: string, size: number) =>
+      verifiedPart(bucket, key, sha, size).then(
+        () => true,
+        () => false,
+      );
+    const stored: string[] = [];
+    for (const object of objects) {
+      const key = evidenceObjectKey(object.sha256);
+      let complete = true;
+      for (const part of object.chunks ?? [
+        { index: -1, sha256: object.sha256, sizeBytes: object.sizeBytes },
+      ])
+        if (
+          !(await present(
+            part.index === -1 ? key : chunkKey(key, part),
+            part.sha256,
+            part.sizeBytes,
+          ))
+        ) {
+          complete = false;
+          break;
+        }
+      if (complete) stored.push(object.sha256);
+    }
+    return stored;
+  }
+  /**
+   * Create-only write of bytes already checked against `sha`, then a full
+   * reread. A content-addressed key holds only the bytes its digest names, so
+   * when the existing copy is missing or fails verification it is replaced
+   * with these verified bytes; a valid copy is never overwritten. Run-scoped
+   * keys keep the strict create-only rule.
+   */
+  private async store(
+    bucket: R2Bucket,
+    key: string,
+    body: Uint8Array,
+    sha: string,
+    contentType: string,
+    content: boolean,
+  ) {
+    const options = {
+      httpMetadata: { contentType },
+      customMetadata: { sha256: sha },
+    };
+    await bucket.put(key, body, {
+      ...options,
+      onlyIf: { etagDoesNotMatch: "*" },
+    });
+    try {
+      await verifiedPart(bucket, key, sha, body.byteLength);
+    } catch (error) {
+      if (!content) throw error;
+      // The one deliberate overwrite: verified bytes replace a missing or
+      // corrupt copy at the key their own digest names.
+      await bucket.put(
+        key,
+        body,
+        options as unknown as Parameters<R2Bucket["put"]>[2],
+      );
+      await verifiedPart(bucket, key, sha, body.byteLength);
+    }
   }
   async upload(
     request: Request,
@@ -1196,10 +1333,10 @@ export class VettingEvidence {
     runId: string,
     sha: string,
   ) {
-    const { policy, bucket } = this.configuration();
+    const { bucket } = this.configuration();
     const { body, keySha256 } = await this.signed(
       request,
-      Math.min(policy.maxObjectBytes, EVIDENCE_CHUNK_BYTES),
+      EVIDENCE_CHUNK_BYTES,
     );
     const run = await this.run(assessment, runId),
       object = await this.object(assessment, runId, sha);
@@ -1217,11 +1354,14 @@ export class VettingEvidence {
         "digest_mismatch",
         "Upload must match the complete declared bytes",
       );
-    await bucket.put(object.object_key, body, {
-      onlyIf: { etagDoesNotMatch: "*" },
-      httpMetadata: { contentType: object.content_type },
-      customMetadata: { sha256: sha },
-    });
+    await this.store(
+      bucket,
+      evidenceLocation(object),
+      body,
+      sha,
+      object.content_type,
+      object.storage === "content",
+    );
     await this.bytes(object, run);
     await this.audit(`service:${keySha256}`, "upload", assessment, runId, sha);
     return json(200, { sha256: sha, sizeBytes: body.byteLength });
@@ -1240,7 +1380,7 @@ export class VettingEvidence {
     );
     const run = await this.run(assessment, runId),
       object = await this.object(assessment, runId, sha);
-    this.readable(object, run);
+    this.readable(run);
     const chunk = this.layout(object)?.[index];
     if (!chunk) fail(404, "not_found", "Declared chunk not found");
     if (
@@ -1252,13 +1392,15 @@ export class VettingEvidence {
         "digest_mismatch",
         "Upload must match the exact declared chunk bytes",
       );
-    const key = chunkKey(object.object_key, chunk);
-    await bucket.put(key, body, {
-      onlyIf: { etagDoesNotMatch: "*" },
-      httpMetadata: { contentType: "application/octet-stream" },
-      customMetadata: { sha256: chunk.sha256 },
-    });
-    await verifiedPart(bucket, key, chunk.sha256, chunk.sizeBytes);
+    const key = chunkKey(evidenceLocation(object), chunk);
+    await this.store(
+      bucket,
+      key,
+      body,
+      chunk.sha256,
+      "application/octet-stream",
+      object.storage === "content",
+    );
     await this.audit(
       `service:${keySha256}`,
       "upload-chunk",
@@ -1359,27 +1501,25 @@ export class VettingEvidence {
               )
               .bind(run.assessment_id, run.run_id, row.sha256)
               .first<{ completed_at: string }>()
-          : await bucket.head(row.object_key);
+          : await bucket.head(evidenceLocation(row));
         const state =
           run.expires_at !== null &&
           Date.parse(run.expires_at) <= this.deps.now().getTime()
             ? "expired"
-            : row.size_bytes > policy.maxObjectBytes
-              ? "oversize"
-              : !head
-                ? chunks
-                  ? "pending"
-                  : "missing"
-                : !chunks &&
-                    (("size" in head && head.size !== row.size_bytes) ||
-                      ("customMetadata" in head &&
-                        (
-                          head.customMetadata as
-                            | Record<string, string>
-                            | undefined
-                        )?.sha256 !== row.sha256))
-                  ? "corrupt"
-                  : "stored-unverified";
+            : !head
+              ? chunks
+                ? "pending"
+                : "missing"
+              : !chunks &&
+                  (("size" in head && head.size !== row.size_bytes) ||
+                    ("customMetadata" in head &&
+                      (
+                        head.customMetadata as
+                          | Record<string, string>
+                          | undefined
+                      )?.sha256 !== row.sha256))
+                ? "corrupt"
+                : "stored-unverified";
         objects.push({
           sha256: row.sha256,
           sizeBytes: row.size_bytes,
@@ -1622,7 +1762,7 @@ export class VettingEvidence {
     );
     const run = await this.run(assessment, runId),
       object = await this.object(assessment, runId, sha);
-    this.readable(object, run);
+    this.readable(run);
     const chunks = this.layout(object);
     if (
       chunks &&
@@ -1644,7 +1784,7 @@ export class VettingEvidence {
       {
         pull: async (controller) => {
           try {
-            const bucket = this.readable(object, run);
+            const bucket = this.readable(run);
             if (index >= (chunks?.length ?? 1)) {
               await audit("download-finished");
               if (ended) return;
@@ -1656,7 +1796,7 @@ export class VettingEvidence {
             const bytes = part
               ? await verifiedPart(
                   bucket,
-                  chunkKey(object.object_key, part),
+                  chunkKey(evidenceLocation(object), part),
                   part.sha256,
                   part.sizeBytes,
                 )
@@ -1737,7 +1877,8 @@ export class VettingEvidence {
         service &&
         path.length === 7 &&
         action === "chunks" &&
-        /^[0-7]$/u.test(path[6]) &&
+        // Any declared part index; the layout bounds it, not a size cap.
+        /^(?:0|[1-9][0-9]{0,8})$/u.test(path[6]) &&
         request.method === "PUT"
       )
         return await this.uploadChunk(

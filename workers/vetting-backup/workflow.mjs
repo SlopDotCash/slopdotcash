@@ -71,9 +71,11 @@ try {
   for (const migration of [
     "0034_vetting_private_evidence.sql",
     "0035_vetting_evidence_chunks.sql",
+    "0036_vetting_evidence_assembly.sql",
     "0066_vetting_case_retention.sql",
     "0067_vetting_audit_retention.sql",
     "0068_vetting_storage_cycles.sql",
+    "0107_vetting_content_addressed_evidence.sql",
   ])
     for (const query of splitSqlQuery(
       await readFile(`migrations/${migration}`, "utf8"),
@@ -255,7 +257,7 @@ try {
       : null;
     await db
       .prepare(
-        "INSERT INTO vetting_evidence_runs VALUES(?,'run',?,?,?,'{}',?,?)",
+        "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,'run',?,?,?,'{}',?,?)",
       )
       .bind(
         id,
@@ -287,6 +289,63 @@ try {
     else if (!id.startsWith("vet_missing_"))
       await source.put(key, data, options(data));
     retainedCases.push({ id, age, keys });
+  }
+  // Content-addressed objects (migration 0107): one stored copy serves every
+  // run that declares its digest. An expired reference gets its receipt, but
+  // the bytes stay while permanent admission evidence still references them;
+  // an object no other reference needs is deleted.
+  const sharedData = Buffer.alloc(12, 5),
+    soleData = Buffer.alloc(13, 6);
+  const contentKey = (bytes) => `vetting/objects/${digest(bytes)}`;
+  for (const [id, bytes, permanent] of [
+    ["vet_shared_expired", sharedData, false],
+    ["vet_shared_permanent", sharedData, true],
+    ["vet_content_expired", soleData, false],
+  ]) {
+    const sha = digest(bytes);
+    await db
+      .prepare(
+        "INSERT INTO vetting_assessments(id,state,completed_at,result) VALUES(?,?,?,?)",
+      )
+      .bind(
+        id,
+        permanent ? "clean" : "incomplete",
+        new Date(now - 91 * 86400_000).toISOString(),
+        permanent
+          ? JSON.stringify({
+              schemaVersion: "slop-vetting-result-v2",
+              disposition: "clean",
+            })
+          : null,
+      )
+      .run();
+    if (!permanent)
+      await db
+        .prepare(
+          "INSERT INTO vetting_evidence_case_closures VALUES(?,?, 'fixture', 'fixture closure')",
+        )
+        .bind(id, new Date(now - 91 * 86400_000).toISOString())
+        .run();
+    await db
+      .prepare(
+        "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,'run',?,?,?,'{}',?,?)",
+      )
+      .bind(
+        id,
+        sha,
+        sha,
+        "{}",
+        new Date(now).toISOString(),
+        new Date(now).toISOString(),
+      )
+      .run();
+    await db
+      .prepare(
+        "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage) VALUES(?,'run',?,?,'trace','fixture','application/octet-stream',?,NULL,'content')",
+      )
+      .bind(id, sha, bytes.length, `vetting/${id}/run/${sha}`)
+      .run();
+    await source.put(contentKey(bytes), bytes, options(bytes));
   }
   const cleanupJobs = [];
   const retentionEnv = {
@@ -370,13 +429,25 @@ try {
         "only uploaded bytes have verified backup copies",
       );
     }
-  assert.equal(
+  assert.ok(
+    await source.head(contentKey(sharedData)),
+    "bytes a retained reference still needs are kept",
+  );
+  assert.equal(await source.head(contentKey(soleData)), null);
+  assert.deepEqual(
     (
       await db
-        .prepare("SELECT COUNT(*) AS count FROM vetting_evidence_deletions")
-        .first()
-    ).count,
-    2,
+        .prepare(
+          "SELECT assessment_id FROM vetting_evidence_deletions ORDER BY assessment_id",
+        )
+        .all()
+    ).results.map((row) => row.assessment_id),
+    [
+      "vet_content_expired",
+      "vet_expired_chunks",
+      "vet_expired_single",
+      "vet_shared_expired",
+    ],
   );
   assert.ok(await source.head("permanent-contributor-trace"));
   assert.equal(
@@ -429,13 +500,241 @@ try {
     ).count,
     38,
   );
+  assert.ok(
+    await source.head(contentKey(sharedData)),
+    "bytes a retained reference still needs are kept",
+  );
+  assert.equal(await source.head(contentKey(soleData)), null);
+  assert.deepEqual(
+    (
+      await db
+        .prepare(
+          "SELECT assessment_id FROM vetting_evidence_deletions ORDER BY assessment_id",
+        )
+        .all()
+    ).results.map((row) => row.assessment_id),
+    [
+      "vet_content_expired",
+      "vet_expired_chunks",
+      "vet_expired_single",
+      "vet_shared_expired",
+    ],
+  );
+
+  // Exercise the real registration implementation against the same D1/R2
+  // while cleanup is paused at both sides of the deletion claim.
+  const evidenceBundle = join(directory, "evidence.mjs");
+  const evidenceBuild = spawnSync(
+    "bun",
+    [
+      "build",
+      "backend/vetting/evidence.ts",
+      "--target=browser",
+      `--outfile=${evidenceBundle}`,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(evidenceBuild.status, 0, evidenceBuild.stderr);
+  const { VettingEvidence } = await import(pathToFileURL(evidenceBundle).href);
+  const evidence = new VettingEvidence({
+    db,
+    bucket: source,
+    now: () => new Date(),
+    randomId: () => crypto.randomUUID(),
+    signed: async (request) => ({
+      body: new Uint8Array(await request.arrayBuffer()),
+      keySha256: "a".repeat(64),
+    }),
+  });
+  const beforeBytes = Buffer.from(
+      "registration wins before the deletion claim",
+    ),
+    duringBytes = Buffer.from("deletion claim blocks registration");
+  const assessment = async (id, permanent = false) =>
+    db
+      .prepare(
+        "INSERT INTO vetting_assessments(id,state,completed_at,result) VALUES(?,?,?,?)",
+      )
+      .bind(
+        id,
+        permanent ? "clean" : "incomplete",
+        new Date(now).toISOString(),
+        permanent
+          ? JSON.stringify({
+              schemaVersion: "slop-vetting-result-v2",
+              disposition: "clean",
+            })
+          : null,
+      )
+      .run();
+  const register = async (id, bytes) =>
+    evidence.register(
+      new Request("https://slop.test/evidence", {
+        method: "POST",
+        body: JSON.stringify({
+          traceSha256: digest(bytes),
+          objects: [
+            {
+              sha256: digest(bytes),
+              sizeBytes: bytes.length,
+              kind: "trace",
+              label: "race evidence",
+              contentType: "application/octet-stream",
+            },
+          ],
+        }),
+      }),
+      id,
+      "new",
+    );
+  for (const [id, bytes] of [
+    ["race_before_old", beforeBytes],
+    ["race_during_old", duringBytes],
+  ]) {
+    await assessment(id);
+    await db
+      .prepare(
+        "INSERT INTO vetting_evidence_case_closures VALUES(?,?, 'fixture', 'race fixture')",
+      )
+      .bind(id, new Date(now - 91 * 86400_000).toISOString())
+      .run();
+    await db
+      .prepare(
+        "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,'old',?,?,?,'{}',?,?)",
+      )
+      .bind(
+        id,
+        digest(bytes),
+        digest(bytes),
+        "{}",
+        new Date(now).toISOString(),
+        new Date(now).toISOString(),
+      )
+      .run();
+    await db
+      .prepare(
+        "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage) VALUES(?,'old',?,?,'trace','race','application/octet-stream',?,NULL,'content')",
+      )
+      .bind(
+        id,
+        digest(bytes),
+        bytes.length,
+        `vetting/${id}/old/${digest(bytes)}`,
+      )
+      .run();
+    await source.put(contentKey(bytes), bytes, options(bytes));
+  }
+  await assessment("race_before_new", true);
+  await assessment("race_during_new", true);
+  let registeredBeforeClaim = false,
+    refusedDuringDelete = false;
+  const beforeClaim = async (sha) => {
+    if (sha !== digest(beforeBytes) || registeredBeforeClaim) return;
+    registeredBeforeClaim = true;
+    const response = await register("race_before_new", beforeBytes);
+    assert.equal(response.status, 201);
+    assert.deepEqual((await response.json()).stored, [digest(beforeBytes)]);
+    await evidence.verify(
+      await evidence.object("race_before_new", "new", digest(beforeBytes)),
+      await evidence.run("race_before_new", "new"),
+    );
+  };
+  const raceDb = new Proxy(db, {
+    get(target, property) {
+      if (property !== "prepare") {
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return (sql) => {
+        const statement = target.prepare(sql);
+        const claim = sql.includes(
+          "INSERT OR IGNORE INTO vetting_evidence_cleanup_claims",
+        );
+        const oldQuery = sql.includes(
+          "SELECT 1 FROM vetting_evidence_objects o",
+        );
+        if (!claim && !oldQuery) return statement;
+        return {
+          bind(...values) {
+            const bound = statement.bind(...values);
+            return claim
+              ? {
+                  async run() {
+                    await beforeClaim(values[0]);
+                    return bound.run();
+                  },
+                }
+              : {
+                  async first() {
+                    const found = await bound.first();
+                    await beforeClaim(values[0]);
+                    return found;
+                  },
+                };
+          },
+        };
+      };
+    },
+  });
+  const raceSource = new Proxy(source, {
+    get(target, property) {
+      if (property === "delete")
+        return async (key) => {
+          if (key === contentKey(duringBytes) && !refusedDuringDelete) {
+            refusedDuringDelete = true;
+            await assert.rejects(
+              register("race_during_new", duringBytes),
+              (error) =>
+                error.status === 409 && error.code === "evidence_cleanup",
+            );
+            assert.equal(
+              await db
+                .prepare(
+                  "SELECT 1 FROM vetting_evidence_runs WHERE assessment_id='race_during_new'",
+                )
+                .first(),
+              null,
+              "refusal rolls back the complete registration",
+            );
+          }
+          return target.delete(key);
+        };
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const raceEnv = {
+    ...retentionEnv,
+    EVIDENCE_DATABASE: raceDb,
+    EVIDENCE_SOURCE: raceSource,
+  };
+  await startDailyBackup(raceEnv, now + 3 * 86400_000);
+  while (cleanupJobs.length) {
+    const job = cleanupJobs.shift();
+    if (job.kind === "cleanup") await cleanupEvidence(raceEnv, job.day);
+    else await backupPage(raceEnv, job);
+  }
+  assert.equal(registeredBeforeClaim, true);
+  assert.equal(refusedDuringDelete, true);
+  assert.ok(
+    await source.head(contentKey(beforeBytes)),
+    "a new permanent reference keeps its verified bytes",
+  );
+  assert.equal(await source.head(contentKey(duringBytes)), null);
+  const retry = await register("race_during_new", duringBytes);
+  assert.equal(retry.status, 201);
+  assert.deepEqual(
+    (await retry.json()).stored,
+    [],
+    "retry must upload deleted bytes instead of claiming reuse",
+  );
   assert.equal(
     (
       await db
-        .prepare("SELECT COUNT(*) AS count FROM vetting_evidence_deletions")
+        .prepare("SELECT COUNT(*) AS n FROM vetting_evidence_cleanup_claims")
         .first()
-    ).count,
-    2,
+    ).n,
+    0,
   );
 
   // Storage corruption prevents completion; it is never a skipped object.
@@ -444,7 +743,7 @@ try {
     customMetadata: { sha256: "0".repeat(64) },
   });
   const jobs = [];
-  const later = now + 3 * 86_400_000;
+  const later = now + 4 * 86_400_000;
   const failureEnv = {
     ...env,
     EVIDENCE_BACKUP_QUEUE: {
@@ -462,7 +761,7 @@ try {
     null,
   );
   console.log(
-    "PASS: real queue/R2 pagination, independent grant-free backup, verified restore, source preservation, scope isolation, interruption-safe expired-case deletion and corruption refusal",
+    "PASS: real queue/R2 pagination, independent grant-free backup, verified restore, source preservation, scope isolation, interruption-safe expired-case deletion, atomic registration/cleanup handoff and corruption refusal",
   );
 } finally {
   await runtime?.dispose();
