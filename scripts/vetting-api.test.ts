@@ -35,6 +35,7 @@ import {
   vettingResult,
 } from "../tests/vetting-fixtures";
 import { publishResult } from "../workers/vetting/publication";
+import { servicePublicationJournal } from "../workers/vetting/publication-journal";
 
 let retained: Awaited<ReturnType<typeof localVettingEvidence>>;
 afterEach(async () => {
@@ -1186,4 +1187,81 @@ test("the journal route reserves and completes one publication per assessment", 
     }),
   );
   expect(unsigned.status).toBe(401);
+}, 60_000);
+
+/** #1411 C-09 review: two controllers racing one intent — exactly one reserve wins. */
+test("only one of two concurrent journal reservations of one assessment is accepted", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const intent = {
+    assessmentId: id,
+    resultSha256: "e".repeat(64),
+    origin: ORIGIN,
+    disposition: "incomplete",
+  };
+  const post = async (payload: unknown) =>
+    vettingApi(
+      await signed("POST", "vetting/journal", JSON.stringify(payload)),
+    );
+  const settled = await Promise.allSettled([
+    post({ operation: "reserve", ...intent }),
+    post({ operation: "reserve", ...intent }),
+  ]);
+  const statuses = settled
+    .map((result) => (result.status === "fulfilled" ? result.value.status : -1))
+    .sort((left, right) => left - right);
+  expect(statuses).toEqual([200, 409]);
+  const after = await post({ operation: "has", assessmentId: id });
+  expect(await after.json()).toEqual({
+    schemaVersion: "slop-vetting-journal-v1",
+    present: true,
+  });
+}, 60_000);
+
+/** #1411 C-09 review: the reservation must outlive a reply the client never saw. */
+test("a reservation whose reply is lost is still read as present by the next run", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const intent = {
+    assessmentId: id,
+    resultSha256: "f".repeat(64),
+    origin: ORIGIN,
+    disposition: "incomplete" as const,
+  };
+  const signer = {
+    privateKey: keys.privateKey,
+    publicKey: await crypto.subtle.importKey(
+      "raw",
+      keys.raw,
+      { name: "Ed25519" },
+      true,
+      ["verify"],
+    ),
+  };
+  const forwarding = servicePublicationJournal({
+    origin: ORIGIN,
+    signer,
+    now: () => NOW,
+    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await vettingApi(
+        new Request(input instanceof Request ? input : String(input), init),
+      );
+      expect(response.status).toBe(200);
+      throw new Error("journal reply lost in transit");
+    }) as unknown as typeof fetch,
+  });
+  await expect(forwarding.reserve(intent)).rejects.toThrow(
+    "journal reply lost in transit",
+  );
+  // The next controller run reads the intent the lost reply could not confirm.
+  const nextRun = servicePublicationJournal({
+    origin: ORIGIN,
+    signer,
+    now: () => NOW,
+    fetch: (async (input: string | URL | Request, init?: RequestInit) =>
+      vettingApi(
+        new Request(input instanceof Request ? input : String(input), init),
+      )) as unknown as typeof fetch,
+  });
+  expect(await nextRun.has(id)).toBe(true);
 }, 60_000);

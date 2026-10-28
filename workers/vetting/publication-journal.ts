@@ -70,6 +70,7 @@ export function servicePublicationJournal(config: {
   origin: string;
   signer: VettingServiceSigner;
   fetch?: typeof fetch;
+  now?: () => Date;
 }): PublicationJournal {
   const origin = new URL(config.origin).origin;
   const fetcher = config.fetch ?? fetch;
@@ -86,6 +87,7 @@ export function servicePublicationJournal(config: {
           method: "POST",
           pathAndQuery: JOURNAL_PATH,
           body,
+          ...(config.now ? { at: config.now() } : {}),
         })),
       },
       body,
@@ -102,11 +104,15 @@ export function servicePublicationJournal(config: {
   return {
     async has(id) {
       const value = await call({ operation: "has", assessmentId: id });
-      return (
-        typeof value === "object" &&
-        value !== null &&
-        (value as { present?: unknown }).present === true
-      );
+      const present =
+        typeof value === "object" && value !== null
+          ? (value as { present?: unknown }).present
+          : undefined;
+      // A well-formed reply with no boolean `present` is refused instead of read
+      // as "not journaled": the caller would republish the assessment.
+      if (typeof present !== "boolean")
+        throw new Error("Publication journal reply has no boolean presence");
+      return present;
     },
     async reserve(intent) {
       await call({
