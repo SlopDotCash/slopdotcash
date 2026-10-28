@@ -54,8 +54,11 @@ export function ProfilePage({
       profiles.state.status === "loading" ||
       membership.joinStatus === "loading" ||
       membership.sessionStatus === "loading";
-    if (!checking && profiles.state.status !== "error")
-      return <UnknownContributor login={login} />;
+    const unavailable =
+      profiles.state.status === "error" ||
+      membership.joinStatus === "unavailable" ||
+      membership.sessionStatus === "error";
+    if (!checking && !unavailable) return <UnknownContributor login={login} />;
     return (
       <main className="shell route-main">
         <UnverifiedIdentity login={login} />
@@ -71,7 +74,10 @@ export function ProfilePage({
             <button
               className="button secondary-button button-small"
               type="button"
-              onClick={profiles.retry}
+              onClick={() => {
+                profiles.retry();
+                membership.retry();
+              }}
             >
               Retry profile
             </button>
