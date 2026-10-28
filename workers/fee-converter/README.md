@@ -171,7 +171,9 @@ For each enabled network:
    is never sold.
 6. Read the fee-wallet balance of each candidate. Skip USDC and empty
    balances. A receipt run also skips a balance unchanged since the token's
-   latest record.
+   latest record. On Solana the balance is the fee wallet's canonical
+   associated token account, the only holding a reviewed route can debit.
+   A fee paid to another token account of the fee wallet stays there.
 7. Get a quote. If the quoted value is above the remaining per-run or per-day
    cap, scale the amount down (at most three requotes, aiming at 98% of the
    remaining cap).
