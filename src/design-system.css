@@ -684,6 +684,10 @@ label {
   padding-block: 96px;
 }
 
+.section.home-security-section {
+  padding-top: 0;
+}
+
 .home-section-heading {
   display: flex;
   flex-wrap: wrap;
