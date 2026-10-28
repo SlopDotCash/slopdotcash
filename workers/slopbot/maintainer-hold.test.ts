@@ -42,6 +42,7 @@ async function uncertainReview(
     sql: (q: string) => unknown;
     advanceTarget: (changedSource: boolean) => void;
     pushUnpatchedFile: (newHead: boolean) => void;
+    deleteTargetBranch: (closesPullRequest: boolean) => void;
   }) => Promise<void>,
   confidence = 0.6,
 ) {
@@ -91,6 +92,8 @@ async function uncertainReview(
   let targetSha = "c".repeat(40);
   let headSha = "b".repeat(40);
   let patch: string | undefined = "-const a = 1;\n+const b = 1;";
+  let targetBranch = true;
+  let itemState = "open";
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -133,7 +136,7 @@ async function uncertainReview(
         const issue = {
           node_id: "PR_local",
           number: 5,
-          state: "open",
+          state: itemState,
           title: "rename a variable",
           body: "Small rename.",
           user: { login: "author", id: 42, type: "User" },
@@ -159,7 +162,7 @@ async function uncertainReview(
         });
       if (path.endsWith("/branches/main"))
         return Response.json({ commit: { sha: "c".repeat(40) } });
-      if (path.endsWith("/branches/development"))
+      if (path.endsWith("/branches/development") && targetBranch)
         return Response.json({ commit: { sha: targetSha } });
       if (path.includes("/compare/"))
         return Response.json({
@@ -330,6 +333,10 @@ async function uncertainReview(
       pushUnpatchedFile: (newHead) => {
         if (newHead) headSha = "e".repeat(40);
         patch = undefined;
+      },
+      deleteTargetBranch: (closesPullRequest) => {
+        targetBranch = false;
+        if (closesPullRequest) itemState = "closed";
       },
       review: () => reviewItem(env as unknown as ReviewEnv, job),
       tick: async () => {
@@ -508,6 +515,31 @@ test.each([true, false])(
       // A resolved hold is not queued again on later days.
       setSystemTime(new Date(start + 9 * day));
       expect((await run.tick()).length).toBe(0);
+    });
+  },
+);
+test.each([true, false])(
+  "a deleted target branch ends the hold only after GitHub closes the pull request (closed=%s)",
+  async (closed) => {
+    await uncertainReview(false, async (run) => {
+      const start = Date.now();
+      expect(await run.review()).toMatch(/^held for maintainer until /);
+      // Deleting the target branch closes the pull requests that target it.
+      run.deleteTargetBranch(closed);
+      setSystemTime(new Date(start + 7 * day + 60_000));
+      const due = await run.tick();
+      expect(due.map((j) => j.kind)).toEqual(["maintainer_hold"]);
+      if (closed) await run.deliver(due);
+      else
+        await expect(run.deliver(due)).rejects.toThrow("hold job was retried");
+      expect(run.labels).toEqual([]);
+      expect(run.writes.filter((w) => w.endsWith("/labels"))).toEqual([]);
+      expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+        { outcome: closed ? "superseded" : null },
+      ]);
+      // A resolved hold is not queued again on later days.
+      setSystemTime(new Date(start + 9 * day));
+      expect((await run.tick()).length).toBe(closed ? 0 : 1);
     });
   },
 );
