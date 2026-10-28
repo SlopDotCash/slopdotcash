@@ -9,7 +9,6 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import { PENALTY_TABLE } from "../workers/slopbot/penalties";
 import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
 import { ContributionPointTiers } from "./PointsRules";
@@ -18,10 +17,6 @@ import { browserDeployment } from "./lib/browser-deployment";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
-import {
-  MAX_CREDITED_REVIEWERS,
-  VALUE_SCORING_POLICY_EFFECTIVE_AT,
-} from "./lib/scoring-policy";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import type { DataState } from "./lib/use-snapshot";
 import {
@@ -33,8 +28,6 @@ import {
 import {
   DataNotice,
   ExternalLinkAnchor,
-  formatDate,
-  formatPointsFromThirds,
   monthlyPoolLabel,
   NetworkName,
   PaymentLifecycle,
@@ -46,12 +39,6 @@ export function HowItWorksPage() {
   return (
     <main className="shell evidence-page how-it-works route-guide">
       <RoutePageHeader title="How Slop works" icon={<BookOpen />} />
-      <nav className="guide-role-nav" aria-label="Guide sections">
-        <a href="#contributor-path">Contributors</a>
-        <a href="#maintainer-path">Maintainers</a>
-        <a href="#points">Points</a>
-        <a href="#payments">Payments</a>
-      </nav>
       <div className="how-paths">
         <section aria-labelledby="contributor-path">
           <h2 id="contributor-path">For contributors</h2>
@@ -140,43 +127,6 @@ export function HowItWorksPage() {
             points. Only accepted-work points count toward payouts. Joining and
             connecting X earn no points.
           </p>
-          <details>
-            <summary>Points rules and evidence</summary>
-            <p>Related or split pull requests count as one work unit.</p>
-            <p>
-              A useful review can find a correction or validate the change. A
-              request for changes is not required. Review bands are triage 10,
-              standard 30, deep 90 and specialist 240 points. The first{" "}
-              {MAX_CREDITED_REVIEWERS} distinct qualifying reviewers share one
-              review pool per pull request: the sum of their highest bands,
-              capped at the pull request's own size and never less than 10
-              points. Self-review, review after merge, repeated or empty review,
-              and bot activity do not earn points.
-            </p>
-            <p>
-              Slopbot debits a closed pull request once, from its published
-              penalty table: spam{" "}
-              {formatPointsFromThirds(PENALTY_TABLE.spam.debitThirds)}, scam or
-              malicious {formatPointsFromThirds(PENALTY_TABLE.scam.debitThirds)}
-              , a clear violation of a quoted project rule{" "}
-              {formatPointsFromThirds(PENALTY_TABLE.gaming.debitThirds)}. A
-              debit lowers only that project and UTC month, never below zero,
-              and never changes an approved, scheduled or paid award. An upheld
-              appeal or a maintainer reopen removes it.
-            </p>
-            <p>
-              Owners, funded employees and related parties may be excluded from
-              payouts. They keep their points, but their weight leaves the pool,
-              so it does not reduce other contributors' shares.
-            </p>
-            <p>
-              These rules apply to work accepted from{" "}
-              {formatDate(VALUE_SCORING_POLICY_EFFECTIVE_AT)} UTC. Earlier work
-              keeps its recorded terms. Signed receipts and private traces are
-              optional. Token use, cost, lines and commits never change points
-              or payment.
-            </p>
-          </details>
         </div>
         <ContributionPointTiers />
       </section>
@@ -218,49 +168,60 @@ export function HowItWorksPage() {
         aria-labelledby="faq-title"
       >
         <h2 id="faq-title">Questions</h2>
-        <details>
-          <summary>What work can I contribute?</summary>
-          <p>
-            Choose unblocked work in an active{" "}
-            <Link href="/#projects">project</Link> and follow its contribution
-            rules. You do not need to claim an issue.
-          </p>
-          <p>
-            Non-code work counts on projects that opt in. The{" "}
-            <Link href="/projects/slopdotcash">Slop project</Link> does: a
-            tutorial, explainer, video, or support answer about Slop can receive
-            a reviewed award of 1 to 8 points.
-          </p>
-          <p>
-            Only your newest three awards on a project count. To submit work,
-            post the link and tag @SlopCash.
-          </p>
-        </details>
-        <details>
-          <summary>When will my work show up?</summary>
-          <p>
-            Merged pull requests and their qualifying reviews appear at the next
-            site update. There is no waiting period or minimum account age.
-          </p>
-        </details>
-        <details>
-          <summary>How do I receive an award?</summary>
-          <p>
-            Add a wallet for your award's network in{" "}
-            <Link href="/account#wallets">Account wallets</Link>. Wallet
-            confirmation requires your signature. Follow the award and its
-            payment status in <Link href="/earnings">Payouts</Link>.
-          </p>
-        </details>
-        <details>
-          <summary>What does projected mean? Is the pool funded?</summary>
-          <p>
-            A live estimate at the project&apos;s cap. It is not a balance or a
-            guarantee: a cap is a target, and only funds in the vault can be
-            allocated. Funds added after a month freezes count toward later
-            months.
-          </p>
-        </details>
+        <div className="faq-answers">
+          <article className="faq-answer">
+            <h3>What work can I contribute?</h3>
+            <div>
+              <p>
+                Choose unblocked work in an active{" "}
+                <Link href="/#projects">project</Link> and follow its
+                contribution rules. You do not need to claim an issue.
+              </p>
+              <p>
+                Non-code work counts on projects that opt in. The{" "}
+                <Link href="/projects/slopdotcash">Slop project</Link> does: a
+                tutorial, explainer, video, or support answer about Slop can
+                receive a reviewed award of 1 to 8 points.
+              </p>
+              <p>
+                Only your newest three awards on a project count. To submit
+                work, post the link and tag @SlopCash.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>When will my work show up?</h3>
+            <div>
+              <p>
+                Merged pull requests and their qualifying reviews appear at the
+                next site update. There is no waiting period or minimum account
+                age.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>How do I receive an award?</h3>
+            <div>
+              <p>
+                Add a wallet for your award's network in{" "}
+                <Link href="/account#wallets">Account wallets</Link>. Wallet
+                confirmation requires your signature. Follow the award and its
+                payment status in <Link href="/earnings">Payouts</Link>.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>What does projected mean? Is the pool funded?</h3>
+            <div>
+              <p>
+                A live estimate at the project&apos;s cap. It is not a balance
+                or a guarantee: a cap is a target, and only funds in the vault
+                can be allocated. Funds added after a month freezes count toward
+                later months.
+              </p>
+            </div>
+          </article>
+        </div>
       </section>
     </main>
   );

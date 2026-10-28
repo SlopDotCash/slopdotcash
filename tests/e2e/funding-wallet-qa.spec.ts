@@ -116,6 +116,9 @@ async function doubleTextSize(page: Page) {
 test("funding and wallet keyboard flows remain accessible at 200 percent text size", async ({
   page,
 }, info) => {
+  await page.route("**/.well-known/slop/projects.json", (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
+  );
   await page.route("**/api/v1/payments/me", (route) =>
     route.fulfill({
       json: {
@@ -130,7 +133,12 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
     }),
   );
   await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
+    route.fulfill({
+      json: { session: { githubId: "123", githubLogin: "qa", admin: false } },
+    }),
+  );
+  await page.route("**/api/v1/project-appeals", (route) =>
+    route.fulfill({ json: { appeals: [] } }),
   );
   const evidence = observe(page);
   for (const path of ["/wallet", "/projects/eliza/funding"]) {
@@ -151,14 +159,11 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
       await audit(page, info, "wallet-200-percent-text");
     } else {
       await expect(
-        page.getByRole("heading", { exact: true, name: "Eliza funding" }),
+        page.getByRole("heading", { exact: true, name: "Eliza" }),
       ).toBeVisible();
-      const setup = page.getByRole("link", {
-        name: "Set up funding",
-        exact: true,
-      });
-      await expect(setup).toHaveAttribute("href", "/projects/eliza/manage");
-      await keyboardTo(page, setup);
+      const copy = page.getByRole("button", { name: "Copy agent prompt" });
+      await keyboardTo(page, copy);
+      await expect(copy).toBeFocused();
       await audit(page, info, "funding-200-percent-text");
     }
   }
@@ -312,12 +317,12 @@ test("vault totals stay current without a refresh button and keep each state dis
   release();
   const heading = section.getByRole("heading", {
     level: 2,
-    name: "Project vault · Base",
+    name: "Project vault Base",
   });
   await expect(heading.locator('svg[data-network="base"]')).toBeVisible();
   await expect(
     section.getByRole("list", { name: "Fees" }).getByRole("listitem"),
-  ).toHaveText(["Award fee 2%", "Withdrawal fee 2%"]);
+  ).toHaveCount(0);
   const available = section
     .locator(".vault-stat")
     .filter({ hasText: "Available" });
@@ -342,11 +347,9 @@ test("vault totals stay current without a refresh button and keep each state dis
   await expect(section.getByRole("button", { name: /refresh/i })).toHaveCount(
     0,
   );
-  const payouts = section.getByRole("link", { name: "View your payouts" });
-  await expect(payouts).toHaveAttribute("href", "/earnings");
-  await expect(payouts).toHaveClass(/\bbutton\b/u);
-  await keyboardTo(page, payouts);
-  await expect(payouts).toBeFocused();
+  const ledger = section.locator(".vault-ledger-details summary");
+  await keyboardTo(page, ledger);
+  await expect(ledger).toBeFocused();
   await audit(page, info, "vault-totals-ready");
 
   // Returning to the page after the cache window reads the totals again.
@@ -354,6 +357,7 @@ test("vault totals stay current without a refresh button and keep each state dis
     status: 200,
     snapshots: [vaultSnapshot("700000000", start + 30_000)],
   };
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(61_000);
   await page.evaluate(() =>
     document.dispatchEvent(new Event("visibilitychange")),
@@ -362,6 +366,7 @@ test("vault totals stay current without a refresh button and keep each state dis
   expect(reads).toBe(2);
 
   // When the snapshot turns stale, the page reads again and marks it.
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(31 * 60_000);
   await expect(section.getByRole("alert")).toContainText("Outdated · read");
   expect(reads).toBe(3);
@@ -369,6 +374,7 @@ test("vault totals stay current without a refresh button and keep each state dis
 
   // A failed refresh keeps the last totals, marked stale, with a retry.
   read = { status: 503, snapshots: [] };
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(61_000);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
@@ -393,6 +399,7 @@ test("vault totals stay current without a refresh button and keep each state dis
   await expect(section.getByText("USDC")).toHaveCount(0);
   // An empty successful read must not hide a later refresh failure.
   read = { status: 503, snapshots: [] };
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(61_000);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(section.getByRole("alert")).toContainText(
@@ -467,8 +474,8 @@ test("project navigation never reuses another project's vault balance", async ({
     route.fulfill({ status: 503, json: { error: "unavailable" } }),
   );
   await page.goto(`/projects/${first.slug}`);
-  const funding = page.getByRole("region", {
-    name: "Project funding",
+  const funding = page.locator("#funding:visible").getByRole("region", {
+    name: "Project escrow",
     exact: true,
   });
   await expect(funding).toContainText("123 USDC");
@@ -477,8 +484,8 @@ test("project navigation never reuses another project's vault balance", async ({
     history.pushState({}, "", `/projects/${slug}`);
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, second.slug);
-  await expect(funding.getByRole("alert")).toHaveText(
-    "Vault totals unavailable",
+  await expect(funding.getByRole("alert")).toContainText(
+    "Vault totals are unavailable.",
   );
   await expect(funding).not.toContainText("123 USDC");
 });

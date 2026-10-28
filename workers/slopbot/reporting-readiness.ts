@@ -39,7 +39,14 @@ export async function refreshRegisteredReporting(
       new Date(),
     );
     checked += 1;
-    if (result.kind !== "verified") failed += 1;
+    // A paused listing without the App installed is a recorded state only its
+    // owner can change, not a refresh failure; counting it would fail the
+    // hourly identity schedule indefinitely. Active projects still count.
+    if (
+      result.kind !== "verified" &&
+      !(result.kind === "app-not-installed" && project.status === "paused")
+    )
+      failed += 1;
   }
   return { checked, failed };
 }

@@ -5,10 +5,7 @@ import {
   ChevronRight,
   Clipboard,
   ExternalLink,
-  FolderGit2,
   Plus,
-  ShieldCheck,
-  Wallet,
 } from "lucide-react";
 import {
   lazy,
@@ -18,34 +15,28 @@ import {
   useMemo,
   useState,
 } from "react";
-import {
-  EscrowFunding,
-  reservedGross,
-  useVaultTotals,
-  vaultSnapshotStale,
-} from "./EscrowFunding";
-import { FundingStatus } from "./FundingStatus";
+import { EscrowFunding } from "./EscrowFunding";
 import { Link, useHashScroll } from "./Link";
-import { SecurityOffer } from "./SecurityOffer";
+import { projectRewardSummaries } from "./lib/project-reward-summary";
+import { formatSecurityAmount } from "./lib/security-bounty.mjs";
+import { ProjectBountyFunding } from "./OwnerBountyVault";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
-import {
-  type PromotionCycle,
-  projectPromotionEligible,
-} from "./lib/allocation-funding";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { copyText } from "./lib/copy-text";
-import { communityProjects, homeProjects } from "./lib/home-projects";
-import { networkLabel } from "./lib/network-names";
-import { formatAssetAmount } from "./lib/payments/contracts";
+import { GithubIcon } from "./lib/github-icon";
+import {
+  communityProjects,
+  hasBountyOverview,
+  homeProjects,
+} from "./lib/home-projects";
 import type { ProjectView } from "./lib/project-view";
 import {
   findProject,
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
-import { REWARD_ASSET_NETWORKS } from "./lib/reward-asset.mjs";
 import { pageTitle, SITE_ORIGIN, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCycleIndex } from "./lib/use-cycle-index";
@@ -61,23 +52,18 @@ import {
 } from "./Points";
 import {
   cycleLifecycleLabel,
-  DataNotice,
   EmptyState,
   ExternalLinkAnchor,
   formatCycleMonth,
   formatDate,
   formatDateTime,
   formatMicroUsdc,
-  MetricGrid,
-  MetricTile,
   monthlyPoolPointsOnly,
   NotFound,
-  ProjectNav,
   RoutePageHeader,
   reviewBudgetLabel,
   stale,
 } from "./Presentation";
-import { ProjectRiskFlag } from "./ProjectRiskFlag";
 
 /**
  * Renders the GitHub-native Slop network across discovery, project,
@@ -147,11 +133,7 @@ function publicFooterDomain(hostname: string): "slop.cash" | "slop.tech" {
     : "slop.cash";
 }
 
-type ProjectRouteKind =
-  | "project"
-  | "funding-project"
-  | "manage-project"
-  | "security-program";
+type ProjectRouteKind = "project" | "manage-project" | "security-program";
 type PageRouteKind =
   | "home"
   | "how-it-works"
@@ -218,7 +200,6 @@ const ROUTES: Record<
     privateTitle: "Security cases",
   },
   project: { snapshot: true, registry: "cached" },
-  "funding-project": { snapshot: false, registry: "current" },
   "manage-project": { snapshot: false, registry: "current" },
   "security-program": { snapshot: false, registry: "current" },
   cycle: { snapshot: true, registry: "cached" },
@@ -243,7 +224,6 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
 const PROJECT_SECTIONS = new Map<string, ProjectRouteKind>([
   ["manage", "manage-project"],
   ["security", "security-program"],
-  ["funding", "funding-project"],
 ]);
 
 function internalRoute(pathname: string): Route {
@@ -306,6 +286,16 @@ function canonicalLocation(): string {
       `/projects/${awards[1]}/funding${window.location.search}${window.location.hash || "#monthly-awards"}`,
     );
   }
+  const funding = /^\/projects\/([^/]+)\/funding\/?$/.exec(
+    window.location.pathname,
+  );
+  if (funding) {
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `/projects/${funding[1]}${window.location.search}${window.location.hash || "#funding"}`,
+    );
+  }
   const legacy = LEGACY_SECTIONS.get(
     window.location.pathname.replace(/^\/|\/$/gu, ""),
   );
@@ -360,16 +350,10 @@ function routeHead(route: Route): { title: string; path: string | null } {
       };
     }
     const base = `/projects/${project.slug}`;
-    if (route.kind === "funding-project") {
-      return {
-        title: pageTitle(`${project.name} funding`),
-        path: `${base}/funding`,
-      };
-    }
     if (route.kind === "security-program") {
       return {
         title: pageTitle(`${project.name} security bounty`),
-        path: `${base}/security`,
+        path: hasBountyOverview(project) ? base : `${base}/security`,
       };
     }
     if (route.kind === "manage-project") {
@@ -378,7 +362,14 @@ function routeHead(route: Route): { title: string; path: string | null } {
         path: `${base}/manage`,
       };
     }
-    return { title: pageTitle(project.name), path: base };
+    return {
+      title: pageTitle(
+        hasBountyOverview(project)
+          ? `${project.name} security bounty`
+          : project.name,
+      ),
+      path: base,
+    };
   }
   const path = window.location.pathname.replace(/(.)\/$/u, "$1");
   const title = STATIC_PAGE_TITLES.get(path);
@@ -520,8 +511,21 @@ function HeroHeading() {
 function monthlyPoolCapLabel(project: ProjectDefinition): string {
   const reward = project.reward;
   const minor = BigInt(reward.monthlyCapMinor);
-  if (project.rewardAsset?.kind === "token" || minor % 1_000_000n !== 0n)
-    return reward.monthlyCapDisplay;
+  if (project.rewardAsset?.kind === "token")
+    return reward.monthlyCapDisplay
+      .replace(/^[\d,]+(?=\s)/u, (digits) =>
+        new Intl.NumberFormat("en-US", {
+          notation: "compact",
+          maximumFractionDigits: 2,
+        })
+          .format(BigInt(digits.replaceAll(",", "")))
+          .toLowerCase(),
+      )
+      .replace(
+        /\s+(\$?\S+)$/u,
+        (_, symbol: string) => ` $${symbol.replace(/^\$/u, "")}`,
+      );
+  if (minor % 1_000_000n !== 0n) return reward.monthlyCapDisplay;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
@@ -530,6 +534,23 @@ function monthlyPoolCapLabel(project: ProjectDefinition): string {
   })
     .format(minor / 1_000_000n)
     .replace(/K$/u, "k");
+}
+
+function ProjectImage({ project }: { project: ProjectDefinition }) {
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  return !project.image || failedImage === project.image ? (
+    <ProjectOwnerAvatar project={project} />
+  ) : (
+    <img
+      alt=""
+      aria-hidden="true"
+      className="project-avatar"
+      width={56}
+      height={56}
+      src={project.image}
+      onError={() => setFailedImage(project.image ?? null)}
+    />
+  );
 }
 
 function ProjectOwnerAvatar({ project }: { project: ProjectDefinition }) {
@@ -561,16 +582,31 @@ function ProjectOwnerAvatar({ project }: { project: ProjectDefinition }) {
   );
 }
 
+function compactPrizeLabel(label: string): string {
+  return label.replace(/\$([\d,]+)(?![\d,.])/gu, (_amount, digits: string) =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      notation: "compact",
+      maximumFractionDigits: 2,
+    })
+      .format(BigInt(digits.replaceAll(",", "")))
+      .toLowerCase(),
+  );
+}
+
 function ProjectCard({ project }: { project: ProjectDefinition }) {
   const amount =
     project.reward.kind === "monthly-pool"
       ? monthlyPoolCapLabel(project)
-      : (project.reward.externalOpportunity?.advertisedAmountDisplay ??
-        "External");
+      : compactPrizeLabel(
+          project.reward.externalOpportunity?.advertisedAmountDisplay ??
+            "External",
+        );
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
-        <ProjectOwnerAvatar project={project} />
+        <ProjectImage project={project} />
         <h3>{project.name}</h3>
         <ArrowRight aria-hidden="true" />
       </div>
@@ -609,7 +645,7 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
   return (
     <li>
       <Link className="project-row" href={`/projects/${project.slug}`}>
-        <ProjectOwnerAvatar project={project} />
+        <ProjectImage project={project} />
         <span className="project-row-name">
           <strong>{project.name}</strong>
           <small>{project.description}</small>
@@ -688,7 +724,7 @@ function GlobalLeaderboard({
         compact
         retryScore={retry}
         scoreState={state}
-        showDataNotice
+        showDataNotice={false}
         title="Top sloperators"
       />
     </section>
@@ -716,9 +752,6 @@ function SecurityBounties() {
         <h2 className="home-section-title" id="home-security-title">
           Security bounties
         </h2>
-        <Link className="text-button" href="/inbox">
-          Your private reports <ArrowRight aria-hidden="true" />
-        </Link>
       </div>
       {programs.length === 0 ? (
         <p className="project-tier-note">
@@ -732,25 +765,37 @@ function SecurityBounties() {
             const terms = project.securityBounty;
             if (!terms) return null;
             return (
-              <article className="security-bounty-card" key={project.id}>
+              <Link
+                className="project-card"
+                key={project.id}
+                href={
+                  hasBountyOverview(project)
+                    ? `/projects/${project.slug}`
+                    : `/projects/${project.slug}/security`
+                }
+              >
                 <div className="project-card-heading">
-                  <ShieldCheck aria-hidden="true" />
+                  <ProjectImage project={project} />
                   <h3>{project.name}</h3>
+                  <ArrowRight aria-hidden="true" />
                 </div>
-                <SecurityOffer project={project} />
-                <Link
-                  className="button primary-button"
-                  href={`/projects/${project.slug}/security`}
-                >
-                  Report privately <ArrowRight aria-hidden="true" />
-                </Link>
-                <details className="security-agent-setup">
-                  <summary>Use your agent</summary>
-                  <AgentPromptBox
-                    prompt={`Read ${window.location.origin}/SKILL.md and follow its private security reporting workflow for github.com/${terms.intake.repository}. Start at ${window.location.origin}/projects/${project.slug}/security and submit findings through Slop.`}
-                  />
-                </details>
-              </article>
+                <div className="project-card-content">
+                  <p className="project-summary">
+                    Find a critical security vulnerability in the {project.name}
+                  </p>
+                  <p className="project-bounty">
+                    <strong>
+                      {compactPrizeLabel(
+                        formatSecurityAmount(
+                          terms.amount.grossMinor,
+                          terms.amount,
+                        ).replace(/^([\d,.]+) USDC$/u, "$$$1"),
+                      )}
+                    </strong>
+                    <span>/ Critical</span>
+                  </p>
+                </div>
+              </Link>
             );
           })}
         </div>
@@ -769,19 +814,7 @@ function HomePage() {
       <section className="hero shell">
         <HeroHeading />
         <InstallPanel />
-        <nav
-          className="report-form-actions"
-          aria-label="Choose how to participate"
-        >
-          <a className="button secondary-button" href="#projects">
-            Contribute to a project
-          </a>
-          <a className="button secondary-button" href="#security-bounties">
-            Report a vulnerability
-          </a>
-        </nav>
       </section>
-      <SecurityBounties />
 
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
@@ -811,6 +844,7 @@ function HomePage() {
           </>
         )}
       </section>
+      <SecurityBounties />
       <GlobalLeaderboard retry={retryScores} state={scores} />
     </main>
   );
@@ -979,14 +1013,10 @@ function AgentPromptBox({
 
 function ProjectParticipation({
   project,
-  cycles,
-  displayCycleId,
   view,
   outdated = false,
 }: {
   project: ProjectDefinition;
-  cycles: readonly PromotionCycle[] | null;
-  displayCycleId: string | null;
   view?: ProjectView;
   outdated?: boolean;
 }) {
@@ -1024,29 +1054,28 @@ function ProjectParticipation({
       <section className="section" id="start">
         <h2>Project paused</h2>
         <p>Do not install this project's skill or start work.</p>
+        <p>
+          A paused project is not collected or scored. Its steward,{" "}
+          <ExternalLinkAnchor href={project.steward.github.profileUrl}>
+            {project.steward.displayName}
+          </ExternalLinkAnchor>
+          , can review its status and next steps on the project setup page.
+          Check back here for a change.{" "}
+          <Link href={`/projects/${project.slug}/manage`}>
+            Project owner: review setup
+          </Link>
+        </p>
       </section>
     );
   }
-  if (projectPromotionEligible(project, cycles, displayCycleId))
-    return (
-      <ProjectInstallPanel
-        key={project.id}
-        project={project}
-        view={view}
-        outdated={outdated}
-      />
-    );
+  // Clearance gates contribution; missing score or funding history does not.
   return (
-    <section className="section" id="start">
-      <h2>Agent setup</h2>
-      <p>
-        {cycles === null
-          ? "Loading funding history…"
-          : displayCycleId === null
-            ? "No contribution data yet."
-            : "Agent setup is paused after two unfunded cycles. Accepted work still earns Points."}
-      </p>
-    </section>
+    <ProjectInstallPanel
+      key={project.id}
+      project={project}
+      view={view}
+      outdated={outdated}
+    />
   );
 }
 
@@ -1131,6 +1160,7 @@ function ProjectInstallPanel({
         </p>
       )}
       <AgentPromptBox
+        openIn
         prompt={ready ? projectAgentPrompt(project) : bootstrapAgentPrompt()}
       />
       {ready && view ? (
@@ -1241,6 +1271,12 @@ function ProjectPaymentHistory({
     right.localeCompare(left),
   );
   const historyLimited = directMonths.length > 3 || cycles.length > 3;
+  if (
+    cycles.length === 0 &&
+    directMonths.length === 0 &&
+    (externalPrize || directState.status === "ready")
+  )
+    return null;
   return (
     <section className="section payment-history">
       <div className="simple-heading">
@@ -1331,140 +1367,143 @@ function ProjectPaymentHistory({
   );
 }
 
-/**
- * The project page's one funding line (PRD section 7: one status summary per
- * project). Deposits, withdrawals and full vault totals live on the funding
- * page only.
- */
-function ProjectFunding({ project }: { project: ProjectDefinition }) {
-  const totals = useVaultTotals(project);
-  if (!project.escrow) return null;
-  const href = `/projects/${project.slug}/funding`;
-  let summary: ReactNode;
-  if (totals.status === "none")
-    summary = `No project vault yet · ${fundingStateLabel(project)}`;
-  else if (totals.status === "loading")
-    summary = <span role="status">Loading vault totals…</span>;
-  else if (totals.status === "error")
-    summary = <span role="alert">Vault totals unavailable</span>;
-  else if (totals.vault.snapshots.length === 0)
-    summary = "Vault totals not read yet";
-  else
-    summary = totals.vault.snapshots.map((snapshot, index) => {
-      const amount = (value: string | null) =>
-        value === null ? "not reported" : formatAssetAmount(value, snapshot);
-      return (
-        <span key={`${snapshot.network}:${snapshot.vault}`}>
-          {index > 0 ? " · " : null}
-          {networkLabel(snapshot.network)}: {amount(snapshot.freeBalance)}{" "}
-          available · {amount(reservedGross(snapshot))} reserved
-          {totals.refreshError !== null ||
-          vaultSnapshotStale(snapshot, totals.vault.staleAfterMs)
-            ? ` (stale, read ${formatDateTime(snapshot.observedAt)})`
-            : null}
-        </span>
-      );
-    });
+/** Funding controls share the project overview's reward summary. */
+function ProjectFundsAndAwards({
+  project,
+  state,
+  onRegistered,
+}: {
+  project: ProjectDefinition;
+  state: DataState;
+  onRegistered: (project: ProjectDefinition) => void;
+}) {
   return (
     <section
-      className="section project-funding-summary"
-      aria-label="Project funding"
+      id="funding"
+      className="project-funds-and-awards"
+      aria-label="Funds and awards"
     >
-      <p>
-        <strong>Funding</strong> {summary}{" "}
-        <Link href={href}>Fund this project</Link>
-      </p>
+      {project.reward.kind === "external-prize-share" ? (
+        <p>The organizer pays this prize.</p>
+      ) : project.escrow ? (
+        <>
+          <EscrowFunding project={project} onRegistered={onRegistered} />
+          <OwnerAwards
+            key={project.id}
+            project={project}
+            awardMonths={
+              state.status === "ready"
+                ? state.cycleIndex.cycles
+                    .filter(
+                      (cycle) =>
+                        cycle.projectId === project.id &&
+                        cycle.kind === "monthly-pool" &&
+                        cycle.contributors.length > 0,
+                    )
+                    .map((cycle) => cycle.cycleId)
+                : []
+            }
+          />
+        </>
+      ) : null}
     </section>
   );
 }
 
-function fundingStateLabel(project: ProjectDefinition): string {
-  if (project.reward.kind === "external-prize-share") return "External prize";
-  return project.reward.fundingState === "committed"
-    ? "Committed"
-    : "Not funded yet";
+function ProjectHeader({ project }: { project: ProjectDefinition }) {
+  return (
+    <RoutePageHeader
+      title={project.name}
+      titleAction={
+        <a
+          className="project-github-link"
+          href={project.links.repository}
+          aria-label={`View ${project.name} on GitHub`}
+          title="View on GitHub"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <GithubIcon aria-hidden="true" size={22} />
+        </a>
+      }
+      icon={<ProjectImage key={project.id} project={project} />}
+      lead={project.description}
+    />
+  );
 }
 
-function ProjectFundingPage({
-  project: original,
+/** Shared copy for every registry reward model; no project-specific descriptions. */
+function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
+  return (
+    <div className="project-overview">
+      <div className="project-state-summary">
+        {projectRewardSummaries(project).map((summary) => (
+          <p className="project-reward-status" key={summary.kind}>
+            {summary.kind === "monthly-pool" ? (
+              <>
+                {summary.amount}
+                {summary.token ? (
+                  <>
+                    {" "}
+                    <ExternalLinkAnchor href={summary.token.url}>
+                      ${summary.token.symbol}
+                    </ExternalLinkAnchor>
+                  </>
+                ) : null}
+                {" monthly target, split between contributors"}
+              </>
+            ) : summary.kind === "critical-loss-of-funds" ? (
+              <>
+                {summary.amount} per critical vulnerability that would result in
+                loss of funds
+                {summary.status === "open"
+                  ? null
+                  : ` · bounty ${summary.status}`}
+              </>
+            ) : summary.kind === "external-prize" ? (
+              <>
+                {summary.amount
+                  ? `${compactPrizeLabel(summary.amount)} external prize pool`
+                  : "External prize"}{" "}
+                · organizer decides awards
+              </>
+            ) : (
+              "Points only · no cash rewards"
+            )}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProjectBountyIntroduction({
+  project,
 }: {
   project: ProjectDefinition;
 }) {
-  const [registered, setRegistered] = useState<ProjectDefinition | null>(null);
-  const project = registered ?? original;
+  const terms = project.securityBounty;
+  if (!terms) return null;
+  const origin = window.location.origin;
+  const prompt = `Read ${origin}/SKILL.md and follow its private security reporting workflow for github.com/${terms.intake.repository}.`;
   return (
-    <main className="shell route-main funding-page route-funding">
-      <RoutePageHeader
-        title={<>{project.name} funding</>}
-        icon={<Wallet />}
-        eyebrow={
-          <>
-            <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-            <span> / </span>Funding
-          </>
-        }
-        actions={
-          <MetricGrid
-            className={`route-funding-summary${project.escrow ? "" : " route-funding-summary--unfunded"}`}
-          >
-            <MetricTile
-              label={
-                project.reward.kind === "monthly-pool"
-                  ? "Monthly target"
-                  : "Advertised prize"
-              }
-              value={
-                monthlyPoolPointsOnly(project.reward)
-                  ? "Points only"
-                  : project.reward.kind === "monthly-pool"
-                    ? project.reward.monthlyCapDisplay
-                    : (project.reward.externalOpportunity
-                        ?.advertisedAmountDisplay ?? "External")
-              }
-            />
-            {!project.escrow ? (
-              <MetricTile
-                label="Committed"
-                value={formatMicroUsdc(project.reward.committedMinor)}
-                detail={fundingStateLabel(project)}
-              />
-            ) : null}
-          </MetricGrid>
-        }
-      />
-      <ProjectNav project={project} current="funding" />
-      <section className="funding-records">
-        {!project.escrow ? (
-          <FundingStatus project={project} className="route-funding-status" />
-        ) : null}
-        {project.reward.kind === "external-prize-share" ? (
-          <p>The organizer pays this prize.</p>
-        ) : project.escrow ? (
-          <EscrowFunding project={project} onRegistered={setRegistered} />
-        ) : (
-          <div className="route-empty">
-            <Wallet aria-hidden="true" />
-            <div>
-              <p>This project has no vault yet.</p>
-              <Link
-                className="button secondary-button"
-                href={`/projects/${project.slug}/manage`}
-              >
-                Set up funding
-              </Link>
-            </div>
+    <section className="project-hero">
+      <div className="shell">
+        <ProjectHeader project={project} />
+        <ProjectRewardSummary project={project} />
+        <div className="install-panel" id="start">
+          <div className="install-heading">
+            <h2>Copy this into your agent.</h2>
           </div>
-        )}
-      </section>
-      {project.escrow ? (
-        <OwnerAwards key={project.id} project={project} />
-      ) : null}
-    </main>
+          <AgentPromptBox openIn prompt={prompt} />
+        </div>
+      </div>
+    </section>
   );
 }
 
 function ProjectPage({
-  project,
+  project: original,
   state,
   retry,
 }: {
@@ -1472,118 +1511,44 @@ function ProjectPage({
   state: DataState;
   retry: () => void;
 }) {
+  const [registered, setRegistered] = useState<ProjectDefinition | null>(null);
+  const project = registered ?? original;
   const view =
     state.status === "ready"
       ? state.views.find((candidate) => candidate.project.id === project.id)
       : undefined;
-  const externalPrize = project.reward.kind === "external-prize-share";
-  const pointsOnly = monthlyPoolPointsOnly(project.reward);
   return (
     <main className="route-project">
       <section className="project-hero">
         <div className="shell">
-          <DataNotice state={state} retry={retry} />
-          <RoutePageHeader
-            title={project.name}
-            icon={<FolderGit2 />}
-            eyebrow={<Link href="/">Projects</Link>}
-            lead={project.description}
-          >
-            <ProjectNav project={project} current="overview" />
-          </RoutePageHeader>
-          <div
-            className={`project-overview${externalPrize ? " project-overview--prize" : ""}`}
-          >
-            <div>
-              <div className="project-state-summary">
-                <p className="project-reward-status">
-                  {pointsOnly
-                    ? "Points only · no cash rewards"
-                    : externalPrize
-                      ? "External prize · organizer decides awards"
-                      : `${project.reward.monthlyCapDisplay} monthly target${project.escrow ? "" : ` · ${fundingStateLabel(project)}`} · ${project.reward.paymentMode === "enabled" ? "payments enabled" : "payments not active"}`}
-                </p>
-                <ProjectFunding project={project} />
-              </div>
-              <div className="project-resource-links">
-                <ExternalLinkAnchor href={project.links.repository}>
-                  View in GitHub <ExternalLink aria-hidden="true" size={14} />
-                </ExternalLinkAnchor>
-                <Link href={`/projects/${project.slug}/security`}>
-                  {project.securityBounty
-                    ? "Security bounty"
-                    : "Report a security issue"}
-                </Link>
-              </div>
-              {project.rewardAsset ? (
-                <details className="asset-details">
-                  <summary>
-                    {project.rewardAsset.symbol} on{" "}
-                    {REWARD_ASSET_NETWORKS[project.rewardAsset.network].name} ·
-                    Asset details
-                  </summary>
-                  <p>
-                    Token contract: <code>{project.rewardAsset.address}</code>
-                  </p>
-                </details>
-              ) : null}
-            </div>
-            {externalPrize ? (
-              <aside className="reward-card">
-                <strong>
-                  <span className="reward-exact-amount">
-                    {
-                      project.reward.externalOpportunity
-                        ?.advertisedAmountDisplay
-                    }
-                  </span>
-                  {" + points"}
-                </strong>
-                <details>
-                  <summary>Prize allocation terms</summary>
-                  <p>{project.terms.externalPrize?.allocationAuthority}</p>
-                  <a href={`/projects/${project.id}/terms.json`}>
-                    Full prize terms
-                  </a>
-                </details>
-              </aside>
-            ) : null}
-          </div>
+          <ProjectHeader project={project} />
+          <ProjectRewardSummary project={project} />
           {project.reward.reviewBudget ? (
             <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
           ) : null}
-          {project.status === "paused" || state.status === "ready" ? (
-            <ProjectParticipation
-              project={project}
-              displayCycleId={view?.cycle.id ?? null}
-              cycles={state.status === "ready" ? state.cycleIndex.cycles : null}
-              view={view}
-              outdated={
-                state.status === "ready" &&
-                (state.refreshError !== undefined || stale(state.snapshot))
-              }
-            />
-          ) : null}
+          <ProjectParticipation
+            project={project}
+            view={view}
+            outdated={
+              state.status === "ready" &&
+              (state.refreshError !== undefined || stale(state.snapshot))
+            }
+          />
         </div>
       </section>
       <div className="shell">
-        {state.status === "ready" &&
-        project.repositories.some(
-          (repository) =>
-            !state.snapshot.repositories.some(
-              (collected) => collected.id === repository.id,
-            ),
-        ) ? (
-          <p className="data-notice" role="status">
-            No activity collected yet.
-          </p>
-        ) : null}
+        <ProjectFundsAndAwards
+          key={`funding:${project.id}`}
+          project={project}
+          state={state}
+          onRegistered={setRegistered}
+        />
         <ProjectPaymentHistory
-          key={project.id}
+          key={`history:${project.id}`}
           project={project}
           state={state}
         />
-        {view && state.status === "ready" ? (
+        {view && state.status === "ready" && view.leaders.length > 0 ? (
           <div id="contributors">
             <ContributorStandings
               projectId={project.id}
@@ -1593,7 +1558,6 @@ function ProjectPage({
             />
           </div>
         ) : null}
-        <ProjectRiskFlag key={`flag:${project.id}`} projectId={project.id} />
       </div>
     </main>
   );
@@ -1684,25 +1648,31 @@ function AppContent({ route }: { route: Route }) {
   else if (route.kind === "project") {
     const project = findProject(route.projectId);
     content = project ? (
-      <ProjectPage project={project} retry={retry} state={state} />
+      hasBountyOverview(project) ? (
+        <main className="route-project">
+          <ProjectBountyIntroduction project={project} />
+          <div className="shell">
+            <ProjectBountyFunding key={project.id} project={project} />
+          </div>
+        </main>
+      ) : (
+        <ProjectPage
+          key={project.id}
+          project={project}
+          retry={retry}
+          state={state}
+        />
+      )
     ) : (
       <main className="shell route-main">
         <h1>Project not found</h1>
         <p>This project isn&apos;t listed.</p>
-        <ProjectRiskFlag
-          key={`flag:${route.projectId}`}
-          projectId={route.projectId}
-        />
         <p>
           <Link href="/">See open projects</Link>
         </p>
       </main>
     );
-  } else if (route.kind === "funding-project")
-    content = withProject(route, (project) => (
-      <ProjectFundingPage key={project.id} project={project} />
-    ));
-  else if (route.kind === "profile")
+  } else if (route.kind === "profile")
     content = <ProfilePage login={route.login} retry={retry} state={state} />;
   else if (route.kind === "cycle")
     content = withProject(route, (project) => (

@@ -17,6 +17,14 @@ type SavedWallet = {
 async function payments(page: Page, wallets: SavedWallet[] = []) {
   const writes: { path: string; body: Record<string, string> }[] = [];
   let claim = { chain: "base", address: evmAddress };
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: { session: { githubId: "123", githubLogin: "qa", admin: false } },
+    }),
+  );
+  await page.route("**/api/v1/project-appeals", (route) =>
+    route.fulfill({ json: { appeals: [] } }),
+  );
   await page.route("**/api/v1/payments/**", async (route) => {
     const path = new URL(route.request().url()).pathname.split("/payments/")[1];
     if (path === "me") {

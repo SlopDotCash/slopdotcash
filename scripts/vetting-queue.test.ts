@@ -34,6 +34,7 @@ const now = new Date("2026-10-19T12:00:00Z");
 const assessmentId = `vet_${"a".repeat(32)}`;
 const templateText = "Harmless contributor and reviewer fixture.";
 const rendererText = "export const fixture = true;";
+const sharedTemplatePath = "skills/contributor/SKILL.md";
 const templateInputs = {
   contributor: {
     sourcePath: "skills/contributor",
@@ -43,7 +44,10 @@ const templateInputs = {
     sourcePath: "skills/reviewer",
     files: [{ path: "SKILL.md", sha256: digest(templateText) }],
   },
-  rendererSources: [{ path: "src/render.mjs", sha256: digest(rendererText) }],
+  rendererSources: [
+    { path: "src/render.mjs", sha256: digest(rendererText) },
+    { path: sharedTemplatePath, sha256: digest(templateText) },
+  ],
   acceptedRevisions: ["1"],
 };
 const templateSha256 = digest(JSON.stringify(templateInputs));
@@ -229,6 +233,8 @@ beforeAll(async () => {
       if (path.startsWith("/skill-templates/"))
         return new Response(mode === "template" ? "changed" : templateText);
       if (path.endsWith("/src/render.mjs")) return new Response(rendererText);
+      if (path.endsWith(`/${sharedTemplatePath}`))
+        return new Response(templateText);
       if (path.endsWith(`/commits/${commitSha}`))
         return Response.json({ sha: commitSha, tree: { sha: treeSha } });
       if (path.endsWith(`/trees/${treeSha}`))
@@ -319,6 +325,74 @@ test("signed real queue and SQLite revision acquire exact Git and template bytes
   }
 });
 
+test("conflicting digests for a shared template path refuse acquisition", async () => {
+  mode = "normal";
+  const conflictingText = "export const conflicting = true;";
+  const conflictingInputs = {
+    ...templateInputs,
+    rendererSources: templateInputs.rendererSources.map((file) =>
+      file.path === sharedTemplatePath
+        ? { ...file, sha256: digest(conflictingText) }
+        : file,
+    ),
+  };
+  const conflictingSha256 = digest(JSON.stringify(conflictingInputs));
+  const conflicted: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (
+        path.endsWith(`/${sharedTemplatePath}`) &&
+        !path.startsWith("/skill-templates/")
+      )
+        return new Response(conflictingText);
+      const response = await connection.fetch!(input, init);
+      if (path === "/api/v1/vetting/requests") {
+        const queue = await response.json();
+        for (const assessment of queue.assessments)
+          if (assessment.assessmentId === assessmentId)
+            assessment.templateSha256 = conflictingSha256;
+        return Response.json(queue);
+      }
+      if (path === "/skill-templates/index.json") {
+        const index = await response.json();
+        index.templateSha256 = conflictingSha256;
+        index.renderer.sources = conflictingInputs.rendererSources;
+        return Response.json(index);
+      }
+      return response;
+    }) as typeof fetch,
+  };
+  const before = await readdir(root);
+  await expect(
+    acquireQueuedAssessment(conflicted, assessmentId, root),
+  ).rejects.toThrow("Conflicting template input digests");
+  expect(await readdir(root)).toEqual(before);
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
+});
+
+test("shared template inputs still verify the second source URL", async () => {
+  mode = "normal";
+  const changed: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (
+        path.endsWith(`/${sharedTemplatePath}`) &&
+        !path.startsWith("/skill-templates/")
+      )
+        return new Response("changed renderer source bytes");
+      return connection.fetch!(input, init);
+    }) as typeof fetch,
+  };
+  const before = await readdir(root);
+  await expect(
+    acquireQueuedAssessment(changed, assessmentId, root),
+  ).rejects.toThrow("Template file bytes changed");
+  expect(await readdir(root)).toEqual(before);
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
+});
+
 test("changed revision/template bytes and wrong signer leave queue pending and no completed bundle", async () => {
   for (const selected of ["manifest", "template", "identity"] as const) {
     mode = selected;
@@ -343,4 +417,99 @@ test("changed revision/template bytes and wrong signer leave queue pending and n
     readPendingAssessments({ ...connection, ...wrong }),
   ).rejects.toThrow();
   expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
+});
+
+test("a recorded repository rename acquires through the current GitHub name", async () => {
+  mode = "normal";
+  // The registry keeps the original path as the id and records the current
+  // path as the appended alias and githubUrl (`assertRepositoryTransition`).
+  const original = JSON.parse(
+    (await projects.getRevisionText("queue-fixture", 1))!.manifestText,
+  );
+  const [repository] = original.repositories;
+  const renamedText = JSON.stringify({
+    ...original,
+    repositories: [
+      {
+        ...repository,
+        aliases: ["example/renamed"],
+        displayName: "example/renamed",
+        githubUrl: "https://github.com/example/renamed",
+      },
+    ],
+  });
+  const renamedSha256 = digest(renamedText);
+  const requested: string[] = [];
+  const renamed: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      requested.push(path);
+      // GitHub answers the former name with a redirect, which acquisition refuses.
+      if (path.startsWith("/repos/example/fixture"))
+        throw new TypeError("fetch failed: unexpected redirect");
+      if (path === "/repos/example/renamed")
+        return Response.json({
+          id: 123456789,
+          node_id: "R_example",
+          full_name: "example/renamed",
+          private: false,
+        });
+      if (path.startsWith("/api/v1/project-revisions/"))
+        return Response.json({
+          projectId: "queue-fixture",
+          revision: 1,
+          manifestSha256: renamedSha256,
+          manifestText: renamedText,
+        });
+      const response = await connection.fetch!(input, init);
+      if (path === "/api/v1/vetting/requests") {
+        const queue = await response.json();
+        for (const assessment of queue.assessments)
+          if (assessment.assessmentId === assessmentId)
+            assessment.manifestSha256 = renamedSha256;
+        return Response.json(queue);
+      }
+      return response;
+    }) as typeof fetch,
+  };
+  const acquired = await acquireQueuedAssessment(renamed, assessmentId, root);
+  const bundle = JSON.parse(
+    await readFile(join(acquired.directory, "queued-inputs.json"), "utf8"),
+  );
+  expect(bundle.repositoryIdentity).toEqual({
+    id: "123456789",
+    nodeId: "R_example",
+    fullName: "example/renamed",
+  });
+  expect(
+    requested.some((path) => path.startsWith("/repos/example/fixture")),
+  ).toBe(false);
+  await rm(acquired.directory, { recursive: true, force: true });
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
+});
+
+test("an unrecorded repository rename is still refused", async () => {
+  mode = "normal";
+  const moved: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      if (new URL(String(input)).pathname === "/repos/example/fixture")
+        return Response.json({
+          id: 123456789,
+          node_id: "R_example",
+          full_name: "example/elsewhere",
+          private: false,
+        });
+      return connection.fetch!(input, init);
+    }) as typeof fetch,
+  };
+  const before = await readdir(root);
+  const failure = await acquireQueuedAssessment(
+    moved,
+    assessmentId,
+    root,
+  ).catch((error: unknown) => error);
+  expect((failure as Error).name).toBe("AcquisitionRefusal");
+  expect(await readdir(root)).toEqual(before);
 });

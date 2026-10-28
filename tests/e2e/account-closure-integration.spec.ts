@@ -432,8 +432,10 @@ for (const withObligations of [false, true])
       ).toContainText(`@${started.login}`);
       await page.keyboard.press("Escape");
       for (const body of completedCallbacks) {
-        expect(body).toContain('id="close-window"');
-        expect(body).toContain(`href="${SITE}"`);
+        expect(body).toContain("window.close();");
+        expect(body).not.toContain("<button");
+        expect(body).not.toContain("<a ");
+        expect(body).not.toContain("<h1");
       }
       await page.screenshot({
         path: info.outputPath("popup-closed-return-preserved.png"),
@@ -442,7 +444,7 @@ for (const withObligations of [false, true])
       await page.waitForLoadState("networkidle");
       if (!withObligations) {
         // A tab opened outside script may refuse window.close after navigation.
-        // It must retain a keyboard-accessible exit, with the callback CSP intact.
+        // It stays blank when the browser refuses closing, with the CSP intact.
         const manual = await context.newPage();
         await manual.route(`${SITE}/__fixture/history`, (route) =>
           route.fulfill({
@@ -472,30 +474,15 @@ for (const withObligations of [false, true])
         expect(completed.headers()["content-security-policy"]).toMatch(
           /script-src 'nonce-[^']+'/u,
         );
-        await expect(
-          manual.getByRole("heading", { name: "Signed in", exact: true }),
-        ).toBeVisible();
+        await expect(manual.locator("body")).toHaveText("", {
+          useInnerText: true,
+        });
+        await expect(manual.locator("a, button")).toHaveCount(0);
         expect(await manual.evaluate(() => window.opener)).toBeNull();
-        expect(
-          await manual.evaluate(() => window.history.length),
-        ).toBeGreaterThan(1);
-        await manual
-          .getByRole("button", { name: "Close window", exact: true })
-          .click();
-        await manual
-          .getByRole("link", { name: "Return to Slop", exact: true })
-          .focus();
-        await expect(
-          manual.getByRole("link", { name: "Return to Slop", exact: true }),
-        ).toBeFocused();
-        await expectAccessible(manual);
         await manual.screenshot({
-          path: info.outputPath("standalone-completion-fallback.png"),
+          path: info.outputPath("standalone-completion-blank.png"),
           fullPage: true,
         });
-        await manual.keyboard.press("Enter");
-        await expect(manual).toHaveURL(`${SITE}/`);
-        await manual.waitForLoadState("networkidle");
         await manual.close();
       }
       await page.goto("about:blank");

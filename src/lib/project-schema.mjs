@@ -6,6 +6,7 @@ import {
   isEscrowChain,
   maxBaseUnitsForChain,
 } from "./escrow-policy.mjs";
+import { assertProjectImage } from "./project-image.mjs";
 import {
   boundedText,
   CANONICAL_UINT,
@@ -104,6 +105,7 @@ const PROJECT_KEYS = [
  * the D1 registry; older revisions omit them.
  */
 const OPTIONAL_PROJECT_KEYS = [
+  "image",
   "escrow",
   "participation",
   "rewardAsset",
@@ -1193,6 +1195,7 @@ function validateProjectDefinition(
     throw new TypeError("project.slug must equal project.id");
   text(project.name, "project.name", { max: 80, min: 2 });
   text(project.eyebrow, "project.eyebrow", { max: 80, min: 3 });
+  if (project.image !== undefined) assertProjectImage(project.image);
   text(project.headline, "project.headline", { max: 120, min: 8 });
   text(project.description, "project.description", { max: 600, min: 24 });
   if (project.contribution !== undefined)
