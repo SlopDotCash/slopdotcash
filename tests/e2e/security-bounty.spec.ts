@@ -2721,11 +2721,12 @@ test("home links to a consolidated security bounty with full award terms @regist
   await link.click();
   await expect(
     page.getByRole("heading", {
-      name: "Security test program security bounty",
+      name: "Security test program",
+      exact: true,
     }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Agent setup" }),
+    page.getByRole("heading", { name: "Copy this into your agent." }),
   ).toBeVisible();
   await expect(
     page.getByText("Points only · no cash rewards", { exact: true }),
@@ -2739,13 +2740,12 @@ test("home links to a consolidated security bounty with full award terms @regist
   await expect(
     page.getByText("Report malicious code in this project", { exact: true }),
   ).toHaveCount(0);
-  await expect(page.getByRole("navigation", { name: "Community" })).toHaveCount(
+  await expect(page.getByText("Full award terms", { exact: true })).toHaveCount(
     0,
   );
-  await page.getByText("Full award terms", { exact: true }).click();
   await expect(
     page.getByRole("region", { name: "Published bounty offer" }),
-  ).toContainText("7,500 USDC");
+  ).toHaveCount(0);
   await expectAccessible(page);
   await page.goto("/");
   await page.unroute("**/api/v1/projects");

@@ -62,13 +62,13 @@ test("retained awards URLs resolve during client navigation with query and fragm
       history.pushState({}, "", path);
       dispatchEvent(new PopStateEvent("popstate"));
     }, `/projects/eliza/awards${suffix}`);
-    await expect(page).toHaveURL(`/projects/eliza/funding${expected}`);
+    await expect(page).toHaveURL(`/projects/eliza${expected}`);
     await expect(
-      page.getByRole("heading", { name: "Eliza funding", exact: true }),
+      page.getByRole("heading", { name: "Eliza", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByText("This project has no vault yet."),
-    ).toBeVisible();
+      page.getByRole("region", { name: "Funds and awards" }),
+    ).toBeAttached();
   }
   await expectAccessible(page);
   await page.screenshot({ path: info.outputPath("retained-awards-route.png") });

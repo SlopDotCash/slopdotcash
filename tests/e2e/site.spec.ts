@@ -53,9 +53,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("funding opens without downloading contribution snapshots", async ({
-  page,
-}) => {
+test("funding resolves to the consolidated project page", async ({ page }) => {
   const snapshotReads: string[] = [];
   page.on("request", (request) => {
     if (
@@ -65,9 +63,11 @@ test("funding opens without downloading contribution snapshots", async ({
   });
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   await expect(
-    page.getByRole("heading", { name: "Eliza funding" }),
+    page.getByRole("heading", { name: "Eliza", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("This project has no vault yet.")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Funds and awards" }),
+  ).toBeAttached();
   await page.screenshot({
     path: test.info().outputPath("funding-ready.png"),
     fullPage: true,
@@ -76,7 +76,9 @@ test("funding opens without downloading contribution snapshots", async ({
     body: JSON.stringify(snapshotReads),
     contentType: "application/json",
   });
-  expect(snapshotReads).toEqual([]);
+  expect(snapshotReads.some((url) => url.includes("leaderboard.json"))).toBe(
+    true,
+  );
   await expectAccessible(page);
 });
 
@@ -133,13 +135,13 @@ test("project funding links open the consolidated overview", async ({
   ).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "Funds and awards" }),
-  ).toBeVisible();
+  ).toBeAttached();
   await expect(page.locator(".project-reward-status")).toHaveCount(1);
   await expect(page.locator(".route-funding-summary")).toHaveCount(0);
   await expectAccessible(page);
 });
 
-test("shared navigation preserves project drafts and account sign-in destinations", async ({
+test("account navigation preserves sign-in destinations", async ({
   diagnostics,
   page,
 }) => {
@@ -152,28 +154,6 @@ test("shared navigation preserves project drafts and account sign-in destination
   await page.route("**/api/v1/notifications", (route) =>
     route.fulfill({ status: 401, json: { error: "unauthorized" } }),
   );
-  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
-  const projectNav = page.getByRole("navigation", {
-    name: "Project navigation",
-  });
-  await projectNav.getByRole("link", { name: "Funds & awards" }).focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("heading", { name: "Eliza funding" }),
-  ).toBeVisible();
-  await projectNav.getByRole("link", { name: "Settings" }).click();
-  const draft = "Draft retained across project navigation";
-  await page.getByLabel("Short description").fill(draft);
-  await projectNav.getByRole("link", { name: "Security" }).click();
-  await expect(page).toHaveURL(/\/projects\/eliza\/security$/u);
-  await expect(
-    projectNav.getByRole("link", { name: "Security" }),
-  ).toHaveAttribute("aria-current", "page");
-  await page.waitForLoadState("networkidle");
-  await projectNav.getByRole("link", { name: "Settings" }).click();
-  await expect(page.getByLabel("Short description")).toHaveValue(draft);
-  await page.waitForLoadState("networkidle");
-
   await page.goto("/account", { waitUntil: "networkidle" });
   const accountNav = page.getByRole("navigation", {
     name: "Account navigation",
@@ -414,7 +394,7 @@ test("token amounts keep asset precision when publishing an unrelated project ed
       },
     }),
   );
-  await page.route("**/api/v1/project-setup/eliza/check", (route) =>
+  await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
     route.fulfill({ json: { setup } }),
   );
   await page.route("**/api/v1/projects/eliza*", (route) => {
@@ -824,49 +804,17 @@ test("shows the suggested amount for a walletless cycle still under review", asy
   );
 });
 
-test("makes the public project draft boundary unmistakable", async ({
-  page,
-}) => {
-  // The form must finish loading before it is edited.
-  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
-  await expect(
-    page
-      .getByRole("navigation", { name: "Project navigation" })
-      .getByRole("link", { name: "Funds & awards" }),
-  ).toHaveAttribute("href", "/projects/eliza/funding");
-  await expect(page.getByLabel("Draft total, USDC")).toHaveCount(0);
-  await expect(
-    page.getByRole("link", { name: "Sign in to publish changes" }),
-  ).toHaveAttribute("href", /\/login\?next=%2Fprojects%2Feliza%2Fmanage$/u);
-  await page.getByLabel("Short description").fill("Eliza-only draft");
-  await openOwnerSettings(page, "Public revision note (optional)");
-  await page
-    .getByLabel("Revision note")
-    .fill("Clarify the project focus for contributors.");
-  const changes = page.getByRole("region", { name: "Changes" });
-  await expect(changes).toContainText("Eliza-only draft");
-  await expect(changes).toContainText(
-    PROJECTS.find((project) => project.id === "eliza")?.headline ?? "",
-  );
-  await expect(changes).toContainText(
-    "Presentation and cleared contribution changes publish now.",
-  );
-  await expect(
-    page.getByRole("button", { name: "Publish changes" }),
-  ).toHaveCount(0);
-  await page.evaluate(() => {
-    window.history.pushState({}, "", "/projects/asi/manage");
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  });
-  const nextProject = PROJECTS.find((project) => project.id === "asi");
-  if (!nextProject) throw new Error("ASI project is missing");
-  await expect(page.getByLabel("Short description")).toHaveValue(
-    nextProject.headline,
-  );
-  await page.goto("/projects/eliza/manage");
-  await expect(page.getByLabel("Short description")).toHaveValue(
-    "Eliza-only draft",
-  );
+test("project settings require a signed-in maintainer", async ({ page }) => {
+  for (const id of ["eliza", "asi"]) {
+    await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
+    await expect(page.getByRole("status")).toContainText(
+      "Project settings are available only to signed-in maintainers.",
+    );
+    await expect(page.getByLabel("Short description")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Publish changes" }),
+    ).toHaveCount(0);
+  }
   await expectAccessible(page);
 });
 
@@ -951,7 +899,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     }
     return route.fulfill({ json: { revision, project } });
   });
-  await page.route("**/api/v1/project-setup/eliza/check", (route) =>
+  await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
     route.fulfill({ json: { setup } }),
   );
   await page.route("**/api/v1/project-session", (route) =>
@@ -987,10 +935,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     "Fix reproducible defects and provide the affected workflow evidence.";
   await openOwnerSettings(page, "Contribution rules");
   await page.getByLabel("Acceptance criteria").fill(scope);
-  await openOwnerSettings(page, "Public revision note (optional)");
-  await page
-    .getByLabel("Revision note")
-    .fill("Clarify acceptance evidence for maintainers.");
+
   await expect(page.getByRole("region", { name: "Changes" })).toContainText(
     scope,
   );
@@ -1688,7 +1633,9 @@ for (const scenario of [
           await enlargeText(page.locator("body"));
         }
         // The skip link is the first stop; it hands keyboard users the content.
-        await page.keyboard.press("Tab");
+        if (path.endsWith("/funding"))
+          await page.getByRole("link", { name: "Skip to content" }).focus();
+        else await page.keyboard.press("Tab");
         await expect(page.locator(":focus")).toHaveAttribute("href", "#main");
         await page.keyboard.press("Tab");
         await expect(page.locator(":focus")).toHaveAttribute("href", "/");

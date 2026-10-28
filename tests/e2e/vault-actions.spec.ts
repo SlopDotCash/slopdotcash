@@ -332,16 +332,13 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({ json: { session: null } }),
   );
-  // The project page shows one funding line; actions live on the funding page.
+  // The overview exposes the same vault controls as the retained funding URL.
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
-  const summary = page.getByRole("region", { name: "Project funding" });
-  await expect(summary).toContainText("Vault totals not read yet");
-  await expect(
-    summary.getByRole("link", { name: "Fund this project", exact: true }),
-  ).toHaveAttribute("href", "/projects/eliza/funding");
+  const summary = page.getByRole("region", { name: "Project escrow" });
+  await expect(summary).toContainText("Totals not read yet");
   await expect(
     page.getByRole("region", { name: /^Fund or withdraw/u }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   await expect(
     page.getByText("Vault: Not set up", { exact: true }),
@@ -642,7 +639,9 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   );
   await page.goto("/projects/eliza/funding");
   await page.getByRole("button", { name: "Review monthly awards" }).click();
-  await page.getByLabel("Contribution month").fill("2026-09");
+  await expect(
+    page.getByRole("navigation", { name: "Contribution month" }),
+  ).toContainText("September 2026");
   await page
     .getByRole("button", { name: "Reserve award for local-contributor" })
     .click();
