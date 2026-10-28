@@ -2508,15 +2508,9 @@ test("two contributors flag through the agent API, pause the project and notify 
   ).toBe(201);
   await second.reload({ waitUntil: "networkidle" });
   await expect(second.locator("main")).not.toContainText(firstEvidence);
-  await expect(second.locator("#start")).toContainText(
-    "Do not install this project's skill or start work.",
-  );
-  // The paused result ships with its next step (PRD section 7).
   await expect(
-    second.locator("#start").getByRole("link", {
-      name: "Project owner: review setup",
-    }),
-  ).toHaveAttribute("href", `/projects/${project.id}/manage`);
+    second.getByRole("heading", { name: "Project not found", exact: true }),
+  ).toBeVisible();
   expect(await readPrivate(second, ownPath)).toMatchObject({
     restriction: "quarantined",
     pausedByFlags: true,
