@@ -121,9 +121,13 @@ message rather than an excerpt of malformed raw evidence.
 Owner decision, 28 October 2026: scanner evidence has no object or run size
 limit (the former 64 MiB cap is removed). Only each request is bounded: every
 upload, read and backup step handles at most one 8 MiB part, and the signed
-1 MiB registration declares at most 1,024 objects. That registration body is
-the only practical ceiling: about 9,000 declared parts, roughly 70 GiB per
-run, far above any repository GitHub serves. Oversize parts are refused, and
+1 MiB registration declares at most 1,024 objects, about 9,000 declared
+parts. Storage is not the binding limit, though: registration, finalization,
+intake and every clearance check reread and hash an object's whole bytes
+inside one Worker request, so the practical ceiling per object is that
+request's CPU budget; the maximum depends on the runtime and evidence
+layout. If verification cannot finish, a clean result stays pending rather
+than clearing. Oversize parts are refused, and
 evidence is never shortened or silently omitted to obtain clearance.
 
 Objects registered since migration 0107 are content-addressed. Their bytes
@@ -142,6 +146,11 @@ scanner references them instead of uploading again. This is a hint only: a chunk
 object still needs this run's finalization, which rereads every part and the
 whole digest, and retention rereads every byte. A missing, changed or
 partial object fails closed for every run that references it.
+
+Release order: apply migration 0107, then deploy the vetting API and the
+backup worker (its cleanup reads `storage` and the deletion claim), then the
+scanner. A scanner that references stored digests before the API knows them
+leaves clean results pending until the API catches up.
 
 Retention deletion is reference-aware. An expired content-addressed
 reference gets its own deletion receipt, but its bytes are deleted only when
