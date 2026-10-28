@@ -196,14 +196,14 @@ function setup(
       now,
     );
   };
-  let beforeBatch: (() => void) | null = null;
+  let beforeBatch: (() => void | Promise<void>) | null = null;
   const securityDb = db as unknown as SecurityD1Database;
   const wrapped: SecurityD1Database = {
     prepare: (sql) => securityDb.prepare(sql),
     batch: async (statements) => {
       const hook = beforeBatch;
       beforeBatch = null;
-      hook?.();
+      await hook?.();
       return securityDb.batch(statements);
     },
   };
@@ -535,7 +535,7 @@ function setup(
     advance: (ms: number) => {
       now = new Date(now.getTime() + ms);
     },
-    setBeforeBatch: (hook: () => void) => {
+    setBeforeBatch: (hook: () => void | Promise<void>) => {
       beforeBatch = hook;
     },
   };
@@ -2216,7 +2216,7 @@ describe("optional GitHub forwarding of a saved report", () => {
       );
       await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
       // GitHub stored the report, then D1 refused the receipt write once.
-      const failAfterCreate = () =>
+      const failAfterCreate = (): void =>
         t.setBeforeBatch(() => {
           if (
             t.github.advisories.length === 0 ||
@@ -2270,5 +2270,119 @@ describe("optional GitHub forwarding of a saved report", () => {
         (viewed.body.case as { advisory: { ghsa: string } }).advisory.ghsa,
       ).toBe(t.github.advisories[0].advisory.ghsa_id);
     }
+  });
+  test("a list read that settles a forward still in flight leaves its GitHub copy for reconcile to adopt", async () => {
+    const t = setup({ durable: true });
+    const accepted = await t.create(REPORTER, { report: REPORT });
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const original = t.cases()[0];
+    const authorization = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+    // GitHub stored the report; the receipt write waits past the timeout
+    // while the reporter loads the list.
+    let listed: string | undefined;
+    const listMidForward = (): void =>
+      t.setBeforeBatch(async () => {
+        if (
+          t.github.advisories.length === 0 ||
+          t.row(submission.id).state !== "submitting"
+        )
+          return listMidForward();
+        t.advance(61_000);
+        listed = (
+          (await t.call(REPORTER, "GET", "security-submissions")).body
+            .submissions as NonNullable<Body["submission"]>[]
+        ).find((entry) => entry.id === submission.id)?.state;
+      });
+    listMidForward();
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(listed).toBe("uncertain");
+    expect(sent.status).toBe(202);
+    expect(sent.body.submission?.state).toBe("uncertain");
+    expect(t.row(submission.id).advisory_ghsa).toBeNull();
+    const reconciled = await t.reconcile(
+      submission.id,
+      sent.body.submission?.revision as number,
+    );
+    expect(reconciled.status).toBe(200);
+    expect(reconciled.body.submission?.state).toBe("receipt-verified");
+    expect(t.row(submission.id).advisory_ghsa).toBe(
+      t.github.advisories[0].advisory.ghsa_id,
+    );
+    expect(t.github.counts.posts).toBe(1);
+    expect(t.cases()).toEqual([original]);
+  });
+  test("a report whose settle fails is listed as stored next to the reporter's other reports", async () => {
+    const t = setup({ durable: true });
+    const accepted = await t.create(REPORTER, { report: REPORT });
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const authorization = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+    // GitHub stored the report, then D1 refused the receipt write once.
+    const failAfterCreate = (): void =>
+      t.setBeforeBatch(() => {
+        if (
+          t.github.advisories.length === 0 ||
+          t.row(submission.id).state !== "submitting"
+        )
+          return failAfterCreate();
+        throw new Error("D1 unavailable");
+      });
+    failAfterCreate();
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.status).toBe(500);
+    const other = (
+      await t.create(REPORTER, {
+        report: { ...REPORT, summary: `Second report ${SENTINEL}` },
+      })
+    ).body.submission as NonNullable<Body["submission"]>;
+    t.advance(61_000);
+    const states = async () => {
+      const listed = await t.call(REPORTER, "GET", "security-submissions");
+      return {
+        status: listed.status,
+        states: Object.fromEntries(
+          (
+            (listed.body.submissions ?? []) as NonNullable<Body["submission"]>[]
+          ).map((entry) => [entry.id, entry.state]),
+        ),
+      };
+    };
+    // D1 refuses the one settle write this list makes.
+    t.setBeforeBatch(() => {
+      throw new Error("D1 unavailable");
+    });
+    expect(await states()).toEqual({
+      status: 200,
+      states: { [submission.id]: "submitting", [other.id]: "draft" },
+    });
+    expect(await states()).toEqual({
+      status: 200,
+      states: { [submission.id]: "uncertain", [other.id]: "draft" },
+    });
   });
 });

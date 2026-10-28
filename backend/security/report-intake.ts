@@ -810,7 +810,8 @@ export async function listStoredSubmissions(
       createdAt: row.created_at,
       submission: await decorateSubmission(
         deps,
-        await settle(deps, row),
+        // A failed settle shows the row as stored; the next read retries it.
+        await settle(deps, row).catch(() => row),
         actor,
       ),
     })),
