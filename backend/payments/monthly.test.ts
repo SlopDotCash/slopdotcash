@@ -1,7 +1,14 @@
 /** Real migrations and registry tables; GitHub authority is a controlled stub here (see scripts/owner-award-authority.test.ts). */
 
 import type { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  setSystemTime,
+  test,
+} from "bun:test";
 import { readFileSync } from "node:fs";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -10,16 +17,19 @@ import {
   evmMonthlySumTree,
 } from "../../contracts/evm/adapter";
 import { solanaBase58 } from "../../contracts/solana/adapter";
+import { monthlyBasesSql } from "../../scripts/prepare-monthly-rewards";
 import { requestOwnerCommitment } from "../../src/lib/owner-commitment-actions";
 import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
+import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
+import { runMonthlyAttester } from "../../workers/payment-executor/index";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
 import { runMonthlyCommitments } from "../../workers/payments/index";
 import {
@@ -1661,6 +1671,170 @@ test("monthly signing preserves its first intent through retry and refuses a cha
     "already bound",
   );
   expect(signatures).toBe(1);
+});
+
+test("the attester publishes every funded month while another project's month cannot be frozen", async () => {
+  vault("1000");
+  await coordinate(afterCutoff);
+  if (!schedule) throw new Error("Fixture schedule missing");
+  const { digest } = sqlite
+    .prepare("SELECT snapshot_sha256 digest FROM monthly_payment_runs")
+    .get() as { digest: string };
+  const records = new Map<string, unknown>();
+  const journal: JournalStore = {
+    async get<T>(key: string) {
+      return records.get(key) as T | undefined;
+    },
+    async put<T>(key: string, value: T) {
+      records.set(key, structuredClone(value));
+    },
+    async transaction<T>(fn: (store: JournalStore) => Promise<T>) {
+      return fn(journal);
+    },
+  };
+  const signed = await signMonthlyAllocation(
+    {
+      db,
+      ...projects(),
+      networks: ["base-sepolia"],
+      schedule,
+      now: () => afterCutoff,
+      journal,
+      verifyDeployment: async () => {},
+      sign: async (plan: { messageHex: string }) =>
+        (await testAttester.sign({ hash: `0x${plan.messageHex}` })).slice(2),
+    },
+    {
+      projectId: project.id,
+      period: "2026-11",
+      network: "base-sepolia",
+      snapshotSha256: digest,
+    },
+  );
+  // Another project was proposed as a vaultless pledge. Its owner then added
+  // the first vault before the cutoff, so its month can never be frozen.
+  const listed = fixtureProject("asi");
+  const pledge = assertProjectDefinition({
+    ...listed,
+    reward: { ...listed.reward, feeBasisPoints: 200, chain: "base" },
+    escrow: {
+      schemaVersion: "1",
+      effectiveCycle: "2026-11",
+      chain: "base",
+      feeBasisPoints: 200,
+      withdrawalFeeBasisPoints: 200,
+      feeMode: "deduct-from-gross",
+      deployments: [],
+    },
+  });
+  const funded = JSON.stringify({
+    ...pledge,
+    escrow: {
+      ...pledge.escrow,
+      deployments: [{ ...deployment, vault: `0x${"7".repeat(40)}` }],
+    },
+  });
+  const proposed = JSON.stringify(pledge);
+  for (const [revision, text] of [
+    [1, proposed],
+    [2, funded],
+  ] as const)
+    sqlite
+      .prepare(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,'Fixture','2026-12-02T00:00:00.000Z')",
+      )
+      .run(listed.id, revision, text, await sha256Hex(text));
+  sqlite
+    .prepare(
+      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',2,?,?,?,?)",
+    )
+    .run(
+      listed.id,
+      funded,
+      await sha256Hex(funded),
+      "2026-10-01T00:00:00.000Z",
+      "2026-12-02T00:00:00.000Z",
+    );
+  sqlite.exec(
+    monthlyBasesSql(
+      {
+        period: "2026-11",
+        skipped: [],
+        bases: [
+          {
+            projectId: listed.id,
+            period: "2026-11",
+            manifest: proposed,
+            manifestSha256: await sha256Hex(proposed),
+            sourceSnapshotSha256: "6".repeat(64),
+            capBase: "1000",
+            rows: [
+              {
+                githubUserId: "303",
+                login: "third",
+                grossBase: "1000",
+                sourceDigest: escrowAwardOrigin(listed.id, "2026-11", "303"),
+              },
+            ],
+          },
+        ],
+      },
+      "2026-12-01T00:11:00.000Z",
+    ),
+  );
+  // No chain RPC exists here; vault reads and scans fail and are reported.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("No chain RPC in this test");
+  }) as unknown as typeof fetch;
+  setSystemTime(afterCutoff);
+  const outcome = await runMonthlyAttester({
+    SIGNER_ROLE: "attester",
+    CHAIN_FAMILY: "evm",
+    PAYMENTS_DB: db,
+    REGISTRY_DB: db,
+    MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
+    PAYMENT_DEPLOYMENTS: JSON.stringify([{ network: "base-sepolia" }]),
+    PAYMENT_RPC_URLS: "{}",
+    JOURNAL: {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: async (request: Request) => {
+          expect(new URL(request.url).pathname).toBe(
+            "/v1/monthly-authorization",
+          );
+          return Response.json(signed);
+        },
+      }),
+    },
+  } as never)
+    .then(
+      () => null,
+      (error: unknown) => error,
+    )
+    .finally(() => {
+      setSystemTime();
+      globalThis.fetch = realFetch;
+    });
+  // The funded month of the healthy project is published.
+  const published = sqlite
+    .prepare(
+      "SELECT project_id,authorization FROM monthly_payment_authorizations",
+    )
+    .all() as { project_id: string; authorization: string }[];
+  expect(published.map((row) => row.project_id)).toEqual([project.id]);
+  expect(JSON.parse(published[0].authorization)).toEqual(signed);
+  // The other project's month stays unfrozen and the run still fails with it.
+  expect(count("monthly_payment_runs")).toBe(1);
+  expect(outcome).toBeInstanceOf(AggregateError);
+  const coordinator = (outcome as AggregateError).errors.find(
+    (error) =>
+      error instanceof Error &&
+      error.message === "Monthly coordinator failures",
+  ) as AggregateError;
+  expect(
+    coordinator.errors.map((error) => (error as MonthlyPaymentError).code),
+  ).toEqual(["financial_policy_changed"]);
 });
 
 test("V2 monthly signing publishes permanent source-bound attempts and resumes the selected admitted month", async () => {

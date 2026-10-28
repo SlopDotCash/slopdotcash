@@ -754,7 +754,20 @@ def activate(revision):
         skills_root,
         f".{skill_name}-link-{secrets.token_hex(8)}",
     )
-    os.symlink(relative_target, temporary_link, target_is_directory=True)
+    try:
+        os.symlink(relative_target, temporary_link, target_is_directory=True)
+    except OSError as error:
+        # ERROR_PRIVILEGE_NOT_HELD: an unelevated Windows account can create a
+        # directory symlink only in Developer Mode. The verified version stays
+        # in the version store, and the next run verifies and activates it.
+        if getattr(error, "winerror", None) == 1314:
+            raise ValueError(
+                "Windows refused to create the skill directory symbolic link "
+                "(WinError 1314). Turn on Developer Mode in Settings > System > "
+                "For developers, or run this command in an elevated terminal, "
+                "then run it again. The verified version is kept and reused."
+            ) from error
+        raise
     try:
         replace_symlink_atomically(temporary_link, target_path)
     finally:

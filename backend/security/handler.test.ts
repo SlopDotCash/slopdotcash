@@ -154,6 +154,7 @@ function report(
     author: { githubId: author.githubId, githubLogin: author.githubLogin },
     summary: "Vault share rounding",
     description: SECRET_DETAIL,
+    referenceLines: [],
     severity: "critical",
     cweIds: ["CWE-682"],
     packages: ["npm:vault"],

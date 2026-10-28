@@ -41,6 +41,7 @@ async function uncertainReview(
     labels: { name: string }[];
     sql: (q: string) => unknown;
     advanceTarget: (changedSource: boolean) => void;
+    pushUnpatchedFile: (newHead: boolean) => void;
   }) => Promise<void>,
   confidence = 0.6,
 ) {
@@ -88,7 +89,8 @@ async function uncertainReview(
   const writes: string[] = [];
   const labels: { name: string }[] = [];
   let targetSha = "c".repeat(40);
-  let patch = "-const a = 1;\n+const b = 1;";
+  let headSha = "b".repeat(40);
+  let patch: string | undefined = "-const a = 1;\n+const b = 1;";
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -145,7 +147,7 @@ async function uncertainReview(
         return Response.json({
           draft: pullDraft,
           merged: false,
-          head: { sha: "b".repeat(40) },
+          head: { sha: headSha },
           base: {
             sha: "c".repeat(40),
             ref: "development",
@@ -324,6 +326,11 @@ async function uncertainReview(
         targetSha = "d".repeat(40);
         if (changedSource) patch = "+different current target comparison";
       },
+      // GitHub returns a file without a patch, such as an image.
+      pushUnpatchedFile: (newHead) => {
+        if (newHead) headSha = "e".repeat(40);
+        patch = undefined;
+      },
       review: () => reviewItem(env as unknown as ReviewEnv, job),
       tick: async () => {
         sent.length = 0;
@@ -480,6 +487,32 @@ test("a pull request converted to draft during the window is not labeled", async
     ]);
   });
 });
+
+test.each([true, false])(
+  "an incomplete current comparison ends the hold only after a new head (newHead=%s)",
+  async (newHead) => {
+    await uncertainReview(false, async (run) => {
+      const start = Date.now();
+      expect(await run.review()).toMatch(/^held for maintainer until /);
+      // The author answers the finding with a new commit that adds an image.
+      run.pushUnpatchedFile(newHead);
+      setSystemTime(new Date(start + 7 * day + 60_000));
+      const due = await run.tick();
+      expect(due.map((j) => j.kind)).toEqual(["maintainer_hold"]);
+      if (newHead) await run.deliver(due);
+      else
+        await expect(run.deliver(due)).rejects.toThrow("hold job was retried");
+      expect(run.labels).toEqual([]);
+      expect(run.writes.filter((w) => w.endsWith("/labels"))).toEqual([]);
+      expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+        { outcome: newHead ? "superseded" : null },
+      ]);
+      // A resolved hold is not queued again on later days.
+      setSystemTime(new Date(start + 9 * day));
+      expect((await run.tick()).length).toBe(newHead ? 0 : 1);
+    });
+  },
+);
 test.each([true, false])(
   "a due hold rechecks substantive source after a target advance (changed=%s)",
   async (changed) => {

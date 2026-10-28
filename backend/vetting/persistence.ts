@@ -16,6 +16,8 @@ import type {
   AdmissionExemption,
   AssessmentState,
   AssessmentSummary,
+  PublicationIntent,
+  PublicationReceipt,
   VettingClearance,
   VettingPin,
 } from "../../src/lib/vetting-contracts";
@@ -169,6 +171,25 @@ export function summarize(assessment: VettingAssessment): AssessmentSummary {
     heldArtifacts: artifacts.filter((artifact) => artifact.state !== "released")
       .length,
   };
+}
+
+/** The request reason of a refresh that replaces an unavailable queued template. */
+export const TEMPLATE_REPLACEMENT_REASON =
+  "Automatic replacement of an unavailable queued template";
+
+/** True when `next` only re-queues `previous` at a released template. */
+function replacesTemplate(
+  next: VettingAssessment,
+  previous: VettingAssessment,
+): boolean {
+  return (
+    next.requestReason === TEMPLATE_REPLACEMENT_REASON &&
+    next.revision === previous.revision &&
+    next.manifestSha256 === previous.manifestSha256 &&
+    next.contentSha256 === previous.contentSha256 &&
+    next.commitSha === previous.commitSha &&
+    next.templateSha256 !== previous.templateSha256
+  );
 }
 
 function newest<T>(items: T[], match: (item: T) => boolean): T | undefined {
@@ -372,6 +393,77 @@ export class CloudflareVettingPersistence {
     return row === null ? null : fromRow(row);
   }
 
+  /**
+   * Publication journal reads: the scanner controller asks the service whether a
+   * publication is already recorded, then reserves and completes it here. The
+   * service is the only writer of these two tables (#1411 C-09).
+   */
+  async hasPublicationIntent(assessmentId: string): Promise<boolean> {
+    return (
+      (await this.db
+        .prepare(
+          "SELECT assessment_id FROM vetting_publication_intents WHERE assessment_id = ?",
+        )
+        .bind(assessmentId)
+        .first()) !== null
+    );
+  }
+
+  /** Reserves one publication. A second reservation for the same assessment conflicts. */
+  async reservePublicationIntent(
+    intent: PublicationIntent,
+  ): Promise<"reserved" | "conflict"> {
+    {
+      const row = await this.db
+        .prepare(
+          `INSERT INTO vetting_publication_intents(assessment_id,result_sha256,origin,disposition)
+           VALUES(?,?,?,?) ON CONFLICT(assessment_id) DO NOTHING RETURNING assessment_id`,
+        )
+        .bind(
+          intent.assessmentId,
+          intent.resultSha256,
+          intent.origin,
+          intent.disposition,
+        )
+        .first();
+      // ON CONFLICT DO NOTHING settles a second reservation by returning no row.
+      return row ? "reserved" : "conflict";
+    }
+  }
+
+  /**
+   * Records the receipt of a reserved publication. A receipt without its intent
+   * is refused, and one receipt per assessment is the rule: a second is reported
+   * as a duplicate rather than replacing the first.
+   */
+  async completePublicationReceipt(
+    receipt: PublicationReceipt,
+  ): Promise<"recorded" | "missing" | "duplicate"> {
+    try {
+      const row = await this.db
+        .prepare(
+          `INSERT INTO vetting_publication_receipts(assessment_id,outcome,http_status)
+           SELECT assessment_id,?,? FROM vetting_publication_intents
+           WHERE assessment_id = ? AND result_sha256 = ? AND origin = ? AND disposition = ?
+           RETURNING assessment_id`,
+        )
+        .bind(
+          receipt.outcome,
+          receipt.httpStatus,
+          receipt.assessmentId,
+          receipt.resultSha256,
+          receipt.origin,
+          receipt.disposition,
+        )
+        .first();
+      return row ? "recorded" : "missing";
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE/u.test(error.message))
+        return "duplicate";
+      throw error;
+    }
+  }
+
   /** Every revision of a project, oldest first, with its content digest. */
   async revisionContents(projectId: string): Promise<
     {
@@ -425,8 +517,8 @@ export class CloudflareVettingPersistence {
     try {
       await this.db
         .prepare(
-          `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, flag_ids)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending',
+          `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, replaces_assessment_id, flag_ids)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?,
              (SELECT json_group_array(id) FROM (SELECT id FROM project_flags WHERE project_id = ? AND state = 'active' ORDER BY id))
            WHERE ? IS NULL OR EXISTS (
              SELECT 1 FROM vetting_assessments previous
@@ -446,6 +538,7 @@ export class CloudflareVettingPersistence {
           assessment.requestedBy.githubLogin,
           assessment.requestedAt,
           assessment.requestReason,
+          replacesPendingId ?? null,
           assessment.projectId,
           replacesPendingId ?? null,
           replacesPendingId ?? null,
@@ -785,6 +878,28 @@ export class CloudflareVettingPersistence {
         const covered = new Set(
           JSON.parse(exempt.covered_assessment_ids) as string[],
         );
+        const replacements = await this.db
+          .prepare(
+            "SELECT id, replaces_assessment_id FROM vetting_assessments WHERE project_id = ? AND replaces_assessment_id IS NOT NULL",
+          )
+          .bind(projectId)
+          .all<{ id: string; replaces_assessment_id: string }>();
+        const predecessor = new Map(
+          replacements.results.map((row) => [
+            row.id,
+            row.replaces_assessment_id,
+          ]),
+        );
+        // Only a persisted automatic retry continues a covered request.
+        // The free-form reason alone never grants exemption coverage.
+        for (let index = 1; index < assessments.length; index += 1)
+          if (
+            predecessor.get(assessments[index].id) ===
+              assessments[index - 1].id &&
+            covered.has(assessments[index - 1].id) &&
+            replacesTemplate(assessments[index], assessments[index - 1])
+          )
+            covered.add(assessments[index].id);
         if (assessments.every((assessment) => covered.has(assessment.id)))
           return {
             state: "cleared",

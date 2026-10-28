@@ -8,6 +8,8 @@ const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
 
+test.use({ video: "on" });
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
@@ -72,6 +74,8 @@ test("retained awards URLs resolve during client navigation with query and fragm
     await expect(
       page.getByRole("region", { name: "Funds and awards" }),
     ).toBeAttached();
+    await page.waitForLoadState("networkidle");
+    await expect(page).toHaveURL(`/projects/eliza${expected}`);
   }
   await expectAccessible(page);
   await page.screenshot({ path: info.outputPath("retained-awards-route.png") });

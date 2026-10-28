@@ -1,6 +1,7 @@
 /** NOT-01 complete preference -> source notification -> private Worker delivery path. */
 import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
+import type { ProjectEnforcement } from "../../src/lib/project-contracts";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
@@ -10,6 +11,7 @@ import {
   parseActivityMailConfig,
 } from "../../workers/notify/activity";
 import { reconcileSecurityMail } from "../../workers/notify/security";
+import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
 import type { SecurityD1Database } from "../security/handler";
 import { handleEmailPreferences } from "./email";
 import { notifyProjectEnforcement, notifyVettingBanAudience } from "./events";
@@ -647,5 +649,132 @@ test("vetting ban mail rechecks affected contributors and current staff after an
     } finally {
       h.sqlite.close();
     }
+  }
+});
+
+test("a reinstatement review mails only a current moderator", async () => {
+  const h = setup();
+  try {
+    // Accounts 101 and 102 are moderators with verified, consented mail.
+    for (const id of ["101", "102"]) {
+      h.mail.config.recipients[id] = {
+        ...h.mail.config.recipients["101"],
+        email: `moderator${id}@example.com`,
+      };
+      const current = await h.call("GET", undefined, id);
+      expect(
+        (
+          await h.call(
+            "POST",
+            {
+              enabled: true,
+              destinationVersion: current.body.destinationVersion,
+            },
+            id,
+          )
+        ).status,
+      ).toBe(200);
+    }
+    const at = h.now().toISOString();
+    const manifest = JSON.stringify({
+      id: "review-project",
+      status: "paused",
+      repositories: [{ id: "example/review-project" }],
+      steward: { github: { actorId: "303" } },
+    });
+    h.sqlite
+      .query(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES ('review-project',1,?,?,'Fixture','303','owner',?)",
+      )
+      .run(manifest, "a".repeat(64), at);
+    h.sqlite
+      .query(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES ('review-project','paused',1,?,?,?,?)",
+      )
+      .run(manifest, "a".repeat(64), at, at);
+    const record = (
+      sequence: number,
+      action: ProjectEnforcement["action"],
+      appealAfter: ProjectEnforcement["appealAfter"],
+      actor: { githubId: string; githubLogin: string },
+      actorRole: ProjectEnforcement["actorRole"],
+      decisionSource: ProjectEnforcement["decisionSource"],
+    ): ProjectEnforcement => ({
+      id: `enf_reviewrecord${sequence}`,
+      projectId: "review-project",
+      sequence,
+      action,
+      stateAfter: "quarantined",
+      appealAfter,
+      reason: "Private moderation reason",
+      evidenceReference: "private-evidence-1",
+      repositoryGithubId: "123",
+      repositoryKeys: ["example/review-project"],
+      actor,
+      actorRole,
+      decisionSource,
+      beforeRevision: 1,
+      beforeManifestSha256: "a".repeat(64),
+      afterRevision: null,
+      afterManifestSha256: null,
+      result: "no_revision_needed",
+      createdAt: at,
+    });
+    const persistence = new CloudflareProjectPersistence(h.db as never);
+    expect(
+      await persistence.appendEnforcement(
+        record(
+          1,
+          "quarantine",
+          "none",
+          { githubId: "104", githubLogin: "moderator104" },
+          "project-moderator",
+          "admin-panel",
+        ),
+        null,
+        [],
+      ),
+    ).toBe("recorded");
+    // The owner's request reaches both independent moderators (ELG-02).
+    expect(
+      await persistence.appendEnforcement(
+        record(
+          2,
+          "request_reinstatement",
+          "requested",
+          { githubId: "303", githubLogin: "owner" },
+          "project-steward",
+          "owner-request",
+        ),
+        null,
+        ["101", "102"],
+      ),
+    ).toBe("recorded");
+    expect(h.rows()).toHaveLength(2);
+    // Before the send, account 102 stops being a moderator.
+    h.mail.moderatorGithubIds = new Set(["101", "104"]);
+    await dispatchActivityMail(h.mail);
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]).toContain("To: moderator101@example.com");
+    expect(
+      Object.fromEntries(
+        (
+          h.rows() as unknown as {
+            recipient_github_id: string;
+            state: string;
+          }[]
+        ).map((row) => [row.recipient_github_id, row.state]),
+      ),
+    ).toEqual({ "101": "provider-accepted", "102": "suppressed" });
+    // The inbox notice itself stays.
+    expect(
+      h.sqlite
+        .query(
+          "SELECT kind FROM notifications WHERE event_key='reinstatement-review:enf_reviewrecord2' AND recipient_github_id='102'",
+        )
+        .get(),
+    ).toEqual({ kind: "reinstatement_review" });
+  } finally {
+    h.sqlite.close();
   }
 });

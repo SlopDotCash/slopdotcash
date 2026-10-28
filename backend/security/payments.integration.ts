@@ -249,6 +249,7 @@ async function call(
               author: reporter,
               summary: "Synthetic report",
               description: "Synthetic local funds-loss example.",
+              referenceLines: [],
               severity: null,
               cweIds: [],
               packages: [],

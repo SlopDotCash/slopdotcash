@@ -19,6 +19,7 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
 import type { ConversionRow } from "./core";
 import { createEvmClient } from "./evm";
+import { runOnce } from "./index";
 import { NativeGasJournal, type NativeGasLimits } from "./native-gas";
 import { parseTransaction as parseSolanaWire } from "./solana";
 import { LOOKUP_TABLE_PROGRAM, resolveSolanaAccounts } from "./solana-accounts";
@@ -386,6 +387,105 @@ test("business failure and router expiry do not release signed gas; overruns hol
   await expect(h.reserve(h.tx(1))).rejects.toThrow(
     "exceeded its reserved maximum",
   );
+});
+
+test("a later run signs at the nonce of a swap dropped after its router deadline and keeps its gas", async () => {
+  const h = await fixture();
+  // The swap at nonce 0 never reached a block. The fee wallet ran out of gas
+  // or the node dropped it, and its 20-minute router deadline has passed.
+  const expired = await h.commit();
+  // While that send is open, its nonce stays held.
+  await expect(h.reserve(h.tx(0, 200n))).rejects.toThrow("already reserved");
+  await h.store.releaseLock("ethereum", h.run, h.now());
+  const word = (value: bigint) => `0x${value.toString(16).padStart(64, "0")}`;
+  const sent: string[] = [];
+  const rpcFetch = (async (url: unknown, init?: RequestInit) => {
+    if (String(url).startsWith("https://aggregator-api.kyberswap.com/")) {
+      const u = new URL(String(url));
+      const native = u.searchParams.get("tokenIn")?.startsWith("0xeeee");
+      return Response.json({
+        code: 0,
+        data: {
+          routerAddress: h.config.networks[0].definition.router,
+          routeSummary: {
+            tokenIn: u.searchParams.get("tokenIn"),
+            tokenOut: h.config.networks[0].definition.usdc,
+            amountIn: u.searchParams.get("amountIn"),
+            amountOut: native ? "1000" : "10000000",
+            amountInUsd: "10",
+            amountOutUsd: "10",
+            gasUsd: "0",
+            route: [],
+          },
+        },
+      });
+    }
+    const q = JSON.parse(String(init?.body));
+    let result: unknown;
+    // The node knows neither the swap nor a receipt; nonce 0 is still unused.
+    if (
+      q.method === "eth_getTransactionReceipt" ||
+      q.method === "eth_getTransactionByHash"
+    )
+      result = null;
+    else if (q.method === "eth_getTransactionCount") result = "0x0";
+    else if (q.method === "eth_call")
+      result = q.params[0].data.startsWith("0x70a08231")
+        ? word(q.params[0].to === token ? 10_000_000n : 0n)
+        : word(0n); // allowance
+    else if (q.method === "eth_estimateGas") result = "0x5208";
+    else if (q.method === "eth_getBlockByNumber")
+      result = {
+        number: "0x10",
+        hash: hash(1),
+        baseFeePerGas: "0x64",
+        timestamp: "0x1",
+        transactions: [],
+      };
+    else if (q.method === "eth_maxPriorityFeePerGas") result = "0x1";
+    else if (q.method === "eth_sendRawTransaction") {
+      sent.push(q.params[0]);
+      result = keccak256(q.params[0]);
+    } else throw new Error(`Unapproved test request ${q.method}`);
+    return Response.json({ jsonrpc: "2.0", id: q.id, result });
+  }) as typeof fetch;
+  await runOnce(
+    {
+      ...h.env,
+      FEE_DB: h.db,
+      FEE_WALLET_KEY_ETHEREUM: h.key,
+      FEE_CONVERTER_ALLOWLIST: JSON.stringify({ ethereum: [token] }),
+    },
+    h.now,
+    { fetch: rpcFetch },
+  );
+  // The expired swap closes as failed, and the same run signs the next send
+  // for the token at the nonce that is still free.
+  expect(
+    h.sqlite
+      .query(
+        "SELECT kind, state, reason, evm_nonce FROM fee_conversions ORDER BY rowid",
+      )
+      .all(),
+  ).toEqual([
+    {
+      kind: "conversion",
+      state: "failed",
+      reason: "router deadline passed before inclusion",
+      evm_nonce: 0,
+    },
+    { kind: "approval", state: "submitted", reason: null, evm_nonce: 0 },
+  ]);
+  expect(sent).toHaveLength(1);
+  expect(parseTransaction(sent[0] as Hex).nonce).toBe(0);
+  // The expired swap keeps its signed gas until a receipt settles nonce 0.
+  const attempts = await h.journal.rows();
+  expect(
+    attempts.map((r) => [r.tx_id, r.nonce, r.state, r.actual_wei]),
+  ).toEqual([
+    [expired.txId, 0, "signed", null],
+    [keccak256(sent[0] as Hex), 0, "signed", null],
+  ]);
 });
 
 test("legacy approval and swap hashes both enter accounting with independently proved nonces", async () => {
