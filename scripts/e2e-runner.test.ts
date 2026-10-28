@@ -118,7 +118,7 @@ for (const stdio of ["inherit", "ignore"]) {
     async () => {
       const directory = mkdtempSync(join(tmpdir(), "slop-phase-failure-"));
       const ready = join(directory, "ready");
-      const descendant = `const server = require("node:net").createServer(); server.listen(0, "127.0.0.1", () => require("node:fs").writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ pid: process.pid, port: server.address().port })));`;
+      const descendant = `const fs = require("node:fs"); const server = require("node:net").createServer(); server.listen(0, "127.0.0.1", () => { fs.writeFileSync(${JSON.stringify(`${ready}.tmp`)}, JSON.stringify({ pid: process.pid, port: server.address().port })); fs.renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)}); });`;
       // A launcher can fail after starting a server. Inherited pipes must not
       // keep the phase alive until its full deadline, and ignored pipes must
       // not let the phase return while the server is still running.
