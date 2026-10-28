@@ -1579,7 +1579,7 @@ async function recordPrivateReports(
 
 /**
  * Whether `report` is GitHub's copy of a report saved on Slop: its author
- * saved a report in this project whose reference line the description
+ * saved a report in this project whose reference line the whole description
  * carries (the same line rule as receipt verification).
  */
 async function forwardOfSavedReport(
@@ -1593,9 +1593,7 @@ async function forwardOfSavedReport(
     )
     .bind(projectId, report.author.githubId)
     .all<{ marker: string }>();
-  const lines = new Set(
-    report.description.split(/\r?\n/u).map((line) => line.trim()),
-  );
+  const lines = new Set(report.referenceLines);
   return (saved.results ?? []).some((row) => lines.has(markerLine(row.marker)));
 }
 
