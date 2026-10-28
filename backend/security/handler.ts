@@ -142,7 +142,6 @@ type ReportingProject = {
   revision: number;
 } | null;
 
-
 export type Role =
   | "reporter"
   | "security-maintainer"
