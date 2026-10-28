@@ -28,6 +28,7 @@ async function uncertainReview(
     deliver: (jobs: Job[]) => Promise<void>;
     setDraft: (v: boolean) => void;
     setMaintainerComments: (value: boolean) => void;
+    setExtraTimeline: (entries: Record<string, unknown>[]) => void;
     setVerdict: (category: Category, nextConfidence: number) => void;
     job: (kind: string, extra: Record<string, unknown>) => Job;
     reopen: () => Promise<Job>;
@@ -74,6 +75,7 @@ async function uncertainReview(
   );
   const repositoryId = Number(project.authority.repositoryId);
   let pullDraft = false;
+  let extraTimeline: Record<string, unknown>[] = [];
   let currentCategory: Category = "busywork";
   let currentConfidence = confidence;
   const interleavings = new Map<string, () => Promise<void>>();
@@ -198,6 +200,7 @@ async function uncertainReview(
                 },
               ]
             : []),
+          ...extraTimeline,
           {
             event: "commented",
             created_at: new Date().toISOString(),
@@ -287,6 +290,9 @@ async function uncertainReview(
       },
       setMaintainerComments: (value) => {
         maintainerComments = value;
+      },
+      setExtraTimeline: (entries) => {
+        extraTimeline = entries;
       },
       setVerdict: (category: Category, nextConfidence: number) => {
         currentCategory = category;
@@ -407,6 +413,35 @@ test("a maintainer who acts inside the window keeps the decision; Slopbot adds n
     expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
       { outcome: "maintainer_acted" },
     ]);
+  });
+});
+
+test("an author's @mention of a maintainer is not maintainer action", async () => {
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    expect(await run.review()).toMatch(/^held for maintainer until /);
+    setSystemTime(new Date(start + 8 * day));
+    // The author comments "@maintainer please take a look". GitHub records
+    // `mentioned` and `subscribed` timeline events whose actor is the
+    // mentioned maintainer, although the maintainer did nothing.
+    const at = new Date(start + 1 * day).toISOString();
+    run.setExtraTimeline([
+      {
+        event: "mentioned",
+        created_at: at,
+        actor: { login: "maintainer", id: 43 },
+      },
+      {
+        event: "subscribed",
+        created_at: at,
+        actor: { login: "maintainer", id: 43 },
+      },
+    ]);
+    await run.deliver(await run.tick());
+    expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+      { outcome: "labeled" },
+    ]);
+    expect(run.labels).toEqual([{ name: "slopbot:uncertain" }]);
   });
 });
 

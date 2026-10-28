@@ -2470,11 +2470,20 @@ async function itemRevision(github: GitHubClient, job: Job, issue: Issue) {
 }
 
 type TimelineEntry = {
+  event?: string;
   created_at?: string;
   submitted_at?: string;
   actor?: { login: string; id: number } | null;
   user?: { login: string; id: number } | null;
 };
+
+// GitHub records these with the mentioned or notified account as the actor,
+// so anyone's @mention of a maintainer would otherwise count as their action.
+const PASSIVE_TIMELINE_EVENTS = new Set([
+  "mentioned",
+  "subscribed",
+  "unsubscribed",
+]);
 
 /** True when a repository maintainer acted on the item since the hold began:
  * any comment, review, label, assignment or state change. Unknown maintainer
@@ -2500,6 +2509,7 @@ async function maintainerActedSince(
       const actor = entry.actor ?? entry.user;
       if (
         at === undefined ||
+        PASSIVE_TIMELINE_EVENTS.has(entry.event ?? "") ||
         Date.parse(at) < Date.parse(since) ||
         !actor ||
         String(actor.id) === env.SLOPBOT_APP_USER_ID
