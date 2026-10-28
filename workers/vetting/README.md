@@ -73,7 +73,10 @@ The flow for one queued assessment:
    is `clean` only if the intake rules accept clean, and `incomplete` in every
    other case.
 6. Retain the private report, inventory, dependency locks and every named
-   artifact under the scan run in the restricted evidence store
+   artifact under the scan run (any size: objects above 8 MiB go as ordered
+   8 MiB parts and are finalized, and digests the store reports as already
+   `stored` are referenced rather than uploaded again) in the restricted
+   evidence store
    ([EVIDENCE.md](../../backend/vetting/EVIDENCE.md)), then publish once with
    `publishResult` ([PUBLICATION.md](PUBLICATION.md)).
 

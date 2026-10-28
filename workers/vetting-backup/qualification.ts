@@ -27,6 +27,7 @@ export const qualificationMigrations = [
   "0066_vetting_case_retention.sql",
   "0067_vetting_audit_retention.sql",
   "0068_vetting_storage_cycles.sql",
+  "0107_vetting_content_addressed_evidence.sql",
 ];
 // The assessment is synthetic; all evidence tables and their guards use the
 // real migrations. No project, scan result or operational attestation is made.
@@ -166,7 +167,7 @@ async function seed(env: Environment) {
     .run();
   await db
     .prepare(
-      "INSERT OR IGNORE INTO vetting_evidence_objects VALUES(?,?,?,?,?,?,?,?,?)",
+      "INSERT OR IGNORE INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks) VALUES(?,?,?,?,?,?,?,?,?)",
     )
     .bind(
       assessment,

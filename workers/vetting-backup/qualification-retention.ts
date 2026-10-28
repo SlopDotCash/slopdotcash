@@ -123,7 +123,7 @@ export async function qualifyRetention(
       .run();
     await db
       .prepare(
-        "INSERT INTO vetting_evidence_objects VALUES(?,'run',?,?,'trace','Harmless retention fixture','application/octet-stream',?,?)",
+        "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks) VALUES(?,'run',?,?,'trace','Harmless retention fixture','application/octet-stream',?,?)",
       )
       .bind(id, sha, data.length, key, chunks ? JSON.stringify(chunks) : null)
       .run();

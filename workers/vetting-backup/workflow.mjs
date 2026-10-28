@@ -74,6 +74,7 @@ try {
     "0066_vetting_case_retention.sql",
     "0067_vetting_audit_retention.sql",
     "0068_vetting_storage_cycles.sql",
+    "0107_vetting_content_addressed_evidence.sql",
   ])
     for (const query of splitSqlQuery(
       await readFile(`migrations/${migration}`, "utf8"),
@@ -288,6 +289,63 @@ try {
       await source.put(key, data, options(data));
     retainedCases.push({ id, age, keys });
   }
+  // Content-addressed objects (migration 0107): one stored copy serves every
+  // run that declares its digest. An expired reference gets its receipt, but
+  // the bytes stay while permanent admission evidence still references them;
+  // an object no other reference needs is deleted.
+  const sharedData = Buffer.alloc(12, 5),
+    soleData = Buffer.alloc(13, 6);
+  const contentKey = (bytes) => `vetting/objects/${digest(bytes)}`;
+  for (const [id, bytes, permanent] of [
+    ["vet_shared_expired", sharedData, false],
+    ["vet_shared_permanent", sharedData, true],
+    ["vet_content_expired", soleData, false],
+  ]) {
+    const sha = digest(bytes);
+    await db
+      .prepare(
+        "INSERT INTO vetting_assessments(id,state,completed_at,result) VALUES(?,?,?,?)",
+      )
+      .bind(
+        id,
+        permanent ? "clean" : "incomplete",
+        new Date(now - 91 * 86400_000).toISOString(),
+        permanent
+          ? JSON.stringify({
+              schemaVersion: "slop-vetting-result-v2",
+              disposition: "clean",
+            })
+          : null,
+      )
+      .run();
+    if (!permanent)
+      await db
+        .prepare(
+          "INSERT INTO vetting_evidence_case_closures VALUES(?,?, 'fixture', 'fixture closure')",
+        )
+        .bind(id, new Date(now - 91 * 86400_000).toISOString())
+        .run();
+    await db
+      .prepare(
+        "INSERT INTO vetting_evidence_runs VALUES(?,'run',?,?,?,'{}',?,?)",
+      )
+      .bind(
+        id,
+        sha,
+        sha,
+        "{}",
+        new Date(now).toISOString(),
+        new Date(now).toISOString(),
+      )
+      .run();
+    await db
+      .prepare(
+        "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage) VALUES(?,'run',?,?,'trace','fixture','application/octet-stream',?,NULL,'content')",
+      )
+      .bind(id, sha, bytes.length, `vetting/${id}/run/${sha}`)
+      .run();
+    await source.put(contentKey(bytes), bytes, options(bytes));
+  }
   const cleanupJobs = [];
   const retentionEnv = {
     ...env,
@@ -370,13 +428,25 @@ try {
         "only uploaded bytes have verified backup copies",
       );
     }
-  assert.equal(
+  assert.ok(
+    await source.head(contentKey(sharedData)),
+    "bytes a retained reference still needs are kept",
+  );
+  assert.equal(await source.head(contentKey(soleData)), null);
+  assert.deepEqual(
     (
       await db
-        .prepare("SELECT COUNT(*) AS count FROM vetting_evidence_deletions")
-        .first()
-    ).count,
-    2,
+        .prepare(
+          "SELECT assessment_id FROM vetting_evidence_deletions ORDER BY assessment_id",
+        )
+        .all()
+    ).results.map((row) => row.assessment_id),
+    [
+      "vet_content_expired",
+      "vet_expired_chunks",
+      "vet_expired_single",
+      "vet_shared_expired",
+    ],
   );
   assert.ok(await source.head("permanent-contributor-trace"));
   assert.equal(
@@ -429,13 +499,25 @@ try {
     ).count,
     38,
   );
-  assert.equal(
+  assert.ok(
+    await source.head(contentKey(sharedData)),
+    "bytes a retained reference still needs are kept",
+  );
+  assert.equal(await source.head(contentKey(soleData)), null);
+  assert.deepEqual(
     (
       await db
-        .prepare("SELECT COUNT(*) AS count FROM vetting_evidence_deletions")
-        .first()
-    ).count,
-    2,
+        .prepare(
+          "SELECT assessment_id FROM vetting_evidence_deletions ORDER BY assessment_id",
+        )
+        .all()
+    ).results.map((row) => row.assessment_id),
+    [
+      "vet_content_expired",
+      "vet_expired_chunks",
+      "vet_expired_single",
+      "vet_shared_expired",
+    ],
   );
 
   // Storage corruption prevents completion; it is never a skipped object.
