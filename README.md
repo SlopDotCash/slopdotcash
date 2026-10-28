@@ -196,7 +196,13 @@ Install the lockfile before preparing the ledger input:
 
 ```bash
 bun install --frozen-lockfile
+bun run projects:sync
 ```
+
+The registry sync reads the public D1 API without credentials, as PR CI does.
+Award and skill validation need those project identities; the committed empty
+bootstrap registry is not a replacement for the live snapshot. Do not commit
+the generated snapshot from local checks.
 
 Choose one ledger preparation path. With live GitHub credentials, collect the
 current ledger:

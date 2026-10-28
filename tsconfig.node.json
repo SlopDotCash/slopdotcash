@@ -83,6 +83,8 @@
     "src/lib/project-view.ts",
     "src/lib/global-leaderboard.ts",
     "src/lib/contributor-standings.ts",
+    "src/lib/received-totals.ts",
+    "src/lib/points-summary.ts",
     "src/lib/use-snapshot.ts",
     "src/lib/profile-activity.ts",
     "src/lib/reward-cycle.ts",

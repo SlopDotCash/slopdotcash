@@ -1,39 +1,95 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
   readdir,
   readFile,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { acquireRepository } from "./acquire";
+import { basename, join } from "node:path";
+import { AcquisitionRefusal, acquireRepository } from "./acquire";
 
 let root: string;
 let repository: string;
+let output: string;
 let commitSha: string;
-let treeSha: string;
-let entries: { mode: string; type: string; sha: string; path: string }[];
-let corrupt: "none" | "blob" | "tree" | "orphan" | "redirect" = "none";
 let server: ReturnType<typeof Bun.serve>;
-const methods: string[] = [];
-const git = (...args: string[]) => {
+const git = (cwd: string, ...args: string[]) => {
   const result = spawnSync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
-    cwd: repository,
+    cwd,
+    env: { PATH: process.env.PATH, HOME: root, GIT_CONFIG_NOSYSTEM: "1" },
   });
   if (result.status !== 0) throw new Error(result.stderr.toString());
-  return result.stdout;
+  return result.stdout.toString().trim();
 };
+const commit = (cwd: string, message: string) => {
+  git(
+    cwd,
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "--no-gpg-sign",
+    "-qm",
+    message,
+  );
+  return git(cwd, "rev-parse", "HEAD");
+};
+const sha256 = (bytes: Uint8Array) =>
+  createHash("sha256").update(bytes).digest("hex");
+/** Everything a failed acquisition might leave behind in its parent. */
+const leftovers = async () => (await readdir(output)).sort();
+
+/** A loopback smart-HTTP server over the real `git http-backend`. */
+async function httpBackend(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname.startsWith("/moved/"))
+    return Response.redirect(
+      `http://127.0.0.1:${server.port}${url.pathname.slice("/moved".length)}${url.search}`,
+      301,
+    );
+  const child = Bun.spawn(["git", "http-backend"], {
+    env: {
+      PATH: process.env.PATH ?? "",
+      GIT_PROJECT_ROOT: root,
+      GIT_HTTP_EXPORT_ALL: "1",
+      PATH_INFO: url.pathname,
+      QUERY_STRING: url.search.slice(1),
+      REQUEST_METHOD: request.method,
+      CONTENT_TYPE: request.headers.get("content-type") ?? "",
+      GIT_PROTOCOL: request.headers.get("git-protocol") ?? "",
+      REMOTE_ADDR: "127.0.0.1",
+    },
+    stdin: request.body ? new Uint8Array(await request.arrayBuffer()) : null,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const raw = Buffer.from(await new Response(child.stdout).arrayBuffer());
+  const split = raw.indexOf("\r\n\r\n");
+  const headers = new Headers();
+  let status = 200;
+  for (const line of raw.subarray(0, split).toString().split("\r\n")) {
+    const [name, ...value] = line.split(": ");
+    if (name.toLowerCase() === "status") status = Number.parseInt(value[0], 10);
+    else headers.set(name, value.join(": "));
+  }
+  return new Response(raw.subarray(split + 4), { status, headers });
+}
 
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "slop-acquisition-test-"));
   repository = join(root, "repo");
+  output = join(root, "out");
+  await mkdir(output);
   await mkdir(repository);
-  git("init", "-q");
+  git(repository, "init", "-q");
   await mkdir(join(repository, "nested"));
   await writeFile(
     join(repository, "nested", "payload.sh"),
@@ -46,136 +102,312 @@ beforeAll(async () => {
       scripts: { preinstall: `touch ${join(root, "executed")}` },
     }),
   );
-  await symlink("../../private", join(repository, "link"));
-  git("add", ".");
-  git(
-    "-c",
-    "user.name=Fixture",
-    "-c",
-    "user.email=fixture@example.invalid",
-    "commit",
-    "--no-gpg-sign",
-    "-qm",
-    "Harmless source fixture",
+  await writeFile(
+    join(repository, "model.bin"),
+    "version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n",
   );
-  commitSha = git("rev-parse", "HEAD").toString().trim();
-  treeSha = git("rev-parse", "HEAD^{tree}").toString().trim();
-  entries = git("ls-tree", "-r", "-t", "HEAD")
-    .toString()
-    .trim()
-    .split("\n")
-    .map((line) => {
-      const [head, path] = line.split("\t");
-      const [mode, type, sha] = head.split(" ");
-      return { mode, type, sha, path };
-    });
-  server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      methods.push(request.method);
-      const path = new URL(request.url).pathname;
-      if (corrupt === "redirect")
-        return Response.redirect("https://example.invalid/", 302);
-      if (path.endsWith(`/commits/${commitSha}`))
-        return Response.json({ sha: commitSha, tree: { sha: treeSha } });
-      if (path.endsWith(`/trees/${treeSha}`))
-        return Response.json({
-          sha: treeSha,
-          truncated: false,
-          tree:
-            corrupt === "tree"
-              ? entries.slice(1)
-              : corrupt === "orphan"
-                ? [
-                    ...entries,
-                    {
-                      ...entries.find((entry) => entry.type === "blob"),
-                      path: "missing/file",
-                    },
-                  ]
-                : entries,
-        });
-      const sha = path.split("/").at(-1) ?? "";
-      if (entries.some((entry) => entry.sha === sha && entry.type === "blob")) {
-        const content = git("cat-file", "blob", sha);
-        return Response.json({
-          sha,
-          encoding: "base64",
-          size: content.length,
-          content:
-            corrupt === "blob"
-              ? Buffer.from("changed").toString("base64")
-              : content.toString("base64"),
-        });
-      }
-      return new Response(null, { status: 404 });
-    },
-  });
+  await symlink("../../private", join(repository, "link"));
+  git(repository, "add", ".");
+  // A gitlink is recorded, never fetched.
+  git(
+    repository,
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `160000,${"1".repeat(40)},vendor/submodule`,
+  );
+  commitSha = commit(repository, "Harmless source fixture");
+  // A hook in the served repository must not run either.
+  await writeFile(
+    join(repository, ".git", "hooks", "reference-transaction"),
+    `#!/bin/sh\ntouch ${join(root, "executed")}\n`,
+    { mode: 0o755 },
+  );
+  server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: httpBackend });
 });
 afterAll(async () => {
   server.stop(true);
   await rm(root, { recursive: true, force: true });
 });
-const fetchFixture: typeof fetch = ((
-  request: string | URL | Request,
-  init?: RequestInit,
-) => {
-  const url = new URL(String(request));
-  expect(url.origin).toBe("https://api.github.com");
-  expect(init?.redirect).toBe("error");
-  expect(new Headers(init?.headers).has("authorization")).toBe(false);
-  return fetch(
-    `http://localhost:${server.port}${url.pathname}${url.search}`,
-    init,
-  );
-}) as typeof fetch;
 
-test("acquires exact real Git objects without checkout, hooks, symlink following or execution", async () => {
-  corrupt = "none";
-  const acquired = await acquireRepository({
-    repository: "fixture/repo",
-    commitSha,
-    directory: root,
-    fetch: fetchFixture,
-  });
+test("fetches the exact commit and stores inert objects without checkout, hooks, links or execution", async () => {
+  // Hooks offered through the operator's own Git configuration are ignored.
+  const hooks = join(root, "operator-hooks");
+  await mkdir(hooks);
+  for (const hook of ["reference-transaction", "post-checkout", "post-merge"])
+    await writeFile(
+      join(hooks, hook),
+      `#!/bin/sh\ntouch ${join(root, "executed")}\n`,
+      { mode: 0o755 },
+    );
+  const operatorConfig = join(root, "operator.gitconfig");
+  await writeFile(
+    operatorConfig,
+    `[core]\n\thooksPath = ${hooks}\n[init]\n\ttemplateDir = ${root}\n`,
+  );
+  const previous = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = operatorConfig;
+  let acquired: Awaited<ReturnType<typeof acquireRepository>>;
+  try {
+    acquired = await acquireRepository({
+      repository: "fixture/repo",
+      commitSha,
+      directory: output,
+      testRemote: `file://${repository}`,
+    });
+  } finally {
+    if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = previous;
+  }
   const inventory = JSON.parse(
     await readFile(join(acquired.directory, "inventory.json"), "utf8"),
   );
   expect(inventory.commitSha).toBe(commitSha);
-  expect(inventory.treeSha).toBe(treeSha);
-  expect(inventory.records).toHaveLength(3);
+  expect(inventory.treeSha).toBe(git(repository, "rev-parse", "HEAD^{tree}"));
+  expect(
+    inventory.records.map((row: { path: string }) => row.path).sort(),
+  ).toEqual(
+    [
+      "link",
+      "model.bin",
+      "nested/payload.sh",
+      "package.json",
+      "vendor/submodule",
+    ].sort(),
+  );
   expect(
     inventory.records.every(
       (row: { state: string }) => row.state === "quarantined",
     ),
   ).toBe(true);
-  expect(inventory.visibilityGaps).toContain("symbolic-link-not-followed");
-  const payload = inventory.records.find(
-    (row: { path: string }) => row.path === "nested/payload.sh",
-  );
+  expect(inventory.visibilityGaps).toEqual([
+    "execution-dependencies-and-release-assets-not-acquired",
+    "lfs-object-not-acquired",
+    "runtime-and-model-review-not-performed",
+    "skill-template-inputs-not-acquired",
+    "submodule-source-not-acquired",
+    "symbolic-link-not-followed",
+  ]);
+  const record = (path: string) =>
+    inventory.records.find((row: { path: string }) => row.path === path);
+  const payload = record("nested/payload.sh");
   expect(
     await readFile(join(acquired.directory, "objects", payload.sha256), "utf8"),
   ).toBe(await readFile(join(repository, "nested", "payload.sh"), "utf8"));
+  expect(
+    (await stat(join(acquired.directory, "objects", payload.sha256))).mode &
+      0o777,
+  ).toBe(0o400);
+  // The link is its target bytes, never followed.
+  expect(
+    await readFile(
+      join(acquired.directory, "objects", record("link").sha256),
+      "utf8",
+    ),
+  ).toBe("../../private");
+  expect(record("vendor/submodule")).toMatchObject({
+    type: "commit",
+    sha256: null,
+  });
   expect((await readdir(acquired.directory)).sort()).toEqual([
     "inventory.json",
     "objects",
   ]);
+  // The Git scratch store is gone; only the acquisition remains.
+  expect(await leftovers()).toEqual([basename(acquired.directory)]);
   expect(await readdir(root)).not.toContain("executed");
-  expect(new Set(methods)).toEqual(new Set(["GET"]));
+  await rm(acquired.directory, { recursive: true, force: true });
 });
 
-test("altered blobs, incomplete trees and redirects leave no completed acquisition", async () => {
-  for (const mode of ["blob", "tree", "orphan", "redirect"] as const) {
-    corrupt = mode;
-    const before = await readdir(root);
+test("a repository beyond the former 1,024-entry, 8 MiB-file and 64 MiB limits is acquired completely", async () => {
+  const large = join(root, "large");
+  await mkdir(join(large, "many"), { recursive: true });
+  git(large, "init", "-q");
+  for (let index = 0; index < 1100; index += 1)
+    await writeFile(
+      join(large, "many", `file-${String(index).padStart(4, "0")}.ts`),
+      `export const value${index} = ${index};\n`,
+    );
+  // 72 MiB in one blob: larger than the old per-file and total caps. Its
+  // varied lines keep the bytes distinct while Git still compresses them.
+  const line = (index: number) =>
+    `${String(index).padStart(10, "0")} ${"x".repeat(53)}\n`;
+  const big = Buffer.from(
+    Array.from({ length: (72 * 1024 * 1024) / 64 }, (_, index) =>
+      line(index),
+    ).join(""),
+  );
+  await writeFile(join(large, "big.txt"), big);
+  git(large, "add", ".");
+  const largeCommit = commit(large, "Large fixture");
+  const started = performance.now();
+  const acquired = await acquireRepository({
+    repository: "fixture/large",
+    commitSha: largeCommit,
+    directory: output,
+    testRemote: `file://${large}`,
+  });
+  const elapsed = performance.now() - started;
+  const inventory = JSON.parse(
+    await readFile(join(acquired.directory, "inventory.json"), "utf8"),
+  );
+  // 1,100 files, the big file and the directory: 1,102 tree entries.
+  expect(inventory.records).toHaveLength(1101);
+  const bigRecord = inventory.records.find(
+    (row: { path: string }) => row.path === "big.txt",
+  );
+  expect(bigRecord.bytes).toBe(big.length);
+  expect(bigRecord.sha256).toBe(sha256(big));
+  expect(
+    sha256(
+      await readFile(join(acquired.directory, "objects", bigRecord.sha256)),
+    ),
+  ).toBe(sha256(big));
+  expect(
+    inventory.records.reduce(
+      (total: number, row: { bytes: number }) => total + row.bytes,
+      0,
+    ),
+  ).toBeGreaterThan(64 * 1024 * 1024);
+  expect(elapsed).toBeLessThan(60_000);
+  await rm(acquired.directory, { recursive: true, force: true });
+}, 120_000);
+
+test("loopback smart HTTP acquires; a redirect, a missing commit and a corrupt object leave nothing", async () => {
+  const served = await acquireRepository({
+    repository: "fixture/repo",
+    commitSha,
+    directory: output,
+    testRemote: `http://127.0.0.1:${server.port}/repo/.git`,
+  });
+  expect(
+    JSON.parse(await readFile(join(served.directory, "inventory.json"), "utf8"))
+      .commitSha,
+  ).toBe(commitSha);
+  await rm(served.directory, { recursive: true, force: true });
+  const before = await leftovers();
+  // Redirects are never followed, even to the same repository.
+  await expect(
+    acquireRepository({
+      repository: "fixture/repo",
+      commitSha,
+      directory: output,
+      testRemote: `http://127.0.0.1:${server.port}/moved/repo/.git`,
+    }),
+  ).rejects.toThrow();
+  expect(await leftovers()).toEqual(before);
+  await expect(
+    acquireRepository({
+      repository: "fixture/repo",
+      commitSha: "2".repeat(40),
+      directory: output,
+      testRemote: `file://${repository}`,
+    }),
+  ).rejects.toThrow();
+  expect(await leftovers()).toEqual(before);
+  // A served object whose bytes no longer match its name.
+  const corrupt = join(root, "corrupt");
+  await mkdir(corrupt);
+  git(corrupt, "init", "-q");
+  await writeFile(join(corrupt, "file.txt"), "original\n");
+  git(corrupt, "add", ".");
+  const corruptCommit = commit(corrupt, "Corrupt fixture");
+  const blob = git(corrupt, "rev-parse", "HEAD:file.txt");
+  const objectPath = join(
+    corrupt,
+    ".git",
+    "objects",
+    blob.slice(0, 2),
+    blob.slice(2),
+  );
+  const other = join(root, "other");
+  await mkdir(other);
+  git(other, "init", "-q");
+  await writeFile(join(other, "file.txt"), "changed\n");
+  git(other, "add", ".");
+  const changed = git(other, "rev-parse", ":file.txt");
+  await rm(objectPath, { force: true });
+  await writeFile(
+    objectPath,
+    await readFile(
+      join(other, ".git", "objects", changed.slice(0, 2), changed.slice(2)),
+    ),
+  );
+  await expect(
+    acquireRepository({
+      repository: "fixture/corrupt",
+      commitSha: corruptCommit,
+      directory: output,
+      testRemote: `file://${corrupt}`,
+    }),
+  ).rejects.toThrow();
+  expect(await leftovers()).toEqual(before);
+});
+
+test("an invalid tree path is a policy refusal; only a local or loopback test remote is accepted", async () => {
+  const odd = join(root, "odd");
+  await mkdir(odd);
+  git(odd, "init", "-q");
+  const blob = spawnSync("git", ["hash-object", "-w", "--stdin"], {
+    cwd: odd,
+    input: "content\n",
+  })
+    .stdout.toString()
+    .trim();
+  const tree = spawnSync("git", ["mktree"], {
+    cwd: odd,
+    input: `100644 blob ${blob}\tbad\u0001name\n`,
+  })
+    .stdout.toString()
+    .trim();
+  const oddCommit = spawnSync(
+    "git",
+    [
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit-tree",
+      tree,
+      "-m",
+      "Odd path",
+    ],
+    { cwd: odd },
+  )
+    .stdout.toString()
+    .trim();
+  git(odd, "update-ref", "refs/heads/main", oddCommit);
+  const before = await leftovers();
+  const refusal = await acquireRepository({
+    repository: "fixture/odd",
+    commitSha: oddCommit,
+    directory: output,
+    testRemote: `file://${odd}`,
+  }).catch((error: unknown) => error);
+  expect(refusal).toBeInstanceOf(AcquisitionRefusal);
+  expect((refusal as AcquisitionRefusal).reason).toBe(
+    "Invalid source tree path or digest",
+  );
+  expect(await leftovers()).toEqual(before);
+  for (const testRemote of [
+    "https://example.com/fixture/repo.git",
+    "http://localhost:1/repo.git",
+    "ssh://127.0.0.1/repo.git",
+  ])
     await expect(
       acquireRepository({
         repository: "fixture/repo",
         commitSha,
-        directory: root,
-        fetch: fetchFixture,
+        directory: output,
+        testRemote,
       }),
-    ).rejects.toThrow();
-    expect(await readdir(root)).toEqual(before);
-  }
+    ).rejects.toThrow("A test remote must be file:// or loopback HTTP");
+  await expect(
+    acquireRepository({
+      repository: "../repo",
+      commitSha,
+      directory: output,
+    }),
+  ).rejects.toBeInstanceOf(AcquisitionRefusal);
+  expect(await leftovers()).toEqual(before);
 });
