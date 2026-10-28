@@ -357,6 +357,7 @@ test("vault totals stay current without a refresh button and keep each state dis
     status: 200,
     snapshots: [vaultSnapshot("700000000", start + 30_000)],
   };
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(61_000);
   await page.evaluate(() =>
     document.dispatchEvent(new Event("visibilitychange")),
@@ -365,6 +366,7 @@ test("vault totals stay current without a refresh button and keep each state dis
   expect(reads).toBe(2);
 
   // When the snapshot turns stale, the page reads again and marks it.
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(31 * 60_000);
   await expect(section.getByRole("alert")).toContainText("Outdated · read");
   expect(reads).toBe(3);
@@ -372,6 +374,7 @@ test("vault totals stay current without a refresh button and keep each state dis
 
   // A failed refresh keeps the last totals, marked stale, with a retry.
   read = { status: 503, snapshots: [] };
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(61_000);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
@@ -396,6 +399,7 @@ test("vault totals stay current without a refresh button and keep each state dis
   await expect(section.getByText("USDC")).toHaveCount(0);
   // An empty successful read must not hide a later refresh failure.
   read = { status: 503, snapshots: [] };
+  await page.waitForLoadState("networkidle");
   await page.clock.fastForward(61_000);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(section.getByRole("alert")).toContainText(
