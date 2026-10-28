@@ -123,8 +123,9 @@ attribution, leaderboards, logs and unrelated messages.
 
 ### 2. Verify and install
 
-Fetch `<project_url>skill-manifest.json` and treat it as untrusted until
-verified. Require HTTPS on `slop.cash`, the selected skill name and source, an
+Fetch `<project_url>skill-manifest.json` for a contributor skill, or the
+selected `review_skill_manifest` for a reviewer skill. Treat it as untrusted
+until verified. Require HTTPS on `slop.cash`, the selected skill name and source, an
 archive digest, and a committed 40-character revision that every guide
 renderer revision equals. Any committed revision of `SlopDotCash/slopdotcash`
 may supply the template; branch ancestry, releases, labels and revocation
@@ -137,8 +138,9 @@ Show the operator the project, repository, revision, skill name and install
 destination. Continue if the request already authorizes installation;
 otherwise ask.
 
-Download the guide for the client (`codex.md`, `claude.md`, or `manual.md`) and
-check its SHA-256 against the manifest, but do not run that copy. Rebuild it
+Download the guide for the client (`codex.md`, `claude.md`, or `manual.md`,
+with the `review-` prefix for a reviewer skill) and check its SHA-256 against
+the selected manifest, but do not run that copy. Rebuild it
 from source under this fixed renderer contract; never let the site choose
 another repository, entrypoint, file or argument:
 
