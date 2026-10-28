@@ -18,6 +18,7 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import { dispatchSecurityMail } from "../../workers/notify/security";
 import { slopbotRepositoryAccess } from "../projects/repository-access";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
+import { type AdvisoryReader, parsePrivateReport } from "./advisories";
 import type { SecurityAnalysisInput, SecurityAnalyzer } from "./analysis";
 import {
   handleSecurityApi,
@@ -259,6 +260,31 @@ function setup(
       };
     },
   };
+  // The App-token reader behind imports and receipt checks, over the same
+  // in-memory GitHub. GitHub's REST author is a User; the fake omits `type`.
+  const asPrivateReport = (advisory: (typeof github.advisories)[number]) =>
+    parsePrivateReport({
+      ...advisory.advisory,
+      author: { ...advisory.advisory.author, type: "User" },
+    });
+  const advisories: AdvisoryReader = {
+    privateReports: async (repository) => ({
+      state: "ok",
+      reports: github.advisories
+        .filter((entry) => entry.repository === repository.toLowerCase())
+        .map(asPrivateReport)
+        .filter((report) => report !== null),
+    }),
+    privateReport: async (repository, ghsa) => {
+      const found = github.advisories.find(
+        (entry) =>
+          entry.repository === repository.toLowerCase() &&
+          entry.advisory.ghsa_id === ghsa,
+      );
+      const report = found ? asPrivateReport(found) : null;
+      return report ? { state: "found", report } : { state: "unavailable" };
+    },
+  };
   const responses: string[] = [];
   let ids = 0;
   let permission: "admin" | "read" = "admin";
@@ -338,6 +364,7 @@ function setup(
         reportingRead,
         intake,
         analyzer,
+        advisories,
         repositoryAccess,
         moderatorGithubIds: new Set([ADMIN.githubId]),
       },
@@ -2164,6 +2191,61 @@ describe("optional GitHub forwarding of a saved report", () => {
     expect(
       (viewed.body.case as { advisory: { ghsa: string } }).advisory.ghsa,
     ).toBeTruthy();
+  });
+  test("an import before the forward settles leaves GitHub's copy to the saved report's case", async () => {
+    const t = setup({ durable: true });
+    const accepted = await t.create(REPORTER, { report: REPORT });
+    expect(accepted.status).toBe(201);
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const [original] = t.cases();
+    const authorization = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+    // GitHub stores the forward, but its answer is lost.
+    t.github.faults.create = "timeout-after-create";
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.body.submission?.state).toBe("uncertain");
+    expect(t.github.advisories).toHaveLength(1);
+    // A report the same researcher filed directly on GitHub is new.
+    t.github.seed(
+      REPO,
+      { id: Number(REPORTER.githubId), login: REPORTER.githubLogin },
+      {
+        summary: "Router accepts an expired signature",
+        description: "A second, unrelated report filed directly on GitHub.",
+      },
+    );
+    const imported = await t.call(MAINTAINER, "POST", "security-cases", {
+      mode: "import",
+      projectId: PROJECT,
+    });
+    expect(imported.body).toEqual({ state: "ok", received: 1 });
+    expect(t.cases()).toHaveLength(2);
+    // The researcher's reconcile links the forward to the saved report's case.
+    t.advance(RECONCILE_QUIET_MS + 1000);
+    const reconciled = await t.reconcile(
+      submission.id,
+      sent.body.submission?.revision as number,
+    );
+    expect(reconciled.body.submission?.state).toBe("receipt-verified");
+    expect(t.row(submission.id).case_id).toBe(original.id);
+    const again = await t.call(MAINTAINER, "POST", "security-cases", {
+      mode: "import",
+      projectId: PROJECT,
+    });
+    expect(again.body).toEqual({ state: "ok", received: 0 });
+    expect(t.cases()).toHaveLength(2);
   });
   test("a human hold prevents forwarding even after earlier GitHub authorization", async () => {
     const t = setup({ durable: true });

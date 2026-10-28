@@ -58,6 +58,7 @@ import {
   type SecurityAnalysisReport,
   type SecurityAnalyzer,
 } from "./analysis";
+import { markerLine } from "./github-advisories";
 import type { IntakeConfig } from "./intake-grant";
 import { prepareSecuritySettlement, securitySettlementView } from "./payments";
 import {
@@ -1437,8 +1438,9 @@ function analysisDependencies(deps: SecurityApiDependencies) {
  * check: the case belongs to that GitHub account, and the receipt time and
  * the program terms in force then are frozen (PRD section 8). A pending link
  * from before automatic receipt by the same author becomes that case. A
- * report that already has a case is left as it is. Returns the newly
- * verified cases; each one gets a private analysis.
+ * report that already has a case is left as it is, and so is GitHub's copy
+ * of a report saved on Slop. Returns the newly verified cases; each one gets
+ * a private analysis.
  */
 async function recordPrivateReports(
   deps: SecurityApiDependencies,
@@ -1459,6 +1461,10 @@ async function recordPrivateReports(
       .bind(input.projectId, report.ghsa, input.projectId, report.ghsa)
       .first<{ id: string }>();
     if (recorded !== null) continue;
+    // A saved report has its case from receipt. Until its forward is linked
+    // (the send is in flight or GitHub's answer was lost), the reporter's
+    // reconcile, not an import, connects GitHub's copy to that case.
+    if (await forwardOfSavedReport(deps, input.projectId, report)) continue;
     const frozen = await termsAtReceipt(
       deps,
       input.projectId,
@@ -1569,6 +1575,28 @@ async function recordPrivateReports(
       packages: entry.report.packages,
     });
   return received.map((entry) => entry.caseId);
+}
+
+/**
+ * Whether `report` is GitHub's copy of a report saved on Slop: its author
+ * saved a report in this project whose reference line the description
+ * carries (the same line rule as receipt verification).
+ */
+async function forwardOfSavedReport(
+  deps: SecurityApiDependencies,
+  projectId: string,
+  report: GithubPrivateReport,
+): Promise<boolean> {
+  const saved = await deps.db
+    .prepare(
+      "SELECT s.marker FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = ? AND s.reporter_github_id = ? AND s.origin = 'slop'",
+    )
+    .bind(projectId, report.author.githubId)
+    .all<{ marker: string }>();
+  const lines = new Set(
+    report.description.split(/\r?\n/u).map((line) => line.trim()),
+  );
+  return (saved.results ?? []).some((row) => lines.has(markerLine(row.marker)));
 }
 
 /**
