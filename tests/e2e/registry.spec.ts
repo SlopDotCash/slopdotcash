@@ -2013,7 +2013,7 @@ test("an owner initializes a legacy monthly project without shortening its accep
     await vaultSetupLink.focus();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(
-      new RegExp(`/projects/${project.id}/funding$`),
+      new RegExp(`/projects/${project.id}#funding$`),
     );
     await expect(
       page.getByRole("heading", { name: /Project vault.*Solana/i }),

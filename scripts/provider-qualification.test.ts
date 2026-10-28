@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { qualifySecurityScreening } from "./qualify-security-screening";
+import {
+  MAXIMUM_ATTEMPTS,
+  qualifySecurityScreening,
+  ScreeningQualificationError,
+  TOTAL_MAXIMUM_MICRO_USD,
+} from "./qualify-security-screening";
 import { qualificationTransport } from "./qualify-value-models";
 
 // Deterministic transport fixtures for the real release wrappers. They prove
@@ -25,6 +30,8 @@ function request() {
     }),
   });
 }
+
+const noSleep = async () => {};
 
 function transport(value: unknown, headers: Record<string, string> = {}) {
   let calls = 0;
@@ -115,6 +122,7 @@ test("release screening wrapper accepts canonical body and legacy receipts", asy
       "synthetic-only",
       false,
       source.fetch,
+      noSleep,
     );
     expect(result.requests).toBe(1);
     expect(result.outcome).toBe("synthetic report classified legitimate");
@@ -129,32 +137,13 @@ test("screening qualification refuses unknown or over-budget costs without retri
       { "x-si-buyer-cost-micro": "75" },
     );
     await expect(
-      qualifySecurityScreening("synthetic-only", false, source.fetch),
+      qualifySecurityScreening("synthetic-only", false, source.fetch, noSleep),
     ).rejects.toThrow();
     expect(source.calls()).toBe(1);
   }
 });
 
-test("screening qualification still refuses incomplete evidence and spam after one call", async () => {
-  for (const decision of ["needs-information", "spam"]) {
-    const source = transport({
-      ...body,
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({ decision, reason: "Synthetic refusal" }),
-        },
-      ],
-      usage: { buyer_cost_micro: 75 },
-    });
-    await expect(
-      qualifySecurityScreening("synthetic-only", false, source.fetch),
-    ).rejects.toThrow(`Synthetic screening returned ${decision}`);
-    expect(source.calls()).toBe(1);
-  }
-});
-
-test("screening refuses body-marked truncation and committed errors despite valid receipts", async () => {
+test("screening refuses body-marked truncation and committed errors after bounded retries", async () => {
   for (const value of [
     { ...body, surplus: { truncated: true }, usage: { buyer_cost_micro: 75 } },
     {
@@ -163,10 +152,182 @@ test("screening refuses body-marked truncation and committed errors despite vali
       usage: { buyer_cost_micro: 75 },
     },
   ]) {
+    // Each billed, incomplete answer is a bounded transient retry; the
+    // release still fails once every attempt is incomplete.
     const source = transport(value, { "x-si-buyer-cost-micro": "75" });
-    await expect(
-      qualifySecurityScreening("synthetic-only", false, source.fetch),
-    ).rejects.toThrow();
-    expect(source.calls()).toBe(1);
+    const error = await failure(
+      qualifySecurityScreening("synthetic-only", false, source.fetch, noSleep),
+    );
+    expect(error.category).toBe("incomplete");
+    expect(source.calls()).toBe(MAXIMUM_ATTEMPTS);
   }
+});
+
+/** Replies with each queued response in order, then repeats the last. */
+function sequence(replies: (() => Response)[]) {
+  let calls = 0;
+  return {
+    calls: () => calls,
+    fetch: (async () => {
+      const reply = replies[Math.min(calls, replies.length - 1)];
+      calls++;
+      return reply();
+    }) as unknown as typeof fetch,
+  };
+}
+
+const json =
+  (value: unknown, status = 200) =>
+  () =>
+    new Response(JSON.stringify(value), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+const ok = json({ ...body, usage: { buyer_cost_micro: 75 } });
+const answer = (text: string) =>
+  json({
+    ...body,
+    content: [{ type: "text", text }],
+    usage: { buyer_cost_micro: 75 },
+  });
+
+async function failure(promise: Promise<unknown>) {
+  try {
+    await promise;
+  } catch (error) {
+    expect(error).toBeInstanceOf(ScreeningQualificationError);
+    return error as ScreeningQualificationError;
+  }
+  throw new Error("expected the qualification to fail");
+}
+
+test("screening dry run checks the request and price bounds without a call", async () => {
+  const source = sequence([ok]);
+  const result = await qualifySecurityScreening(
+    undefined,
+    true,
+    source.fetch,
+    noSleep,
+  );
+  expect(result.outcome).toBe("dry-run; no provider calls");
+  expect(result.requests).toBe(0);
+  expect(source.calls()).toBe(0);
+});
+
+test("screening retries transient failures within the attempt bound", async () => {
+  for (const transient of [
+    json({ type: "error", error: { type: "overloaded_error" } }, 503),
+    json({ type: "error", error: { type: "rate_limit_error" } }, 429),
+    answer("The report looks legitimate."),
+    json({
+      ...body,
+      stop_reason: "max_tokens",
+      usage: { buyer_cost_micro: 75 },
+    }),
+  ]) {
+    const source = sequence([transient, ok]);
+    const result = await qualifySecurityScreening(
+      "synthetic-only",
+      false,
+      source.fetch,
+      noSleep,
+    );
+    expect(result.outcome).toBe("synthetic report classified legitimate");
+    expect(result.requests).toBe(2);
+    expect(result.failedAttempts).toHaveLength(1);
+    expect(source.calls()).toBe(2);
+  }
+});
+
+test("screening reports the category after exhausting transient retries", async () => {
+  const source = sequence([
+    json({ type: "error", error: { type: "overloaded_error" } }, 503),
+  ]);
+  const error = await failure(
+    qualifySecurityScreening("synthetic-only", false, source.fetch, noSleep),
+  );
+  expect(error.category).toBe("http-status");
+  expect(error.detail).toEqual({
+    status: 503,
+    errorType: "overloaded_error",
+    retryable: true,
+  });
+  expect(error.attempts).toHaveLength(MAXIMUM_ATTEMPTS);
+  expect(source.calls()).toBe(MAXIMUM_ATTEMPTS);
+  const thrown = sequence([
+    () => {
+      throw new TypeError("fetch failed");
+    },
+  ]);
+  const network = await failure(
+    qualifySecurityScreening("synthetic-only", false, thrown.fetch, noSleep),
+  );
+  expect(network.category).toBe("network");
+  expect(thrown.calls()).toBe(MAXIMUM_ATTEMPTS);
+  expect(TOTAL_MAXIMUM_MICRO_USD).toBe(MAXIMUM_ATTEMPTS * 1_000_000);
+});
+
+test("screening fails closed at once on a wrong decision or a rejected key", async () => {
+  for (const verdict of ["needs-information", "spam"]) {
+    const wrong = sequence([
+      answer(
+        JSON.stringify({ decision: verdict, reason: "Synthetic refusal" }),
+      ),
+      ok,
+    ]);
+    const decision = await failure(
+      qualifySecurityScreening("synthetic-only", false, wrong.fetch, noSleep),
+    );
+    expect(decision.category).toBe("wrong-decision");
+    expect(decision.detail).toEqual({ decision: verdict });
+    expect(wrong.calls()).toBe(1);
+  }
+  for (const status of [401, 402, 403]) {
+    for (const readable of [true, false]) {
+      const rejected = sequence([
+        readable
+          ? json(
+              { type: "error", error: { type: "authentication_error" } },
+              status,
+            )
+          : () => new Response("Unauthorized", { status }),
+        ok,
+      ]);
+      const error = await failure(
+        qualifySecurityScreening(
+          "synthetic-only",
+          false,
+          rejected.fetch,
+          noSleep,
+        ),
+      );
+      expect(error.category).toBe("http-status");
+      expect(error.detail.status).toBe(status);
+      expect(rejected.calls()).toBe(1);
+    }
+  }
+});
+
+test("screening categories never carry the key or model text", async () => {
+  const secret = "inf_SYNTHETIC_SECRET_VALUE";
+  const source = sequence([answer(`not json ${secret}`)]);
+  const error = await failure(
+    qualifySecurityScreening(secret, false, source.fetch, noSleep),
+  );
+  expect(error.category).toBe("schema-invalid");
+  expect(JSON.stringify(error.attempts)).not.toContain(secret);
+  expect(error.message).not.toContain(secret);
+});
+
+test("screening accepts the requested JSON inside one Markdown fence", async () => {
+  const source = sequence([
+    answer('```json\n{"decision":"legitimate","reason":"Concrete"}\n```'),
+  ]);
+  const result = await qualifySecurityScreening(
+    "synthetic-only",
+    false,
+    source.fetch,
+    noSleep,
+  );
+  expect(result.requests).toBe(1);
 });

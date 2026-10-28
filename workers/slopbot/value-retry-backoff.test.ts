@@ -330,3 +330,46 @@ test("a missing pull request is a terminal, recorded outcome", async () => {
     ),
   ).toBeNull();
 });
+
+test("the parked sweep rotates so every parked repository is rechecked", async () => {
+  const queue = database();
+  const jobs = Array.from({ length: 25 }, (_, i) => ({
+    ...job,
+    deliveryId: `parked-${i}`,
+    repositoryId: 1000 + i,
+    repo: `queue-${i}`,
+  }));
+  await seed(queue, jobs);
+  const at = new Date("2026-10-28T00:00:00.000Z");
+  for (const entry of jobs) {
+    const claim = await claimValueRequest(queue.db, entry.deliveryId, at);
+    if (!claim) throw new Error("claim was refused");
+    await finishValueRequest(queue.db, claim, "parked", null, at);
+  }
+  const sweep = async (minute: number, active = new Set<number>()) => {
+    const checked: number[] = [];
+    const resumed = await resumeParkedValueRequests(
+      queue.db,
+      async ({ repositoryId }) => {
+        checked.push(repositoryId);
+        return active.has(repositoryId);
+      },
+      new Date(at.getTime() + minute * 60_000),
+    );
+    return { checked, resumed };
+  };
+  const first = await sweep(5);
+  expect(first.checked).toHaveLength(20);
+  // The second run starts with the five repositories past the first cutoff.
+  const second = await sweep(10, new Set([1024]));
+  expect(second.checked.slice(0, 5).sort()).toEqual([
+    1020, 1021, 1022, 1023, 1024,
+  ]);
+  expect(second.resumed).toBe(1);
+  expect(new Set([...first.checked, ...second.checked]).size).toBe(25);
+  // The third run continues with the least recently checked repositories:
+  // the five from the first run that the second did not reach.
+  const third = await sweep(15);
+  expect(third.checked.slice(0, 5)).toEqual(first.checked.slice(15, 20));
+  expect(third.checked).not.toContain(1024);
+});

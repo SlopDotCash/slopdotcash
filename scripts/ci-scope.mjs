@@ -51,6 +51,9 @@ if (ui)
     lane("preview-2", "preview", "chromium", "2/2"),
     lane("pages", "pages", "chromium", "1/1"),
   );
+// Root skill edits change raw Markdown and discovery bytes checked by Pages.
+if (!ui && changed(/^skills\/slop\//u))
+  lanes.push(lane("pages", "pages", "chromium", "1/1"));
 if (api)
   lanes.push(
     lane("registry-1", "registry", "chromium firefox", "1/2"),

@@ -123,17 +123,32 @@ export async function activePenalty(
     .first<Penalty>();
 }
 
-/** Reverses the debit once. Later appeals, reopens and retries change nothing. */
+/** Reverses the debit once. Later appeals, reopens and retries change nothing.
+ * A maintainer reopen passes the revision it reopened and its event time: it
+ * reverses only a debit from a close of that revision or a close at or before
+ * the reopen, never a later revision's close that the reopen did not cover.
+ */
 export async function reversePenalty(
   db: D1Database,
   itemNodeId: string,
   reason: "appeal_upheld" | "maintainer_reopen",
+  covered?: { revision: string; occurredAt: string },
 ): Promise<boolean> {
   const result = await db
     .prepare(
-      "UPDATE slopbot_penalties SET reversed_at = ?, reversal = ? WHERE item_node_id = ? AND reversed_at IS NULL",
+      `UPDATE slopbot_penalties SET reversed_at = ?1, reversal = ?2
+       WHERE item_node_id = ?3 AND reversed_at IS NULL
+         AND (?4 IS NULL OR recorded_at <= ?5 OR EXISTS (
+           SELECT 1 FROM slopbot_reviews r
+           WHERE r.review_key = slopbot_penalties.review_key AND r.revision = ?4))`,
     )
-    .bind(new Date().toISOString(), reason, itemNodeId)
+    .bind(
+      new Date().toISOString(),
+      reason,
+      itemNodeId,
+      covered?.revision ?? null,
+      covered?.occurredAt ?? null,
+    )
     .run();
   return (result.meta?.changes ?? 0) === 1;
 }

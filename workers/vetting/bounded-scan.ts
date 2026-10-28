@@ -37,10 +37,14 @@ import {
 } from "./scanners";
 
 export const INVENTORY_SCHEMA = "slop-scan-inventory-v2";
-/** The evidence bundle the model reads; never silently shortened. */
+/**
+ * The envelope of one single-call review: an inventory within it is read by
+ * one model call, exactly as before batching. A larger inventory is never
+ * shortened; `review-plan.ts` splits it across token-budgeted batches.
+ */
 export const MAX_INVENTORY_BYTES = 1024 * 1024;
 export const MAX_INVENTORY_ITEMS = 1024;
-/** A single text file larger than this is a visibility gap, not a skip. */
+/** Text files larger than this are reviewed in consecutive parts of this size. */
 export const MAX_TEXT_FILE_BYTES = 256 * 1024;
 
 export type ScanInputFile = { path: string; bytes: Uint8Array };
@@ -324,6 +328,119 @@ function installHookCommands(path: string, text: string): string[] {
   }
 }
 
+/** JSON that configures tools rather than holding data; always reviewed. */
+const CONFIG_JSON =
+  /(?:^|\/)(?:tsconfig[^/]*|jsconfig[^/]*|\.?eslintrc[^/]*|\.babelrc|babel\.config|\.swcrc|turbo|nx|lerna|vercel|netlify|wrangler|app|manifest|renovate|\.prettierrc|biome|components|project|angular|firebase|now)\.json$/iu;
+const GENERATED =
+  /(?:^|\/)(?:dist|build|out|\.next|\.output|coverage)\/|\.min\.(?:m?js|css)$|(?:^|\/)(?:assets|static|public)\/(?:[^/]+\/)*[^/]+[-.][A-Za-z0-9_-]{8,}\.m?js$/u;
+const VENDORED = /(?:^|\/)(?:vendor|third_party|third-party|node_modules)\//u;
+/** Obfuscation and staged-payload signals that keep a bulk file in model review. */
+const OBFUSCATION =
+  /\beval\s*\(|new\s+Function\s*\(|\batob\s*\(|String\.fromCharCode\s*\((?:\s*\d+\s*,){16}|(?:\\x[0-9a-f]{2}){32}|[A-Za-z0-9+/]{2000,}={0,2}|child_process|\bexecSync\b|\bspawn\s*\(/iu;
+
+/**
+ * Content whose model review adds little over the deterministic checks:
+ * dependency locks, data JSON, generated bundles and vendored copies. Used
+ * only when an inventory exceeds one review call. Install scripts, agent
+ * instructions and manifests are never bulk. A deterministic finding or
+ * obfuscation signal in bulk content sends the model every match in context
+ * (`signalExcerpt`).
+ */
+export function bulkClass(
+  path: string,
+  surfaces: ScanSurface[],
+): "lockfile" | "data" | "generated" | "vendored" | null {
+  if (
+    surfaces.includes("installScripts") ||
+    surfaces.includes("agentInstructions") ||
+    surfaces.includes("manifests")
+  )
+    return null;
+  const lower = path.toLowerCase();
+  if (surfaces.includes("dependencies")) return "lockfile";
+  if (VENDORED.test(lower)) return "vendored";
+  if (GENERATED.test(lower)) return "generated";
+  if (
+    lower.endsWith(".json") &&
+    !CONFIG_JSON.test(lower) &&
+    !lower.includes("/.vscode/") &&
+    !lower.startsWith(".vscode/") &&
+    !lower.startsWith(".claude/") &&
+    !lower.startsWith(".cursor/") &&
+    !lower.startsWith(".github/")
+  )
+    return "data";
+  return null;
+}
+
+const SIGNAL_CONTEXT = 1536;
+/**
+ * The text around every deterministic-rule match and obfuscation signal of a
+ * bulk file, with character offsets; null when there is none. The
+ * deterministic checks still read the whole file.
+ */
+export function signalExcerpt(path: string, text: string): string | null {
+  const matches: [number, number][] = [];
+  for (const pattern of [
+    OBFUSCATION,
+    DOWNLOAD,
+    ...RULES.map((rule) => rule.pattern),
+  ])
+    for (const match of text.matchAll(
+      new RegExp(pattern.source, `g${pattern.flags.replace("g", "")}`),
+    ))
+      matches.push([match.index, Math.min(match[0].length, 4096)]);
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => a[0] - b[0]);
+  const windows: [number, number][] = [];
+  for (const [index, length] of matches) {
+    const start = Math.max(0, index - SIGNAL_CONTEXT);
+    const end = Math.min(text.length, index + length + SIGNAL_CONTEXT);
+    const last = windows[windows.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else windows.push([start, end]);
+  }
+  return [
+    `Signal excerpts of ${path} (${text.length} characters). Deterministic checks read the whole file; this item holds every deterministic-rule match and obfuscation signal with ${SIGNAL_CONTEXT} characters of context.`,
+    ...windows.map(
+      ([start, end]) =>
+        `--- characters ${start}-${end} ---\n${text.slice(start, end)}`,
+    ),
+  ].join("\n");
+}
+
+/** Consecutive parts of at most `size` bytes, split after a newline when possible. */
+export function textParts(text: string, size = MAX_TEXT_FILE_BYTES): string[] {
+  const bytes = Buffer.from(text);
+  if (bytes.length <= size) return [text];
+  const parts: string[] = [];
+  let start = 0;
+  while (start < bytes.length) {
+    let end = Math.min(start + size, bytes.length);
+    if (end < bytes.length) {
+      const newline = bytes.lastIndexOf(10, end - 1);
+      if (newline > start) end = newline + 1;
+      // Never split inside a UTF-8 sequence.
+      while (end > start + 1 && (bytes[end] & 0xc0) === 0x80) end -= 1;
+    }
+    parts.push(bytes.subarray(start, end).toString("utf8"));
+    start = end;
+  }
+  return parts;
+}
+
+/** The inventory item that lists bulk files; never a repository path. */
+export const DETERMINISTIC_COVERAGE_ID = "/slop-scan/deterministic-coverage";
+
+export type DeterministicRecord = {
+  path: string;
+  sha256: string;
+  bytes: number;
+  class: "lockfile" | "data" | "generated" | "vendored";
+  /** The model read every rule match and obfuscation signal as `<path>#signals`. */
+  signals?: true;
+};
+
 export type RepositoryInspection = {
   /** Exact bytes of the evidence bundle the model reads. */
   inventory: Uint8Array;
@@ -336,6 +453,13 @@ export type RepositoryInspection = {
   visibilityGaps: string[];
   /** Download URLs install-time content references. */
   downloads: string[];
+  /**
+   * Bulk content covered by every deterministic check but not sent to the
+   * model; empty unless the inventory exceeds one review call.
+   */
+  deterministic: DeterministicRecord[];
+  /** Paths of reviewed items with a deterministic finding or obfuscation signal. */
+  riskSignals: string[];
 };
 
 /**
@@ -361,22 +485,16 @@ export function inspectRepository(input: {
   const findings: ScanFinding[] = [];
   const artifacts: VettingArtifact[] = [];
   const dependencyLocks: { path: string; sha256: string }[] = [];
-  const items: { id: string; text: string; sha256: string }[] = [];
-  const downloads = new Set<string>();
-  let inventoryBytes = 0;
-  const addItem = (id: string, text: string, surfaces: ScanSurface[]) => {
-    const size = Buffer.byteLength(text) + id.length + 160;
-    if (
-      items.length >= MAX_INVENTORY_ITEMS ||
-      inventoryBytes + size > MAX_INVENTORY_BYTES
-    ) {
-      for (const surface of surfaces) partial.add(surface);
-      gaps.push(`Review inventory budget exceeded at ${id}`);
-      return;
-    }
-    inventoryBytes += size;
-    items.push({ id, text, sha256: sha256(text) });
+  type Candidate = {
+    path: string;
+    sha256: string;
+    bytes: number;
+    text: string;
+    surfaces: ScanSurface[];
+    flagged: boolean;
   };
+  const candidates: Candidate[] = [];
+  const downloads = new Set<string>();
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
     const digest = sha256(file.bytes);
@@ -411,16 +529,14 @@ export function inspectRepository(input: {
     if (surfaces.includes("dependencies"))
       dependencyLocks.push({ path: file.path.slice(0, 500), sha256: digest });
     const text = decode(file.bytes);
-    if (text === null || file.bytes.byteLength > MAX_TEXT_FILE_BYTES) {
+    if (text === null) {
       for (const surface of surfaces) partial.add(surface);
-      gaps.push(
-        text === null
-          ? `Undecodable executable content at ${file.path}`
-          : `Oversized executable content at ${file.path}`,
-      );
+      gaps.push(`Undecodable executable content at ${file.path}`);
       continue;
     }
-    findings.push(...checkText(file.path, text, surfaces));
+    // Every deterministic check reads the whole file, whatever its size.
+    const found = checkText(file.path, text, surfaces);
+    findings.push(...found);
     const hooks = installHookCommands(file.path, text);
     if (hooks.length > 0) {
       counts.installScripts += 1;
@@ -432,8 +548,90 @@ export function inspectRepository(input: {
     if (surfaces.includes("installScripts") || hooks.length > 0)
       for (const match of [text, ...hooks].join("\n").matchAll(DOWNLOAD))
         downloads.add((match[1] ?? match[2]).slice(0, 500));
-    addItem(file.path, text, surfaces);
+    candidates.push({
+      path: file.path,
+      sha256: digest,
+      bytes: file.bytes.byteLength,
+      text,
+      surfaces,
+      flagged: found.length > 0 || hooks.length > 0,
+    });
   }
+  // A large text file is reviewed in consecutive parts; none is skipped.
+  const itemsOf = (candidate: Candidate) =>
+    textParts(candidate.text).map((text, index, parts) => {
+      const id =
+        parts.length === 1
+          ? candidate.path
+          : `${candidate.path}#part-${index + 1}-of-${parts.length}`;
+      return { id, text, sha256: sha256(text) };
+    });
+  let items = candidates.flatMap(itemsOf);
+  const deterministic: DeterministicRecord[] = [];
+  const envelope = (list: typeof items) =>
+    list.length > MAX_INVENTORY_ITEMS ||
+    list.reduce(
+      (total, item) =>
+        total + Buffer.byteLength(item.text) + item.id.length + 160,
+      0,
+    ) > MAX_INVENTORY_BYTES;
+  // Beyond one review call, bulk content is covered by the deterministic
+  // checks above and listed by digest instead of sent to the model.
+  const excerpted = new Set<string>();
+  if (envelope(items)) {
+    items = [];
+    for (const candidate of candidates) {
+      const kind = bulkClass(candidate.path, candidate.surfaces);
+      const excerpt =
+        kind === null ? null : signalExcerpt(candidate.path, candidate.text);
+      // Signals too dense to excerpt in one item keep the whole file reviewed.
+      if (
+        kind === null ||
+        (excerpt !== null && Buffer.byteLength(excerpt) > MAX_TEXT_FILE_BYTES)
+      ) {
+        items.push(...itemsOf(candidate));
+        continue;
+      }
+      deterministic.push({
+        path: candidate.path,
+        sha256: candidate.sha256,
+        bytes: candidate.bytes,
+        class: kind,
+        ...(excerpt === null ? {} : { signals: true as const }),
+      });
+      if (excerpt !== null) {
+        excerpted.add(candidate.path);
+        items.push({
+          id: `${candidate.path}#signals`,
+          text: excerpt,
+          sha256: sha256(excerpt),
+        });
+      }
+    }
+  }
+  // Bulk files are bound into the reviewed inventory by digest, so any change
+  // to one changes the inventory and its reuse key. The id cannot be a
+  // repository path, which never starts with "/".
+  if (deterministic.length > 0) {
+    const text = JSON.stringify({
+      note: "Files covered by every deterministic check and not sent to the model. A file with signals has a <path>#signals item with every rule match and obfuscation signal in context.",
+      files: deterministic,
+    });
+    items.unshift({
+      id: DETERMINISTIC_COVERAGE_ID,
+      text,
+      sha256: sha256(text),
+    });
+  }
+  const bulk = new Set(deterministic.map((record) => record.path));
+  const riskSignals = candidates
+    .filter(
+      (candidate) =>
+        excerpted.has(candidate.path) ||
+        ((candidate.flagged || OBFUSCATION.test(candidate.text)) &&
+          !bulk.has(candidate.path)),
+    )
+    .map((candidate) => candidate.path);
   // The scan does not retrieve install-time downloads; each stays a gap.
   for (const url of [...downloads].sort()) {
     counts.downloads += 1;
@@ -475,12 +673,14 @@ export function inspectRepository(input: {
     dependencyLocks,
     visibilityGaps: gaps,
     downloads: [...downloads].sort(),
+    deterministic,
+    riskSignals,
   };
 }
 
 /**
- * Adds isolated-execution evidence to the inventory the model reads. `add`
- * refuses an item beyond the inventory budget. `finish` records the given
+ * Adds isolated-execution evidence to the inventory the model reads. `finish`
+ * records the given
  * gaps on the inspection and its inventory, then replaces the inventory
  * bytes and digest.
  */
@@ -492,17 +692,9 @@ export function executionInventory(inspection: RepositoryInspection) {
     visibilityGaps: string[];
   };
   return {
-    add(id: string, text: string): boolean {
-      const item = { id, text, sha256: sha256(text) };
-      const candidate = { ...inventory, items: [...inventory.items, item] };
-      if (
-        candidate.items.length > MAX_INVENTORY_ITEMS ||
-        new TextEncoder().encode(JSON.stringify(candidate)).length >
-          MAX_INVENTORY_BYTES
-      )
-        return false;
-      inventory.items.push(item);
-      return true;
+    /** Never refused: a larger inventory is reviewed in batches. */
+    add(id: string, text: string): void {
+      inventory.items.push({ id, text, sha256: sha256(text) });
     },
     finish(gaps: string[]) {
       for (const gap of gaps) {

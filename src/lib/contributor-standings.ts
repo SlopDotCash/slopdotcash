@@ -1,9 +1,12 @@
-/** One display projection for points and finalized principal. */
+/**
+ * One display projection for points and finalized principal. Points follow
+ * the selected period; money received is always the all-time total.
+ */
 
 import { githubUserIdFromNodeId } from "./github-actor";
 import type { ActorRef } from "./leaderboard-types";
-import type { DirectTransfer } from "./payments/contracts";
 import type { PointsMember } from "./points";
+import type { ReceivedContributor } from "./received-totals";
 import type { DataState } from "./use-snapshot";
 
 export function contributorStandings(
@@ -11,10 +14,10 @@ export function contributorStandings(
   members: readonly PointsMember[] | null,
   month: string | null,
   projectId: string,
-  directTransfers: readonly DirectTransfer[] | null = null,
+  received: readonly ReceivedContributor[] | null = null,
 ) {
   // An unavailable source is not an empty history or a complete Paid total.
-  const moneyAvailable = state.status === "ready" && directTransfers !== null;
+  const moneyAvailable = state.status === "ready" && received !== null;
   const currentActors = new Map(
     (members ?? []).map((member) => [member.actor.id, member.actor]),
   );
@@ -47,9 +50,8 @@ export function contributorStandings(
     const cycles = state.cycleIndex.cycles.filter(
       (c) => !projectId || c.projectId === projectId,
     );
-    // Payment occurrence follows finalized settlement time, not the work month.
+    // Money received is all-time whatever points period is selected.
     for (const cycle of cycles) {
-      if (month && !cycle.settledAt?.startsWith(month)) continue;
       for (const contributor of cycle.contributors) {
         if (BigInt(contributor.paidMinor) > 0n) {
           const recipient = row(contributor.actor);
@@ -60,8 +62,8 @@ export function contributorStandings(
       }
     }
   }
-  if (state.status === "ready" && directTransfers !== null) {
-    // Direct transfers name numeric GitHub IDs; rows may carry node IDs.
+  if (state.status === "ready" && received !== null) {
+    // Received totals name numeric GitHub IDs; rows may carry node IDs.
     const byNumericId = new Map<string, ActorRef>();
     for (const actor of [
       ...currentActors.values(),
@@ -72,16 +74,21 @@ export function contributorStandings(
         : githubUserIdFromNodeId(actor.id);
       if (numeric) byNumericId.set(numeric, actor);
     }
-    for (const transfer of directTransfers) {
-      if (projectId && transfer.projectId !== projectId) continue;
-      if (month && !transfer.blockTime.startsWith(month)) continue;
+    for (const contributor of received) {
+      const amount = projectId
+        ? BigInt(
+            contributor.projects.find((p) => p.projectId === projectId)
+              ?.usdMicro ?? "0",
+          )
+        : BigInt(contributor.usdMicro);
+      if (amount === 0n) continue;
       const recipient = row(
-        byNumericId.get(transfer.githubUserId) ?? {
-          id: transfer.githubUserId,
-          login: transfer.login,
+        byNumericId.get(contributor.githubUserId) ?? {
+          id: contributor.githubUserId,
+          login: contributor.login ?? contributor.githubUserId,
         },
       );
-      recipient.money = (recipient.money ?? 0n) + BigInt(transfer.amountMicro);
+      recipient.money = (recipient.money ?? 0n) + amount;
     }
   }
   for (const member of members ?? []) {

@@ -59,7 +59,7 @@ import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
-import { useAllDirectTransfers } from "./lib/use-direct-transfers";
+import { useReceivedTotals } from "./lib/use-received-totals";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
   AccountNav,
@@ -1359,20 +1359,18 @@ export function ContributorStandings({
   const metric = (
     m: ReturnType<typeof contributorStandings>["rows"][number],
   ) => (sort === "points" ? m.points : m.money);
-  const [direct, retryDirect] = useAllDirectTransfers(
-    PROJECTS.map((p) => p.id),
-  );
+  const [received, retryReceived] = useReceivedTotals();
   const projection = contributorStandings(
     scores,
     state.status === "ready" ? members : null,
     period === "month" ? new Date().toISOString().slice(0, 7) : null,
     project,
-    direct.status === "ready" ? direct.transfers : null,
+    received.status === "ready" ? received.received.contributors : null,
   );
   // Loading and failed sources stay distinct in each column.
   const pointsMissing = state.status === "loading" ? "Loading…" : "Unavailable";
   const moneyMissing =
-    scores.status === "loading" || direct.status === "loading"
+    scores.status === "loading" || received.status === "loading"
       ? "Loading…"
       : "Unavailable";
   const ranked = projection.rows
@@ -1424,14 +1422,26 @@ export function ContributorStandings({
         <DataNotice state={scores} retry={retryScore ?? retryLoadedScore} />
       ) : null}
       <Notice />
-      {!compact && direct.status === "error" ? (
+      <p className="points-meta">Money received is the all-time total.</p>
+      {received.status === "error" ? (
         <p role="status">
           <span>Payment records unavailable.</span>{" "}
-          <button type="button" onClick={retryDirect}>
+          <button type="button" onClick={retryReceived}>
             Retry payment records
           </button>
         </p>
-      ) : !compact && direct.status === "loading" && sort === "money" ? (
+      ) : received.status === "ready" && received.refreshError ? (
+        <p role="status">
+          <span>
+            Money received is from{" "}
+            {formatDateTime(received.received.generatedAt)}; the latest refresh
+            failed.
+          </span>{" "}
+          <button type="button" onClick={retryReceived}>
+            Retry payment records
+          </button>
+        </p>
+      ) : !compact && received.status === "loading" && sort === "money" ? (
         <p role="status">Loading payment records…</p>
       ) : null}
       {!compact ? (

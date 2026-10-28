@@ -204,7 +204,13 @@ repository. Routine commits, dependencies, Markdown, skill and presentation
 changes keep that admission; do not claim the later content was scanned. Keep successful bounded admission-scan evidence permanently, including original evidence used by a reused result (owner decision, 27 October 2026). Other scanner cases keep their existing retention rules.
 Keep the original complete assessment and retained evidence. Another repository
 cannot inherit a nonexempt admission. Explicit security investigations control
-nonexempt admission (owner decision, 27 October 2026, PRD section 8). Record the
+nonexempt admission (owner decision, 27 October 2026, PRD section 8).
+Admission scans have no repository size limit (owner decision, 28 October
+2026, PRD section 8): acquisition is one shallow Git fetch of the exact commit,
+verified locally, and a large inventory is reviewed in token-budgeted batches
+with a repository-level synthesis (`workers/vetting/ACQUISITION.md`,
+`workers/vetting/review-plan.ts`). Never reintroduce an entry, file or total
+size refusal, and never record a partly reviewed repository as passed. Record the
 existing-project exemption explicitly, never as a passed scan; its project-ID
 scope is unchanged. Flags, pauses, confirmed-malicious bans and fresh-scan
 reinstatement requirements still apply.

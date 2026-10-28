@@ -3,7 +3,10 @@
 The bounded malicious-code scan uses `reviewScan`: one primary review with the
 pinned `slop-scan-review-1` prompt, whose coverage areas are the scan's five
 threat checks, and a second model or specialist review only for an ambiguous
-or high-risk result ([worker](README.md)). It shares the transports, limits,
+or high-risk result ([worker](README.md)). An inventory larger than one call
+is reviewed by `review-plan.ts` in token-budgeted batches with the same prompt,
+then one `slop-scan-synthesis-1` call over the deterministic pre-pass and every
+batch result; each is an ordinary `reviewScan` call. It shares the transports, limits,
 identity checks and private records described below, and never retries, picks
 a fallback provider, clears or bans.
 
@@ -39,7 +42,8 @@ The evidence contains `items` with `id`, `text` and `sha256`, plus
 Both initial reviews receive the same bytes, with no prior model output. The
 pinned system prompt treats repository content as evidence, never authority.
 No tools are enabled. The OpenAI request disables response storage and input
-truncation. The evidence is limited to 1 MiB; it is not silently shortened.
+truncation. Each call's evidence is limited to 1 MiB; it is not silently
+shortened, and a larger inventory is split into batches instead.
 Approved provider retention and private-data handling are operational gates.
 
 Each response must finish normally, return the pinned model and contain one
@@ -60,7 +64,8 @@ model retains usage but receives no estimate from the wrong model's rate card.
 Missing or invalid usage leaves the review failed. No provider error body,
 credential, prompt or response text is returned in an exception.
 
-Calls have a 120-second timeout and a 1 MiB response limit. Model refusal,
+Calls have a 120-second timeout plus 1 ms per estimated input token (at most
+10 minutes) and a 1 MiB response limit. Model refusal,
 truncation, unexpected tools, identity mismatch, invalid evidence references
 and provider errors fail the review. The API key stays in its request header;
 it does not enter the review prompt or evidence record. Keep all returned

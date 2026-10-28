@@ -212,8 +212,8 @@ before submitting.
   only when asked: `run-receipt.mjs preview` discloses what would be read and
   published, and a trace follows the
   [private trace contract](https://slop.cash/protocol/private-trace-v1.md)
-  with separate consent and inspection. Declining or a failed upload never
-  blocks submission; never claim a trace bonus.
+  with separate informed consent and inspection; failure never blocks submission.
+  Declining never blocks submission. Never claim a trace bonus.
 
 Model identity and usage are self-reported. Device signatures prove byte
 continuity, not billing, model execution, effort or quality. Accepted

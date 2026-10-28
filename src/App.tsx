@@ -16,10 +16,10 @@ import {
   useState,
 } from "react";
 import { EscrowFunding } from "./EscrowFunding";
+import { HomeStandings } from "./HomeStandings";
 import { Link, useHashScroll } from "./Link";
 import { projectRewardSummaries } from "./lib/project-reward-summary";
 import { formatSecurityAmount } from "./lib/security-bounty.mjs";
-import { ProjectBountyFunding } from "./OwnerBountyVault";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
@@ -96,6 +96,13 @@ const SponsorsPage = lazy(() =>
   import("./PublicPages").then((module) => ({ default: module.SponsorsPage })),
 );
 const OwnerAwards = lazy(() => import("./OwnerAwards"));
+// Vault setup and wallet actions carry the chain adapters; only bounty
+// project pages need them, so they stay out of the home page bundle.
+const ProjectBountyFunding = lazy(() =>
+  import("./OwnerBountyVault").then((module) => ({
+    default: module.ProjectBountyFunding,
+  })),
+);
 const ProjectProposalPage = lazy(() => import("./ProjectProposalPage"));
 const AdminPage = lazy(() => import("./Admin"));
 const InboxPage = lazy(() => import("./Inbox"));
@@ -536,15 +543,27 @@ function monthlyPoolCapLabel(project: ProjectDefinition): string {
     .replace(/K$/u, "k");
 }
 
-function ProjectImage({ project }: { project: ProjectDefinition }) {
+/**
+ * Custom images are the 128px WebP avatars that ProjectImageField encodes
+ * into the immutable revision, so they arrive inline with the registry and
+ * cost no request. Rows below the fold defer GitHub fallback avatars.
+ */
+function ProjectImage({
+  project,
+  lazy = false,
+}: {
+  project: ProjectDefinition;
+  lazy?: boolean;
+}) {
   const [failedImage, setFailedImage] = useState<string | null>(null);
   return !project.image || failedImage === project.image ? (
-    <ProjectOwnerAvatar project={project} />
+    <ProjectOwnerAvatar project={project} lazy={lazy} />
   ) : (
     <img
       alt=""
       aria-hidden="true"
       className="project-avatar"
+      decoding="async"
       width={56}
       height={56}
       src={project.image}
@@ -553,7 +572,13 @@ function ProjectImage({ project }: { project: ProjectDefinition }) {
   );
 }
 
-function ProjectOwnerAvatar({ project }: { project: ProjectDefinition }) {
+function ProjectOwnerAvatar({
+  project,
+  lazy,
+}: {
+  project: ProjectDefinition;
+  lazy: boolean;
+}) {
   const repository = project.repositories[0];
   const owner = (repository?.aliases?.at(-1) ?? repository?.id ?? "").split(
     "/",
@@ -574,7 +599,9 @@ function ProjectOwnerAvatar({ project }: { project: ProjectDefinition }) {
       alt=""
       aria-hidden="true"
       className="project-avatar"
+      decoding="async"
       height={56}
+      loading={lazy ? "lazy" : undefined}
       onError={() => setFailed(true)}
       src={src}
       width={56}
@@ -645,7 +672,7 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
   return (
     <li>
       <Link className="project-row" href={`/projects/${project.slug}`}>
-        <ProjectImage project={project} />
+        <ProjectImage lazy project={project} />
         <span className="project-row-name">
           <strong>{project.name}</strong>
           <small>{project.description}</small>
@@ -708,29 +735,6 @@ function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
   );
 }
 
-function GlobalLeaderboard({
-  state,
-  retry,
-}: {
-  state: DataState;
-  retry: () => void;
-}) {
-  return (
-    <section
-      className="section shell home-leaderboard-section"
-      id="leaderboard"
-    >
-      <ContributorStandings
-        compact
-        retryScore={retry}
-        scoreState={state}
-        showDataNotice={false}
-        title="Top sloperators"
-      />
-    </section>
-  );
-}
-
 function bootstrapAgentPrompt(): string {
   const origin = window.location.origin.replace(/\/$/u, "");
   return `Read ${origin}/SKILL.md and follow it.`;
@@ -775,7 +779,7 @@ function SecurityBounties() {
                 }
               >
                 <div className="project-card-heading">
-                  <ProjectImage project={project} />
+                  <ProjectImage lazy project={project} />
                   <h3>{project.name}</h3>
                   <ArrowRight aria-hidden="true" />
                 </div>
@@ -807,8 +811,6 @@ function SecurityBounties() {
 function HomePage() {
   const featuredProjects = homeProjects();
   const listedCommunityProjects = communityProjects();
-  // One shared read feeds the leaderboard; project cards never wait for it.
-  const [scores, retryScores] = useSnapshot(true);
   return (
     <main>
       <section className="hero shell">
@@ -845,7 +847,12 @@ function HomePage() {
         )}
       </section>
       <SecurityBounties />
-      <GlobalLeaderboard retry={retryScores} state={scores} />
+      <section
+        className="section shell home-leaderboard-section"
+        id="leaderboard"
+      >
+        <HomeStandings />
+      </section>
     </main>
   );
 }
@@ -1578,7 +1585,8 @@ export function App() {
     <PointsProvider
       enabled={
         !globalThis.__SLOP_PROJECT_REGISTRY_ERROR__ &&
-        ["home", "project", "profile", "points"].includes(route.kind)
+        // The home table reads the small points summary, not the journal.
+        ["project", "profile", "points"].includes(route.kind)
       }
     >
       <AppContent route={route} />

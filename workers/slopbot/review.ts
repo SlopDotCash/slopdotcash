@@ -256,9 +256,14 @@ export async function pullDiff(
   )
     throw new Error("Pull request comparison is unavailable");
   let diff = "";
-  // GitHub returns at most 300 comparison files, on the first page only.
-  // Saturation cannot prove that every changed path was returned.
-  let truncated = comparison.files.length >= 300;
+  // Keep the complete returned inventory, even when a large patch will not fit.
+  // A missing binary/large-file patch is a review limitation, not a queue error.
+  const inventory: { path: string; status: string; included: boolean }[] = [];
+  const limitations: string[] = [];
+  if (comparison.files.length >= 300)
+    limitations.push(
+      "GitHub returned its 300-file comparison limit; the file inventory may be incomplete.",
+    );
   for (const file of comparison.files.slice(0, 300)) {
     if (
       typeof file.filename !== "string" ||
@@ -268,21 +273,28 @@ export async function pullDiff(
       (file.patch !== undefined && typeof file.patch !== "string")
     )
       throw new Error("Pull request comparison file is invalid");
-    if (file.patch === undefined) truncated = true;
     const fileName =
       file.previous_filename === undefined
         ? file.filename
         : `${file.previous_filename} -> ${file.filename}`;
-    const chunk = `--- ${fileName} (${file.status})\n${file.patch ?? "(binary or too large to show)"}\n`;
-    if (diff.length + chunk.length > MAX_DIFF_CHARS) {
-      truncated = true;
-      break;
-    }
-    diff += chunk;
+    const chunk = `--- ${fileName} (${file.status})\n${file.patch ?? ""}\n`;
+    const included =
+      file.patch !== undefined && diff.length + chunk.length <= MAX_DIFF_CHARS;
+    inventory.push({ path: fileName, status: file.status, included });
+    if (included) diff += chunk;
+    else
+      limitations.push(
+        `${fileName}: ${file.patch === undefined ? "GitHub did not supply a patch (binary or large file)" : "patch exceeds the review input budget"}.`,
+      );
   }
+  const truncated = limitations.length > 0;
+  if (truncated)
+    diff = `Service review coverage (unreviewed content must not be inferred):\n${JSON.stringify(inventory)}\n\nIncluded patches:\n${diff}`;
+
   return {
     diff,
     truncated,
+    limitations,
     changedFiles: comparison.files.length,
     baseSha,
     mergeBaseSha: comparison.merge_base_commit.sha,
@@ -306,6 +318,7 @@ type Context = {
   quality: QualityEvidence[];
   registration: { scope: ReviewScope; projectId: string };
   relatedOpenItem?: RelatedOpenItem;
+  limitations: string[];
 };
 
 type RelatedOpenItem = {
@@ -318,18 +331,6 @@ type RelatedOpenItem = {
   revision: string;
   contentDigest: string;
 };
-
-/** GitHub did not return the complete current comparison. The item and pull
- * request facts that were read before the comparison stay available.
- */
-class IncompleteComparisonError extends Error {
-  constructor(
-    readonly issue: Issue,
-    readonly pull: Pull | null,
-  ) {
-    super("Pull request comparison is incomplete");
-  }
-}
 
 // Surplus may never see private content, and v2 supports public repositories only.
 async function publicRepository(
@@ -398,13 +399,13 @@ async function loadContext(
       ? {
           diff: "",
           truncated: false,
+          limitations: [] as string[],
           changedFiles: 0,
           baseSha,
           mergeBaseSha: baseSha,
           targetRef: repo.default_branch,
         }
       : await pullDiff(github, job.owner, job.repo, repo.id, pull);
-  if (comparison.truncated) throw new IncompleteComparisonError(issue, pull);
   const itemText = reviewedItemText(issue, pull, comparison);
   const revision =
     pull?.head.sha ?? (await sha256Hex(`${issue.title}\n${issue.body ?? ""}`));
@@ -417,6 +418,7 @@ async function loadContext(
   );
   const quality =
     pull === null ||
+    comparison.truncated ||
     pull.base.sha !== comparison.baseSha ||
     comparison.baseSha !== baseSha ||
     comparison.mergeBaseSha !== baseSha
@@ -456,6 +458,7 @@ async function loadContext(
     policy,
     policyDigest,
     registration,
+    limitations: comparison.limitations,
   };
 }
 
@@ -479,6 +482,8 @@ function sameReviewedSource(
     fresh.mergeBaseSha === original.mergeBaseSha &&
     fresh.targetRef === original.targetRef &&
     fresh.itemText === original.itemText &&
+    JSON.stringify(fresh.limitations) ===
+      JSON.stringify(original.limitations) &&
     fresh.policyDigest === original.policyDigest
   );
 }
@@ -516,15 +521,23 @@ async function callModel(
 }
 
 export function buildPrompt(
-  context: Pick<Context, "policy" | "quality" | "itemText" | "relatedOpenItem">,
+  context: Pick<
+    Context,
+    "policy" | "quality" | "itemText" | "relatedOpenItem"
+  > &
+    Partial<Pick<Context, "limitations">>,
   itemKind: string,
 ) {
   const files = context.policy
     .map((f) => `<file name="${f.path}">\n${f.text}\n</file>`)
     .join("\n");
   return {
-    system: SYSTEM_PROMPT,
-    policy: `<policy>\n${files || "(no published guidance)"}\n</policy>\n<verified-defects>${JSON.stringify(context.quality)}</verified-defects>`,
+    system:
+      SYSTEM_PROMPT +
+      (context.limitations?.length
+        ? "\nThis is a limited advisory review. Some source content is unavailable. Do not infer omitted contents, approve the whole change, or classify it as empty or duplicate. Report the supplied coverage limitations."
+        : ""),
+    policy: `<policy>\n${files || "(no published guidance)"}\n</policy>\n<verified-defects>${JSON.stringify(context.quality)}</verified-defects>\n<coverage-limitations>${JSON.stringify(context.limitations ?? [])}</coverage-limitations>`,
     item: `<item kind="${itemKind}">\n${modelItemText(context)}\n</item>`,
   };
 }
@@ -851,7 +864,7 @@ function disclosure(call: CallRecord | null): string {
 
 export function commentBody(input: {
   verdict: Verdict;
-  action: "label" | "close" | "hold";
+  action: "label" | "close" | "hold" | "comment";
   blockedClose: string | null;
   context: Context;
   triage: CallRecord | null;
@@ -864,13 +877,25 @@ export function commentBody(input: {
     .join("\n\n");
   const lines = [
     "<!-- slopbot:review -->",
-    input.action === "close"
-      ? `**Slopbot closed this item** under the repository's \`${verdict.category}\` rule.`
-      : input.action === "hold"
-        ? `**Slopbot review (uncertain, maintainer decides):** \`${verdict.category}\``
-        : `**Slopbot review:** \`${verdict.category}\``,
+    input.action === "comment"
+      ? context.limitations.length
+        ? "**Slopbot limited review — maintainer review needed**"
+        : "**Slopbot review complete — no finding**"
+      : input.action === "close"
+        ? `**Slopbot closed this item** under the repository's \`${verdict.category}\` rule.`
+        : input.action === "hold"
+          ? `**Slopbot review (uncertain, maintainer decides):** \`${verdict.category}\``
+          : `**Slopbot review:** \`${verdict.category}\``,
     "",
     neutralize(verdict.summary),
+    ...(input.action === "comment"
+      ? [
+          "",
+          context.limitations.length
+            ? "Some changed content could not be reviewed. No label or closure was applied. This is not approval of the pull request."
+            : "This is an advisory intake review, not approval of the pull request. Tests were not run by this review.",
+        ]
+      : []),
     "",
     rules,
     "",
@@ -889,6 +914,17 @@ export function commentBody(input: {
     "",
     `- Reviewed revision: \`${context.revision}\``,
     `- Policy digest: \`${context.policyDigest}\``,
+    ...context.limitations
+      .slice(0, 40)
+      .map(
+        (limitation) =>
+          `- Not reviewed: ${neutralize(limitation).slice(0, 500)}`,
+      ),
+    ...(context.limitations.length > 40
+      ? [
+          `- ${context.limitations.length - 40} additional coverage limitations. Inspect the immutable comparison for this revision.`,
+        ]
+      : []),
     ...context.quality
       .filter((q) => q.id === verdict.objective_defect)
       .flatMap((q) => [
@@ -1104,6 +1140,7 @@ export async function reviewItem(
     );
   const reviewKey = await sha256Hex(
     [
+      "visible-review-v1",
       issue.node_id,
       context.revision,
       context.policyDigest,
@@ -1192,6 +1229,29 @@ export async function reviewItem(
       claimToken,
     );
   } catch (error) {
+    // A provider failure must not leave an apparently untouched submission.
+    // Only publish while this attempt still owns the exact current source.
+    // Do not echo provider errors, which may contain request data.
+    if (routing.review && context.registration.scope === "contributor") {
+      try {
+        const fresh = await loadContext(env, job, context.registration);
+        if (await sameReviewEvidence(job, fresh, context))
+          await upsertComment(
+            env,
+            job,
+            context,
+            [
+              "<!-- slopbot:review -->",
+              "**Slopbot review could not complete**",
+              `Revision: \`${context.revision}\`.`,
+              "Slopbot will retry this attempt. If retries are exhausted, an operator must recover it. This is not approval or a finding against the contribution.",
+            ].join("\n\n"),
+            { reviewKey, token: claimToken },
+          );
+      } catch {
+        // Preserve the original error and queue retry if GitHub is unavailable.
+      }
+    }
     await store.finishReview(db, reviewKey, claimToken, "failed", {
       skipReason: String(error).slice(0, 300),
     });
@@ -1223,8 +1283,8 @@ async function runReview(
     return routing.reason;
   }
 
-  let verdict = prefilter(context);
-  if (verdict === null) {
+  let verdict = context.limitations.length ? null : prefilter(context);
+  if (verdict === null && context.limitations.length === 0) {
     const duplicate = await duplicateOf(env, job, context, contentDigest);
     if (duplicate) {
       verdict = duplicate.verdict;
@@ -1269,6 +1329,12 @@ async function runReview(
     deterministic = false;
   }
 
+  if (context.limitations.length)
+    verdict = {
+      ...verdict,
+      objective_defect: null,
+      limitations: [...context.limitations, ...verdict.limitations],
+    };
   const category: Category = verdict.category;
   // Contributor work is stopped on a paused, flagged or removed project; only
   // a security finding is published there (PRD section 5).
@@ -1280,6 +1346,62 @@ async function runReview(
     return `no action (${category}; security review only)`;
   }
   const mode = category === "none" ? "off" : config.config.categories[category];
+  if (
+    (category === "none" && scope === "contributor") ||
+    context.limitations.length > 0
+  ) {
+    const fresh = await loadContext(env, job, context.registration);
+    if (
+      !(await sameReviewEvidence(job, fresh, context)) ||
+      !(await store.installationActive(db, job.installationId))
+    )
+      throw new Error(
+        "review source or authorization changed before publication",
+      );
+    // Keep explicit category opt-outs. Limited coverage never becomes a hold,
+    // label or close, even if a model returns a confident finding.
+    const published =
+      mode === "off" && category !== "none"
+        ? {
+            ...verdict,
+            category: "none" as const,
+            rule_refs: [],
+            evidence: [],
+            limitations: context.limitations,
+            summary:
+              "The enabled review is incomplete. A maintainer must review the omitted content.",
+          }
+        : verdict;
+    await upsertComment(
+      env,
+      job,
+      context,
+      commentBody({
+        verdict: published,
+        action: "comment",
+        blockedClose: null,
+        context,
+        triage,
+        confirm: null,
+      }),
+      claim,
+    );
+    await store.recordAction(
+      db,
+      reviewKey,
+      job.repositoryId,
+      issue.node_id,
+      "comment",
+      context.limitations.length ? "limited review" : "no finding",
+    );
+    await store.finishReview(db, reviewKey, claimToken, "completed", {
+      verdict,
+      action: "comment",
+    });
+    return context.limitations.length
+      ? "limited advisory review published"
+      : "review published (no finding)";
+  }
   if (mode === "off") {
     await store.finishReview(db, reviewKey, claimToken, "completed", {
       verdict,
@@ -2054,7 +2176,19 @@ export async function recordHumanSignal(
         ...session,
         revision: decided,
       }));
-    await reversePenalty(db, issue.node_id, "maintainer_reopen");
+    // Only a debit this reopen covers: its revision's close, or a close at or
+    // before the reopen. A later head's close after a push stays.
+    await reversePenalty(
+      db,
+      issue.node_id,
+      "maintainer_reopen",
+      source
+        ? {
+            revision: decided,
+            occurredAt: new Date(source.occurredAt).toISOString(),
+          }
+        : undefined,
+    );
     const appeal = await appealByKey(db, `appeal:${issue.node_id}:${decided}`);
     if (appeal !== null) {
       await resolveAppeal(db, appeal.appeal_key, "upheld", "maintainer");
@@ -2719,24 +2853,13 @@ export async function applyMaintainerHold(
     return supersede("security review only");
   if (!(await store.installationActive(db, job.installationId)))
     return supersede("installation removed or suspended");
-  let context: Context | null;
-  try {
-    context = await loadContext(env, { ...job, kind: "review" }, registration);
-  } catch (error) {
-    // The held revision had a complete comparison. A later push can add a
-    // file without a patch, and then the comparison never becomes complete.
-    // The item facts still end the hold; an unchanged item is retried.
-    if (
-      error instanceof IncompleteComparisonError &&
-      (error.issue.node_id !== hold.item_node_id ||
-        error.issue.state !== "open" ||
-        error.pull?.draft ||
-        error.pull?.merged ||
-        error.pull?.head.sha !== hold.revision)
-    )
-      return supersede("item changed after the review");
-    throw error;
-  }
+  const context = await loadContext(
+    env,
+    { ...job, kind: "review" },
+    registration,
+  );
+  if (context?.limitations.length)
+    return supersede("comparison coverage is incomplete");
   if (context === null || context.issue.node_id !== hold.item_node_id)
     return supersede("item not readable");
   const { github, repo, issue, pull, revision } = context;

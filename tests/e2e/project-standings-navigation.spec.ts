@@ -17,15 +17,18 @@ const contributors = {
 async function fixtures(page: Page, paymentsAvailable = () => true) {
   await page.clock.setFixedTime(new Date(instant));
   await page.route(`${site}/**`, (route) =>
-    route.fulfill({
-      path: join(
-        process.cwd(),
-        "dist",
-        route.request().resourceType() === "document"
-          ? "index.html"
-          : new URL(route.request().url()).pathname,
-      ),
-    }),
+    // Money received falls back to the shared empty aggregate (fixtures.ts).
+    new URL(route.request().url()).pathname === "/api/v1/payments/received"
+      ? route.fallback()
+      : route.fulfill({
+          path: join(
+            process.cwd(),
+            "dist",
+            route.request().resourceType() === "document"
+              ? "index.html"
+              : new URL(route.request().url()).pathname,
+          ),
+        }),
   );
   // Preview has no executable agent discovery; D1 coverage is in registry.spec.ts.
   await page.route("**/.well-known/slop/projects.json", (route) =>
@@ -46,14 +49,10 @@ async function fixtures(page: Page, paymentsAvailable = () => true) {
   await page.route("https://avatars.githubusercontent.com/**", (route) =>
     route.fulfill({ path: join(process.cwd(), "public/slop-mark.svg") }),
   );
+  // Project payment history still lists each project's own disclosures.
   await page.route(
     "**/api/v1/payments/projects/*/direct-transfers",
     (route) => {
-      if (!paymentsAvailable())
-        return route.fulfill({
-          status: 503,
-          body: "Payment source unavailable",
-        });
       const projectId = new URL(route.request().url()).pathname.split("/")[5];
       const actor = contributors[projectId as keyof typeof contributors];
       return route.fulfill({
@@ -79,6 +78,42 @@ async function fixtures(page: Page, paymentsAvailable = () => true) {
       });
     },
   );
+  // One edge-cached aggregate carries all-time money received for every page.
+  await page.route("**/api/v1/payments/received", (route) => {
+    if (!paymentsAvailable())
+      return route.fulfill({
+        status: 503,
+        body: "Payment source unavailable",
+      });
+    const rows = Object.entries(contributors).map(([projectId, actor]) => ({
+      githubUserId: actor.id,
+      login: actor.login,
+      usdMicro: actor.amount,
+      directMicro: actor.amount,
+      vaultUsdMicro: "0",
+      directTransfers: 1,
+      vaultPayments: 0,
+      projects: [{ projectId, usdMicro: actor.amount }],
+      otherAssets: [],
+    }));
+    return route.fulfill({
+      json: {
+        schemaVersion: "1",
+        generatedAt: instant,
+        contributors: rows,
+        totals: {
+          usdMicro: rows
+            .reduce((sum, row) => sum + BigInt(row.usdMicro), 0n)
+            .toString(),
+          directMicro: "333330000",
+          vaultUsdMicro: "0",
+          directTransfers: rows.length,
+          vaultPayments: 0,
+          contributors: rows.length,
+        },
+      },
+    });
+  });
 }
 
 test("Money received standings preserve unavailable data and recover on retry", async ({
@@ -87,7 +122,7 @@ test("Money received standings preserve unavailable data and recover on retry", 
 }, info) => {
   // The payment source outage asserted below.
   diagnostics.allow(
-    /^console Failed to load resource: the server responded with a status of 503 .*\/direct-transfers$/u,
+    /^console Failed to load resource: the server responded with a status of 503 .*\/api\/v1\/payments\/received$/u,
   );
   let available = false;
   const failures: string[] = [];
@@ -112,7 +147,8 @@ test("Money received standings preserve unavailable data and recover on retry", 
   expect(
     failures.every(
       (failure) =>
-        failure.startsWith("503 ") && failure.endsWith("/direct-transfers"),
+        failure.startsWith("503 ") &&
+        failure.endsWith("/api/v1/payments/received"),
     ),
   ).toBe(true);
   await page.screenshot({ path: info.outputPath("payments-unavailable.png") });
@@ -210,18 +246,19 @@ test("global standings still accept project, sort and contributor filters", asyn
     name: "View leaderboard",
     exact: true,
   });
-  await expect(fullView).toHaveAttribute(
-    "href",
-    "/points?period=lifetime&sort=money",
-  );
+  // The home table is all time, so its full view opens recorded history.
+  await expect(fullView).toHaveAttribute("href", "/points?period=lifetime");
   await expectAccessible(page);
   await fullView.focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/points\?period=lifetime&sort=money/);
+  await expect(page).toHaveURL(/\/points\?period=lifetime/);
   const standings = page.getByRole("region", {
     name: "Contributor standings",
     exact: true,
   });
+  await standings
+    .getByRole("button", { name: "Money received", exact: true })
+    .click();
   const project = standings.getByLabel("Project", { exact: true });
   await project.selectOption("eliza");
   await expect(project).toHaveValue("eliza");

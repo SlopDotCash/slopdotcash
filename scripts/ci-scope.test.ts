@@ -12,6 +12,7 @@ import { dirname, join, resolve } from "node:path";
 
 const selector = resolve("scripts/ci-scope.mjs");
 for (const path of [
+  "skills/slop/SKILL.md",
   "src/lib/project-skill.mjs",
   "src/lib/project-skill-publication.mjs",
   "scripts/skill-source-matches-commit.mjs",
@@ -53,9 +54,21 @@ for (const path of [
           GITHUB_OUTPUT: output,
         },
       });
-      expect(readFileSync(output, "utf8").split("\n")).toContain(
-        `installer=${path !== "README.md"}`,
-      );
+      const lines = readFileSync(output, "utf8").split("\n");
+      expect(lines).toContain(`installer=${path !== "README.md"}`);
+      if (path === "skills/slop/SKILL.md") {
+        const matrix = lines.find((line) => line.startsWith("browser_matrix="));
+        if (!matrix) throw new Error("Browser matrix output is missing");
+        expect(
+          JSON.parse(matrix.slice("browser_matrix=".length)).include,
+        ).toContainEqual({
+          lane: "pages",
+          server: "pages",
+          browsers: "chromium",
+          shard: "1/1",
+          grep: "",
+        });
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

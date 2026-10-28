@@ -29,8 +29,13 @@ to `"true"` after the explicit production qualification and activation review.
    SHA. PR content comes from an immutable comparison of the current
    GitHub-selected target branch and PR head, with the target repository ID
    verified. Stale PR-file metadata cannot add inherited changes. Missing
-   patches, unavailable comparisons and the 300-file comparison limit stop
-   review. Before action, recheck the target, head, merge base and content.
+   comparisons and invalid target identities retry without a verdict. Missing
+   binary or large-file patches, the text budget, and the 300-file comparison
+   limit produce a limited advisory review instead of exhausting queue retries.
+   The prompt identifies every returned file and which patches were included.
+   A patch that does not fit cannot hide later smaller patches. Limited reviews
+   publish the coverage gaps and never create a label, hold, closure or penalty.
+   Before publication, recheck the target, head, merge base and content.
    A due maintainer hold also compares the current item with its stored content
    digest; a changed finding is superseded without changing the hold deadline.
 3. `routing.ts` applies the published precedence: installation, private
@@ -76,7 +81,10 @@ to `"true"` after the explicit production qualification and activation review.
    - no unresolved limitations in either verdict;
    - an unchanged item just before acting.
 
-   Otherwise the bot only comments and labels.
+   Otherwise the bot only comments and labels. Eligible full reviews with no
+   finding also update the bot's single review comment, with the reviewed
+   revision, model route and limitations. This is not a maintainer approval.
+   Exempt authors, drafts and repository opt-outs retain their existing routing.
 
    The prompt asks for limitations that affect the finding, its rule or its
    evidence. It never claims that unrun tests passed. Missing tests still
@@ -144,7 +152,8 @@ to `"true"` after the explicit production qualification and activation review.
    original revision and event time. Queue retries use that bound revision;
    a changed head or issue text cannot inherit the decision. An author push
    before the queue runs does not drop a maintainer decision: it is recorded
-   for the reopened revision and reverses the debit, and only the cleanup of
+   for the reopened revision and reverses a debit from that revision's close
+   or a close at or before the reopen, never a later head's close. Only the cleanup of
    Slopbot's close and labels requires that revision to still be current. Older jobs without
    that receipt make no decision. Confirm current GitHub maintainer authority
    and an open item before applying it. The existing same-revision protection
@@ -935,6 +944,12 @@ A competing delivery retries when the lease expires; it is not acknowledged as
 completed and does not spend another model call. An expired running attempt can
 be claimed atomically as an unbilled retry. Completed reviews remain deduplicated.
 
+Provider failures after intake publish a bounded retry notice when the source
+and authorization still match. Errors are not echoed into public comments.
+The attempt remains failed and the queue retries it. A changed source also
+retries, so a moving target branch does not silently acknowledge an unfinished
+review. A failed notice write does not suppress the original retry.
+
 The current claim is checked before model work and GitHub mutations. Completion
 and failure updates require the same unexpired token, so an older attempt cannot
 overwrite a successor. Provider receipts are still recorded if ownership is lost,
@@ -1224,7 +1239,10 @@ that GitHub answers with 404 in a repository the installation still reads is
 `missing`, a terminal recorded state. A paused, retired or unregistered project
 `parked`s its requests with no retry time, so they are never claimed hourly;
 each scheduled run first gives the parked requests of a now-active repository a
-retry time again. `attempts-exhausted` is terminal: migration
+retry time again. The sweep checks at most 20 repositories per run in rotation,
+never checked first, then least recently checked (migration
+`0106_slopbot_value_parked_checks.sql`), so every parked repository is
+rechecked within a bounded number of runs. `attempts-exhausted` is terminal: migration
 `0104_slopbot_value_inference_attempts.sql` records one immutable row per paid
 provider attempt for an inference key (installation, source digest, prompt,
 schema and route), and a key that has used three attempts that reserved budget

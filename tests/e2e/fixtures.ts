@@ -138,6 +138,26 @@ export const test = base.extend<{ diagnostics: Diagnostics }>({
       };
       watch(context);
       browser.on("context", watch);
+      // Specs that serve the built bundle on the product origin have no
+      // payments backend there. Money received is then a complete empty
+      // aggregate unless a spec routes its own records (page routes win).
+      await context.route(`${SITE}/api/v1/payments/received`, (route) =>
+        route.fulfill({
+          json: {
+            schemaVersion: "1",
+            generatedAt: "2026-01-01T00:00:00.000Z",
+            contributors: [],
+            totals: {
+              usdMicro: "0",
+              directMicro: "0",
+              vaultUsdMicro: "0",
+              directTransfers: 0,
+              vaultPayments: 0,
+              contributors: 0,
+            },
+          },
+        }),
+      );
       await use({
         allow: (...patterns) => allowed.push(...patterns),
         allowResponse: (status, method, path) => {

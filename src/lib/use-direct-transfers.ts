@@ -81,25 +81,3 @@ export function useDirectTransfers(
     "Direct payment records unavailable",
   );
 }
-
-/** Every registered project's direct transfers; one failed project fails the set. */
-export function useAllDirectTransfers(projectIds: readonly string[]) {
-  const key = projectIds.join(",");
-  const load = useCallback(
-    async (signal: AbortSignal) => ({
-      transfers: (
-        await Promise.all(
-          key
-            .split(",")
-            .filter(Boolean)
-            .map((id) =>
-              loadDirectTransfers(`projects/${encodeURIComponent(id)}`, signal),
-            ),
-        )
-      ).flat(),
-    }),
-    [key],
-  );
-  // No registered projects is a complete empty result, not a pending request.
-  return usePublicResource(true, load, "Direct payment records unavailable");
-}

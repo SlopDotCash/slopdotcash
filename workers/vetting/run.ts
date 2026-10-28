@@ -53,9 +53,9 @@ import {
   type QueuedAssessment,
   readPendingAssessments,
 } from "./queue";
+import { type ReviewCache, reviewInventory } from "./review-plan";
 import {
   PINNED_SCANNER_PROFILES,
-  reviewScan,
   type ScannerProfile,
   validateProfile,
 } from "./scanners";
@@ -113,6 +113,16 @@ export type ScanServiceConfig = {
   journalDirectory: string;
   journal?: PublicationJournal;
   randomId?: () => string;
+  /**
+   * Batched review of a large inventory (`review-plan.ts`): the input budget
+   * of one call, parallel calls, and an optional operator-private cache that
+   * lets a review larger than one pass's call budget resume next pass.
+   */
+  review?: {
+    batchTokens?: number;
+    concurrency?: number;
+    cache?: ReviewCache;
+  };
 };
 
 export type AssessmentOutcome =
@@ -134,6 +144,7 @@ export type AssessmentOutcome =
         | "reuse"
         | "primary-review"
         | "specialist-review"
+        | "review-batches"
         | "evidence";
       /** The error name of a step that threw, never its message. */
       reason?: string;
@@ -422,16 +433,24 @@ async function scanOne(
     const executionEvidenceSha256s = await Promise.all(
       isolated.reports.map(sha256Hex),
     );
-    const evidence = new TextDecoder().decode(inspection.inventory);
-    const review = (profile: ScannerProfile) =>
-      reviewScan({
-        evidence,
-        inputSha256: inspection.inventorySha256,
-        profile,
-        fetch: connection.fetch,
-      });
-    // A failed review is a service failure, never an incomplete scan.
+    // One call for an inventory within the single-call envelope; otherwise
+    // token-budgeted batches and a repository-level synthesis.
+    const review = async (profile: ScannerProfile) =>
+      (
+        await reviewInventory({
+          inspection,
+          profile,
+          fetch: connection.fetch,
+          batchTokens: config.review?.batchTokens,
+          concurrency: config.review?.concurrency,
+          cache: config.review?.cache,
+        })
+      ).evidence;
+    // A failed review is a service failure, never an incomplete scan. A
+    // batched review that ran out of its per-pass budget resumes next pass.
     const primary = await review(config.primary);
+    if (primary === null)
+      return { assessmentId, state: "retry", step: "review-batches" };
     if (primary.review.status !== "completed")
       return { assessmentId, state: "retry", step: "primary-review" };
     const runId = `scan_${(config.randomId ?? randomUUID)().replaceAll("-", "")}`;
@@ -454,6 +473,8 @@ async function scanOne(
     let specialist = false;
     if (composed.needsSpecialist) {
       const second = await review(config.specialist);
+      if (second === null)
+        return { assessmentId, state: "retry", step: "review-batches" };
       if (second.review.status !== "completed")
         return { assessmentId, state: "retry", step: "specialist-review" };
       composed = compose(second);

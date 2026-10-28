@@ -17,15 +17,18 @@ test("Account waits for identity and keeps current sign-out without individual s
   });
   let signouts = 0;
   await page.route(`${site}/**`, (route) =>
-    route.fulfill({
-      path: join(
-        process.cwd(),
-        "dist",
-        route.request().resourceType() === "document"
-          ? "index.html"
-          : new URL(route.request().url()).pathname,
-      ),
-    }),
+    // Money received falls back to the shared empty aggregate (fixtures.ts).
+    new URL(route.request().url()).pathname === "/api/v1/payments/received"
+      ? route.fallback()
+      : route.fulfill({
+          path: join(
+            process.cwd(),
+            "dist",
+            route.request().resourceType() === "document"
+              ? "index.html"
+              : new URL(route.request().url()).pathname,
+          ),
+        }),
   );
   await page.route(`${site}/api/v1/project-session`, (route) =>
     route.fulfill({
@@ -107,15 +110,18 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
     welcome: 5,
   };
   await page.route(`${site}/**`, (route) =>
-    route.fulfill({
-      path: join(
-        process.cwd(),
-        "dist",
-        route.request().resourceType() === "document"
-          ? "index.html"
-          : new URL(route.request().url()).pathname,
-      ),
-    }),
+    // Money received falls back to the shared empty aggregate (fixtures.ts).
+    new URL(route.request().url()).pathname === "/api/v1/payments/received"
+      ? route.fallback()
+      : route.fulfill({
+          path: join(
+            process.cwd(),
+            "dist",
+            route.request().resourceType() === "document"
+              ? "index.html"
+              : new URL(route.request().url()).pathname,
+          ),
+        }),
   );
   await page.route(`${site}/api/v1/project-session`, (route) =>
     route.fulfill({

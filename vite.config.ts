@@ -112,6 +112,77 @@ export default defineConfig(({ command, isPreview }) => {
         },
       },
       {
+        // The app chunk loads only after the registry read resolves, so the
+        // browser would fetch them one after the other. Preloading both from
+        // the document starts the registry read and every app module at once;
+        // main.tsx still evaluates the app after the registry is installed.
+        name: "boot-preload",
+        apply: "build",
+        transformIndexHtml: {
+          order: "post",
+          handler(_html, context) {
+            const bundle = context.bundle;
+            if (!bundle) return [];
+            const app = Object.values(bundle).find(
+              (chunk) =>
+                chunk.type === "chunk" &&
+                chunk.facadeModuleId
+                  ?.replaceAll("\\", "/")
+                  .endsWith("/src/App.tsx"),
+            );
+            if (!app || app.type !== "chunk") return [];
+            const modules = new Set<string>();
+            const styles = new Set<string>();
+            const visit = (fileName: string) => {
+              const chunk = bundle[fileName];
+              if (!chunk || chunk.type !== "chunk" || modules.has(fileName))
+                return;
+              if (chunk.isEntry) return;
+              modules.add(fileName);
+              for (const css of chunk.viteMetadata?.importedCss ?? [])
+                styles.add(css);
+              for (const imported of chunk.imports) visit(imported);
+            };
+            visit(app.fileName);
+            const registry =
+              process.env.VITE_SLOP_PROJECT_REGISTRY_URL || "/api/v1/projects";
+            return [
+              {
+                tag: "link",
+                attrs: {
+                  rel: "preload",
+                  as: "fetch",
+                  href: registry,
+                  crossorigin: "anonymous",
+                },
+                injectTo: "head",
+              },
+              ...[...modules].map((fileName) => ({
+                tag: "link",
+                attrs: {
+                  rel: "modulepreload",
+                  href: `/${fileName}`,
+                  crossorigin: "",
+                },
+                injectTo: "head" as const,
+              })),
+              ...[...styles].map((fileName) => ({
+                tag: "link",
+                // Vite's chunk loader requests CSS with crossorigin="", so the
+                // preload must match it to be reused.
+                attrs: {
+                  rel: "preload",
+                  as: "style",
+                  href: `/${fileName}`,
+                  crossorigin: "",
+                },
+                injectTo: "head" as const,
+              })),
+            ];
+          },
+        },
+      },
+      {
         name: "staging-security-headers",
         closeBundle() {
           if (process.env.VITE_SLOP_ENVIRONMENT !== "staging") return;
@@ -133,11 +204,11 @@ export default defineConfig(({ command, isPreview }) => {
       ? { "import.meta.env.VITE_SLOP_LOCAL_BACKEND": JSON.stringify("1") }
       : {},
     // Local UI development reads the public registry, independently of build
-    // outputs, and the public direct-transfer totals behind "Money received".
+    // outputs, and the public payment records behind "Money received".
     // The legacy file URL is also supported for existing sessions.
     server: {
       proxy: {
-        "^/(?:api/v1/projects|api/v1/payments/[^?]+/direct-transfers|\\.well-known/slop/projects\\.json|data/project-registry\\.json)(?:\\?.*)?$":
+        "^/(?:api/v1/projects|api/v1/payments/[^?]+/direct-transfers|api/v1/payments/received|\\.well-known/slop/projects\\.json|data/project-registry\\.json)(?:\\?.*)?$":
           {
             target: localReadOrigin,
             changeOrigin: true,
@@ -160,7 +231,7 @@ export default defineConfig(({ command, isPreview }) => {
         // Published snapshots (leaderboard, points, cycles, profiles) are build
         // outputs. A local file from the generators wins; otherwise read the
         // published copy so the leaderboard loads without a live ingestion run.
-        "^/data/(?:leaderboard\\.json|points\\.json|points/|cycles/|profiles\\.json)":
+        "^/data/(?:leaderboard\\.json|points\\.json|points-summary\\.json|points/|cycles/|profiles\\.json)":
           {
             target: localReadOrigin,
             changeOrigin: true,

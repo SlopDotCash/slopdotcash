@@ -201,8 +201,11 @@ export async function finishValueRequest(
 }
 
 /** Gives parked requests a retry time again once their repository is active.
- * Reads at most `limit` distinct repositories per run; the live registry is
- * the authority, and a read failure propagates. Returns the resumed count.
+ * Reads at most `limit` distinct repositories per run, in rotation: never
+ * checked first, then least recently checked (`slopbot_value_parked_checks`),
+ * so every parked repository is rechecked within ceil(parked / limit) runs.
+ * The live registry is the authority, and a read failure propagates. Returns
+ * the resumed count.
  */
 export async function resumeParkedValueRequests(
   db: D1Database,
@@ -218,11 +221,16 @@ export async function resumeParkedValueRequests(
     .prepare(
       `SELECT json_group_array(json_object('owner',owner,'repo',repo,
          'repositoryId',repositoryId)) AS rows_json FROM (
-       SELECT DISTINCT r.owner,r.repo,r.repository_id AS repositoryId
-       FROM slopbot_value_processing p
-       JOIN slopbot_value_requests r ON r.delivery_id=p.delivery_id
-       WHERE p.outcome='parked' AND p.state='waiting' AND p.retry_at IS NULL
-       ORDER BY r.repository_id,r.owner,r.repo LIMIT ?)`,
+       SELECT parked.owner,parked.repo,parked.repositoryId FROM (
+         SELECT DISTINCT r.owner,r.repo,r.repository_id AS repositoryId
+         FROM slopbot_value_processing p
+         JOIN slopbot_value_requests r ON r.delivery_id=p.delivery_id
+         WHERE p.outcome='parked' AND p.state='waiting' AND p.retry_at IS NULL
+       ) parked LEFT JOIN slopbot_value_parked_checks c
+         ON c.repository_id=parked.repositoryId AND c.owner=parked.owner
+         AND c.repo=parked.repo
+       ORDER BY c.checked_at IS NOT NULL,c.checked_at,
+         parked.repositoryId,parked.owner,parked.repo LIMIT ?)`,
     )
     .bind(limit)
     .first<{ rows_json: string }>();
@@ -234,7 +242,22 @@ export async function resumeParkedValueRequests(
   }[];
   let resumed = 0;
   for (const repository of repositories) {
-    if (!(await isActive(repository))) continue;
+    const active = await isActive(repository);
+    // Record the check only after the registry answered.
+    await db
+      .prepare(
+        `INSERT INTO slopbot_value_parked_checks(repository_id,owner,repo,checked_at)
+         VALUES (?1,?2,?3,?4) ON CONFLICT(repository_id,owner,repo)
+         DO UPDATE SET checked_at=excluded.checked_at`,
+      )
+      .bind(
+        repository.repositoryId,
+        repository.owner,
+        repository.repo,
+        at.toISOString(),
+      )
+      .run();
+    if (!active) continue;
     const result = await db
       .prepare(
         `UPDATE slopbot_value_processing SET retry_at=?1,updated_at=?1

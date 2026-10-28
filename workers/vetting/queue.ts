@@ -51,7 +51,13 @@ export class QueuedAcquisitionRefusal extends AcquisitionRefusal {
     super(refusal.reason, refusal.capacity);
   }
 }
-export type QueueConnection = VettingConnection;
+export type QueueConnection = VettingConnection & {
+  /**
+   * Test-only source remote for a repository path (`file://` or loopback
+   * HTTP, enforced by `acquireRepository`). Production fetches GitHub.
+   */
+  testGitRemote?: (repository: string) => string;
+};
 /** A pinned input of at most 1 MiB. */
 async function pinnedBytes(response: Response): Promise<Uint8Array> {
   if (!response.ok || !response.body) {
@@ -266,11 +272,13 @@ export async function acquireQueuedAssessment(
   };
   if (sha256(JSON.stringify(templateInputs)) !== assessment.templateSha256)
     throw new Error("Template input digest mismatch");
+  // One shallow Git fetch of the exact commit. It sends no credential: the
+  // source is public, and the GitHub token stays on the API reads above.
   const acquired = await acquireRepository({
     repository: currentPath,
     commitSha: assessment.commitSha,
     directory,
-    fetch: fetcher,
+    testRemote: connection.testGitRemote?.(currentPath),
   }).catch((error: unknown) => {
     if (error instanceof AcquisitionRefusal) throw refusal(error);
     throw error;

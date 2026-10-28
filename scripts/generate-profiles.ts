@@ -52,6 +52,19 @@ async function publish(path: string, value: ProfileIndex) {
   await writeFile(`${path}.tmp`, `${JSON.stringify(value)}\n`);
   await rename(`${path}.tmp`, path);
 }
+/** Validate retained census bytes against their own recorded, registered inventory. */
+function assertRetainedProfiles(value: ProfileIndex) {
+  const inventory = Array.isArray(value?.repositories)
+    ? value.repositories.map((row) => row.repository)
+    : [];
+  if (!inventory.every((id) => isHistoricalRepositoryId(id)))
+    throw Error("Retained census names an unregistered repository");
+  const collected = Array.isArray(value?.issues?.repositories)
+    ? value.issues.repositories.map((row) => row.repository)
+    : inventory;
+  assertProfiles(value, collected);
+}
+
 if (values.live) {
   const token = await resolveGitHubToken();
   if (!values.previous)
@@ -59,23 +72,7 @@ if (values.live) {
       "Live profile collection requires --previous with the last published census (or the reviewed seed for the first publication)",
     );
   const previous = JSON.parse(await readFile(values.previous, "utf8"));
-  // The last census may predate a project activation or retirement. It only
-  // carries issue history forward, so it must name registered repositories,
-  // not exactly the current active set.
-  const previousInventory = Array.isArray(previous?.repositories)
-    ? previous.repositories.map((r: { repository: string }) => r.repository)
-    : [];
-  if (!previousInventory.every((id: string) => isHistoricalRepositoryId(id)))
-    throw Error("Previous census names an unregistered repository");
-  // Its inventory also holds carried rows of repositories it no longer
-  // collected. The repositories it collected are those its issue census
-  // covered; a legacy census without issues collected its whole inventory.
-  const previousCollected = Array.isArray(previous?.issues?.repositories)
-    ? previous.issues.repositories.map(
-        (r: { repository: string }) => r.repository,
-      )
-    : previousInventory;
-  assertProfiles(previous, previousCollected);
+  assertRetainedProfiles(previous);
   const client = new GitHubGraphqlClient(token);
   const request: CensusRequest = async <T>(
     query: string,
@@ -209,6 +206,8 @@ if (values.live) {
   console.log(`Published ${result.people.length} profiles`);
 } else {
   const value = JSON.parse(await readFile(values.input ?? seed, "utf8"));
-  assertProfiles(value);
+  // A PR input is a retained snapshot, not a new complete live collection.
+  // Readers keep checking it against current targets and report missing data.
+  assertRetainedProfiles(value);
   await publish(output, value);
 }

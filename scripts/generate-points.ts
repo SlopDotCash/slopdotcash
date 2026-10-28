@@ -20,11 +20,13 @@ import {
   type PointAward,
   type PointsIndex,
   type PointsJournal,
+  type PointsMember,
   pointMembers,
   pointRevisionId,
   reconcilePointPenalties,
   retainedBatchOwnedKeys,
 } from "../src/lib/points";
+import type { PointsSummary } from "../src/lib/points-summary";
 import { findHistoricalRepository, findProject } from "../src/lib/projects.mjs";
 import { syncCycleIndex } from "./sync-cycle-index";
 
@@ -392,6 +394,31 @@ export function retainedHistoryAwards(events: ScoreEvent[]): PointAward[] {
   });
 }
 
+/** Every contributor's all-time total, derived from the same journal. */
+export function pointsSummary(
+  journal: PointsJournal,
+  members: readonly PointsMember[],
+  indexDigest: string,
+): PointsSummary {
+  const ranked = members
+    .filter((member) => member.total > 0)
+    .sort((a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id));
+  return {
+    schemaVersion: "1",
+    ruleVersion: journal.ruleVersion,
+    generatedAt: journal.generatedAt,
+    indexDigest,
+    totals: {
+      contributors: ranked.length,
+      points: ranked.reduce((sum, member) => sum + member.total, 0),
+    },
+    contributors: ranked.map((member) => ({
+      actor: { id: member.actor.id, login: member.actor.login },
+      total: member.total,
+    })),
+  };
+}
+
 export async function generatePoints(
   options: { online?: boolean; bootstrap?: boolean } = {},
 ) {
@@ -500,6 +527,17 @@ export async function generatePoints(
   await mkdir(".points-build", { recursive: true });
   await writeFile(".points-build/import.sql", pointsSql(journal));
   const members = pointMembers(journal);
+  // The home page ranks the top contributors from this small summary instead
+  // of downloading every shard of the journal.
+  const summary = pointsSummary(journal, members, hash(JSON.stringify(index)));
+  await writeFile(
+    "public/data/points-summary.json.tmp",
+    JSON.stringify(summary) + "\n",
+  );
+  await rename(
+    "public/data/points-summary.json.tmp",
+    "public/data/points-summary.json",
+  );
   await writeFile(
     ".points-build/report.json",
     JSON.stringify(

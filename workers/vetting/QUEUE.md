@@ -20,9 +20,10 @@ then checks the template index against the assigned input digest, reconstructs
 that digest, and downloads the exact contributor, reviewer and renderer bytes.
 Changed or uncommitted template inputs fail closed. It follows no redirects.
 The index and each template file have a 1 MiB limit; template content has a
-32 MiB total limit. The complete network acquisition has a 180-second limit.
-The source acquisition component keeps its own stricter per-request and source
-limits.
+32 MiB total limit. These pinned-input reads have a 180-second limit. Source
+acquisition is one shallow Git fetch of the assigned commit with no size limit
+and its own 45-minute operational guard ([ACQUISITION.md](ACQUISITION.md)); it
+sends no credential.
 
 A successful call returns the private directory and SHA-256 of
 `queued-inputs.json`. That file binds the assessment, exact manifest text,
