@@ -22,9 +22,11 @@ import {
 import {
   type ReviewPass,
   reviewScan,
+  SCAN_PROMPT_REVISION,
   SCAN_REVIEW_AREAS,
   type ScannerEvidence,
   type ScannerProfile,
+  SYNTHESIS_PROMPT_REVISION,
 } from "./scanners";
 
 /** Default input budget of one batch call, in estimated tokens. */
@@ -277,11 +279,15 @@ export function synthesisCall(
 /** Optional operator-private store that lets a long review resume next pass. */
 export type ReviewCache = { directory: string; maxCallsPerPass: number };
 
+const promptRevision = (kind: ReviewPass["kind"]) =>
+  kind === "synthesis" ? SYNTHESIS_PROMPT_REVISION : SCAN_PROMPT_REVISION;
+
 async function cached(
   cache: ReviewCache | undefined,
   key: string,
   call: PlannedCall,
   profile: ScannerProfile,
+  kind: ReviewPass["kind"],
 ): Promise<ScannerEvidence | null> {
   if (!cache) return null;
   try {
@@ -291,7 +297,8 @@ async function cached(
     return value.review.status === "completed" &&
       value.review.inputManifestSha256 === call.inputSha256 &&
       value.review.model === profile.model &&
-      value.review.reviewer === profile.reviewer
+      value.review.reviewer === profile.reviewer &&
+      value.review.promptPolicyRevision === promptRevision(kind)
       ? value
       : null;
   } catch {
@@ -409,13 +416,14 @@ export async function reviewInventory(input: {
         timeoutMs: callTimeoutMs(plan.call.estimatedTokens),
       }),
     };
-  const key = (call: PlannedCall, kind: string) =>
+  const key = (call: PlannedCall, kind: ReviewPass["kind"]) =>
     sha256(
       JSON.stringify([
         profile.endpoint,
         profile.model,
         profile.reviewer,
         kind,
+        promptRevision(kind),
         call.inputSha256,
       ]),
     );
@@ -426,7 +434,7 @@ export async function reviewInventory(input: {
     kind: ReviewPass["kind"],
   ): Promise<{ evidence: ScannerEvidence; cached: boolean } | null> => {
     const id = key(call, kind);
-    const hit = await cached(input.cache, id, call, profile);
+    const hit = await cached(input.cache, id, call, profile, kind);
     if (hit) return { evidence: hit, cached: true };
     if (budget <= 0) {
       exhausted = true;
