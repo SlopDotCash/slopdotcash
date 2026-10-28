@@ -135,6 +135,25 @@ test("screening qualification refuses unknown or over-budget costs without retri
   }
 });
 
+test("screening qualification still refuses incomplete evidence and spam after one call", async () => {
+  for (const decision of ["needs-information", "spam"]) {
+    const source = transport({
+      ...body,
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({ decision, reason: "Synthetic refusal" }),
+        },
+      ],
+      usage: { buyer_cost_micro: 75 },
+    });
+    await expect(
+      qualifySecurityScreening("synthetic-only", false, source.fetch),
+    ).rejects.toThrow(`Synthetic screening returned ${decision}`);
+    expect(source.calls()).toBe(1);
+  }
+});
+
 test("screening refuses body-marked truncation and committed errors despite valid receipts", async () => {
   for (const value of [
     { ...body, surplus: { truncated: true }, usage: { buyer_cost_micro: 75 } },
