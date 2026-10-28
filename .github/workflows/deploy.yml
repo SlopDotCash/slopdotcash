@@ -41,6 +41,9 @@ jobs:
   prepare:
     name: Prepare checked browser bundle
     outputs:
+      browser_matrix: ${{ steps.scope.outputs.browser_matrix }}
+      sandbox: ${{ steps.scope.outputs.sandbox }}
+      installer: ${{ steps.scope.outputs.installer }}
       registry_sha256: ${{ steps.registry.outputs.registry_sha256 }}
       revisions_sha256: ${{ steps.registry.outputs.revisions_sha256 }}
     env:
@@ -63,6 +66,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           submodules: false
+
+      - name: Select affected CI coverage
+        id: scope
+        run: node scripts/ci-scope.mjs
 
       - name: Verify quality checkout
         run: |
@@ -284,6 +291,10 @@ jobs:
           persist-credentials: false
           submodules: false
 
+      - name: Select affected CI coverage
+        id: scope
+        run: node scripts/ci-scope.mjs
+
       - name: Verify check checkout
         run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
@@ -309,6 +320,7 @@ jobs:
         run: bun run verify:code
 
       - name: Run installer lifecycle end-to-end checks
+        if: steps.scope.outputs.installer == 'true'
         run: bun run test:installer:e2e
 
   browsers:
@@ -318,30 +330,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - lane: preview-1
-            browsers: chromium
-            server: preview
-            shard: 1/2
-          - lane: preview-2
-            browsers: chromium
-            server: preview
-            shard: 2/2
-          - lane: pages
-            browsers: chromium
-            server: pages
-            shard: 1/1
-          # The shipped bundle with Pages Functions. Each shard runs on its own
-          # runner with its own fresh local D1, Wrangler and GitHub fixture.
-          - lane: registry-1
-            browsers: chromium firefox
-            server: registry
-            shard: 1/2
-          - lane: registry-2
-            browsers: chromium firefox
-            server: registry
-            shard: 2/2
+      matrix: ${{ fromJSON(needs.prepare.outputs.browser_matrix) }}
     env:
       VITE_SLOP_ENVIRONMENT: ${{ (github.ref == 'refs/heads/development' || github.base_ref == 'development') && 'staging' || 'production' }}
       SLOP_E2E_PREBUILT: '1'
@@ -417,7 +406,11 @@ jobs:
       - name: Run complete assigned browser coverage
         env:
           BROWSER_SHARD: ${{ matrix.shard }}
-        run: node scripts/run-e2e.mjs --shard="$BROWSER_SHARD"
+          BROWSER_GREP: ${{ matrix.grep }}
+        run: |
+          args=(--shard="$BROWSER_SHARD")
+          if [ -n "$BROWSER_GREP" ]; then args+=(--grep "$BROWSER_GREP"); fi
+          node scripts/run-e2e.mjs "${args[@]}"
       - name: Verify local sign-in return paths
         if: matrix.lane == 'preview-1'
         # This DEV-mode flow needs Vite, not the production preview bundle.
@@ -442,6 +435,8 @@ jobs:
           retention-days: 14
 
   isolated-artifact:
+    needs: prepare
+    if: needs.prepare.outputs.sandbox == 'true'
     uses: ./.github/workflows/vetting-sandbox.yml
     permissions:
       contents: read
@@ -458,11 +453,12 @@ jobs:
           CHECK_RESULT: ${{ needs.check.result }}
           BROWSER_RESULT: ${{ needs.browsers.result }}
           SANDBOX_RESULT: ${{ needs.isolated-artifact.result }}
+          SANDBOX_REQUIRED: ${{ needs.prepare.outputs.sandbox }}
         run: |
           test "$PREPARE_RESULT" = success
           test "$CHECK_RESULT" = success
           test "$BROWSER_RESULT" = success
-          test "$SANDBOX_RESULT" = success
+          if [ "$SANDBOX_REQUIRED" = true ]; then test "$SANDBOX_RESULT" = success; fi
 
   staging:
     name: Deploy verified development to staging
