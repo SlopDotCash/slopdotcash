@@ -178,6 +178,8 @@ Private operator service routes (no public routes or `workers.dev` endpoint):
 - `POST https://notify.internal/v1/security-notifications/reconcile`, body with
   `deliveryId`, `attempt`, `destinationDigest`, `outcome` and `evidenceReference`, records independent provider
   evidence. Outcomes are `delivered`, `bounced`, `suppressed`, or `not-accepted`.
+  Provider `bounced` and `suppressed` evidence are failed deliveries and
+  escalate to the backup.
   Only the exact accepted or ambiguous attempt and destination can be reconciled.
   Each immutable provider evidence reference is accepted once; an old receipt
   cannot authorize another retry. `not-accepted`
