@@ -91,6 +91,28 @@ that check was not completed (PRD section 11). These records do not prove
 project activation, wallet binding or a first payment; continue those under
 #904 without repeating the program upgrade.
 
+### Token-2022 owner vault setup upgrade (28 October 2026)
+
+The owner approved this exact program upgrade.
+The previous deployment above remains historical evidence. The upgrade finalized
+at slot **462,466,131**, transaction
+[`4cScJHGH…WP2T1`](https://solscan.io/tx/4cScJHGHPKNp23A5NDJ5Ydte3LbzmufkaVo22y9fmG3fKgBjHikrX7TvQFCjtruArhbdTb6zGBpZwNkzUCMWP2T1).
+
+The 731,040-byte deployed code region has SHA-256
+`f250228d87493c024737de9dea4290ed0d28ed777eaddf17b874d493b77274a6`.
+It matches the retained verifiable build from source
+`c9564479a65523756fd2998e04d192be3f88579a` and contract tree
+`1899bd10df62916a75936c78bd6a80e5b2065a75`. The same bytes passed the
+[full local-chain lifecycle run](https://github.com/SlopDotCash/slopdotcash/actions/runs/40672894952)
+and match the [independent build](https://github.com/SlopDotCash/slopdotcash/actions/runs/40677418859).
+
+The program account was extended by 39,408 bytes before uploading. Buffer bytes
+were checked in full before the upgrade. The upgrade transaction cost 10,000
+lamports and returned the buffer's 3,714,562,040 lamports to the funding wallet.
+Finalized reads verified the code digest and the unchanged upgrade, identity,
+fee-recipient and rotation authorities. No payout-execution switch was changed.
+Vault creation, deposits and registration remain separate operations.
+
 ### Base monthly reserve V2 upgrade
 
 The owner authorized the reviewed Base sequence on 25 October 2026 with a
@@ -730,11 +752,11 @@ before creating a vault; it does not establish vault or payment readiness.
 ### First Solana vault: reviewed program infrastructure
 
 `contracts/solana/programs.ts` holds the program review. It contains no project,
-owner, mint or vault inventory. The mainnet pin records the finalized #901
-upgrade at slot 461493344 from source `83827c042c7f28479f7d6a959d7ee5a64652fe85`.
-The ProgramData bytes after the 45-byte header have SHA-256
-`38c8d776e9d4d763f16c834d76aa0497ba1c3f2a3b8bbe17a60067268782005d`.
-This includes zero padding; do not substitute the unpadded build digest.
+owner, mint or vault inventory. The mainnet pin records the owner-approved Token-2022 upgrade at slot
+462466131 from source `c9564479a65523756fd2998e04d192be3f88579a`.
+The 731,040 ProgramData bytes after the 45-byte header have SHA-256
+`f250228d87493c024737de9dea4290ed0d28ed777eaddf17b874d493b77274a6`.
+The deployed region and retained artifact have the same length and digest.
 New mainnet projects use the reviewed replay domain
 `SHA256("slop-escrow:solana-mainnet")`. This first-vault infrastructure choice
 does not change any existing project's recorded domain. Each signed message
