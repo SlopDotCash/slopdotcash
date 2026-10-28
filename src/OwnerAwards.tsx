@@ -1,5 +1,5 @@
 import "./owner-review.css";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { loginHref } from "./lib/browser-deployment";
@@ -17,6 +17,7 @@ import OwnerReserveRelease, {
   releaseStoragePrefix,
 } from "./OwnerReserveRelease";
 import {
+  formatCycleMonth,
   formatDateTime,
   MetricGrid,
   MetricTile,
@@ -69,9 +70,12 @@ const STATE_TEXT: Record<
 
 export default function OwnerAwards({
   project,
+  awardMonths,
 }: {
   project: ProjectDefinition;
+  awardMonths: readonly string[];
 }) {
+  const months = [...new Set(awardMonths)].sort();
   const [recovery] = useState(() => {
     try {
       return { pending: recoverOwnerCommitments(project.id), error: "" };
@@ -86,10 +90,16 @@ export default function OwnerAwards({
   // unless this browser has a submitted release to reconcile.
   const [opened, setOpened] = useState(() => hasSubmittedRelease(project.id));
   const [monthRequest, setMonthRequest] = useState(() => ({
-    period: previousMonth(),
+    period: months.at(-1) ?? previousMonth(),
     revision: 0,
   }));
   const { period } = monthRequest;
+  useEffect(() => {
+    const latest = [...awardMonths].sort().at(-1);
+    if (latest && !awardMonths.includes(period)) {
+      setMonthRequest((current) => ({ ...current, period: latest }));
+    }
+  }, [awardMonths, period]);
   const [view, setView] = useState<MonthlyOwnerView | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
@@ -268,6 +278,21 @@ export default function OwnerAwards({
           deployment.vault === currentDeployment.vault,
       )
     : null;
+  if (
+    months.length === 0 &&
+    recovery.pending.length === 0 &&
+    !recovery.error &&
+    !opened
+  )
+    return null;
+  const monthIndex = months.indexOf(period);
+  const selectMonth = (month: string) => {
+    setMonthRequest((current) => ({
+      period: month,
+      revision: current.revision,
+    }));
+    setView(null);
+  };
   return (
     <section
       id="monthly-awards"
@@ -300,22 +325,32 @@ export default function OwnerAwards({
       ) : (
         <>
           <form className="award-month-toolbar" onSubmit={load}>
-            <label>
-              Contribution month
-              <input
-                type="month"
-                required
-                value={period}
-                disabled={busy}
-                onChange={(event) => {
-                  setMonthRequest({
-                    period: event.target.value,
-                    revision: monthRequest.revision,
-                  });
-                  setView(null);
-                }}
-              />
-            </label>
+            <nav
+              className="award-month-navigation"
+              aria-label="Contribution month"
+            >
+              <button
+                type="button"
+                className="button secondary-button icon-button"
+                aria-label="Previous award month"
+                disabled={busy || monthIndex <= 0}
+                onClick={() => selectMonth(months[monthIndex - 1])}
+              >
+                <ChevronLeft aria-hidden="true" />
+              </button>
+              <span aria-live="polite">{formatCycleMonth(period)}</span>
+              <button
+                type="button"
+                className="button secondary-button icon-button"
+                aria-label="Next award month"
+                disabled={
+                  busy || monthIndex < 0 || monthIndex >= months.length - 1
+                }
+                onClick={() => selectMonth(months[monthIndex + 1])}
+              >
+                <ChevronRight aria-hidden="true" />
+              </button>
+            </nav>
             <button
               className="button primary-button"
               type="submit"

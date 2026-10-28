@@ -8,6 +8,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ProjectImageField } from "./ProjectImageField";
 import "./owner-review.css";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
@@ -34,6 +35,7 @@ import {
   publishProjectRevision,
   publishStoredApplication,
   type RevisionResult,
+  useProjectMaintainer,
   useProjectSession,
 } from "./lib/project-api";
 import {
@@ -102,6 +104,7 @@ const EMPTY_PROPOSAL = {
   stewardActorId: "",
   stewardNodeId: "",
   headline: "",
+  image: "",
   goal: "",
   criteria: "",
   contributionGuide: "",
@@ -152,6 +155,7 @@ const FIELD_STEP: Partial<Record<ProposalField, number>> = {
   licenseCommit: 0,
   licenseDigest: 0,
   name: 1,
+  image: 1,
   headline: 1,
   goal: 1,
   criteria: 1,
@@ -400,7 +404,10 @@ function readDraft(): Proposal | null {
     const draft = { ...EMPTY_PROPOSAL };
     for (const key of Object.keys(EMPTY_PROPOSAL) as ProposalField[]) {
       const entry = (value as Record<string, unknown>)[key];
-      if (typeof entry === "string" && entry.length <= 4_000)
+      if (
+        typeof entry === "string" &&
+        entry.length <= (key === "image" ? 16_384 : 4_000)
+      )
         draft[key] = entry;
     }
     return draft;
@@ -1005,6 +1012,7 @@ export default function ProjectProposalPage() {
       name: p.name || "New project",
       eyebrow: "Open-source project",
       headline: p.headline || "Describe the project in one sentence.",
+      ...(p.image ? { image: p.image } : {}),
       description: p.goal || "Describe the concrete open-source goal.",
       listingTier: "community",
       status: "paused",
@@ -1619,6 +1627,7 @@ export default function ProjectProposalPage() {
         ) : null}
         {step === 1 ? (
           <>
+            <ProjectImageField value={p.image} onChange={set("image")} />
             <TextField
               error={shown("name")}
               label="Project name"
@@ -1992,6 +2001,7 @@ export default function ProjectProposalPage() {
 }
 
 type UpdateDraft = {
+  image: string;
   automaticClosure: string;
   headline: string;
   goal: string;
@@ -2006,6 +2016,7 @@ type UpdateDraft = {
 } & Record<SkillRuleField, string>;
 
 const DRAFT_FIELDS = [
+  "image",
   "automaticClosure",
   "headline",
   "goal",
@@ -2029,6 +2040,23 @@ const DRAFT_FIELDS = [
  * the current one, and the server refuses a stale base revision.
  */
 export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
+  const { allowed, checking } = useProjectMaintainer(project.id);
+  if (!allowed)
+    return (
+      <main className="shell route-main manage-page">
+        <RoutePageHeader title="Project settings" />
+        <ProjectNav project={project} current="settings" />
+        <p role="status">
+          {checking
+            ? "Checking access…"
+            : "Project settings are available only to signed-in maintainers."}
+        </p>
+      </main>
+    );
+  return <ProjectUpdateForm project={project} />;
+}
+
+function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
   const session = useProjectSession();
   const [base, setBase] = useState<{
     revision: number;
@@ -2083,6 +2111,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   const initial: UpdateDraft = {
     automaticClosure: String(current.slopbot?.automaticClosure === true),
     headline: current.headline,
+    image: current.image ?? "",
     goal: current.description,
     criteria: current.contribution?.approvedScope ?? "",
     note: "",
@@ -2121,7 +2150,8 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           DRAFT_FIELDS.filter(
             (field) =>
               typeof saved[field] === "string" &&
-              (saved[field] as string).length <= 4_000,
+              (saved[field] as string).length <=
+                (field === "image" ? 16_384 : 4_000),
           ).map((field) => [field, saved[field]]),
         )
       : null,
@@ -2265,6 +2295,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       ...(source.slopbot !== undefined || value.automaticClosure === "true"
         ? { slopbot: { automaticClosure: value.automaticClosure === "true" } }
         : {}),
+      image: value.image || undefined,
       headline: value.headline.trim(),
       description: value.goal.trim(),
       contribution: {
@@ -2301,6 +2332,18 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       after:
         next.slopbot?.automaticClosure === true ? "Allowed" : "Not allowed",
     },
+    ...(current.image !== next.image
+      ? [
+          {
+            field: "image",
+            label: "Project image",
+            before: current.image
+              ? "Current custom image"
+              : "GitHub owner avatar",
+            after: next.image ? "New custom image" : "GitHub owner avatar",
+          },
+        ]
+      : []),
     {
       field: "headline",
       label: "Short description",
@@ -2381,7 +2424,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         project.id,
         next,
         base.revision,
-        value.note,
+        "",
         choice.mode === "monthly" && changes.financial.length > 0
           ? value.monthlyAmount.trim()
           : null,
@@ -2444,6 +2487,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
       >
         <details className="proposal-advanced" open>
           <summary>Project listing</summary>
+          <ProjectImageField value={value.image} onChange={set("image")} />
           <TextField
             error={shown("headline")}
             label="Short description"
@@ -2540,18 +2584,6 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             </button>
           </div>
         ) : null}
-        <details className="proposal-advanced">
-          <summary>Public revision note (optional)</summary>
-          <TextField
-            error={shown("note")}
-            hint="Optional and public."
-            label="Revision note"
-            multiline
-            name="note"
-            onChange={set("note")}
-            value={value.note}
-          />
-        </details>
         {staleDraft ? (
           <div role="alert" className="form-error">
             <p>
@@ -2616,49 +2648,20 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         {loadError ? (
           <div role="alert" className="form-error">
             <p>{loadError}</p>
-            <button
-              className="button secondary-button"
-              onClick={() => setReload((count) => count + 1)}
-              type="button"
-            >
-              Try again
-            </button>
           </div>
         ) : null}
         <div className="handoff-actions">
-          {session.status !== "signed-in" ? (
-            <a
-              className="button primary-button"
-              href={loginHref(`/projects/${project.slug}/manage`)}
-            >
-              Sign in to publish changes
-            </a>
-          ) : (
-            <button
-              className="button primary-button"
-              disabled={
-                submission.state === "publishing" || base === null || staleDraft
-              }
-              onClick={() => void publish()}
-              type="button"
-            >
-              {submission.state === "publishing"
-                ? "Publishing…"
-                : "Publish changes"}
-            </button>
-          )}
           <button
-            className="button secondary-button"
-            disabled={submission.state === "publishing"}
-            onClick={() => {
-              setDraft(null);
-              setDraftRevision(null);
-              setAttempted(false);
-              setSubmission({ state: "idle" });
-            }}
+            className="button primary-button"
+            disabled={
+              submission.state === "publishing" || base === null || staleDraft
+            }
+            onClick={() => void publish()}
             type="button"
           >
-            Discard draft
+            {submission.state === "publishing"
+              ? "Publishing…"
+              : "Publish changes"}
           </button>
           {submission.state === "error" ? (
             <p className="form-error" role="alert">
@@ -2697,11 +2700,13 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           </p>
         </div>
       </form>
-      <p id="security-settings">
-        <Link href={`/projects/${current.slug}/security#security-settings`}>
-          Manage security program and private bounty funds
-        </Link>
-      </p>
+      {current.securityBounty ? (
+        <p id="security-settings">
+          <Link href={`/projects/${current.slug}/security#security-settings`}>
+            Manage security program and private bounty funds
+          </Link>
+        </p>
+      ) : null}
       {!monthly ? (
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>

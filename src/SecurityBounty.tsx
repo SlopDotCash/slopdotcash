@@ -599,7 +599,7 @@ export function SecurityProgramPage({
       </main>
     );
   const money = amounts(terms);
-  const agentPrompt = `Read ${window.location.origin}/SKILL.md and follow its private security reporting workflow for github.com/${terms.intake.repository}. Start at ${window.location.origin}/projects/${project.slug}/security and submit findings through Slop.`;
+  const agentPrompt = `Read ${window.location.origin}/SKILL.md and follow its private security reporting workflow for github.com/${terms.intake.repository}.`;
   const { scope } = terms;
   return (
     <main className="shell route-main admin-page security-page operations-page security-program">

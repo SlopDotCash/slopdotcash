@@ -40,6 +40,8 @@ Users can add EVM and Solana payout wallets. If users have not added wallets, th
 
 ## 4. Projects and contribution skills
 
+Owner decision, 28 October 2026: projects may upload an optional custom image in setup and settings. Cards and project headers use that image, falling back to the GitHub owner avatar. Do not use GitHub social-preview images. Save image changes as project presentation revisions.
+
 Setup has four steps: Repository, Contribution rules, Rewards, Review. Funding terms belong in Rewards. Project owners must be logged in with Github to create a project. Preview the page and both skills. Show one setup status that reports GitHub authority, Slopbot installation, the security scan, and funding separately, with the next action.
 
 Projects start without routine admin approval after complete setup, verified GitHub authority, Slopbot installation, and either a successful security scan or the permanent existing-project exemption in section 8. Funding is optional and has a separate status. Contributor skills check for malicious code and injection risks before installation or execution. They report risks and stop the local workflow. Two distinct contributor flags pause the project and remove it from available work. A clean fresh scan reinstates a project that flags alone paused.

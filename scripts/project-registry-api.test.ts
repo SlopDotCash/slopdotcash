@@ -356,6 +356,42 @@ describe("project registry API", () => {
     expect((await call("GET", "projects/missing")).status).toBe(404);
   });
 
+  test("owner project images publish, validate and remove through immutable revisions", async () => {
+    access = ADMIN_ACCESS;
+    await listProject();
+    const current = await persistence.getProject("open-registry");
+    if (!current) throw new Error("Missing listed project");
+    const image =
+      "data:image/webp;base64,UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA";
+    const manifest = { ...current.manifest, image };
+    const published = await call("PUT", "projects/open-registry", "applicant", {
+      manifest,
+      expectedRevision: current.revision,
+    });
+    expect(published.status).toBe(200);
+    expect((await published.json()).changes.presentation).toEqual(["image"]);
+    expect(
+      (await (await call("GET", "projects/open-registry")).json()).project
+        .image,
+    ).toBe(image);
+    const invalid = await call("PUT", "projects/open-registry", "applicant", {
+      manifest: { ...manifest, image: "data:image/svg+xml;base64,PHN2Zz4=" },
+      expectedRevision: 2,
+    });
+    expect(invalid.status).toBe(422);
+    const removed = await call("PUT", "projects/open-registry", "applicant", {
+      manifest: current.manifest,
+      expectedRevision: 2,
+    });
+    expect(removed.status).toBe(200);
+    expect(
+      (await (await call("GET", "projects/open-registry")).json()).project
+        .image,
+    ).toBeUndefined();
+    const prior = await persistence.getRevisionText("open-registry", 2);
+    expect(JSON.parse(prior?.manifestText ?? "{}").image).toBe(image);
+  });
+
   test("an owner revision publishes at once and appends only its expected revision", async () => {
     access = ADMIN_ACCESS;
     await listProject();

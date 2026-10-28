@@ -118,42 +118,24 @@ test("project setup shares one sign-in read with its owner inventory", async ({
   await expectAccessible(page);
 });
 
-test("project navigation reads an updated published registry", async ({
+test("project funding links open the consolidated overview", async ({
   page,
   diagnostics,
 }) => {
   diagnostics.allowPreviewApiMisses();
-  let published = false;
-  const description =
-    "Owner-published project description after this page opened.";
-  await page.route(
-    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)(?:\?.*)?$/u,
-    (route) =>
-      route.fulfill({
-        json: {
-          schemaVersion: "1",
-          projects: PROJECTS.map((project) =>
-            published && project.id === "eliza"
-              ? { ...project, description }
-              : project,
-          ),
-        },
-      }),
-  );
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
-  await expect(
-    page.getByRole("heading", { name: "Eliza funding", exact: true }),
-  ).toBeVisible();
-  published = true;
-  await page
-    .getByRole("navigation", { name: "Project navigation" })
-    .getByRole("link", { name: "Overview", exact: true })
-    .focus();
-  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/projects\/eliza#funding$/u);
   await expect(
     page.getByRole("heading", { name: "Eliza", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText(description, { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Project navigation" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Funds and awards" }),
+  ).toBeVisible();
+  await expect(page.locator(".project-reward-status")).toHaveCount(1);
+  await expect(page.locator(".route-funding-summary")).toHaveCount(0);
   await expectAccessible(page);
 });
 

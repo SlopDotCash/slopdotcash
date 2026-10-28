@@ -5,10 +5,7 @@ import {
   ChevronRight,
   Clipboard,
   ExternalLink,
-  FolderGit2,
   Plus,
-  ShieldCheck,
-  Wallet,
 } from "lucide-react";
 import {
   lazy,
@@ -18,15 +15,10 @@ import {
   useMemo,
   useState,
 } from "react";
-import {
-  EscrowFunding,
-  reservedGross,
-  useVaultTotals,
-  vaultSnapshotStale,
-} from "./EscrowFunding";
-import { FundingStatus } from "./FundingStatus";
+import { EscrowFunding } from "./EscrowFunding";
 import { Link, useHashScroll } from "./Link";
 import { formatSecurityAmount } from "./lib/security-bounty.mjs";
+import { ProjectBountyFunding } from "./OwnerBountyVault";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
@@ -38,8 +30,6 @@ import {
   hasBountyOverview,
   homeProjects,
 } from "./lib/home-projects";
-import { networkLabel } from "./lib/network-names";
-import { formatAssetAmount } from "./lib/payments/contracts";
 import type { ProjectView } from "./lib/project-view";
 import {
   findProject,
@@ -67,11 +57,8 @@ import {
   formatDate,
   formatDateTime,
   formatMicroUsdc,
-  MetricGrid,
-  MetricTile,
   monthlyPoolPointsOnly,
   NotFound,
-  ProjectNav,
   RoutePageHeader,
   reviewBudgetLabel,
   stale,
@@ -145,11 +132,7 @@ function publicFooterDomain(hostname: string): "slop.cash" | "slop.tech" {
     : "slop.cash";
 }
 
-type ProjectRouteKind =
-  | "project"
-  | "funding-project"
-  | "manage-project"
-  | "security-program";
+type ProjectRouteKind = "project" | "manage-project" | "security-program";
 type PageRouteKind =
   | "home"
   | "how-it-works"
@@ -216,7 +199,6 @@ const ROUTES: Record<
     privateTitle: "Security cases",
   },
   project: { snapshot: true, registry: "cached" },
-  "funding-project": { snapshot: false, registry: "current" },
   "manage-project": { snapshot: false, registry: "current" },
   "security-program": { snapshot: false, registry: "current" },
   cycle: { snapshot: true, registry: "cached" },
@@ -241,7 +223,6 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
 const PROJECT_SECTIONS = new Map<string, ProjectRouteKind>([
   ["manage", "manage-project"],
   ["security", "security-program"],
-  ["funding", "funding-project"],
 ]);
 
 function internalRoute(pathname: string): Route {
@@ -304,6 +285,16 @@ function canonicalLocation(): string {
       `/projects/${awards[1]}/funding${window.location.search}${window.location.hash || "#monthly-awards"}`,
     );
   }
+  const funding = /^\/projects\/([^/]+)\/funding\/?$/.exec(
+    window.location.pathname,
+  );
+  if (funding) {
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `/projects/${funding[1]}${window.location.search}${window.location.hash || "#funding"}`,
+    );
+  }
   const legacy = LEGACY_SECTIONS.get(
     window.location.pathname.replace(/^\/|\/$/gu, ""),
   );
@@ -358,12 +349,6 @@ function routeHead(route: Route): { title: string; path: string | null } {
       };
     }
     const base = `/projects/${project.slug}`;
-    if (route.kind === "funding-project") {
-      return {
-        title: pageTitle(`${project.name} funding`),
-        path: `${base}/funding`,
-      };
-    }
     if (route.kind === "security-program") {
       return {
         title: pageTitle(`${project.name} security bounty`),
@@ -550,6 +535,23 @@ function monthlyPoolCapLabel(project: ProjectDefinition): string {
     .replace(/K$/u, "k");
 }
 
+function ProjectImage({ project }: { project: ProjectDefinition }) {
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  return !project.image || failedImage === project.image ? (
+    <ProjectOwnerAvatar project={project} />
+  ) : (
+    <img
+      alt=""
+      aria-hidden="true"
+      className="project-avatar"
+      width={56}
+      height={56}
+      src={project.image}
+      onError={() => setFailedImage(project.image ?? null)}
+    />
+  );
+}
+
 function ProjectOwnerAvatar({ project }: { project: ProjectDefinition }) {
   const repository = project.repositories[0];
   const owner = (repository?.aliases?.at(-1) ?? repository?.id ?? "").split(
@@ -579,16 +581,31 @@ function ProjectOwnerAvatar({ project }: { project: ProjectDefinition }) {
   );
 }
 
+function compactPrizeLabel(label: string): string {
+  return label.replace(/\$([\d,]+)(?![\d,.])/gu, (_amount, digits: string) =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      notation: "compact",
+      maximumFractionDigits: 2,
+    })
+      .format(BigInt(digits.replaceAll(",", "")))
+      .toLowerCase(),
+  );
+}
+
 function ProjectCard({ project }: { project: ProjectDefinition }) {
   const amount =
     project.reward.kind === "monthly-pool"
       ? monthlyPoolCapLabel(project)
-      : (project.reward.externalOpportunity?.advertisedAmountDisplay ??
-        "External");
+      : compactPrizeLabel(
+          project.reward.externalOpportunity?.advertisedAmountDisplay ??
+            "External",
+        );
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
-        <ProjectOwnerAvatar project={project} />
+        <ProjectImage project={project} />
         <h3>{project.name}</h3>
         <ArrowRight aria-hidden="true" />
       </div>
@@ -627,7 +644,7 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
   return (
     <li>
       <Link className="project-row" href={`/projects/${project.slug}`}>
-        <ProjectOwnerAvatar project={project} />
+        <ProjectImage project={project} />
         <span className="project-row-name">
           <strong>{project.name}</strong>
           <small>{project.description}</small>
@@ -747,44 +764,37 @@ function SecurityBounties() {
             const terms = project.securityBounty;
             if (!terms) return null;
             return (
-              <article className="security-bounty-card" key={project.id}>
+              <Link
+                className="project-card"
+                key={project.id}
+                href={
+                  hasBountyOverview(project)
+                    ? `/projects/${project.slug}`
+                    : `/projects/${project.slug}/security`
+                }
+              >
                 <div className="project-card-heading">
-                  <ShieldCheck aria-hidden="true" />
-                  <h3>
-                    <Link
-                      href={
-                        hasBountyOverview(project)
-                          ? `/projects/${project.slug}`
-                          : `/projects/${project.slug}/security`
-                      }
-                    >
-                      {project.name}
-                    </Link>
-                  </h3>
+                  <ProjectImage project={project} />
+                  <h3>{project.name}</h3>
+                  <ArrowRight aria-hidden="true" />
                 </div>
-                <p className="security-offer-net">
-                  <strong>
-                    {formatSecurityAmount(
-                      terms.amount.grossMinor,
-                      terms.amount,
-                    )}{" "}
-                    security bounty
-                  </strong>
-                </p>
-                <p>
-                  Find a critical security vulnerability in the {project.name}
-                </p>
-                <Link
-                  className="button primary-button"
-                  href={
-                    hasBountyOverview(project)
-                      ? `/projects/${project.slug}`
-                      : `/projects/${project.slug}/security`
-                  }
-                >
-                  View bounty <ArrowRight aria-hidden="true" />
-                </Link>
-              </article>
+                <div className="project-card-content">
+                  <p className="project-summary">
+                    Find a critical security vulnerability in the {project.name}
+                  </p>
+                  <p className="project-bounty">
+                    <strong>
+                      {compactPrizeLabel(
+                        formatSecurityAmount(
+                          terms.amount.grossMinor,
+                          terms.amount,
+                        ).replace(/^([\d,.]+) USDC$/u, "$$$1"),
+                      )}
+                    </strong>
+                    <span>/ Critical</span>
+                  </p>
+                </div>
+              </Link>
             );
           })}
         </div>
@@ -1149,6 +1159,7 @@ function ProjectInstallPanel({
         </p>
       )}
       <AgentPromptBox
+        openIn
         prompt={ready ? projectAgentPrompt(project) : bootstrapAgentPrompt()}
       />
       {ready && view ? (
@@ -1259,6 +1270,12 @@ function ProjectPaymentHistory({
     right.localeCompare(left),
   );
   const historyLimited = directMonths.length > 3 || cycles.length > 3;
+  if (
+    cycles.length === 0 &&
+    directMonths.length === 0 &&
+    (externalPrize || directState.status === "ready")
+  )
+    return null;
   return (
     <section className="section payment-history">
       <div className="simple-heading">
@@ -1349,135 +1366,103 @@ function ProjectPaymentHistory({
   );
 }
 
-/**
- * The project page's one funding line (PRD section 7: one status summary per
- * project). Deposits, withdrawals and full vault totals live on the funding
- * page only.
- */
-function ProjectFunding({ project }: { project: ProjectDefinition }) {
-  const totals = useVaultTotals(project);
-  if (!project.escrow) return null;
-  const href = `/projects/${project.slug}/funding`;
-  let summary: ReactNode;
-  if (totals.status === "none")
-    summary = `No project vault yet · ${fundingStateLabel(project)}`;
-  else if (totals.status === "loading")
-    summary = <span role="status">Loading vault totals…</span>;
-  else if (totals.status === "error")
-    summary = <span role="alert">Vault totals unavailable</span>;
-  else if (totals.vault.snapshots.length === 0)
-    summary = "Vault totals not read yet";
-  else
-    summary = totals.vault.snapshots.map((snapshot, index) => {
-      const amount = (value: string | null) =>
-        value === null ? "not reported" : formatAssetAmount(value, snapshot);
-      return (
-        <span key={`${snapshot.network}:${snapshot.vault}`}>
-          {index > 0 ? " · " : null}
-          {networkLabel(snapshot.network)}: {amount(snapshot.freeBalance)}{" "}
-          available · {amount(reservedGross(snapshot))} reserved
-          {totals.refreshError !== null ||
-          vaultSnapshotStale(snapshot, totals.vault.staleAfterMs)
-            ? ` (stale, read ${formatDateTime(snapshot.observedAt)})`
-            : null}
-        </span>
-      );
-    });
-  return (
-    <section
-      className="section project-funding-summary"
-      aria-label="Project funding"
-    >
-      <p>
-        <strong>Funding</strong> {summary}{" "}
-        <Link href={href}>Fund this project</Link>
-      </p>
-    </section>
-  );
-}
-
-function fundingStateLabel(project: ProjectDefinition): string {
-  if (project.reward.kind === "external-prize-share") return "External prize";
-  return project.reward.fundingState === "committed"
-    ? "Committed"
-    : "Not funded yet";
-}
-
-function ProjectFundingPage({
+/** Funding controls share the project overview's reward summary. */
+function ProjectFundsAndAwards({
   project: original,
+  state,
 }: {
   project: ProjectDefinition;
+  state: DataState;
 }) {
   const [registered, setRegistered] = useState<ProjectDefinition | null>(null);
   const project = registered ?? original;
   return (
-    <main className="shell route-main funding-page route-funding">
-      <RoutePageHeader
-        title={<>{project.name} funding</>}
-        icon={<Wallet />}
-        eyebrow={
-          <>
-            <Link href={`/projects/${project.slug}`}>{project.name}</Link>
-            <span> / </span>Funding
-          </>
-        }
-        actions={
-          <MetricGrid
-            className={`route-funding-summary${project.escrow ? "" : " route-funding-summary--unfunded"}`}
-          >
-            <MetricTile
-              label={
-                project.reward.kind === "monthly-pool"
-                  ? "Monthly target"
-                  : "Advertised prize"
-              }
-              value={
-                monthlyPoolPointsOnly(project.reward)
-                  ? "Points only"
-                  : project.reward.kind === "monthly-pool"
-                    ? project.reward.monthlyCapDisplay
-                    : (project.reward.externalOpportunity
-                        ?.advertisedAmountDisplay ?? "External")
-              }
-            />
-            {!project.escrow ? (
-              <MetricTile
-                label="Committed"
-                value={formatMicroUsdc(project.reward.committedMinor)}
-                detail={fundingStateLabel(project)}
-              />
-            ) : null}
-          </MetricGrid>
-        }
-      />
-      <ProjectNav project={project} current="funding" />
-      <section className="funding-records">
-        {!project.escrow ? (
-          <FundingStatus project={project} className="route-funding-status" />
-        ) : null}
-        {project.reward.kind === "external-prize-share" ? (
-          <p>The organizer pays this prize.</p>
-        ) : project.escrow ? (
+    <section
+      id="funding"
+      className="project-funds-and-awards"
+      aria-label="Funds and awards"
+    >
+      {project.reward.kind === "external-prize-share" ? (
+        <p>The organizer pays this prize.</p>
+      ) : project.escrow ? (
+        <>
           <EscrowFunding project={project} onRegistered={setRegistered} />
-        ) : (
-          <div className="route-empty">
-            <Wallet aria-hidden="true" />
-            <div>
-              <p>This project has no vault yet.</p>
-              <Link
-                className="button secondary-button"
-                href={`/projects/${project.slug}/manage`}
-              >
-                Set up funding
-              </Link>
-            </div>
-          </div>
-        )}
-      </section>
-      {project.escrow ? (
-        <OwnerAwards key={project.id} project={project} />
+          <OwnerAwards
+            key={project.id}
+            project={project}
+            awardMonths={
+              state.status === "ready"
+                ? state.cycleIndex.cycles
+                    .filter(
+                      (cycle) =>
+                        cycle.projectId === project.id &&
+                        cycle.kind === "monthly-pool" &&
+                        cycle.contributors.length > 0,
+                    )
+                    .map((cycle) => cycle.cycleId)
+                : []
+            }
+          />
+        </>
       ) : null}
-    </main>
+    </section>
+  );
+}
+
+function ProjectHeader({ project }: { project: ProjectDefinition }) {
+  return (
+    <RoutePageHeader
+      title={project.name}
+      titleAction={
+        <a
+          className="project-github-link"
+          href={project.links.repository}
+          aria-label={`View ${project.name} on GitHub`}
+          title="View on GitHub"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <GithubIcon aria-hidden="true" size={22} />
+        </a>
+      }
+      icon={<ProjectImage key={project.id} project={project} />}
+      lead={project.description}
+    />
+  );
+}
+
+function ProjectBountyIntroduction({
+  project,
+}: {
+  project: ProjectDefinition;
+}) {
+  const terms = project.securityBounty;
+  if (!terms) return null;
+  const origin = window.location.origin;
+  const prompt = `Read ${origin}/SKILL.md and follow its private security reporting workflow for github.com/${terms.intake.repository}.`;
+  return (
+    <section className="project-hero">
+      <div className="shell">
+        <ProjectHeader project={project} />
+        <div className="project-overview">
+          <p className="project-reward-status">
+            {compactPrizeLabel(
+              formatSecurityAmount(
+                terms.amount.grossMinor,
+                terms.amount,
+              ).replace(/^([\d,.]+) USDC$/u, "$$$1"),
+            )}{" "}
+            per critical vulnerability that would result in loss of funds
+          </p>
+        </div>
+        <div className="install-panel" id="start">
+          <div className="install-heading">
+            <h2>Copy this into your agent.</h2>
+          </div>
+          <AgentPromptBox openIn prompt={prompt} />
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1500,57 +1485,38 @@ function ProjectPage({
     <main className="route-project">
       <section className="project-hero">
         <div className="shell">
-          <RoutePageHeader
-            title={project.name}
-            titleAction={
-              <a
-                className="project-github-link"
-                href={project.links.repository}
-                aria-label={`View ${project.name} on GitHub`}
-                title="View on GitHub"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <GithubIcon aria-hidden="true" size={22} />
-              </a>
-            }
-            icon={<FolderGit2 />}
-            eyebrow={<Link href="/">Projects</Link>}
-            lead={project.description}
-          >
-            <ProjectNav project={project} current="overview" />
-          </RoutePageHeader>
+          <ProjectHeader project={project} />
           <div
             className={`project-overview${externalPrize ? " project-overview--prize" : ""}`}
           >
             <div>
               <div className="project-state-summary">
                 <p className="project-reward-status">
-                  {pointsOnly
-                    ? "Points only · no cash rewards"
-                    : externalPrize
-                      ? "External prize · organizer decides awards"
-                      : `${project.reward.monthlyCapDisplay} monthly target${project.escrow ? "" : ` · ${fundingStateLabel(project)}`} · ${project.reward.paymentMode === "enabled" ? "payments enabled" : "payments not active"}`}
-                </p>
-                <ProjectFunding project={project} />
-              </div>
-              {project.rewardAsset?.kind === "token" ? (
-                <div className="project-token-address">
-                  <p>
-                    Token address:{" "}
-                    {project.rewardAsset.network === "solana" &&
-                    project.rewardAsset.address.endsWith("pump") ? (
+                  {pointsOnly ? (
+                    "Points only · no cash rewards"
+                  ) : externalPrize ? (
+                    "External prize · organizer decides awards"
+                  ) : project.rewardAsset?.kind === "token" ? (
+                    <>
+                      {monthlyPoolCapLabel(project).replace(/\s+\$?\S+$/u, "")}{" "}
                       <ExternalLinkAnchor
-                        href={`https://pump.fun/coin/${project.rewardAsset.address}`}
+                        href={
+                          project.rewardAsset.network === "solana"
+                            ? project.rewardAsset.address.endsWith("pump")
+                              ? `https://pump.fun/coin/${project.rewardAsset.address}`
+                              : `https://solscan.io/token/${project.rewardAsset.address}`
+                            : `https://${project.rewardAsset.network === "base" ? "basescan.org" : "etherscan.io"}/token/${project.rewardAsset.address}`
+                        }
                       >
-                        <code>{project.rewardAsset.address}</code>
-                      </ExternalLinkAnchor>
-                    ) : (
-                      <code>{project.rewardAsset.address}</code>
-                    )}
-                  </p>
-                </div>
-              ) : null}
+                        ${project.rewardAsset.symbol.replace(/^\$/u, "")}
+                      </ExternalLinkAnchor>{" "}
+                      monthly target, split between contributors
+                    </>
+                  ) : (
+                    `${project.reward.monthlyCapDisplay} monthly target`
+                  )}
+                </p>
+              </div>
             </div>
             {externalPrize ? (
               <aside className="reward-card">
@@ -1587,23 +1553,17 @@ function ProjectPage({
         </div>
       </section>
       <div className="shell">
-        {state.status === "ready" &&
-        project.repositories.some(
-          (repository) =>
-            !state.snapshot.repositories.some(
-              (collected) => collected.id === repository.id,
-            ),
-        ) ? (
-          <p className="data-notice" role="status">
-            No activity collected yet.
-          </p>
-        ) : null}
+        <ProjectFundsAndAwards
+          key={project.id}
+          project={project}
+          state={state}
+        />
         <ProjectPaymentHistory
           key={project.id}
           project={project}
           state={state}
         />
-        {view && state.status === "ready" ? (
+        {view && state.status === "ready" && view.leaders.length > 0 ? (
           <div id="contributors">
             <ContributorStandings
               projectId={project.id}
@@ -1693,9 +1653,13 @@ function AppContent({ route }: { route: Route }) {
   else if (route.kind === "vetting-evidence") content = <VettingEvidencePage />;
   else if (route.kind === "security-cases") content = <SecurityCasesPage />;
   else if (route.kind === "security-program")
-    content = withProject(route, (project) => (
-      <SecurityProgramPage key={project.id} project={project} />
-    ));
+    content = withProject(route, (project) =>
+      project.securityBounty ? (
+        <SecurityProgramPage key={project.id} project={project} />
+      ) : (
+        <ProjectPage project={project} state={state} retry={retry} />
+      ),
+    );
   else if (route.kind === "manage-project")
     content = withProject(route, (project) => (
       <ProjectUpdatePage key={project.id} project={project} />
@@ -1704,7 +1668,12 @@ function AppContent({ route }: { route: Route }) {
     const project = findProject(route.projectId);
     content = project ? (
       hasBountyOverview(project) ? (
-        <SecurityProgramPage key={project.id} project={project} />
+        <main className="route-project">
+          <ProjectBountyIntroduction project={project} />
+          <div className="shell">
+            <ProjectBountyFunding key={project.id} project={project} />
+          </div>
+        </main>
       ) : (
         <ProjectPage project={project} retry={retry} state={state} />
       )
@@ -1717,11 +1686,7 @@ function AppContent({ route }: { route: Route }) {
         </p>
       </main>
     );
-  } else if (route.kind === "funding-project")
-    content = withProject(route, (project) => (
-      <ProjectFundingPage key={project.id} project={project} />
-    ));
-  else if (route.kind === "profile")
+  } else if (route.kind === "profile")
     content = <ProfilePage login={route.login} retry={retry} state={state} />;
   else if (route.kind === "cycle")
     content = withProject(route, (project) => (
@@ -1733,12 +1698,6 @@ function AppContent({ route }: { route: Route }) {
       />
     ));
   else content = <NotFound />;
-  const routedProject =
-    "projectId" in route ? findProject(route.projectId) : undefined;
-  const bountyPage =
-    (route.kind === "project" || route.kind === "security-program") &&
-    routedProject != null &&
-    hasBountyOverview(routedProject);
   return (
     <>
       <Header />
@@ -1768,7 +1727,7 @@ function AppContent({ route }: { route: Route }) {
           {content}
         </Suspense>
       </div>
-      {bountyPage ? null : <Footer marketing={route.kind === "home"} />}
+      <Footer marketing={route.kind === "home"} />
     </>
   );
 }

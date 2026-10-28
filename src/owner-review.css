@@ -214,3 +214,31 @@
     gap: 0.2rem;
   }
 }
+
+.award-month-navigation {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.award-month-navigation > span {
+  min-width: 10rem;
+  text-align: center;
+  font-weight: 600;
+}
+
+.project-image-field {
+  display: grid;
+  justify-items: start;
+  gap: 0.75rem;
+}
+.project-image-field > label {
+  font-weight: 700;
+}
+.project-image-field > p {
+  margin: 0;
+  color: var(--muted);
+}
+.project-image-field > img {
+  border-radius: 12px;
+  object-fit: cover;
+}

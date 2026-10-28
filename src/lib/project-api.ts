@@ -270,3 +270,38 @@ export function useProjectSession(
     ? snapshot.state
     : { status: "checking" };
 }
+
+/** Show owner controls only after the API verifies current repository authority. */
+export function useProjectMaintainer(projectId: string) {
+  const session = useProjectSession();
+  const [verified, setVerified] = useState<string | null>(null);
+  const identity =
+    session.status === "signed-in"
+      ? `${projectId}:${session.session.githubId}`
+      : null;
+  useEffect(() => {
+    let active = true;
+    setVerified(null);
+    if (identity) {
+      void projectApiRequest(
+        "GET",
+        `project-setup/${encodeURIComponent(projectId)}`,
+      ).then(
+        () => {
+          if (active) setVerified(identity);
+        },
+        () => {
+          if (active) setVerified(null);
+        },
+      );
+    }
+    return () => {
+      active = false;
+    };
+  }, [projectId, identity]);
+  return {
+    allowed: identity !== null && verified === identity,
+    checking: session.status === "checking",
+    session,
+  };
+}
