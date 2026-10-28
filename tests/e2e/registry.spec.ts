@@ -2393,6 +2393,7 @@ test("repository lookup failures explain the next action and preserve the draft 
 
 test("two contributors flag through the agent API, pause the project and notify moderators @registry", async ({
   browser,
+  diagnostics,
 }) => {
   const readPrivate = (page: Page, path: string) =>
     page.evaluate(async (url) => (await fetch(url)).json(), path);
@@ -2402,6 +2403,8 @@ test("two contributors flag through the agent API, pause the project and notify 
     repository: `e2e-owner/flag-flow-${suffix}`,
     name: `Flag flow ${suffix}`,
   };
+  // A contributor may inspect this page without having maintainer access.
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${project.id}`);
   // Owner decision D3: a flagger's GitHub account is at least 30 days old
   // and has at least 1 merged pull request in a registered project.
   await setGithubUser("900000002", "e2e-applicant", "2020-01-01T00:00:00Z", 2);
