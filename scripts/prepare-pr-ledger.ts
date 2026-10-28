@@ -75,7 +75,6 @@ function rebindTransferredRepositoryPresentation(
       "description",
       "integrationBranch",
       "projectId",
-      "role",
     ] as const) {
       if (deployed[key] !== current[key]) {
         throw new TypeError(`${path}.${key} cannot change during a transfer`);
@@ -101,7 +100,9 @@ function rebindTransferredRepositoryPresentation(
       expectedNodeId: _expectedNodeId,
       ...published
     } = current;
-    return published;
+    // This role belongs to the retained ledger's collection order. A newer
+    // registry can reorder projects without changing these source records.
+    return { ...published, role: deployed.role };
   });
   return changed
     ? { ...candidate, repositories: reboundRepositories }
@@ -160,8 +161,17 @@ function addActivatedRepositories(candidate: JsonRecord): JsonRecord {
   }
   return {
     ...candidate,
-    repositories: nextRepositories,
-    source: { ...source, repositories: nextSourceRepositories },
+    repository: record(nextRepositories[0], "primary repository").id,
+    repositories: nextRepositories.map((entry, index) => ({
+      ...record(entry, "repository"),
+      role: index === 0 ? "primary" : "member",
+    })),
+    source: {
+      ...source,
+      repositoryId: record(nextSourceRepositories[0], "primary source")
+        .repositoryId,
+      repositories: nextSourceRepositories,
+    },
   };
 }
 
