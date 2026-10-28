@@ -252,9 +252,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     vault: string,
     payoutPolicy: "ordinary" | "security-bounty",
   ): Promise<SolanaEscrowConfig> => {
-    const selected = parsePaymentNetworks(env.PAYMENT_NETWORKS).find(
-      (name) => name === network,
-    );
+    const selected = vaultSetupNetworks(env).find((name) => name === network);
     if (!selected || ESCROW_NETWORKS[selected].family !== "solana")
       throw new Error("Funding network unavailable");
     const registry = await loadRegistryPaymentDeployments(
