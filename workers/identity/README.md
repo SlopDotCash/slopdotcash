@@ -228,3 +228,21 @@ enforces the exact per-client fixed window with a
 secret-derived client digest; neither raw client addresses nor an eventually
 consistent counter become the durable authority. Zone WAF rules remain defense
 in depth and must not replace the route-specific Worker counters.
+
+## Local development handoff
+
+Local development uses the existing GitHub App and production callback.
+`POST /v1/local/start` accepts the points audience and an exact HTTP loopback
+origin (localhost or 127.0.0.1 with an explicit port). The origin is encoded in
+the random flow identifier stored with the normal PKCE and state checks.
+After the callback, `POST /v1/local/poll` consumes this flow once and returns
+its GitHub identity only to the holder of its random polling capability.
+Normal polling refuses local flows, and local polling refuses normal flows.
+No production session or production assertion is issued for a local flow.
+
+The local backend polls over HTTPS, validates the bound return origin, and
+issues a separate 90-second, single-use local assertion for the existing
+local session exchange. The callback closes the popup or returns the same tab
+to the local login page; the saved local flow restores its original destination.
+Local handoff requests use the existing start/poll rate limits. No database
+migration, extra GitHub callback, CORS expansion, or local GitHub secret is required.

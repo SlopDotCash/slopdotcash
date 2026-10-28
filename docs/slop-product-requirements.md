@@ -38,6 +38,8 @@ Store only ID, optional username, verification time, and visibility. Reserve tha
 
 Users can add EVM and Solana payout wallets. If users have not added wallets, they can claim payouts they should have already received.
 
+Owner decision, 28 October 2026: local development uses the existing Slop GitHub App through a loopback-bound, single-use identity handoff. No separate developer App or production secret is required locally. Production and local session/assertion stores remain separate; local handoffs cannot create production assertions.
+
 ## 4. Projects and contribution skills
 
 Owner decision, 28 October 2026: projects may upload an optional custom image in setup and settings. Cards and project headers use that image, falling back to the GitHub owner avatar. Do not use GitHub social-preview images. Save image changes as project presentation revisions.
