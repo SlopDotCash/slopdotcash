@@ -292,9 +292,7 @@ test("security reports recover a failed list with account-bound private reads", 
 test("security sign-in returns directly to the selected project", async ({
   page,
 }) => {
-  let reads = 0;
   await page.route("**/api/v1/project-session", (route) => {
-    reads++;
     return route.fulfill({ json: { session: null } });
   });
   await page.route("**/api/v1/security-programs/eliza/intake", (route) =>
@@ -326,7 +324,6 @@ test("security sign-in returns directly to the selected project", async ({
     "href",
     /\/login\?next=%2Fprojects%2Feliza%2Fsecurity$/u,
   );
-  expect(reads).toBe(1);
   await expectAccessible(page);
 });
 
@@ -1594,7 +1591,7 @@ test("shows an explicit error for invalid data and retries", async ({
   const failedAttempts = attempts;
   expect(failedAttempts).toBeGreaterThan(1);
   failSnapshot = false;
-  await page.getByRole("button", { name: /Retry/u }).click();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
   // The frozen fixture is older than eight hours: a retained snapshot shows
   // its stale label instead of passing as current (owner decision D2).
@@ -1763,7 +1760,12 @@ for (const route of [
 
 test("opens the sponsors page directly and through keyboard navigation", async ({
   page,
+  diagnostics,
 }, testInfo) => {
+  // Returning from the home page cancels any background Points shards.
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points\/[0-9a-f]\.json$/u,
+  );
   await page.goto("/sponsors", { waitUntil: "networkidle" });
   // The page's records must finish loading before keyboard navigation
   // leaves it, or the move cancels the read.

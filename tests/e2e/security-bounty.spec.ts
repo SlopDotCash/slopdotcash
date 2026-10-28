@@ -841,6 +841,7 @@ test("owners publish and control bounty programs with verified funding @registry
     // Moving these controls to the public Security workspace grants no
     // authority to another signed-in reader, even with a funded vault.
     const beforeRefusal = await adminProject(request, id);
+    diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
     diagnostics.allowResponse(
       403,
       "GET",
