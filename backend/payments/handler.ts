@@ -50,7 +50,7 @@ import {
   verifyEvmBindingSignature,
   verifyPaymentWalletSignature,
 } from "./possession";
-import { publicVaultPayments } from "./public-records";
+import { publicReceivedTotals, publicVaultPayments } from "./public-records";
 import { handleSolanaFunding } from "./solana-funding";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
@@ -111,6 +111,9 @@ export interface PaymentsDependencies {
 }
 /** The payments cron writes snapshots every 5 minutes; one minute keeps reads near it. */
 const VAULT_EDGE_CACHE_SECONDS = 60;
+/** Received totals change only when a payment finalizes or a transfer is disclosed. */
+const RECEIVED_CACHE_SECONDS = 60;
+const RECEIVED_STALE_SECONDS = 600;
 export interface PaymentDeploymentIdentity {
   network: string;
   chain: string;
@@ -342,6 +345,28 @@ export async function handlePaymentsApi(
               headers: {
                 "content-type": "application/json",
                 "cache-control": `public, max-age=${VAULT_EDGE_CACHE_SECONDS}, s-maxage=${VAULT_EDGE_CACHE_SECONDS}`,
+                "x-content-type-options": "nosniff",
+              },
+            },
+          ),
+      );
+    // All-time money received per public contributor, from D1 only. The edge
+    // keeps one copy per colo so the home page never fans out per project.
+    if (path === "/received" && request.method === "GET")
+      return await cachedPublicResponse(
+        deps.edgeCache,
+        request,
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...(await publicReceivedTotals(deps.db, deps.tier === "staging")),
+              generatedAt: now,
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json",
+                "cache-control": `public, max-age=${RECEIVED_CACHE_SECONDS}, s-maxage=${RECEIVED_CACHE_SECONDS}, stale-while-revalidate=${RECEIVED_STALE_SECONDS}`,
                 "x-content-type-options": "nosniff",
               },
             },

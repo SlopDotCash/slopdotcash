@@ -20,27 +20,64 @@ import {
   type PointAward,
   type PointsIndex,
   type PointsJournal,
+  type PointsMember,
   pointMembers,
   pointRevisionId,
   reconcilePointPenalties,
   retainedBatchOwnedKeys,
 } from "../src/lib/points";
+import type { PointsSummary } from "../src/lib/points-summary";
 import { findHistoricalRepository, findProject } from "../src/lib/projects.mjs";
 import { syncCycleIndex } from "./sync-cycle-index";
 
 function hash(s: string) {
   return createHash("sha256").update(s).digest("hex");
 }
+type PointsOrigin = "https://slop.cash" | "https://staging.slop.cash";
+
+async function loadPublishedProjection(
+  origin: PointsOrigin,
+  indexResponse?: Response,
+): Promise<PointsJournal> {
+  indexResponse ??= await fetch(`${origin}/data/points.json`, {
+    signal: AbortSignal.timeout(30000),
+    cache: "no-store",
+  });
+  if (!indexResponse.ok)
+    throw new Error("Published points projection unavailable");
+  const index = (await readBoundedJson(
+    indexResponse,
+    1024 * 1024,
+    "points index",
+  )) as PointsIndex;
+  if (!Array.isArray(index.shards) || index.shards.length !== 16)
+    throw new Error("Invalid published points index");
+  const parts = await Promise.all(
+    index.shards.map(async (shard, i) => {
+      if (shard.path !== `/data/points/${i.toString(16)}.json`)
+        throw new Error("Invalid published points shard path");
+      const response = await fetch(`${origin}${shard.path}`, {
+        signal: AbortSignal.timeout(30000),
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Published points history unavailable");
+      return readBoundedText(response, 8 * 1024 * 1024, "points shard");
+    }),
+  );
+  return assemblePoints(index, parts);
+}
+
 export async function loadPublishedPoints(
   bootstrap = false,
   wait: (milliseconds: number) => Promise<void> = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  origin: PointsOrigin = "https://slop.cash",
 ): Promise<PointsJournal | null> {
   let cursor: number | null = 0;
   let batch: string | undefined;
   let journal: PointsJournal | undefined;
   do {
-    const url = new URL("https://slop.cash/api/v1/points/journal");
+    const url = new URL(`${origin}/api/v1/points/journal`);
     url.searchParams.set("after", String(cursor));
     if (batch) url.searchParams.set("batch", batch);
     let response: Response;
@@ -65,13 +102,32 @@ export async function loadPublishedPoints(
         break;
       await wait(15000);
     }
+    // Staging has historically published its journal in Pages without a D1
+    // checkpoint. Retain that complete, validated staging snapshot, rather
+    // than importing production awards for a different project inventory.
+    if (
+      origin === "https://staging.slop.cash" &&
+      cursor === 0 &&
+      response.status === 503 &&
+      value.error === "points_not_published"
+    ) {
+      const existing = await fetch(`${origin}/data/points.json`, {
+        signal: AbortSignal.timeout(30000),
+        cache: "no-store",
+      });
+      if (bootstrap && existing.status === 404) {
+        await existing.body?.cancel();
+        return null;
+      }
+      return loadPublishedProjection(origin, existing);
+    }
     if (
       bootstrap &&
       cursor === 0 &&
       [404, 503].includes(response.status) &&
       ["points_not_published", "not_found"].includes(String(value.error))
     ) {
-      const existing = await fetch("https://slop.cash/data/points.json", {
+      const existing = await fetch(`${origin}/data/points.json`, {
         signal: AbortSignal.timeout(30000),
         cache: "no-store",
       });
@@ -120,32 +176,7 @@ export async function loadPublishedPoints(
     throw new Error("Points batch digest mismatch");
   // Scheduled refreshes have Pages-only authority. Retain their published journal
   // as well as the latest protected-release D1 checkpoint; neither may fork history.
-  const indexResponse = await fetch("https://slop.cash/data/points.json", {
-    signal: AbortSignal.timeout(30000),
-    cache: "no-store",
-  });
-  if (!indexResponse.ok)
-    throw new Error("Published points projection unavailable");
-  const index = (await readBoundedJson(
-    indexResponse,
-    1024 * 1024,
-    "points index",
-  )) as PointsIndex;
-  if (!Array.isArray(index.shards) || index.shards.length !== 16)
-    throw new Error("Invalid published points index");
-  const parts = await Promise.all(
-    index.shards.map(async (shard, i) => {
-      if (shard.path !== `/data/points/${i.toString(16)}.json`)
-        throw new Error("Invalid published points shard path");
-      const response = await fetch(`https://slop.cash${shard.path}`, {
-        signal: AbortSignal.timeout(30000),
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error("Published points history unavailable");
-      return readBoundedText(response, 8 * 1024 * 1024, "points shard");
-    }),
-  );
-  return retainPublishedHistory(journal, assemblePoints(index, parts));
+  return retainPublishedHistory(journal, await loadPublishedProjection(origin));
 }
 export function retainPublishedHistory(
   checkpoint: PointsJournal,
@@ -392,8 +423,37 @@ export function retainedHistoryAwards(events: ScoreEvent[]): PointAward[] {
   });
 }
 
+/** Every contributor's all-time total, derived from the same journal. */
+export function pointsSummary(
+  journal: PointsJournal,
+  members: readonly PointsMember[],
+  indexDigest: string,
+): PointsSummary {
+  const ranked = members
+    .filter((member) => member.total > 0)
+    .sort((a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id));
+  return {
+    schemaVersion: "1",
+    ruleVersion: journal.ruleVersion,
+    generatedAt: journal.generatedAt,
+    indexDigest,
+    totals: {
+      contributors: ranked.length,
+      points: ranked.reduce((sum, member) => sum + member.total, 0),
+    },
+    contributors: ranked.map((member) => ({
+      actor: { id: member.actor.id, login: member.actor.login },
+      total: member.total,
+    })),
+  };
+}
+
 export async function generatePoints(
-  options: { online?: boolean; bootstrap?: boolean } = {},
+  options: {
+    online?: boolean;
+    bootstrap?: boolean;
+    origin?: PointsOrigin;
+  } = {},
 ) {
   const history: unknown = JSON.parse(
     await readFile("data/points/history.json", "utf8"),
@@ -401,7 +461,7 @@ export async function generatePoints(
   assertPointsJournal(history);
   let journal: PointsJournal = history;
   const published = options.online
-    ? await loadPublishedPoints(options.bootstrap)
+    ? await loadPublishedPoints(options.bootstrap, undefined, options.origin)
     : null;
   if (published) {
     // The checked-in history is an ancestor, never a second award source.
@@ -500,6 +560,17 @@ export async function generatePoints(
   await mkdir(".points-build", { recursive: true });
   await writeFile(".points-build/import.sql", pointsSql(journal));
   const members = pointMembers(journal);
+  // The home page ranks the top contributors from this small summary instead
+  // of downloading every shard of the journal.
+  const summary = pointsSummary(journal, members, hash(JSON.stringify(index)));
+  await writeFile(
+    "public/data/points-summary.json.tmp",
+    JSON.stringify(summary) + "\n",
+  );
+  await rename(
+    "public/data/points-summary.json.tmp",
+    "public/data/points-summary.json",
+  );
   await writeFile(
     ".points-build/report.json",
     JSON.stringify(
@@ -527,5 +598,9 @@ if (import.meta.main) {
     online: args.includes("--online") || process.env.SLOP_POINTS_ONLINE === "1",
     bootstrap:
       args.includes("--bootstrap") || process.env.SLOP_POINTS_BOOTSTRAP === "1",
+    origin:
+      process.env.VITE_SLOP_ENVIRONMENT === "staging"
+        ? "https://staging.slop.cash"
+        : "https://slop.cash",
   });
 }

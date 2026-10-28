@@ -164,11 +164,9 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
       return route.fulfill({ json: { automatic } });
     },
   );
-  await page.goto("/projects/eliza");
-  await page.evaluate(() => {
-    history.pushState({}, "", "/projects/eliza/awards?keep=1");
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  });
+  // Navigate as a user opening a legacy link. Dispatching popstate before
+  // React installs its listener can miss the route transition entirely.
+  await page.goto("/projects/eliza/awards?keep=1");
   await expect(page).toHaveURL(/\/projects\/eliza\?keep=1#monthly-awards$/u);
   await expect(page.locator("#monthly-awards")).toBeInViewport();
   await page.getByRole("button", { name: "Review monthly awards" }).click();

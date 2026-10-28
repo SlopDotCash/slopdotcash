@@ -117,11 +117,15 @@ jobs:
         # reads projects and generated skills from D1 at runtime, so a newly
         # approved project appears without this step. Every trusted run
         # snapshots it so build-time ingestion collects the active
-        # repositories. Before an environment first serves the API, the sync
-        # keeps the committed snapshot and says so.
-        if: github.event_name != 'pull_request'
+        # repositories. Pull-request validation also needs this public,
+        # read-only inventory to validate awards for registered projects.
+        # Use the same public environment as the PR ledger. The PR adapter
+        # retains collected source records when new projects become active.
+        # No repository or deployment credential is passed to this read.
+        # Before an environment first serves the API, the sync keeps the
+        # committed snapshot and says so.
         env:
-          SLOP_API_ORIGIN: ${{ env.VITE_SLOP_ENVIRONMENT == 'staging' && 'https://staging.slop.cash' || 'https://slop.cash' }}
+          SLOP_API_ORIGIN: ${{ github.event_name == 'pull_request' && 'https://slop.cash' || env.VITE_SLOP_ENVIRONMENT == 'staging' && 'https://staging.slop.cash' || 'https://slop.cash' }}
         run: bun run projects:sync
 
       - name: Validate project registry and every skill
@@ -808,11 +812,14 @@ jobs:
 
       - name: Qualify private report screening with the real provider
         if: steps.release-input.outputs.superseded != 'true'
-        timeout-minutes: 3
+        timeout-minutes: 4
         env:
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
-        # One bounded synthetic call; no private reports or delivery side effects.
-        # This protected main-only job fails before any publication on failure.
+        # Up to three bounded synthetic calls (1 USD each, 3 USD total) that
+        # retry only transient failures; no private reports or delivery side
+        # effects. A wrong classification fails at once, and every failure
+        # logs only its category. This protected main-only job fails before
+        # any publication on failure.
         run: bun --no-env-file scripts/qualify-security-screening.ts
 
       - name: Require reviewed Pages project

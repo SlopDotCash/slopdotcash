@@ -393,6 +393,18 @@ time or work month. The projection reconciles the paid obligation against its
 immutable finalized event before returning it. Reserved or submitted amounts
 are not paid records, and invalid evidence or failed reads return unavailable.
 
+`GET /api/v1/payments/received` returns all-time money received per public
+contributor in one edge-cached response (60 seconds, then stale for up to ten
+minutes while it refreshes). It sums every disclosed direct transfer and every
+finalized ordinary vault payment whose asset is a six-decimal reference
+stablecoin of its network, so the amount is in micro-dollars; testnet receipts
+count only on staging. Other vault assets stay separate in `otherAssets` and
+are never converted. Each contributor also carries the same amount by project.
+Vault records pass the same evidence reconciliation as the projection above,
+and one invalid record, or more than 20,000 records, fails the read. The home,
+leaderboard and project standings read only this aggregate; a browser shows
+its last good copy marked stale when a refresh fails, and never a zero total.
+
 Pages return at most 100 records. Continue with the returned `next` as `after`
 and the same `through` boundary; `total` applies to that boundary. The public
 client checks page continuity, duplicates and completeness before display, and

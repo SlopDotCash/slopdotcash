@@ -1,7 +1,12 @@
 /** Fresh local API authority with explicitly replayed retained source evidence.
  * This does not recreate the old database or attest a new VM execution.
+ * Acquisition fetches a Git commit, and retained evidence keeps the tree and
+ * blob but not the original commit object, so the replay commits the
+ * identical, verified tree in a local repository. Only the commit pin differs.
  */
+
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -59,6 +64,46 @@ export async function retainedAssemblyFixture(input: {
       .digest("hex"),
     record.gitSha,
   );
+  const replay = await mkdtemp(join(tmpdir(), "slop-retained-source-"));
+  const git = (args: string[], input?: string | Buffer) => {
+    const result = spawnSync(
+      "git",
+      ["-c", "core.hooksPath=/dev/null", ...args],
+      {
+        cwd: replay,
+        input,
+        env: {
+          PATH: process.env.PATH,
+          HOME: replay,
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_AUTHOR_NAME: "Retained replay",
+          GIT_AUTHOR_EMAIL: "replay@example.invalid",
+          GIT_AUTHOR_DATE: "2026-10-20T12:00:00Z",
+          GIT_COMMITTER_NAME: "Retained replay",
+          GIT_COMMITTER_EMAIL: "replay@example.invalid",
+          GIT_COMMITTER_DATE: "2026-10-20T12:00:00Z",
+        },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr.toString());
+    return result.stdout.toString().trim();
+  };
+  git(["init", "-q", "--bare"]);
+  assert.equal(git(["hash-object", "-w", "--stdin"], blob), record.gitSha);
+  assert.equal(
+    git(["mktree"], `${record.mode} blob ${record.gitSha}\t${record.path}\n`),
+    source.treeSha,
+  );
+  const replayCommit = git([
+    "commit-tree",
+    source.treeSha,
+    "-m",
+    "Retained source replay",
+  ]);
+  git(["update-ref", "refs/heads/main", replayCommit]);
+  const expectedInventory = Buffer.from(
+    JSON.stringify({ ...source, commitSha: replayCommit }),
+  );
   const templates = oldQueue.templateInputs;
   assert.equal(
     digest(JSON.stringify(templates)),
@@ -85,7 +130,7 @@ export async function retainedAssemblyFixture(input: {
   );
   const keys = await vettingKeyPair();
   const pin = {
-    commitSha: source.commitSha,
+    commitSha: replayCommit,
     templateSha256: oldQueue.assessment.templateSha256,
   };
   let ids = 0;
@@ -150,6 +195,7 @@ export async function retainedAssemblyFixture(input: {
     await retained.dispose();
     sqlite.close();
     await rm(root, { recursive: true, force: true });
+    await rm(replay, { recursive: true, force: true });
   };
   try {
     const created = await projectApi(
@@ -210,31 +256,6 @@ export async function retainedAssemblyFixture(input: {
             path === `/example/templates/${source.commitSha}/${name}`
           )
             return new Response(new Uint8Array(body));
-        if (path === `/repos/example/fixture/git/commits/${source.commitSha}`)
-          return Response.json({
-            sha: source.commitSha,
-            tree: { sha: source.treeSha },
-          });
-        if (path === `/repos/example/fixture/git/trees/${source.treeSha}`)
-          return Response.json({
-            sha: source.treeSha,
-            truncated: false,
-            tree: [
-              {
-                path: record.path,
-                mode: record.mode,
-                type: "blob",
-                sha: record.gitSha,
-              },
-            ],
-          });
-        if (path === `/repos/example/fixture/git/blobs/${record.gitSha}`)
-          return Response.json({
-            sha: record.gitSha,
-            encoding: "base64",
-            size: blob.length,
-            content: blob.toString("base64"),
-          });
         return new Response(null, { status: 404 });
       },
     });
@@ -264,10 +285,14 @@ export async function retainedAssemblyFixture(input: {
       (await readPendingAssessments(connection))[0].assessmentId,
       queuedId,
     );
-    const acquired = await acquireQueuedAssessment(connection, queuedId, root);
+    const acquired = await acquireQueuedAssessment(
+      { ...connection, testGitRemote: () => `file://${replay}` },
+      queuedId,
+      root,
+    );
     assert.deepEqual(
       await readFile(join(acquired.directory, "inventory.json")),
-      originalBytes,
+      expectedInventory,
     );
     const assessment = await vetting.getAssessment(queuedId);
     assert.ok(assessment);
