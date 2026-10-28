@@ -121,6 +121,7 @@ type Run = {
     release: () => void;
   };
   loseNextReopenResponse: () => void;
+  failNextCommentUpdate: () => void;
   loseNextAppealCommentResponse: (accepted?: boolean) => void;
   rejectNextAppealComment: (status: number) => void;
   pauseNextAppealComment: () => { entered: Promise<void>; release: () => void };
@@ -246,6 +247,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let pauseFindingLabel: (() => Promise<void>) | null = null;
   let loseFindingLabelResponse = false;
   let loseReopenResponse = false;
+  let failCommentUpdate = false;
   let appealResponse: "accepted" | "unknown" | null = null;
   let appealRejection: number | null = null;
   let pauseAppeal: (() => Promise<void>) | null = null;
@@ -565,6 +567,10 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         return Response.json({ id: 900 + comments.length }, { status: 201 });
       }
       if (/\/issues\/comments\/\d+$/u.test(path)) {
+        if (failCommentUpdate) {
+          failCommentUpdate = false;
+          return new Response(null, { status: 502 });
+        }
         comments.push(((await request.json()) as { body: string }).body);
         return Response.json({ id: Number(path.split("/").pop()) });
       }
@@ -769,6 +775,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       },
       loseNextReopenResponse: () => {
         loseReopenResponse = true;
+      },
+      failNextCommentUpdate: () => {
+        failCommentUpdate = true;
       },
       rejectNextAppealComment: (status) => {
         appealRejection = status;
@@ -2264,6 +2273,48 @@ test("a scam notice write failure is recovered after GitHub has closed the item"
     await run.review();
     expect(run.sql(SCAM_NOTICES)).toHaveLength(1);
     expect(run.writes).toEqual(githubWrites);
+  });
+});
+
+test("an appeal reaches triage after a confirmed close whose comment update failed", async () => {
+  await closedItem(async (run) => {
+    // GitHub confirms the close and the debit is recorded, then the close
+    // comment update fails, so the run fails after the close.
+    run.failNextCommentUpdate();
+    await expect(run.review()).rejects.toThrow("returned 502");
+    expect(run.currentState()).toBe("closed");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    // The queue retry finds a closed item and has no review to repeat.
+    expect(await run.review()).toBe("item is not open");
+
+    // The author's appeal still reaches Slopbot triage, and the accepted
+    // uphold reopens the item and reverses the debit once.
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("appeal upheld by the appellant");
+    expect(run.currentState()).toBe("open");
+    expect(run.labels).not.toContain("slopbot: spam");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "appeal_upheld",
+      },
+    ]);
   });
 });
 
