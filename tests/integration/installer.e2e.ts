@@ -1187,7 +1187,7 @@ time.sleep(60)
   const stallServerScript = `
     const http = require("node:http");
     const fs = require("node:fs");
-    const [responsesPath, pattern, stallMsRaw, stallCountRaw, logPath] =
+    const [responsesPath, pattern, stallMsRaw, stallCountRaw, logPath, failureMode] =
       process.argv.slice(1);
     const responses = JSON.parse(fs.readFileSync(responsesPath, "utf8"));
     const stallMs = Number(stallMsRaw);
@@ -1208,6 +1208,10 @@ time.sleep(60)
       };
       if (request.url.includes(pattern) && stalled < stallCount) {
         stalled += 1;
+        if (failureMode === "disconnect") {
+          request.socket.destroy();
+          return;
+        }
         setTimeout(respond, stallMs);
       } else {
         respond();
@@ -1224,6 +1228,7 @@ time.sleep(60)
     stallPattern: string;
     stallMs: number;
     stallCount: number;
+    failureMode?: "stall" | "disconnect";
   }): Promise<{ port: number; kill: () => void }> {
     const child = spawn(
       process.execPath,
@@ -1235,6 +1240,7 @@ time.sleep(60)
         String(options.stallMs),
         String(options.stallCount),
         options.requestLog,
+        options.failureMode ?? "stall",
       ],
       { stdio: ["ignore", "pipe", "inherit"] },
     );
@@ -1363,6 +1369,81 @@ time.sleep(60)
         .split("\n")
         .filter((line) => line.includes("/contents/"));
       expect(sourceRequests).toHaveLength(3);
+      expect(currentLink(installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionA}`,
+      );
+    } finally {
+      server.kill();
+    }
+  });
+
+  it("recovers a verified update after a closed connection", async () => {
+    const root = freshRoot("disconnect-recover");
+    const { artifactB, installRoot, updateAuthority } =
+      timeoutUpdateFixture(root);
+    const requestLog = join(root, "requests.log");
+    writeFileSync(requestLog, "");
+    const server = await startStallServer({
+      responsesPath: join(
+        fileURLToPath(updateAuthority.apiOrigin),
+        "responses.json",
+      ),
+      requestLog,
+      stallPattern: "/git/commits/",
+      stallMs: 0,
+      stallCount: 1,
+      failureMode: "disconnect",
+    });
+    try {
+      const update = run(
+        loopbackCommand(artifactB, server.port, updateAuthority.rawOrigin),
+        installRoot,
+      );
+      expect(update.status, update.stderr).toBe(0);
+      expect(currentLink(installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionB}`,
+      );
+      expect(
+        readFileSync(requestLog, "utf8")
+          .split("\n")
+          .filter((line) => line.includes(`/git/commits/${revisionB}`)),
+      ).toHaveLength(2);
+    } finally {
+      server.kill();
+    }
+  });
+
+  it("keeps the verified version when closed connections exhaust retries", async () => {
+    const root = freshRoot("disconnect-exhaust");
+    const { artifactB, installRoot, updateAuthority } =
+      timeoutUpdateFixture(root);
+    const requestLog = join(root, "requests.log");
+    writeFileSync(requestLog, "");
+    const server = await startStallServer({
+      responsesPath: join(
+        fileURLToPath(updateAuthority.apiOrigin),
+        "responses.json",
+      ),
+      requestLog,
+      stallPattern: "/contents/",
+      stallMs: 0,
+      stallCount: 99,
+      failureMode: "disconnect",
+    });
+    try {
+      const update = run(
+        loopbackCommand(artifactB, server.port, updateAuthority.rawOrigin),
+        installRoot,
+      );
+      expect(update.status).not.toBe(0);
+      expect(update.stderr).toContain(
+        "authenticated download failed after 3 attempts",
+      );
+      expect(
+        readFileSync(requestLog, "utf8")
+          .split("\n")
+          .filter((line) => line.includes("/contents/")),
+      ).toHaveLength(3);
       expect(currentLink(installRoot)).toBe(
         `.contribute-to-eliza-versions/${revisionA}`,
       );
