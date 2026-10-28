@@ -165,7 +165,7 @@ jobs:
           else
             curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
               --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
-              --retry 2 --retry-delay 2 --retry-max-time 600 \
+              --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
               "$profile_origin/data/profiles.json" --output "$previous_profiles"
           fi
           # Selects the versioned value scoring policy for new work. Exit 75
@@ -190,7 +190,7 @@ jobs:
             mkdir -p public/data
             curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
               --connect-timeout 10 --max-time 180 --max-filesize 26214400 \
-              --retry 2 --retry-delay 2 --retry-max-time 600 \
+              --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
               "$profile_origin/data/leaderboard.json" \
               --output public/data/leaderboard.json
             test -s public/data/leaderboard.json

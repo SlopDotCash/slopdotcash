@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -20,38 +21,53 @@ if (downloads?.length !== 2) {
 
 for (const [index, download] of downloads.entries()) {
   const name = index === 0 ? "profile history" : "fallback leaderboard";
-  for (const failure of ["timeout", "unavailable", "missing"] as const) {
-    test(`${name}: ${failure === "timeout" ? "retries a stalled transfer and decodes the complete snapshot" : `refuses a persistently ${failure} snapshot`}`, async () => {
+  for (const failure of [
+    "timeout",
+    "disconnect",
+    "unavailable",
+    "missing",
+  ] as const) {
+    const recovers = failure === "timeout" || failure === "disconnect";
+    test(`${name}: ${recovers ? `recovers a ${failure} and decodes the complete snapshot` : `refuses a persistently ${failure} snapshot`}`, async () => {
       const directory = await mkdtemp(join(tmpdir(), "slop-snapshot-"));
       const output = join(directory, "snapshot.json");
       const snapshot = JSON.stringify({
         history: "retained record ".repeat(1000),
       });
       let attempts = 0;
-      const server = Bun.serve({
-        hostname: "127.0.0.1",
-        port: 0,
-        async fetch(request) {
-          attempts++;
-          if (failure === "missing")
-            return new Response("missing", { status: 404 });
-          if (failure === "unavailable")
-            return new Response("unavailable", { status: 503 });
-          if (attempts === 1) {
-            // A stalled origin must not permanently block the release.
-            await Bun.sleep(300);
-          }
-          expect(request.headers.get("accept-encoding")).toContain("gzip");
-          return new Response(gzipSync(snapshot), {
-            headers: { "Content-Encoding": "gzip" },
-          });
-        },
+      const compressed = gzipSync(snapshot);
+      const server = createServer(async (request, response) => {
+        attempts++;
+        if (failure === "missing" || failure === "unavailable") {
+          response.writeHead(failure === "missing" ? 404 : 503);
+          response.end(failure);
+          return;
+        }
+        if (attempts === 1 && failure === "timeout") {
+          // A stalled origin must not permanently block the release.
+          await Bun.sleep(300);
+        }
+        expect(request.headers["accept-encoding"]).toContain("gzip");
+        response.writeHead(200, {
+          "Content-Encoding": "gzip",
+          "Content-Length": compressed.length,
+        });
+        if (attempts === 1 && failure === "disconnect") {
+          response.write(compressed.subarray(0, compressed.length / 2));
+          setTimeout(() => response.destroy(), 20);
+        } else response.end(compressed);
       });
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("Missing test server port");
       try {
         // Run the workflow's actual curl command. Only substitute local HTTP
         // transport, output paths and shorter deadlines for this fixture.
         const command = download
-          .replaceAll("$profile_origin", server.url.origin)
+          .replaceAll("$profile_origin", `http://127.0.0.1:${address.port}`)
           .replaceAll("$previous_profiles", output)
           .replaceAll("public/data/leaderboard.json", output)
           .replace("'=https'", "'=http'")
@@ -67,16 +83,17 @@ for (const [index, download] of downloads.entries()) {
           new Response(process.stdout).text(),
           new Response(process.stderr).text(),
         ]);
-        if (failure === "timeout") {
+        if (recovers) {
           expect(code).toBe(0);
           expect(attempts).toBe(2);
           expect(await readFile(output, "utf8")).toBe(snapshot);
         } else {
           expect(code).not.toBe(0);
-          expect(attempts).toBe(failure === "missing" ? 1 : 3);
+          expect(attempts).toBe(3);
         }
       } finally {
-        server.stop(true);
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
         await rm(directory, { recursive: true, force: true });
       }
     });
