@@ -2,6 +2,7 @@ import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   type CallRecord,
   type ModelEnv,
+  PROVIDER_BUDGET_EXHAUSTED,
   type Prompt,
   runStructuredRoute,
   TRIAGE_ROUTE,
@@ -83,6 +84,11 @@ export const VALUE_INFERENCE_ATTEMPT_LIMIT = 3;
 /** Records one immutable attempt for this key, or refuses when the key has
  * already used every attempt that reserved budget. A recorded attempt whose
  * reservation was refused never reached the provider and does not count.
+ * Neither does an attempt whose every recorded call the provider refused
+ * under its spending limit: it was not paid, and the request waits for the
+ * provider budget instead (README "Free reviews, budget blocks, spend"). An
+ * attempt with no recorded call still counts, because it may have reached the
+ * provider.
  */
 async function admitValueAttempt(
   db: D1Database,
@@ -95,7 +101,11 @@ async function admitValueAttempt(
        SELECT ?1,?2,?3 WHERE (
          SELECT COUNT(*) FROM slopbot_value_inference_attempts a
          JOIN slopbot_value_budget_reservations r ON r.attempt_id=a.attempt_id
-         WHERE a.inference_key=?2) < ?4
+         WHERE a.inference_key=?2
+           AND (NOT EXISTS (SELECT 1 FROM slopbot_costs c
+                  WHERE c.review_key=a.attempt_id AND c.failure=?5)
+             OR EXISTS (SELECT 1 FROM slopbot_costs c
+                  WHERE c.review_key=a.attempt_id AND c.failure IS NOT ?5))) < ?4
        AND NOT EXISTS (SELECT 1 FROM slopbot_value_inference_attempts WHERE attempt_id=?1)
        RETURNING attempt_id`,
     )
@@ -104,6 +114,7 @@ async function admitValueAttempt(
       key,
       new Date().toISOString(),
       VALUE_INFERENCE_ATTEMPT_LIMIT,
+      PROVIDER_BUDGET_EXHAUSTED,
     )
     .first();
   return row !== null;
@@ -226,6 +237,15 @@ export async function runValueInference<T>(
   }
   // A failed authority check is not a refusal by the registry; retry it.
   if (result.failure !== undefined) throw result.failure;
+  // A provider spending denial is a budget block: the request keeps a retry
+  // time and resumes after the provider budget resets.
+  if (result.budgetResetAt !== undefined)
+    return {
+      ...result,
+      inferredAt,
+      blocked: true,
+      blockReason: "budget" as const,
+    };
   return {
     ...result,
     inferredAt,
