@@ -26,7 +26,10 @@ import {
   handleTraceApi,
   type TraceApiDependencies,
 } from "../backend/trace/handler";
-import type { EscrowDeployment } from "../src/lib/escrow-policy.mjs";
+import {
+  assertEscrowPolicy,
+  type EscrowDeployment,
+} from "../src/lib/escrow-policy.mjs";
 import type {
   ProjectEnforcement,
   RepositoryAccess,
@@ -622,6 +625,107 @@ test("an owner revision cannot record a vault; a reviewed admin revision can", a
   });
   expect(changed.status).toBe(422);
   expect(changed.body.error).toBe("financial_change_restricted");
+  // A reviewed existing vault may opt in or out of an executor restriction,
+  // but this exception never permits changing its financial identity.
+  const limitedManifest = {
+    ...recorded.manifest,
+    escrow: {
+      ...withVault.escrow,
+      deployments: [
+        {
+          ...TEST_VAULT,
+          bindingConsentNonceLimit: 1,
+          maxNativeCostWei: "10000000000000",
+        },
+      ],
+    },
+  };
+  const limited = await call("PUT", "projects/open-registry", OWNER, {
+    manifest: limitedManifest,
+    expectedRevision: recorded.revision,
+  });
+  expect(limited.body.error).toBeUndefined();
+  expect(limited.status).toBe(200);
+  const revision = await persistence.getProject("open-registry");
+  if (!revision) throw new Error("project expected");
+  expect(
+    revision.manifest.escrow?.deployments[0].bindingConsentNonceLimit,
+  ).toBe(1);
+  expect(revision.manifest.escrow?.deployments[0].maxNativeCostWei).toBe(
+    "10000000000000",
+  );
+  const invalidIdentity = await call("PUT", "projects/open-registry", OWNER, {
+    manifest: {
+      ...limitedManifest,
+      escrow: {
+        ...withVault.escrow,
+        deployments: [
+          { ...TEST_VAULT, bindingConsentNonceLimit: 1, owner: OTHER },
+        ],
+      },
+    },
+    expectedRevision: revision.revision,
+  });
+  expect(invalidIdentity.status).toBe(422);
+  const nativeOnly = {
+    ...recorded.manifest,
+    escrow: {
+      ...withVault.escrow,
+      deployments: [{ ...TEST_VAULT, maxNativeCostWei: "10000000000000" }],
+    },
+  };
+  const disabled = await call("PUT", "projects/open-registry", OWNER, {
+    manifest: nativeOnly,
+    expectedRevision: revision.revision,
+  });
+  expect(disabled.status).toBe(200);
+  const keptNative = await persistence.getProject("open-registry");
+  if (!keptNative) throw new Error("project expected");
+  expect(keptNative.manifest.escrow?.deployments[0].maxNativeCostWei).toBe(
+    "10000000000000",
+  );
+  expect(
+    keptNative.manifest.escrow?.deployments[0].bindingConsentNonceLimit,
+  ).toBeUndefined();
+  const nonceOnly = await call("PUT", "projects/open-registry", OWNER, {
+    manifest: {
+      ...recorded.manifest,
+      escrow: {
+        ...withVault.escrow,
+        deployments: [{ ...TEST_VAULT, bindingConsentNonceLimit: 1 }],
+      },
+    },
+    expectedRevision: keptNative.revision,
+  });
+  expect(nonceOnly.status).toBe(200);
+  const keptNonce = await persistence.getProject("open-registry");
+  if (!keptNonce) throw new Error("project expected");
+  expect(
+    keptNonce.manifest.escrow?.deployments[0].bindingConsentNonceLimit,
+  ).toBe(1);
+  expect(
+    keptNonce.manifest.escrow?.deployments[0].maxNativeCostWei,
+  ).toBeUndefined();
+  for (const value of [true, false, "1", 0, 2, null])
+    expect(() =>
+      assertEscrowPolicy({
+        ...withVault.escrow,
+        deployments: [{ ...TEST_VAULT, bindingConsentNonceLimit: value }],
+      }),
+    ).toThrow();
+  expect(() =>
+    assertEscrowPolicy({
+      ...withVault.escrow,
+      chain: "solana",
+      deployments: [
+        {
+          ...TEST_VAULT,
+          rotationAuthority: "fixture",
+          bindingConsentNonceLimit: 1,
+        },
+      ],
+    }),
+  ).toThrow("Invalid binding consent nonce limit");
 });
 
 test("a payout exclusion starts with the next UTC month on every revision path", async () => {

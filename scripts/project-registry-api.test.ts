@@ -295,6 +295,110 @@ async function listProject(
 }
 
 describe("project registry API", () => {
+  test("only a current owner can revise the EVM execution cap without changing its verified vault", async () => {
+    access = ADMIN_ACCESS;
+    await listProject(
+      applicationManifest(
+        "open-registry",
+        "example/open-registry",
+        rewardFields(
+          {
+            mode: "monthly",
+            network: "base",
+            assetKind: "stablecoin",
+            tokenAddress: "",
+            tokenSymbol: "",
+            monthlyAmount: "1000",
+          },
+          deps.now(),
+        ),
+      ),
+    );
+    const initial = await persistence.getProject("open-registry");
+    if (!initial) throw new Error("Missing project");
+    const deployment = {
+      network: "base-sepolia" as const,
+      vault: `0x${"1".repeat(40)}`,
+      asset: "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+      owner: `0x${"2".repeat(40)}`,
+      identityAuthority: `0x${"3".repeat(40)}`,
+      feeRecipient: `0x${"4".repeat(40)}`,
+      factory: `0x${"5".repeat(40)}`,
+      registrar: `0x${"6".repeat(40)}`,
+      factoryCodeSha256: "c".repeat(64),
+      codeSha256: "d".repeat(64),
+      deploymentTransaction: `0x${"e".repeat(64)}`,
+      sourceCommit: "a".repeat(40),
+      bindingDelaySeconds: "0",
+      rotationDelaySeconds: null,
+      programId: null,
+      projectPda: null,
+      networkDomain: null,
+      upgradeAuthority: null,
+    };
+    deps.vaultSetup = {
+      networks: async () => ["base-sepolia"],
+      review: async () => {
+        throw Error("unused");
+      },
+      register: async () => deployment,
+    };
+    const registered = await call(
+      "POST",
+      "project-vaults/open-registry",
+      "applicant",
+      {
+        step: "register",
+        expectedRevision: initial.revision,
+        network: "base-sepolia",
+        claimId: "verified-owner",
+        automatic: false,
+        transactionId: deployment.deploymentTransaction,
+      },
+    );
+    if (registered.status !== 200) throw new Error(await registered.text());
+    const change = async (
+      limit: string | undefined,
+      actor: "admin" | "applicant" | "moderator" | null = "applicant",
+      replaceVault = false,
+    ) => {
+      const current = await persistence.getProject("open-registry");
+      if (!current) throw Error("Missing project");
+      const escrow = current.manifest.escrow;
+      if (!escrow) throw Error("Missing registered escrow");
+      return call("PUT", "projects/open-registry", actor ?? undefined, {
+        expectedRevision: current.revision,
+        manifest: {
+          ...current.manifest,
+          escrow: {
+            ...escrow,
+            deployments: escrow.deployments.map(
+              ({ maxNativeCostWei: _old, ...d }) => ({
+                ...d,
+                ...(limit === undefined ? {} : { maxNativeCostWei: limit }),
+                ...(replaceVault ? { vault: `0x${"9".repeat(40)}` } : {}),
+              }),
+            ),
+          },
+        },
+      });
+    };
+    expect((await change("1000000000000000", null)).status).toBe(401);
+    expect((await change("1000000000000000")).status).toBe(200);
+    expect((await change("500000000000000")).status).toBe(200);
+    expect((await change(undefined)).status).toBe(200);
+    expect((await change("0")).status).toBe(422);
+    expect((await change("500000000000000", "applicant", true)).status).toBe(
+      422,
+    );
+    access = { ...ADMIN_ACCESS, permission: "read", roleName: "read" };
+    expect((await change("500000000000000")).status).toBe(403);
+    expect(
+      (await persistence.getProject("open-registry"))?.manifest.escrow
+        ?.deployments[0].vault,
+    ).toBe(deployment.vault);
+  });
+
   test("first bounty setup checks live management authority without changing the project", async () => {
     await listProject();
     const before = await persistence.getProject("open-registry");
