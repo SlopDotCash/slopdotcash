@@ -71,7 +71,9 @@ export function fixtureRepository(fullName) {
     : ownerLogin === E2E_OWNER.login
       ? { login: E2E_OWNER.login, id: Number(E2E_OWNER.githubId), type: "User" }
       : {
-          login: E2E_ORGANIZATION.login,
+          // The platform-only bounty gate needs its canonical repository name.
+          login:
+            ownerLogin === "SlopDotCash" ? ownerLogin : E2E_ORGANIZATION.login,
           id: Number(E2E_ORGANIZATION.githubId),
           type: "Organization",
         };
