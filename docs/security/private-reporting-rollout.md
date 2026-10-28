@@ -4,7 +4,7 @@ This runbook implements the owner decisions in [PRD sections 8–10](../slop-pro
 
 ## Approved behavior
 
-All registered projects accept confidential reports. Only Umia Protocol has a current paid bounty. Its maintainer considers a $10,000 gross award for the first qualifying report of each distinct critical loss-of-funds finding: $7,500 to the researcher and $2,500 to slop.cash. The owner decides whether to grant the published award; an after-approval award uses the amount frozen at receipt. There is no fixed number of findings and no upfront vault deposit. Slop funds approved awards through the existing private settlement flow; Umia reimbursement stays outside this application.
+All registered projects accept confidential reports. Umia Protocol and, from 28 October 2026, Slop's own contracts have paid bounties (see "Slop contract bounty" below). The Umia maintainer considers a $10,000 gross Umia award for the first qualifying report of each distinct critical loss-of-funds finding: $7,500 to the researcher and $2,500 to slop.cash. The owner decides whether to grant the published award; an after-approval award uses the amount frozen at receipt. There is no fixed number of findings and no upfront vault deposit. Slop funds approved awards through the existing private settlement flow; Umia reimbursement stays outside this application.
 
 The researcher signs in to Slop, reviews current terms, and submits a private report. Slop retains the validated report in private object storage, records its own receipt and terms, and shows the case in Inbox. Surplus screening precedes owner notification. Missing evidence, suspected spam and provider failure stay available for private human review. A screening result never approves an award or disclosure.
 
@@ -40,3 +40,29 @@ not claim comprehensive model quality or live report/email delivery.
 7. After the maintainer chooses an award, deploy/register and fund the approved separate bounty vault as needed through the existing owner flow. Do not fund it during program setup. Reserve only after fresh finalized balance evidence, and mark paid only after exact principal, fee and destination reconciliation. An off-chain reimbursement is not a contributor payment receipt.
 
 The existing PRD waiver for earlier private-reporting live checks remains recorded as waived, not passed. This runbook does not turn unexecuted new provider, browser, email, GitHub or payment checks into successful evidence.
+
+## Slop contract bounty
+
+Owner decision, 28 October 2026: $10,000 per accepted critical loss-of-funds
+finding (theft or permanent freezing of funds) in Slop's mainnet contracts from
+`contracts/evm/src` and `contracts/solana/programs`. slop.cash is the sponsor,
+so the terms use the full-award split (`researcherBasisPoints: 10000`,
+`slopBasisPoints: 0`; owner decision confirmed 28 October 2026), which only
+the platform project `slopdotcash`, whose repositories include
+`SlopDotCash/slopdotcash`, may publish. Full-award terms must use
+`fundingPolicy: "after-approval"` and may not bind `settlement`: the bounty
+vault always pays 75/25. A case received under them freezes the full-award
+split, records a chosen award as unfunded, and never reserves or prepares a
+payment through a bounty vault, even if a later revision binds one. No
+full-award payment path exists yet: reservation is skipped and payment
+preparation is refused, so an approved full-award case is not payable until a
+full-award payment path is approved and released.
+
+Publish it as the owner: sign in as `lalalune`, open
+`/projects/slopdotcash/security`, choose **Set bounty terms**, review the
+prefilled terms (USDC, $10,000, after-approval, no award count, source revision
+`7fdedd35…`, the recorded EVM factory and vault implementations on Base,
+Ethereum and Robinhood Chain and the Solana program), set Status to **Open**,
+then **Review** and **Publish**. That appends the immutable D1 revision that
+the home page and security page read. Confirm the source revision and network
+before publishing.

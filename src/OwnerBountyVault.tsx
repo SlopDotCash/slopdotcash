@@ -9,6 +9,7 @@ import {
 } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
+import { isFullAwardSplit } from "./lib/security-bounty.mjs";
 import { OwnerVaultSetup } from "./OwnerVaultSetup";
 import { formatDateTime, NetworkName } from "./Presentation";
 import { VaultActions } from "./VaultActions";
@@ -20,6 +21,19 @@ type PrivateFunds = {
   freeMinor: string;
   snapshotAt: string;
 };
+
+/** A slop.cash-sponsored full award binds no bounty vault: every bounty
+ * vault pays 75/25 (PRD section 8, owner decision 28 October 2026). */
+export function FullAwardFundingNote() {
+  return (
+    <p className="vault-unconfigured" role="status">
+      slop.cash funds approved awards after review. This program pays the whole
+      award to the researcher, so it uses no 75/25 bounty vault. An approved
+      award is not payable until a full-award payment path is approved and
+      released.
+    </p>
+  );
+}
 
 /** Same public vault framing, backed only by the separate bounty vault. */
 export function ProjectBountyFunding({
@@ -49,7 +63,9 @@ export function ProjectBountyFunding({
           )}
         </h2>
       </header>
-      {allowed ? (
+      {isFullAwardSplit(terms.split) ? (
+        <FullAwardFundingNote />
+      ) : allowed ? (
         <OwnerBountyVault
           project={project}
           compact

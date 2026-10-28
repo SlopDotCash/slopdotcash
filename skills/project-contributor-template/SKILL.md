@@ -117,7 +117,7 @@ report or email its body as a fallback.
 
 The owner decides validity and any award. Under paid terms, an approved gross
 award splits 75% to the researcher and 25% to slop.cash, without the ordinary
-2% fee. Use the live amount and funding state; never promise an award, reserve
+2% fee; Slop's own contract bounty pays the researcher the whole award. Use the live amount and funding state; never promise an award, reserve
 funds, sign payments or mark a payment successful. A fix, payment or expired
 deadline does not authorize public disclosure.
 

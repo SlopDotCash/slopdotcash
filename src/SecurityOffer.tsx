@@ -1,6 +1,7 @@
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   formatSecurityAmount,
+  isFullAwardSplit,
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
 
@@ -20,7 +21,8 @@ export function SecurityOffer({
         promised.
       </p>
     );
-  const split = securityBountySplit(terms.amount.grossMinor);
+  const split = securityBountySplit(terms.amount.grossMinor, terms.split);
+  const fullAward = isFullAwardSplit(terms.split);
   const amount = (minor: string) => formatSecurityAmount(minor, terms.amount);
   return (
     <section
@@ -31,13 +33,16 @@ export function SecurityOffer({
         <strong>{amount(split.researcherMinor)}</strong> to the researcher
       </p>
       <p>
-        {amount(split.grossMinor)} total award · {amount(split.slopMinor)} to
-        Slop. No additional payout fee.
+        {fullAward
+          ? `${amount(split.grossMinor)} total award, sponsored by ${terms.sponsor.name}. The researcher receives all of it; Slop takes no share and no payout fee.`
+          : `${amount(split.grossMinor)} total award · ${amount(split.slopMinor)} to Slop. No additional payout fee.`}
       </p>
       <p className="security-offer-funding">
-        {terms.funding.state === "pledged"
-          ? "Pledged — funded after approval. Payment requires verified funding."
-          : "Funding verified at the recorded observation. Awards require owner approval."}
+        {fullAward
+          ? "Pledged — funded after approval. An approved award is not payable until a full-award payment path is approved and released."
+          : terms.funding.state === "pledged"
+            ? "Pledged — funded after approval. Payment requires verified funding."
+            : "Funding verified at the recorded observation. Awards require owner approval."}
       </p>
       {!compact ? <p>{terms.scope.lossDefinition}</p> : null}
       <p className="field-hint">
