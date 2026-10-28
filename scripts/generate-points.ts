@@ -240,6 +240,46 @@ export function retainedHistoryCorrections(
   return corrections;
 }
 
+// #857 retired the evaluator manifests, without revoking their awards. The
+// published journal's first batch after the projects returned erroneously
+// zeroed eleven of them. Identify that exact batch, not arbitrary later zeroes.
+const EVALUATIONS_RETIRED_AT = "2026-10-19T01:22:36.000Z";
+const RETIREMENT_ZEROED_AT = "2026-10-20T05:30:25.870Z";
+const RETIREMENT_ZERO_DIGEST =
+  "782097740ab32fa43352c9b7d43b34cc4586f8611068c40a9cddcc58edc9aa37";
+// Recovery gets distinct durable provenance so a subsequent maintainer decision
+// (including a zero or an unchanged explicit award) ends retirement protection.
+const RETIREMENT_RECOVERY_DIGEST = hash(
+  `retired-evaluator-recovery-v1:${RETIREMENT_ZERO_DIGEST}`,
+);
+
+export function retiredEvaluatorAwards(journal: PointsJournal): PointAward[] {
+  const retained = new Map<string, { award: PointAward; latestId: string }>();
+  for (const revision of journal.revisions) {
+    const { award } = revision;
+    if (award.category !== "evaluated-contribution") continue;
+    if (revision.recordedAt < EVALUATIONS_RETIRED_AT) {
+      retained.set(award.key, { award, latestId: revision.id });
+      continue;
+    }
+    const prior = retained.get(award.key);
+    if (!prior) continue;
+    const erroneousZero =
+      revision.recordedAt === RETIREMENT_ZEROED_AT &&
+      revision.sourceDigest === RETIREMENT_ZERO_DIGEST &&
+      revision.sourceRule === "slop-score-v2" &&
+      JSON.stringify(award) === JSON.stringify({ ...prior.award, amount: 0 });
+    const recovery =
+      revision.sourceDigest === RETIREMENT_RECOVERY_DIGEST &&
+      revision.sourceRule === "slop-score-v2" &&
+      JSON.stringify(award) === JSON.stringify(prior.award);
+    if (revision.previous === prior.latestId && (erroneousZero || recovery))
+      prior.latestId = revision.id;
+    else retained.delete(award.key);
+  }
+  return [...retained.values()].map(({ award }) => award);
+}
+
 /**
  * Applies the retained history batch in full: the supplied awards, the
  * removal corrections they imply, and explicit source provenance.
@@ -263,9 +303,27 @@ export function applyRetainedHistoryBatch(
   sourceDigest: string,
   recordedAt: string,
 ): PointsJournal {
-  let result = appendPointAwards(
+  const retired = retiredEvaluatorAwards(journal);
+  const supplied = new Set(awards.map((award) => award.key));
+  const retiredKeys = new Set(retired.map((award) => award.key));
+  const priorIds = new Set(
+    [...latestPoints(journal).values()]
+      .filter((revision) => retiredKeys.has(revision.award.key))
+      .map((revision) => revision.id),
+  );
+  const recovered = appendPointAwards(
     journal,
-    [...awards, ...retainedHistoryCorrections(journal, awards)],
+    retired.filter((award) => !supplied.has(award.key)),
+    RETIREMENT_RECOVERY_DIGEST,
+    "slop-score-v2",
+    recordedAt,
+  );
+  let result = appendPointAwards(
+    recovered,
+    [
+      ...awards,
+      ...retainedHistoryCorrections(recovered, [...awards, ...retired]),
+    ],
     sourceDigest,
     "slop-score-v2",
     recordedAt,
@@ -282,7 +340,8 @@ export function applyRetainedHistoryBatch(
           award.category === "evaluated-contribution") &&
         revision !== undefined &&
         JSON.stringify(revision.award) === JSON.stringify(award) &&
-        coverageDigests.has(revision.sourceDigest)
+        (coverageDigests.has(revision.sourceDigest) ||
+          priorIds.has(revision.id))
       );
     });
   if (confirmations.length) {
