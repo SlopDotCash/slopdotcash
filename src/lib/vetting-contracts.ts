@@ -6,6 +6,34 @@ export const VETTING_DISPOSITIONS = [
 ] as const;
 export type VettingDisposition = (typeof VETTING_DISPOSITIONS)[number];
 
+/**
+ * The publication journal contract, shared by the deployed service that writes
+ * the tables and by the scanner controller that posts to it. It lives here and
+ * not in `workers/vetting/publication-journal.ts`, because that module reads and
+ * writes local files: importing it from the Worker bundle pulls `node:fs` into
+ * workerd, which then refuses to start.
+ */
+export const PUBLICATION_OUTCOMES = [
+  "accepted",
+  "rejected",
+  "unknown",
+] as const;
+export type PublicationOutcome = (typeof PUBLICATION_OUTCOMES)[number];
+export const JOURNAL_SCHEMA = "slop-vetting-journal-v1";
+export const JOURNAL_PATH = "/api/v1/vetting/journal";
+/** One publication reservation. */
+export type PublicationIntent = {
+  assessmentId: string;
+  resultSha256: string;
+  origin: string;
+  disposition: VettingDisposition;
+};
+/** The recorded outcome of a reserved publication. */
+export type PublicationReceipt = PublicationIntent & {
+  outcome: PublicationOutcome;
+  httpStatus: number | null;
+};
+
 export type AssessmentState = "pending" | VettingDisposition;
 
 /** The safe public summary of one assessment (VET-01 display fields). */

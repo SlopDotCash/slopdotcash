@@ -1,101 +1,114 @@
-import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { d1PublicationJournal } from "../workers/vetting/publication-journal";
+/** #1411 C-09: the scheduled controller records publication state through the
+ * signed service, so the protected job holds no database credential of its own.
+ *
+ * The direct-D1 writer these cases used to drive is gone with the credential.
+ * The tables' own guarantees are unchanged and schema-enforced (migration 0074:
+ * immutable intents and receipts, one receipt per assessment); their behavioural
+ * coverage now lives in `scripts/vetting-api.test.ts`, which drives the route
+ * end to end (second reservation 409, second receipt 409, mismatched digest 422).
+ */
+import { expect, test } from "bun:test";
+import {
+  JOURNAL_SCHEMA,
+  servicePublicationJournal,
+} from "../workers/vetting/publication-journal";
 
-let db: Database;
-let loseReply: boolean;
-beforeEach(() => {
-  db = new Database(":memory:");
-  db.exec(
-    "PRAGMA foreign_keys=ON; CREATE TABLE vetting_assessments(id TEXT PRIMARY KEY); INSERT INTO vetting_assessments VALUES('assessment-a')",
-  );
-  db.exec(
-    readFileSync("migrations/0074_vetting_publication_journal.sql", "utf8"),
-  );
-  loseReply = false;
-});
-afterEach(() => db.close());
 const intent = {
   assessmentId: "assessment-a",
   origin: "https://staging.slop.cash",
   resultSha256: "a".repeat(64),
-  disposition: "incomplete",
+  disposition: "incomplete" as const,
 };
-function journal() {
-  return d1PublicationJournal({
-    accountId: "b".repeat(32),
-    databaseId: "00000000-0000-0000-0000-000000000001",
-    token: "test-token",
-    fetch: Object.assign(
-      async (_url: unknown, init?: RequestInit) => {
-        const { sql, params } = JSON.parse(String(init?.body));
-        try {
-          const results = db.prepare(sql).all(...params);
-          if (loseReply) {
-            loseReply = false;
-            throw new Error("Lost durable reservation response");
-          }
-          return Response.json({
-            success: true,
-            result: [{ success: true, results }],
-          });
-        } catch (error) {
-          if ((error as Error).message === "Lost durable reservation response")
-            throw error;
-          return Response.json({ success: false, result: [] });
-        }
-      },
-      { preconnect: fetch.preconnect },
-    ) as typeof fetch,
-  });
+
+async function serviceSigner() {
+  const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+    "sign",
+    "verify",
+  ]);
+  return { publicKey: pair.publicKey, privateKey: pair.privateKey };
 }
 
-test("a restarted controller preserves an intent even when its reservation reply is lost", async () => {
-  expect(await journal().has(intent.assessmentId)).toBe(false);
-  loseReply = true;
-  await expect(journal().reserve(intent)).rejects.toThrow(
-    "Lost durable reservation response",
+test("the journal client signs every operation and reads the service reply", async () => {
+  const calls: {
+    url: string;
+    method: string;
+    body: Record<string, unknown>;
+    signed: boolean;
+  }[] = [];
+  const journal = servicePublicationJournal({
+    origin: "https://staging.slop.cash",
+    signer: await serviceSigner(),
+    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input instanceof Request ? input.url : input));
+      const body = JSON.parse(
+        new TextDecoder().decode(init?.body as Uint8Array),
+      ) as Record<string, unknown>;
+      const headers = new Headers(init?.headers);
+      calls.push({
+        url: `${url.origin}${url.pathname}`,
+        method: String(init?.method),
+        body,
+        signed: (headers.get("x-slop-vetting-signature") ?? "").length === 88,
+      });
+      return Response.json({
+        schemaVersion: JOURNAL_SCHEMA,
+        ...(body.operation === "has"
+          ? { present: true }
+          : body.operation === "reserve"
+            ? { reserved: true }
+            : { recorded: true }),
+      });
+    }) as typeof fetch,
+  });
+
+  expect(await journal.has(intent.assessmentId)).toBe(true);
+  await journal.reserve(intent);
+  await journal.complete({ ...intent, outcome: "unknown", httpStatus: null });
+
+  expect(calls.map((call) => call.url)).toEqual(
+    Array(3).fill("https://staging.slop.cash/api/v1/vetting/journal"),
   );
-  expect(await journal().has(intent.assessmentId)).toBe(true);
-  await expect(journal().reserve(intent)).rejects.toThrow("already reserved");
-  expect(
-    db.query("SELECT count(*) n FROM vetting_publication_intents").get(),
-  ).toEqual({ n: 1 });
+  expect(calls.map((call) => call.method)).toEqual(["POST", "POST", "POST"]);
+  expect(calls.every((call) => call.signed)).toBe(true);
+  expect(calls[0].body).toEqual({
+    operation: "has",
+    assessmentId: intent.assessmentId,
+  });
+  expect(calls[1].body).toEqual({ operation: "reserve", ...intent });
+  expect(calls[2].body).toEqual({
+    operation: "complete",
+    ...intent,
+    outcome: "unknown",
+    httpStatus: null,
+  });
 });
 
-test("only one concurrent controller can reserve a publication and its metadata stays immutable", async () => {
-  const attempts = await Promise.allSettled([
-    journal().reserve(intent),
-    journal().reserve(intent),
-  ]);
-  expect(
-    attempts.filter((result) => result.status === "fulfilled"),
-  ).toHaveLength(1);
-  expect(() =>
-    db.exec("UPDATE vetting_publication_intents SET result_sha256='changed'"),
-  ).toThrow("immutable");
-  expect(() => db.exec("DELETE FROM vetting_publication_intents")).toThrow(
-    "immutable",
+test("an unsigned or refused journal reply fails the operation by name", async () => {
+  const journal = servicePublicationJournal({
+    origin: "https://staging.slop.cash",
+    signer: await serviceSigner(),
+    fetch: (async () =>
+      new Response("no", { status: 503 })) as unknown as typeof fetch,
+  });
+  await expect(journal.has("vet_assessment")).rejects.toThrow(
+    "Publication journal refused has (HTTP 503)",
   );
+  await expect(journal.reserve(intent)).rejects.toThrow(
+    "Publication journal refused reserve (HTTP 503)",
+  );
+  await expect(
+    journal.complete({ ...intent, outcome: "unknown", httpStatus: null }),
+  ).rejects.toThrow("Publication journal refused complete (HTTP 503)");
 });
 
-test("a receipt must match the reserved result and remains exactly once", async () => {
-  await journal().reserve(intent);
-  const receipt = { ...intent, outcome: "unknown" as const, httpStatus: null };
-  await expect(
-    journal().complete({ ...receipt, resultSha256: "c".repeat(64) }),
-  ).rejects.toThrow("matching intent");
-  await journal().complete(receipt);
-  await expect(
-    journal().complete({ ...receipt, outcome: "accepted" }),
-  ).rejects.toThrow();
-  expect(
-    db
-      .query("SELECT outcome,http_status FROM vetting_publication_receipts")
-      .get(),
-  ).toEqual({ outcome: "unknown", http_status: null });
-  expect(() => db.exec("DELETE FROM vetting_publication_receipts")).toThrow(
-    "immutable",
+test("a reply from another contract generation is refused", async () => {
+  const journal = servicePublicationJournal({
+    origin: "https://staging.slop.cash",
+    signer: await serviceSigner(),
+    fetch: (async () =>
+      Response.json({ present: true })) as unknown as typeof fetch,
+  });
+  await expect(journal.has(intent.assessmentId)).rejects.toThrow(
+    "unexpected contract",
   );
 });
