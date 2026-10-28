@@ -1,6 +1,7 @@
 /** Actual subprocess lifecycle: failed browser phases must not leave servers running. */
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,12 +17,27 @@ function stopDescendant(pid: number) {
   }
 }
 
+async function expectPortReusable(port: number) {
+  const server = createServer();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", resolve);
+    });
+  } finally {
+    if (server.listening)
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+  }
+}
+
 test("a timed-out launcher stops its descendant server before returning failure", async () => {
   const directory = mkdtempSync(join(tmpdir(), "slop-phase-tree-"));
   const ready = join(directory, "ready");
   const heartbeat = join(directory, "heartbeat");
   // Publish complete heartbeat samples so termination cannot leave a torn write.
-  const descendant = `const fs = require("node:fs"); let count = 0; fs.writeFileSync(${JSON.stringify(heartbeat)}, "0"); fs.writeFileSync(${JSON.stringify(`${ready}.tmp`)}, String(process.pid)); fs.renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)}); setInterval(() => { fs.writeFileSync(${JSON.stringify(heartbeat)} + ".next", String(++count)); fs.renameSync(${JSON.stringify(heartbeat)} + ".next", ${JSON.stringify(heartbeat)}); }, 25);`;
+  const descendant = `const fs = require("node:fs"); let count = 0; fs.writeFileSync(${JSON.stringify(heartbeat)}, "0"); const server = require("node:net").createServer(); server.listen(0, "127.0.0.1", () => { fs.writeFileSync(${JSON.stringify(`${ready}.tmp`)}, JSON.stringify({ pid: process.pid, port: server.address().port })); fs.renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)}); }); setInterval(() => { fs.writeFileSync(${JSON.stringify(heartbeat)} + ".next", String(++count)); fs.renameSync(${JSON.stringify(heartbeat)} + ".next", ${JSON.stringify(heartbeat)}); }, 25);`;
   const launcher = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "inherit" }); setInterval(() => {}, 1000);`;
   let completed = false;
   // Include cold launcher startup before exercising descendant termination.
@@ -43,17 +59,15 @@ test("a timed-out launcher stops its descendant server before returning failure"
     while (!existsSync(ready) && !completed) await pause(25);
     if (!existsSync(ready))
       throw new Error("The descendant did not start before the phase deadline");
-    const pid = Number(readFileSync(ready, "utf8"));
+    const { pid, port } = JSON.parse(readFileSync(ready, "utf8"));
     process.kill(pid, 0);
+    // Prove the descendant owns a real server before exercising cleanup.
+    await expect(expectPortReusable(port)).rejects.toHaveProperty(
+      "code",
+      "EADDRINUSE",
+    );
     expect(await phase).toBe(1);
-    let alive = true;
-    try {
-      process.kill(pid, 0);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-      alive = false;
-    }
-    expect(alive).toBe(false);
+    await expectPortReusable(port);
     const stoppedAt = readFileSync(heartbeat, "utf8");
     expect(Number(stoppedAt)).toBeGreaterThan(0);
     await pause(150);
@@ -104,7 +118,7 @@ for (const stdio of ["inherit", "ignore"]) {
     async () => {
       const directory = mkdtempSync(join(tmpdir(), "slop-phase-failure-"));
       const ready = join(directory, "ready");
-      const descendant = `require("node:fs").writeFileSync(${JSON.stringify(ready)}, String(process.pid)); setInterval(() => {}, 1000);`;
+      const descendant = `const fs = require("node:fs"); const server = require("node:net").createServer(); server.listen(0, "127.0.0.1", () => { fs.writeFileSync(${JSON.stringify(`${ready}.tmp`)}, JSON.stringify({ pid: process.pid, port: server.address().port })); fs.renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)}); });`;
       // A launcher can fail after starting a server. Inherited pipes must not
       // keep the phase alive until its full deadline, and ignored pipes must
       // not let the phase return while the server is still running.
@@ -125,17 +139,23 @@ for (const stdio of ["inherit", "ignore"]) {
         const script = `import { runE2ePhase } from ${JSON.stringify(runner)}; process.exitCode = await runE2ePhase({ ...${JSON.stringify(options)}, command: process.execPath, env: process.env });`;
         const child = Bun.spawn(["node", "--input-type=module", "-e", script], {
           stdout: "inherit",
-          stderr: "inherit",
+          stderr: "pipe",
         });
+        const diagnostics = new Response(child.stderr).text();
         const deadline = Date.now() + 5000;
         while (!existsSync(ready) && Date.now() < deadline) await pause(25);
         expect(existsSync(ready)).toBe(true);
-        const serverPid = Number(readFileSync(ready, "utf8"));
+        const { pid: serverPid, port } = JSON.parse(
+          readFileSync(ready, "utf8"),
+        );
         pid = serverPid;
         expect(await child.exited).toBe(7);
-        expect(() => process.kill(serverPid, 0)).toThrow(
-          expect.objectContaining({ code: "ESRCH" }),
-        );
+        const stderr = await diagnostics;
+        // The member-state check targets Linux; other platforms keep the
+        // bounded fallback and still prove cleanup through port reuse.
+        if (process.platform === "linux")
+          expect(stderr).not.toContain("process cleanup did not finish");
+        await expectPortReusable(port);
         pid = undefined;
       } finally {
         if (pid !== undefined) stopDescendant(pid);
