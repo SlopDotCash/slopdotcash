@@ -2,56 +2,13 @@ name: Escrow accounting and recovery
 
 on:
   pull_request:
-    branches: [develop, development, main]
+    branches: [development, main]
     paths:
       - 'contracts/**'
-      - 'backend/payments/**'
-      - 'backend/security/**'
-      - 'workers/payments/**'
-      - 'workers/security-payments/**'
-      - 'workers/payment-executor/**'
-      - 'workers/fee-converter/**'
-      - 'backend/fee-conversions/**'
-      - 'workers/referral-accrual/**'
-      - 'backend/referrals/**'
-      - 'src/lib/payments/**'
-      - 'src/lib/security-bounty.*'
-      - 'src/lib/escrow-policy.*'
-      - 'src/Earnings.tsx'
-      - 'src/EscrowFunding.tsx'
-      - 'src/ProjectProposalPage.tsx'
-      - 'src/WalletRegistration.tsx'
-      - 'src/VaultActions.tsx'
-      - 'src/OwnerAwards.tsx'
-      - 'src/OwnerCommitment.tsx'
-      - 'src/lib/*vault-actions.ts'
-      - 'src/lib/*commitment-actions.ts'
-      - 'src/lib/use-payout-wallets.ts'
-      - 'tests/e2e/*vault-actions.spec.ts'
-      - 'tests/e2e/fixtures.ts'
-      - 'src/lib/wallets.ts'
-      - 'src/lib/wallet-registration.ts'
-      - 'src/lib/funding-address.*'
-      - 'src/lib/project-schema.*'
-      - 'scripts/check-payout-test-funding.mjs'
-      - 'scripts/*escrow*'
-      - 'scripts/payment-keeper/**'
-      - 'workers/operator-keeper/**'
-      - 'tests/cloudflare-keeper-*'
-      - 'scripts/prepare-payment-deployments.ts'
-      - 'scripts/check-payout-readiness.ts'
-      - 'scripts/check-referral-roots.ts'
-      - 'scripts/test-payout-browser.mjs'
-      - 'scripts/child-environment.mjs'
-      - 'scripts/prepare-e2e-fixture.mjs'
-      - 'scripts/run-e2e*.mjs'
-      - 'scripts/run-security-payments.mjs'
-      - 'scripts/copy-working-tree.mjs'
-      - 'playwright.config.ts'
-      - 'migrations/**'
-      - 'package.json'
-      - 'bun.lock'
       - '.github/workflows/escrow-tests.yml'
+      - 'scripts/ci-scope.mjs'
+  schedule:
+    - cron: '23 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -65,7 +22,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    outputs:
+      solana: ${{ steps.scope.outputs.solana }}
+      evm: ${{ steps.scope.outputs.evm }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        run: node scripts/ci-scope.mjs
+
   solana-verifiable:
+    needs: scope
+    if: needs.scope.outputs.solana == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -144,6 +116,8 @@ jobs:
           retention-days: 30
 
   evm:
+    needs: scope
+    if: needs.scope.outputs.evm == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -179,18 +153,25 @@ jobs:
       - run: forge build --root contracts/evm --sizes
       - run: forge test --root contracts/evm
       - run: bun run test:contracts:evm
+        if: github.event_name != 'pull_request'
       - name: Prove native keeper durability across an abrupt process crash
+        if: github.event_name != 'pull_request'
         env:
           SLOP_KEEPER_RUNTIME: cloudflare
         run: bun scripts/payment-keeper/evm.integration.ts
       - run: bun run test:payments
+        if: github.event_name != 'pull_request'
       - run: bun run test:referral-accrual:anvil
+        if: github.event_name != 'pull_request'
       - name: Exercise fee conversion and claim recovery on an isolated local chain
+        if: github.event_name != 'pull_request'
         env:
           SLOP_TEST_CLAIM_FAULTS: before,lease,finalized-role
         run: bun run test:fee-converter:fork --local
       - run: bunx playwright install --with-deps chromium
+        if: github.event_name != 'pull_request'
       - name: Load deployed public ledger for browser checks
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           mkdir -p public/data
@@ -211,8 +192,11 @@ jobs:
             "$ledger_file" public/data/leaderboard.json
 
       - run: bunx vite build
+        if: github.event_name != 'pull_request'
       - run: node scripts/test-payout-browser.mjs
+        if: github.event_name != 'pull_request'
       - name: Exercise wallet funding and recovery in Chromium
+        if: github.event_name != 'pull_request'
         env:
           SLOP_E2E_VAULT_ACTIONS: '1'
           SLOP_E2E_VIDEO: '1'
@@ -235,6 +219,7 @@ jobs:
           retention-days: 30
 
   solana:
+    if: github.event_name != 'pull_request'
     needs: solana-verifiable
     runs-on: ubuntu-24.04
     timeout-minutes: 60

@@ -261,12 +261,16 @@ transaction. An operator cannot bypass this path.
 null. It checks the original database attempt and journal identity, and does
 not sign, broadcast, read a secret, or require the wallet claim still to be
 current. This lets the dispatcher reconcile a lost response even after the
-contributor has replaced the wallet. For a stored Solana signature it also
-reports whether the reviewed chain has observed that signature. A preflight
-refusal leaves the attempt retryable. Recovery also reopens an older row that
-incorrectly marked an unobserved signature submitted. The journal keeps its
-signed bytes; only the existing finalized-expiry checks permit a replacement.
-Signed transaction bytes are never returned.
+contributor has replaced the wallet. For a stored transaction it also reports
+whether the reviewed chain has observed it: the Solana signature status, or an
+EVM node that knows the exact hash. A refused Solana preflight or EVM broadcast
+(for example, an unfunded gas wallet) leaves the attempt retryable, and the
+dispatcher's retry resends the same signed bytes. An EVM attempt recorded as
+submitted without that observation would never be resent, and its unfilled
+nonce would stop every later relayer transaction. Recovery also reopens an
+older row that incorrectly marked an unobserved Solana signature submitted.
+The journal keeps its signed bytes; only the existing finalized-expiry checks
+permit a Solana replacement. Signed transaction bytes are never returned.
 
 Deploy the executor before, or together with, the payments Worker when adding
 this observation field. The updated payments Worker refuses an older executor
@@ -332,6 +336,29 @@ authorization. Keeper gas budgets and Solana recovery are not changed.
 EVM signing limits gas to the deployment record's `gasCeiling`, copied from the
 network registry, and max gas price to 10 gwei; a record without a ceiling is
 refused.
+
+An EVM deployment may additionally set `maxNativeCostWei` through its normal
+owner-authorized immutable project revision. It is a canonical positive
+uint256 decimal string. The signer refuses an envelope when
+`gasLimit * maxFeePerGas` exceeds this limit; the existing gas and 10-gwei
+ceilings still apply. Omission preserves the existing limits. The field does
+not apply to Solana and is never copied from another project's factory template.
+
+Each newly signed operation retains the limit under which it was admitted.
+Raising or removing the current setting cannot loosen that operation's bound;
+a tighter current setting also governs new signatures and broadcasts. Fee
+replacements and same-nonce binding cancellations use the same operation bound.
+Canonical historical receipts remain reconcilable under their original policy.
+This is a per-operation envelope limit, not a daily, lifetime, wallet or combined
+qualification budget. Separate operator accounting must still bound the total
+across all qualifying transactions and preserve every uncertain attempt.
+Here one operation is the original signed nonce and its same-nonce competitors;
+another nonce after a finalized revert is a separate envelope. This field does
+not enforce a one-nonce binding policy or a cumulative retry allowance. A normal
+reviewed release must publish any new registry limit before the Worker uses it.
+This bounds the signed EIP-1559 envelope. Separate Base L1/operator charges
+remain covered by the keeper's existing native budget and receipt accounting;
+this field does not replace that accounting.
 
 | Network | `gasCeiling` | Why |
 | --- | --- | --- |
@@ -565,3 +592,33 @@ Existing `slop-staging.pages.dev` is owned by another task: coordinate before ch
 its Pages bindings or deploying the isolated artifact. No live OAuth or hosted session
 claim is made until real GitHub sign-in, one-use assertion consumption, same-host cookie,
 wallet control signature, and finalized payout pass there. Use the new login/earnings
+
+## Per-consent nonce restriction
+
+An approved EVM deployment may set `bindingConsentNonceLimit: 1` in its D1
+project revision. Absent preserves ordinary behavior. This is separate from
+`TEST_BINDING_NONCE_LIMIT`, whose staging-only semantics are unchanged. It
+restricts the production scheduled destination-binding path; it grants no
+signer role, mainnet activation or additional transaction authority.
+
+For this opt-in, the durable journal admits one nonce for the exact wallet-signed
+binding payload: network, chain ID, vault, actor, destination, expected version,
+claim digest and expiry. The signed attempt, original nonce/hash and maximum
+native envelope are stored atomically before broadcast. A finalized revert,
+expiry, retirement or same-nonce cancellation never resets that admission.
+Disabling the deployment setting does not make an admitted consent reusable.
+Existing same-nonce reconciliation and authorized cancellation remain available.
+A newly signed consent with a different expiry is separate authority; the service
+does not generate that consent itself. All current wallet, claim, deployment and
+pre-broadcast authorization checks still apply.
+
+On first admission, missing or malformed legacy budget history holds for
+operator review. The existing 1,000-record bounded history check includes
+retired and observed attempts. Read-only reconciliation may still record a
+proved legacy finalized winner without inventing a nonce budget or authorizing
+another send. The setting is not copied from another vault's
+setup template. Changing it appends a normal owner-authorized project revision;
+no migration, live setting change or activation is performed by this source.
+The native envelope retains the existing gas-units and 10-gwei fee ceilings;
+a separately configured native-cost limit remains independently required for
+an execution plan that needs a tighter monetary cap (PRD sections 6 and 11).

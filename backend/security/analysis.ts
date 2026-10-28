@@ -509,7 +509,15 @@ export async function runCaseAnalysis(
     await finish("unavailable");
     return;
   }
-  let report = received ?? (await deps.storedReport?.(caseId)) ?? null;
+  let report: SecurityAnalysisReport | null;
+  try {
+    report = received ?? (await deps.storedReport?.(caseId)) ?? null;
+  } catch {
+    // The retained Slop report cannot be read or verified now. Record this
+    // like an unreadable advisory, so the attempt stays retryable.
+    await finish("unavailable");
+    return;
+  }
   if (report === null) {
     const lookup =
       deps.advisories && row.advisory_ghsa

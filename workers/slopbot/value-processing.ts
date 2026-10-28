@@ -22,6 +22,45 @@ const terminal = new Set<ValueOutcome>([
 ]);
 const LEASE_MS = 10 * 60 * 1000;
 
+/** The first retry delay, and the cadence kept for a transient failure. */
+const VALUE_RETRY_BASE_MS = 60 * 60 * 1000;
+/** Longest retry delay of a blocked outcome: never more than one day. */
+const VALUE_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Delay before attempt `attempt` (1 is the first) of an outcome that is blocked
+ * rather than failing transiently: the base interval doubled once per earlier
+ * attempt, capped at one day, so a block that persists stops costing an hourly
+ * run without turning the outcome into a final zero.
+ */
+export function valueRetryDelayMs(attempt: number): number {
+  const step = Math.max(Math.trunc(attempt), 1) - 1;
+  return Math.min(VALUE_RETRY_BASE_MS * 2 ** step, VALUE_RETRY_MAX_MS);
+}
+
+/**
+ * The retry time for this outcome, from the attempts already recorded for this
+ * delivery. `retry` is the transient path — a thrown failure, a source-lease
+ * contention or a provider outage — so it keeps the plain one-hour cadence and
+ * only the blocked outcomes back off. The count belongs to one delivery: the
+ * claimed row is the only one that advances.
+ */
+export async function nextValueRetryAt(
+  db: D1Database,
+  deliveryId: string,
+  outcome: ValueOutcome,
+  at = new Date(),
+): Promise<Date> {
+  if (outcome === "retry") return new Date(at.getTime() + VALUE_RETRY_BASE_MS);
+  const row = await db
+    .prepare(
+      "SELECT attempts FROM slopbot_value_processing WHERE delivery_id=?",
+    )
+    .bind(deliveryId)
+    .first<{ attempts: number }>();
+  return new Date(at.getTime() + valueRetryDelayMs((row?.attempts ?? 0) + 1));
+}
+
 /** Claim an existing durable request. One atomic statement handles the first
  * attempt, scheduled retries and recovery after a worker disappears.
  */
@@ -100,12 +139,16 @@ export async function finishValueRequest(
       (!retryAt || !Number.isFinite(retryAt.getTime()) || retryAt <= at))
   )
     throw new Error("Value request retry time does not match its outcome");
+  // Only a blocked outcome advances the count. A transient 'retry' also carries
+  // a retry time, and counting it would let a provider outage push a later,
+  // unrelated block straight to the day cap.
+  const blocked = !complete && outcome !== "retry";
   // One statement: without the current lease no row is selected or written.
   const row = await db
     .prepare(
       `INSERT INTO slopbot_value_processing
-       (delivery_id,claim_token,lease_until,state,outcome,retry_at,updated_at)
-       SELECT r.delivery_id,?2,?7,?4,?5,?6,?7
+       (delivery_id,claim_token,lease_until,state,outcome,retry_at,updated_at,attempts)
+       SELECT r.delivery_id,?2,?7,?4,?5,?6,?7,?8
        FROM slopbot_value_processing owner
        JOIN slopbot_value_requests claimed ON claimed.delivery_id=owner.delivery_id
        JOIN slopbot_value_requests r ON r.repository_id=claimed.repository_id
@@ -117,6 +160,13 @@ export async function finishValueRequest(
          AND owner.state='running' AND owner.lease_until>?7
        ON CONFLICT(delivery_id) DO UPDATE SET claim_token=excluded.claim_token,
          state=excluded.state,outcome=excluded.outcome,retry_at=excluded.retry_at,
+         -- The delivery_id predicate is load-bearing, not redundant: the SELECT
+         -- also settles every waiting sibling delivery of the same PR, and this
+         -- row UPSERT is what inserts them, so without it they would be credited
+         -- with attempts they never made and their count would drift upward.
+         attempts=CASE WHEN slopbot_value_processing.delivery_id=?1 AND ?9=1
+           THEN slopbot_value_processing.attempts+1
+           ELSE slopbot_value_processing.attempts END,
          updated_at=excluded.updated_at
        WHERE slopbot_value_processing.delivery_id=?1
           OR slopbot_value_processing.state='waiting'
@@ -130,6 +180,8 @@ export async function finishValueRequest(
       outcome,
       retryAt?.toISOString() ?? null,
       at.toISOString(),
+      0,
+      blocked ? 1 : 0,
     )
     .first();
   if (!row) throw new Error("Value request lease is no longer owned");
