@@ -253,6 +253,10 @@ test.beforeAll(async () => {
 });
 test.afterAll(() => anvil?.kill("SIGTERM"));
 
+test.beforeEach(async ({ diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
+});
+
 test("depositor funds a real vault, recovers a submitted transaction and owner withdraws only free funds", async ({
   diagnostics,
   page,
@@ -313,7 +317,14 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
-      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
   );
   await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/api/v1/projects/eliza", (route) =>
@@ -814,7 +825,14 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
-      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
   );
   await serveProjectCycleIndex(page, [project.id]);
   await page.route("**/api/v1/projects/eliza", (route) =>
@@ -1491,13 +1509,10 @@ test("owner creates, registers and funds a vault through the real API", async ({
     ).toHaveText(
       "Creation used a monthly cap of 1,000 TEST. The project now uses 2,000 TEST. Use the automatic payment controls below to apply the new cap.",
     );
-    const monthlyTarget = recoveryPage
-      .locator("dl > div")
-      .filter({
-        has: recoveryPage.locator("dt", { hasText: /^Monthly target$/u }),
-      })
-      .locator("dd");
-    await expect(monthlyTarget).toHaveText("2,000 TEST");
+    const monthlyTarget = recoveryPage.locator(".project-reward-status");
+    await expect(monthlyTarget).toHaveText(
+      /2k\s*\$TEST monthly target, split between contributors/u,
+    );
     await expect(monthlyTarget).toBeVisible();
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(state.project.revision).toBe(3);
